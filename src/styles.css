@@ -1,0 +1,167 @@
+:root {
+  font-family: system-ui, Ubuntu, Droid Sans, sans-serif;
+  font-size: 12px;
+
+  color: #0f0f0f;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+  outline: none;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+.container {
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.file-icon {
+  display: inline-block;
+
+  font-size: 150%;
+
+  font-family: "seti";
+
+  background-size: 22px;
+  background-position: 0;
+  background-repeat: no-repeat;
+  width: 20px;
+  height: 20px;
+  line-height: inherit !important;
+  display: inline-block;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  vertical-align: top;
+}
+
+.file-icon.folder {
+  background-image: url("./assets/folder-open-light.svg");
+  background-position: center;
+  background-size: 12px;
+}
+
+.pane {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  height: 100%;
+}
+
+@font-face {
+  font-family: "seti";
+  font-weight: normal;
+  src: url("./assets/seti.woff") format("woff");
+  font-style: normal;
+  font-size: 150%;
+}
+
+.focused {
+  background: #e8f0fe;
+}
+
+.selected {
+  color: red;
+}
+
+.header {
+  padding: 0.2em;
+  background: #f0f0f0;
+  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.table-header {
+  font-weight: bold;
+  display: flex;
+  padding-left: 0.5rem;
+  background: #fafafa;
+  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
+  z-index: 1;
+}
+
+ul.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  cursor: default;
+}
+
+li.file-item {
+  display: flex;
+  height: 20px;
+}
+
+.datum,
+.table-header .column {
+  overflow: hidden;
+  white-space: nowrap;
+  padding-left: 0.2em;
+  padding-right: 0.2em;
+  line-height: 20px;
+  text-overflow: ellipsis;
+}
+
+.filename {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.filename-part {
+  display: inline;
+}
+
+.sort-indicator {
+  color: #aaa;
+}
+
+.filter-input {
+  position: absolute;
+  bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.filter-head::after {
+  content: "";
+  width: 0px;
+  margin-left: -0.75px;
+  margin-right: -0.75px;
+  height: 20px;
+  border-left: 1.5px solid black;
+  left: 0;
+  animation: blink step-end 1s infinite;
+}
+
+@keyframes blink {
+  50% {
+    border-left: 1.5px solid transparent;
+  }
+}
