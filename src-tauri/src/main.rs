@@ -6,12 +6,16 @@ pub mod common;
 pub mod pane;
 
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
+use common::Error;
+use notify::{RecommendedWatcher, RecursiveMode};
 use pane::PaneViewState;
 use serde::ser::SerializeSeq;
+use tauri::{window, AppHandle, Invoke, Manager, Window, Wry};
 
 #[derive(
     PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -101,6 +105,38 @@ impl GlobalState {
     }
 }
 
+pub struct WindowContext {
+    window: Window,
+    watcher: Watcher,
+    global_state: GlobalState,
+}
+
+impl WindowContext {
+    pub fn create(window: Window) -> Result<Self, Error> {
+        let paths = ["/".to_string(), "/".to_string()];
+        let global_state = GlobalState::new(paths);
+        let watcher = Watcher::new(window.clone(), global_state.clone());
+
+        Ok(Self {
+            window,
+            watcher,
+            global_state,
+        })
+    }
+
+    pub fn with_updates(
+        &self,
+        f: impl FnOnce(&GlobalState) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let ret = f(&self.global_state);
+
+        self.watcher.update_paths();
+        self.window.emit("updated", UpdatePayload::new(self.global_state.clone()))?;
+
+        ret
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct UpdatePayload {
     pub state: GlobalState,
@@ -112,12 +148,98 @@ impl UpdatePayload {
     }
 }
 
-fn main() {
-    let paths = ["/".to_string(), "/".to_string()];
+struct WatcherInner {
+    global_state: GlobalState,
+    watcher: Option<RecommendedWatcher>,
+    watched_paths: HashSet<PathBuf>,
+}
 
-    tauri::Builder::default()
-        .manage(GlobalState::new(paths))
-        .invoke_handler(tauri::generate_handler![
+#[derive(Clone)]
+pub struct Watcher {
+    inner: Arc<Mutex<WatcherInner>>,
+}
+
+impl Watcher {
+    pub fn new(window: Window, global_state: GlobalState) -> Self {
+        let inner = Arc::new(Mutex::new(WatcherInner {
+            global_state,
+            watcher: None,
+            watched_paths: HashSet::new(),
+        }));
+
+        let watcher = {
+            let inner = Arc::clone(&inner);
+            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                match res {
+                    Ok(event) => {
+                        let mut inner = inner.lock().unwrap();
+                        let mut changed = false;
+
+                        {
+                            let mut panes = inner.global_state.panes.0.iter_mut();
+                            while let Some(pane) = panes.next() {
+                                let mut pane = pane.lock().unwrap();
+                                if event.paths.iter().any(|p| p.starts_with(&pane.path)) {
+                                    if let Err(e) = pane.refresh() {
+                                        eprintln!("refresh error: {:?}", e);
+                                    }
+                                    changed = true;
+                                }
+                            }
+                        }
+
+                        if changed {
+                            let payload = UpdatePayload::new(inner.global_state.clone());
+                            window.emit("updated", payload).unwrap();
+                        }
+                    }
+                    Err(e) => eprintln!("watch error: {:?}", e),
+                };
+            })
+            .unwrap()
+        };
+
+        inner.lock().unwrap().watcher = Some(watcher);
+        Self { inner }
+    }
+
+    pub fn update_paths(&self) {
+        use notify::Watcher;
+        let mut inner = self.inner.lock().unwrap();
+
+        let paths: HashSet<PathBuf> = inner
+            .global_state
+            .panes
+            .iter()
+            .map(|(_, p)| p.lock().unwrap().path.clone())
+            .collect();
+
+        let to_add: Vec<_> = paths.difference(&inner.watched_paths).cloned().collect();
+        let to_remove: Vec<_> = inner.watched_paths.difference(&paths).cloned().collect();
+
+        let watcher = inner.watcher.as_mut().unwrap();
+
+        for path in to_add {
+            if let Err(e) = watcher.watch(&path, RecursiveMode::NonRecursive) {
+                eprintln!("watch error: {:?}", e);
+            }
+        }
+        for path in to_remove {
+            match watcher.unwatch(&path) {
+                Ok(_) | Err(notify::Error{ kind: notify::ErrorKind::WatchNotFound, .. }) => {}
+                Err(e) => {
+                    eprintln!("unwatch error: {:?}", e);
+                }
+            }
+        }
+
+        inner.watched_paths = paths;
+    }
+}
+
+fn main() {
+    let handler: Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> =
+        Box::new(tauri::generate_handler![
             cmd::navigate,
             cmd::ping,
             cmd::focus,
@@ -128,7 +250,20 @@ fn main() {
             cmd::relative_jump,
             cmd::set_filter,
             cmd::copy_pane
-        ])
+        ]);
+
+    let handler = Box::new(move |i| {
+        let start = std::time::Instant::now();
+        handler(i);
+        println!("handler took {:?}", start.elapsed());
+    });
+
+    tauri::Builder::default()
+        .on_page_load(|w, _| {
+            let context = WindowContext::create(w.clone()).unwrap();
+            w.app_handle().manage(context);
+        })
+        .invoke_handler(handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

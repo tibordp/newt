@@ -1,139 +1,114 @@
 use tauri::{State, Window};
 
-use crate::{common::Error, pane::Sorting, GlobalState, PaneHandle, UpdatePayload};
+use crate::{
+    common::Error, pane::Sorting, GlobalState, PaneHandle, UpdatePayload, Watcher, WindowContext,
+};
 
 #[tauri::command]
 pub fn navigate(
-    gs: State<GlobalState>,
-    window: Window,
+    ctx: State<WindowContext>,
     pane_handle: PaneHandle,
     path: &str,
 ) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().navigate(path.into())?;
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().navigate(path.into())?;
 
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-    Ok(())
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn focus(
-    gs: State<GlobalState>,
-    window: Window,
+    ctx: State<WindowContext>,
     pane_handle: PaneHandle,
     filename: Option<String>,
 ) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    if let Some(filename) = filename {
-        state.lock().unwrap().focus(filename);
-    }
-
-    gs.activate_pane(pane_handle);
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        if let Some(filename) = filename {
+            state.lock().unwrap().focus(filename);
+        }
+        gs.activate_pane(pane_handle);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn set_sorting(
-    gs: State<GlobalState>,
-    window: Window,
+    ctx: State<WindowContext>,
     pane_handle: PaneHandle,
     sorting: Sorting,
 ) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().set_sorting(sorting);
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().set_sorting(sorting);
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn toggle_selected(
-    gs: State<GlobalState>,
-    window: Window,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().toggle_selected();
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+pub fn toggle_selected(ctx: State<WindowContext>, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().toggle_selected();
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn select_all(
-    gs: State<GlobalState>,
-    window: Window,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().select_all();
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+pub fn select_all(ctx: State<WindowContext>, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().select_all();
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn deselect_all(
-    gs: State<GlobalState>,
-    window: Window,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().deselect_all();
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+pub fn deselect_all(ctx: State<WindowContext>, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().deselect_all();
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn relative_jump(
-    gs: State<GlobalState>,
-    window: Window,
+    ctx: State<WindowContext>,
     pane_handle: PaneHandle,
     offset: i32,
 ) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().relative_jump(offset);
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-
-    Ok(())
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().relative_jump(offset);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn set_filter(
-    gs: State<GlobalState>,
-    window: Window,
+    ctx: State<WindowContext>,
     pane_handle: PaneHandle,
     filter: Option<String>,
 ) -> Result<(), Error> {
-    let state = gs.panes.get(pane_handle).unwrap();
-    state.lock().unwrap().set_filter(filter);
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-    Ok(())
+    ctx.with_updates(|gs| {
+        let state = gs.panes.get(pane_handle).unwrap();
+        state.lock().unwrap().set_filter(filter);
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn copy_pane(
-    gs: State<GlobalState>,
-    window: Window,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
-    gs.copy_pane(pane_handle);
-
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-    Ok(())
+pub fn copy_pane(ctx: State<WindowContext>, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_updates(|gs| {
+        gs.copy_pane(pane_handle);
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn ping(gs: State<GlobalState>, window: Window) -> Result<(), Error> {
-    window.emit("updated", UpdatePayload::new((*gs).clone()))?;
-    Ok(())
+pub fn ping(ctx: State<WindowContext>) -> Result<(), Error> {
+    ctx.with_updates(|_| Ok(()))
 }

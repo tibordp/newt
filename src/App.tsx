@@ -400,7 +400,7 @@ function Pane({
         tabIndex={-1}
       />
       <div className="header">
-        {paneHandle} {path}
+        {path}
       </div>
       <div className="table-header">
         {columns.map(({ name, key, sortable, style }, i) => (
@@ -483,7 +483,7 @@ function App() {
       <Allotment minSize={200} className="container">
         {remoteState &&
           remoteState.panes.map((props, i) => (
-            <Pane paneHandle={i} {...props} />
+            <Pane key={i} paneHandle={i} {...props} />
           ))}
       </Allotment>
     </Profiler>

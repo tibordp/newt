@@ -130,7 +130,18 @@ impl PaneViewState {
     // Public API
 
     pub fn refresh(&mut self) -> Result<(), Error> {
-        self.reload()?;
+        match self.reload() {
+            // Directory we were in might have been deleted. In this case we go up until we find a
+            // directory that exists.
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                if self.path.pop() {
+                    return self.refresh();
+                } else {
+                    return Err(Error::Io(e));
+                }
+            }
+            _ => {}
+        }
         self.sort();
         self.update_focus();
 
@@ -140,22 +151,26 @@ impl PaneViewState {
     pub fn navigate(&mut self, path: String) -> Result<(), Error> {
         let mut new_state = self.clone();
 
-        let is_up = path == "..";
+        let previous = if path == ".." {
+            let p = new_state.path.file_name().map(|f| f.to_string_lossy().to_string());
+            // We are at the root
+            if !new_state.path.pop() {
+                return Ok(());
+            }
+            p
+        } else {
+            new_state.path.push(path);
+            None
+        };
 
-        new_state.path.push(path);
         new_state.path = new_state.path.canonicalize()?;
         new_state.refresh()?;
         new_state.filter = None;
-
         // Focus the folder we just came from
-        if is_up {
-            new_state.focused = self
-                .path
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .or_else(|| new_state.files.get(0).map(|f| f.name.clone()))
-        }
+        new_state.focused = previous
+            .or_else(|| new_state.files.get(0).map(|f| f.name.clone()));
         new_state.selected.clear();
+        new_state.update_focus();
 
         *self = new_state;
         Ok(())
