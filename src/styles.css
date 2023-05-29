@@ -6,9 +6,11 @@
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+  /* zoom: 1.2; */
 }
 
 * {
@@ -37,11 +39,8 @@ body {
 
 .file-icon {
   display: inline-block;
-
   font-size: 150%;
-
   font-family: "seti";
-
   background-size: 22px;
   background-position: 0;
   background-repeat: no-repeat;
@@ -57,7 +56,7 @@ body {
 .file-icon.folder {
   background-image: url("./assets/folder-open-light.svg");
   background-position: center;
-  background-size: 12px;
+  background-size: 11px;
 }
 
 .pane {
@@ -111,6 +110,7 @@ ul.files {
   overflow-y: scroll;
   overflow-x: hidden;
   cursor: default;
+  will-change: transform;
 }
 
 li.file-item {
@@ -140,6 +140,10 @@ li.file-item {
 
 .sort-indicator {
   color: #aaa;
+}
+
+.deemphasized {
+  color: #777;
 }
 
 .filter-input {

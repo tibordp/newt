@@ -1,22 +1,17 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
+import { listen, Event } from "@tauri-apps/api/event";
 import { message } from "@tauri-apps/api/dialog";
 
 import { Allotment } from "allotment";
 import "allotment/dist/style.css";
 
 import iconMapping from "./assets/mapping.json";
-import {
-  HotkeysProvider,
-  useHotkeys,
-  useHotkeysContext,
-} from "react-hotkeys-hook";
 import { ViewportList, ViewportListRef } from "react-viewport-list";
 import { CSSProperties } from "react";
 import { Profiler } from "react";
 
 type File = {
-  id: string;
   name: string;
   size: number;
   is_dir: boolean;
@@ -25,12 +20,6 @@ type File = {
   modified: string;
   accessed: string;
   created: string;
-};
-
-type NavigateParams = {
-  path?: string;
-  up?: boolean;
-  otherPane?: boolean;
 };
 
 function FileName({ focused, filter, info }) {
@@ -78,6 +67,46 @@ function FileName({ focused, filter, info }) {
       )}
     </>
   );
+}
+
+function deepUpdate(original: any, received: any): any {
+  if (
+    original === null ||
+    received === null ||
+    Array.isArray(original) !== Array.isArray(received) ||
+    typeof original !== typeof received
+  ) {
+    return received;
+  }
+
+  let isChanged = false;
+  let ret;
+  if (Array.isArray(original)) {
+    if (original.length !== received.length) {
+      return received;
+    }
+
+    const result = Array(original.length);
+    for (let i = 0; i < original.length; i++) {
+      result[i] = deepUpdate(original[i], received[i]);
+      isChanged = isChanged || result[i] !== original[i];
+    }
+
+    ret = isChanged ? result : original;
+  } else if (typeof original === "object") {
+    const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
+
+    const result = {};
+    for (const key of keys) {
+      result[key] = deepUpdate(original[key], received[key]);
+      isChanged = isChanged || result[key] !== original[key];
+    }
+    ret = isChanged ? result : original;
+  } else {
+    ret = received;
+  }
+
+  return ret;
 }
 
 function modeToString(mode) {
@@ -159,96 +188,132 @@ const columns: ColumnDef[] = [
   },
 ];
 
-function Pane({ path, active, onFocus, navigate, initialFile }) {
-  const [files, setFiles] = useState<File[]>(null);
-  const [focusedFile, setFocusedFile] = useState<string>(initialFile);
-  const [sorting, setSorting] = useState({ key: "name", asc: true });
-  const [filter, setFilter] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+type Sorting = {
+  key: string;
+  asc: boolean;
+};
+
+type PaneState = {
+  path: string;
+  sorting: Sorting;
+  files: File[];
+  focused?: string;
+  selected: string[];
+  active: boolean;
+  filter?: string;
+};
+
+type GlobalState = {
+  panes: PaneState[];
+};
+
+type ChangePayload = {
+  state: GlobalState;
+};
+
+const useRemoteState = (deps: any[] = []): GlobalState | null => {
+  const [state, setState] = useState<any>(null);
+
+  useEffect(() => {
+    let listenPromise = listen("updated", (event: Event<ChangePayload>) => {
+      // State is serialized, so we perform a "deep" update (diff), updating
+      // only the changed parts of the current state. This is to avoid losing
+      // the reference to the state object, which would cause a re-render of
+      // the entire component tree.
+      setState((s) => deepUpdate(s, event.payload.state));
+    });
+    listenPromise.then(() => invoke("ping", {}));
+    return () => {
+      listenPromise.then((unlisten) => unlisten());
+    };
+  }, deps);
+
+  return state;
+};
+
+function Pane({
+  paneHandle,
+  active,
+  filter,
+  path,
+  files,
+  selected,
+  sorting,
+  focused,
+}: PaneState & { paneHandle: number }) {
+  const command = async (cmd: string, args: any = {}) => {
+    try {
+      await invoke(cmd, { paneHandle, ...args });
+    } catch (e) {
+      await message(e.toString(), {
+        type: "error",
+        title: "Error",
+      });
+    }
+  };
+
+  // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
+  // when someone Ctrl+A's a directory with 1000+ files.
+  const selectedLookup = useMemo(() => {
+    return new Set(selected);
+  }, [selected]);
 
   const focusedIndex = useMemo(() => {
     if (files) {
-      return Math.max(0, files.findIndex((f) => f.name === focusedFile));
+      return files.findIndex((f) => f.name === focused);
     }
-    return 0;
-  }, [files, focusedFile]);
+    return -1;
+  }, [files, focused]);
 
   const containerRef = useRef<HTMLUListElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const viewPortRef = useRef<ViewportListRef>(null);
 
-  const scrollTo = (index) => {
-    // Do this first rather than after the state update to avoid flickering
-    // when someone holds down the arrow keys.
+  useEffect(() => {
     if (active && files && viewPortRef.current) {
       const containerHeight = containerRef.current!.offsetHeight;
       const pos = viewPortRef.current.getScrollPosition();
-      if (index < pos.index || (index == pos.index && pos.offset > 0)) {
+      if (
+        focusedIndex < pos.index ||
+        (focusedIndex == pos.index && pos.offset > 0)
+      ) {
         viewPortRef.current.scrollToIndex({
-          index: index,
-          delay: 10,
+          index: focusedIndex,
+          delay: 0,
           alignToTop: true,
         });
-      } else if (index >= pos.index + Math.floor(containerHeight / 20)) {
+      } else if (focusedIndex >= pos.index + Math.floor(containerHeight / 20)) {
         viewPortRef.current.scrollToIndex({
-          index: index,
-          delay: 10,
+          index: focusedIndex,
+          delay: 0,
           alignToTop: false,
         });
       }
-      setFocusedFile(files[index].name);
     }
-  };
-
-  const getFiles = async (preserveScroll: boolean) => {
-    const newFiles: File[] = await invoke("directory_list", { path, sorting });
-
-    setFilter(null);
-    setFiles(newFiles);
-    setFocusedFile(initialFile);
-  };
+  }, [active, files, focusedIndex]);
 
   useEffect(() => {
-    getFiles(false);
-    setSelected(new Set());
-  }, [path]);
-
-  useEffect(() => {
-    getFiles(true);
-  }, [sorting]);
+    if (active && containerRef.current && inputRef.current) {
+      if (filter === null) {
+        containerRef.current.focus();
+      } else {
+        inputRef.current.focus();
+      }
+    }
+  }, [active, path, filter]);
 
   const open = async (file: File) => {
     if (!file) return;
 
     if (file.is_dir) {
-      navigate({ path: file.name });
+      command("navigate", { path: file.name });
     } else {
-      await invoke("open", { basePath: path, path: file.name });
+      command("open", { filename: file.name });
     }
   };
 
   const relativeJump = (delta: number, nofilter?: boolean) => {
-    if (!files || delta === 0) return;
-
-    let newIndex;
-    if (nofilter || filter === null) {
-      newIndex = Math.max(0, Math.min(focusedIndex + delta, files.length - 1));
-    } else {
-      let remaining = delta;
-      let i = focusedIndex;
-      newIndex = focusedIndex;
-      do {
-        i += Math.sign(delta);
-        if (i < 0 || i >= files.length || remaining === 0) {
-          break;
-        }
-        if (files[i].name.toLocaleLowerCase().startsWith(filter)) {
-          newIndex = i;
-          remaining -= Math.sign(delta);
-        }
-      } while (true);
-    }
-    scrollTo(newIndex);
+    command("relative_jump", { offset: delta });
   };
 
   const onKeyDownCommon = (e) => {
@@ -261,38 +326,23 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
     } else if (e.key == "PageUp") {
       relativeJump(-10);
     } else if (e.key == "Home") {
-      relativeJump(-Infinity);
+      relativeJump(-Math.pow(2, 31));
     } else if (e.key == "End") {
-      relativeJump(Infinity);
+      relativeJump(Math.pow(2, 31) - 1);
     } else if (e.key == "Enter") {
       open(files[focusedIndex]);
     } else if (e.key == "Tab") {
-      onFocus(false);
+      invoke("focus", { paneHandle: 1 - paneHandle });
     } else if (e.key == "." && e.ctrlKey) {
-      navigate({ otherPane: true });
+      command("copy_pane");
     } else if (e.key == "Escape") {
-      containerRef.current.focus();
-      setFilter(null);
+      command("set_filter", { filter: null });
     } else if (e.key == "Insert") {
-      setFilter(null);
-      setSelected((selected) => {
-        const newSelected = new Set(selected);
-
-        if (selected.has(focusedFile)) {
-          newSelected.delete(focusedFile);
-        } else {
-          newSelected.add(focusedFile);
-        }
-
-        return newSelected;
-      });
-      relativeJump(1, true);
+      command("toggle_selected");
     } else if (e.key.toLowerCase() == "d" && e.ctrlKey) {
-      setFilter(null);
-      setSelected(new Set());
+      command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && e.ctrlKey) {
-      setFilter(null);
-      setSelected(new Set(files.map((f) => f.name)));
+      command("select_all");
     } else {
       return false;
     }
@@ -301,11 +351,10 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
   };
 
   const onkeydown = (e) => {
-    console.log("onkeydown", e.key);
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "Backspace") {
-      navigate({ up: true });
+      invoke("navigate", { paneHandle, path: ".." });
     } else if (e.key.length == 1) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
@@ -321,11 +370,15 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
       // ...
     } else if (e.key == "ArrowLeft") {
       if (filter.length > 0) {
-        setFilter(focusedFile.substring(0, filter.length - 1));
+        command("set_filter", {
+          filter: focused.substring(0, filter.length - 1),
+        });
       }
     } else if (e.key == "ArrowRight") {
-      if (filter.length < focusedFile.length) {
-        setFilter(focusedFile.substring(0, filter.length + 1));
+      if (filter.length < focused.length) {
+        command("set_filter", {
+          filter: focused.substring(0, filter.length + 1),
+        });
       }
     } else {
       return;
@@ -334,62 +387,31 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
     e.preventDefault();
   };
 
-  const applyFilter = (newFilter: string) => {
-    console.log("applyFilter", newFilter);
-
-    let newIndex = null;
-    // Search in the forward direction first. If the current file matches, then
-    // we'll stay on it.
-    for (let i = focusedIndex; i < files.length; i++) {
-      if (files[i].name.toLocaleLowerCase().startsWith(newFilter)) {
-        newIndex = i;
-        break;
-      }
-    }
-    if (newIndex === null) {
-      for (let i = focusedIndex; i >= 0; i--) {
-        if (files[i].name.toLocaleLowerCase().startsWith(newFilter)) {
-          newIndex = i;
-          break;
-        }
-      }
-    }
-    if (newIndex !== null) {
-      setFilter(newFilter);
-      scrollTo(newIndex);
-    } else if (filter === null) {
-      // Enter the filter mode even if the first character doesn't match.
-      setFilter("");
-    }
-  };
-
-  useEffect(() => {
-    if (active && files && inputRef.current) {
-      containerRef.current.focus();
-      scrollTo(focusedIndex);
-    }
-    setFilter(null);
-  }, [active, files]);
-
   return (
-    <div className="pane" onClick={() => onFocus(true)}>
+    <div className="pane" onClick={() => command("focus")}>
       <input
         className="filter-input"
         type="text"
         value={filter || ""}
-        onChange={(e) => applyFilter(e.target.value.toLocaleLowerCase())}
+        onChange={(e) => command("set_filter", { filter: e.target.value })}
         ref={inputRef}
         onKeyDown={onkeydownFilter}
+        onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">{path}</div>
+      <div className="header">
+        {path}
+      </div>
       <div className="table-header">
         {columns.map(({ name, key, sortable, style }, i) => (
           <div
             className="column"
             style={style}
             key={i}
-            onClick={() => sortable && setSorting({ key, asc: !sorting.asc })}
+            onClick={() =>
+              sortable &&
+              command("set_sorting", { sorting: { key, asc: !sorting.asc } })
+            }
           >
             {name}
             {sorting.key == key && (
@@ -414,15 +436,14 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
             viewportRef={containerRef}
             items={files}
           >
-            {(row, i) => (
+            {(row: File, i) => (
               <li
-                key={i}
-                className={
-                  `file-item ${(active && focusedIndex === i) ? "focused" : ""} ${selected.has(row.name) ? "selected" : ""}`
-                }
+                key={row.name}
+                className={`file-item ${
+                  active && focusedIndex === i ? "focused" : ""
+                } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={() => {
-                  setFilter(null);
-                  scrollTo(i);
+                  command("focus", { filename: row.name });
                 }}
                 onDoubleClick={() => open(row)}
               >
@@ -454,80 +475,18 @@ function Pane({ path, active, onFocus, navigate, initialFile }) {
   );
 }
 
-type PaneState = {
-  path: string;
-  initialFile?: string;
-};
-
 function App() {
-  const [activePane, setActivePane] = useState(0);
-  const [paneStates, setPaneStates] = useState<PaneState[]>([
-    { path: "/home/tibordp/src/alumina/src/alumina-boot" },
-    { path: "/home/tibordp/" },
-  ]);
-
-  const focusNext = () => setActivePane((i) => (i + 1) % paneStates.length);
-  const navigate = async (index: number, params: NavigateParams) => {
-    try {
-      const state = paneStates[index];
-
-      let newpath;
-      if (params.up) {
-        newpath = "..";
-      } else if (params.path) {
-        newpath = params.path;
-      } else if (params.otherPane) {
-        newpath = paneStates[(index + 1) % paneStates.length].path;
-      }
-
-      const target: string = await invoke("navigate", {
-        basePath: state.path,
-        path: newpath,
-      });
-      const lastSegment = state.path.split("/").pop();
-
-      setPaneStates((states) =>
-        states.map((state, j) =>
-          j === index
-            ? {
-                ...state,
-                path: target,
-                initialFile: newpath === ".." && lastSegment,
-              }
-            : state
-        )
-      );
-    } catch (e) {
-      await message(e.toString(), {
-        type: "error",
-        title: "Error",
-      });
-    }
-  };
+  const remoteState = useRemoteState([]);
 
   return (
-    <HotkeysProvider>
-      <Profiler id="app" onRender={console.log}>
-        <Allotment minSize={200} className="container">
-          {paneStates.map((state, i) => (
-            <Pane
-              key={i}
-              path={state.path}
-              active={activePane === i}
-              onFocus={(focused) => {
-                if (focused) {
-                  setActivePane(i);
-                } else {
-                  focusNext();
-                }
-              }}
-              initialFile={state.initialFile}
-              navigate={(params) => navigate(i, params)}
-            />
+    <Profiler id="app" onRender={console.log}>
+      <Allotment minSize={200} className="container">
+        {remoteState &&
+          remoteState.panes.map((props, i) => (
+            <Pane key={i} paneHandle={i} {...props} />
           ))}
-        </Allotment>
-      </Profiler>
-    </HotkeysProvider>
+      </Allotment>
+    </Profiler>
   );
 }
 
