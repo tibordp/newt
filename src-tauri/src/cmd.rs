@@ -1,8 +1,6 @@
-use tauri::{State, Window};
+use tauri::State;
 
-use crate::{
-    common::Error, pane::Sorting, GlobalState, PaneHandle, UpdatePayload, Watcher, WindowContext,
-};
+use crate::{common::Error, pane::Sorting, PaneHandle, WindowContext};
 
 #[tauri::command]
 pub fn navigate(

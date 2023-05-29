@@ -152,7 +152,10 @@ impl PaneViewState {
         let mut new_state = self.clone();
 
         let previous = if path == ".." {
-            let p = new_state.path.file_name().map(|f| f.to_string_lossy().to_string());
+            let p = new_state
+                .path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string());
             // We are at the root
             if !new_state.path.pop() {
                 return Ok(());
@@ -167,8 +170,7 @@ impl PaneViewState {
         new_state.refresh()?;
         new_state.filter = None;
         // Focus the folder we just came from
-        new_state.focused = previous
-            .or_else(|| new_state.files.get(0).map(|f| f.name.clone()));
+        new_state.focused = previous.or_else(|| new_state.files.get(0).map(|f| f.name.clone()));
         new_state.selected.clear();
         new_state.update_focus();
 

@@ -15,7 +15,7 @@ use common::Error;
 use notify::{RecommendedWatcher, RecursiveMode};
 use pane::PaneViewState;
 use serde::ser::SerializeSeq;
-use tauri::{window, AppHandle, Invoke, Manager, Window, Wry};
+use tauri::{Invoke, Manager, Window, Wry};
 
 #[derive(
     PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -131,7 +131,8 @@ impl WindowContext {
         let ret = f(&self.global_state);
 
         self.watcher.update_paths();
-        self.window.emit("updated", UpdatePayload::new(self.global_state.clone()))?;
+        self.window
+            .emit("updated", UpdatePayload::new(self.global_state.clone()))?;
 
         ret
     }
@@ -176,8 +177,7 @@ impl Watcher {
                         let mut changed = false;
 
                         {
-                            let mut panes = inner.global_state.panes.0.iter_mut();
-                            while let Some(pane) = panes.next() {
+                            for pane in inner.global_state.panes.0.iter_mut() {
                                 let mut pane = pane.lock().unwrap();
                                 if event.paths.iter().any(|p| p.starts_with(&pane.path)) {
                                     if let Err(e) = pane.refresh() {
@@ -226,7 +226,11 @@ impl Watcher {
         }
         for path in to_remove {
             match watcher.unwatch(&path) {
-                Ok(_) | Err(notify::Error{ kind: notify::ErrorKind::WatchNotFound, .. }) => {}
+                Ok(_)
+                | Err(notify::Error {
+                    kind: notify::ErrorKind::WatchNotFound,
+                    ..
+                }) => {}
                 Err(e) => {
                     eprintln!("unwatch error: {:?}", e);
                 }
