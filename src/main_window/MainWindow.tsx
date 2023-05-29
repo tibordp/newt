@@ -347,6 +347,8 @@ function Pane({
       command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && e.ctrlKey) {
       command("select_all");
+    } else if (e.key == "F3") {
+      command("view", { filename: files[focusedIndex].name });
     } else {
       return false;
     }
@@ -485,6 +487,8 @@ function App() {
   const onkeydown = (e) => {
     if (e.key.toLowerCase() == "n" && e.ctrlKey) {
       invoke("new_window", {});
+    } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
+      window.close();
     } else {
       return;
     }

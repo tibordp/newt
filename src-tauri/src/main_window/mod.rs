@@ -1,14 +1,21 @@
 pub mod pane;
 
-use std::{sync::{Arc, Mutex}, path::PathBuf, collections::HashSet};
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::RecommendedWatcher;
+use notify::RecursiveMode;
 use serde::ser::SerializeSeq;
-use tauri::{Window, Wry, Manager, State};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use tauri::Manager;
+use tauri::State;
+use tauri::Window;
+use tauri::Wry;
 
-use crate::{common::Error, GlobalContext};
+use crate::common::Error;
+use crate::GlobalContext;
 
 use self::pane::PaneViewState;
-
 
 #[derive(
     PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -98,7 +105,6 @@ impl MainWindowState {
     }
 }
 
-
 struct MainWindowContextInner {
     window: Window,
     watcher: Watcher,
@@ -111,14 +117,16 @@ pub struct MainWindowContext {
 }
 
 impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
-    fn from_command(command: tauri::command::CommandItem<'de, Wry>) -> Result<Self, tauri::InvokeError> {
-      let window = command.message.window();
-      let app_handle = window.app_handle();
-      let s: State<GlobalContext> = app_handle.state();
+    fn from_command(
+        command: tauri::command::CommandItem<'de, Wry>,
+    ) -> Result<Self, tauri::InvokeError> {
+        let window = command.message.window();
+        let app_handle = window.app_handle();
+        let s: State<GlobalContext> = app_handle.state();
 
-      Ok(s.window(&window).expect("window not found").clone())
+        Ok(s.main_window(&window).expect("window not found"))
     }
-  }
+}
 
 impl MainWindowContext {
     pub fn create(window: Window) -> Result<Self, Error> {
@@ -131,35 +139,42 @@ impl MainWindowContext {
                 window,
                 watcher,
                 global_state,
-            })
+            }),
         })
     }
 
-    pub fn with_updates(
+    pub fn with_update(
         &self,
         f: impl FnOnce(&MainWindowState) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let ret = f(&self.inner.global_state);
 
         self.inner.watcher.update_paths();
-        self.inner.window
-            .emit("updated", UpdatePayload::new(self.inner.global_state.clone()))?;
+        self.inner.window.emit(
+            "updated",
+            UpdatePayload::new(self.inner.global_state.clone()),
+        )?;
 
         ret
     }
 
-    pub fn with_pane(
+    pub fn with_update_pane(
         &self,
         pane_handle: PaneHandle,
         f: impl FnOnce(&mut PaneViewState) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        self.with_updates(|s| {
+        self.with_update(|s| {
             let pane = s.panes.get(pane_handle).unwrap();
             let mut pane = pane.lock().unwrap();
 
-            f(&mut *pane)
+            f(&mut pane)
         })
     }
+
+    pub fn panes(&self) -> &Panes {
+        &self.inner.global_state.panes
+    }
+
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -264,4 +279,3 @@ impl Watcher {
         inner.watched_paths = paths;
     }
 }
-

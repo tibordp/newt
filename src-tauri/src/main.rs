@@ -5,43 +5,43 @@ pub mod cmd;
 pub mod common;
 pub mod main_window;
 
-use std::{
-    collections::{HashSet, HashMap},
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
-
 use common::Error;
 use main_window::MainWindowContext;
-use notify::{RecommendedWatcher, RecursiveMode};
-use serde::ser::SerializeSeq;
-use tauri::{Invoke, Manager, Window, Wry, State};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri::Manager;
+use tauri::State;
+use tauri::Window;
 
-
+#[derive(Default)]
 pub struct GlobalContext {
-    windows: Mutex<HashMap<Window, MainWindowContext>>,
+    main_windows: Mutex<HashMap<Window, MainWindowContext>>,
 }
 
 impl GlobalContext {
-    pub fn new() -> Self {
-        Self {
-            windows: Mutex::new(HashMap::new())
-        }
-    }
-
     pub fn create_window(&self, window: Window) -> Result<(), Error> {
         println!("creating window");
         let window_context = MainWindowContext::create(window.clone())?;
-        self.windows.lock().unwrap().insert(window, window_context);
+        self.main_windows
+            .lock()
+            .unwrap()
+            .insert(window, window_context);
 
         Ok(())
     }
 
-    pub fn window(&self, window: &Window) -> Option<MainWindowContext> {
+    pub fn main_window(&self, window: &Window) -> Option<MainWindowContext> {
         println!("getting window {}", window.label());
-        self.windows.lock().unwrap().get(window).cloned()
+        self.main_windows.lock().unwrap().get(window).cloned()
+    }
+
+    pub fn destroy_window(&self, window: &Window) -> Result<(), Error> {
+        println!("destroying window {}", window.label());
+        self.main_windows.lock().unwrap().remove(window);
+        Ok(())
     }
 }
+
 fn main() {
     let handler = cmd::create_handler();
     let handler = Box::new(move |i| {
@@ -50,14 +50,23 @@ fn main() {
         println!("handler took {:?}", start.elapsed());
     });
 
-    let global_ctx = GlobalContext::new();
+    let global_ctx = GlobalContext::default();
     tauri::Builder::default()
         .manage(global_ctx)
-        .on_page_load(|w, _| {
+        .on_page_load(|w, _payload| {
             let app_handle = w.app_handle();
             let global_ctx: State<GlobalContext> = app_handle.state();
 
             global_ctx.create_window(w).unwrap();
+        })
+        .on_window_event(|event| match event.event() {
+            tauri::WindowEvent::Destroyed => {
+                let app_handle = event.window().app_handle();
+                let global_ctx: State<GlobalContext> = app_handle.state();
+
+                global_ctx.destroy_window(event.window()).unwrap();
+            }
+            _ => {}
         })
         .invoke_handler(handler)
         .run(tauri::generate_context!())

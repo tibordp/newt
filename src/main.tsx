@@ -1,7 +1,9 @@
 import React from "react";
 
 import ReactDOM from "react-dom/client";
-import App from "./main_window/MainWindow";
+import MainWindow from "./main_window/MainWindow";
+import Viewer from "./viewer/Viewer";
+
 import {
   createBrowserRouter,
   RouterProvider
@@ -11,7 +13,11 @@ import "./styles.css";
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <App />
+    element: <MainWindow />
+  },
+  {
+    path: "/viewer",
+    element: <Viewer />
   }
 ]);
 

@@ -1,9 +1,9 @@
-use crate::common::{Error, ToUnix};
-use std::{
-    collections::{HashMap, HashSet},
-    os::unix::prelude::MetadataExt,
-    path::PathBuf,
-};
+use crate::common::Error;
+use crate::common::ToUnix;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::os::unix::prelude::MetadataExt;
+use std::path::PathBuf;
 
 /// View model for a pane.
 #[derive(Clone, serde::Serialize)]
