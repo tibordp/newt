@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen, Event } from "@tauri-apps/api/event";
+import { appWindow } from "@tauri-apps/api/window";
 import { message } from "@tauri-apps/api/dialog";
 
 import { Allotment } from "allotment";
+import "./MainWindow.css";
 import "allotment/dist/style.css";
 
-import iconMapping from "./assets/mapping.json";
+import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "react-viewport-list";
 import { CSSProperties } from "react";
 import { Profiler } from "react";
@@ -216,11 +218,13 @@ const useRemoteState = (deps: any[] = []): GlobalState | null => {
 
   useEffect(() => {
     let listenPromise = listen("updated", (event: Event<ChangePayload>) => {
-      // State is serialized, so we perform a "deep" update (diff), updating
-      // only the changed parts of the current state. This is to avoid losing
-      // the reference to the state object, which would cause a re-render of
-      // the entire component tree.
-      setState((s) => deepUpdate(s, event.payload.state));
+      if (event.windowLabel === appWindow.label) {
+        // State is serialized, so we perform a "deep" update (diff), updating
+        // only the changed parts of the current state. This is to avoid losing
+        // the reference to the state object, which would cause a re-render of
+        // the entire component tree.
+        setState((s) => deepUpdate(s, event.payload.state));
+      }
     });
     listenPromise.then(() => invoke("ping", {}));
     return () => {
@@ -343,6 +347,8 @@ function Pane({
       command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && e.ctrlKey) {
       command("select_all");
+    } else if (e.key == "F3") {
+      command("view", { filename: files[focusedIndex].name });
     } else {
       return false;
     }
@@ -478,8 +484,25 @@ function Pane({
 function App() {
   const remoteState = useRemoteState([]);
 
+  const onkeydown = (e) => {
+    if (e.key.toLowerCase() == "n" && e.ctrlKey) {
+      invoke("new_window", {});
+    } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
+      window.close();
+    } else {
+      return;
+    }
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    window.addEventListener("keydown", onkeydown);
+    return () => window.removeEventListener("keydown", onkeydown);
+  }, []);
+
   return (
     <Profiler id="app" onRender={console.log}>
+      <div style={{ position: "fixed", top: 0, zIndex: 10000, backgroundColor: "red", padding: "1em", margin: "1em" }}>{window.location.href}</div>
       <Allotment minSize={200} className="container">
         {remoteState &&
           remoteState.panes.map((props, i) => (
