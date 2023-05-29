@@ -2,7 +2,12 @@ use crate::common::Error;
 use crate::common::ToUnix;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
+#[cfg(target_family = "unix")]
 use std::os::unix::prelude::MetadataExt;
+#[cfg(target_family = "windows")]
+use std::os::windows::prelude::MetadataExt;
+
 use std::path::PathBuf;
 
 /// View model for a pane.
@@ -50,12 +55,17 @@ impl PaneViewState {
                 let file_type = metadata.file_type();
                 let name = entry.file_name().into_string().unwrap();
 
+                #[cfg(target_family = "unix")]
+                let mode = metadata.mode();
+                #[cfg(target_family = "windows")]
+                let mode = metadata.file_attributes() as _;
+
                 Ok(File {
                     name: name.clone(),
                     size: metadata.len(),
                     is_dir: file_type.is_dir(),
                     is_hidden: name.starts_with('.'),
-                    mode: metadata.mode(),
+                    mode,
                     modified: metadata.modified().map(|t| t.to_unix()).ok(),
                     accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                     created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -65,12 +75,18 @@ impl PaneViewState {
 
         if let Some(parent) = self.path.parent() {
             let metadata = parent.metadata()?;
+            
+            #[cfg(target_family = "unix")]
+            let mode = metadata.mode();
+            #[cfg(target_family = "windows")]
+            let mode = metadata.file_attributes() as _;
+
             ret.push(File {
                 name: "..".to_string(),
                 size: metadata.len(),
                 is_dir: true,
                 is_hidden: false,
-                mode: metadata.mode(),
+                mode,
                 modified: metadata.modified().map(|t| t.to_unix()).ok(),
                 accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                 created: metadata.created().map(|t| t.to_unix()).ok(),
