@@ -1,5 +1,3 @@
-
-
 use crate::common::Error;
 use crate::common::ToUnix;
 use std::collections::HashMap;
@@ -11,7 +9,6 @@ use std::os::unix::prelude::MetadataExt;
 use std::os::windows::prelude::MetadataExt;
 
 use std::path::PathBuf;
-
 
 use super::DisplayOptions;
 

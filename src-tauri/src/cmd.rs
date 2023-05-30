@@ -1,6 +1,5 @@
 use std::io::Read;
 
-
 use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;
@@ -14,7 +13,7 @@ use crate::main_window::PaneHandle;
 #[tauri::command]
 pub fn navigate(ctx: MainWindowContext, pane_handle: PaneHandle, path: &str) -> Result<(), Error> {
     ctx.with_update_pane(pane_handle, |pane| {
-        pane.navigate(path.into())?;
+        pane.navigate(path)?;
         Ok(())
     })
 }
@@ -164,7 +163,7 @@ async fn open(
     let pane = pane.read();
 
     let full_path = pane.path.join(filename);
-    opener::open(&full_path)?;
+    opener::open(full_path)?;
 
     Ok(())
 }
@@ -206,7 +205,7 @@ pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
     #[cfg(windows)]
     const LINE_ENDING: &'static str = "\r\n";
     #[cfg(not(windows))]
-    const LINE_ENDING: &'static str = "\n";
+    const LINE_ENDING: &str = "\n";
 
     let mut text = String::new();
     for line in pane.get_effective_selection() {

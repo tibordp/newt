@@ -57,7 +57,11 @@ function FileName({ focused, filter, info }) {
   );
 
   return (
-    <div className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""}`}>
+    <div
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${
+        is_symlink ? "symlink" : ""
+      }`}
+    >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
         {nameElement}
