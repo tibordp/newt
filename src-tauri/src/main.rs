@@ -29,7 +29,6 @@ impl GlobalContext {
     }
 
     pub fn main_window(&self, window: &Window) -> Option<MainWindowContext> {
-        println!("getting window {}", window.label());
         self.main_windows.lock().get(window).cloned()
     }
 

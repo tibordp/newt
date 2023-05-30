@@ -12,7 +12,7 @@ use crate::main_window::PaneHandle;
 
 #[tauri::command]
 pub fn navigate(ctx: MainWindowContext, pane_handle: PaneHandle, path: &str) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |pane| {
         pane.navigate(path)?;
         Ok(())
     })
@@ -27,7 +27,7 @@ pub fn focus(
     ctx.with_update(|gs| {
         let state = gs.panes.get(pane_handle).unwrap();
         if let Some(filename) = filename {
-            state.write().focus(filename);
+            state.view_state_mut().focus(filename);
         }
         gs.activate_pane(pane_handle);
         Ok(())
@@ -40,8 +40,8 @@ pub fn set_sorting(
     pane_handle: PaneHandle,
     sorting: Sorting,
 ) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.set_sorting(sorting);
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().set_sorting(sorting);
         Ok(())
     })
 }
@@ -53,8 +53,8 @@ pub fn toggle_selected(
     filename: String,
     focus_next: bool,
 ) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.toggle_selected(filename, focus_next);
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().toggle_selected(filename, focus_next);
         Ok(())
     })
 }
@@ -65,24 +65,24 @@ pub fn select_range(
     pane_handle: PaneHandle,
     filename: String,
 ) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.select_range(filename);
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().select_range(filename);
         Ok(())
     })
 }
 
 #[tauri::command]
 pub fn select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.select_all();
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().select_all();
         Ok(())
     })
 }
 
 #[tauri::command]
 pub fn deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.deselect_all();
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().deselect_all();
         Ok(())
     })
 }
@@ -94,8 +94,8 @@ pub fn relative_jump(
     offset: i32,
     with_selection: bool,
 ) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.relative_jump(offset, with_selection);
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().relative_jump(offset, with_selection);
         Ok(())
     })
 }
@@ -106,26 +106,21 @@ pub fn set_filter(
     pane_handle: PaneHandle,
     filter: Option<String>,
 ) -> Result<(), Error> {
-    ctx.with_update_pane(pane_handle, |pane| {
-        pane.set_filter(filter);
+    ctx.with_pane_update(pane_handle, |pane| {
+        pane.view_state_mut().set_filter(filter);
         Ok(())
     })
 }
 
 #[tauri::command]
 pub fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update(|gs| {
-        gs.copy_pane(pane_handle);
-        Ok(())
-    })
+    ctx.with_update(|gs| gs.copy_pane(pane_handle))
 }
 
 #[tauri::command]
 async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle, filename: String) {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let pane = pane.read();
-
-    let full_path = pane.path.join(filename);
+    let full_path = pane.path().join(filename);
 
     let base_url = window.url();
     let mut url = base_url.join("/viewer").unwrap();
@@ -137,7 +132,9 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle, f
         uuid::Uuid::new_v4().to_string(),
         tauri::WindowUrl::App(url.to_string().into()), /* the url */
     )
+    .title(format!("{} - viewer", full_path.display()))
     .center()
+    .focused(true)
     .build()
     .unwrap();
 }
@@ -160,9 +157,8 @@ async fn open(
     filename: String,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let pane = pane.read();
+    let full_path = pane.path().join(filename);
 
-    let full_path = pane.path.join(filename);
     opener::open(full_path)?;
 
     Ok(())
@@ -200,7 +196,6 @@ pub fn toggle_hidden(ctx: MainWindowContext) -> Result<(), Error> {
 #[tauri::command]
 pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let pane = pane.read();
 
     #[cfg(windows)]
     const LINE_ENDING: &'static str = "\r\n";
@@ -224,10 +219,36 @@ pub fn paste_from_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> 
     let mut clipboard = arboard::Clipboard::new()?;
     let text = clipboard.get_text()?;
 
-    ctx.with_update_pane(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |pane| {
         pane.navigate(text.trim())?;
         Ok(())
     })
+}
+
+#[tauri::command]
+pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
+    window.with_webview(move |webview| {
+        #[cfg(target_os = "linux")]
+        {
+            // see https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/struct.WebView.html
+            // and https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/trait.WebViewExt.html
+            use webkit2gtk::traits::WebViewExt;
+            webview.inner().set_zoom_level(factor);
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            // see https://docs.rs/webview2-com/0.19.1/webview2_com/Microsoft/Web/WebView2/Win32/struct.ICoreWebView2Controller.html
+            webview.controller().SetZoomFactor(factor).unwrap();
+        }
+
+        #[cfg(target_os = "macos")]
+        unsafe {
+            let () = msg_send![webview.inner(), setPageZoom: factor];
+        }
+    })?;
+
+    Ok(())
 }
 
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
@@ -249,6 +270,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         open,
         view,
         copy_to_clipboard,
-        paste_from_clipboard
+        paste_from_clipboard,
+        zoom
     ])
 }

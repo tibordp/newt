@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen, Event } from "@tauri-apps/api/event";
 import { appWindow } from "@tauri-apps/api/window";
-import { message } from "@tauri-apps/api/dialog";
 
 import { Allotment } from "allotment";
 import "./MainWindow.css";
@@ -12,6 +11,11 @@ import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "react-viewport-list";
 import { CSSProperties } from "react";
 import { Profiler } from "react";
+import { enablePatches, applyPatches, Patch } from "immer";
+
+import { safeCommand } from "../lib/invoke";
+
+enablePatches();
 
 type File = {
   name: string;
@@ -209,7 +213,8 @@ type GlobalState = {
 };
 
 type ChangePayload = {
-  state: GlobalState;
+  state?: GlobalState;
+  patch?: Patch[];
 };
 
 const useRemoteState = (deps: any[] = []): GlobalState | null => {
@@ -222,7 +227,19 @@ const useRemoteState = (deps: any[] = []): GlobalState | null => {
         // only the changed parts of the current state. This is to avoid losing
         // the reference to the state object, which would cause a re-render of
         // the entire component tree.
-        setState((s) => deepUpdate(s, event.payload.state));
+        setState((s) => {
+          const start = performance.now();
+          let ret;
+          if (event.payload.patch) {
+            console.log(event.payload.patch);
+            ret = applyPatches(s, event.payload.patch);
+          } else {
+            ret = deepUpdate(s, event.payload.state!);
+          }
+          const end = performance.now();
+          console.log(`[useRemoteState] Update took ${end - start}ms`);
+          return ret;
+        });
       }
     });
     listenPromise.then(() => invoke("ping", {}));
@@ -244,16 +261,8 @@ function Pane({
   sorting,
   focused,
 }: PaneState & { paneHandle: number }) {
-  const command = async (cmd: string, args: any = {}) => {
-    try {
-      await invoke(cmd, { paneHandle, ...args });
-    } catch (e) {
-      await message(e.toString(), {
-        type: "error",
-        title: "Error",
-      });
-    }
-  };
+  const command = (cmd: string, args: object = {}) =>
+    safeCommand(cmd, { paneHandle, ...args });
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -391,10 +400,7 @@ function Pane({
     } else {
       command("focus", { filename: e.currentTarget.dataset.name });
     }
-  };
-
-  const onDoubleClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
-    command("open", { filename: e.currentTarget.dataset.name });
+    e.preventDefault();
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
@@ -474,7 +480,7 @@ function Pane({
                   active && focusedIndex === i ? "focused" : ""
                 } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
-                onDoubleClick={onDoubleClick}
+                onDoubleClick={() => open(row)}
               >
                 <div style={columns[0].style} className="datum">
                   <FileName
@@ -506,21 +512,11 @@ function Pane({
 
 function App() {
   const remoteState = useRemoteState([]);
-  const command = async (cmd: string, args: any = {}) => {
-    try {
-      await invoke(cmd, args);
-    } catch (e) {
-      await message(e.toString(), {
-        type: "error",
-        title: "Error",
-      });
-    }
-  };
   const onkeydown = (e) => {
     if (e.key.toLowerCase() == "h" && e.ctrlKey) {
-      command("toggle_hidden");
+      safeCommand("toggle_hidden");
     } else if (e.key.toLowerCase() == "n" && e.ctrlKey) {
-      command("new_window");
+      safeCommand("new_window");
     } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
       window.close();
     } else {
