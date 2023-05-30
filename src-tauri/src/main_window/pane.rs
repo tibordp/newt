@@ -10,6 +10,37 @@ use std::os::windows::prelude::MetadataExt;
 
 use std::path::PathBuf;
 
+use super::DisplayOptions;
+
+#[derive(Clone, serde::Serialize)]
+pub struct File {
+    pub name: String,
+    pub size: u64,
+    pub is_dir: bool,
+    pub is_hidden: bool,
+    pub is_symlink: bool,
+    pub mode: u32,
+    pub modified: Option<i128>,
+    pub accessed: Option<i128>,
+    pub created: Option<i128>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortingKey {
+    Name,
+    Size,
+    Modified,
+    Accessed,
+    Created,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Sorting {
+    pub key: SortingKey,
+    pub asc: bool,
+}
+
 /// View model for a pane.
 #[derive(Clone, serde::Serialize)]
 pub struct PaneViewState {
@@ -23,11 +54,17 @@ pub struct PaneViewState {
     pub filter: Option<String>,
 
     #[serde(skip)]
+    raw_files: Vec<File>,
+    #[serde(skip)]
+    display_options: DisplayOptions,
+    #[serde(skip)]
     file_lookup: HashMap<String, usize>,
+    #[serde(skip)]
+    filter_regex: Option<regex::Regex>,
 }
 
 impl PaneViewState {
-    pub fn create(path: PathBuf) -> Result<Self, Error> {
+    pub fn create(path: PathBuf, display_options: DisplayOptions) -> Result<Self, Error> {
         let mut ret = Self {
             path,
             sorting: Sorting {
@@ -39,8 +76,10 @@ impl PaneViewState {
             selected: HashSet::new(),
             active: false,
             filter: None,
-
+            filter_regex: None,
             file_lookup: HashMap::new(),
+            display_options,
+            raw_files: Vec::new(),
         };
         ret.refresh()?;
 
@@ -53,7 +92,17 @@ impl PaneViewState {
                 let entry = entry?;
                 let metadata = entry.metadata()?;
                 let file_type = metadata.file_type();
+
                 let name = entry.file_name().into_string().unwrap();
+                let mut is_dir = file_type.is_dir();
+
+                if file_type.is_symlink() {
+                    let target_metadata = std::fs::metadata(entry.path());
+                    // If we e.g. don't have permission to read the target, we show the link details
+                    if let Ok(target_metadata) = target_metadata {
+                        is_dir = target_metadata.is_dir();
+                    }
+                }
 
                 #[cfg(target_family = "unix")]
                 let mode = metadata.mode();
@@ -63,7 +112,8 @@ impl PaneViewState {
                 Ok(File {
                     name: name.clone(),
                     size: metadata.len(),
-                    is_dir: file_type.is_dir(),
+                    is_dir,
+                    is_symlink: file_type.is_symlink(),
                     is_hidden: name.starts_with('.'),
                     mode,
                     modified: metadata.modified().map(|t| t.to_unix()).ok(),
@@ -75,7 +125,7 @@ impl PaneViewState {
 
         if let Some(parent) = self.path.parent() {
             let metadata = parent.metadata()?;
-            
+
             #[cfg(target_family = "unix")]
             let mode = metadata.mode();
             #[cfg(target_family = "windows")]
@@ -85,6 +135,7 @@ impl PaneViewState {
                 name: "..".to_string(),
                 size: metadata.len(),
                 is_dir: true,
+                is_symlink: false,
                 is_hidden: false,
                 mode,
                 modified: metadata.modified().map(|t| t.to_unix()).ok(),
@@ -93,11 +144,21 @@ impl PaneViewState {
             });
         }
 
-        self.files = ret;
+        self.raw_files = ret;
         Ok(())
     }
 
-    fn sort(&mut self) {
+    pub fn filter(&mut self) {
+        let display_options = self.display_options.0.read();
+        self.files = self
+            .raw_files
+            .iter()
+            .filter(|f| !f.is_hidden || display_options.show_hidden || f.name == "..")
+            .cloned()
+            .collect();
+    }
+
+    pub fn sort(&mut self) {
         self.files.sort_by(|a, b| {
             // Directories first
             if a.name == ".." {
@@ -130,7 +191,7 @@ impl PaneViewState {
             .collect();
     }
 
-    fn update_focus(&mut self) {
+    pub fn update_focus(&mut self) {
         self.selected
             .retain(|name| self.file_lookup.contains_key(name));
 
@@ -143,29 +204,67 @@ impl PaneViewState {
         }
     }
 
+    fn update_filter(&mut self, filter: Option<String>) {
+        self.filter = filter;
+        self.filter_regex = self
+            .filter
+            .as_ref()
+            .map(|f| regex::Regex::new(&format!("(?i)^{}", regex::escape(f))).unwrap());
+    }
+
     // Public API
 
     pub fn refresh(&mut self) -> Result<(), Error> {
+        // the path is expected to be canonical by now
+
         match self.reload() {
-            // Directory we were in might have been deleted. In this case we go up until we find a
-            // directory that exists.
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                if self.path.pop() {
-                    return self.refresh();
-                } else {
-                    return Err(Error::Io(e));
+            Err(Error::Io(e)) => match e.kind() {
+                // Directory we were in might have been deleted. In this case we go up until we find a
+                // directory that exists.
+                std::io::ErrorKind::NotFound => {
+                    if self.path.pop() {
+                        return self.refresh();
+                    } else {
+                        return Err(e.into());
+                    }
                 }
-            }
+                std::io::ErrorKind::NotADirectory => {
+                    self.focused = self
+                        .path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string());
+
+                    if self.path.pop() {
+                        return self.refresh();
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+                _ => return Err(e.into()),
+            },
             Err(e) => return Err(e),
             _ => {}
         }
+
+        self.filter();
         self.sort();
         self.update_focus();
 
         Ok(())
     }
 
-    pub fn navigate(&mut self, path: String) -> Result<(), Error> {
+    /// If the selection is empty, returns the focused file.
+    /// Otherwise, returns the selected files. The focused file is NOT included
+    /// in the selection in this case.
+    pub fn get_effective_selection(&self) -> Vec<PathBuf> {
+        if self.selected.is_empty() {
+            self.focused.iter().map(|s| self.path.join(s)).collect()
+        } else {
+            self.selected.iter().map(|s| self.path.join(s)).collect()
+        }
+    }
+
+    pub fn navigate(&mut self, path: &str) -> Result<(), Error> {
         let mut new_state = self.clone();
 
         let previous = if path == ".." {
@@ -184,10 +283,10 @@ impl PaneViewState {
         };
 
         new_state.path = new_state.path.canonicalize()?;
+        new_state.focused = previous;
         new_state.refresh()?;
         new_state.filter = None;
         // Focus the folder we just came from
-        new_state.focused = previous.or_else(|| new_state.files.get(0).map(|f| f.name.clone()));
         new_state.selected.clear();
         new_state.update_focus();
 
@@ -196,7 +295,7 @@ impl PaneViewState {
     }
 
     pub fn focus(&mut self, filename: String) {
-        self.filter = None;
+        self.update_filter(None);
         self.focused = Some(filename);
         self.update_focus();
     }
@@ -206,29 +305,58 @@ impl PaneViewState {
         self.sort();
     }
 
-    pub fn toggle_selected(&mut self) {
-        if let Some(focused) = self.focused.as_ref() {
-            self.filter = None;
-            if !self.selected.remove(focused) && self.file_lookup.contains_key(focused) {
-                self.selected.insert(focused.clone());
-            }
-            self.relative_jump(1);
+    pub fn toggle_selected(&mut self, filename: String, focus_next: bool) {
+        if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
+            self.selected.insert(filename.clone());
+        }
+
+        self.update_filter(None);
+        if focus_next {
+            self.relative_jump(1, false);
+        } else {
+            self.focused = Some(filename);
+            self.update_focus();
         }
     }
 
+    pub fn select_range(&mut self, filename: String) {
+        self.update_filter(None);
+        let Some(&start_index) = self
+            .focused
+            .as_deref()
+            .map(|f| self.file_lookup.get(f).unwrap())
+            else {
+                return;
+            };
+
+        let Some(&end_index) = self
+            .file_lookup
+            .get(&filename) else {
+                return;
+            };
+
+        for i in start_index.min(end_index)..=start_index.max(end_index) {
+            self.selected.insert(self.files[i].name.clone());
+        }
+
+        self.focused = Some(filename);
+    }
+
     pub fn select_all(&mut self) {
-        self.filter = None;
+        self.update_filter(None);
+        self.filter_regex = None;
         self.selected = self.file_lookup.keys().cloned().collect();
     }
 
     pub fn deselect_all(&mut self) {
-        self.filter = None;
+        self.update_filter(None);
+        self.filter_regex = None;
         self.selected.clear();
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {
         let Some(filter) = filter else {
-            self.filter = None;
+            self.update_filter(None);
             return;
         };
 
@@ -238,30 +366,34 @@ impl PaneViewState {
             .map(|f| self.file_lookup.get(f).unwrap())
             .unwrap_or(&0);
 
+        let new_filter = regex::Regex::new(&format!("(?i)^{}", regex::escape(&filter))).unwrap();
+
         // Search in the down direction first
         for f in self.files.iter().skip(start_index) {
-            if f.name.starts_with(&filter) {
+            if new_filter.is_match(&f.name) {
                 self.focused = Some(f.name.clone());
                 self.filter = Some(filter);
+                self.filter_regex = Some(new_filter);
                 return;
             }
         }
 
         // Then search in the up direction
         for f in self.files.iter().take(start_index).rev() {
-            if f.name.starts_with(&filter) {
+            if new_filter.is_match(&f.name) {
                 self.focused = Some(f.name.clone());
                 self.filter = Some(filter);
+                self.filter_regex = Some(new_filter);
                 return;
             }
         }
 
         if self.filter.is_none() {
-            self.filter = Some(Default::default());
+            self.update_filter(Some(Default::default()));
         }
     }
 
-    pub fn relative_jump(&mut self, mut offset: i32) {
+    pub fn relative_jump(&mut self, mut offset: i32, with_selection: bool) {
         let direction = offset.signum();
 
         if self.files.is_empty() {
@@ -275,6 +407,11 @@ impl PaneViewState {
             .unwrap_or(0);
 
         let mut i = new_index;
+        if with_selection {
+            self.selected
+                .insert(self.files[new_index as usize].name.clone());
+        }
+
         loop {
             i += direction;
             if i < 0 || i >= (self.files.len() as i32) || offset == 0 {
@@ -295,32 +432,4 @@ impl PaneViewState {
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
     }
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct File {
-    pub name: String,
-    pub size: u64,
-    pub is_dir: bool,
-    pub is_hidden: bool,
-    pub mode: u32,
-    pub modified: Option<i128>,
-    pub accessed: Option<i128>,
-    pub created: Option<i128>,
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SortingKey {
-    Name,
-    Size,
-    Modified,
-    Accessed,
-    Created,
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Sorting {
-    pub key: SortingKey,
-    pub asc: bool,
 }

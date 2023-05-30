@@ -1,4 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![feature(io_error_more)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub mod cmd;
@@ -7,8 +8,8 @@ pub mod main_window;
 
 use common::Error;
 use main_window::MainWindowContext;
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use tauri::Manager;
 use tauri::State;
 use tauri::Window;
@@ -22,22 +23,19 @@ impl GlobalContext {
     pub fn create_window(&self, window: Window) -> Result<(), Error> {
         println!("creating window");
         let window_context = MainWindowContext::create(window.clone())?;
-        self.main_windows
-            .lock()
-            .unwrap()
-            .insert(window, window_context);
+        self.main_windows.lock().insert(window, window_context);
 
         Ok(())
     }
 
     pub fn main_window(&self, window: &Window) -> Option<MainWindowContext> {
         println!("getting window {}", window.label());
-        self.main_windows.lock().unwrap().get(window).cloned()
+        self.main_windows.lock().get(window).cloned()
     }
 
     pub fn destroy_window(&self, window: &Window) -> Result<(), Error> {
         println!("destroying window {}", window.label());
-        self.main_windows.lock().unwrap().remove(window);
+        self.main_windows.lock().remove(window);
         Ok(())
     }
 }
@@ -59,15 +57,18 @@ fn main() {
 
             global_ctx.create_window(w).unwrap();
         })
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::Destroyed => {
-                let app_handle = event.window().app_handle();
-                let global_ctx: State<GlobalContext> = app_handle.state();
+        .on_window_event(
+            #[allow(clippy::single_match)]
+            |event| match event.event() {
+                tauri::WindowEvent::Destroyed => {
+                    let app_handle = event.window().app_handle();
+                    let global_ctx: State<GlobalContext> = app_handle.state();
 
-                global_ctx.destroy_window(event.window()).unwrap();
-            }
-            _ => {}
-        })
+                    global_ctx.destroy_window(event.window()).unwrap();
+                }
+                _ => {}
+            },
+        )
         .invoke_handler(handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

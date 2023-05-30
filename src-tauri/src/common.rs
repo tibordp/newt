@@ -6,6 +6,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Tauri(#[from] tauri::Error),
+    #[error("{0}")]
+    Open(#[from] opener::OpenError),
+    #[error("{0}")]
+    Arboard(#[from] arboard::Error),
+    #[error("{0}")]
+    Custom(String),
 }
 
 // we must manually implement serde::Serialize

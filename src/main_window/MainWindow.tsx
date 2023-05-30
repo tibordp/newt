@@ -17,6 +17,7 @@ type File = {
   name: string;
   size: number;
   is_dir: boolean;
+  is_symlink: boolean;
   is_hidden: boolean;
   mode: number;
   modified: string;
@@ -25,7 +26,7 @@ type File = {
 };
 
 function FileName({ focused, filter, info }) {
-  const { name, is_dir, is_hidden } = info;
+  const { name, is_dir, is_symlink, is_hidden } = info;
 
   const icon =
     iconMapping.light.fileNames[name] ||
@@ -47,27 +48,25 @@ function FileName({ focused, filter, info }) {
     </>
   );
 
+  const iconElement = is_dir ? (
+    <div className="file-icon folder" />
+  ) : (
+    <div className="file-icon" style={{ color: fontColor }}>
+      {ch}
+    </div>
+  );
+
   return (
-    <>
-      {!is_dir && (
-        <div className="filename">
-          <div className="file-icon" style={{ color: fontColor }}>
-            {ch}
-          </div>
-          <div className={focused ? "filename-part focused" : "filename-part"}>
-            {nameElement}
-          </div>
-        </div>
-      )}
-      {is_dir && (
-        <div className="filename">
-          <div className="file-icon folder" />
-          <div className={focused ? "filename-part focused" : "filename-part"}>
-            {nameElement}
-          </div>
-        </div>
-      )}
-    </>
+    <div
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${
+        is_symlink ? "symlink" : ""
+      }`}
+    >
+      {iconElement}
+      <div className={focused ? "filename-part focused" : "filename-part"}>
+        {nameElement}
+      </div>
+    </div>
   );
 }
 
@@ -316,23 +315,23 @@ function Pane({
     }
   };
 
-  const relativeJump = (delta: number, nofilter?: boolean) => {
-    command("relative_jump", { offset: delta });
+  const relativeJump = (delta: number, withSelection?: boolean) => {
+    command("relative_jump", { offset: delta, withSelection: !!withSelection });
   };
 
   const onKeyDownCommon = (e) => {
     if (e.key == "ArrowDown") {
-      relativeJump(1);
+      relativeJump(1, e.shiftKey);
     } else if (e.key == "ArrowUp") {
-      relativeJump(-1);
+      relativeJump(-1, e.shiftKey);
     } else if (e.key == "PageDown") {
-      relativeJump(10);
+      relativeJump(10, e.shiftKey);
     } else if (e.key == "PageUp") {
-      relativeJump(-10);
+      relativeJump(-10, e.shiftKey);
     } else if (e.key == "Home") {
-      relativeJump(-Math.pow(2, 31));
+      relativeJump(-Math.pow(2, 31), e.shiftKey);
     } else if (e.key == "End") {
-      relativeJump(Math.pow(2, 31) - 1);
+      relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter") {
       open(files[focusedIndex]);
     } else if (e.key == "Tab") {
@@ -341,14 +340,24 @@ function Pane({
       command("copy_pane");
     } else if (e.key == "Escape") {
       command("set_filter", { filter: null });
-    } else if (e.key == "Insert") {
-      command("toggle_selected");
     } else if (e.key.toLowerCase() == "d" && e.ctrlKey) {
       command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && e.ctrlKey) {
       command("select_all");
     } else if (e.key == "F3") {
       command("view", { filename: files[focusedIndex].name });
+    } else if ((e.key.toLowerCase() == "c" || e.key == "Insert") && e.ctrlKey) {
+      command("copy_to_clipboard");
+    } else if (
+      (e.key.toLowerCase() == "v" && e.ctrlKey) ||
+      (e.key == "Insert" && e.shiftKey)
+    ) {
+      command("paste_from_clipboard");
+    } else if (e.key == "Insert") {
+      command("toggle_selected", {
+        filename: files[focusedIndex].name,
+        focusNext: true,
+      });
     } else {
       return false;
     }
@@ -361,7 +370,7 @@ function Pane({
       // ...
     } else if (e.key == "Backspace") {
       invoke("navigate", { paneHandle, path: ".." });
-    } else if (e.key.length == 1) {
+    } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
       inputRef.current.focus();
@@ -369,6 +378,23 @@ function Pane({
     }
 
     e.preventDefault();
+  };
+
+  const onClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
+    if (e.ctrlKey) {
+      command("toggle_selected", {
+        filename: e.currentTarget.dataset.name,
+        focusNext: false,
+      });
+    } else if (e.shiftKey) {
+      command("select_range", { filename: e.currentTarget.dataset.name });
+    } else {
+      command("focus", { filename: e.currentTarget.dataset.name });
+    }
+  };
+
+  const onDoubleClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
+    command("open", { filename: e.currentTarget.dataset.name });
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
@@ -405,9 +431,7 @@ function Pane({
         onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">
-        {path}
-      </div>
+      <div className="header">{path}</div>
       <div className="table-header">
         {columns.map(({ name, key, sortable, style }, i) => (
           <div
@@ -445,13 +469,12 @@ function Pane({
             {(row: File, i) => (
               <li
                 key={row.name}
+                data-name={row.name}
                 className={`file-item ${
                   active && focusedIndex === i ? "focused" : ""
                 } ${selectedLookup.has(row.name) ? "selected" : ""}`}
-                onClick={() => {
-                  command("focus", { filename: row.name });
-                }}
-                onDoubleClick={() => open(row)}
+                onClick={onClick}
+                onDoubleClick={onDoubleClick}
               >
                 <div style={columns[0].style} className="datum">
                   <FileName
@@ -483,10 +506,21 @@ function Pane({
 
 function App() {
   const remoteState = useRemoteState([]);
-
+  const command = async (cmd: string, args: any = {}) => {
+    try {
+      await invoke(cmd, args);
+    } catch (e) {
+      await message(e.toString(), {
+        type: "error",
+        title: "Error",
+      });
+    }
+  };
   const onkeydown = (e) => {
-    if (e.key.toLowerCase() == "n" && e.ctrlKey) {
-      invoke("new_window", {});
+    if (e.key.toLowerCase() == "h" && e.ctrlKey) {
+      command("toggle_hidden");
+    } else if (e.key.toLowerCase() == "n" && e.ctrlKey) {
+      command("new_window");
     } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
       window.close();
     } else {
@@ -502,7 +536,6 @@ function App() {
 
   return (
     <Profiler id="app" onRender={console.log}>
-      <div style={{ position: "fixed", top: 0, zIndex: 10000, backgroundColor: "red", padding: "1em", margin: "1em" }}>{window.location.href}</div>
       <Allotment minSize={200} className="container">
         {remoteState &&
           remoteState.panes.map((props, i) => (
