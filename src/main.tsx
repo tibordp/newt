@@ -4,21 +4,18 @@ import ReactDOM from "react-dom/client";
 import MainWindow from "./main_window/MainWindow";
 import Viewer from "./viewer/Viewer";
 
-import {
-  createBrowserRouter,
-  RouterProvider
-} from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles.css";
 
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <MainWindow />
+    element: <MainWindow />,
   },
   {
     path: "/viewer",
-    element: <Viewer />
-  }
+    element: <Viewer />,
+  },
 ]);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

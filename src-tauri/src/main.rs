@@ -1,4 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![feature(io_error_more)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub mod cmd;
