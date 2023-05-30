@@ -1,3 +1,7 @@
+use parking_lot::RwLock;
+use parking_lot::RwLockReadGuard;
+use parking_lot::RwLockWriteGuard;
+
 use crate::common::Error;
 use crate::common::ToUnix;
 use std::collections::HashMap;
@@ -8,9 +12,12 @@ use std::os::unix::prelude::MetadataExt;
 #[cfg(target_family = "windows")]
 use std::os::windows::prelude::MetadataExt;
 
+use std::path::Component;
+use std::path::Path;
 use std::path::PathBuf;
 
 use super::DisplayOptions;
+use super::DisplayOptionsInner;
 
 #[derive(Clone, serde::Serialize)]
 pub struct File {
@@ -25,9 +32,10 @@ pub struct File {
     pub created: Option<i128>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SortingKey {
+    #[default]
     Name,
     Size,
     Modified,
@@ -41,90 +49,54 @@ pub struct Sorting {
     pub asc: bool,
 }
 
-/// View model for a pane.
-#[derive(Clone, serde::Serialize)]
-pub struct PaneViewState {
-    pub path: PathBuf,
-    pub sorting: Sorting,
-    pub files: Vec<File>,
-    pub focused: Option<String>,
-    pub selected: HashSet<String>,
-
-    pub active: bool,
-    pub filter: Option<String>,
-
-    #[serde(skip)]
-    raw_files: Vec<File>,
-    #[serde(skip)]
-    display_options: DisplayOptions,
-    #[serde(skip)]
-    file_lookup: HashMap<String, usize>,
-    #[serde(skip)]
-    filter_regex: Option<regex::Regex>,
+impl Default for Sorting {
+    fn default() -> Self {
+        Self {
+            key: SortingKey::default(),
+            asc: true,
+        }
+    }
 }
 
-impl PaneViewState {
-    pub fn create(path: PathBuf, display_options: DisplayOptions) -> Result<Self, Error> {
-        let mut ret = Self {
-            path,
-            sorting: Sorting {
-                key: SortingKey::Name,
-                asc: true,
-            },
-            files: Vec::new(),
-            focused: None,
-            selected: HashSet::new(),
-            active: false,
-            filter: None,
-            filter_regex: None,
-            file_lookup: HashMap::new(),
-            display_options,
-            raw_files: Vec::new(),
-        };
-        ret.refresh()?;
+pub struct FileList {
+    path: PathBuf,
+    files: Vec<File>,
+}
 
-        Ok(ret)
+impl FileList {
+    pub fn new(path: PathBuf, files: Vec<File>) -> Self {
+        Self { path, files }
     }
 
-    fn reload(&mut self) -> Result<(), Error> {
-        let mut ret = std::fs::read_dir(&self.path)?
-            .map(|entry| {
-                let entry = entry?;
-                let metadata = entry.metadata()?;
-                let file_type = metadata.file_type();
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 
-                let name = entry.file_name().into_string().unwrap();
-                let mut is_dir = file_type.is_dir();
+    pub fn files(&self) -> &[File] {
+        &self.files
+    }
+}
 
-                if file_type.is_symlink() {
-                    let target_metadata = std::fs::metadata(entry.path());
-                    // If we e.g. don't have permission to read the target, we show the link details
-                    if let Ok(target_metadata) = target_metadata {
-                        is_dir = target_metadata.is_dir();
-                    }
-                }
+fn resolve(path: &Path) -> PathBuf {
+    assert!(path.is_absolute());
+    let mut ret = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            component => ret.push(component.as_os_str()),
+        }
+    }
+    ret
+}
 
-                #[cfg(target_family = "unix")]
-                let mode = metadata.mode();
-                #[cfg(target_family = "windows")]
-                let mode = metadata.file_attributes() as _;
-
-                Ok(File {
-                    name: name.clone(),
-                    size: metadata.len(),
-                    is_dir,
-                    is_symlink: file_type.is_symlink(),
-                    is_hidden: name.starts_with('.'),
-                    mode,
-                    modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                    accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                    created: metadata.created().map(|t| t.to_unix()).ok(),
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-
-        if let Some(parent) = self.path.parent() {
-            let metadata = parent.metadata()?;
+fn list_files(path: &Path) -> Result<FileList, Error> {
+    fn reload(path: &Path) -> Result<Vec<File>, Error> {
+        let mut ret = Vec::new();
+        if let Some(parent) = path.parent() {
+            let metadata = parent.symlink_metadata()?;
 
             #[cfg(target_family = "unix")]
             let mode = metadata.mode();
@@ -135,7 +107,7 @@ impl PaneViewState {
                 name: "..".to_string(),
                 size: metadata.len(),
                 is_dir: true,
-                is_symlink: false,
+                is_symlink: metadata.is_symlink(),
                 is_hidden: false,
                 mode,
                 modified: metadata.modified().map(|t| t.to_unix()).ok(),
@@ -144,21 +116,187 @@ impl PaneViewState {
             });
         }
 
-        self.raw_files = ret;
+        for maybe_entry in std::fs::read_dir(path)? {
+            let entry = maybe_entry?;
+            let metadata = entry.metadata()?;
+            let file_type = metadata.file_type();
+
+            let name = entry.file_name().into_string().unwrap();
+            let mut is_dir = file_type.is_dir();
+
+            if file_type.is_symlink() {
+                let target_metadata = std::fs::metadata(entry.path());
+                // If we e.g. don't have permission to read the target, we show the link details
+                if let Ok(target_metadata) = target_metadata {
+                    is_dir = target_metadata.is_dir();
+                }
+            }
+
+            #[cfg(target_family = "unix")]
+            let mode = metadata.mode();
+            #[cfg(target_family = "windows")]
+            let mode = metadata.file_attributes() as _;
+
+            ret.push(File {
+                name: name.clone(),
+                size: metadata.len(),
+                is_dir,
+                is_symlink: file_type.is_symlink(),
+                is_hidden: name.starts_with('.'),
+                mode,
+                modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                created: metadata.created().map(|t| t.to_unix()).ok(),
+            });
+        }
+
+        Ok(ret)
+    }
+
+    assert!(path.is_absolute());
+
+    let mut path = resolve(path);
+    loop {
+        match reload(&path) {
+            Ok(files) => return Ok(FileList::new(path, files)),
+            Err(Error::Io(e)) => match e.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
+                    if !path.pop() {
+                        return Err(e.into());
+                    }
+                }
+                _ => return Err(e.into()),
+            },
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+pub struct Pane {
+    file_list: RwLock<FileList>,
+    view_state: RwLock<PaneViewState>,
+    display_options: DisplayOptions,
+}
+
+impl Pane {
+    pub fn new(path: PathBuf, display_options: DisplayOptions) -> Self {
+        Self {
+            file_list: RwLock::new(FileList::new(path, Vec::new())),
+            view_state: RwLock::new(PaneViewState::default()),
+            display_options,
+        }
+    }
+
+    pub fn path(&self) -> PathBuf {
+        self.file_list.read().path().to_path_buf()
+    }
+
+    pub fn view_state(&self) -> RwLockReadGuard<'_, PaneViewState> {
+        self.view_state.read()
+    }
+
+    pub fn view_state_mut(&self) -> RwLockWriteGuard<'_, PaneViewState> {
+        self.view_state.write()
+    }
+
+    pub fn update_view_state(&self) {
+        let display_options = self.display_options.0.read().clone();
+        let file_list = self.file_list.read();
+        let mut view_state: parking_lot::lock_api::RwLockWriteGuard<
+            parking_lot::RawRwLock,
+            PaneViewState,
+        > = self.view_state.write();
+
+        view_state.update(display_options, &file_list);
+    }
+
+    pub fn refresh(&self) -> Result<(), Error> {
+        let original_path = self.file_list.read().path().to_path_buf();
+
+        let file_list = list_files(&original_path)?;
+
+        let display_options = self.display_options.0.read().clone();
+        let mut self_file_list = self.file_list.write();
+        let mut view_state = self.view_state.write();
+
+        view_state.update(display_options, &file_list);
+        *self_file_list = file_list;
+        view_state.focus_descendant(&original_path);
+
         Ok(())
     }
 
-    pub fn filter(&mut self) {
-        let display_options = self.display_options.0.read();
-        self.files = self
-            .raw_files
-            .iter()
-            .filter(|f| !f.is_hidden || display_options.show_hidden || f.name == "..")
-            .cloned()
-            .collect();
+    pub fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let original_path = self.path();
+        let target = original_path.join(path);
+
+        let file_list = list_files(&target)?;
+
+        let display_options = self.display_options.0.read().clone();
+        let mut self_file_list = self.file_list.write();
+        let mut view_state = self.view_state.write();
+
+        view_state.filter = None;
+        view_state.selected.clear();
+        view_state.focused = None;
+
+        view_state.update(display_options, &file_list);
+        *self_file_list = file_list;
+        view_state.focus_descendant(&target);
+
+        Ok(())
     }
 
-    pub fn sort(&mut self) {
+    /// If the selection is empty, returns the focused file.
+    /// Otherwise, returns the selected files. The focused file is NOT included
+    /// in the selection in this case.
+    pub fn get_effective_selection(&self) -> Vec<PathBuf> {
+        let view_state = self.view_state.read();
+
+        if view_state.selected.is_empty() {
+            view_state
+                .focused
+                .iter()
+                .map(|s| view_state.path.join(s))
+                .collect()
+        } else {
+            view_state
+                .selected
+                .iter()
+                .map(|s: &String| view_state.path.join(s))
+                .collect()
+        }
+    }
+}
+
+impl serde::Serialize for Pane {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.view_state.read().serialize(serializer)
+    }
+}
+
+/// View model for a pane.
+#[derive(Default, Clone, serde::Serialize)]
+pub struct PaneViewState {
+    pub path: PathBuf,
+    pub sorting: Sorting,
+    pub files: Vec<File>,
+    pub focused: Option<String>,
+    pub selected: HashSet<String>,
+    pub active: bool,
+    pub filter: Option<String>,
+
+    #[serde(skip)]
+    file_lookup: HashMap<String, usize>,
+    #[serde(skip)]
+    filter_regex: Option<regex::Regex>,
+}
+
+impl PaneViewState {
+    fn sort(&mut self) {
         self.files.sort_by(|a, b| {
             // Directories first
             if a.name == ".." {
@@ -191,7 +329,7 @@ impl PaneViewState {
             .collect();
     }
 
-    pub fn update_focus(&mut self) {
+    fn update_focus(&mut self) {
         self.selected
             .retain(|name| self.file_lookup.contains_key(name));
 
@@ -213,91 +351,35 @@ impl PaneViewState {
     }
 
     // Public API
-
-    pub fn refresh(&mut self) -> Result<(), Error> {
+    pub fn update(&mut self, display_options: DisplayOptionsInner, file_list: &FileList) {
         // the path is expected to be canonical by now
 
-        match self.reload() {
-            Err(Error::Io(e)) => match e.kind() {
-                // Directory we were in might have been deleted. In this case we go up until we find a
-                // directory that exists.
-                std::io::ErrorKind::NotFound => {
-                    if self.path.pop() {
-                        return self.refresh();
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-                std::io::ErrorKind::NotADirectory => {
-                    self.focused = self
-                        .path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string());
+        self.path = file_list.path().to_path_buf();
+        self.files = file_list
+            .files()
+            .iter()
+            .filter(|f| !f.is_hidden || display_options.show_hidden || f.name == "..")
+            .cloned()
+            .collect();
 
-                    if self.path.pop() {
-                        return self.refresh();
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-                _ => return Err(e.into()),
-            },
-            Err(e) => return Err(e),
-            _ => {}
-        }
-
-        self.filter();
         self.sort();
         self.update_focus();
-
-        Ok(())
-    }
-
-    /// If the selection is empty, returns the focused file.
-    /// Otherwise, returns the selected files. The focused file is NOT included
-    /// in the selection in this case.
-    pub fn get_effective_selection(&self) -> Vec<PathBuf> {
-        if self.selected.is_empty() {
-            self.focused.iter().map(|s| self.path.join(s)).collect()
-        } else {
-            self.selected.iter().map(|s| self.path.join(s)).collect()
-        }
-    }
-
-    pub fn navigate(&mut self, path: &str) -> Result<(), Error> {
-        let mut new_state = self.clone();
-
-        let previous = if path == ".." {
-            let p = new_state
-                .path
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string());
-            // We are at the root
-            if !new_state.path.pop() {
-                return Ok(());
-            }
-            p
-        } else {
-            new_state.path.push(path);
-            None
-        };
-
-        new_state.path = new_state.path.canonicalize()?;
-        new_state.focused = previous;
-        new_state.refresh()?;
-        new_state.filter = None;
-        // Focus the folder we just came from
-        new_state.selected.clear();
-        new_state.update_focus();
-
-        *self = new_state;
-        Ok(())
     }
 
     pub fn focus(&mut self, filename: String) {
         self.update_filter(None);
         self.focused = Some(filename);
         self.update_focus();
+    }
+
+    pub fn focus_descendant(&mut self, path: &Path) {
+        if let Some(filename) = path
+            .strip_prefix(&self.path)
+            .ok()
+            .and_then(|prefix| prefix.iter().next())
+        {
+            self.focus(filename.to_string_lossy().to_string());
+        }
     }
 
     pub fn set_sorting(&mut self, sorting: Sorting) {

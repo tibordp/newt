@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/tauri";
 import { message } from "@tauri-apps/api/dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import "./Viewer.css";
@@ -9,6 +9,7 @@ function Viewer() {
   let [searchParams] = useSearchParams();
   let [contents, setContents] = useState("");
 
+  const ref = useRef(null);
   const onkeydown = (e) => {
     if (e.key == "Escape") {
       window.close();
@@ -43,8 +44,12 @@ function Viewer() {
     read_file();
   }, [searchParams]);
 
+  useEffect(() => {
+    ref.current.focus();
+  }, []);
+
   return (
-    <div className="viewer">
+    <div className="viewer" ref={ref} tabIndex={0}>
       <pre>{contents}</pre>
     </div>
   );

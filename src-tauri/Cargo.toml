@@ -1,5 +1,5 @@
 [package]
-name = "orthopraxy"
+name = "newt"
 version = "0.0.0"
 description = "A Tauri App"
 authors = ["you"]
@@ -24,6 +24,10 @@ url = "2.3"
 regex = "1.8"
 arboard = "3.2"
 parking_lot = "0.12"
+treediff = { version = "4", features = ["with-serde-json"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "*"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
