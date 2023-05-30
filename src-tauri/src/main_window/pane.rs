@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+
 
 use crate::common::Error;
 use crate::common::ToUnix;
@@ -11,7 +11,7 @@ use std::os::unix::prelude::MetadataExt;
 use std::os::windows::prelude::MetadataExt;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+
 
 use super::DisplayOptions;
 

@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use tauri::AppHandle;
+
 use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;
