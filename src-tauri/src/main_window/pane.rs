@@ -236,7 +236,7 @@ impl Pane {
         let mut self_file_list = self.file_list.write();
         let mut view_state = self.view_state.write();
 
-        view_state.filter = None;
+        view_state.set_filter(None);
         view_state.selected.clear();
         view_state.focused = None;
 
@@ -391,6 +391,7 @@ impl PaneViewState {
         if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
             self.selected.insert(filename.clone());
         }
+        self.selected.remove("..");
 
         self.update_filter(None);
         if focus_next {
@@ -420,6 +421,7 @@ impl PaneViewState {
         for i in start_index.min(end_index)..=start_index.max(end_index) {
             self.selected.insert(self.files[i].name.clone());
         }
+        self.selected.remove("..");
 
         self.focused = Some(filename);
     }
@@ -428,6 +430,7 @@ impl PaneViewState {
         self.update_filter(None);
         self.filter_regex = None;
         self.selected = self.file_lookup.keys().cloned().collect();
+        self.selected.remove("..");
     }
 
     pub fn deselect_all(&mut self) {
@@ -493,6 +496,7 @@ impl PaneViewState {
             self.selected
                 .insert(self.files[new_index as usize].name.clone());
         }
+        self.selected.remove("..");
 
         loop {
             i += direction;

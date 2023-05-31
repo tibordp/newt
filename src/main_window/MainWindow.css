@@ -1,3 +1,11 @@
+:root {
+  --column-width-0: 250px;
+  --column-width-1: 100px;
+  --column-width-2: 70px;
+  --column-width-3: 70px;
+  --column-width-4: 70px;
+}
+
 .file-icon {
   position: relative;
   display: inline-block;
@@ -46,18 +54,29 @@
 .header {
   padding: 0.2em;
   background: #f0f0f0;
-  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0px 1px -1px rgba(0, 0, 0, 0.4);
   z-index: 2;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .table-header {
+  box-sizing: content-box;
+  flex-shrink: 0;
+  overflow-x: hidden;
+  z-index: 1;
+  background: #fafafa;
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+}
+
+.table-header-inner
+{
   font-weight: bold;
   display: flex;
-  background: #fafafa;
-  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
-  z-index: 1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  cursor: default;
 }
 
 ul.files {
@@ -67,8 +86,8 @@ ul.files {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
-  overflow-y: scroll;
-  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-x: auto;
   cursor: default;
 }
 
@@ -77,14 +96,46 @@ li.file-item {
   height: 20px;
 }
 
-.datum,
-.table-header .column {
+.datum, .column {
   overflow: hidden;
   white-space: nowrap;
+  line-height: 20px;
   padding-left: 0.2em;
   padding-right: 0.2em;
-  line-height: 20px;
   text-overflow: ellipsis;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+li.file-item:after, .table-header-inner:after {
+  content: "";
+  flex-grow: 0;
+  flex-shrink: 0;
+  height: 1px;
+  width: 10px;
+}
+
+.column {
+  position: relative;
+  padding-left: 0.4em;
+  padding-right: 0.4em;
+  border-right: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.column-grip {
+  width: 8px;
+  height: 18px;
+  margin-left: -4px;
+  margin-right: -4px;
+  z-index: 10;
+  cursor: col-resize;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.sortable:hover {
+  background: #f4f4f4;
+  cursor: pointer;
 }
 
 .filename {
@@ -97,7 +148,22 @@ li.file-item {
   display: inline;
 }
 
-.sort-indicator {
+.column.sorted-asc[style*="text-align: left"]::after {
+  content: " ▲";
+  color: #aaa;
+}
+.column.sorted-desc[style*="text-align: left"]::after {
+  content: " ▼";
+  color: #aaa;
+}
+
+.column.sorted-asc[style*="text-align: right"]::before {
+  content: "▲ ";
+  color: #aaa;
+}
+
+.column.sorted-desc[style*="text-align: right"]::before {
+  content: "▼ ";
   color: #aaa;
 }
 
@@ -146,4 +212,11 @@ li.file-item {
   background-image: url("../assets/symlink_badge.svg");
   background-position: center;
   z-index: 5;
+}
+
+.statusbar {
+  padding: 0.2em;
+  background: #f0f0f0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

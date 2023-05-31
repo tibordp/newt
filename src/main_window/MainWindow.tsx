@@ -140,56 +140,26 @@ const columns: ColumnDef[] = [
     name: "Name",
     key: "name",
     sortable: true,
-    style: {
-      flexGrow: 4,
-      flexShrink: 0,
-      flexBasis: "100px",
-      textAlign: "left",
-    },
   },
   {
     name: "Size",
     key: "size",
     sortable: true,
-    style: {
-      flexGrow: 1,
-      flexShrink: 0,
-      flexBasis: "50px",
-      textAlign: "right",
-    },
   },
   {
     name: "Date",
     key: "modified",
     sortable: true,
-    style: {
-      flexGrow: 1,
-      flexShrink: 0,
-      flexBasis: "30px",
-      textAlign: "center",
-    },
   },
   {
     name: "Time",
     key: "modified",
     sortable: true,
-    style: {
-      flexGrow: 1,
-      flexShrink: 0,
-      flexBasis: "30px",
-      textAlign: "center",
-    },
   },
   {
     name: "Mode",
     key: "mode",
     sortable: false,
-    style: {
-      flexGrow: 1,
-      flexShrink: 0,
-      flexBasis: "30px",
-      textAlign: "center",
-    },
   },
 ];
 
@@ -251,6 +221,55 @@ const useRemoteState = (deps: any[] = []): GlobalState | null => {
   return state;
 };
 
+function ColumnHeader({ index, column, sorting, onClick }) {
+  const { name, key, sortable } = column;
+  const ref = useRef<HTMLDivElement>(null);
+  const [startOffset, setStartOffset] = useState(null);
+
+  const onmousedown = (e) => {
+    setStartOffset(ref.current.offsetWidth - e.clientX);
+  };
+
+  const onmouseup = (e) => {
+    setStartOffset(null);
+  }
+
+  const onmousemove = (e) => {
+    if (startOffset !== null && startOffset + e.clientX > 10) {
+      const root = document.querySelector(':root');
+      root.style.setProperty(`--column-width-${index}`, `${startOffset + e.clientX}px`);
+    }
+  }
+
+  useEffect(() => {
+    document.addEventListener("mouseup", onmouseup);
+    document.addEventListener("mousemove", onmousemove);
+
+    return () => {
+      document.removeEventListener("mouseup", onmouseup);
+      document.removeEventListener("mousemove", onmousemove);
+    }
+  }, [startOffset]);
+
+  return (
+    <>
+    <div
+      ref={ref}
+      className={`column ${sortable ? "sortable" : ""} ${
+        sorting.key == key && sorting.asc ? "sorted-asc" : ""
+      } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+      style={{
+        width: `var(--column-width-${index})`
+      }}
+      onClick={onClick}
+    >
+      {name}
+    </div>
+    <div className="column-grip" onMouseDown={onmousedown}></div>
+    </>
+  );
+}
+
 function Pane({
   paneHandle,
   active,
@@ -280,6 +299,7 @@ function Pane({
   const containerRef = useRef<HTMLUListElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const viewPortRef = useRef<ViewportListRef>(null);
+  const tableHeaderRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (active && files && viewPortRef.current) {
@@ -425,6 +445,11 @@ function Pane({
     e.preventDefault();
   };
 
+  const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
+    tableHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft;
+  }
+
+
   return (
     <div className="pane" onClick={() => command("focus")}>
       <input
@@ -438,25 +463,21 @@ function Pane({
         tabIndex={-1}
       />
       <div className="header">{path}</div>
-      <div className="table-header">
-        {columns.map(({ name, key, sortable, style }, i) => (
-          <div
-            className="column"
-            style={style}
-            key={i}
-            onClick={() =>
-              sortable &&
-              command("set_sorting", { sorting: { key, asc: !sorting.asc } })
-            }
-          >
-            {name}
-            {sorting.key == key && (
-              <span className="sort-indicator">
-                {sorting.asc ? " ▲" : " ▼"}
-              </span>
-            )}
+      <div className="table-header" ref={tableHeaderRef}>
+        <div className="table-header-inner" >
+          {columns.map((column, i) => (
+            <ColumnHeader
+              key={i}
+              index={i}
+              sorting={sorting}
+              column={column}
+              onClick={() =>
+                column.sortable &&
+                command("set_sorting", { sorting: { key: column.key, asc: !sorting.asc } })
+              }
+            />
+          ))}
           </div>
-        ))}
       </div>
       {files && (
         <ul
@@ -464,6 +485,7 @@ function Pane({
           ref={containerRef}
           onKeyDown={onkeydown}
           tabIndex={0}
+          onScroll={onScroll}
         >
           <ViewportList
             overscan={10}
@@ -482,23 +504,23 @@ function Pane({
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
-                <div style={columns[0].style} className="datum">
+                <div style={{ width: `var(--column-width-${0})` }} className="datum">
                   <FileName
                     filter={filter}
                     focused={active && focusedIndex == i}
                     info={row}
                   />
                 </div>
-                <div style={columns[1].style} className="align-right datum">
+                <div style={{ width: `var(--column-width-${1})`}} className="align-right datum">
                   {row.is_dir ? "DIR" : row.size.toLocaleString()}
                 </div>
-                <div style={columns[3].style} className="align-center datum">
+                <div style={{ width: `var(--column-width-${2})` }} className="align-center datum">
                   {new Date(row.modified).toLocaleDateString()}
                 </div>
-                <div style={columns[4].style} className="align-center datum">
+                <div style={{ width: `var(--column-width-${3})` }} className="align-center datum">
                   {new Date(row.modified).toLocaleTimeString()}
                 </div>
-                <div style={columns[2].style} className="align-center datum">
+                <div style={{ width: `var(--column-width-${4})` }}className="align-center datum">
                   {modeToString(row.mode)}
                 </div>
               </li>
@@ -506,6 +528,7 @@ function Pane({
           </ViewportList>
         </ul>
       )}
+      <div className="statusbar">{path}</div>
     </div>
   );
 }

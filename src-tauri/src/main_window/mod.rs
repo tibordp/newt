@@ -112,6 +112,7 @@ impl MainWindowState {
     pub fn activate_pane(&self, handle: PaneHandle) {
         for (h, pane) in self.panes.iter() {
             let mut view_state = pane.view_state_mut();
+            view_state.set_filter(None);
             view_state.active = h == handle;
         }
     }
