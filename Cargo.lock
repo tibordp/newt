@@ -1647,6 +1647,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "notify",
+ "objc",
  "once_cell",
  "opener",
  "parking_lot",

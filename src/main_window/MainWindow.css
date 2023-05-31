@@ -1,11 +1,3 @@
-:root {
-  --column-width-0: 250px;
-  --column-width-1: 100px;
-  --column-width-2: 70px;
-  --column-width-3: 70px;
-  --column-width-4: 70px;
-}
-
 .file-icon {
   position: relative;
   display: inline-block;
@@ -52,12 +44,10 @@
 }
 
 .header {
-  padding: 0.2em;
-  margin: 1px;
-  margin-left: 2px;
+  padding: 0.2em 0.3em 0.2em 0.3em;
   background: #fafafa;
-  box-shadow: 0 0px 1px -1px rgba(0, 0, 0, 0.4) inset;
-  z-index: 2;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
   -webkit-user-select: auto;
@@ -73,12 +63,12 @@
 }
 
 .table-header-inner {
-  font-weight: bold;
-  display: flex;
   flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
+  display: flex;
   cursor: default;
+  width: fit-content;
+  padding-right: 20px;
+  font-weight: bold;
 }
 
 ul.files {
@@ -95,7 +85,9 @@ ul.files {
 
 li.file-item {
   display: flex;
+  width: fit-content;
   height: 20px;
+  padding-right: 20px;
 }
 
 .datum,
@@ -108,18 +100,6 @@ li.file-item {
   text-overflow: ellipsis;
   flex-grow: 0;
   flex-shrink: 0;
-}
-
-li.file-item:after,
-.table-header-inner:after {
-  content: "";
-  flex-grow: 0;
-  flex-shrink: 0;
-  height: 1px;
-  width: 10px;
-}
-.table-header-inner:after {
-  width: 200px;
 }
 
 .column {
