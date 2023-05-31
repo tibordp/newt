@@ -1,4 +1,12 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+  startTransition,
+  useId,
+} from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen, Event } from "@tauri-apps/api/event";
 import { appWindow } from "@tauri-apps/api/window";
@@ -8,7 +16,7 @@ import "./MainWindow.css";
 import "allotment/dist/style.css";
 
 import iconMapping from "../assets/mapping.json";
-import { ViewportList, ViewportListRef } from "react-viewport-list";
+import { ViewportList, ViewportListRef } from "../lib/viewPortList";
 import { CSSProperties } from "react";
 import { Profiler } from "react";
 import { enablePatches, applyPatches, Patch } from "immer";
@@ -131,35 +139,57 @@ function modeToString(mode) {
 type ColumnDef = {
   name: string;
   key: string;
-  sortable: boolean;
-  style: CSSProperties;
+  sortKey?: string;
+  align: "left" | "right" | "center";
+  render: (info: File, paneProps: PaneState) => JSX.Element;
+  initialWidth: number;
 };
 
 const columns: ColumnDef[] = [
   {
     name: "Name",
     key: "name",
-    sortable: true,
+    sortKey: "name",
+    align: "left",
+    render: (info, { filter, focused, active }) => (
+      <FileName
+        filter={filter}
+        focused={active && focused == info.name}
+        info={info}
+      />
+    ),
+    initialWidth: 250,
   },
   {
     name: "Size",
     key: "size",
-    sortable: true,
+    sortKey: "size",
+    align: "right",
+    render: (info) => <>{info.is_dir ? "DIR" : info.size.toLocaleString()}</>,
+    initialWidth: 100,
   },
   {
     name: "Date",
-    key: "modified",
-    sortable: true,
+    key: "modified_date",
+    sortKey: "modified",
+    align: "right",
+    render: (info) => <>{new Date(info.modified).toLocaleDateString()}</>,
+    initialWidth: 70,
   },
   {
     name: "Time",
-    key: "modified",
-    sortable: true,
+    key: "modified_time",
+    sortKey: "modified",
+    align: "right",
+    render: (info) => <>{new Date(info.modified).toLocaleTimeString()}</>,
+    initialWidth: 70,
   },
   {
     name: "Mode",
     key: "mode",
-    sortable: false,
+    align: "right",
+    render: (info) => <>{modeToString(info.mode)}</>,
+    initialWidth: 70,
   },
 ];
 
@@ -221,8 +251,8 @@ const useRemoteState = (deps: any[] = []): GlobalState | null => {
   return state;
 };
 
-function ColumnHeader({ index, column, sorting, onClick }) {
-  const { name, key, sortable } = column;
+function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
+  const { name, key, sortKey } = column;
   const ref = useRef<HTMLDivElement>(null);
   const [startOffset, setStartOffset] = useState(null);
 
@@ -232,14 +262,18 @@ function ColumnHeader({ index, column, sorting, onClick }) {
 
   const onmouseup = (e) => {
     setStartOffset(null);
-  }
+  };
 
   const onmousemove = (e) => {
     if (startOffset !== null && startOffset + e.clientX > 10) {
-      const root = document.querySelector(':root');
-      root.style.setProperty(`--column-width-${index}`, `${startOffset + e.clientX}px`);
+      const root = document.querySelector(":root");
+      // @ts-ignore
+      root.style.setProperty(
+        `--${widthPrefix}-${column.key}`,
+        `${startOffset + e.clientX}px`
+      );
     }
-  }
+  };
 
   useEffect(() => {
     document.addEventListener("mouseup", onmouseup);
@@ -248,38 +282,48 @@ function ColumnHeader({ index, column, sorting, onClick }) {
     return () => {
       document.removeEventListener("mouseup", onmouseup);
       document.removeEventListener("mousemove", onmousemove);
-    }
+    };
   }, [startOffset]);
+
+  useEffect(() => {
+    const root = document.querySelector(":root");
+    // @ts-ignore
+    root.style.setProperty(
+      `--${widthPrefix}-${column.key}`,
+      `${column.initialWidth}px`
+    );
+  }, []);
 
   return (
     <>
-    <div
-      ref={ref}
-      className={`column ${sortable ? "sortable" : ""} ${
-        sorting.key == key && sorting.asc ? "sorted-asc" : ""
-      } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
-      style={{
-        width: `var(--column-width-${index})`
-      }}
-      onClick={onClick}
-    >
-      {name}
-    </div>
-    <div className="column-grip" onMouseDown={onmousedown}></div>
+      <div
+        ref={ref}
+        className={`column ${sortKey ? "sortable" : ""} ${
+          sorting.key == key && sorting.asc ? "sorted-asc" : ""
+        } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+        style={{
+          width: `var(--${widthPrefix}-${column.key})`,
+        }}
+        onClick={onClick}
+      >
+        {name}
+      </div>
+      <div className="column-grip" onMouseDown={onmousedown}></div>
     </>
   );
 }
 
-function Pane({
-  paneHandle,
-  active,
-  filter,
-  path,
-  files,
-  selected,
-  sorting,
-  focused,
-}: PaneState & { paneHandle: number }) {
+function Pane(props: PaneState & { paneHandle: number }) {
+  const {
+    paneHandle,
+    active,
+    filter,
+    path,
+    files,
+    selected,
+    sorting,
+    focused,
+  } = props;
   const command = (cmd: string, args: object = {}) =>
     safeCommand(cmd, { paneHandle, ...args });
 
@@ -288,6 +332,47 @@ function Pane({
   const selectedLookup = useMemo(() => {
     return new Set(selected);
   }, [selected]);
+
+  const [
+    bytes,
+    fileCount,
+    dirCount,
+    selectedBytes,
+    selectedFileCount,
+    selectedDirCount,
+  ] = useMemo(() => {
+    let bytes = 0;
+    let fileCount = 0;
+    let dirCount = 0;
+    let selectedBytes = 0;
+    let selectedFileCount = 0;
+    let selectedDirCount = 0;
+
+    for (const f of files) {
+      if (f.is_dir) {
+        dirCount++;
+      } else {
+        fileCount++;
+        bytes += f.size;
+      }
+      if (selectedLookup.has(f.name)) {
+        if (f.is_dir) {
+          selectedDirCount++;
+        } else {
+          selectedFileCount++;
+          selectedBytes += f.size;
+        }
+      }
+    }
+    return [
+      bytes,
+      fileCount,
+      dirCount,
+      selectedBytes,
+      selectedFileCount,
+      selectedDirCount,
+    ];
+  }, [files, selectedLookup]);
 
   const focusedIndex = useMemo(() => {
     if (files) {
@@ -301,7 +386,7 @@ function Pane({
   const viewPortRef = useRef<ViewportListRef>(null);
   const tableHeaderRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (active && files && viewPortRef.current) {
       const containerHeight = containerRef.current!.offsetHeight;
       const pos = viewPortRef.current.getScrollPosition();
@@ -313,12 +398,14 @@ function Pane({
           index: focusedIndex,
           delay: 0,
           alignToTop: true,
+          prerender: Math.ceil(containerHeight / 20),
         });
       } else if (focusedIndex >= pos.index + Math.floor(containerHeight / 20)) {
         viewPortRef.current.scrollToIndex({
           index: focusedIndex,
           delay: 0,
           alignToTop: false,
+          prerender: Math.ceil(containerHeight / 20),
         });
       }
     }
@@ -447,8 +534,9 @@ function Pane({
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
     tableHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft;
-  }
+  };
 
+  const widthPrefix = `pane-${paneHandle}-column-`;
 
   return (
     <div className="pane" onClick={() => command("focus")}>
@@ -464,20 +552,22 @@ function Pane({
       />
       <div className="header">{path}</div>
       <div className="table-header" ref={tableHeaderRef}>
-        <div className="table-header-inner" >
-          {columns.map((column, i) => (
+        <div className="table-header-inner">
+          {columns.map((column) => (
             <ColumnHeader
-              key={i}
-              index={i}
+              key={column.key}
+              widthPrefix={widthPrefix}
               sorting={sorting}
               column={column}
               onClick={() =>
-                column.sortable &&
-                command("set_sorting", { sorting: { key: column.key, asc: !sorting.asc } })
+                column.sortKey &&
+                command("set_sorting", {
+                  sorting: { key: column.key, asc: !sorting.asc },
+                })
               }
             />
           ))}
-          </div>
+        </div>
       </div>
       {files && (
         <ul
@@ -488,47 +578,53 @@ function Pane({
           onScroll={onScroll}
         >
           <ViewportList
-            overscan={10}
+            overscan={0}
             initialIndex={focusedIndex}
             ref={viewPortRef}
             viewportRef={containerRef}
             items={files}
+            itemSize={20}
           >
-            {(row: File, i) => (
+            {(row: File) => (
               <li
                 key={row.name}
                 data-name={row.name}
                 className={`file-item ${
-                  active && focusedIndex === i ? "focused" : ""
+                  active && row.name == focused ? "focused" : ""
                 } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
-                <div style={{ width: `var(--column-width-${0})` }} className="datum">
-                  <FileName
-                    filter={filter}
-                    focused={active && focusedIndex == i}
-                    info={row}
-                  />
-                </div>
-                <div style={{ width: `var(--column-width-${1})`}} className="align-right datum">
-                  {row.is_dir ? "DIR" : row.size.toLocaleString()}
-                </div>
-                <div style={{ width: `var(--column-width-${2})` }} className="align-center datum">
-                  {new Date(row.modified).toLocaleDateString()}
-                </div>
-                <div style={{ width: `var(--column-width-${3})` }} className="align-center datum">
-                  {new Date(row.modified).toLocaleTimeString()}
-                </div>
-                <div style={{ width: `var(--column-width-${4})` }}className="align-center datum">
-                  {modeToString(row.mode)}
-                </div>
+                {columns.map((column) => (
+                  <div
+                    key={column.key}
+                    style={{
+                      textAlign: column.align,
+                      width: `var(--${widthPrefix}-${column.key})`,
+                    }}
+                    className="datum"
+                  >
+                    {column.render(row, props)}
+                  </div>
+                ))}
               </li>
             )}
           </ViewportList>
         </ul>
       )}
-      <div className="statusbar">{path}</div>
+      <div className="statusbar">
+        {selected.length > 0 && (
+          <>
+            {selectedFileCount} files, {selectedDirCount} directories selected, {selectedBytes.toLocaleString()} bytes
+            total
+          </>
+        )}
+        { selected.length == 0 && (
+          <>
+            {fileCount} files, {dirCount} directories
+          </>
+        )}
+      </div>
     </div>
   );
 }
