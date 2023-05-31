@@ -29,6 +29,9 @@ treediff = { version = "4", features = ["with-serde-json"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "*"
+
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!

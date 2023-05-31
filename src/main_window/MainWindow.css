@@ -44,20 +44,31 @@
 }
 
 .header {
-  padding: 0.2em;
-  background: #f0f0f0;
-  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
-  z-index: 2;
+  padding: 0.2em 0.3em 0.2em 0.3em;
+  background: #fafafa;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
+  -webkit-user-select: auto;
 }
 
 .table-header {
-  font-weight: bold;
-  display: flex;
-  background: #fafafa;
-  box-shadow: 0 1px 1px -1px rgba(0, 0, 0, 0.4);
+  box-sizing: content-box;
+  flex-shrink: 0;
+  overflow-x: hidden;
   z-index: 1;
+  background: #fafafa;
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+}
+
+.table-header-inner {
+  flex-direction: row;
+  display: flex;
+  cursor: default;
+  width: fit-content;
+  padding-right: 20px;
+  font-weight: bold;
 }
 
 ul.files {
@@ -67,24 +78,51 @@ ul.files {
   display: flex;
   flex-direction: column;
   flex-grow: 1;
-  overflow-y: scroll;
-  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-x: auto;
   cursor: default;
 }
 
 li.file-item {
   display: flex;
+  width: fit-content;
   height: 20px;
+  padding-right: 20px;
 }
 
 .datum,
-.table-header .column {
+.column {
   overflow: hidden;
   white-space: nowrap;
+  line-height: 20px;
   padding-left: 0.2em;
   padding-right: 0.2em;
-  line-height: 20px;
   text-overflow: ellipsis;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.column {
+  position: relative;
+  padding-left: 0.4em;
+  padding-right: 0.4em;
+  border-right: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.column-grip {
+  width: 8px;
+  height: 18px;
+  margin-left: -4px;
+  margin-right: -4px;
+  z-index: 10;
+  cursor: col-resize;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.sortable:hover {
+  background: #f4f4f4;
+  cursor: pointer;
 }
 
 .filename {
@@ -97,7 +135,12 @@ li.file-item {
   display: inline;
 }
 
-.sort-indicator {
+.column.sorted-asc::after {
+  content: " ▲";
+  color: #aaa;
+}
+.column.sorted-desc::after {
+  content: " ▼";
   color: #aaa;
 }
 
@@ -146,4 +189,11 @@ li.file-item {
   background-image: url("../assets/symlink_badge.svg");
   background-position: center;
   z-index: 5;
+}
+
+.statusbar {
+  padding: 0.2em;
+  background: #f0f0f0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

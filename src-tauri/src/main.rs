@@ -2,6 +2,10 @@
 #![feature(io_error_more)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[macro_use]
+#[cfg(target_os = "macos")]
+extern crate objc; // v0.2.7
+
 pub mod cmd;
 pub mod common;
 pub mod main_window;
