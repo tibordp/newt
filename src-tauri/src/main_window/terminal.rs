@@ -68,14 +68,14 @@ impl Terminal {
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), Error> {
         match self.sender.send(Command::Resize(rows, cols)) {
             Ok(()) => Ok(()),
-            Err(e) => Err(Error::Custom("terminal error".to_string())),
+            Err(_e) => Err(Error::Custom("terminal error".to_string())),
         }
     }
 
     pub fn input(&self, data: Vec<u8>) -> Result<(), Error> {
         match self.sender.send(Command::Input(data)) {
             Ok(()) => Ok(()),
-            Err(e) => Err(Error::Custom("terminal error".to_string())),
+            Err(_e) => Err(Error::Custom("terminal error".to_string())),
         }
     }
 }

@@ -9,10 +9,10 @@ use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::marker::PhantomData;
+
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+
+
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -20,9 +20,9 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::UpdatePublisher;
-use crate::common::diff;
+
 use crate::common::Error;
-use crate::common::PatchOperation;
+
 use crate::GlobalContext;
 
 use self::pane::Pane;
