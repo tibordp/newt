@@ -1,11 +1,4 @@
-
 use std::io::Read;
-
-
-
-
-
-
 
 use tauri::Invoke;
 use tauri::Manager;
@@ -260,9 +253,7 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn terminal_open(
-    ctx: MainWindowContext
-) -> Result<TerminalHandle, Error> {
+pub async fn terminal_open(ctx: MainWindowContext) -> Result<TerminalHandle, Error> {
     let handle = ctx.create_terminal().await?;
 
     Ok(handle)

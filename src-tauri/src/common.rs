@@ -1,4 +1,5 @@
-use std::{time::SystemTime, marker::PhantomData};
+use std::marker::PhantomData;
+use std::time::SystemTime;
 
 use parking_lot::Mutex;
 use tauri::Window;
@@ -175,7 +176,6 @@ pub fn diff(
     delegate.try_into_patch()
 }
 
-
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdatePayload {
@@ -187,7 +187,7 @@ pub struct UpdatePublisher<T> {
     window: Window,
     event_name: String,
     previous: Mutex<serde_json::Value>,
-    _phantom: PhantomData<T>
+    _phantom: PhantomData<T>,
 }
 
 impl<T: serde::Serialize> UpdatePublisher<T> {
@@ -196,7 +196,7 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             event_name: format!("update:{}", event_name),
             window,
             previous: Mutex::new(serde_json::Value::Null),
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 
@@ -213,8 +213,8 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             self.window.emit(
                 &self.event_name,
                 patch
-                .map(UpdatePayload::Patch)
-                .unwrap_or(UpdatePayload::State(serialized)),
+                    .map(UpdatePayload::Patch)
+                    .unwrap_or(UpdatePayload::State(serialized)),
             )?;
         }
 

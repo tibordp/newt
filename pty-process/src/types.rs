@@ -23,12 +23,7 @@ impl Size {
     /// Returns a [`Size`](Size) instance with the given number of rows and
     /// columns, as well as the given pixel dimensions.
     #[must_use]
-    pub fn new_with_pixel(
-        row: u16,
-        col: u16,
-        xpixel: u16,
-        ypixel: u16,
-    ) -> Self {
+    pub fn new_with_pixel(row: u16, col: u16, xpixel: u16, ypixel: u16) -> Self {
         Self {
             row,
             col,

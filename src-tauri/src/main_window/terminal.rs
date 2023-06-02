@@ -62,7 +62,11 @@ impl Terminal {
             }
         });
 
-        Ok(Self { handle, defunct: false, sender })
+        Ok(Self {
+            handle,
+            defunct: false,
+            sender,
+        })
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<(), Error> {
@@ -103,7 +107,7 @@ async fn run_terminal(
                 }
 
                 window.emit("terminal_data", TerminalData {
-                    handle: handle,
+                    handle,
                     data: buf[..len].to_vec(),
                 })?;
             }

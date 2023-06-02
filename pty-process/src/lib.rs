@@ -59,8 +59,8 @@ pub use error::{Error, Result};
 mod types;
 pub use types::Size;
 
-mod sys;
 mod command;
+mod sys;
 pub use command::Command;
 mod pty;
 

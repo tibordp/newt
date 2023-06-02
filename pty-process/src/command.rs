@@ -5,9 +5,7 @@ pub struct Command {
     stdout: bool,
     stderr: bool,
     pre_exec_set: bool,
-    pre_exec: Option<
-        Box<dyn FnMut() -> std::io::Result<()> + Send + Sync + 'static>,
-    >,
+    pre_exec: Option<Box<dyn FnMut() -> std::io::Result<()> + Send + Sync + 'static>>,
 }
 
 impl Command {
@@ -61,10 +59,7 @@ impl Command {
     }
 
     /// See [`tokio::process::Command::env_remove`]
-    pub fn env_remove<K: AsRef<std::ffi::OsStr>>(
-        &mut self,
-        key: K,
-    ) -> &mut Self {
+    pub fn env_remove<K: AsRef<std::ffi::OsStr>>(&mut self, key: K) -> &mut Self {
         self.inner.env_remove(key);
         self
     }
@@ -76,39 +71,27 @@ impl Command {
     }
 
     /// See [`tokio::process::Command::current_dir`]
-    pub fn current_dir<P: AsRef<std::path::Path>>(
-        &mut self,
-        dir: P,
-    ) -> &mut Self {
+    pub fn current_dir<P: AsRef<std::path::Path>>(&mut self, dir: P) -> &mut Self {
         self.inner.current_dir(dir);
         self
     }
 
     /// See [`tokio::process::Command::stdin`]
-    pub fn stdin<T: Into<std::process::Stdio>>(
-        &mut self,
-        cfg: T,
-    ) -> &mut Self {
+    pub fn stdin<T: Into<std::process::Stdio>>(&mut self, cfg: T) -> &mut Self {
         self.stdin = true;
         self.inner.stdin(cfg);
         self
     }
 
     /// See [`tokio::process::Command::stdout`]
-    pub fn stdout<T: Into<std::process::Stdio>>(
-        &mut self,
-        cfg: T,
-    ) -> &mut Self {
+    pub fn stdout<T: Into<std::process::Stdio>>(&mut self, cfg: T) -> &mut Self {
         self.stdout = true;
         self.inner.stdout(cfg);
         self
     }
 
     /// See [`tokio::process::Command::stderr`]
-    pub fn stderr<T: Into<std::process::Stdio>>(
-        &mut self,
-        cfg: T,
-    ) -> &mut Self {
+    pub fn stderr<T: Into<std::process::Stdio>>(&mut self, cfg: T) -> &mut Self {
         self.stderr = true;
         self.inner.stderr(cfg);
         self
@@ -129,10 +112,7 @@ impl Command {
     /// child process (see the documentation for
     /// [`tokio::process::Command::spawn`]), or if we fail to make the child a
     /// session leader or set its controlling terminal.
-    pub fn spawn(
-        &mut self,
-        pts: &crate::Pts,
-    ) -> crate::Result<tokio::process::Child> {
+    pub fn spawn(&mut self, pts: &crate::Pts) -> crate::Result<tokio::process::Child> {
         let (stdin, stdout, stderr) = pts.0.setup_subprocess()?;
 
         if !self.stdin {

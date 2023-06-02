@@ -14,9 +14,7 @@ impl Pty {
         )?;
         #[cfg(not(target_os = "macos"))]
         let pt = nix::pty::posix_openpt(
-            nix::fcntl::OFlag::O_RDWR
-                | nix::fcntl::OFlag::O_NOCTTY
-                | nix::fcntl::OFlag::O_CLOEXEC,
+            nix::fcntl::OFlag::O_RDWR | nix::fcntl::OFlag::O_NOCTTY | nix::fcntl::OFlag::O_CLOEXEC,
         )?;
         nix::pty::grantpt(&pt)?;
         nix::pty::unlockpt(&pt)?;
@@ -32,10 +30,10 @@ impl Pty {
         // descriptor and size is guaranteed to be initialized because it's a
         // normal rust value, and nix::pty::Winsize is a repr(C) struct with
         // the same layout as `struct winsize` from sys/ioctl.h.
-        Ok(unsafe {
-            set_term_size_unsafe(fd, std::ptr::NonNull::from(&size).as_ptr())
-        }
-        .map(|_| ())?)
+        Ok(
+            unsafe { set_term_size_unsafe(fd, std::ptr::NonNull::from(&size).as_ptr()) }
+                .map(|_| ())?,
+        )
     }
 
     pub fn pts(&self) -> crate::Result<Pts> {
@@ -46,11 +44,11 @@ impl Pty {
             .into()))
     }
 
-    #[cfg(target_os="macos")]
+    #[cfg(target_os = "macos")]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
-        use std::os::unix::ffi::OsStrExt;
-        use std::ffi::{CStr,OsStr};
+        use std::ffi::{CStr, OsStr};
         use std::os::raw::c_char;
+        use std::os::unix::ffi::OsStrExt;
         use std::path::PathBuf;
         // ptsname_r is a linux extension but ptsname isn't thread-safe
         // we could use a static mutex but instead we re-implemented ptsname_r with a syscall
@@ -58,44 +56,31 @@ impl Pty {
         // the buffer size on OSX is 128, defined by sys/ttycom.h
         //
         //
-        let buf : [c_char; 128] = [0;128];
+        let buf: [c_char; 128] = [0; 128];
 
         unsafe {
-            match libc::ioctl(self.0.as_raw_fd(), libc::TIOCPTYGNAME as u64, &buf) {
-                0 => {
-                   Ok(PathBuf::from(
-                           OsStr::from_bytes(
-                               CStr::from_ptr(buf.as_ptr())
-                               .to_bytes()
-                               )
-                           )
-                       )
-                },
+            match libc::ioctl(self.0.as_raw_fd(), u64::from(libc::TIOCPTYGNAME), &buf) {
+                0 => Ok(PathBuf::from(OsStr::from_bytes(
+                    CStr::from_ptr(buf.as_ptr()).to_bytes(),
+                ))),
                 _ => Err(std::io::Error::last_os_error()),
             }
         }
     }
 
-    #[cfg(not(target_os="macos"))]
+    #[cfg(not(target_os = "macos"))]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
         Ok(nix::pty::ptsname_r(&self.0)?)
     }
 
     #[cfg(not(target_os = "macos"))]
     pub fn set_nonblocking(&self) -> nix::Result<()> {
-        let bits = nix::fcntl::fcntl(
-            self.0.as_raw_fd(),
-            nix::fcntl::FcntlArg::F_GETFL,
-        )?;
+        let bits = nix::fcntl::fcntl(self.0.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL)?;
         // Safety: bits was just returned from a F_GETFL call. ideally i would
         // just be able to use from_bits here, but it fails for some reason?
-        let mut opts =
-            unsafe { nix::fcntl::OFlag::from_bits_unchecked(bits) };
+        let mut opts = unsafe { nix::fcntl::OFlag::from_bits_unchecked(bits) };
         opts |= nix::fcntl::OFlag::O_NONBLOCK;
-        nix::fcntl::fcntl(
-            self.0.as_raw_fd(),
-            nix::fcntl::FcntlArg::F_SETFL(opts),
-        )?;
+        nix::fcntl::fcntl(self.0.as_raw_fd(), nix::fcntl::FcntlArg::F_SETFL(opts))?;
 
         Ok(())
     }
@@ -152,9 +137,7 @@ impl Pts {
         move || {
             nix::unistd::setsid()?;
             // Safety: OwnedFds are required to contain a valid file descriptor
-            unsafe {
-                set_controlling_terminal_unsafe(pts_fd, std::ptr::null())
-            }?;
+            unsafe { set_controlling_terminal_unsafe(pts_fd, std::ptr::null()) }?;
             Ok(())
         }
     }
@@ -178,11 +161,7 @@ impl std::os::fd::AsRawFd for Pts {
     }
 }
 
-nix::ioctl_write_ptr_bad!(
-    set_term_size_unsafe,
-    libc::TIOCSWINSZ,
-    nix::pty::Winsize
-);
+nix::ioctl_write_ptr_bad!(set_term_size_unsafe, libc::TIOCSWINSZ, nix::pty::Winsize);
 
 nix::ioctl_write_ptr_bad!(
     set_controlling_terminal_unsafe,

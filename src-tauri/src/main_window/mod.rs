@@ -12,7 +12,6 @@ use std::collections::HashSet;
 
 use std::path::PathBuf;
 
-
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -313,7 +312,10 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    pub fn new(publisher: Arc<UpdatePublisher<MainWindowState>>, global_state: MainWindowState) -> Self {
+    pub fn new(
+        publisher: Arc<UpdatePublisher<MainWindowState>>,
+        global_state: MainWindowState,
+    ) -> Self {
         let inner = Arc::new(Mutex::new(WatcherInner {
             global_state,
             watcher: None,
