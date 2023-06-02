@@ -4,12 +4,9 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
-  startTransition,
-  useId,
+  useContext,
 } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
-import { listen, Event } from "@tauri-apps/api/event";
-import { appWindow } from "@tauri-apps/api/window";
 
 import { Allotment } from "allotment";
 import "./MainWindow.css";
@@ -17,11 +14,15 @@ import "allotment/dist/style.css";
 
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
-import { CSSProperties } from "react";
 import { Profiler } from "react";
-import { enablePatches, applyPatches, Patch } from "immer";
+import { enablePatches } from "immer";
 
-import { safeCommand } from "../lib/invoke";
+import { TerminalData, registerTerminalDataHandler, safeCommand, safeCommandSilent, useRemoteState, useTerminalData } from "../lib/ipc";
+import { Terminal as XTermJSTerminal } from "xterm";
+import { FitAddon } from "xterm-addon-fit";
+
+import "xterm/css/xterm.css";
+import "@fontsource-variable/roboto-mono";
 
 enablePatches();
 
@@ -70,9 +71,8 @@ function FileName({ focused, filter, info }) {
 
   return (
     <div
-      className={`filename ${is_hidden ? "hidden-file" : ""} ${
-        is_symlink ? "symlink" : ""
-      }`}
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
+        }`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
@@ -80,46 +80,6 @@ function FileName({ focused, filter, info }) {
       </div>
     </div>
   );
-}
-
-function deepUpdate(original: any, received: any): any {
-  if (
-    original === null ||
-    received === null ||
-    Array.isArray(original) !== Array.isArray(received) ||
-    typeof original !== typeof received
-  ) {
-    return received;
-  }
-
-  let isChanged = false;
-  let ret;
-  if (Array.isArray(original)) {
-    if (original.length !== received.length) {
-      return received;
-    }
-
-    const result = Array(original.length);
-    for (let i = 0; i < original.length; i++) {
-      result[i] = deepUpdate(original[i], received[i]);
-      isChanged = isChanged || result[i] !== original[i];
-    }
-
-    ret = isChanged ? result : original;
-  } else if (typeof original === "object") {
-    const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
-
-    const result = {};
-    for (const key of keys) {
-      result[key] = deepUpdate(original[key], received[key]);
-      isChanged = isChanged || result[key] !== original[key];
-    }
-    ret = isChanged ? result : original;
-  } else {
-    ret = received;
-  }
-
-  return ret;
 }
 
 function modeToString(mode) {
@@ -208,47 +168,19 @@ type PaneState = {
   filter?: string;
 };
 
-type GlobalState = {
+type DisplayOptions = {
+  show_hidden: boolean;
+  active_pane: number;
+};
+
+type Terminal = {
+  handle: string;
+};
+
+type MainWindowState = {
   panes: PaneState[];
-};
-
-type ChangePayload = {
-  state?: GlobalState;
-  patch?: Patch[];
-};
-
-const useRemoteState = (deps: any[] = []): GlobalState | null => {
-  const [state, setState] = useState<any>(null);
-
-  useEffect(() => {
-    let listenPromise = listen("updated", (event: Event<ChangePayload>) => {
-      if (event.windowLabel === appWindow.label) {
-        // State is serialized, so we perform a "deep" update (diff), updating
-        // only the changed parts of the current state. This is to avoid losing
-        // the reference to the state object, which would cause a re-render of
-        // the entire component tree.
-        setState((s) => {
-          const start = performance.now();
-          let ret;
-          if (event.payload.patch) {
-            console.log(event.payload.patch);
-            ret = applyPatches(s, event.payload.patch);
-          } else {
-            ret = deepUpdate(s, event.payload.state!);
-          }
-          const end = performance.now();
-          console.log(`[useRemoteState] Update took ${end - start}ms`);
-          return ret;
-        });
-      }
-    });
-    listenPromise.then(() => invoke("ping", {}));
-    return () => {
-      listenPromise.then((unlisten) => unlisten());
-    };
-  }, deps);
-
-  return state;
+  terminals: Terminal[];
+  display_options: DisplayOptions;
 };
 
 function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
@@ -257,15 +189,20 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
   const [startOffset, setStartOffset] = useState(null);
 
   const onmousedown = (e) => {
+    e.preventDefault();
     setStartOffset(ref.current.offsetWidth - e.clientX);
   };
 
   const onmouseup = (e) => {
-    setStartOffset(null);
+    if (startOffset !== null) {
+      e.preventDefault();
+      setStartOffset(null);
+    }
   };
 
   const onmousemove = (e) => {
     if (startOffset !== null && startOffset + e.clientX > 10) {
+      e.preventDefault();
       const root = document.querySelector(":root");
       // @ts-ignore
       root.style.setProperty(
@@ -298,9 +235,8 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
     <>
       <div
         ref={ref}
-        className={`column ${sortKey ? "sortable" : ""} ${
-          sorting.key == key && sorting.asc ? "sorted-asc" : ""
-        } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+        className={`column ${sortKey ? "sortable" : ""} ${sorting.key == key && sorting.asc ? "sorted-asc" : ""
+          } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
         }}
@@ -313,7 +249,7 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
   );
 }
 
-function Pane(props: PaneState & { paneHandle: number }) {
+function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   const {
     paneHandle,
     active,
@@ -449,7 +385,11 @@ function Pane(props: PaneState & { paneHandle: number }) {
     } else if (e.key == "End") {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter") {
-      open(files[focusedIndex]);
+      if (e.ctrlKey) {
+        open(files[focusedIndex]);
+      } else {
+        command("terminal_open");
+      }
     } else if (e.key == "Tab") {
       invoke("focus", { paneHandle: 1 - paneHandle });
     } else if (e.key == "." && e.ctrlKey) {
@@ -562,7 +502,7 @@ function Pane(props: PaneState & { paneHandle: number }) {
               onClick={() =>
                 column.sortKey &&
                 command("set_sorting", {
-                  sorting: { key: column.key, asc: !sorting.asc },
+                  sorting: { key: column.sortKey, asc: !sorting.asc },
                 })
               }
             />
@@ -589,9 +529,8 @@ function Pane(props: PaneState & { paneHandle: number }) {
               <li
                 key={row.name}
                 data-name={row.name}
-                className={`file-item ${
-                  active && row.name == focused ? "focused" : ""
-                } ${selectedLookup.has(row.name) ? "selected" : ""}`}
+                className={`file-item ${active && row.name == focused ? "focused" : ""
+                  } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
@@ -615,11 +554,11 @@ function Pane(props: PaneState & { paneHandle: number }) {
       <div className="statusbar">
         {selected.length > 0 && (
           <>
-            {selectedFileCount} files, {selectedDirCount} directories selected, {selectedBytes.toLocaleString()} bytes
-            total
+            {selectedFileCount} files, {selectedDirCount} directories selected,{" "}
+            {selectedBytes.toLocaleString()} bytes total
           </>
         )}
-        { selected.length == 0 && (
+        {selected.length == 0 && (
           <>
             {fileCount} files, {dirCount} directories
           </>
@@ -629,8 +568,89 @@ function Pane(props: PaneState & { paneHandle: number }) {
   );
 }
 
+function Terminal({ handle }: { handle: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const termDataContext = useContext(TerminalData);
+
+  useEffect(() => {
+    const term = new XTermJSTerminal({
+      scrollback: 1000,
+      fontFamily:
+        "Consolas, Menlo, Monaco, 'Lucida Console', 'Liberation Mono', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Courier New', monospace, serif",
+      fontSize: 12,
+      cursorStyle: "block",
+      allowTransparency: true,
+      allowProposedApi: true,
+
+      theme: {
+        cursor: "#000000",
+        background: "#ffffff",
+        foreground: "#333333",
+        selectionBackground: "#ADD6FF",
+        black: "#000000",
+        red: "#cd3131",
+        green: "#00BC00",
+        yellow: "#949800",
+        blue: "#0451a5",
+        magenta: "#bc05bc",
+        cyan: "#0598bc",
+        white: "#555555",
+        brightBlack: "#666666",
+        brightRed: "#cd3131",
+        brightGreen: "#14CE14",
+        brightYellow: "#b5ba00",
+        brightBlue: "#0451a5",
+        brightMagenta: "#bc05bc",
+        brightCyan: "#0598bc",
+        brightWhite: "#a5a5a5",
+      },
+    });
+    term.open(ref.current!);
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    fitAddon.fit();
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+    });
+
+    resizeObserver.observe(ref.current!);
+    const unregister = registerTerminalDataHandler(termDataContext, handle, data => {
+      // @ts-ignore
+      term.write(data);
+    });
+
+    const onUserInput = (data) => {
+      const binaryData = new TextEncoder().encode(data);
+      safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
+    };
+
+    term.onBinary(onUserInput);
+    term.onData(onUserInput);
+    term.onResize((size) => {
+      safeCommandSilent("terminal_resize", { handle, rows: size.rows, cols: size.cols });
+    });
+
+    return () => {
+      unregister();
+      term.dispose();
+      if (ref.current) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, []);
+
+  return (
+    <div className="terminal-container">
+      <div className="terminal" ref={ref} />
+    </div>
+  );
+}
+
 function App() {
-  const remoteState = useRemoteState([]);
+  const remoteState = useRemoteState<MainWindowState>("main_window", []);
+  const terminalData = useTerminalData([]);
+
   const onkeydown = (e) => {
     if (e.key.toLowerCase() == "h" && e.ctrlKey) {
       safeCommand("toggle_hidden");
@@ -651,12 +671,22 @@ function App() {
 
   return (
     <Profiler id="app" onRender={console.log}>
-      <Allotment minSize={200} className="container">
-        {remoteState &&
-          remoteState.panes.map((props, i) => (
-            <Pane key={i} paneHandle={i} {...props} />
-          ))}
-      </Allotment>
+      <TerminalData.Provider value={terminalData}>
+        <Allotment vertical className="container" separator>
+          <Allotment minSize={200}>
+            {remoteState &&
+              remoteState.panes.map((props, i) => (
+                <Pane
+                  key={i}
+                  paneHandle={i}
+                  {...props}
+                  active={remoteState.display_options.active_pane === i}
+                />
+              ))}
+          </Allotment>
+          { remoteState && Object.keys(remoteState.terminals).map((handle) => <Terminal key={handle} handle={handle} />) }
+        </Allotment>
+      </TerminalData.Provider>
     </Profiler>
   );
 }

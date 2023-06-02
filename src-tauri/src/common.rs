@@ -1,4 +1,8 @@
+use std::marker::PhantomData;
 use std::time::SystemTime;
+
+use parking_lot::Mutex;
+use tauri::Window;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -10,6 +14,8 @@ pub enum Error {
     Open(#[from] opener::OpenError),
     #[error("{0}")]
     Arboard(#[from] arboard::Error),
+    #[error("{0}")]
+    PtyProcess(#[from] pty_process::Error),
     #[error("{0}")]
     Custom(String),
 }
@@ -168,4 +174,50 @@ pub fn diff(
     let mut delegate = PatchDelegate::new(max_ops);
     treediff::diff(previous, serialized, &mut delegate);
     delegate.try_into_patch()
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdatePayload {
+    State(serde_json::Value),
+    Patch(Vec<PatchOperation>),
+}
+
+pub struct UpdatePublisher<T> {
+    window: Window,
+    event_name: String,
+    previous: Mutex<serde_json::Value>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: serde::Serialize> UpdatePublisher<T> {
+    pub fn new(window: Window, event_name: &str) -> Self {
+        Self {
+            event_name: format!("update:{}", event_name),
+            window,
+            previous: Mutex::new(serde_json::Value::Null),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn publish(&self, state: &T) -> Result<(), Error> {
+        let serialized = serde_json::to_value(state).unwrap();
+        let patch;
+        {
+            let mut previous = self.previous.lock();
+            patch = diff(&previous, &serialized, Some(100));
+            *previous = serialized.clone();
+        }
+
+        if matches!(patch.as_ref().map(Vec::len), Some(1..) | None) {
+            self.window.emit(
+                &self.event_name,
+                patch
+                    .map(UpdatePayload::Patch)
+                    .unwrap_or(UpdatePayload::State(serialized)),
+            )?;
+        }
+
+        Ok(())
+    }
 }

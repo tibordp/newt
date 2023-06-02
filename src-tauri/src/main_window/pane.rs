@@ -286,7 +286,6 @@ pub struct PaneViewState {
     pub files: Vec<File>,
     pub focused: Option<String>,
     pub selected: HashSet<String>,
-    pub active: bool,
     pub filter: Option<String>,
 
     #[serde(skip)]
@@ -513,9 +512,5 @@ impl PaneViewState {
         }
 
         self.focused = Some(self.files[new_index as usize].name.clone());
-    }
-
-    pub fn set_active(&mut self, active: bool) {
-        self.active = active;
     }
 }
