@@ -1,0 +1,29 @@
+[package]
+name = "pty-process"
+version = "0.3.0"
+authors = ["Jesse Luehrs <doy@tozt.net>"]
+edition = "2021"
+
+description = "spawn commands attached to a pty"
+repository = "https://git.tozt.net/pty-process"
+readme = "README.md"
+keywords = ["pty", "spawn", "execute", "process"]
+categories = ["asynchronous", "command-line-interface"]
+license = "MIT"
+include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+[dependencies]
+libc = "0.2.139"
+nix = "0.26.2"
+
+tokio = { version = "1.26.0", features = ["fs", "process", "net"], optional = true }
+
+[dev-dependencies]
+futures = "0.3.26"
+regex = "1.7.1"
+tokio = { version = "1.26.0", features = ["full"] }
+
+[features]
+default = []
+
+async = ["tokio"]

@@ -13,10 +13,10 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::Error;
-use crate::main_window::TerminalHandle;
 use crate::main_window::pane::Sorting;
 use crate::main_window::MainWindowContext;
 use crate::main_window::PaneHandle;
+use crate::main_window::TerminalHandle;
 
 #[tauri::command]
 pub fn navigate(ctx: MainWindowContext, pane_handle: PaneHandle, path: &str) -> Result<(), Error> {
@@ -259,25 +259,41 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
     Ok(())
 }
 
-
 #[tauri::command]
-pub async fn terminal_open(ctx: MainWindowContext, handle: TerminalHandle, rows: u16, cols: u16) -> Result<TerminalHandle, Error> {
-    let handle = ctx.create_terminal(handle, rows, cols).await?;
+pub async fn terminal_open(
+    ctx: MainWindowContext
+) -> Result<TerminalHandle, Error> {
+    let handle = ctx.create_terminal().await?;
 
     Ok(handle)
 }
 
 #[tauri::command]
-pub fn terminal_write(ctx: MainWindowContext, handle: TerminalHandle, data: Vec<u8>) -> Result<(), Error> {
-    let term = ctx.terminals().get(handle).unwrap();
+pub fn terminal_write(
+    ctx: MainWindowContext,
+    handle: TerminalHandle,
+    data: Vec<u8>,
+) -> Result<(), Error> {
+    let term = ctx
+        .terminals()
+        .get(handle)
+        .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
     term.input(data)?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn terminal_resize(ctx: MainWindowContext, handle: TerminalHandle, rows: u16, cols: u16) -> Result<(), Error> {
-    let term = ctx.terminals().get(handle).unwrap();
+pub fn terminal_resize(
+    ctx: MainWindowContext,
+    handle: TerminalHandle,
+    rows: u16,
+    cols: u16,
+) -> Result<(), Error> {
+    let term = ctx
+        .terminals()
+        .get(handle)
+        .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
     term.resize(rows, cols)?;
 
     Ok(())

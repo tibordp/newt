@@ -25,8 +25,9 @@ regex = "1.8"
 arboard = "3.2"
 parking_lot = "0.12"
 treediff = { version = "4", features = ["with-serde-json"] }
-pty-process = { version = "0.3", features = ["async"] }
+pty-process = { path = "../pty-process" }
 tokio = { version = "1", features = ["full"] }
+libc = "*"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"

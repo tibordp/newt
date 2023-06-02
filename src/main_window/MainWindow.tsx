@@ -4,12 +4,9 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
-  startTransition,
-  useId,
+  useContext,
 } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
-import { listen, Event } from "@tauri-apps/api/event";
-import { appWindow } from "@tauri-apps/api/window";
 
 import { Allotment } from "allotment";
 import "./MainWindow.css";
@@ -17,18 +14,14 @@ import "allotment/dist/style.css";
 
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
-import { CSSProperties } from "react";
 import { Profiler } from "react";
-import { enablePatches, applyPatches, Patch } from "immer";
+import { enablePatches } from "immer";
 
-import { safeCommand } from "../lib/invoke";
-import { Terminal } from "xterm";
-import { CanvasAddon } from "xterm-addon-canvas";
+import { TerminalData, registerTerminalDataHandler, safeCommand, safeCommandSilent, useRemoteState, useTerminalData } from "../lib/ipc";
+import { Terminal as XTermJSTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 
 import "xterm/css/xterm.css";
-import { v4 as uuidv4 } from 'uuid';
-
 import "@fontsource-variable/roboto-mono";
 
 enablePatches();
@@ -78,9 +71,8 @@ function FileName({ focused, filter, info }) {
 
   return (
     <div
-      className={`filename ${is_hidden ? "hidden-file" : ""} ${
-        is_symlink ? "symlink" : ""
-      }`}
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
+        }`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
@@ -88,46 +80,6 @@ function FileName({ focused, filter, info }) {
       </div>
     </div>
   );
-}
-
-function deepUpdate(original: any, received: any): any {
-  if (
-    original === null ||
-    received === null ||
-    Array.isArray(original) !== Array.isArray(received) ||
-    typeof original !== typeof received
-  ) {
-    return received;
-  }
-
-  let isChanged = false;
-  let ret;
-  if (Array.isArray(original)) {
-    if (original.length !== received.length) {
-      return received;
-    }
-
-    const result = Array(original.length);
-    for (let i = 0; i < original.length; i++) {
-      result[i] = deepUpdate(original[i], received[i]);
-      isChanged = isChanged || result[i] !== original[i];
-    }
-
-    ret = isChanged ? result : original;
-  } else if (typeof original === "object") {
-    const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
-
-    const result = {};
-    for (const key of keys) {
-      result[key] = deepUpdate(original[key], received[key]);
-      isChanged = isChanged || result[key] !== original[key];
-    }
-    ret = isChanged ? result : original;
-  } else {
-    ret = received;
-  }
-
-  return ret;
 }
 
 function modeToString(mode) {
@@ -221,48 +173,14 @@ type DisplayOptions = {
   active_pane: number;
 };
 
-type GlobalState = {
+type Terminal = {
+  handle: string;
+};
+
+type MainWindowState = {
   panes: PaneState[];
+  terminals: Terminal[];
   display_options: DisplayOptions;
-};
-
-type ChangePayload = {
-  state?: GlobalState;
-  patch?: Patch[];
-};
-
-const useRemoteState = (deps: any[] = []): GlobalState | null => {
-  const [state, setState] = useState<any>(null);
-
-  useEffect(() => {
-    let listenPromise = listen("updated", (event: Event<ChangePayload>) => {
-      if (event.windowLabel === appWindow.label) {
-        // State is serialized, so we perform a "deep" update (diff), updating
-        // only the changed parts of the current state. This is to avoid losing
-        // the reference to the state object, which would cause a re-render of
-        // the entire component tree.
-        setState((s) => {
-          const start = performance.now();
-          let ret;
-          if (event.payload.patch) {
-            console.log(event.payload.patch);
-            ret = applyPatches(s, event.payload.patch);
-          } else {
-            ret = deepUpdate(s, event.payload.state!);
-          }
-          const end = performance.now();
-          console.log(`[useRemoteState] Update took ${end - start}ms`);
-          return ret;
-        });
-      }
-    });
-    listenPromise.then(() => invoke("ping", {}));
-    return () => {
-      listenPromise.then((unlisten) => unlisten());
-    };
-  }, deps);
-
-  return state;
 };
 
 function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
@@ -317,9 +235,8 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
     <>
       <div
         ref={ref}
-        className={`column ${sortKey ? "sortable" : ""} ${
-          sorting.key == key && sorting.asc ? "sorted-asc" : ""
-        } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+        className={`column ${sortKey ? "sortable" : ""} ${sorting.key == key && sorting.asc ? "sorted-asc" : ""
+          } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
         }}
@@ -468,7 +385,11 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     } else if (e.key == "End") {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter") {
-      open(files[focusedIndex]);
+      if (e.ctrlKey) {
+        open(files[focusedIndex]);
+      } else {
+        command("terminal_open");
+      }
     } else if (e.key == "Tab") {
       invoke("focus", { paneHandle: 1 - paneHandle });
     } else if (e.key == "." && e.ctrlKey) {
@@ -608,9 +529,8 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
               <li
                 key={row.name}
                 data-name={row.name}
-                className={`file-item ${
-                  active && row.name == focused ? "focused" : ""
-                } ${selectedLookup.has(row.name) ? "selected" : ""}`}
+                className={`file-item ${active && row.name == focused ? "focused" : ""
+                  } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
@@ -648,14 +568,12 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   );
 }
 
-function XTerm() {
-  const outer = useRef<HTMLDivElement>(null);
+function Terminal({ handle }: { handle: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [addon, setAddon] = useState<Terminal | null>(null);
-  const [term, setTerm] = useState<Terminal | null>(null);
+  const termDataContext = useContext(TerminalData);
 
   useEffect(() => {
-    const t = new Terminal({
+    const term = new XTermJSTerminal({
       scrollback: 1000,
       fontFamily:
         "Consolas, Menlo, Monaco, 'Lucida Console', 'Liberation Mono', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Courier New', monospace, serif",
@@ -687,83 +605,38 @@ function XTerm() {
         brightWhite: "#a5a5a5",
       },
     });
-    t.open(ref.current!);
-    const addon = new CanvasAddon();
+    term.open(ref.current!);
+
     const fitAddon = new FitAddon();
-    //t.loadAddon(addon);
-    t.loadAddon(fitAddon);
+    term.loadAddon(fitAddon);
     fitAddon.fit();
     const resizeObserver = new ResizeObserver(() => {
-      console.log("resize");
       fitAddon.fit();
     });
+
     resizeObserver.observe(ref.current!);
-    setTerm(t);
+    const unregister = registerTerminalDataHandler(termDataContext, handle, data => {
+      // @ts-ignore
+      term.write(data);
+    });
 
-    const init = async () => {
-      const handle = uuidv4();
-
-      const listener = await listen("terminal_data", (data) => {
-        if (data.payload.handle === handle) {
-          t.write(data.payload.data);
-        }
-      });
-
-      await invoke("terminal_open", { handle, rows: t.rows, cols: t.cols });
-      const binaryData = new TextEncoder().encode("hello world");
-      console.log(JSON.stringify(binaryData));
-
-      invoke("terminal_write", { handle, data: [...binaryData] })
-        .then(() => {
-          console.log("written");
-        })
-        .catch((e) => {
-          console.error(e);
-        });
-      t.onBinary((data) => {
-        const binaryData = new TextEncoder().encode(data);
-        console.log(JSON.stringify(binaryData));
-
-        invoke("terminal_write", { handle, data: [...binaryData] })
-          .then(() => {
-            console.log("written");
-          })
-          .catch((e) => {
-            console.error(e);
-          });
-      });
-      t.onResize((size) => {
-        invoke("terminal_resize", { handle, rows: size.rows, cols: size.cols })
-          .then(() => {
-            console.log("resized");
-          })
-          .catch((e) => {
-            console.error(e);
-          });
-      });
-      t.onData((data) => {
-        const binaryData = new TextEncoder().encode(data);
-        console.log(JSON.stringify(binaryData));
-        invoke("terminal_write", { handle, data: [...binaryData] })
-          .then(() => {
-            console.log("written");
-          })
-          .catch((e) => {
-            console.error(e);
-          });
-      });
+    const onUserInput = (data) => {
+      const binaryData = new TextEncoder().encode(data);
+      safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
     };
-    init()
-      .then(() => {
-        console.log("inited");
-      })
-      .catch((e) => {
-        console.error(e);
-      });
+
+    term.onBinary(onUserInput);
+    term.onData(onUserInput);
+    term.onResize((size) => {
+      safeCommandSilent("terminal_resize", { handle, rows: size.rows, cols: size.cols });
+    });
 
     return () => {
-      t.dispose();
-      resizeObserver.unobserve(ref.current!);
+      unregister();
+      term.dispose();
+      if (ref.current) {
+        resizeObserver.disconnect();
+      }
     };
   }, []);
 
@@ -775,7 +648,9 @@ function XTerm() {
 }
 
 function App() {
-  const remoteState = useRemoteState([]);
+  const remoteState = useRemoteState<MainWindowState>("main_window", []);
+  const terminalData = useTerminalData([]);
+
   const onkeydown = (e) => {
     if (e.key.toLowerCase() == "h" && e.ctrlKey) {
       safeCommand("toggle_hidden");
@@ -796,20 +671,22 @@ function App() {
 
   return (
     <Profiler id="app" onRender={console.log}>
-      <Allotment vertical className="container" separator>
-        <Allotment minSize={200}>
-          {remoteState &&
-            remoteState.panes.map((props, i) => (
-              <Pane
-                key={i}
-                paneHandle={i}
-                {...props}
-                active={remoteState.display_options.active_pane === i}
-              />
-            ))}
+      <TerminalData.Provider value={terminalData}>
+        <Allotment vertical className="container" separator>
+          <Allotment minSize={200}>
+            {remoteState &&
+              remoteState.panes.map((props, i) => (
+                <Pane
+                  key={i}
+                  paneHandle={i}
+                  {...props}
+                  active={remoteState.display_options.active_pane === i}
+                />
+              ))}
+          </Allotment>
+          { remoteState && Object.keys(remoteState.terminals).map((handle) => <Terminal key={handle} handle={handle} />) }
         </Allotment>
-        <XTerm />
-      </Allotment>
+      </TerminalData.Provider>
     </Profiler>
   );
 }

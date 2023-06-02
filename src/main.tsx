@@ -6,7 +6,7 @@ import Viewer from "./viewer/Viewer";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles.css";
 
-import { safeCommand } from "./lib/invoke";
+import { safeCommand } from "./lib/ipc";
 
 const router = createBrowserRouter([
   {

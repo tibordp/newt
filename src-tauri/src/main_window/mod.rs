@@ -9,6 +9,7 @@ use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -18,6 +19,7 @@ use tauri::State;
 use tauri::Window;
 use tauri::Wry;
 
+use crate::common::UpdatePublisher;
 use crate::common::diff;
 use crate::common::Error;
 use crate::common::PatchOperation;
@@ -192,53 +194,11 @@ impl MainWindowState {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum UpdatePayload {
-    State(serde_json::Value),
-    Patch(Vec<PatchOperation>),
-}
-
-pub struct UpdatePublisher {
-    window: Window,
-    previous: Mutex<serde_json::Value>,
-}
-
-impl UpdatePublisher {
-    fn new(window: Window) -> Self {
-        Self {
-            window,
-            previous: Mutex::new(serde_json::Value::Null),
-        }
-    }
-
-    pub fn publish(&self, state: &MainWindowState) -> Result<(), Error> {
-        let serialized = serde_json::to_value(state).unwrap();
-        let patch;
-        {
-            let mut previous = self.previous.lock();
-            patch = diff(&previous, &serialized, Some(100));
-            *previous = serialized.clone();
-        }
-
-        if matches!(patch.as_ref().map(Vec::len), Some(1..) | None) {
-            self.window.emit(
-                "updated",
-                patch
-                .map(UpdatePayload::Patch)
-                .unwrap_or(UpdatePayload::State(serialized)),
-            )?;
-        }
-
-        Ok(())
-    }
-}
-
 struct MainWindowContextInner {
     window: Window,
     watcher: Watcher,
     main_window_state: MainWindowState,
-    publisher: Arc<UpdatePublisher>,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
 
 #[derive(Clone)]
@@ -264,7 +224,7 @@ impl MainWindowContext {
         let global_state = MainWindowState::new(paths);
         global_state.refresh()?;
 
-        let publisher = Arc::new(UpdatePublisher::new(window.clone()));
+        let publisher = Arc::new(UpdatePublisher::new(window.clone(), "main_window"));
         let watcher = Watcher::new(publisher.clone(), global_state.clone());
 
         Ok(Self {
@@ -328,8 +288,9 @@ impl MainWindowContext {
         &self.inner.main_window_state.terminals
     }
 
-    pub async fn create_terminal(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<TerminalHandle, Error> {
-        let terminal = Terminal::create(self.inner.window.clone(), handle, rows, cols).await?;
+    pub async fn create_terminal(&self) -> Result<TerminalHandle, Error> {
+        let handle = TerminalHandle::new();
+        let terminal = Terminal::create(self.inner.window.clone(), handle, None).await?;
 
         self.with_update(|s| {
             s.terminals.insert(handle, terminal);
@@ -352,7 +313,7 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    pub fn new(publisher: Arc<UpdatePublisher>, global_state: MainWindowState) -> Self {
+    pub fn new(publisher: Arc<UpdatePublisher<MainWindowState>>, global_state: MainWindowState) -> Self {
         let inner = Arc::new(Mutex::new(WatcherInner {
             global_state,
             watcher: None,
