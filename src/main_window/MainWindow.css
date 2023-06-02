@@ -197,3 +197,22 @@ li.file-item {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+.terminal-container {
+  padding: 0 0 0.5em 0.5em;
+  height: 100%;
+  width: 100%;
+}
+
+.terminal {
+  padding-top: 0.2em;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.terminal::before {
+  content: "";
+  flex-grow: 1;
+}

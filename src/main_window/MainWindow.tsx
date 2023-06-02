@@ -22,6 +22,14 @@ import { Profiler } from "react";
 import { enablePatches, applyPatches, Patch } from "immer";
 
 import { safeCommand } from "../lib/invoke";
+import { Terminal } from "xterm";
+import { CanvasAddon } from "xterm-addon-canvas";
+import { FitAddon } from "xterm-addon-fit";
+
+import "xterm/css/xterm.css";
+import { v4 as uuidv4 } from 'uuid';
+
+import "@fontsource-variable/roboto-mono";
 
 enablePatches();
 
@@ -208,8 +216,14 @@ type PaneState = {
   filter?: string;
 };
 
+type DisplayOptions = {
+  show_hidden: boolean;
+  active_pane: number;
+};
+
 type GlobalState = {
   panes: PaneState[];
+  display_options: DisplayOptions;
 };
 
 type ChangePayload = {
@@ -257,15 +271,20 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
   const [startOffset, setStartOffset] = useState(null);
 
   const onmousedown = (e) => {
+    e.preventDefault();
     setStartOffset(ref.current.offsetWidth - e.clientX);
   };
 
   const onmouseup = (e) => {
-    setStartOffset(null);
+    if (startOffset !== null) {
+      e.preventDefault();
+      setStartOffset(null);
+    }
   };
 
   const onmousemove = (e) => {
     if (startOffset !== null && startOffset + e.clientX > 10) {
+      e.preventDefault();
       const root = document.querySelector(":root");
       // @ts-ignore
       root.style.setProperty(
@@ -313,7 +332,7 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
   );
 }
 
-function Pane(props: PaneState & { paneHandle: number }) {
+function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   const {
     paneHandle,
     active,
@@ -562,7 +581,7 @@ function Pane(props: PaneState & { paneHandle: number }) {
               onClick={() =>
                 column.sortKey &&
                 command("set_sorting", {
-                  sorting: { key: column.key, asc: !sorting.asc },
+                  sorting: { key: column.sortKey, asc: !sorting.asc },
                 })
               }
             />
@@ -615,16 +634,142 @@ function Pane(props: PaneState & { paneHandle: number }) {
       <div className="statusbar">
         {selected.length > 0 && (
           <>
-            {selectedFileCount} files, {selectedDirCount} directories selected, {selectedBytes.toLocaleString()} bytes
-            total
+            {selectedFileCount} files, {selectedDirCount} directories selected,{" "}
+            {selectedBytes.toLocaleString()} bytes total
           </>
         )}
-        { selected.length == 0 && (
+        {selected.length == 0 && (
           <>
             {fileCount} files, {dirCount} directories
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function XTerm() {
+  const outer = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const [addon, setAddon] = useState<Terminal | null>(null);
+  const [term, setTerm] = useState<Terminal | null>(null);
+
+  useEffect(() => {
+    const t = new Terminal({
+      scrollback: 1000,
+      fontFamily:
+        "Consolas, Menlo, Monaco, 'Lucida Console', 'Liberation Mono', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Courier New', monospace, serif",
+      fontSize: 12,
+      cursorStyle: "block",
+      allowTransparency: true,
+      allowProposedApi: true,
+
+      theme: {
+        cursor: "#000000",
+        background: "#ffffff",
+        foreground: "#333333",
+        selectionBackground: "#ADD6FF",
+        black: "#000000",
+        red: "#cd3131",
+        green: "#00BC00",
+        yellow: "#949800",
+        blue: "#0451a5",
+        magenta: "#bc05bc",
+        cyan: "#0598bc",
+        white: "#555555",
+        brightBlack: "#666666",
+        brightRed: "#cd3131",
+        brightGreen: "#14CE14",
+        brightYellow: "#b5ba00",
+        brightBlue: "#0451a5",
+        brightMagenta: "#bc05bc",
+        brightCyan: "#0598bc",
+        brightWhite: "#a5a5a5",
+      },
+    });
+    t.open(ref.current!);
+    const addon = new CanvasAddon();
+    const fitAddon = new FitAddon();
+    //t.loadAddon(addon);
+    t.loadAddon(fitAddon);
+    fitAddon.fit();
+    const resizeObserver = new ResizeObserver(() => {
+      console.log("resize");
+      fitAddon.fit();
+    });
+    resizeObserver.observe(ref.current!);
+    setTerm(t);
+
+    const init = async () => {
+      const handle = uuidv4();
+
+      const listener = await listen("terminal_data", (data) => {
+        if (data.payload.handle === handle) {
+          t.write(data.payload.data);
+        }
+      });
+
+      await invoke("terminal_open", { handle, rows: t.rows, cols: t.cols });
+      const binaryData = new TextEncoder().encode("hello world");
+      console.log(JSON.stringify(binaryData));
+
+      invoke("terminal_write", { handle, data: [...binaryData] })
+        .then(() => {
+          console.log("written");
+        })
+        .catch((e) => {
+          console.error(e);
+        });
+      t.onBinary((data) => {
+        const binaryData = new TextEncoder().encode(data);
+        console.log(JSON.stringify(binaryData));
+
+        invoke("terminal_write", { handle, data: [...binaryData] })
+          .then(() => {
+            console.log("written");
+          })
+          .catch((e) => {
+            console.error(e);
+          });
+      });
+      t.onResize((size) => {
+        invoke("terminal_resize", { handle, rows: size.rows, cols: size.cols })
+          .then(() => {
+            console.log("resized");
+          })
+          .catch((e) => {
+            console.error(e);
+          });
+      });
+      t.onData((data) => {
+        const binaryData = new TextEncoder().encode(data);
+        console.log(JSON.stringify(binaryData));
+        invoke("terminal_write", { handle, data: [...binaryData] })
+          .then(() => {
+            console.log("written");
+          })
+          .catch((e) => {
+            console.error(e);
+          });
+      });
+    };
+    init()
+      .then(() => {
+        console.log("inited");
+      })
+      .catch((e) => {
+        console.error(e);
+      });
+
+    return () => {
+      t.dispose();
+      resizeObserver.unobserve(ref.current!);
+    };
+  }, []);
+
+  return (
+    <div className="terminal-container">
+      <div className="terminal" ref={ref} />
     </div>
   );
 }
@@ -651,11 +796,19 @@ function App() {
 
   return (
     <Profiler id="app" onRender={console.log}>
-      <Allotment minSize={200} className="container">
-        {remoteState &&
-          remoteState.panes.map((props, i) => (
-            <Pane key={i} paneHandle={i} {...props} />
-          ))}
+      <Allotment vertical className="container" separator>
+        <Allotment minSize={200}>
+          {remoteState &&
+            remoteState.panes.map((props, i) => (
+              <Pane
+                key={i}
+                paneHandle={i}
+                {...props}
+                active={remoteState.display_options.active_pane === i}
+              />
+            ))}
+        </Allotment>
+        <XTerm />
       </Allotment>
     </Profiler>
   );

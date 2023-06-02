@@ -11,6 +11,8 @@ pub enum Error {
     #[error("{0}")]
     Arboard(#[from] arboard::Error),
     #[error("{0}")]
+    PtyProcess(#[from] pty_process::Error),
+    #[error("{0}")]
     Custom(String),
 }
 

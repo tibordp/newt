@@ -36,7 +36,8 @@ function App({ children }) {
   };
 
   useEffect(() => {
-    safeCommand("zoom", { factor: zoom });
+    document.body.style.zoom = zoom.toString();
+    //safeCommand("zoom", { factor: zoom });
   }, [zoom]);
 
   useEffect(() => {

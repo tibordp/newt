@@ -1,12 +1,17 @@
 pub mod pane;
+pub mod terminal;
 
 use notify::RecommendedWatcher;
 use notify::RecursiveMode;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
+use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -19,10 +24,12 @@ use crate::common::PatchOperation;
 use crate::GlobalContext;
 
 use self::pane::Pane;
+use self::terminal::Terminal;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayOptionsInner {
     show_hidden: bool,
+    active_pane: PaneHandle,
 }
 
 #[derive(Default, Clone)]
@@ -38,7 +45,7 @@ impl serde::Serialize for DisplayOptions {
 }
 
 #[derive(
-    PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
+    Default, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
 pub struct PaneHandle(usize);
 
@@ -75,9 +82,59 @@ impl serde::Serialize for Panes {
     }
 }
 
+#[derive(
+    PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct TerminalHandle(uuid::Uuid);
+
+impl TerminalHandle {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+}
+
+#[derive(Clone)]
+pub struct Terminals(Arc<RwLock<HashMap<TerminalHandle, Arc<Terminal>>>>);
+
+impl Terminals {
+    pub fn new() -> Self {
+        Self(Arc::new(RwLock::new(HashMap::new())))
+    }
+
+    pub fn get(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
+        self.0.read().get(&handle).cloned()
+    }
+
+    pub fn insert(&self, handle: TerminalHandle, terminal: Terminal) -> TerminalHandle {
+        let mut lock = self.0.write();
+        lock.insert(handle, Arc::new(terminal));
+        handle
+    }
+
+    pub fn remove(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
+        self.0.write().remove(&handle)
+    }
+}
+
+impl serde::Serialize for Terminals {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        let lock = self.0.read();
+
+        let mut seq = serializer.serialize_map(Some(lock.len()))?;
+        for e in lock.iter() {
+            seq.serialize_entry(&e.0, &**e.1)?;
+        }
+        seq.end()
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct MainWindowState {
     pub panes: Panes,
+    pub terminals: Terminals,
     pub display_options: DisplayOptions,
     pub window_title: String,
 }
@@ -91,6 +148,7 @@ impl MainWindowState {
                 let path = PathBuf::from(path);
                 Pane::new(path, display_options.clone())
             })),
+            terminals: Terminals::new(),
             display_options,
             window_title: "File Manager".to_string(),
         }
@@ -110,11 +168,7 @@ impl MainWindowState {
     }
 
     pub fn activate_pane(&self, handle: PaneHandle) {
-        for (h, pane) in self.panes.iter() {
-            let mut view_state = pane.view_state_mut();
-            view_state.set_filter(None);
-            view_state.active = h == handle;
-        }
+        self.display_options.0.write().active_pane = handle;
     }
 
     pub fn copy_pane(&self, handle: PaneHandle) -> Result<(), Error> {
@@ -167,12 +221,14 @@ impl UpdatePublisher {
             *previous = serialized.clone();
         }
 
-        self.window.emit(
-            "updated",
-            patch
+        if matches!(patch.as_ref().map(Vec::len), Some(1..) | None) {
+            self.window.emit(
+                "updated",
+                patch
                 .map(UpdatePayload::Patch)
                 .unwrap_or(UpdatePayload::State(serialized)),
-        )?;
+            )?;
+        }
 
         Ok(())
     }
@@ -181,7 +237,7 @@ impl UpdatePublisher {
 struct MainWindowContextInner {
     window: Window,
     watcher: Watcher,
-    global_state: MainWindowState,
+    main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher>,
 }
 
@@ -216,7 +272,7 @@ impl MainWindowContext {
                 window,
                 watcher,
                 publisher,
-                global_state,
+                main_window_state: global_state,
             }),
         })
     }
@@ -225,10 +281,12 @@ impl MainWindowContext {
         &self,
         f: impl FnOnce(&MainWindowState) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let ret = f(&self.inner.global_state);
+        let ret = f(&self.inner.main_window_state);
 
         self.inner.watcher.update_paths();
-        self.inner.publisher.publish(&self.inner.global_state)?;
+        self.inner
+            .publisher
+            .publish(&self.inner.main_window_state)?;
 
         if let Some(pane) = self.active_pane() {
             self.inner
@@ -252,19 +310,33 @@ impl MainWindowContext {
     }
 
     pub fn panes(&self) -> &Panes {
-        &self.inner.global_state.panes
+        &self.inner.main_window_state.panes
     }
 
     pub fn active_pane(&self) -> Option<Arc<Pane>> {
-        for (_, pane) in self.inner.global_state.panes.iter() {
-            let view_state = pane.view_state();
-            if view_state.active {
-                drop(view_state);
-                return Some(pane);
-            }
-        }
+        self.inner.main_window_state.panes.get(
+            self.inner
+                .main_window_state
+                .display_options
+                .0
+                .read()
+                .active_pane,
+        )
+    }
 
-        None
+    pub fn terminals(&self) -> &Terminals {
+        &self.inner.main_window_state.terminals
+    }
+
+    pub async fn create_terminal(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<TerminalHandle, Error> {
+        let terminal = Terminal::create(self.inner.window.clone(), handle, rows, cols).await?;
+
+        self.with_update(|s| {
+            s.terminals.insert(handle, terminal);
+            Ok(())
+        })?;
+
+        Ok(handle)
     }
 }
 
