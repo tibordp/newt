@@ -58,17 +58,8 @@ impl Terminal {
         }
         let child = cmd.spawn(&pty_slave)?;
 
-        tokio::spawn(async move {
-            match run_terminal(
-                context,
-                pty_master,
-                child,
-                window,
-                handle,
-                receiver,
-            )
-            .await
-            {
+        tauri::async_runtime::spawn(async move {
+            match run_terminal(context, pty_master, child, window, handle, receiver).await {
                 Ok(()) => {}
                 Err(e) => {
                     eprintln!("terminal error: {}", e);

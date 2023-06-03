@@ -1,40 +1,51 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 
-type CreateDirectoryProps = CommonDialogProps & {
-  path: string;
+type RenameProps = CommonDialogProps & {
+  base_path: string;
+  name: string;
 };
 
-export default function CreateDirectory({
-  path,
+export default function Rename({
+  base_path,
+  name,
   cancel,
   context,
-}: CreateDirectoryProps) {
-  const [name, setName] = useState("");
+}: RenameProps) {
+  const [newName, setNewName] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     console.log(context);
-    safeCommand("create_directory", {
+    safeCommand("rename", {
       paneHandle: context?.pane_handle,
-      path,
-      name,
+      basePath: base_path,
+      oldName: name,
+      newName: newName,
     });
   }
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
 
   return (
     <>
       <form onSubmit={onSubmit}>
         <div className="dialog-contents">
-          <h2>Create Directory</h2>
-          <label htmlFor="path">Directory name</label>
+          <h2>Rename file</h2>
+          <label htmlFor="path">
+            New name for <b>{name}</b>
+          </label>
           <input
             type="text"
             name="path"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
             size={40}
+            ref={inputRef}
             autoFocus
           />
         </div>

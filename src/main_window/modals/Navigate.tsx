@@ -1,45 +1,46 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 
-type CreateDirectoryProps = CommonDialogProps & {
+type NavigateProps = CommonDialogProps & {
   path: string;
 };
 
-export default function CreateDirectory({
-  path,
-  cancel,
-  context,
-}: CreateDirectoryProps) {
-  const [name, setName] = useState("");
+export default function Navigate({ path, cancel, context }: NavigateProps) {
+  const [newPath, setNewPath] = useState(path);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     console.log(context);
-    safeCommand("create_directory", {
+    safeCommand("navigate", {
       paneHandle: context?.pane_handle,
-      path,
-      name,
+      path: newPath,
     });
   }
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
 
   return (
     <>
       <form onSubmit={onSubmit}>
         <div className="dialog-contents">
-          <h2>Create Directory</h2>
-          <label htmlFor="path">Directory name</label>
+          <h2>Navigate to</h2>
+          <label htmlFor="path">Path</label>
           <input
+            ref={inputRef}
             type="text"
             name="path"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={newPath}
+            onChange={(e) => setNewPath(e.target.value)}
             size={40}
             autoFocus
           />
         </div>
         <div className="dialog-buttons">
-          <input type="submit" value="Create" disabled={!name} />
+          <input type="submit" value="Create" disabled={!newPath} />
           <input type="button" value="Cancel" onClick={cancel} />
         </div>
       </form>

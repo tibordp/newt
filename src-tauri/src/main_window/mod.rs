@@ -10,6 +10,7 @@ use serde::ser::SerializeSeq;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -60,27 +61,39 @@ impl serde::Serialize for DisplayOptions {
 }
 
 #[derive(
-    Default, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
+    Default,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub struct PaneHandle(usize);
 
 #[derive(Clone)]
-pub struct Panes(Vec<Arc<Pane>>);
+pub struct Panes(Arc<RwLock<Vec<Arc<Pane>>>>);
 
 impl Panes {
-    pub fn new(inner: impl IntoIterator<Item = Pane>) -> Self {
-        Self(inner.into_iter().map(Arc::new).collect())
+    pub fn new() -> Self {
+        Self(Arc::new(RwLock::new(Vec::new())))
+    }
+
+    pub fn add(&self, pane: Pane) {
+        let mut lock = self.0.write();
+        lock.push(Arc::new(pane));
     }
 
     pub fn get(&self, handle: PaneHandle) -> Option<Arc<Pane>> {
-        self.0.get(handle.0).cloned()
+        self.0.read().get(handle.0).cloned()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (PaneHandle, Arc<Pane>)> + '_ {
-        self.0
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (PaneHandle(i), p.clone()))
+    pub fn all(&self) -> Vec<Arc<Pane>> {
+        self.0.read().clone()
     }
 }
 
@@ -89,8 +102,9 @@ impl serde::Serialize for Panes {
     where
         S: serde::ser::Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for e in self.0.iter() {
+        let locked = self.0.read();
+        let mut seq = serializer.serialize_seq(Some(locked.len()))?;
+        for e in locked.iter() {
             seq.serialize_element(&**e)?;
         }
         seq.end()
@@ -153,13 +167,26 @@ impl serde::Serialize for Terminals {
 
 #[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum ModalData {
-    CreateDirectory { path: PathBuf }
+pub enum ModalDataKind {
+    CreateDirectory { path: PathBuf },
+    Navigate { path: PathBuf },
+    Rename { base_path: PathBuf, name: String },
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModalContext {
+    pub pane_handle: Option<PaneHandle>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModalData {
+    #[serde(flatten)]
+    pub kind: ModalDataKind,
+    pub context: ModalContext,
 }
 
 #[derive(Clone)]
 pub struct ModalState(pub Arc<RwLock<Option<ModalData>>>);
-
 
 impl Default for ModalState {
     fn default() -> Self {
@@ -186,14 +213,11 @@ pub struct MainWindowState {
 }
 
 impl MainWindowState {
-    fn new(paths: impl IntoIterator<Item = String>) -> Self {
+    fn new() -> Self {
         let display_options = DisplayOptions::default();
 
         Self {
-            panes: Panes::new(paths.into_iter().map(|path| {
-                let path = PathBuf::from(path);
-                Pane::new(path, display_options.clone())
-            })),
+            panes: Panes::new(),
             terminals: Terminals::new(),
             modal: ModalState::default(),
             display_options,
@@ -202,16 +226,18 @@ impl MainWindowState {
     }
 
     fn other_pane(&self, handle: PaneHandle) -> Arc<Pane> {
-        assert!(self.panes.0.len() == 2);
-
         self.panes.get(PaneHandle(1 - handle.0)).unwrap()
     }
 
-    pub fn refresh(&self) -> Result<(), Error> {
-        for (_, pane) in self.panes.iter() {
-            pane.refresh()?;
+    pub async fn refresh(&self) -> Result<(), Error> {
+        for pane in self.panes.all() {
+            pane.refresh().await?;
         }
         Ok(())
+    }
+
+    pub fn close_modal(&self) {
+        *self.modal.0.write() = None;
     }
 
     pub fn activate_pane(&self, handle: PaneHandle) {
@@ -220,11 +246,11 @@ impl MainWindowState {
         opts.panes_focused = true;
     }
 
-    pub fn copy_pane(&self, handle: PaneHandle) -> Result<(), Error> {
+    pub async fn copy_pane(&self, handle: PaneHandle) -> Result<(), Error> {
         let other_pane = self.other_pane(handle);
         let pane = self.panes.get(handle).unwrap();
 
-        pane.navigate(other_pane.path())?;
+        pane.navigate(other_pane.path()).await?;
 
         Ok(())
     }
@@ -235,7 +261,7 @@ impl MainWindowState {
             display_options.show_hidden = !display_options.show_hidden;
         }
 
-        for (_, pane) in self.panes.iter() {
+        for pane in self.panes.all() {
             pane.update_view_state();
         }
     }
@@ -266,13 +292,27 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 }
 
 impl MainWindowContext {
-    pub fn create(window: Window) -> Result<Self, Error> {
-        let paths = ["/".to_string(), "/home/tibordp/.bashrc".to_string()];
-        let global_state = MainWindowState::new(paths);
-        global_state.refresh()?;
+    pub async fn create(window: Window) -> Result<Self, Error> {
+        let global_state = MainWindowState::new();
 
-        let publisher = Arc::new(UpdatePublisher::new(window.clone(), "main_window"));
+        let publisher = Arc::new(UpdatePublisher::new(
+            window.clone(),
+            "main_window",
+            global_state.clone(),
+        ));
         let watcher = Watcher::new(publisher.clone(), global_state.clone());
+
+        global_state.panes.add(Pane::new(
+            "/".into(),
+            global_state.display_options.clone(),
+            publisher.clone(),
+        ));
+        global_state.panes.add(Pane::new(
+            "/".into(),
+            global_state.display_options.clone(),
+            publisher.clone(),
+        ));
+        global_state.refresh().await?;
 
         Ok(Self {
             inner: Arc::new(MainWindowContextInner {
@@ -295,9 +335,27 @@ impl MainWindowContext {
         let ret = f(&self.inner.main_window_state);
 
         self.inner.watcher.update_paths();
-        self.inner
-            .publisher
-            .publish(&self.inner.main_window_state)?;
+        self.inner.publisher.publish()?;
+
+        if let Some(pane) = self.active_pane() {
+            self.inner
+                .window
+                .set_title(&format!("{} - newt", pane.path().display()))
+                .unwrap();
+        }
+
+        ret
+    }
+
+    pub async fn with_update_async<T, F, Fut>(&self, f: F) -> Result<T, Error>
+    where
+        Fut: Future<Output = Result<T, Error>>,
+        F: FnOnce(MainWindowState) -> Fut,
+    {
+        let ret = f(self.inner.main_window_state.clone()).await;
+
+        self.inner.watcher.update_paths();
+        self.inner.publisher.publish()?;
 
         if let Some(pane) = self.active_pane() {
             self.inner
@@ -312,12 +370,28 @@ impl MainWindowContext {
     pub fn with_pane_update<T>(
         &self,
         pane_handle: PaneHandle,
-        f: impl FnOnce(&Pane) -> Result<T, Error>,
+        f: impl FnOnce(&MainWindowState, &Pane) -> Result<T, Error>,
     ) -> Result<T, Error> {
         self.with_update(|s| {
             let pane = s.panes.get(pane_handle).unwrap();
-            f(&pane)
+            f(s, &pane)
         })
+    }
+
+    pub async fn with_pane_update_async<T, F, Fut>(
+        &self,
+        pane_handle: PaneHandle,
+        f: F,
+    ) -> Result<T, Error>
+    where
+        Fut: Future<Output = Result<T, Error>>,
+        F: FnOnce(MainWindowState, Arc<Pane>) -> Fut,
+    {
+        self.with_update_async(|s| {
+            let pane = s.panes.get(pane_handle).unwrap();
+            async move { f(s, pane).await }
+        })
+        .await
     }
 
     pub fn panes(&self) -> &Panes {
@@ -351,13 +425,8 @@ impl MainWindowContext {
 
     pub async fn create_terminal(&self, path: Option<&Path>) -> Result<Arc<Terminal>, Error> {
         let handle = TerminalHandle::new();
-        let terminal = Terminal::create(
-            self.clone(),
-            self.inner.window.clone(),
-            handle,
-            path,
-        )
-        .await?;
+        let terminal =
+            Terminal::create(self.clone(), self.inner.window.clone(), handle, path).await?;
 
         self.with_update(|s| {
             let terminal = s.terminals.insert(handle, terminal);
@@ -386,34 +455,34 @@ impl Watcher {
         global_state: MainWindowState,
     ) -> Self {
         let inner = Arc::new(Mutex::new(WatcherInner {
-            global_state,
+            global_state: global_state.clone(),
             watcher: None,
             watched_paths: HashSet::new(),
         }));
 
         let watcher = {
-            let inner = Arc::clone(&inner);
             notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 match res {
                     Ok(event) => {
-                        let inner = inner.lock();
-                        let mut changed = false;
-
-                        {
-                            for (_, pane) in inner.global_state.panes.iter() {
-                                let pane_path = pane.path();
-                                if event.paths.iter().any(|p| p.starts_with(&pane_path)) {
-                                    if let Err(e) = pane.refresh() {
-                                        eprintln!("refresh error: {:?}", e);
+                        let global_state = global_state.clone();
+                        let publisher = publisher.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let mut changed = false;
+                            {
+                                for pane in global_state.panes.all() {
+                                    let pane_path = pane.path();
+                                    if event.paths.iter().any(|p| p.starts_with(&pane_path)) {
+                                        if let Err(e) = pane.refresh().await {
+                                            eprintln!("refresh error: {:?}", e);
+                                        }
+                                        changed = true;
                                     }
-                                    changed = true;
                                 }
                             }
-                        }
-
-                        if changed {
-                            publisher.publish(&inner.global_state).unwrap();
-                        }
+                            if changed {
+                                publisher.publish().unwrap();
+                            }
+                        });
                     }
                     Err(e) => eprintln!("watch error: {:?}", e),
                 };
@@ -427,25 +496,25 @@ impl Watcher {
 
     pub fn update_paths(&self) {
         use notify::Watcher;
-        let mut inner = self.inner.lock();
 
+        let mut inner = self.inner.lock();
         let paths: HashSet<PathBuf> = inner
             .global_state
             .panes
+            .all()
             .iter()
-            .map(|(_, p)| p.path())
+            .map(|p| p.path())
             .collect();
-
         let to_add: Vec<_> = paths.difference(&inner.watched_paths).cloned().collect();
         let to_remove: Vec<_> = inner.watched_paths.difference(&paths).cloned().collect();
 
         let watcher = inner.watcher.as_mut().unwrap();
-
         for path in to_add {
             if let Err(e) = watcher.watch(&path, RecursiveMode::NonRecursive) {
                 eprintln!("watch error: {:?}", e);
             }
         }
+
         for path in to_remove {
             match watcher.unwatch(&path) {
                 Ok(_)
@@ -458,7 +527,6 @@ impl Watcher {
                 }
             }
         }
-
         inner.watched_paths = paths;
     }
 }

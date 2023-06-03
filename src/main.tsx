@@ -5,7 +5,6 @@ import Viewer from "./viewer/Viewer";
 
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles.css";
-
 import { safeCommand } from "./lib/ipc";
 
 const router = createBrowserRouter([
@@ -36,8 +35,8 @@ function App({ children }) {
   };
 
   useEffect(() => {
-    document.body.style.zoom = zoom.toString();
-    //safeCommand("zoom", { factor: zoom });
+    //document.body.style.zoom = zoom.toString();
+    safeCommand("zoom", { factor: zoom });
   }, [zoom]);
 
   useEffect(() => {

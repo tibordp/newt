@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { Allotment } from "allotment";
 import "./MainWindow.css";
 import "allotment/dist/style.css";
+import { confirm } from "@tauri-apps/api/dialog";
 
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
@@ -177,6 +178,7 @@ type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
+  busy: boolean;
 };
 
 type DisplayOptions = {
@@ -274,9 +276,24 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     selected,
     sorting,
     focused,
+    busy,
   } = props;
   const command = (cmd: string, args: object = {}) =>
     safeCommand(cmd, { paneHandle, ...args });
+
+  const [showSpinner, setShowSpinner] = useState(false);
+
+  useEffect(() => {
+    let timeout = null;
+    if (busy) {
+      timeout = setTimeout(() => setShowSpinner(true), 200);
+    } else {
+      setShowSpinner(false);
+    }
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [busy]);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -413,6 +430,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     } else if (e.key == "." && e.ctrlKey) {
       command("copy_pane");
     } else if (e.key == "Escape") {
+      command("cancel");
       command("set_filter", { filter: null });
     } else if (e.key.toLowerCase() == "d" && e.ctrlKey) {
       command("deselect_all");
@@ -420,10 +438,28 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       command("select_all");
     } else if (e.key == "F3") {
       command("view", { filename: files[focusedIndex].name });
-    } else if (e.key == "F7") {
-      command("request_mkdir");
+    } else if (e.key == "F2") {
+      command("dialog", { dialog: "rename" });
+    }
+    if (e.key == "F7") {
+      command("dialog", { dialog: "create_directory" });
+    } else if (e.key.toLowerCase() == "l" && e.ctrlKey) {
+      command("dialog", { dialog: "navigate" });
     } else if ((e.key.toLowerCase() == "c" || e.key == "Insert") && e.ctrlKey) {
       command("copy_to_clipboard");
+    } else if (e.key == "Delete") {
+      let message;
+      if (selected.length > 0) {
+        message = `Delete ${selected.length} selected files?`;
+      } else {
+        message = `Delete ${files[focusedIndex].name}?`;
+      }
+
+      confirm(message, { title: "Delete" }).then((confirmed) => {
+        if (confirmed) {
+          command("delete_selected");
+        }
+      });
     } else if (
       (e.key.toLowerCase() == "v" && e.ctrlKey) ||
       (e.key == "Insert" && e.shiftKey)
@@ -499,7 +535,10 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   const widthPrefix = `pane-${paneHandle}-column-`;
 
   return (
-    <div className="pane" onClick={() => command("focus")}>
+    <div
+      className={`pane ${showSpinner ? "pane-busy" : ""}`}
+      onClick={() => command("focus")}
+    >
       <input
         className="filter-input"
         type="text"
@@ -573,13 +612,14 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         </ul>
       )}
       <div className="statusbar">
-        {selected.length > 0 && (
+        {showSpinner && "Loading file list..."}
+        {!showSpinner && selected.length > 0 && (
           <>
             {selectedFileCount} files, {selectedDirCount} directories selected,{" "}
             {selectedBytes.toLocaleString()} bytes total
           </>
         )}
-        {selected.length == 0 && (
+        {!showSpinner && selected.length == 0 && (
           <>
             {fileCount} files, {dirCount} directories
           </>
