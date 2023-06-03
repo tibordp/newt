@@ -26,10 +26,9 @@ export const safeCommandSilent = async (
   try {
     await invoke(command, { ...args });
   } catch (e) {
-    console.log(e)
+    console.log(e);
   }
 };
-
 
 export type ChangePayload<T> = {
   state?: T;
@@ -38,11 +37,10 @@ export type ChangePayload<T> = {
 
 export type TerminalData = {
   handle: string;
-  data: number[]
+  data: number[];
 };
 
 export const TerminalData = createContext({});
-
 
 function deepUpdate(original: any, received: any): any {
   if (
@@ -84,31 +82,37 @@ function deepUpdate(original: any, received: any): any {
   return ret;
 }
 
-export const useRemoteState = <T>(event_name: string, deps: any[] = []): T | null => {
+export const useRemoteState = <T>(
+  event_name: string,
+  deps: any[] = []
+): T | null => {
   const [state, setState] = useState<T>(null);
 
   useEffect(() => {
-    let listenPromise = listen(`update:${event_name}`, (event: Event<ChangePayload<T>>) => {
-      if (event.windowLabel === appWindow.label) {
-        // State is serialized, so we perform a "deep" update (diff), updating
-        // only the changed parts of the current state. This is to avoid losing
-        // the reference to the state object, which would cause a re-render of
-        // the entire component tree.
-        setState((s) => {
-          const start = performance.now();
-          let ret;
-          if (event.payload.patch) {
-            console.log(event.payload.patch);
-            ret = applyPatches(s, event.payload.patch);
-          } else {
-            ret = deepUpdate(s, event.payload.state!);
-          }
-          const end = performance.now();
-          console.log(`[useRemoteState] Update took ${end - start}ms`);
-          return ret;
-        });
+    let listenPromise = listen(
+      `update:${event_name}`,
+      (event: Event<ChangePayload<T>>) => {
+        if (event.windowLabel === appWindow.label) {
+          // State is serialized, so we perform a "deep" update (diff), updating
+          // only the changed parts of the current state. This is to avoid losing
+          // the reference to the state object, which would cause a re-render of
+          // the entire component tree.
+          setState((s) => {
+            const start = performance.now();
+            let ret;
+            if (event.payload.patch) {
+              console.log(event.payload.patch);
+              ret = applyPatches(s, event.payload.patch);
+            } else {
+              ret = deepUpdate(s, event.payload.state!);
+            }
+            const end = performance.now();
+            console.log(`[useRemoteState] Update took ${end - start}ms`);
+            return ret;
+          });
+        }
       }
-    });
+    );
     listenPromise.then(() => invoke("ping", {}));
     return () => {
       listenPromise.then((unlisten) => unlisten());
@@ -121,34 +125,40 @@ export const useRemoteState = <T>(event_name: string, deps: any[] = []): T | nul
 export type DataCallback = (data: number[]) => void;
 
 type TerminalDataListener = {
-  messages: number[][]
-  listener?: DataCallback,
-  disconnected?: boolean
-}
+  messages: number[][];
+  listener?: DataCallback;
+  disconnected?: boolean;
+};
 
 export type TerminalDataState = {
-  [handle: string]: TerminalDataListener
-}
+  [handle: string]: TerminalDataListener;
+};
 
 export const useTerminalData = (deps: any[] = []): any => {
   const state = useRef<TerminalDataState>({});
 
   useEffect(() => {
-    let listenPromise = listen("terminal_data", (event: Event<TerminalData>) => {
-      if (event.windowLabel === appWindow.label) {
-        if (!(event.payload.handle in state.current)) {
-          state.current[event.payload.handle] = { messages: [], listener: null }
-        }
-        const cur = state.current[event.payload.handle]
-        if (!cur.disconnected) {
-          if (cur.listener) {
-            cur.listener(event.payload.data)
-          } else {
-            cur.messages.push(event.payload.data)
+    let listenPromise = listen(
+      "terminal_data",
+      (event: Event<TerminalData>) => {
+        if (event.windowLabel === appWindow.label) {
+          if (!(event.payload.handle in state.current)) {
+            state.current[event.payload.handle] = {
+              messages: [],
+              listener: null,
+            };
+          }
+          const cur = state.current[event.payload.handle];
+          if (!cur.disconnected) {
+            if (cur.listener) {
+              cur.listener(event.payload.data);
+            } else {
+              cur.messages.push(event.payload.data);
+            }
           }
         }
       }
-    });
+    );
     return () => {
       listenPromise.then((unlisten) => unlisten());
     };
@@ -157,19 +167,24 @@ export const useTerminalData = (deps: any[] = []): any => {
   return state.current;
 };
 
-export const registerTerminalDataHandler = (context: TerminalDataState, handle: string, listener: DataCallback): () => void => {
+export const registerTerminalDataHandler = (
+  context: TerminalDataState,
+  handle: string,
+  listener: DataCallback
+): (() => void) => {
   if (!(handle in context)) {
-    context[handle] = { messages: [], listener: listener }
+    context[handle] = { messages: [], listener: listener };
   } else {
     if (context[handle].listener) {
       throw new Error("cannot have more than one listener per terminal");
     }
     context[handle].listener = listener;
-    while (context[handle].messages) {
+    while (context[handle].messages.length > 0) {
+      console.log(context[handle].messages);
       listener(context[handle].messages.shift());
     }
   }
   return () => {
     context[handle].disconnected = true;
-  }
-}
+  };
+};

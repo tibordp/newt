@@ -1691,6 +1691,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "shell-quote",
  "tauri",
  "tauri-build",
  "thiserror",
@@ -2601,6 +2602,12 @@ checksum = "900fba806f70c630b0a382d0d825e17a0f19fcd059a2ade1ff237bcddf446b31"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "shell-quote"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab31b1e46a3f14300977ece8c355009deddc6c531de49d55951e795bbad42957"
 
 [[package]]
 name = "signal-hook-registry"

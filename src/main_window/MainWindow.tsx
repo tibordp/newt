@@ -17,12 +17,22 @@ import { ViewportList, ViewportListRef } from "../lib/viewPortList";
 import { Profiler } from "react";
 import { enablePatches } from "immer";
 
-import { TerminalData, registerTerminalDataHandler, safeCommand, safeCommandSilent, useRemoteState, useTerminalData } from "../lib/ipc";
+import {
+  TerminalData,
+  registerTerminalDataHandler,
+  safeCommand,
+  safeCommandSilent,
+  useRemoteState,
+  useTerminalData,
+} from "../lib/ipc";
 import { Terminal as XTermJSTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 
+import ReactModal from "react-modal";
+
 import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
+import { ModalContent, ModalState } from "./modals/ModalContent";
 
 enablePatches();
 
@@ -71,8 +81,9 @@ function FileName({ focused, filter, info }) {
 
   return (
     <div
-      className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
-        }`}
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${
+        is_symlink ? "symlink" : ""
+      }`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
@@ -171,6 +182,8 @@ type PaneState = {
 type DisplayOptions = {
   show_hidden: boolean;
   active_pane: number;
+  panes_focused: boolean;
+  active_terminal?: string;
 };
 
 type Terminal = {
@@ -181,6 +194,7 @@ type MainWindowState = {
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;
+  modal?: ModalState;
 };
 
 function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
@@ -235,8 +249,9 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
     <>
       <div
         ref={ref}
-        className={`column ${sortKey ? "sortable" : ""} ${sorting.key == key && sorting.asc ? "sorted-asc" : ""
-          } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+        className={`column ${sortKey ? "sortable" : ""} ${
+          sorting.key == key && sorting.asc ? "sorted-asc" : ""
+        } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
         }}
@@ -348,12 +363,15 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   }, [active, files, focusedIndex]);
 
   useEffect(() => {
-    if (active && containerRef.current && inputRef.current) {
+    if (active) {
       if (filter === null) {
-        containerRef.current.focus();
+        containerRef.current?.focus();
       } else {
-        inputRef.current.focus();
+        inputRef.current?.focus();
       }
+    } else {
+      inputRef.current?.blur();
+      containerRef.current?.blur();
     }
   }, [active, path, filter]);
 
@@ -386,9 +404,9 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter") {
       if (e.ctrlKey) {
-        open(files[focusedIndex]);
+        command("send_to_terminal", { filename: files[focusedIndex].name });
       } else {
-        command("terminal_open");
+        open(files[focusedIndex]);
       }
     } else if (e.key == "Tab") {
       invoke("focus", { paneHandle: 1 - paneHandle });
@@ -402,6 +420,8 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       command("select_all");
     } else if (e.key == "F3") {
       command("view", { filename: files[focusedIndex].name });
+    } else if (e.key == "F7") {
+      command("request_mkdir");
     } else if ((e.key.toLowerCase() == "c" || e.key == "Insert") && e.ctrlKey) {
       command("copy_to_clipboard");
     } else if (
@@ -514,7 +534,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
           className="files"
           ref={containerRef}
           onKeyDown={onkeydown}
-          tabIndex={0}
+          tabIndex={-1}
           onScroll={onScroll}
         >
           <ViewportList
@@ -529,8 +549,9 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
               <li
                 key={row.name}
                 data-name={row.name}
-                className={`file-item ${active && row.name == focused ? "focused" : ""
-                  } ${selectedLookup.has(row.name) ? "selected" : ""}`}
+                className={`file-item ${
+                  active && row.name == focused ? "focused" : ""
+                } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
@@ -568,7 +589,8 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   );
 }
 
-function Terminal({ handle }: { handle: string }) {
+function Terminal({ handle, active }: { handle: string; active: boolean }) {
+  const terminalRef = useRef<XTermJSTerminal>(null);
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
 
@@ -606,6 +628,36 @@ function Terminal({ handle }: { handle: string }) {
       },
     });
     term.open(ref.current!);
+    terminalRef.current = term;
+
+    const unregister = registerTerminalDataHandler(
+      termDataContext,
+      handle,
+      (data) => {
+        console.log("DATA", data);
+        // @ts-ignore
+        term.write(data);
+      }
+    );
+
+    const onUserInput = (data) => {
+      const binaryData = new TextEncoder().encode(data);
+      safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
+    };
+
+    term.element.addEventListener("focus", () => {
+      safeCommandSilent("terminal_focus", { handle });
+    });
+
+    term.onBinary(onUserInput);
+    term.onData(onUserInput);
+    term.onResize((size) => {
+      safeCommandSilent("terminal_resize", {
+        handle,
+        rows: size.rows,
+        cols: size.cols,
+      });
+    });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -613,25 +665,10 @@ function Terminal({ handle }: { handle: string }) {
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
     });
-
     resizeObserver.observe(ref.current!);
-    const unregister = registerTerminalDataHandler(termDataContext, handle, data => {
-      // @ts-ignore
-      term.write(data);
-    });
-
-    const onUserInput = (data) => {
-      const binaryData = new TextEncoder().encode(data);
-      safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
-    };
-
-    term.onBinary(onUserInput);
-    term.onData(onUserInput);
-    term.onResize((size) => {
-      safeCommandSilent("terminal_resize", { handle, rows: size.rows, cols: size.cols });
-    });
 
     return () => {
+      terminalRef.current = null;
       unregister();
       term.dispose();
       if (ref.current) {
@@ -639,6 +676,14 @@ function Terminal({ handle }: { handle: string }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (active) {
+      terminalRef.current?.focus();
+    } else {
+      terminalRef.current?.blur();
+    }
+  }, [active]);
 
   return (
     <div className="terminal-container">
@@ -672,6 +717,14 @@ function App() {
   return (
     <Profiler id="app" onRender={console.log}>
       <TerminalData.Provider value={terminalData}>
+        <ReactModal
+          isOpen={!!remoteState?.modal}
+          onRequestClose={() => safeCommand("close_modal")}
+          overlayClassName={"modal-overlay"}
+          className={"modal-content"}
+        >
+          <ModalContent state={remoteState?.modal} />
+        </ReactModal>
         <Allotment vertical className="container" separator>
           <Allotment minSize={200}>
             {remoteState &&
@@ -680,11 +733,25 @@ function App() {
                   key={i}
                   paneHandle={i}
                   {...props}
-                  active={remoteState.display_options.active_pane === i}
+                  active={
+                    remoteState.display_options.panes_focused &&
+                    remoteState.display_options.active_pane === i
+                  }
                 />
               ))}
           </Allotment>
-          { remoteState && Object.keys(remoteState.terminals).map((handle) => <Terminal key={handle} handle={handle} />) }
+          {remoteState &&
+            Object.keys(remoteState.terminals).map((handle) => (
+              <Allotment.Pane preferredSize="20%" key={handle}>
+                <Terminal
+                  handle={handle}
+                  active={
+                    !remoteState.display_options.panes_focused &&
+                    remoteState.display_options.active_terminal === handle
+                  }
+                />
+              </Allotment.Pane>
+            ))}
         </Allotment>
       </TerminalData.Provider>
     </Profiler>

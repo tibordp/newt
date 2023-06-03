@@ -50,7 +50,6 @@
   z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
-  -webkit-user-select: auto;
 }
 
 .table-header {
@@ -215,4 +214,14 @@ li.file-item {
 .terminal::before {
   content: "";
   flex-grow: 1;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.05);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

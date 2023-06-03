@@ -6,10 +6,12 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::Error;
+use crate::main_window::ModalData;
 use crate::main_window::pane::Sorting;
 use crate::main_window::MainWindowContext;
 use crate::main_window::PaneHandle;
 use crate::main_window::TerminalHandle;
+use crate::main_window::terminal::Terminal;
 
 #[tauri::command]
 pub fn navigate(ctx: MainWindowContext, pane_handle: PaneHandle, path: &str) -> Result<(), Error> {
@@ -253,10 +255,31 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn terminal_open(ctx: MainWindowContext) -> Result<TerminalHandle, Error> {
-    let handle = ctx.create_terminal().await?;
+pub async fn send_to_terminal(ctx: MainWindowContext, pane_handle: PaneHandle, filename: String) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let terminal = if let Some(terminal) = ctx.active_terminal() {
+        ctx.with_update(|c| {
+            c.display_options.0.write().panes_focused = false;
+            Ok(())
+        })?;
+        terminal
+    } else {
+        ctx.create_terminal(Some(&pane.path())).await?
+    };
 
-    Ok(handle)
+    let input: Vec<_> = pane.get_effective_selection()
+        .iter()
+        .filter_map(|p| {
+            p.file_name()
+                .map(shell_quote::bash::escape)
+                .map(|mut b| { b.push(b' '); b })
+         })
+        .flatten()
+        .collect();
+
+    terminal.input(input)?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -290,6 +313,49 @@ pub fn terminal_resize(
     Ok(())
 }
 
+#[tauri::command]
+pub fn focus_terminal(
+    ctx: MainWindowContext,
+    handle: TerminalHandle,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        let mut opts = gs.display_options.0.write();
+        opts.active_terminal = Some(handle);
+        opts.panes_focused = false;
+
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn close_modal(
+    ctx: MainWindowContext,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        let mut modal_state = gs.modal.0.write();
+        *modal_state = None;
+
+        Ok(())
+    })
+}
+
+
+#[tauri::command]
+pub fn request_mkdir(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+
+    ctx.with_update(|gs| {
+        let mut modal_state = gs.modal.0.write();
+        *modal_state = Some(ModalData::CreateDirectory { path: pane.path() });
+
+        Ok(())
+    })
+}
+
+
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
         navigate,
@@ -311,8 +377,10 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         copy_to_clipboard,
         paste_from_clipboard,
         zoom,
-        terminal_open,
         terminal_write,
         terminal_resize,
+        send_to_terminal,
+        close_modal,
+        request_mkdir
     ])
 }

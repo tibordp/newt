@@ -28,6 +28,7 @@ treediff = { version = "4", features = ["with-serde-json"] }
 pty-process = { path = "../pty-process" }
 tokio = { version = "1", features = ["full"] }
 libc = "*"
+shell-quote = "0.3.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"

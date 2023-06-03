@@ -10,6 +10,7 @@ use serde::ser::SerializeSeq;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use std::sync::Arc;
@@ -27,14 +28,27 @@ use crate::GlobalContext;
 use self::pane::Pane;
 use self::terminal::Terminal;
 
-#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayOptionsInner {
-    show_hidden: bool,
-    active_pane: PaneHandle,
+    pub show_hidden: bool,
+    pub active_pane: PaneHandle,
+    pub active_terminal: Option<TerminalHandle>,
+    pub panes_focused: bool,
 }
 
 #[derive(Default, Clone)]
-pub struct DisplayOptions(Arc<RwLock<DisplayOptionsInner>>);
+pub struct DisplayOptions(pub Arc<RwLock<DisplayOptionsInner>>);
+
+impl Default for DisplayOptionsInner {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            active_pane: PaneHandle(0),
+            active_terminal: None,
+            panes_focused: true,
+        }
+    }
+}
 
 impl serde::Serialize for DisplayOptions {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -102,14 +116,19 @@ impl Terminals {
         Self(Arc::new(RwLock::new(HashMap::new())))
     }
 
+    pub fn len(&self) -> usize {
+        self.0.read().len()
+    }
+
     pub fn get(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
         self.0.read().get(&handle).cloned()
     }
 
-    pub fn insert(&self, handle: TerminalHandle, terminal: Terminal) -> TerminalHandle {
+    pub fn insert(&self, handle: TerminalHandle, terminal: Terminal) -> Arc<Terminal> {
         let mut lock = self.0.write();
-        lock.insert(handle, Arc::new(terminal));
-        handle
+        let term = Arc::new(terminal);
+        lock.insert(handle, term.clone());
+        term
     }
 
     pub fn remove(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
@@ -133,9 +152,35 @@ impl serde::Serialize for Terminals {
 }
 
 #[derive(Clone, serde::Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ModalData {
+    CreateDirectory { path: PathBuf }
+}
+
+#[derive(Clone)]
+pub struct ModalState(pub Arc<RwLock<Option<ModalData>>>);
+
+
+impl Default for ModalState {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(None)))
+    }
+}
+
+impl serde::Serialize for ModalState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.0.read().serialize(serializer)
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
 pub struct MainWindowState {
     pub panes: Panes,
     pub terminals: Terminals,
+    pub modal: ModalState,
     pub display_options: DisplayOptions,
     pub window_title: String,
 }
@@ -150,6 +195,7 @@ impl MainWindowState {
                 Pane::new(path, display_options.clone())
             })),
             terminals: Terminals::new(),
+            modal: ModalState::default(),
             display_options,
             window_title: "File Manager".to_string(),
         }
@@ -169,7 +215,9 @@ impl MainWindowState {
     }
 
     pub fn activate_pane(&self, handle: PaneHandle) {
-        self.display_options.0.write().active_pane = handle;
+        let mut opts = self.display_options.0.write();
+        opts.active_pane = handle;
+        opts.panes_focused = true;
     }
 
     pub fn copy_pane(&self, handle: PaneHandle) -> Result<(), Error> {
@@ -236,10 +284,14 @@ impl MainWindowContext {
         })
     }
 
-    pub fn with_update(
+    pub fn window(&self) -> Window {
+        self.inner.window.clone()
+    }
+
+    pub fn with_update<T>(
         &self,
-        f: impl FnOnce(&MainWindowState) -> Result<(), Error>,
-    ) -> Result<(), Error> {
+        f: impl FnOnce(&MainWindowState) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let ret = f(&self.inner.main_window_state);
 
         self.inner.watcher.update_paths();
@@ -257,11 +309,11 @@ impl MainWindowContext {
         ret
     }
 
-    pub fn with_pane_update(
+    pub fn with_pane_update<T>(
         &self,
         pane_handle: PaneHandle,
-        f: impl FnOnce(&Pane) -> Result<(), Error>,
-    ) -> Result<(), Error> {
+        f: impl FnOnce(&Pane) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         self.with_update(|s| {
             let pane = s.panes.get(pane_handle).unwrap();
             f(&pane)
@@ -283,20 +335,37 @@ impl MainWindowContext {
         )
     }
 
+    pub fn active_terminal(&self) -> Option<Arc<Terminal>> {
+        self.inner
+            .main_window_state
+            .display_options
+            .0
+            .read()
+            .active_terminal
+            .and_then(|handle| self.inner.main_window_state.terminals.get(handle))
+    }
+
     pub fn terminals(&self) -> &Terminals {
         &self.inner.main_window_state.terminals
     }
 
-    pub async fn create_terminal(&self) -> Result<TerminalHandle, Error> {
+    pub async fn create_terminal(&self, path: Option<&Path>) -> Result<Arc<Terminal>, Error> {
         let handle = TerminalHandle::new();
-        let terminal = Terminal::create(self.inner.window.clone(), handle, None).await?;
+        let terminal = Terminal::create(
+            self.clone(),
+            self.inner.window.clone(),
+            handle,
+            path,
+        )
+        .await?;
 
         self.with_update(|s| {
-            s.terminals.insert(handle, terminal);
-            Ok(())
-        })?;
-
-        Ok(handle)
+            let terminal = s.terminals.insert(handle, terminal);
+            let mut opts = s.display_options.0.write();
+            opts.active_terminal = Some(handle);
+            opts.panes_focused = false;
+            Ok(terminal)
+        })
     }
 }
 
