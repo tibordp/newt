@@ -187,21 +187,23 @@ pub struct UpdatePublisher<T> {
     window: Window,
     event_name: String,
     previous: Mutex<serde_json::Value>,
+    state: T,
     _phantom: PhantomData<T>,
 }
 
 impl<T: serde::Serialize> UpdatePublisher<T> {
-    pub fn new(window: Window, event_name: &str) -> Self {
+    pub fn new(window: Window, event_name: &str, state: T) -> Self {
         Self {
             event_name: format!("update:{}", event_name),
             window,
+            state,
             previous: Mutex::new(serde_json::Value::Null),
             _phantom: PhantomData,
         }
     }
 
-    pub fn publish(&self, state: &T) -> Result<(), Error> {
-        let serialized = serde_json::to_value(state).unwrap();
+    pub fn publish(&self) -> Result<(), Error> {
+        let serialized = serde_json::to_value(&self.state).unwrap();
         let patch;
         {
             let mut previous = self.previous.lock();

@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::path::PathBuf;
 
 use tauri::Invoke;
 use tauri::Manager;
@@ -6,17 +7,36 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::Error;
+use crate::main_window::pane;
 use crate::main_window::pane::Sorting;
+use crate::main_window::terminal::Terminal;
 use crate::main_window::MainWindowContext;
+use crate::main_window::ModalContext;
+use crate::main_window::ModalData;
+use crate::main_window::ModalDataKind;
 use crate::main_window::PaneHandle;
 use crate::main_window::TerminalHandle;
 
 #[tauri::command]
-pub fn navigate(ctx: MainWindowContext, pane_handle: PaneHandle, path: &str) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
-        pane.navigate(path)?;
+pub fn cancel(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.cancel();
         Ok(())
     })
+}
+
+#[tauri::command]
+pub async fn navigate(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    path: &str,
+) -> Result<(), Error> {
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate(path).await?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -41,7 +61,7 @@ pub fn set_sorting(
     pane_handle: PaneHandle,
     sorting: Sorting,
 ) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().set_sorting(sorting);
         Ok(())
     })
@@ -54,7 +74,7 @@ pub fn toggle_selected(
     filename: String,
     focus_next: bool,
 ) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().toggle_selected(filename, focus_next);
         Ok(())
     })
@@ -66,7 +86,7 @@ pub fn select_range(
     pane_handle: PaneHandle,
     filename: String,
 ) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().select_range(filename);
         Ok(())
     })
@@ -74,7 +94,7 @@ pub fn select_range(
 
 #[tauri::command]
 pub fn select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().select_all();
         Ok(())
     })
@@ -82,7 +102,7 @@ pub fn select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(),
 
 #[tauri::command]
 pub fn deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().deselect_all();
         Ok(())
     })
@@ -95,7 +115,7 @@ pub fn relative_jump(
     offset: i32,
     with_selection: bool,
 ) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().relative_jump(offset, with_selection);
         Ok(())
     })
@@ -107,15 +127,16 @@ pub fn set_filter(
     pane_handle: PaneHandle,
     filter: Option<String>,
 ) -> Result<(), Error> {
-    ctx.with_pane_update(pane_handle, |pane| {
+    ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().set_filter(filter);
         Ok(())
     })
 }
 
 #[tauri::command]
-pub fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update(|gs| gs.copy_pane(pane_handle))
+pub async fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_update_async(|gs| async move { gs.copy_pane(pane_handle).await })
+        .await
 }
 
 #[tauri::command]
@@ -216,14 +237,18 @@ pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
 }
 
 #[tauri::command]
-pub fn paste_from_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn paste_from_clipboard(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
     let mut clipboard = arboard::Clipboard::new()?;
     let text = clipboard.get_text()?;
 
-    ctx.with_pane_update(pane_handle, |pane| {
-        pane.navigate(text.trim())?;
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        pane.navigate(text.trim()).await?;
         Ok(())
     })
+    .await
 }
 
 #[tauri::command]
@@ -253,10 +278,37 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn terminal_open(ctx: MainWindowContext) -> Result<TerminalHandle, Error> {
-    let handle = ctx.create_terminal().await?;
+pub async fn send_to_terminal(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    filename: String,
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let terminal = if let Some(terminal) = ctx.active_terminal() {
+        ctx.with_update(|c| {
+            c.display_options.0.write().panes_focused = false;
+            Ok(())
+        })?;
+        terminal
+    } else {
+        ctx.create_terminal(Some(&pane.path())).await?
+    };
 
-    Ok(handle)
+    let input: Vec<_> = pane
+        .get_effective_selection()
+        .iter()
+        .filter_map(|p| {
+            p.file_name().map(shell_quote::bash::escape).map(|mut b| {
+                b.push(b' ');
+                b
+            })
+        })
+        .flatten()
+        .collect();
+
+    terminal.input(input)?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -290,8 +342,137 @@ pub fn terminal_resize(
     Ok(())
 }
 
+#[tauri::command]
+pub fn focus_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        let mut opts = gs.display_options.0.write();
+        opts.active_terminal = Some(handle);
+        opts.panes_focused = false;
+
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn dialog(
+    ctx: MainWindowContext,
+    dialog: String,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+
+    ctx.with_update(|gs| {
+        let mut modal_state = gs.modal.0.write();
+        *modal_state = Some(ModalData {
+            kind: match &dialog[..] {
+                "navigate" => ModalDataKind::Navigate { path: pane.path() },
+                "create_directory" => ModalDataKind::CreateDirectory { path: pane.path() },
+                "rename" => ModalDataKind::Rename {
+                    base_path: pane.path(),
+                    name: match pane.view_state().focused {
+                        Some(ref selected) => selected.clone(),
+                        None => return Ok(()),
+                    },
+                },
+                _ => panic!(),
+            },
+            context: ModalContext {
+                pane_handle: Some(pane_handle),
+            },
+        });
+
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn create_directory(
+    ctx: MainWindowContext,
+    pane_handle: Option<PaneHandle>,
+    path: String,
+    name: String,
+) -> Result<(), Error> {
+    let dir_path = PathBuf::from(path.clone());
+    let dir_path = dir_path.join(name.clone());
+
+    std::fs::create_dir_all(&dir_path)?;
+
+    ctx.with_update_async(|gs| async move {
+        gs.close_modal();
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.navigate(path).await?;
+            pane.view_state_mut().focus(name);
+            eprintln!("here");
+        }
+
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        let selected = pane.get_effective_selection();
+        let ret = tauri::async_runtime::spawn_blocking(|| {
+            for path in selected {
+                if path.is_dir() {
+                    std::fs::remove_dir_all(path)?;
+                } else {
+                    std::fs::remove_file(path)?;
+                }
+            }
+            Ok::<_, Error>(())
+        })
+        .await?;
+
+        pane.refresh().await?;
+        ret?;
+
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn rename(
+    ctx: MainWindowContext,
+    pane_handle: Option<PaneHandle>,
+    base_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), Error> {
+    let old_path = PathBuf::from(base_path.clone()).join(old_name.clone());
+    let new_path = PathBuf::from(base_path).join(new_name.clone());
+
+    tauri::async_runtime::spawn_blocking(move || std::fs::rename(&old_path, &new_path)).await??;
+
+    ctx.with_update_async(|gs| async move {
+        gs.close_modal();
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh().await?;
+            pane.view_state_mut().focus(new_name);
+        }
+
+        Ok(())
+    })
+    .await
+
+}
+
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
+        cancel,
         navigate,
         ping,
         focus,
@@ -311,8 +492,13 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         copy_to_clipboard,
         paste_from_clipboard,
         zoom,
-        terminal_open,
         terminal_write,
         terminal_resize,
+        send_to_terminal,
+        close_modal,
+        dialog,
+        create_directory,
+        delete_selected,
+        rename
     ])
 }

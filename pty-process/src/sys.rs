@@ -70,7 +70,7 @@ impl Pty {
 
     #[cfg(not(target_os = "macos"))]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
-        Ok(nix::pty::ptsname_r(&self.0)?)
+        Ok(nix::pty::ptsname_r(&self.0)?.into())
     }
 
     #[cfg(not(target_os = "macos"))]

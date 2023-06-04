@@ -1,12 +1,16 @@
+use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
 use parking_lot::RwLockWriteGuard;
+use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
 use crate::common::ToUnix;
+use crate::common::UpdatePublisher;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use std::future::Future;
 #[cfg(target_family = "unix")]
 use std::os::unix::prelude::MetadataExt;
 #[cfg(target_family = "windows")]
@@ -15,9 +19,11 @@ use std::os::windows::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::DisplayOptions;
 use super::DisplayOptionsInner;
+use super::MainWindowState;
 
 #[derive(Clone, serde::Serialize)]
 pub struct File {
@@ -92,7 +98,7 @@ fn resolve(path: &Path) -> PathBuf {
     ret
 }
 
-fn list_files(path: &Path) -> Result<FileList, Error> {
+async fn list_files(path: &Path) -> Result<FileList, Error> {
     fn reload(path: &Path) -> Result<Vec<File>, Error> {
         let mut ret = Vec::new();
         if let Some(parent) = path.parent() {
@@ -157,7 +163,8 @@ fn list_files(path: &Path) -> Result<FileList, Error> {
 
     let mut path = resolve(path);
     loop {
-        match reload(&path) {
+        let path_1 = path.clone();
+        match tauri::async_runtime::spawn_blocking(move || reload(&path_1)).await? {
             Ok(files) => return Ok(FileList::new(path, files)),
             Err(Error::Io(e)) => match e.kind() {
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
@@ -172,23 +179,68 @@ fn list_files(path: &Path) -> Result<FileList, Error> {
     }
 }
 
+struct Busy<'a>(&'a Pane);
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.view_state_mut().busy = false;
+    }
+}
+
 pub struct Pane {
     file_list: RwLock<FileList>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
+    cancellation_token: Mutex<Option<CancellationToken>>,
 }
 
 impl Pane {
-    pub fn new(path: PathBuf, display_options: DisplayOptions) -> Self {
+    pub fn new(
+        path: PathBuf,
+        display_options: DisplayOptions,
+        publisher: Arc<UpdatePublisher<MainWindowState>>,
+    ) -> Self {
         Self {
             file_list: RwLock::new(FileList::new(path, Vec::new())),
             view_state: RwLock::new(PaneViewState::default()),
             display_options,
+            publisher,
+            cancellation_token: Mutex::new(None),
         }
     }
 
     pub fn path(&self) -> PathBuf {
         self.file_list.read().path().to_path_buf()
+    }
+
+    async fn cancellable<T, Fut>(&self, f: Fut) -> Result<Option<T>, Error>
+    where
+        Fut: Future<Output = Result<T, Error>>,
+    {
+        self.view_state_mut().busy = true;
+        let _busy = Busy(self);
+        self.publisher.publish()?;
+
+        let token = CancellationToken::new();
+        if let Some(previous) = self.cancellation_token.lock().replace(token.clone()) {
+            previous.cancel();
+        }
+
+        tokio::select! {
+            _ = token.cancelled() => {
+                // The token was cancelled
+                Ok(None)
+            }
+            ret = f => {
+                Ok(Some(ret?))
+            }
+        }
+    }
+
+    pub fn cancel(&self) {
+        if let Some(token) = self.cancellation_token.lock().take() {
+            token.cancel();
+        }
     }
 
     pub fn view_state(&self) -> RwLockReadGuard<'_, PaneViewState> {
@@ -210,10 +262,10 @@ impl Pane {
         view_state.update(display_options, &file_list);
     }
 
-    pub fn refresh(&self) -> Result<(), Error> {
+    pub async fn refresh(&self) -> Result<(), Error> {
         let original_path = self.file_list.read().path().to_path_buf();
 
-        let file_list = list_files(&original_path)?;
+        let file_list = list_files(&original_path).await?;
 
         let display_options = self.display_options.0.read().clone();
         let mut self_file_list = self.file_list.write();
@@ -226,11 +278,21 @@ impl Pane {
         Ok(())
     }
 
-    pub fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let original_path = self.path();
-        let target = original_path.join(path);
+        let target = resolve(&original_path.join(path));
 
-        let file_list = list_files(&target)?;
+        // Show the destination directory while we're loading
+        self.file_list.write().path = target.clone();
+        self.view_state_mut().path = target.clone();
+
+        let Some(file_list) = self.cancellable(async {
+            list_files(&target).await
+        }).await? else {
+            self.file_list.write().path = original_path.clone();
+            self.view_state_mut().path = original_path;
+            return Ok(());
+        };
 
         let display_options = self.display_options.0.read().clone();
         let mut self_file_list = self.file_list.write();
@@ -242,7 +304,11 @@ impl Pane {
 
         view_state.update(display_options, &file_list);
         *self_file_list = file_list;
-        view_state.focus_descendant(&target);
+        if target == self_file_list.path() {
+            view_state.focus_descendant(&original_path);
+        } else {
+            view_state.focus_descendant(&target);
+        }
 
         Ok(())
     }
@@ -287,6 +353,7 @@ pub struct PaneViewState {
     pub focused: Option<String>,
     pub selected: HashSet<String>,
     pub filter: Option<String>,
+    pub busy: bool,
 
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
@@ -366,12 +433,21 @@ impl PaneViewState {
     }
 
     pub fn focus(&mut self, filename: String) {
+        if self.busy {
+            return;
+        }
+
+
         self.update_filter(None);
         self.focused = Some(filename);
         self.update_focus();
     }
 
     pub fn focus_descendant(&mut self, path: &Path) {
+        if self.busy {
+            return;
+        }
+
         if let Some(filename) = path
             .strip_prefix(&self.path)
             .ok()
@@ -382,11 +458,19 @@ impl PaneViewState {
     }
 
     pub fn set_sorting(&mut self, sorting: Sorting) {
+        if self.busy {
+            return;
+        }
+
         self.sorting = sorting;
         self.sort();
     }
 
     pub fn toggle_selected(&mut self, filename: String, focus_next: bool) {
+        if self.busy {
+            return;
+        }
+
         if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
             self.selected.insert(filename.clone());
         }
@@ -402,6 +486,10 @@ impl PaneViewState {
     }
 
     pub fn select_range(&mut self, filename: String) {
+        if self.busy {
+            return;
+        }
+
         self.update_filter(None);
         let Some(&start_index) = self
             .focused
@@ -426,6 +514,10 @@ impl PaneViewState {
     }
 
     pub fn select_all(&mut self) {
+        if self.busy {
+            return;
+        }
+
         self.update_filter(None);
         self.filter_regex = None;
         self.selected = self.file_lookup.keys().cloned().collect();
@@ -433,12 +525,20 @@ impl PaneViewState {
     }
 
     pub fn deselect_all(&mut self) {
+        if self.busy {
+            return;
+        }
+
         self.update_filter(None);
         self.filter_regex = None;
         self.selected.clear();
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {
+        if self.busy {
+            return;
+        }
+
         let Some(filter) = filter else {
             self.update_filter(None);
             return;
@@ -478,6 +578,10 @@ impl PaneViewState {
     }
 
     pub fn relative_jump(&mut self, mut offset: i32, with_selection: bool) {
+        if self.busy {
+            return;
+        }
+
         let direction = offset.signum();
 
         if self.files.is_empty() {

@@ -1,6 +1,7 @@
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use std::path::Path;
+use std::sync::Arc;
 
 use tauri::Window;
 use tokio::io::AsyncReadExt;
@@ -9,7 +10,10 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::common::Error;
+use crate::common::UpdatePublisher;
 
+use super::MainWindowContext;
+use super::MainWindowState;
 use super::TerminalHandle;
 
 pub enum Command {
@@ -23,7 +27,7 @@ pub struct TerminalData {
     pub data: Vec<u8>,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize)]
 pub struct Terminal {
     pub handle: TerminalHandle,
     pub defunct: bool,
@@ -33,6 +37,7 @@ pub struct Terminal {
 
 impl Terminal {
     pub async fn create(
+        context: MainWindowContext,
         window: Window,
         handle: TerminalHandle,
         working_dir: Option<&Path>,
@@ -53,8 +58,8 @@ impl Terminal {
         }
         let child = cmd.spawn(&pty_slave)?;
 
-        tokio::spawn(async move {
-            match run_terminal(pty_master, child, window, handle, receiver).await {
+        tauri::async_runtime::spawn(async move {
+            match run_terminal(context, pty_master, child, window, handle, receiver).await {
                 Ok(()) => {}
                 Err(e) => {
                     eprintln!("terminal error: {}", e);
@@ -85,6 +90,7 @@ impl Terminal {
 }
 
 async fn run_terminal(
+    context: MainWindowContext,
     mut pty: pty_process::Pty,
     mut child: tokio::process::Child,
     window: Window,
@@ -105,11 +111,11 @@ async fn run_terminal(
                 if len == 0 {
                     continue;
                 }
-
                 window.emit("terminal_data", TerminalData {
                     handle,
                     data: buf[..len].to_vec(),
                 })?;
+
             }
             Some(cmd) = mailbox.recv() => {
                 match cmd {
@@ -123,7 +129,16 @@ async fn run_terminal(
             }
         }
     }
-    eprintln!("terminal exited");
+
+    context.with_update(|c| {
+        c.terminals.remove(handle);
+        c.display_options.0.write().active_terminal = None;
+        if c.terminals.len() == 0 {
+            c.display_options.0.write().panes_focused = true;
+        }
+        Ok(())
+    })?;
+
     Ok(())
 }
 
