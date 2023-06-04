@@ -216,16 +216,6 @@ li.file-item {
   flex-grow: 1;
 }
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.05);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .pane.pane-busy {
   opacity: 0.7;
 }

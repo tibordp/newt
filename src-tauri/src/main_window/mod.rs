@@ -303,12 +303,12 @@ impl MainWindowContext {
         let watcher = Watcher::new(publisher.clone(), global_state.clone());
 
         global_state.panes.add(Pane::new(
-            "/".into(),
+            std::env::current_dir().unwrap(),
             global_state.display_options.clone(),
             publisher.clone(),
         ));
         global_state.panes.add(Pane::new(
-            "/".into(),
+            std::env::current_dir().unwrap(),
             global_state.display_options.clone(),
             publisher.clone(),
         ));

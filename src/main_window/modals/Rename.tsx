@@ -50,7 +50,7 @@ export default function Rename({
           />
         </div>
         <div className="dialog-buttons">
-          <input type="submit" value="Create" disabled={!name} />
+          <input type="submit" value="Create" disabled={!newName} />
           <input type="button" value="Cancel" onClick={cancel} />
         </div>
       </form>

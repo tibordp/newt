@@ -280,14 +280,16 @@ impl Pane {
 
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let original_path = self.path();
-        let target = original_path.join(path);
+        let target = resolve(&original_path.join(path));
 
         // Show the destination directory while we're loading
+        self.file_list.write().path = target.clone();
         self.view_state_mut().path = target.clone();
 
         let Some(file_list) = self.cancellable(async {
             list_files(&target).await
         }).await? else {
+            self.file_list.write().path = original_path.clone();
             self.view_state_mut().path = original_path;
             return Ok(());
         };
@@ -302,7 +304,11 @@ impl Pane {
 
         view_state.update(display_options, &file_list);
         *self_file_list = file_list;
-        view_state.focus_descendant(&target);
+        if target == self_file_list.path() {
+            view_state.focus_descendant(&original_path);
+        } else {
+            view_state.focus_descendant(&target);
+        }
 
         Ok(())
     }
