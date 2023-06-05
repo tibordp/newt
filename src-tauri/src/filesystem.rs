@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::os::unix::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
@@ -6,8 +5,10 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
+use log::debug;
+use log::info;
+use log::warn;
 use notify::Config;
 use notify::Event;
 use notify::RecommendedWatcher;
@@ -15,7 +16,6 @@ use notify::RecursiveMode;
 use notify::Watcher;
 use parking_lot::Mutex;
 use tokio::sync::oneshot::Sender;
-use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
 use crate::common::ToUnix;
@@ -71,10 +71,7 @@ pub fn resolve(path: &Path) -> PathBuf {
 
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
-    async fn poll_changes(
-        &self,
-        path: PathBuf,
-    ) -> Result<(), Error>;
+    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
 
     async fn list_files(&self, path: PathBuf) -> Result<FileList, Error>;
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error>;
@@ -98,7 +95,7 @@ impl Drop for WatchDropGuard<'_> {
             }
         });
         if needs_unwatch {
-            eprintln!("Unwatching {}", self.1.display());
+            info!("unwatching {}", self.1.display());
             let _ = watcher.unwatch(&self.1);
         }
     }
@@ -125,13 +122,13 @@ impl Local {
                             for (id, watched_path, sender) in regs.iter_mut() {
                                 if event.paths.iter().any(|p| p.starts_with(&watched_path)) {
                                     if let Some(sender) = sender.take() {
-                                        eprintln!("Notifying {}", id);
+                                        debug!("notifying {}", id);
                                         let _ = sender.send(());
                                     }
                                 }
                             }
                         }
-                        Err(e) => eprintln!("watch error: {:?}", e),
+                        Err(e) => warn!("watch error: {:?}", e),
                     };
                 },
                 Config::default(),
@@ -148,12 +145,10 @@ impl Local {
 
 #[async_trait::async_trait]
 impl Filesystem for Local {
-    async fn poll_changes(
-        &self,
-        path: PathBuf,
-    ) -> Result<(), Error> {
+    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
         let id = self.id.fetch_add(1, Ordering::SeqCst);
-        println!("Registering new watch for {}, id = {}", path.display(), id);
+        debug!("registering new watch for {}, id = {}", path.display(), id);
+
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         {
@@ -161,7 +156,7 @@ impl Filesystem for Local {
             let mut regs = self.registrations.lock();
             let needs_watch = !regs.iter().any(|p| p.1 == path);
             if needs_watch {
-                eprintln!("Watching {}", path.display());
+                info!("watching {}", path.display());
                 watcher.watch(&path, RecursiveMode::NonRecursive)?;
             }
             regs.push((id, path.clone(), Some(tx)));
@@ -169,8 +164,6 @@ impl Filesystem for Local {
 
         let _guard = WatchDropGuard(id, path.clone(), self);
         let _ = rx.await;
-
-        eprintln!("Changes detected on {}", path.display());
 
         Ok(())
     }

@@ -7,9 +7,9 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::Error;
-use crate::main_window::pane;
+
 use crate::main_window::pane::Sorting;
-use crate::main_window::terminal::Terminal;
+
 use crate::main_window::MainWindowContext;
 use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
@@ -281,7 +281,7 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 pub async fn send_to_terminal(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
-    filename: String,
+    _filename: String,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let terminal = if let Some(terminal) = ctx.active_terminal() {
@@ -459,7 +459,6 @@ pub async fn rename(
         Ok(())
     })
     .await
-
 }
 
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {

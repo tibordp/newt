@@ -1,3 +1,5 @@
+use log::info;
+use log::warn;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -86,7 +88,7 @@ impl Pane {
         loop {
             tokio::select! {
                 _ = self.fs.poll_changes(self.path()) => {
-                    eprintln!("Change detected");
+                    info!("changes detected");
                 }
                 _ = rx.changed() =>  {
                     continue;
@@ -96,8 +98,9 @@ impl Pane {
             let cloned = self.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = cloned.refresh().await {
-                    eprintln!("failed to refresh pane: {}", e);
+                    warn!("failed to refresh pane: {}", e);
                 }
+
                 cloned.publisher.publish().unwrap();
             });
         }

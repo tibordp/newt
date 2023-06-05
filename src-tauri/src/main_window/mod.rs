@@ -1,14 +1,10 @@
 pub mod pane;
 pub mod terminal;
 
-use notify::RecommendedWatcher;
-use notify::RecursiveMode;
-use parking_lot::Mutex;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use std::future::Future;
 use std::path::Path;
@@ -24,9 +20,9 @@ use crate::common::UpdatePublisher;
 
 use crate::common::Error;
 
-use crate::GlobalContext;
 use crate::filesystem::Filesystem;
 use crate::filesystem::Local;
+use crate::GlobalContext;
 
 use self::pane::Pane;
 use self::terminal::Terminal;
@@ -267,7 +263,6 @@ impl MainWindowState {
             pane.update_view_state();
         }
     }
-
 }
 struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
@@ -319,7 +314,9 @@ impl MainWindowContext {
         global_state.refresh().await?;
 
         for pane in global_state.panes.all() {
-            tauri::async_runtime::spawn(async move { pane.watch_changes().await; });
+            tauri::async_runtime::spawn(async move {
+                pane.watch_changes().await;
+            });
         }
 
         Ok(Self {
