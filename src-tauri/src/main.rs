@@ -9,6 +9,7 @@ extern crate objc; // v0.2.7
 pub mod cmd;
 pub mod common;
 pub mod main_window;
+pub mod filesystem;
 
 use common::Error;
 use main_window::MainWindowContext;

@@ -403,7 +403,7 @@ pub async fn create_directory(
     let dir_path = PathBuf::from(path.clone());
     let dir_path = dir_path.join(name.clone());
 
-    std::fs::create_dir_all(&dir_path)?;
+    ctx.fs().create_directory(dir_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -411,7 +411,6 @@ pub async fn create_directory(
             let pane = gs.panes.get(pane_handle).unwrap();
             pane.navigate(path).await?;
             pane.view_state_mut().focus(name);
-            eprintln!("here");
         }
 
         Ok(())
@@ -421,21 +420,14 @@ pub async fn create_directory(
 
 #[tauri::command]
 pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let fs = ctx.fs();
+
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
         let selected = pane.get_effective_selection();
-        let ret = tauri::async_runtime::spawn_blocking(|| {
-            for path in selected {
-                if path.is_dir() {
-                    std::fs::remove_dir_all(path)?;
-                } else {
-                    std::fs::remove_file(path)?;
-                }
-            }
-            Ok::<_, Error>(())
-        })
-        .await?;
 
+        let ret = fs.delete_all(selected).await;
         pane.refresh().await?;
+
         ret?;
 
         Ok(())
@@ -454,7 +446,7 @@ pub async fn rename(
     let old_path = PathBuf::from(base_path.clone()).join(old_name.clone());
     let new_path = PathBuf::from(base_path).join(new_name.clone());
 
-    tauri::async_runtime::spawn_blocking(move || std::fs::rename(&old_path, &new_path)).await??;
+    ctx.fs().rename(old_path, new_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();

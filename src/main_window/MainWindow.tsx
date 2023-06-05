@@ -172,6 +172,7 @@ type Sorting = {
 
 type PaneState = {
   path: string;
+  pending_path?: string;
   sorting: Sorting;
   files: File[];
   focused?: string;
@@ -277,15 +278,21 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     sorting,
     focused,
     busy,
+    pending_path
   } = props;
-  const command = (cmd: string, args: object = {}) =>
-    safeCommand(cmd, { paneHandle, ...args });
+  const command = (cmd: string, args: object = {}, also_when_busy = false) => {
+    if (also_when_busy || !busy) {
+      safeCommand(cmd, { paneHandle, ...args });
+    }
+  }
 
   const [showSpinner, setShowSpinner] = useState(false);
 
   useEffect(() => {
     let timeout = null;
     if (busy) {
+      // 200 ms of grace period before showing the loading screen to
+      // appear smoother.
       timeout = setTimeout(() => setShowSpinner(true), 200);
     } else {
       setShowSpinner(false);
@@ -430,7 +437,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     } else if (e.key == "." && e.ctrlKey) {
       command("copy_pane");
     } else if (e.key == "Escape") {
-      command("cancel");
+      command("cancel", {}, true);
       command("set_filter", { filter: null });
     } else if (e.key.toLowerCase() == "d" && e.ctrlKey) {
       command("deselect_all");
@@ -464,7 +471,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       (e.key.toLowerCase() == "v" && e.ctrlKey) ||
       (e.key == "Insert" && e.shiftKey)
     ) {
-      command("paste_from_clipboard");
+      command("paste_from_clipboard", {}, true);
     } else if (e.key == "Insert") {
       command("toggle_selected", {
         filename: files[focusedIndex].name,
@@ -481,7 +488,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "Backspace") {
-      invoke("navigate", { paneHandle, path: ".." });
+      command("navigate", { path: ".." }, true);
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
@@ -549,7 +556,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">{path}</div>
+      <div className="header">{pending_path || path}</div>
       <div className="table-header" ref={tableHeaderRef}>
         <div className="table-header-inner">
           {columns.map((column) => (
