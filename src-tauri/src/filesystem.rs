@@ -1,15 +1,13 @@
-use std::cell::Cell;
 use std::os::unix::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use log::debug;
-use log::info;
+
 use log::warn;
 use notify::event::RemoveKind;
 use notify::Config;
@@ -19,7 +17,6 @@ use notify::RecommendedWatcher;
 use notify::RecursiveMode;
 use notify::Watcher;
 use parking_lot::Mutex;
-use tokio::sync::oneshot::Sender;
 
 use crate::common::Error;
 use crate::common::ToUnix;

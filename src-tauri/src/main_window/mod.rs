@@ -22,7 +22,7 @@ use crate::common::Error;
 
 use crate::filesystem::Filesystem;
 use crate::filesystem::Local;
-use crate::filesystem::Slow;
+
 use crate::GlobalContext;
 
 use self::pane::Pane;
