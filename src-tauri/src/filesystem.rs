@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::os::unix::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
@@ -5,12 +6,15 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::debug;
 use log::info;
 use log::warn;
+use notify::event::RemoveKind;
 use notify::Config;
 use notify::Event;
+use notify::EventKind;
 use notify::RecommendedWatcher;
 use notify::RecursiveMode;
 use notify::Watcher;
@@ -79,52 +83,39 @@ pub trait Filesystem: Send + Sync {
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
 }
 
-struct WatchDropGuard<'a>(usize, PathBuf, &'a Local);
-impl Drop for WatchDropGuard<'_> {
-    fn drop(&mut self) {
-        let mut watcher = self.2.watcher.lock();
-        let mut regs = self.2.registrations.lock();
+pub struct Local {}
 
-        let mut needs_unwatch = true;
-        regs.retain(|p| {
-            if p.0 == self.0 {
-                false
-            } else {
-                needs_unwatch = needs_unwatch && (p.1 != self.1);
-                true
-            }
-        });
-        if needs_unwatch {
-            info!("unwatching {}", self.1.display());
-            let _ = watcher.unwatch(&self.1);
-        }
+impl Local {
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
-pub struct Local {
-    id: AtomicUsize,
-    registrations: Arc<Mutex<Vec<(usize, PathBuf, Option<Sender<()>>)>>>,
-    watcher: Mutex<RecommendedWatcher>,
-}
+#[async_trait::async_trait]
+impl Filesystem for Local {
+    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Arc::new(Mutex::new(Some(tx)));
 
-impl Local {
-    pub fn create() -> Result<Self, Error> {
-        let registrations: Arc<Mutex<Vec<(usize, PathBuf, Option<Sender<()>>)>>> =
-            Arc::new(Mutex::new(Vec::new()));
-
-        let watcher = {
-            let registrations = registrations.clone();
+        let mut watcher = {
+            let path = path.clone();
             RecommendedWatcher::new(
                 move |res: Result<Event, notify::Error>| {
                     match res {
                         Ok(event) => {
-                            let mut regs = registrations.lock();
-                            for (id, watched_path, sender) in regs.iter_mut() {
-                                if event.paths.iter().any(|p| p.starts_with(&watched_path)) {
-                                    if let Some(sender) = sender.take() {
-                                        debug!("notifying {}", id);
-                                        let _ = sender.send(());
-                                    }
+                            debug!("{:?} (while watching {})", event, path.display());
+                            let should_notify = match event.kind {
+                                EventKind::Remove(RemoveKind::Folder) => event
+                                    .paths
+                                    .iter()
+                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                _ => event.paths.iter().any(|p| p.starts_with(&path)),
+                            };
+
+                            if should_notify {
+                                let sender = tx.lock().take();
+                                if let Some(s) = sender {
+                                    let _ = s.send(());
                                 }
                             }
                         }
@@ -135,36 +126,16 @@ impl Local {
             )?
         };
 
-        Ok(Self {
-            id: AtomicUsize::new(0),
-            registrations,
-            watcher: Mutex::new(watcher),
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl Filesystem for Local {
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
-        let id = self.id.fetch_add(1, Ordering::SeqCst);
-        debug!("registering new watch for {}, id = {}", path.display(), id);
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-
-        {
-            let mut watcher = self.watcher.lock();
-            let mut regs = self.registrations.lock();
-            let needs_watch = !regs.iter().any(|p| p.1 == path);
-            if needs_watch {
-                info!("watching {}", path.display());
-                watcher.watch(&path, RecursiveMode::NonRecursive)?;
+        // We need to watch all the parents in order to detect folder deletion
+        let mut path = path;
+        loop {
+            watcher.watch(&path, RecursiveMode::NonRecursive)?;
+            if !path.pop() {
+                break;
             }
-            regs.push((id, path.clone(), Some(tx)));
         }
 
-        let _guard = WatchDropGuard(id, path.clone(), self);
         let _ = rx.await;
-
         Ok(())
     }
 
@@ -273,5 +244,36 @@ impl Filesystem for Local {
             Ok(())
         })
         .await?
+    }
+}
+
+pub struct Slow<T: Filesystem>(T);
+
+impl<T: Filesystem> Slow<T> {
+    pub fn new(inner: T) -> Self {
+        Self(inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: Filesystem> Filesystem for Slow<T> {
+    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+        self.0.poll_changes(path).await
+    }
+    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.list_files(path).await
+    }
+    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.rename(old_path, new_path).await
+    }
+    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.create_directory(path).await
+    }
+    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.delete_all(paths).await
     }
 }

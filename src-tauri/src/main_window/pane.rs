@@ -8,10 +8,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
 use crate::common::UpdatePublisher;
+use crate::filesystem::resolve;
 use crate::filesystem::File;
 use crate::filesystem::FileList;
 use crate::filesystem::Filesystem;
-use crate::filesystem::resolve;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -19,12 +19,10 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::DisplayOptions;
 use super::DisplayOptionsInner;
 use super::MainWindowState;
-
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,11 +50,26 @@ impl Default for Sorting {
     }
 }
 
+struct NavigationState {
+    version: usize,
+    changes_tx: tokio::sync::watch::Sender<()>,
+    file_list: Arc<FileList>,
+}
+
+impl NavigationState {
+    fn new(path: PathBuf, changes_tx: tokio::sync::watch::Sender<()>) -> Self {
+        Self {
+            version: 0,
+            changes_tx,
+            file_list: Arc::new(FileList::new(path, Vec::new())),
+        }
+    }
+}
 
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
-    navigation_state: RwLock<(usize, tokio::sync::watch::Sender<()>, Arc<FileList>)>,
+    navigation_state: RwLock<NavigationState>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -74,7 +87,7 @@ impl Pane {
 
         Self {
             fs,
-            navigation_state: RwLock::new((0, tx, Arc::new(FileList::new(path, Vec::new())))),
+            navigation_state: RwLock::new(NavigationState::new(path, tx)),
             view_state: RwLock::new(PaneViewState::default()),
             nav_changes_rx: rx,
             display_options,
@@ -87,8 +100,17 @@ impl Pane {
         let mut rx = self.nav_changes_rx.clone();
         loop {
             tokio::select! {
-                _ = self.fs.poll_changes(self.path()) => {
-                    info!("changes detected");
+                ret = self.fs.poll_changes(self.path()) => {
+                    match ret {
+                        Ok(()) => {
+                            info!("changes detected")
+                        }
+                        Err(e) => {
+                            warn!("failed to watch, the folder was probably removed: {}", e);
+                            // We wait until the next navigation before restarting the watch
+                            let _ = rx.changed().await;
+                        }
+                    }
                 }
                 _ = rx.changed() =>  {
                     continue;
@@ -97,17 +119,16 @@ impl Pane {
 
             let cloned = self.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = cloned.refresh().await {
+                if let Err(e) = cloned.refresh(true).await {
                     warn!("failed to refresh pane: {}", e);
                 }
-
                 cloned.publisher.publish().unwrap();
             });
         }
     }
 
     pub fn path(&self) -> PathBuf {
-        self.navigation_state.read().2.path().to_path_buf()
+        self.navigation_state.read().file_list.path().to_path_buf()
     }
 
     async fn cancellable<T, Fut>(&self, f: Fut) -> Result<T, Error>
@@ -151,26 +172,34 @@ impl Pane {
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &*navigation_state.2);
+        view_state.update(display_options, &*navigation_state.file_list);
     }
 
-    pub async fn refresh(&self) -> Result<(), Error> {
-        self.navigate(".").await?;
+    pub async fn refresh(&self, silent: bool) -> Result<(), Error> {
+        self.navigate(".", silent).await?;
         Ok(())
     }
 
-    pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    pub async fn navigate<P: AsRef<Path>>(&self, path: P, silent: bool) -> Result<(), Error> {
         let (epoch, original_fl, target) = {
-            let mut navigation_state = self.navigation_state.write();
-            let version = navigation_state.0;
-            let target = resolve(&navigation_state.2.path().join(path));
+            let ref this = self;
+            let mut navigation_state = this.navigation_state.write();
 
-            navigation_state.0 += 1;
-            let old_fl = std::mem::replace(&mut navigation_state.2, Arc::new(FileList::new(target.clone(), Vec::new())));
+            let version = navigation_state.version;
+            let target = resolve(&navigation_state.file_list.path().join(path));
 
-            let mut ws = self.view_state_mut();
-            ws.pending_path = Some(target.clone());
-            ws.busy = true;
+            navigation_state.version += 1;
+            let old_fl = std::mem::replace(
+                &mut navigation_state.file_list,
+                Arc::new(FileList::new(target.clone(), Vec::new())),
+            );
+
+            let mut ws = this.view_state_mut();
+
+            if !silent {
+                ws.pending_path = Some(target.clone());
+                ws.busy = true;
+            }
 
             (version + 1, old_fl, target)
         };
@@ -183,9 +212,9 @@ impl Pane {
                 // Restore the old navigation & view-state, unless another navigation got there first.
                 let mut ws = self.view_state_mut();
                 let mut navigation_state = self.navigation_state.write();
-                if navigation_state.0 == epoch {
-                    navigation_state.0 = epoch + 1;
-                    navigation_state.2 = original_fl.clone();
+                if navigation_state.version == epoch {
+                    navigation_state.version = epoch + 1;
+                    navigation_state.file_list = original_fl.clone();
 
                     ws.busy = false;
                     ws.pending_path = None
@@ -199,30 +228,33 @@ impl Pane {
 
         let mut ws = self.view_state.write();
         let mut navigation_state = self.navigation_state.write();
-        if navigation_state.0 != epoch {
+        if navigation_state.version != epoch {
             return Ok(());
         }
-        navigation_state.0 = epoch + 1;
-        navigation_state.2 = new_file_list.clone();
+        navigation_state.version = epoch + 1;
+        navigation_state.file_list = new_file_list.clone();
 
-        if original_fl.path() != new_file_list.path() {
-            let _ = navigation_state.1.send(());
-        }
-
+        let has_path_changed = original_fl.path() != new_file_list.path();
         let display_options = self.display_options.0.read().clone();
 
         ws.busy = false;
-        ws.set_filter(None);
-        ws.selected.clear();
-        ws.focused = None;
         ws.pending_path = None;
+
+        if has_path_changed {
+            let _ = navigation_state.changes_tx.send(());
+            ws.set_filter(None);
+            ws.selected.clear();
+            ws.focused = None;
+        }
 
         ws.update(display_options, &*new_file_list);
 
-        if target == new_file_list.path() {
-            ws.focus_descendant(&original_fl.path());
-        } else {
-            ws.focus_descendant(&target);
+        if has_path_changed {
+            if target == new_file_list.path() {
+                ws.focus_descendant(&original_fl.path());
+            } else {
+                ws.focus_descendant(&target);
+            }
         }
 
         Ok(())

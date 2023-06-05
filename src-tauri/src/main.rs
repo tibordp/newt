@@ -12,9 +12,12 @@ pub mod filesystem;
 pub mod main_window;
 
 use common::Error;
+use log::debug;
+use log::info;
 use main_window::MainWindowContext;
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use tauri::Invoke;
 use tauri::Manager;
 use tauri::State;
 use tauri::Window;
@@ -26,7 +29,7 @@ pub struct GlobalContext {
 
 impl GlobalContext {
     pub async fn create_window(&self, window: Window) -> Result<(), Error> {
-        println!("creating window");
+        info!("creating window {}", window.label());
         let window_context = MainWindowContext::create(window.clone()).await?;
         self.main_windows.lock().insert(window, window_context);
 
@@ -38,7 +41,7 @@ impl GlobalContext {
     }
 
     pub fn destroy_window(&self, window: &Window) -> Result<(), Error> {
-        println!("destroying window {}", window.label());
+        info!("destroying window {}", window.label());
         self.main_windows.lock().remove(window);
         Ok(())
     }
@@ -48,10 +51,12 @@ fn main() {
     pretty_env_logger::init();
 
     let handler = cmd::create_handler();
-    let handler = Box::new(move |i| {
+    let handler = Box::new(move |i: Invoke| {
         let start = std::time::Instant::now();
+        let cmd = i.message.command().to_string();
+
         handler(i);
-        println!("handler took {:?}", start.elapsed());
+        debug!("handler {} took {:?}", cmd, start.elapsed());
     });
 
     let global_ctx = GlobalContext::default();
@@ -65,14 +70,21 @@ fn main() {
         })
         .on_window_event(
             #[allow(clippy::single_match)]
-            |event| match event.event() {
-                tauri::WindowEvent::Destroyed => {
-                    let app_handle = event.window().app_handle();
-                    let global_ctx: State<GlobalContext> = app_handle.state();
+            |event| {
+                let app_handle = event.window().app_handle();
+                let global_ctx: State<GlobalContext> = app_handle.state();
 
-                    global_ctx.destroy_window(event.window()).unwrap();
+                match event.event() {
+                    tauri::WindowEvent::Destroyed => {
+                        global_ctx.destroy_window(event.window()).unwrap();
+                    }
+                    tauri::WindowEvent::Focused(true) => {
+                        if let Some(ctx) = global_ctx.main_window(event.window()) {
+                            tauri::async_runtime::spawn(async move { ctx.refresh().await });
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             },
         )
         .invoke_handler(handler)

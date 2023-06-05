@@ -33,7 +33,7 @@ pub async fn navigate(
 ) -> Result<(), Error> {
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        pane.navigate(path).await?;
+        pane.navigate(path, false).await?;
         Ok(())
     })
     .await
@@ -245,7 +245,7 @@ pub async fn paste_from_clipboard(
     let text = clipboard.get_text()?;
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        pane.navigate(text.trim()).await?;
+        pane.navigate(text.trim(), false).await?;
         Ok(())
     })
     .await
@@ -409,7 +409,7 @@ pub async fn create_directory(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.navigate(path).await?;
+            pane.navigate(path, false).await?;
             pane.view_state_mut().focus(name);
         }
 
@@ -426,7 +426,7 @@ pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) ->
         let selected = pane.get_effective_selection();
 
         let ret = fs.delete_all(selected).await;
-        pane.refresh().await?;
+        pane.refresh(false).await?;
 
         ret?;
 
@@ -452,7 +452,7 @@ pub async fn rename(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh().await?;
+            pane.refresh(false).await?;
             pane.view_state_mut().focus(new_name);
         }
 
