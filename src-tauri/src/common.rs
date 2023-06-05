@@ -176,17 +176,26 @@ pub fn diff(
     delegate.try_into_patch()
 }
 
+const MAX_PATCH_OPS: usize = 100;
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum UpdatePayload {
+pub enum UpdatePayloadKind {
     State(serde_json::Value),
     Patch(Vec<PatchOperation>),
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct UpdatePayload {
+    pub version: usize,
+    #[serde(flatten)]
+    pub kind: UpdatePayloadKind,
 }
 
 pub struct UpdatePublisher<T> {
     window: Window,
     event_name: String,
-    previous: Mutex<serde_json::Value>,
+    base: Mutex<(usize, serde_json::Value)>,
     state: T,
     _phantom: PhantomData<T>,
 }
@@ -197,28 +206,56 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             event_name: format!("update:{}", event_name),
             window,
             state,
-            previous: Mutex::new(serde_json::Value::Null),
+            base: Mutex::new((0, serde_json::Value::Null)),
             _phantom: PhantomData,
         }
     }
 
     pub fn publish(&self) -> Result<(), Error> {
         let serialized = serde_json::to_value(&self.state).unwrap();
-        let patch;
-        {
-            let mut previous = self.previous.lock();
-            patch = diff(&previous, &serialized, Some(100));
-            *previous = serialized.clone();
-        }
 
-        if matches!(patch.as_ref().map(Vec::len), Some(1..) | None) {
-            self.window.emit(
-                &self.event_name,
-                patch
-                    .map(UpdatePayload::Patch)
-                    .unwrap_or(UpdatePayload::State(serialized)),
-            )?;
-        }
+        let (version, patch) = {
+            let mut base = self.base.lock();
+            let patch = diff(&base.1, &serialized, Some(MAX_PATCH_OPS));
+            if patch.as_ref().is_some_and(|p| p.is_empty()) {
+                // If there are no changes, don't publish anything and don't increment the version
+                return Ok(());
+            }
+
+            let version = base.0;
+            *base = (version + 1, serialized.clone());
+            (version, patch)
+        };
+
+        self.window.emit(
+            &self.event_name,
+            UpdatePayload {
+                version,
+                kind: patch
+                    .map(UpdatePayloadKind::Patch)
+                    .unwrap_or(UpdatePayloadKind::State(serialized)),
+            },
+        )?;
+
+        Ok(())
+    }
+
+    pub fn publish_full(&self) -> Result<(), Error> {
+        let serialized = serde_json::to_value(&self.state).unwrap();
+        let (version, _) = {
+            let mut base = self.base.lock();
+            let version = base.0 + 1;
+
+            std::mem::replace(&mut *base, (version, serialized.clone()))
+        };
+
+        self.window.emit(
+            &self.event_name,
+            UpdatePayload {
+                version,
+                kind: UpdatePayloadKind::State(serialized),
+            },
+        )?;
 
         Ok(())
     }

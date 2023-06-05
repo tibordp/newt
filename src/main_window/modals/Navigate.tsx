@@ -12,7 +12,6 @@ export default function Navigate({ path, cancel, context }: NavigateProps) {
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    console.log(context);
     safeCommand("navigate", {
       paneHandle: context?.pane_handle,
       path: newPath,

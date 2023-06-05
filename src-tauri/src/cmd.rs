@@ -204,7 +204,7 @@ async fn read_file(filename: String) -> Result<String, Error> {
 
 #[tauri::command]
 pub fn ping(ctx: MainWindowContext) -> Result<(), Error> {
-    ctx.with_update(|_| Ok(()))
+    ctx.publish_full()
 }
 
 #[tauri::command]

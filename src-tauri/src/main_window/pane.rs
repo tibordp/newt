@@ -64,6 +64,7 @@ impl Default for Sorting {
     }
 }
 
+#[derive(Clone)]
 pub struct FileList {
     path: PathBuf,
     files: Vec<File>,
@@ -187,7 +188,7 @@ impl Drop for Busy<'_> {
 }
 
 pub struct Pane {
-    file_list: RwLock<FileList>,
+    navigation_state: RwLock<(usize, Arc<FileList>)>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -201,7 +202,7 @@ impl Pane {
         publisher: Arc<UpdatePublisher<MainWindowState>>,
     ) -> Self {
         Self {
-            file_list: RwLock::new(FileList::new(path, Vec::new())),
+            navigation_state: RwLock::new((0, Arc::new(FileList::new(path, Vec::new())))),
             view_state: RwLock::new(PaneViewState::default()),
             display_options,
             publisher,
@@ -210,17 +211,13 @@ impl Pane {
     }
 
     pub fn path(&self) -> PathBuf {
-        self.file_list.read().path().to_path_buf()
+        self.navigation_state.read().1.path().to_path_buf()
     }
 
-    async fn cancellable<T, Fut>(&self, f: Fut) -> Result<Option<T>, Error>
+    async fn cancellable<T, Fut>(&self, f: Fut) -> Option<Result<T, Error>>
     where
         Fut: Future<Output = Result<T, Error>>,
     {
-        self.view_state_mut().busy = true;
-        let _busy = Busy(self);
-        self.publisher.publish()?;
-
         let token = CancellationToken::new();
         if let Some(previous) = self.cancellation_token.lock().replace(token.clone()) {
             previous.cancel();
@@ -229,10 +226,10 @@ impl Pane {
         tokio::select! {
             _ = token.cancelled() => {
                 // The token was cancelled
-                Ok(None)
+                None
             }
             ret = f => {
-                Ok(Some(ret?))
+                Some(ret)
             }
         }
     }
@@ -253,61 +250,83 @@ impl Pane {
 
     pub fn update_view_state(&self) {
         let display_options = self.display_options.0.read().clone();
-        let file_list = self.file_list.read();
+        let navigation_state = self.navigation_state.read();
         let mut view_state: parking_lot::lock_api::RwLockWriteGuard<
             parking_lot::RawRwLock,
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &file_list);
+        view_state.update(display_options, &*navigation_state.1);
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {
-        let original_path = self.file_list.read().path().to_path_buf();
-
-        let file_list = list_files(&original_path).await?;
-
-        let display_options = self.display_options.0.read().clone();
-        let mut self_file_list = self.file_list.write();
-        let mut view_state = self.view_state.write();
-
-        view_state.update(display_options, &file_list);
-        *self_file_list = file_list;
-        view_state.focus_descendant(&original_path);
-
+        self.navigate(".").await?;
         Ok(())
     }
 
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
-        let original_path = self.path();
-        let target = resolve(&original_path.join(path));
+        let (epoch, original_fl, target) = {
+            let mut navigation_state = self.navigation_state.write();
+            let old_ns = navigation_state.clone();
 
-        // Show the destination directory while we're loading
-        self.file_list.write().path = target.clone();
-        self.view_state_mut().path = target.clone();
+            let target = resolve(&navigation_state.1.path.join(path));
 
-        let Some(file_list) = self.cancellable(async {
-            list_files(&target).await
-        }).await? else {
-            self.file_list.write().path = original_path.clone();
-            self.view_state_mut().path = original_path;
+            *navigation_state = (
+                old_ns.0 + 1,
+                Arc::new(FileList::new(target.clone(), Vec::new())),
+            );
+
+            let mut ws = self.view_state_mut();
+            ws.path = target.clone();
+            ws.busy = true;
+
+            (old_ns.0 + 1, old_ns.1.clone(), target)
+        };
+
+        self.publisher.publish()?;
+
+        let foo = self
+            .cancellable(async {
+                Ok(Arc::new(list_files(&target).await?));
+            })
+            .await;
+
+        let Some(new_file_list) = foo
+         else {
+            let mut navigation_state = self.navigation_state.write();
+            if navigation_state.0 != epoch {
+                return Ok(())
+            }
+
+            *navigation_state = (epoch + 1, original_fl.clone());
+
+            let mut  ws = self.view_state_mut();
+            ws.busy = false;
+            ws.path = original_fl.path().to_path_buf();
+
             return Ok(());
         };
 
+        let mut navigation_state = self.navigation_state.write();
+        if navigation_state.0 != epoch {
+            return Ok(());
+        }
+        *navigation_state = (epoch + 1, new_file_list.clone());
+
         let display_options = self.display_options.0.read().clone();
-        let mut self_file_list = self.file_list.write();
-        let mut view_state = self.view_state.write();
+        let mut ws = self.view_state.write();
 
-        view_state.set_filter(None);
-        view_state.selected.clear();
-        view_state.focused = None;
+        ws.busy = false;
+        ws.set_filter(None);
+        ws.selected.clear();
+        ws.focused = None;
 
-        view_state.update(display_options, &file_list);
-        *self_file_list = file_list;
-        if target == self_file_list.path() {
-            view_state.focus_descendant(&original_path);
+        ws.update(display_options, &*new_file_list);
+
+        if target == new_file_list.path() {
+            ws.focus_descendant(&original_fl.path());
         } else {
-            view_state.focus_descendant(&target);
+            ws.focus_descendant(&target);
         }
 
         Ok(())
@@ -436,7 +455,6 @@ impl PaneViewState {
         if self.busy {
             return;
         }
-
 
         self.update_filter(None);
         self.focused = Some(filename);
