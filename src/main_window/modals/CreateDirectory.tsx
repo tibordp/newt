@@ -15,7 +15,6 @@ export default function CreateDirectory({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    console.log(context);
     safeCommand("create_directory", {
       paneHandle: context?.pane_handle,
       path,

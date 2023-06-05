@@ -18,7 +18,6 @@ export default function Rename({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    console.log(context);
     safeCommand("rename", {
       paneHandle: context?.pane_handle,
       basePath: base_path,

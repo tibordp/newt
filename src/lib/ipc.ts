@@ -26,13 +26,14 @@ export const safeCommandSilent = async (
   try {
     await invoke(command, { ...args });
   } catch (e) {
-    console.log(e);
+    console.error(e);
   }
 };
 
 export type ChangePayload<T> = {
   state?: T;
   patch?: Patch[];
+  version: number
 };
 
 export type TerminalData = {
@@ -86,6 +87,7 @@ export const useRemoteState = <T>(
   event_name: string,
   deps: any[] = []
 ): T | null => {
+  const version = useRef(null)
   const [state, setState] = useState<T>(null);
 
   useEffect(() => {
@@ -98,16 +100,20 @@ export const useRemoteState = <T>(
           // the reference to the state object, which would cause a re-render of
           // the entire component tree.
           setState((s) => {
-            const start = performance.now();
             let ret;
             if (event.payload.patch) {
-              console.log(event.payload.patch);
-              ret = applyPatches(s, event.payload.patch);
+              if (event.payload.version === version.current + 1) {
+                version.current = event.payload.version
+                ret = applyPatches(s, event.payload.patch);
+              } else if (version.current !== null) {
+                // this should never happen, but just in case
+                console.warn("version mismatch, requesting full state...")
+                invoke("ping", {});
+              }
             } else {
+              version.current = event.payload.version
               ret = deepUpdate(s, event.payload.state!);
             }
-            const end = performance.now();
-            console.log(`[useRemoteState] Update took ${end - start}ms`);
             return ret;
           });
         }
@@ -180,7 +186,6 @@ export const registerTerminalDataHandler = (
     }
     context[handle].listener = listener;
     while (context[handle].messages.length > 0) {
-      console.log(context[handle].messages);
       listener(context[handle].messages.shift());
     }
   }

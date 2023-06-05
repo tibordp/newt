@@ -265,8 +265,8 @@ impl MainWindowState {
             pane.update_view_state();
         }
     }
-}
 
+}
 struct MainWindowContextInner {
     window: Window,
     watcher: Watcher,
@@ -435,6 +435,10 @@ impl MainWindowContext {
             opts.panes_focused = false;
             Ok(terminal)
         })
+    }
+
+    pub fn publish_full(&self) -> Result<(), Error> {
+        self.inner.publisher.publish_full()
     }
 }
 

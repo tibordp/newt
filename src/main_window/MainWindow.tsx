@@ -674,7 +674,6 @@ function Terminal({ handle, active }: { handle: string; active: boolean }) {
       termDataContext,
       handle,
       (data) => {
-        console.log("DATA", data);
         // @ts-ignore
         term.write(data);
       }
