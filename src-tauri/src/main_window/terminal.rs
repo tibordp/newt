@@ -1,8 +1,8 @@
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use std::path::Path;
-use std::sync::Arc;
 
+use log::warn;
 use tauri::Window;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -10,10 +10,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::common::Error;
-use crate::common::UpdatePublisher;
 
 use super::MainWindowContext;
-use super::MainWindowState;
+
 use super::TerminalHandle;
 
 pub enum Command {
@@ -62,7 +61,7 @@ impl Terminal {
             match run_terminal(context, pty_master, child, window, handle, receiver).await {
                 Ok(()) => {}
                 Err(e) => {
-                    eprintln!("terminal error: {}", e);
+                    warn!("terminal error: {}", e);
                 }
             }
         });

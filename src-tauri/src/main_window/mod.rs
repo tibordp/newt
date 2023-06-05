@@ -1,14 +1,10 @@
 pub mod pane;
 pub mod terminal;
 
-use notify::RecommendedWatcher;
-use notify::RecursiveMode;
-use parking_lot::Mutex;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use std::future::Future;
 use std::path::Path;
@@ -24,6 +20,8 @@ use crate::common::UpdatePublisher;
 
 use crate::common::Error;
 
+use crate::filesystem::Filesystem;
+use crate::filesystem::Local;
 use crate::GlobalContext;
 
 use self::pane::Pane;
@@ -265,11 +263,10 @@ impl MainWindowState {
             pane.update_view_state();
         }
     }
-
 }
 struct MainWindowContextInner {
+    fs: Arc<dyn Filesystem>,
     window: Window,
-    watcher: Watcher,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
@@ -293,6 +290,7 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
+        let fs = Arc::new(Local::create()?);
         let global_state = MainWindowState::new();
 
         let publisher = Arc::new(UpdatePublisher::new(
@@ -300,28 +298,39 @@ impl MainWindowContext {
             "main_window",
             global_state.clone(),
         ));
-        let watcher = Watcher::new(publisher.clone(), global_state.clone());
 
         global_state.panes.add(Pane::new(
+            fs.clone(),
             std::env::current_dir().unwrap(),
             global_state.display_options.clone(),
             publisher.clone(),
         ));
         global_state.panes.add(Pane::new(
+            fs.clone(),
             std::env::current_dir().unwrap(),
             global_state.display_options.clone(),
             publisher.clone(),
         ));
         global_state.refresh().await?;
 
+        for pane in global_state.panes.all() {
+            tauri::async_runtime::spawn(async move {
+                pane.watch_changes().await;
+            });
+        }
+
         Ok(Self {
             inner: Arc::new(MainWindowContextInner {
+                fs,
                 window,
-                watcher,
                 publisher,
                 main_window_state: global_state,
             }),
         })
+    }
+
+    pub fn fs(&self) -> Arc<dyn Filesystem> {
+        self.inner.fs.clone()
     }
 
     pub fn window(&self) -> Window {
@@ -334,7 +343,6 @@ impl MainWindowContext {
     ) -> Result<T, Error> {
         let ret = f(&self.inner.main_window_state);
 
-        self.inner.watcher.update_paths();
         self.inner.publisher.publish()?;
 
         if let Some(pane) = self.active_pane() {
@@ -354,7 +362,6 @@ impl MainWindowContext {
     {
         let ret = f(self.inner.main_window_state.clone()).await;
 
-        self.inner.watcher.update_paths();
         self.inner.publisher.publish()?;
 
         if let Some(pane) = self.active_pane() {
@@ -439,98 +446,5 @@ impl MainWindowContext {
 
     pub fn publish_full(&self) -> Result<(), Error> {
         self.inner.publisher.publish_full()
-    }
-}
-
-struct WatcherInner {
-    global_state: MainWindowState,
-    watcher: Option<RecommendedWatcher>,
-    watched_paths: HashSet<PathBuf>,
-}
-
-#[derive(Clone)]
-pub struct Watcher {
-    inner: Arc<Mutex<WatcherInner>>,
-}
-
-impl Watcher {
-    pub fn new(
-        publisher: Arc<UpdatePublisher<MainWindowState>>,
-        global_state: MainWindowState,
-    ) -> Self {
-        let inner = Arc::new(Mutex::new(WatcherInner {
-            global_state: global_state.clone(),
-            watcher: None,
-            watched_paths: HashSet::new(),
-        }));
-
-        let watcher = {
-            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                match res {
-                    Ok(event) => {
-                        let global_state = global_state.clone();
-                        let publisher = publisher.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let mut changed = false;
-                            {
-                                for pane in global_state.panes.all() {
-                                    let pane_path = pane.path();
-                                    if event.paths.iter().any(|p| p.starts_with(&pane_path)) {
-                                        if let Err(e) = pane.refresh().await {
-                                            eprintln!("refresh error: {:?}", e);
-                                        }
-                                        changed = true;
-                                    }
-                                }
-                            }
-                            if changed {
-                                publisher.publish().unwrap();
-                            }
-                        });
-                    }
-                    Err(e) => eprintln!("watch error: {:?}", e),
-                };
-            })
-            .unwrap()
-        };
-
-        inner.lock().watcher = Some(watcher);
-        Self { inner }
-    }
-
-    pub fn update_paths(&self) {
-        use notify::Watcher;
-
-        let mut inner = self.inner.lock();
-        let paths: HashSet<PathBuf> = inner
-            .global_state
-            .panes
-            .all()
-            .iter()
-            .map(|p| p.path())
-            .collect();
-        let to_add: Vec<_> = paths.difference(&inner.watched_paths).cloned().collect();
-        let to_remove: Vec<_> = inner.watched_paths.difference(&paths).cloned().collect();
-
-        let watcher = inner.watcher.as_mut().unwrap();
-        for path in to_add {
-            if let Err(e) = watcher.watch(&path, RecursiveMode::NonRecursive) {
-                eprintln!("watch error: {:?}", e);
-            }
-        }
-
-        for path in to_remove {
-            match watcher.unwatch(&path) {
-                Ok(_)
-                | Err(notify::Error {
-                    kind: notify::ErrorKind::WatchNotFound,
-                    ..
-                }) => {}
-                Err(e) => {
-                    eprintln!("unwatch error: {:?}", e);
-                }
-            }
-        }
-        inner.watched_paths = paths;
     }
 }

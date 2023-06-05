@@ -8,6 +8,7 @@ extern crate objc; // v0.2.7
 
 pub mod cmd;
 pub mod common;
+pub mod filesystem;
 pub mod main_window;
 
 use common::Error;
@@ -44,6 +45,8 @@ impl GlobalContext {
 }
 
 fn main() {
+    pretty_env_logger::init();
+
     let handler = cmd::create_handler();
     let handler = Box::new(move |i| {
         let start = std::time::Instant::now();
@@ -59,7 +62,6 @@ fn main() {
             let global_ctx: State<GlobalContext> = app_handle.state();
 
             tauri::async_runtime::block_on(global_ctx.create_window(w)).unwrap();
-
         })
         .on_window_event(
             #[allow(clippy::single_match)]

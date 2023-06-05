@@ -1,3 +1,5 @@
+use log::info;
+use log::warn;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -5,38 +7,24 @@ use parking_lot::RwLockWriteGuard;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
-use crate::common::ToUnix;
 use crate::common::UpdatePublisher;
+use crate::filesystem::File;
+use crate::filesystem::FileList;
+use crate::filesystem::Filesystem;
+use crate::filesystem::resolve;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 use std::future::Future;
-#[cfg(target_family = "unix")]
-use std::os::unix::prelude::MetadataExt;
-#[cfg(target_family = "windows")]
-use std::os::windows::prelude::MetadataExt;
-
-use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::DisplayOptions;
 use super::DisplayOptionsInner;
 use super::MainWindowState;
 
-#[derive(Clone, serde::Serialize)]
-pub struct File {
-    pub name: String,
-    pub size: u64,
-    pub is_dir: bool,
-    pub is_hidden: bool,
-    pub is_symlink: bool,
-    pub mode: u32,
-    pub modified: Option<i128>,
-    pub accessed: Option<i128>,
-    pub created: Option<i128>,
-}
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,131 +52,11 @@ impl Default for Sorting {
     }
 }
 
-#[derive(Clone)]
-pub struct FileList {
-    path: PathBuf,
-    files: Vec<File>,
-}
-
-impl FileList {
-    pub fn new(path: PathBuf, files: Vec<File>) -> Self {
-        Self { path, files }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn files(&self) -> &[File] {
-        &self.files
-    }
-}
-
-fn resolve(path: &Path) -> PathBuf {
-    assert!(path.is_absolute());
-    let mut ret = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            component => ret.push(component.as_os_str()),
-        }
-    }
-    ret
-}
-
-async fn list_files(path: &Path) -> Result<FileList, Error> {
-    fn reload(path: &Path) -> Result<Vec<File>, Error> {
-        let mut ret = Vec::new();
-        if let Some(parent) = path.parent() {
-            let metadata = parent.symlink_metadata()?;
-
-            #[cfg(target_family = "unix")]
-            let mode = metadata.mode();
-            #[cfg(target_family = "windows")]
-            let mode = metadata.file_attributes() as _;
-
-            ret.push(File {
-                name: "..".to_string(),
-                size: metadata.len(),
-                is_dir: true,
-                is_symlink: metadata.is_symlink(),
-                is_hidden: false,
-                mode,
-                modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                created: metadata.created().map(|t| t.to_unix()).ok(),
-            });
-        }
-
-        for maybe_entry in std::fs::read_dir(path)? {
-            let entry = maybe_entry?;
-            let metadata = entry.metadata()?;
-            let file_type = metadata.file_type();
-
-            let name = entry.file_name().into_string().unwrap();
-            let mut is_dir = file_type.is_dir();
-
-            if file_type.is_symlink() {
-                let target_metadata = std::fs::metadata(entry.path());
-                // If we e.g. don't have permission to read the target, we show the link details
-                if let Ok(target_metadata) = target_metadata {
-                    is_dir = target_metadata.is_dir();
-                }
-            }
-
-            #[cfg(target_family = "unix")]
-            let mode = metadata.mode();
-            #[cfg(target_family = "windows")]
-            let mode = metadata.file_attributes() as _;
-
-            ret.push(File {
-                name: name.clone(),
-                size: metadata.len(),
-                is_dir,
-                is_symlink: file_type.is_symlink(),
-                is_hidden: name.starts_with('.'),
-                mode,
-                modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                created: metadata.created().map(|t| t.to_unix()).ok(),
-            });
-        }
-
-        Ok(ret)
-    }
-
-    assert!(path.is_absolute());
-
-    let mut path = resolve(path);
-    loop {
-        let path_1 = path.clone();
-        match tauri::async_runtime::spawn_blocking(move || reload(&path_1)).await? {
-            Ok(files) => return Ok(FileList::new(path, files)),
-            Err(Error::Io(e)) => match e.kind() {
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
-                    if !path.pop() {
-                        return Err(e.into());
-                    }
-                }
-                _ => return Err(e.into()),
-            },
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-struct Busy<'a>(&'a Pane);
-impl Drop for Busy<'_> {
-    fn drop(&mut self) {
-        self.0.view_state_mut().busy = false;
-    }
-}
 
 pub struct Pane {
-    navigation_state: RwLock<(usize, Arc<FileList>)>,
+    fs: Arc<dyn Filesystem>,
+    nav_changes_rx: tokio::sync::watch::Receiver<()>,
+    navigation_state: RwLock<(usize, tokio::sync::watch::Sender<()>, Arc<FileList>)>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -197,24 +65,52 @@ pub struct Pane {
 
 impl Pane {
     pub fn new(
+        fs: Arc<dyn Filesystem>,
         path: PathBuf,
         display_options: DisplayOptions,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
     ) -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(());
+
         Self {
-            navigation_state: RwLock::new((0, Arc::new(FileList::new(path, Vec::new())))),
+            fs,
+            navigation_state: RwLock::new((0, tx, Arc::new(FileList::new(path, Vec::new())))),
             view_state: RwLock::new(PaneViewState::default()),
+            nav_changes_rx: rx,
             display_options,
             publisher,
             cancellation_token: Mutex::new(None),
         }
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.navigation_state.read().1.path().to_path_buf()
+    pub async fn watch_changes(self: Arc<Self>) {
+        let mut rx = self.nav_changes_rx.clone();
+        loop {
+            tokio::select! {
+                _ = self.fs.poll_changes(self.path()) => {
+                    info!("changes detected");
+                }
+                _ = rx.changed() =>  {
+                    continue;
+                }
+            };
+
+            let cloned = self.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = cloned.refresh().await {
+                    warn!("failed to refresh pane: {}", e);
+                }
+
+                cloned.publisher.publish().unwrap();
+            });
+        }
     }
 
-    async fn cancellable<T, Fut>(&self, f: Fut) -> Option<Result<T, Error>>
+    pub fn path(&self) -> PathBuf {
+        self.navigation_state.read().2.path().to_path_buf()
+    }
+
+    async fn cancellable<T, Fut>(&self, f: Fut) -> Result<T, Error>
     where
         Fut: Future<Output = Result<T, Error>>,
     {
@@ -225,11 +121,10 @@ impl Pane {
 
         tokio::select! {
             _ = token.cancelled() => {
-                // The token was cancelled
-                None
+                Err(Error::Cancelled)
             }
             ret = f => {
-                Some(ret)
+                ret
             }
         }
     }
@@ -256,7 +151,7 @@ impl Pane {
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &*navigation_state.1);
+        view_state.update(display_options, &*navigation_state.2);
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {
@@ -267,59 +162,60 @@ impl Pane {
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let (epoch, original_fl, target) = {
             let mut navigation_state = self.navigation_state.write();
-            let old_ns = navigation_state.clone();
+            let version = navigation_state.0;
+            let target = resolve(&navigation_state.2.path().join(path));
 
-            let target = resolve(&navigation_state.1.path.join(path));
-
-            *navigation_state = (
-                old_ns.0 + 1,
-                Arc::new(FileList::new(target.clone(), Vec::new())),
-            );
+            navigation_state.0 += 1;
+            let old_fl = std::mem::replace(&mut navigation_state.2, Arc::new(FileList::new(target.clone(), Vec::new())));
 
             let mut ws = self.view_state_mut();
-            ws.path = target.clone();
+            ws.pending_path = Some(target.clone());
             ws.busy = true;
 
-            (old_ns.0 + 1, old_ns.1.clone(), target)
+            (version + 1, old_fl, target)
         };
 
-        self.publisher.publish()?;
+        let _ = self.publisher.publish();
 
-        let foo = self
-            .cancellable(async {
-                Ok(Arc::new(list_files(&target).await?));
-            })
-            .await;
+        let new_file_list = match self.cancellable(self.fs.list_files(target.clone())).await {
+            Ok(ret) => Arc::new(ret),
+            Err(e) => {
+                // Restore the old navigation & view-state, unless another navigation got there first.
+                let mut ws = self.view_state_mut();
+                let mut navigation_state = self.navigation_state.write();
+                if navigation_state.0 == epoch {
+                    navigation_state.0 = epoch + 1;
+                    navigation_state.2 = original_fl.clone();
 
-        let Some(new_file_list) = foo
-         else {
-            let mut navigation_state = self.navigation_state.write();
-            if navigation_state.0 != epoch {
-                return Ok(())
+                    ws.busy = false;
+                    ws.pending_path = None
+                }
+                return match e {
+                    Error::Cancelled => Ok(()),
+                    e => Err(e),
+                };
             }
-
-            *navigation_state = (epoch + 1, original_fl.clone());
-
-            let mut  ws = self.view_state_mut();
-            ws.busy = false;
-            ws.path = original_fl.path().to_path_buf();
-
-            return Ok(());
         };
 
+        let mut ws = self.view_state.write();
         let mut navigation_state = self.navigation_state.write();
         if navigation_state.0 != epoch {
             return Ok(());
         }
-        *navigation_state = (epoch + 1, new_file_list.clone());
+        navigation_state.0 = epoch + 1;
+        navigation_state.2 = new_file_list.clone();
+
+        if original_fl.path() != new_file_list.path() {
+            let _ = navigation_state.1.send(());
+        }
 
         let display_options = self.display_options.0.read().clone();
-        let mut ws = self.view_state.write();
 
         ws.busy = false;
         ws.set_filter(None);
         ws.selected.clear();
         ws.focused = None;
+        ws.pending_path = None;
 
         ws.update(display_options, &*new_file_list);
 
@@ -367,6 +263,7 @@ impl serde::Serialize for Pane {
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PaneViewState {
     pub path: PathBuf,
+    pub pending_path: Option<PathBuf>,
     pub sorting: Sorting,
     pub files: Vec<File>,
     pub focused: Option<String>,
@@ -452,20 +349,12 @@ impl PaneViewState {
     }
 
     pub fn focus(&mut self, filename: String) {
-        if self.busy {
-            return;
-        }
-
         self.update_filter(None);
         self.focused = Some(filename);
         self.update_focus();
     }
 
     pub fn focus_descendant(&mut self, path: &Path) {
-        if self.busy {
-            return;
-        }
-
         if let Some(filename) = path
             .strip_prefix(&self.path)
             .ok()
@@ -476,19 +365,11 @@ impl PaneViewState {
     }
 
     pub fn set_sorting(&mut self, sorting: Sorting) {
-        if self.busy {
-            return;
-        }
-
         self.sorting = sorting;
         self.sort();
     }
 
     pub fn toggle_selected(&mut self, filename: String, focus_next: bool) {
-        if self.busy {
-            return;
-        }
-
         if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
             self.selected.insert(filename.clone());
         }
@@ -504,10 +385,6 @@ impl PaneViewState {
     }
 
     pub fn select_range(&mut self, filename: String) {
-        if self.busy {
-            return;
-        }
-
         self.update_filter(None);
         let Some(&start_index) = self
             .focused
@@ -543,20 +420,12 @@ impl PaneViewState {
     }
 
     pub fn deselect_all(&mut self) {
-        if self.busy {
-            return;
-        }
-
         self.update_filter(None);
         self.filter_regex = None;
         self.selected.clear();
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {
-        if self.busy {
-            return;
-        }
-
         let Some(filter) = filter else {
             self.update_filter(None);
             return;
@@ -596,10 +465,6 @@ impl PaneViewState {
     }
 
     pub fn relative_jump(&mut self, mut offset: i32, with_selection: bool) {
-        if self.busy {
-            return;
-        }
-
         let direction = offset.signum();
 
         if self.files.is_empty() {
