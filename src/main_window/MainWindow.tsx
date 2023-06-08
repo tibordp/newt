@@ -34,19 +34,20 @@ import ReactModal from "react-modal";
 import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
+import { P } from "@tauri-apps/api/event-30ea0228";
 
 enablePatches();
 
 type File = {
   name: string;
-  size: number;
+  size?: number;
   is_dir: boolean;
   is_symlink: boolean;
   is_hidden: boolean;
   mode: number;
-  modified: string;
-  accessed: string;
-  created: string;
+  modified: number;
+  accessed: number;
+  created: number;
 };
 
 function FileName({ focused, filter, info }) {
@@ -94,35 +95,37 @@ function FileName({ focused, filter, info }) {
   );
 }
 
-function modeToString(mode) {
-  const types = ["-", "d", "l"]; // File types: Regular file, Directory, Symbolic link
-  const permissions = ["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"]; // Permission strings
-
-  const actualMode = mode & 0o7777;
-
-  const type = types[Math.floor(actualMode / (8 * 8 * 8))]; // Get the file type
-  const owner = permissions[Math.floor((actualMode % (8 * 8 * 8)) / (8 * 8))]; // Get the owner's permissions
-  const group = permissions[Math.floor((actualMode % (8 * 8)) / 8)]; // Get the group's permissions
-  const other = permissions[actualMode % 8]; // Get the permissions for others
-
-  return type + owner + group + other + ".";
-}
-
 type ColumnDef = {
-  name: string;
-  key: string;
-  sortKey?: string;
   align: "left" | "right" | "center";
-  render: (info: File, paneProps: PaneState) => JSX.Element;
   initialWidth: number;
+  subcolumns?: SubcolumnDef[];
+  key: string;
+  render: (info: File, paneProps: PaneState) => JSX.Element;
+};
+
+type SubcolumnDef = {
+  name: string;
+  sortKey?: string;
+  style?: React.CSSProperties;
 };
 
 const columns: ColumnDef[] = [
   {
-    name: "Name",
-    key: "name",
-    sortKey: "name",
     align: "left",
+    key: "name",
+    subcolumns: [
+      {
+        sortKey: "name",
+        name: "Name",
+        style: {
+          flexBasis: "60px",
+        },
+      },
+      {
+        sortKey: "extension",
+        name: "Ext",
+      },
+    ],
     render: (info, { filter, focused, active }) => (
       <FileName
         filter={filter}
@@ -133,35 +136,59 @@ const columns: ColumnDef[] = [
     initialWidth: 250,
   },
   {
-    name: "Size",
+    align: "right",
     key: "size",
-    sortKey: "size",
-    align: "right",
-    render: (info) => <>{info.is_dir ? "DIR" : info.size.toLocaleString()}</>,
     initialWidth: 100,
+    subcolumns: [
+      {
+        name: "Size",
+        sortKey: "size",
+      },
+    ],
+    render: (info) => (
+      <>
+        {info.size !== null
+          ? info.size.toLocaleString()
+          : info.is_dir
+          ? "DIR"
+          : "???"}
+      </>
+    ),
   },
   {
-    name: "Date",
+    align: "right",
+    initialWidth: 70,
     key: "modified_date",
-    sortKey: "modified",
-    align: "right",
+    subcolumns: [
+      {
+        name: "Date",
+        sortKey: "modified",
+      },
+    ],
     render: (info) => <>{new Date(info.modified).toLocaleDateString()}</>,
-    initialWidth: 70,
   },
   {
-    name: "Time",
+    align: "right",
+    initialWidth: 70,
     key: "modified_time",
-    sortKey: "modified",
-    align: "right",
+    subcolumns: [
+      {
+        name: "Time",
+        sortKey: "modified",
+      },
+    ],
     render: (info) => <>{new Date(info.modified).toLocaleTimeString()}</>,
-    initialWidth: 70,
   },
   {
-    name: "Mode",
-    key: "mode",
-    align: "right",
-    render: (info) => <>{modeToString(info.mode)}</>,
+    align: "left",
     initialWidth: 70,
+    key: "mode",
+    subcolumns: [
+      {
+        name: "Mode",
+      },
+    ],
+    render: (info) => <>{info.mode}</>,
   },
 ];
 
@@ -179,7 +206,6 @@ type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
-  busy: boolean;
 };
 
 type DisplayOptions = {
@@ -200,8 +226,19 @@ type MainWindowState = {
   modal?: ModalState;
 };
 
-function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
-  const { name, key, sortKey } = column;
+type ColumnHeaderProps = {
+  widthPrefix: string;
+  column: ColumnDef;
+  sorting: Sorting;
+  onSort: (key: string, asc: boolean) => void;
+};
+
+function ColumnHeader({
+  widthPrefix,
+  column,
+  sorting,
+  onSort,
+}: ColumnHeaderProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [startOffset, setStartOffset] = useState(null);
 
@@ -248,19 +285,59 @@ function ColumnHeader({ widthPrefix, column, sorting, onClick }) {
     );
   }, []);
 
+  const defaultSubcolStyle = {
+    flexGrow: 1,
+    flexShrink: 1,
+  };
+
   return (
     <>
       <div
         ref={ref}
-        className={`column ${sortKey ? "sortable" : ""} ${
-          sorting.key == key && sorting.asc ? "sorted-asc" : ""
-        } ${sorting.key == key && !sorting.asc ? "sorted-desc" : ""}`}
+        className={`column`}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
+          textAlign: column.align,
         }}
-        onClick={onClick}
       >
-        {name}
+        {column.subcolumns.map((subcol, i) => (
+          <div
+            ref={ref}
+            className={`subcolumn ${subcol.sortKey ? "sortable" : ""}`}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              if (subcol.sortKey) {
+                onSort(
+                  subcol.sortKey,
+                  sorting.key != subcol.sortKey || !sorting.asc
+                );
+              }
+            }}
+            style={subcol.style || defaultSubcolStyle}
+          >
+            {column.align == "right" && (
+              <>
+                {sorting.key == subcol.sortKey && sorting.asc && (
+                  <span className="sorting-indicator">▲ </span>
+                )}
+                {sorting.key == subcol.sortKey && !sorting.asc && (
+                  <span className="sorting-indicator">▼ </span>
+                )}
+              </>
+            )}
+            {subcol.name}
+            {column.align == "left" && (
+              <>
+                {sorting.key == subcol.sortKey && sorting.asc && (
+                  <span className="sorting-indicator"> ▲</span>
+                )}
+                {sorting.key == subcol.sortKey && !sorting.asc && (
+                  <span className="sorting-indicator"> ▼</span>
+                )}
+              </>
+            )}
+          </div>
+        ))}
       </div>
       <div className="column-grip" onMouseDown={onmousedown}></div>
     </>
@@ -277,20 +354,19 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     selected,
     sorting,
     focused,
-    busy,
-    pending_path
+    pending_path,
   } = props;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
-    if (also_when_busy || !busy) {
+    if (also_when_busy || !pending_path) {
       safeCommand(cmd, { paneHandle, ...args });
     }
-  }
+  };
 
   const [showSpinner, setShowSpinner] = useState(false);
 
   useEffect(() => {
     let timeout = null;
-    if (busy) {
+    if (pending_path) {
       // 200 ms of grace period before showing the loading screen to
       // appear smoother.
       timeout = setTimeout(() => setShowSpinner(true), 200);
@@ -300,7 +376,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     return () => {
       clearTimeout(timeout);
     };
-  }, [busy]);
+  }, [pending_path]);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -500,6 +576,8 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
+    e.stopPropagation();
+
     if (e.ctrlKey) {
       command("toggle_selected", {
         filename: e.currentTarget.dataset.name,
@@ -510,7 +588,6 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     } else {
       command("focus", { filename: e.currentTarget.dataset.name });
     }
-    e.preventDefault();
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
@@ -565,12 +642,11 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
               widthPrefix={widthPrefix}
               sorting={sorting}
               column={column}
-              onClick={() =>
-                column.sortKey &&
+              onSort={(key, asc) => {
                 command("set_sorting", {
-                  sorting: { key: column.sortKey, asc: !sorting.asc },
-                })
-              }
+                  sorting: { key, asc },
+                });
+              }}
             />
           ))}
         </div>

@@ -1,3 +1,4 @@
+use log::debug;
 use log::info;
 use log::warn;
 use parking_lot::Mutex;
@@ -18,6 +19,8 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::DisplayOptions;
@@ -29,6 +32,7 @@ use super::MainWindowState;
 pub enum SortingKey {
     #[default]
     Name,
+    Extension,
     Size,
     Modified,
     Accessed,
@@ -50,26 +54,12 @@ impl Default for Sorting {
     }
 }
 
-struct NavigationState {
-    version: usize,
-    changes_tx: tokio::sync::watch::Sender<()>,
-    file_list: Arc<FileList>,
-}
-
-impl NavigationState {
-    fn new(path: PathBuf, changes_tx: tokio::sync::watch::Sender<()>) -> Self {
-        Self {
-            version: 0,
-            changes_tx,
-            file_list: Arc::new(FileList::new(path, Vec::new())),
-        }
-    }
-}
-
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
-    navigation_state: RwLock<NavigationState>,
+    navigation_mutex: tokio::sync::Mutex<tokio::sync::watch::Sender<()>>,
+    refresh_queue: AtomicUsize,
+    file_list: RwLock<Arc<FileList>>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -87,7 +77,9 @@ impl Pane {
 
         Self {
             fs,
-            navigation_state: RwLock::new(NavigationState::new(path, tx)),
+            navigation_mutex: tokio::sync::Mutex::new(tx),
+            file_list: RwLock::new(Arc::new(FileList::new(path, vec![]))),
+            refresh_queue: AtomicUsize::new(0),
             view_state: RwLock::new(PaneViewState::default()),
             nav_changes_rx: rx,
             display_options,
@@ -99,8 +91,9 @@ impl Pane {
     pub async fn watch_changes(self: Arc<Self>) {
         let mut rx = self.nav_changes_rx.clone();
         loop {
+            let path = self.path();
             tokio::select! {
-                ret = self.fs.poll_changes(self.path()) => {
+                ret = self.fs.poll_changes(path.clone()) => {
                     match ret {
                         Ok(()) => {
                             info!("changes detected")
@@ -109,6 +102,7 @@ impl Pane {
                             warn!("failed to watch, the folder was probably removed: {}", e);
                             // We wait until the next navigation before restarting the watch
                             let _ = rx.changed().await;
+                            continue;
                         }
                     }
                 }
@@ -119,16 +113,16 @@ impl Pane {
 
             let cloned = self.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = cloned.refresh(true).await {
-                    warn!("failed to refresh pane: {}", e);
+                match cloned.refresh(Some(path)).await {
+                    Ok(()) => cloned.publisher.publish().unwrap(),
+                    Err(e) => warn!("failed to refresh pane: {}", e),
                 }
-                cloned.publisher.publish().unwrap();
             });
         }
     }
 
     pub fn path(&self) -> PathBuf {
-        self.navigation_state.read().file_list.path().to_path_buf()
+        self.file_list.read().path().to_path_buf()
     }
 
     async fn cancellable<T, Fut>(&self, f: Fut) -> Result<T, Error>
@@ -150,6 +144,79 @@ impl Pane {
         }
     }
 
+    async fn navigate_impl(
+        &self,
+        target: PathBuf,
+        silent: bool,
+        changes_sender: &mut tokio::sync::watch::Sender<()>,
+    ) -> Result<(), Error> {
+        let old_file_list = {
+            // Temporarily push the new navigation state. This is mostly so people can backspace out of
+            // a directory that is taking a long time to load (and not just Esc) - but eventually this
+            // is also to support gradual loading of directories. Right now - after this block, the
+            // view state is out of sync with the navigation state (still shows the old files)
+            let mut file_list = self.file_list.write();
+            let old_file_list = std::mem::replace(
+                &mut *file_list,
+                Arc::new(FileList::new(target.clone(), Vec::new())),
+            );
+
+            if !silent {
+                self.view_state_mut().pending_path = Some(target.clone());
+            }
+
+            old_file_list
+        };
+
+        if !silent {
+            let _ = self.publisher.publish();
+        }
+
+        let new_file_list = match self.cancellable(self.fs.list_files(target.clone())).await {
+            Ok(ret) => Arc::new(ret),
+            Err(e) => {
+                debug!("navigation failed: {}", e);
+
+                // Restore the old navigation state
+                *self.file_list.write() = old_file_list;
+                self.view_state_mut().pending_path = None;
+
+                return match e {
+                    Error::Cancelled => Ok(()),
+                    e => Err(e),
+                };
+            }
+        };
+
+        let mut ws = self.view_state_mut();
+
+        let mut file_list = self.file_list.write();
+        *file_list = new_file_list.clone();
+
+        let has_path_changed = old_file_list.path() != new_file_list.path();
+        let display_options = self.display_options.0.read().clone();
+
+        ws.pending_path = None;
+        if has_path_changed {
+            let _ = changes_sender.send(());
+            ws.set_filter(None);
+            ws.selected.clear();
+            ws.focused = None;
+        }
+
+        ws.update(display_options, &*new_file_list);
+
+        if has_path_changed {
+            if target == new_file_list.path() {
+                ws.focus_descendant(&old_file_list.path());
+            } else {
+                ws.focus_descendant(&target);
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn cancel(&self) {
         if let Some(token) = self.cancellation_token.lock().take() {
             token.cancel();
@@ -166,98 +233,39 @@ impl Pane {
 
     pub fn update_view_state(&self) {
         let display_options = self.display_options.0.read().clone();
-        let navigation_state = self.navigation_state.read();
+        let file_list = self.file_list.read();
         let mut view_state: parking_lot::lock_api::RwLockWriteGuard<
             parking_lot::RawRwLock,
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &*navigation_state.file_list);
+        view_state.update(display_options, &*file_list);
     }
 
-    pub async fn refresh(&self, silent: bool) -> Result<(), Error> {
-        self.navigate(".", silent).await?;
+    pub async fn refresh(&self, expected_path: Option<PathBuf>) -> Result<(), Error> {
+        let Some(expected_path) = expected_path else {
+            return self.navigate(".").await;
+        };
+
+        self.refresh_queue.fetch_add(1, Ordering::SeqCst);
+
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        if self.refresh_queue.fetch_sub(1, Ordering::SeqCst) == 1 && self.path() == expected_path {
+            self.navigate_impl(expected_path, true, &mut *changes_sender)
+                .await?;
+        }
+
         Ok(())
     }
 
-    pub async fn navigate<P: AsRef<Path>>(&self, path: P, silent: bool) -> Result<(), Error> {
-        let (epoch, original_fl, target) = {
-            let ref this = self;
-            let mut navigation_state = this.navigation_state.write();
+    pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let target = resolve(&self.path().join(path));
 
-            let version = navigation_state.version;
-            let target = resolve(&navigation_state.file_list.path().join(path));
+        // Cancel any pending navigation
+        self.cancel();
 
-            navigation_state.version += 1;
-            let old_fl = std::mem::replace(
-                &mut navigation_state.file_list,
-                Arc::new(FileList::new(target.clone(), Vec::new())),
-            );
-
-            let mut ws = this.view_state_mut();
-
-            if !silent {
-                ws.pending_path = Some(target.clone());
-                ws.busy = true;
-            }
-
-            (version + 1, old_fl, target)
-        };
-
-        let _ = self.publisher.publish();
-
-        let new_file_list = match self.cancellable(self.fs.list_files(target.clone())).await {
-            Ok(ret) => Arc::new(ret),
-            Err(e) => {
-                // Restore the old navigation & view-state, unless another navigation got there first.
-                let mut ws = self.view_state_mut();
-                let mut navigation_state = self.navigation_state.write();
-                if navigation_state.version == epoch {
-                    navigation_state.version = epoch + 1;
-                    navigation_state.file_list = original_fl.clone();
-
-                    ws.busy = false;
-                    ws.pending_path = None
-                }
-                return match e {
-                    Error::Cancelled => Ok(()),
-                    e => Err(e),
-                };
-            }
-        };
-
-        let mut ws = self.view_state.write();
-        let mut navigation_state = self.navigation_state.write();
-        if navigation_state.version != epoch {
-            return Ok(());
-        }
-        navigation_state.version = epoch + 1;
-        navigation_state.file_list = new_file_list.clone();
-
-        let has_path_changed = original_fl.path() != new_file_list.path();
-        let display_options = self.display_options.0.read().clone();
-
-        ws.busy = false;
-        ws.pending_path = None;
-
-        if has_path_changed {
-            let _ = navigation_state.changes_tx.send(());
-            ws.set_filter(None);
-            ws.selected.clear();
-            ws.focused = None;
-        }
-
-        ws.update(display_options, &*new_file_list);
-
-        if has_path_changed {
-            if target == new_file_list.path() {
-                ws.focus_descendant(&original_fl.path());
-            } else {
-                ws.focus_descendant(&target);
-            }
-        }
-
-        Ok(())
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        self.navigate_impl(target, false, &mut *changes_sender).await
     }
 
     /// If the selection is empty, returns the focused file.
@@ -291,6 +299,17 @@ impl serde::Serialize for Pane {
     }
 }
 
+fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
+    if a.is_dir && b.is_dir {
+        return std::cmp::Ordering::Equal;
+    }
+
+    let a = a.name.rfind('.').map(|i| &a.name[i + 1..]).unwrap_or("");
+    let b = b.name.rfind('.').map(|i| &b.name[i + 1..]).unwrap_or("");
+
+    a.cmp(b)
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PaneViewState {
@@ -301,7 +320,6 @@ pub struct PaneViewState {
     pub focused: Option<String>,
     pub selected: HashSet<String>,
     pub filter: Option<String>,
-    pub busy: bool,
 
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
@@ -328,6 +346,7 @@ impl PaneViewState {
             let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
             match self.sorting.key {
                 SortingKey::Name => a.name.cmp(&b.name),
+                SortingKey::Extension => compare_extension(a, b),
                 SortingKey::Size => a.size.cmp(&b.size),
                 SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
                 SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
@@ -441,10 +460,6 @@ impl PaneViewState {
     }
 
     pub fn select_all(&mut self) {
-        if self.busy {
-            return;
-        }
-
         self.update_filter(None);
         self.filter_regex = None;
         self.selected = self.file_lookup.keys().cloned().collect();

@@ -33,7 +33,7 @@ export const safeCommandSilent = async (
 export type ChangePayload<T> = {
   state?: T;
   patch?: Patch[];
-  version: number
+  version: number;
 };
 
 export type TerminalData = {
@@ -87,7 +87,7 @@ export const useRemoteState = <T>(
   event_name: string,
   deps: any[] = []
 ): T | null => {
-  const version = useRef(null)
+  const version = useRef(null);
   const [state, setState] = useState<T>(null);
 
   useEffect(() => {
@@ -103,15 +103,15 @@ export const useRemoteState = <T>(
             let ret;
             if (event.payload.patch) {
               if (event.payload.version === version.current + 1) {
-                version.current = event.payload.version
+                version.current = event.payload.version;
                 ret = applyPatches(s, event.payload.patch);
               } else if (version.current !== null) {
                 // this should never happen, but just in case
-                console.warn("version mismatch, requesting full state...")
+                console.warn("version mismatch, requesting full state...");
                 invoke("ping", {});
               }
             } else {
-              version.current = event.payload.version
+              version.current = event.payload.version;
               ret = deepUpdate(s, event.payload.state!);
             }
             return ret;

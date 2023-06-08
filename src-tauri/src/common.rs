@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 use std::time::SystemTime;
 
+use log::debug;
 use parking_lot::Mutex;
 use tauri::Window;
 
@@ -224,6 +225,10 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             if patch.as_ref().is_some_and(|p| p.is_empty()) {
                 // If there are no changes, don't publish anything and don't increment the version
                 return Ok(());
+            }
+
+            if let Some(p) = patch.as_ref() {
+                // debug!("patch: {:?}", p);
             }
 
             let version = base.0;

@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
+use log::debug;
 use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;
@@ -33,7 +34,7 @@ pub async fn navigate(
 ) -> Result<(), Error> {
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        pane.navigate(path, false).await?;
+        pane.navigate(path).await?;
         Ok(())
     })
     .await
@@ -245,7 +246,7 @@ pub async fn paste_from_clipboard(
     let text = clipboard.get_text()?;
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        pane.navigate(text.trim(), false).await?;
+        pane.navigate(text.trim()).await?;
         Ok(())
     })
     .await
@@ -409,7 +410,7 @@ pub async fn create_directory(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.navigate(path, false).await?;
+            pane.refresh(None).await?;
             pane.view_state_mut().focus(name);
         }
 
@@ -426,7 +427,7 @@ pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) ->
         let selected = pane.get_effective_selection();
 
         let ret = fs.delete_all(selected).await;
-        pane.refresh(false).await?;
+        pane.refresh(None).await?;
 
         ret?;
 
@@ -452,7 +453,7 @@ pub async fn rename(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(false).await?;
+            pane.refresh(None).await?;
             pane.view_state_mut().focus(new_name);
         }
 

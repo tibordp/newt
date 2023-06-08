@@ -24,11 +24,11 @@ use crate::common::ToUnix;
 #[derive(Clone, serde::Serialize)]
 pub struct File {
     pub name: String,
-    pub size: u64,
+    pub size: Option<u64>,
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
-    pub mode: u32,
+    pub mode: String,
     pub modified: Option<i128>,
     pub accessed: Option<i128>,
     pub created: Option<i128>,
@@ -110,8 +110,7 @@ impl Filesystem for Local {
                             };
 
                             if should_notify {
-                                let sender = tx.lock().take();
-                                if let Some(s) = sender {
+                                if let Some(s) = tx.lock().take() {
                                     let _ = s.send(());
                                 }
                             }
@@ -149,11 +148,11 @@ impl Filesystem for Local {
 
                 ret.push(File {
                     name: "..".to_string(),
-                    size: metadata.len(),
+                    size: None,
                     is_dir: true,
                     is_symlink: metadata.is_symlink(),
                     is_hidden: false,
-                    mode,
+                    mode: mode_string(mode),
                     modified: metadata.modified().map(|t| t.to_unix()).ok(),
                     accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                     created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -183,11 +182,11 @@ impl Filesystem for Local {
 
                 ret.push(File {
                     name: name.clone(),
-                    size: metadata.len(),
+                    size: (!is_dir).then_some(metadata.len()),
                     is_dir,
                     is_symlink: file_type.is_symlink(),
                     is_hidden: name.starts_with('.'),
-                    mode,
+                    mode: mode_string(mode),
                     modified: metadata.modified().map(|t| t.to_unix()).ok(),
                     accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                     created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -273,4 +272,46 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.delete_all(paths).await
     }
+}
+
+
+pub fn mode_string(mode: u32) -> String {
+    const TYPE_CHARS: &[u8] = b"?pc?d?b?-?l?s???";
+    const MODE_CHARS: &[u8] = b"rwxSTst";
+
+    let mut ret = vec![0; 10];
+    let mut idx = 0usize;
+
+    ret[idx] = TYPE_CHARS[((mode >> 12) & 0xf) as usize];
+    let mut i = 0;
+    let mut m = 0o400;
+    loop {
+        let mut j = 0;
+        let mut k = 0;
+
+        loop {
+            idx += 1;
+            ret[idx] = b'-';
+            if mode & m != 0 {
+                ret[idx] = MODE_CHARS[j];
+                k = j;
+            }
+            m >>= 1;
+            j += 1;
+            if j >= 3 {
+                break;
+            }
+        }
+        i += 1;
+
+        if mode & (0o10000 >> i) != 0 {
+            ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) as usize)];
+        }
+
+        if i >= 3 {
+            break;
+        }
+    }
+
+    unsafe { String::from_utf8_unchecked(ret) }
 }

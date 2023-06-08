@@ -228,9 +228,9 @@ impl MainWindowState {
         self.panes.get(PaneHandle(1 - handle.0)).unwrap()
     }
 
-    pub async fn refresh(&self, silent: bool) -> Result<(), Error> {
+    pub async fn refresh(&self) -> Result<(), Error> {
         for pane in self.panes.all() {
-            pane.refresh(silent).await?;
+            pane.refresh(None).await?;
         }
         Ok(())
     }
@@ -249,7 +249,7 @@ impl MainWindowState {
         let other_pane = self.other_pane(handle);
         let pane = self.panes.get(handle).unwrap();
 
-        pane.navigate(other_pane.path(), false).await?;
+        pane.navigate(other_pane.path()).await?;
 
         Ok(())
     }
@@ -315,7 +315,7 @@ impl MainWindowContext {
             global_state.display_options.clone(),
             publisher.clone(),
         ));
-        global_state.refresh(false).await?;
+        global_state.refresh().await?;
 
         for pane in global_state.panes.all() {
             tauri::async_runtime::spawn(async move {
@@ -367,7 +367,6 @@ impl MainWindowContext {
         let ret = f(self.inner.main_window_state.clone()).await;
 
         self.inner.publisher.publish()?;
-
         if let Some(pane) = self.active_pane() {
             self.inner
                 .window
@@ -453,7 +452,10 @@ impl MainWindowContext {
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {
-        self.inner.main_window_state.refresh(true).await?;
+        self.with_update_async(|gs| async move {
+            gs.refresh().await?;
+            Ok(())
+        }).await?;
         Ok(())
     }
 }
