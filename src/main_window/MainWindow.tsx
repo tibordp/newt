@@ -179,7 +179,6 @@ type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
-  busy: boolean;
 };
 
 type DisplayOptions = {
@@ -277,11 +276,10 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     selected,
     sorting,
     focused,
-    busy,
     pending_path
   } = props;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
-    if (also_when_busy || !busy) {
+    if (also_when_busy || !pending_path) {
       safeCommand(cmd, { paneHandle, ...args });
     }
   }
@@ -290,7 +288,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
 
   useEffect(() => {
     let timeout = null;
-    if (busy) {
+    if (pending_path) {
       // 200 ms of grace period before showing the loading screen to
       // appear smoother.
       timeout = setTimeout(() => setShowSpinner(true), 200);
@@ -300,7 +298,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     return () => {
       clearTimeout(timeout);
     };
-  }, [busy]);
+  }, [pending_path]);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.

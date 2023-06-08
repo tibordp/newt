@@ -230,7 +230,7 @@ impl MainWindowState {
 
     pub async fn refresh(&self, silent: bool) -> Result<(), Error> {
         for pane in self.panes.all() {
-            pane.refresh(silent).await?;
+            pane.refresh(silent, None).await?;
         }
         Ok(())
     }
@@ -249,7 +249,7 @@ impl MainWindowState {
         let other_pane = self.other_pane(handle);
         let pane = self.panes.get(handle).unwrap();
 
-        pane.navigate(other_pane.path(), false).await?;
+        pane.navigate(other_pane.path(), false, None).await?;
 
         Ok(())
     }

@@ -110,8 +110,7 @@ impl Filesystem for Local {
                             };
 
                             if should_notify {
-                                let sender = tx.lock().take();
-                                if let Some(s) = sender {
+                                if let Some(s) = tx.lock().take() {
                                     let _ = s.send(());
                                 }
                             }
