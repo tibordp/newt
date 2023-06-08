@@ -102,10 +102,15 @@ li.file-item {
 }
 
 .column {
+  display: flex;
+  gap: 1em;
   position: relative;
+  border-right: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.subcolumn {
   padding-left: 0.4em;
   padding-right: 0.4em;
-  border-right: 1px solid rgba(0, 0, 0, 0.15);
 }
 
 .column-grip {
@@ -134,12 +139,7 @@ li.file-item {
   display: inline;
 }
 
-.column.sorted-asc::after {
-  content: " ▲";
-  color: #aaa;
-}
-.column.sorted-desc::after {
-  content: " ▼";
+.sorting-indicator {
   color: #aaa;
 }
 

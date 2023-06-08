@@ -34,7 +34,7 @@ pub async fn navigate(
 ) -> Result<(), Error> {
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        pane.navigate(path, false, None).await?;
+        pane.navigate(path).await?;
         Ok(())
     })
     .await
@@ -246,7 +246,7 @@ pub async fn paste_from_clipboard(
     let text = clipboard.get_text()?;
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        pane.navigate(text.trim(), false, None).await?;
+        pane.navigate(text.trim()).await?;
         Ok(())
     })
     .await
@@ -403,15 +403,14 @@ pub async fn create_directory(
 ) -> Result<(), Error> {
     let dir_path = PathBuf::from(path.clone());
     let dir_path = dir_path.join(name.clone());
-    let pane = pane_handle.and_then(|h| ctx.panes().get(h));
-    let old_version = pane.as_deref().map(|p| p.version());
 
     ctx.fs().create_directory(dir_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
-        if let Some(pane) = pane {
-            pane.navigate(path, false, old_version).await?;
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh(None).await?;
             pane.view_state_mut().focus(name);
         }
 
@@ -425,11 +424,10 @@ pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let fs = ctx.fs();
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        let version = pane.version();
         let selected = pane.get_effective_selection();
 
         let ret = fs.delete_all(selected).await;
-        pane.refresh(false, Some(version)).await?;
+        pane.refresh(None).await?;
 
         ret?;
 
@@ -448,15 +446,14 @@ pub async fn rename(
 ) -> Result<(), Error> {
     let old_path = PathBuf::from(base_path.clone()).join(old_name.clone());
     let new_path = PathBuf::from(base_path).join(new_name.clone());
-    let pane = pane_handle.and_then(|h| ctx.panes().get(h));
-    let old_version = pane.as_deref().map(|p| p.version());
 
     ctx.fs().rename(old_path, new_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
-        if let Some(pane) = pane {
-            pane.refresh(false, old_version).await?;
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh(None).await?;
             pane.view_state_mut().focus(new_name);
         }
 
