@@ -1,6 +1,10 @@
 use log::debug;
 use log::info;
 use log::warn;
+use newt_common::filesystem::File;
+use newt_common::filesystem::FileList;
+use newt_common::filesystem::Filesystem;
+use newt_common::filesystem::resolve;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -9,10 +13,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
 use crate::common::UpdatePublisher;
-use crate::filesystem::resolve;
-use crate::filesystem::File;
-use crate::filesystem::FileList;
-use crate::filesystem::Filesystem;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -172,7 +172,14 @@ impl Pane {
             let _ = self.publisher.publish();
         }
 
-        let new_file_list = match self.cancellable(self.fs.list_files(target.clone())).await {
+        let fut = {
+            let target = target.clone();
+            async move {
+                Ok(self.fs.list_files(target).await?)
+            }
+        };
+
+        let new_file_list = match self.cancellable(fut).await {
             Ok(ret) => Arc::new(ret),
             Err(e) => {
                 debug!("navigation failed: {}", e);

@@ -18,10 +18,10 @@ use notify::RecursiveMode;
 use notify::Watcher;
 use parking_lot::Mutex;
 
-use crate::common::Error;
-use crate::common::ToUnix;
+use crate::Error;
+use crate::ToUnix;
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
@@ -34,6 +34,7 @@ pub struct File {
     pub created: Option<i128>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FileList {
     path: PathBuf,
     files: Vec<File>,
@@ -73,7 +74,6 @@ pub fn resolve(path: &Path) -> PathBuf {
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
-
     async fn list_files(&self, path: PathBuf) -> Result<FileList, Error>;
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error>;
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error>;
@@ -199,7 +199,7 @@ impl Filesystem for Local {
         assert!(path.is_absolute());
         loop {
             let path_1 = path.clone();
-            match tauri::async_runtime::spawn_blocking(move || reload(&path_1)).await? {
+            match tokio::task::spawn_blocking(move || reload(&path_1)).await? {
                 Ok(files) => return Ok(FileList::new(path, files)),
                 Err(Error::Io(e)) => match e.kind() {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
@@ -215,21 +215,21 @@ impl Filesystem for Local {
     }
 
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
-        tauri::async_runtime::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             std::fs::rename(old_path, new_path).map_err(Error::Io)
         })
         .await?
     }
 
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
-        tauri::async_runtime::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(path).map_err(Error::Io)
         })
         .await?
     }
 
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
-        tauri::async_runtime::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             for path in paths {
                 if path.is_dir() {
                     std::fs::remove_dir_all(path)?;
@@ -274,7 +274,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     }
 }
 
-
+/// From busybox.
 pub fn mode_string(mode: u32) -> String {
     const TYPE_CHARS: &[u8] = b"?pc?d?b?-?l?s???";
     const MODE_CHARS: &[u8] = b"rwxSTst";
@@ -307,7 +307,6 @@ pub fn mode_string(mode: u32) -> String {
         if mode & (0o10000 >> i) != 0 {
             ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) as usize)];
         }
-
         if i >= 3 {
             break;
         }

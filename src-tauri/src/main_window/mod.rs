@@ -1,6 +1,8 @@
 pub mod pane;
 pub mod terminal;
 
+use newt_common::filesystem::Filesystem;
+use newt_common::filesystem::Local;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -17,12 +19,7 @@ use tauri::Window;
 use tauri::Wry;
 
 use crate::common::UpdatePublisher;
-
 use crate::common::Error;
-
-use crate::filesystem::Filesystem;
-use crate::filesystem::Local;
-
 use crate::GlobalContext;
 
 use self::pane::Pane;
