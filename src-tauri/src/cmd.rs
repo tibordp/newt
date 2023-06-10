@@ -1,7 +1,6 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use log::debug;
 use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;

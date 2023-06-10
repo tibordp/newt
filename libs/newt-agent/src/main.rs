@@ -1,5 +1,5 @@
-use newt_common::{Error, filesystem::Local};
-use tokio::io::Stdin;
+use newt_common::{filesystem::Local, Error};
+
 use tokio_duplex::Duplex;
 
 #[tokio::main]

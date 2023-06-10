@@ -215,17 +215,13 @@ impl Filesystem for Local {
     }
 
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
-        tokio::task::spawn_blocking(move || {
-            std::fs::rename(old_path, new_path).map_err(Error::Io)
-        })
-        .await?
+        tokio::task::spawn_blocking(move || std::fs::rename(old_path, new_path).map_err(Error::Io))
+            .await?
     }
 
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
-        tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(path).map_err(Error::Io)
-        })
-        .await?
+        tokio::task::spawn_blocking(move || std::fs::create_dir_all(path).map_err(Error::Io))
+            .await?
     }
 
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {

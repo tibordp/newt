@@ -1,10 +1,10 @@
 use log::debug;
 use log::info;
 use log::warn;
+use newt_common::filesystem::resolve;
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::resolve;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -174,9 +174,7 @@ impl Pane {
 
         let fut = {
             let target = target.clone();
-            async move {
-                Ok(self.fs.list_files(target).await?)
-            }
+            async move { Ok(self.fs.list_files(target).await?) }
         };
 
         let new_file_list = match self.cancellable(fut).await {
@@ -272,7 +270,8 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, &mut *changes_sender).await
+        self.navigate_impl(target, false, &mut *changes_sender)
+            .await
     }
 
     /// If the selection is empty, returns the focused file.

@@ -1,13 +1,10 @@
 use std::marker::PhantomData;
-use std::time::SystemTime;
 
-use log::debug;
 use parking_lot::Mutex;
 use tauri::Window;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]

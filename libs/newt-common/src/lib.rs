@@ -1,7 +1,7 @@
 #![feature(io_error_more)]
 
-pub mod rpc;
 pub mod filesystem;
+pub mod rpc;
 
 use std::time::SystemTime;
 
@@ -25,14 +25,18 @@ pub enum Error {
 
 impl serde::Serialize for Error {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::ser::Serializer {
+    where
+        S: serde::ser::Serializer,
+    {
         serializer.serialize_str(self.to_string().as_ref())
     }
 }
 
 impl<'de> serde::Deserialize<'de> for Error {
     fn deserialize<D>(deserializer: D) -> Result<Error, D::Error>
-    where D: serde::de::Deserializer<'de> {
+    where
+        D: serde::de::Deserializer<'de>,
+    {
         let s = String::deserialize(deserializer)?;
         Ok(Error::Remote(s))
     }

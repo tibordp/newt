@@ -2,7 +2,7 @@ pub mod pane;
 pub mod terminal;
 
 use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::Local;
+
 use newt_common::rpc::Communicator;
 use newt_common::rpc::RemoteFileSystem;
 use parking_lot::RwLock;
@@ -21,8 +21,8 @@ use tauri::State;
 use tauri::Window;
 use tauri::Wry;
 
-use crate::common::UpdatePublisher;
 use crate::common::Error;
+use crate::common::UpdatePublisher;
 use crate::GlobalContext;
 
 use self::pane::Pane;
@@ -310,8 +310,9 @@ impl MainWindowContext {
         let communicator = Communicator::new();
         let fs = RemoteFileSystem::new(communicator.clone());
 
-        tokio::spawn(async move { let _ = communicator.handle_connection(stream).await; });
-
+        tokio::spawn(async move {
+            let _ = communicator.handle_connection(stream).await;
+        });
 
         //let fs = Local::new();
         //let fs = Slow::new(fs);
@@ -477,7 +478,8 @@ impl MainWindowContext {
         self.with_update_async(|gs| async move {
             gs.refresh().await?;
             Ok(())
-        }).await?;
+        })
+        .await?;
         Ok(())
     }
 }

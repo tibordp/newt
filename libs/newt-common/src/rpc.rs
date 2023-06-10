@@ -2,20 +2,19 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Weak,
+        atomic::{AtomicU64, Ordering},
+        Arc,
     },
-    thread::JoinHandle,
 };
 
 use bytes::{Buf, BufMut, Bytes};
-use log::{debug, error, info};
+use log::{error, info};
 use parking_lot::Mutex;
 use tokio::{
-    io::{AsyncBufRead, AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite},
     task::AbortHandle,
 };
-use tokio_stream::wrappers::UnboundedReceiverStream;
+
 use tokio_util::codec::Framed;
 
 use crate::{
@@ -242,66 +241,64 @@ impl Communicator {
 
         let result = loop {
             match rx.next().await {
-                Some(Ok(msg)) => {
-                    match msg {
-                        Message::Ping(response) => {
-                            if !response {
-                                let _ = outbox.send(Message::Ping(true));
-                            } else {
-                                info!("ping response received");
-                            }
+                Some(Ok(msg)) => match msg {
+                    Message::Ping(response) => {
+                        if !response {
+                            let _ = outbox.send(Message::Ping(true));
+                        } else {
+                            info!("ping response received");
                         }
-                        Message::InvokeRequest(api, id, payload) => {
-                            let dispatcher = self.dispatcher.clone().expect(
-                                "received a request message on a communicator without a dispatcher",
-                            );
-                            let outbox = outbox.clone();
-                            self.tasks.lock().insert(
-                                id,
-                                tokio::spawn(async move {
-                                    match dispatcher.invoke(api, payload).await {
-                                        Ok(Some(resp)) => {
-                                            let _ = outbox.send(Message::InvokeResponse(id, resp));
-                                        }
-                                        Ok(None) => {
-                                            error!("unknown API invoked");
-                                        }
-                                        Err(e) => {
-                                            error!("error handling request: {}", e);
-                                        }
-                                    }
-                                })
-                                .abort_handle(),
-                            );
-                        }
-                        Message::InvokeResponse(id, payload) => {
-                            if let Some(sender) = self.response.lock().remove(&id) {
-                                let _ = sender.send(payload);
-                            }
-                        }
-                        Message::Notify(api, payload) => {
-                            let dispatcher = self.dispatcher.clone().expect(
-                                "received a request message on a communicator without a dispatcher",
-                            );
+                    }
+                    Message::InvokeRequest(api, id, payload) => {
+                        let dispatcher = self.dispatcher.clone().expect(
+                            "received a request message on a communicator without a dispatcher",
+                        );
+                        let outbox = outbox.clone();
+                        self.tasks.lock().insert(
+                            id,
                             tokio::spawn(async move {
-                                match dispatcher.notify(api, payload).await {
-                                    Ok(true) => {}
-                                    Ok(false) => {
+                                match dispatcher.invoke(api, payload).await {
+                                    Ok(Some(resp)) => {
+                                        let _ = outbox.send(Message::InvokeResponse(id, resp));
+                                    }
+                                    Ok(None) => {
                                         error!("unknown API invoked");
                                     }
                                     Err(e) => {
-                                        error!("error handling notification: {}", e)
+                                        error!("error handling request: {}", e);
                                     }
                                 }
-                            });
-                        }
-                        Message::InvokeCancel(id) => {
-                            if let Some(task) = self.tasks.lock().remove(&id) {
-                                task.abort();
-                            }
+                            })
+                            .abort_handle(),
+                        );
+                    }
+                    Message::InvokeResponse(id, payload) => {
+                        if let Some(sender) = self.response.lock().remove(&id) {
+                            let _ = sender.send(payload);
                         }
                     }
-                }
+                    Message::Notify(api, payload) => {
+                        let dispatcher = self.dispatcher.clone().expect(
+                            "received a request message on a communicator without a dispatcher",
+                        );
+                        tokio::spawn(async move {
+                            match dispatcher.notify(api, payload).await {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    error!("unknown API invoked");
+                                }
+                                Err(e) => {
+                                    error!("error handling notification: {}", e)
+                                }
+                            }
+                        });
+                    }
+                    Message::InvokeCancel(id) => {
+                        if let Some(task) = self.tasks.lock().remove(&id) {
+                            task.abort();
+                        }
+                    }
+                },
                 Some(Err(e)) => {
                     break Err(e);
                 }
@@ -441,7 +438,7 @@ impl Dispatcher for FilesystemDispatcher {
 
                 bincode::serialize(&ret).unwrap()
             }
-            _ => return Ok(None)
+            _ => return Ok(None),
         };
 
         Ok(Some(ret.into()))
