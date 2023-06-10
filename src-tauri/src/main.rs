@@ -26,7 +26,7 @@ pub struct GlobalContext {
 }
 
 impl GlobalContext {
-    pub async fn create_window(&self, window: Window) -> Result<(), Error> {
+    pub async fn create_main_window(&self, window: Window) -> Result<(), Error> {
         info!("creating window {}", window.label());
         let window_context = MainWindowContext::create(window.clone()).await?;
         self.main_windows.lock().insert(window, window_context);
@@ -64,7 +64,7 @@ fn main() {
             let app_handle = w.app_handle();
             let global_ctx: State<GlobalContext> = app_handle.state();
 
-            tauri::async_runtime::block_on(global_ctx.create_window(w)).unwrap();
+            tauri::async_runtime::block_on(global_ctx.create_main_window(w)).unwrap();
         })
         .on_window_event(
             #[allow(clippy::single_match)]

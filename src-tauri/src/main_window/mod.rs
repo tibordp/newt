@@ -2,9 +2,11 @@ pub mod pane;
 pub mod terminal;
 
 use newt_common::filesystem::Filesystem;
-
+use newt_common::filesystem::Remote;
 use newt_common::rpc::Communicator;
-use newt_common::rpc::RemoteFileSystem;
+
+use newt_common::terminal::TerminalClient;
+use newt_common::terminal::TerminalHandle;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -107,17 +109,6 @@ impl serde::Serialize for Panes {
             seq.serialize_element(&**e)?;
         }
         seq.end()
-    }
-}
-
-#[derive(
-    PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-pub struct TerminalHandle(uuid::Uuid);
-
-impl TerminalHandle {
-    pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
     }
 }
 
@@ -267,6 +258,8 @@ impl MainWindowState {
 }
 struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
+    terminal_client: Arc<dyn TerminalClient>,
+
     window: Window,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -291,33 +284,37 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        /*let child = tokio::process::Command::new("/usr/bin/ssh")
-            .args(&["rpi.ojdip.net", "/home/tibordp/src/newt/target/release/newt-agent"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-        */
-
-        let child = tokio::process::Command::new("pkexec")
-            .args(&["/home/tibordp/src/newt/target/debug/newt-agent"])
+        let mut child = tokio::process::Command::new("/usr/bin/ssh")
+            .args(&[
+                "localhost",
+                "sh -c /home/tibordp/src/newt/target/debug/newt-agent",
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
 
-        let stream = tokio_duplex::Duplex::new(child.stdout.unwrap(), child.stdin.unwrap());
-        let communicator = Communicator::new();
-        let fs = RemoteFileSystem::new(communicator.clone());
+        /* let child = tokio::process::Command::new("pkexec")
+        .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;*/
+
+        let stream = tokio_duplex::Duplex::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
+        let communicator = Communicator::new(stream);
+        let fs = Remote::new(communicator.clone());
+        let terminal_client = newt_common::terminal::Remote::new(communicator);
 
         tokio::spawn(async move {
-            let _ = communicator.handle_connection(stream).await;
+            let ret = child.wait().await.unwrap();
+            eprintln!("child exited: {}", ret);
         });
-
         //let fs = Local::new();
         //let fs = Slow::new(fs);
 
         let fs = Arc::new(fs);
+        let terminal_client = Arc::new(terminal_client);
         let global_state = MainWindowState::new();
 
         let publisher = Arc::new(UpdatePublisher::new(
@@ -349,6 +346,7 @@ impl MainWindowContext {
         Ok(Self {
             inner: Arc::new(MainWindowContextInner {
                 fs,
+                terminal_client,
                 window,
                 publisher,
                 main_window_state: global_state,
@@ -358,6 +356,10 @@ impl MainWindowContext {
 
     pub fn fs(&self) -> Arc<dyn Filesystem> {
         self.inner.fs.clone()
+    }
+
+    pub fn terminal_client(&self) -> Arc<dyn TerminalClient> {
+        self.inner.terminal_client.clone()
     }
 
     pub fn window(&self) -> Window {
@@ -457,14 +459,12 @@ impl MainWindowContext {
     }
 
     pub async fn create_terminal(&self, path: Option<&Path>) -> Result<Arc<Terminal>, Error> {
-        let handle = TerminalHandle::new();
-        let terminal =
-            Terminal::create(self.clone(), self.inner.window.clone(), handle, path).await?;
+        let terminal = Terminal::create(self.clone(), self.inner.window.clone(), path).await?;
 
         self.with_update(|s| {
-            let terminal = s.terminals.insert(handle, terminal);
+            let terminal = s.terminals.insert(terminal.handle, terminal);
             let mut opts = s.display_options.0.write();
-            opts.active_terminal = Some(handle);
+            opts.active_terminal = Some(terminal.handle);
             opts.panes_focused = false;
             Ok(terminal)
         })

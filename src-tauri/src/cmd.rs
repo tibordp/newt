@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
+use newt_common::terminal::TerminalHandle;
 use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;
@@ -15,7 +16,6 @@ use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
 use crate::main_window::ModalDataKind;
 use crate::main_window::PaneHandle;
-use crate::main_window::TerminalHandle;
 
 #[tauri::command]
 pub fn cancel(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
@@ -306,13 +306,13 @@ pub async fn send_to_terminal(
         .flatten()
         .collect();
 
-    terminal.input(input)?;
+    terminal.input(input).await?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn terminal_write(
+pub async fn terminal_write(
     ctx: MainWindowContext,
     handle: TerminalHandle,
     data: Vec<u8>,
@@ -321,13 +321,13 @@ pub fn terminal_write(
         .terminals()
         .get(handle)
         .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
-    term.input(data)?;
+    term.input(data).await?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn terminal_resize(
+pub async fn terminal_resize(
     ctx: MainWindowContext,
     handle: TerminalHandle,
     rows: u16,
@@ -337,7 +337,7 @@ pub fn terminal_resize(
         .terminals()
         .get(handle)
         .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
-    term.resize(rows, cols)?;
+    term.resize(rows, cols).await?;
 
     Ok(())
 }

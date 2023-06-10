@@ -31,6 +31,7 @@ impl From<newt_common::Error> for Error {
             newt_common::Error::Io(x) => Error::Io(x),
             newt_common::Error::Tokio(x) => Error::Tokio(x),
             newt_common::Error::Notify(x) => Error::Notify(x),
+            newt_common::Error::PtyProcess(x) => Error::PtyProcess(x),
             newt_common::Error::Custom(x) => Error::Custom(x),
             newt_common::Error::Cancelled => Error::Cancelled,
             newt_common::Error::Connection => Error::Custom("connection error".to_string()),
