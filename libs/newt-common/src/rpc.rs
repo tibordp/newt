@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes};
-use log::error;
+use log::{error, debug};
 use parking_lot::Mutex;
 use tokio::{
     io::{AsyncBufRead, AsyncRead, AsyncWrite},
@@ -48,7 +48,6 @@ impl tokio_util::codec::Decoder for MessageCodec {
             return Ok(None);
         }
 
-        let kind = src[0];
         match src[0] {
             1 => {
                 if src.len() < 15 {
@@ -62,11 +61,13 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(15 + len - src.len());
                     return Ok(None);
                 }
+                let slice = Bytes::copy_from_slice(&src[15..15 + len]);
+                src.advance(15 + len);
 
                 return Ok(Some(Message::Request(
                     Api(api),
                     RequestId(request_id),
-                    Bytes::copy_from_slice(&src[15..15 + len]),
+                    slice,
                 )));
             }
             2 => {
@@ -80,10 +81,12 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(13 + len - src.len());
                     return Ok(None);
                 }
+                let slice = Bytes::copy_from_slice(&src[13..13 + len]);
+                src.advance(13 + len);
 
                 return Ok(Some(Message::Response(
                     RequestId(request_id),
-                    Bytes::copy_from_slice(&src[13..13 + len]),
+                    slice,
                 )));
             }
             3 => {
@@ -91,6 +94,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     return Ok(None);
                 }
                 let request_id = (&src[1..9]).read_u64::<NetworkEndian>().unwrap();
+                src.advance(9);
                 return Ok(Some(Message::Cancel(RequestId(request_id))));
             }
             _ => {
@@ -190,10 +194,12 @@ impl Communicator {
         loop {
             tokio::select! {
                 Some(msg) = rx.recv() => {
+                    debug!("sending message");
                     stream.send(msg).await?;
                 }
                 Some(result) = stream.next() => match result {
                     Ok(msg) => {
+                        debug!("processing message {:?}", msg);
                         match msg {
                             Message::Request(api, id, payload) => {
                                 let dispatcher = self.dispatcher.clone().expect(
@@ -245,33 +251,42 @@ impl Communicator {
         Req: serde::Serialize + for<'de> serde::Deserialize<'de>,
         Resp: serde::Serialize + for<'de> serde::Deserialize<'de>,
     {
-        let id = RequestId(self.id.fetch_add(0, Ordering::SeqCst));
-        let mut bytes: Vec<u8> = Vec::new();
-        ciborium::into_writer(req, &mut bytes).unwrap();
+        debug!("invoking api: {:?}", api);
+        let id = RequestId(self.id.fetch_add(1, Ordering::SeqCst));
+        let bytes = bincode::serialize(req).unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.response.lock().insert(id, tx);
         let guard = CancelGuard(self, id);
+
+        let message = Message::Request(api, id, bytes.into());
+        debug!("sending message: {:?}, yahoo", message);
 
         self.outbox
             .lock()
             .as_ref()
             .and_then(|s| s.upgrade())
             .ok_or_else(|| Error::Custom("communicator is not connected".into()))?
-            .send(Message::Request(api, id, bytes.into()))
+            .send(message)
             .map_err(|_| Error::Custom("could not send".into()))?;
 
         let resp = rx
             .await
-            .map_err(|_| Error::Custom("could not receive".into()))?;
+            .map_err(|e| Error::Custom(e.to_string()))?;
 
         std::mem::forget(guard);
-        Ok(ciborium::from_reader(std::io::Cursor::new(resp)).unwrap())
+        Ok(bincode::deserialize(&resp[..]).unwrap())
     }
 }
 
-struct RemoteFileSystem {
+pub struct RemoteFileSystem {
     communicator: Arc<Communicator>,
+}
+
+impl RemoteFileSystem {
+    pub fn new(communicator: Arc<Communicator>) -> Self {
+        Self { communicator }
+    }
 }
 
 const API_POLL_CHANGES: Api = Api(0);
@@ -286,8 +301,7 @@ impl Filesystem for RemoteFileSystem {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(API_POLL_CHANGES, &path)
-            .await
-            .map_err(|_| Error::Connection)?;
+            .await?;
 
         Ok(ret?)
     }
@@ -295,8 +309,7 @@ impl Filesystem for RemoteFileSystem {
         let ret: Result<FileList, Error> = self
             .communicator
             .invoke(API_LIST_FILES, &path)
-            .await
-            .map_err(|_| Error::Connection)?;
+            .await?;
 
         Ok(ret?)
     }
@@ -304,8 +317,7 @@ impl Filesystem for RemoteFileSystem {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(API_RENAME, &(old_path, new_path))
-            .await
-            .map_err(|_| Error::Connection)?;
+            .await?;
 
         Ok(ret?)
     }
@@ -313,8 +325,7 @@ impl Filesystem for RemoteFileSystem {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(API_CREATE_DIRECTORY, &path)
-            .await
-            .map_err(|_| Error::Connection)?;
+            .await?;
 
         Ok(ret?)
     }
@@ -322,8 +333,7 @@ impl Filesystem for RemoteFileSystem {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(API_DELETE_ALL, &paths)
-            .await
-            .map_err(|_| Error::Connection)?;
+            .await?;
 
         Ok(ret?)
     }
@@ -335,51 +345,49 @@ pub struct FilesystemDispatcher {
 
 impl FilesystemDispatcher {
     pub fn new<F: Filesystem + 'static>(filesystem: F) -> Self {
-        Self { filesystem: Box::new(filesystem) }
+        Self {
+            filesystem: Box::new(filesystem),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Dispatcher for FilesystemDispatcher {
     async fn dispatch(&self, api: Api, req: bytes::Bytes) -> Result<bytes::Bytes, Error> {
-        let mut result = Vec::new();
-
-        match api {
+        let ret = match api {
             API_POLL_CHANGES => {
-                let path: PathBuf = ciborium::from_reader(std::io::Cursor::new(req)).unwrap();
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.poll_changes(path).await;
 
-                ciborium::into_writer(&ret, &mut result)
+                bincode::serialize(&ret).unwrap()
             }
             API_LIST_FILES => {
-                let path: PathBuf = ciborium::from_reader(std::io::Cursor::new(req)).unwrap();
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.list_files(path).await;
 
-                ciborium::into_writer(&ret, &mut result)
+                bincode::serialize(&ret).unwrap()
             }
             API_RENAME => {
                 let (old_path, new_path): (PathBuf, PathBuf) =
-                    ciborium::from_reader(std::io::Cursor::new(req)).unwrap();
+                bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.rename(old_path, new_path).await;
 
-                ciborium::into_writer(&ret, &mut result)
+                bincode::serialize(&ret).unwrap()
             }
             API_CREATE_DIRECTORY => {
-                let path: PathBuf = ciborium::from_reader(std::io::Cursor::new(req)).unwrap();
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.create_directory(path).await;
 
-                ciborium::into_writer(&ret, &mut result)
+                bincode::serialize(&ret).unwrap()
             }
             API_DELETE_ALL => {
-                let paths: Vec<PathBuf> = ciborium::from_reader(std::io::Cursor::new(req)).unwrap();
+                let paths: Vec<PathBuf> = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.delete_all(paths).await;
 
-                ciborium::into_writer(&ret, &mut result)
+                bincode::serialize(&ret).unwrap()
             }
             _ => return Err(Error::Custom("unknown api".into())),
-        }
-        .map_err(|_| Error::Custom("could not serialize".into()))?;
-
-        Ok(result.into())
+        };
+        Ok(ret.into())
     }
 }

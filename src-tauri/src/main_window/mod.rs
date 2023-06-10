@@ -3,6 +3,8 @@ pub mod terminal;
 
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::Local;
+use newt_common::rpc::Communicator;
+use newt_common::rpc::RemoteFileSystem;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -12,6 +14,7 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 
+use std::process::Stdio;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -288,7 +291,20 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        let fs = Local::new();
+        let child = tokio::process::Command::new("/home/tibordp/src/newt/target/debug/newt-agent")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        let stream = tokio_duplex::Duplex::new(child.stdout.unwrap(), child.stdin.unwrap());
+        let communicator = Communicator::new();
+        let fs = RemoteFileSystem::new(communicator.clone());
+
+        tokio::spawn(async move { let _ = communicator.process(stream).await; });
+
+
+        //let fs = Local::new();
         //let fs = Slow::new(fs);
 
         let fs = Arc::new(fs);
