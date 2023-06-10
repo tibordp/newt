@@ -10,6 +10,6 @@ async fn main() -> Result<(), Error> {
     let stream = Duplex::new(stdin, stdout);
     let dispatcher = newt_common::rpc::FilesystemDispatcher::new(Local::new());
     let rpc = newt_common::rpc::Communicator::with_dispatcher(dispatcher);
-    rpc.process(stream).await?;
+    rpc.handle_connection(stream).await?;
     Ok(())
 }

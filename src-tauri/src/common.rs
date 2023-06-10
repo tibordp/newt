@@ -232,10 +232,6 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
                 return Ok(());
             }
 
-            if let Some(p) = patch.as_ref() {
-                // debug!("patch: {:?}", p);
-            }
-
             let version = base.0;
             *base = (version + 1, serialized.clone());
             (version, patch)

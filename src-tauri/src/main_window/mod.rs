@@ -291,7 +291,16 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        let child = tokio::process::Command::new("/home/tibordp/src/newt/target/debug/newt-agent")
+        /*let child = tokio::process::Command::new("/usr/bin/ssh")
+            .args(&["rpi.ojdip.net", "/home/tibordp/src/newt/target/release/newt-agent"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        */
+
+        let child = tokio::process::Command::new("pkexec")
+            .args(&["/home/tibordp/src/newt/target/debug/newt-agent"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -301,7 +310,7 @@ impl MainWindowContext {
         let communicator = Communicator::new();
         let fs = RemoteFileSystem::new(communicator.clone());
 
-        tokio::spawn(async move { let _ = communicator.process(stream).await; });
+        tokio::spawn(async move { let _ = communicator.handle_connection(stream).await; });
 
 
         //let fs = Local::new();

@@ -1738,6 +1738,7 @@ dependencies = [
  "async-trait",
  "libc",
  "log",
+ "newt-agent",
  "newt-common",
  "notify",
  "objc",
