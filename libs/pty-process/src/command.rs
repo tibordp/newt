@@ -1,3 +1,5 @@
+use libc::kill;
+
 /// Wrapper around [`tokio::process::Command`]
 pub struct Command {
     inner: tokio::process::Command,
@@ -24,6 +26,12 @@ impl Command {
     /// See [`tokio::process::Command::arg`]
     pub fn arg<S: AsRef<std::ffi::OsStr>>(&mut self, arg: S) -> &mut Self {
         self.inner.arg(arg);
+        self
+    }
+
+    /// See [`tokio::process::Command::kill_on_drop`]
+    pub fn kill_on_drop(&mut self, kill_on_drop: bool) -> &mut Self {
+        self.inner.kill_on_drop(kill_on_drop);
         self
     }
 

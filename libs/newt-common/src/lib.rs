@@ -2,6 +2,8 @@
 
 pub mod filesystem;
 pub mod rpc;
+pub mod api;
+pub mod terminal;
 
 use std::time::SystemTime;
 
@@ -13,6 +15,8 @@ pub enum Error {
     Tokio(#[from] tokio::task::JoinError),
     #[error("{0}")]
     Notify(#[from] notify::Error),
+    #[error("{0}")]
+    PtyProcess(#[from] pty_process::Error),
     #[error("{0}")]
     Custom(String),
     #[error("operation cancelled")]

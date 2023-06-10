@@ -212,11 +212,11 @@ type DisplayOptions = {
   show_hidden: boolean;
   active_pane: number;
   panes_focused: boolean;
-  active_terminal?: string;
+  active_terminal?: number;
 };
 
 type Terminal = {
-  handle: string;
+  handle: number;
 };
 
 type MainWindowState = {
@@ -716,7 +716,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   );
 }
 
-function Terminal({ handle, active }: { handle: string; active: boolean }) {
+function Terminal({ handle, active }: { handle: number; active: boolean }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
@@ -842,6 +842,8 @@ function App() {
     return () => window.removeEventListener("keydown", onkeydown);
   }, []);
 
+  console.log(remoteState);
+
   return (
     <Profiler id="app" onRender={console.log}>
       <TerminalData.Provider value={terminalData}>
@@ -869,13 +871,13 @@ function App() {
               ))}
           </Allotment>
           {remoteState &&
-            Object.keys(remoteState.terminals).map((handle) => (
-              <Allotment.Pane preferredSize="20%" key={handle}>
+            Object.values(remoteState.terminals).map((term) => (
+              <Allotment.Pane preferredSize="20%" key={term.handle}>
                 <Terminal
-                  handle={handle}
+                  handle={term.handle}
                   active={
                     !remoteState.display_options.panes_focused &&
-                    remoteState.display_options.active_terminal === handle
+                    remoteState.display_options.active_terminal === term.handle
                   }
                 />
               </Allotment.Pane>

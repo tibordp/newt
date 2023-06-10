@@ -209,11 +209,11 @@ impl Pane {
             ws.focused = None;
         }
 
-        ws.update(display_options, &*new_file_list);
+        ws.update(display_options, &new_file_list);
 
         if has_path_changed {
             if target == new_file_list.path() {
-                ws.focus_descendant(&old_file_list.path());
+                ws.focus_descendant(old_file_list.path());
             } else {
                 ws.focus_descendant(&target);
             }
@@ -244,7 +244,7 @@ impl Pane {
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &*file_list);
+        view_state.update(display_options, &file_list);
     }
 
     pub async fn refresh(&self, expected_path: Option<PathBuf>) -> Result<(), Error> {
@@ -256,7 +256,7 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         if self.refresh_queue.fetch_sub(1, Ordering::SeqCst) == 1 && self.path() == expected_path {
-            self.navigate_impl(expected_path, true, &mut *changes_sender)
+            self.navigate_impl(expected_path, true, &mut changes_sender)
                 .await?;
         }
 
@@ -270,8 +270,7 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, &mut *changes_sender)
-            .await
+        self.navigate_impl(target, false, &mut changes_sender).await
     }
 
     /// If the selection is empty, returns the focused file.

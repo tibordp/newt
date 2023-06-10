@@ -18,6 +18,7 @@ use notify::RecursiveMode;
 use notify::Watcher;
 use parking_lot::Mutex;
 
+use crate::rpc::Communicator;
 use crate::Error;
 use crate::ToUnix;
 
@@ -80,11 +81,12 @@ pub trait Filesystem: Send + Sync {
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
 }
 
+#[derive(Default)]
 pub struct Local {}
 
 impl Local {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
     }
 }
 
@@ -267,6 +269,60 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.delete_all(paths).await
+    }
+}
+
+pub struct Remote {
+    communicator: Communicator,
+}
+
+impl Remote {
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl Filesystem for Remote {
+    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_POLL_CHANGES, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error> {
+        let ret: Result<FileList, Error> = self
+            .communicator
+            .invoke(crate::api::API_LIST_FILES, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_RENAME, &(old_path, new_path))
+            .await?;
+
+        Ok(ret?)
+    }
+    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_CREATE_DIRECTORY, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_DELETE_ALL, &paths)
+            .await?;
+
+        Ok(ret?)
     }
 }
 

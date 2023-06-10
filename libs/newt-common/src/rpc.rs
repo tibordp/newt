@@ -23,10 +23,10 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Api(u16);
+pub struct Api(pub u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct RequestId(u64);
+pub struct RequestId(pub u64);
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Message {
@@ -46,7 +46,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         use byteorder::{NetworkEndian, ReadBytesExt};
 
-        if src.len() < 1 {
+        if src.is_empty() {
             return Ok(None);
         }
 
@@ -57,7 +57,8 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 }
                 let pong = src[1] != 0;
                 src.advance(2);
-                return Ok(Some(Message::Ping(pong)));
+
+                Ok(Some(Message::Ping(pong)))
             }
             1 => {
                 if src.len() < 15 {
@@ -74,11 +75,11 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 let slice = Bytes::copy_from_slice(&src[15..15 + len]);
                 src.advance(15 + len);
 
-                return Ok(Some(Message::InvokeRequest(
+                Ok(Some(Message::InvokeRequest(
                     Api(api),
                     RequestId(request_id),
                     slice,
-                )));
+                )))
             }
             2 => {
                 if src.len() < 1 + 8 + 4 {
@@ -94,7 +95,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 let slice = Bytes::copy_from_slice(&src[13..13 + len]);
                 src.advance(13 + len);
 
-                return Ok(Some(Message::InvokeResponse(RequestId(request_id), slice)));
+                Ok(Some(Message::InvokeResponse(RequestId(request_id), slice)))
             }
             3 => {
                 if src.len() < 1 + 8 {
@@ -102,7 +103,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 }
                 let request_id = (&src[1..9]).read_u64::<NetworkEndian>().unwrap();
                 src.advance(9);
-                return Ok(Some(Message::InvokeCancel(RequestId(request_id))));
+                Ok(Some(Message::InvokeCancel(RequestId(request_id))))
             }
             4 => {
                 if src.len() < 1 + 2 {
@@ -118,11 +119,9 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 let slice = Bytes::copy_from_slice(&src[7..7 + len]);
                 src.advance(7 + len);
 
-                return Ok(Some(Message::Notify(Api(api), slice)));
+                Ok(Some(Message::Notify(Api(api), slice)))
             }
-            _ => {
-                return Err(Error::Custom("invalid message kind".to_string()));
-            }
+            _ => Err(Error::Custom("invalid message kind".to_string())),
         }
     }
 }
@@ -171,71 +170,95 @@ impl tokio_util::codec::Encoder<Message> for MessageCodec {
 }
 
 #[async_trait::async_trait]
-pub trait Dispatcher: Send + Sync {
+pub trait Dispatcher: Send + Sync + 'static {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error>;
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error>;
 }
 
-pub struct Communicator {
-    request_id: AtomicU64,
-    tasks: Mutex<HashMap<RequestId, AbortHandle>>,
-    response: Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<bytes::Bytes>>>,
-    dispatcher: Option<Arc<dyn Dispatcher>>,
-    outbox: Mutex<Option<tokio::sync::mpsc::WeakUnboundedSender<Message>>>,
-}
+pub struct ChainDispatcher<T1, T2>(T1, T2);
 
-pub struct CancelGuard<'a>(&'a Communicator, RequestId);
-impl<'a> Drop for CancelGuard<'a> {
-    fn drop(&mut self) {
-        self.0.response.lock().remove(&self.1);
-        if let Some(tx) = self.0.outbox.lock().as_ref().and_then(|s| s.upgrade()) {
-            let _ = tx.send(Message::InvokeCancel(self.1));
+#[async_trait::async_trait]
+impl<T1: Dispatcher, T2: Dispatcher> Dispatcher for ChainDispatcher<T1, T2> {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        if let Some(res) = self.0.invoke(api, req.clone()).await? {
+            Ok(Some(res))
+        } else {
+            self.1.invoke(api, req).await
+        }
+    }
+
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if self.0.notify(api, req.clone()).await? {
+            Ok(true)
+        } else {
+            self.1.notify(api, req).await
         }
     }
 }
 
-impl Communicator {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            request_id: AtomicU64::new(0),
-            tasks: Mutex::new(HashMap::new()),
-            response: Mutex::new(HashMap::new()),
-            dispatcher: None,
-            outbox: Mutex::new(None),
-        })
+pub trait DispatcherExt: Dispatcher + Sized {
+    fn chain<Other: Dispatcher>(self, next: Other) -> ChainDispatcher<Self, Other> {
+        ChainDispatcher(self, next)
+    }
+}
+
+impl<T: Dispatcher> DispatcherExt for T {}
+
+struct NullDispatcher;
+
+#[async_trait::async_trait]
+impl Dispatcher for NullDispatcher {
+    async fn invoke(&self, _api: Api, _req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        Ok(None)
     }
 
-    pub fn with_dispatcher<D: Dispatcher + 'static>(dispatcher: D) -> Arc<Self> {
-        Arc::new(Self {
-            request_id: AtomicU64::new(0),
-            tasks: Mutex::new(HashMap::new()),
-            response: Mutex::new(HashMap::new()),
-            dispatcher: Some(Arc::new(dispatcher)),
-            outbox: Mutex::new(None),
-        })
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
     }
+}
 
-    pub async fn handle_connection<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
+
+/// Attempt to cancel a remote invocation when the guard is dropped.
+pub struct CancelGuard<'a>(&'a CommunicatorInner, RequestId);
+impl<'a> Drop for CancelGuard<'a> {
+    fn drop(&mut self) {
+        self.0.response.lock().remove(&self.1);
+        let _ = self.0.outbox.send(Message::InvokeCancel(self.1));
+    }
+}
+
+pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Stream for T {}
+
+struct CommunicatorInner {
+    request_id: AtomicU64,
+    tasks: Mutex<HashMap<RequestId, AbortHandle>>,
+    response: Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<bytes::Bytes>>>,
+    dispatcher: Arc<dyn Dispatcher>,
+    outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+}
+
+impl CommunicatorInner {
+    async fn handle_connection<S: Stream>(
         self: Arc<Self>,
         stream: S,
+        mut inbox: tokio::sync::mpsc::UnboundedReceiver<Message>,
     ) -> Result<(), Error> {
         use futures::SinkExt;
         use futures::StreamExt;
-
-        let (outbox, mut inbox) = tokio::sync::mpsc::unbounded_channel();
-        *self.outbox.lock() = Some(outbox.downgrade());
 
         let (mut tx, mut rx) = Framed::new(stream, MessageCodec {}).split();
 
         let sender = {
             tokio::spawn(async move {
                 while let Some(msg) = inbox.recv().await {
-                    if let Err(e) = tx.send(msg).await {
-                        return Err(e);
-                    }
+                    tx.send(msg).await?;
+                    // Since this is an interactive RPC, we flush after every message
+                    tx.flush().await?;
                 }
+                info!("outbox closed");
 
-                Ok(())
+                Ok::<(), Error>(())
             })
         };
 
@@ -244,16 +267,14 @@ impl Communicator {
                 Some(Ok(msg)) => match msg {
                     Message::Ping(response) => {
                         if !response {
-                            let _ = outbox.send(Message::Ping(true));
+                            let _ = self.outbox.send(Message::Ping(true));
                         } else {
                             info!("ping response received");
                         }
                     }
                     Message::InvokeRequest(api, id, payload) => {
-                        let dispatcher = self.dispatcher.clone().expect(
-                            "received a request message on a communicator without a dispatcher",
-                        );
-                        let outbox = outbox.clone();
+                        let dispatcher = self.dispatcher.clone();
+                        let outbox = self.outbox.clone();
                         self.tasks.lock().insert(
                             id,
                             tokio::spawn(async move {
@@ -278,9 +299,7 @@ impl Communicator {
                         }
                     }
                     Message::Notify(api, payload) => {
-                        let dispatcher = self.dispatcher.clone().expect(
-                            "received a request message on a communicator without a dispatcher",
-                        );
+                        let dispatcher = self.dispatcher.clone();
                         tokio::spawn(async move {
                             match dispatcher.notify(api, payload).await {
                                 Ok(true) => {}
@@ -311,25 +330,64 @@ impl Communicator {
         sender.await??;
         result
     }
+}
+
+#[derive(Clone)]
+pub struct Communicator(Arc<CommunicatorInner>);
+
+impl Communicator {
+    pub fn new<S: Stream>(stream: S) -> Self {
+        Self::with_dispatcher(NullDispatcher, stream)
+    }
+
+    pub fn with_dispatcher<D: Dispatcher, S: Stream>(dispatcher: D, stream: S) -> Self {
+        let (outbox, inbox) = tokio::sync::mpsc::unbounded_channel();
+
+        let ret = Arc::new(CommunicatorInner {
+            request_id: AtomicU64::new(0),
+            tasks: Mutex::new(HashMap::new()),
+            response: Mutex::new(HashMap::new()),
+            dispatcher: Arc::new(dispatcher),
+            outbox: outbox.clone(),
+        });
+
+        let inner = ret.clone();
+        tokio::spawn(async move {
+            match inner.clone().handle_connection(stream, inbox).await {
+                Ok(()) => {
+                    info!("connection closed");
+                }
+                Err(e) => {
+                    error!("connection error: {}", e);
+                }
+            }
+
+            // Cancel all pending tasks
+            for (_, handle) in inner.tasks.lock().drain() {
+                handle.abort();
+            }
+            for (_, sender) in inner.response.lock().drain() {
+                drop(sender);
+            }
+        });
+
+        Self(ret)
+    }
 
     pub async fn invoke<Req, Resp>(&self, api: Api, req: &Req) -> Result<Resp, Error>
     where
-        Req: serde::Serialize + for<'de> serde::Deserialize<'de>,
-        Resp: serde::Serialize + for<'de> serde::Deserialize<'de>,
+        Req: serde::Serialize,
+        Resp: for<'de> serde::Deserialize<'de>,
     {
-        let id = RequestId(self.request_id.fetch_add(1, Ordering::SeqCst));
+        let id = RequestId(self.0.request_id.fetch_add(1, Ordering::SeqCst));
         let bytes = bincode::serialize(req).unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.response.lock().insert(id, tx);
-        let guard = CancelGuard(self, id);
+        self.0.response.lock().insert(id, tx);
+        let guard = CancelGuard(&self.0, id);
 
         let message = Message::InvokeRequest(api, id, bytes.into());
-        self.outbox
-            .lock()
-            .as_ref()
-            .and_then(|s| s.upgrade())
-            .ok_or_else(|| Error::Connection)?
+        self.0.outbox
             .send(message)
             .map_err(|_| Error::Connection)?;
 
@@ -338,115 +396,22 @@ impl Communicator {
         std::mem::forget(guard);
         Ok(bincode::deserialize(&resp[..]).unwrap())
     }
-}
 
-pub struct RemoteFileSystem {
-    communicator: Arc<Communicator>,
-}
+    pub async fn notify<Req>(&self, api: Api, req: &Req) -> Result<(), Error>
+    where
+        Req: serde::Serialize
+    {
+        let bytes = bincode::serialize(req).unwrap();
 
-impl RemoteFileSystem {
-    pub fn new(communicator: Arc<Communicator>) -> Self {
-        Self { communicator }
-    }
-}
+        let message = Message::Notify(api, bytes.into());
+        self.0.outbox
+            .send(message)
+            .map_err(|_| Error::Connection)?;
 
-const API_POLL_CHANGES: Api = Api(0);
-const API_LIST_FILES: Api = Api(1);
-const API_RENAME: Api = Api(2);
-const API_CREATE_DIRECTORY: Api = Api(3);
-const API_DELETE_ALL: Api = Api(4);
-
-#[async_trait::async_trait]
-impl Filesystem for RemoteFileSystem {
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
-        let ret: Result<(), Error> = self.communicator.invoke(API_POLL_CHANGES, &path).await?;
-
-        Ok(ret?)
-    }
-    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error> {
-        let ret: Result<FileList, Error> = self.communicator.invoke(API_LIST_FILES, &path).await?;
-
-        Ok(ret?)
-    }
-    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(API_RENAME, &(old_path, new_path))
-            .await?;
-
-        Ok(ret?)
-    }
-    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(API_CREATE_DIRECTORY, &path)
-            .await?;
-
-        Ok(ret?)
-    }
-    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
-        let ret: Result<(), Error> = self.communicator.invoke(API_DELETE_ALL, &paths).await?;
-
-        Ok(ret?)
-    }
-}
-
-pub struct FilesystemDispatcher {
-    filesystem: Box<dyn Filesystem>,
-}
-
-impl FilesystemDispatcher {
-    pub fn new<F: Filesystem + 'static>(filesystem: F) -> Self {
-        Self {
-            filesystem: Box::new(filesystem),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Dispatcher for FilesystemDispatcher {
-    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
-        let ret = match api {
-            API_POLL_CHANGES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.poll_changes(path).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_LIST_FILES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.list_files(path).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_RENAME => {
-                let (old_path, new_path): (PathBuf, PathBuf) =
-                    bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.rename(old_path, new_path).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_CREATE_DIRECTORY => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.create_directory(path).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_DELETE_ALL => {
-                let paths: Vec<PathBuf> = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.delete_all(paths).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            _ => return Ok(None),
-        };
-
-        Ok(Some(ret.into()))
+        Ok(())
     }
 
-    async fn notify(&self, api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        match api {
-            _ => Ok(false),
-        }
+    pub async fn closed(&self) {
+        self.0.outbox.closed().await
     }
 }
