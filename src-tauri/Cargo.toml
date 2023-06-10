@@ -25,7 +25,8 @@ regex = "1.8"
 arboard = "3.2"
 parking_lot = "0.12"
 treediff = { version = "4", features = ["with-serde-json"] }
-pty-process = { path = "../pty-process" }
+pty-process = { path = "../libs/pty-process" }
+newt-common = { path = "../libs/newt-common" }
 tokio = { version = "1", features = ["full"] }
 libc = "*"
 shell-quote = "0.3.0"

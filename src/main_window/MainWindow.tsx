@@ -34,7 +34,7 @@ import ReactModal from "react-modal";
 import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
-import { P } from "@tauri-apps/api/event-30ea0228";
+import { modifiers } from "../lib/keybindings";
 
 enablePatches();
 
@@ -489,66 +489,66 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     command("relative_jump", { offset: delta, withSelection: !!withSelection });
   };
 
-  const onKeyDownCommon = (e) => {
-    if (e.key == "ArrowDown") {
+  const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
+    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+
+    if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
-    } else if (e.key == "ArrowUp") {
+    } else if (e.key == "ArrowUp" && (noModifiers || e.shiftKey)) {
       relativeJump(-1, e.shiftKey);
-    } else if (e.key == "PageDown") {
+    } else if (e.key == "PageDown" && (noModifiers || e.shiftKey)) {
       relativeJump(10, e.shiftKey);
-    } else if (e.key == "PageUp") {
+    } else if (e.key == "PageUp" && (noModifiers || e.shiftKey)) {
       relativeJump(-10, e.shiftKey);
-    } else if (e.key == "Home") {
+    } else if (e.key == "Home" && noModifiers) {
       relativeJump(-Math.pow(2, 31), e.shiftKey);
-    } else if (e.key == "End") {
+    } else if (e.key == "End" && noModifiers) {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
-    } else if (e.key == "Enter") {
-      if (e.ctrlKey) {
+    } else if (e.key == "Enter" && (noModifiers || ctrlOrMeta)) {
+      if (ctrlOrMeta) {
         command("send_to_terminal", { filename: files[focusedIndex].name });
       } else {
         open(files[focusedIndex]);
       }
-    } else if (e.key == "Tab") {
+    } else if (e.key == "Tab" && noModifiers) {
       invoke("focus", { paneHandle: 1 - paneHandle });
-    } else if (e.key == "." && e.ctrlKey) {
+    } else if (e.key == "." && ctrlOrMeta) {
       command("copy_pane");
-    } else if (e.key == "Escape") {
+    } else if (e.key == "Escape" && noModifiers) {
       command("cancel", {}, true);
       command("set_filter", { filter: null });
-    } else if (e.key.toLowerCase() == "d" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "d" && ctrlOrMeta) {
       command("deselect_all");
-    } else if (e.key.toLowerCase() == "a" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "a" && ctrlOrMeta) {
       command("select_all");
-    } else if (e.key == "F3") {
+    } else if (e.key == "F3" && noModifiers) {
       command("view", { filename: files[focusedIndex].name });
-    } else if (e.key == "F2") {
+    } else if (e.key == "F2" && noModifiers) {
       command("dialog", { dialog: "rename" });
-    }
-    if (e.key == "F7") {
+    } else if (e.key == "F7" && noModifiers) {
       command("dialog", { dialog: "create_directory" });
-    } else if (e.key.toLowerCase() == "l" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "l" && ctrlOrMeta) {
       command("dialog", { dialog: "navigate" });
-    } else if ((e.key.toLowerCase() == "c" || e.key == "Insert") && e.ctrlKey) {
+    } else if ((e.key.toLowerCase() == "c" && ctrlOrMeta) || (e.key == insertKey && e.ctrlKey)) {
       command("copy_to_clipboard");
-    } else if (e.key == "Delete") {
+    } else if (e.key == "Delete" || (isMac && e.key == "Backspace" && e.metaKey)) {
       let message;
       if (selected.length > 0) {
         message = `Delete ${selected.length} selected files?`;
       } else {
         message = `Delete ${files[focusedIndex].name}?`;
       }
-
       confirm(message, { title: "Delete" }).then((confirmed) => {
         if (confirmed) {
           command("delete_selected");
         }
       });
     } else if (
-      (e.key.toLowerCase() == "v" && e.ctrlKey) ||
+      (e.key.toLowerCase() == "v" && ctrlOrMeta) ||
       (e.key == "Insert" && e.shiftKey)
     ) {
       command("paste_from_clipboard", {}, true);
-    } else if (e.key == "Insert") {
+    } else if (e.key == insertKey && noModifiers) {
       command("toggle_selected", {
         filename: files[focusedIndex].name,
         focusNext: true,
@@ -560,15 +560,41 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     return true;
   };
 
-  const onkeydown = (e) => {
+  const onkeydown = (e: React.KeyboardEvent<Element>) => {
+    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+
     if (onKeyDownCommon(e)) {
       // ...
-    } else if (e.key == "Backspace") {
+    } else if (e.key == "Backspace" && noModifiers) {
       command("navigate", { path: ".." }, true);
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
       inputRef.current.focus();
+      return;
+    }
+
+    e.preventDefault();
+  };
+
+  const onkeydownFilter: React.KeyboardEventHandler = (e) => {
+    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+
+    if (onKeyDownCommon(e)) {
+      // ...
+    } else if (e.key == "ArrowLeft" && noModifiers) {
+      if (filter.length > 0) {
+        command("set_filter", {
+          filter: focused.substring(0, filter.length - 1),
+        });
+      }
+    } else if (e.key == "ArrowRight" && noModifiers) {
+      if (filter.length < focused.length) {
+        command("set_filter", {
+          filter: focused.substring(0, filter.length + 1),
+        });
+      }
+    } else {
       return;
     }
 
@@ -588,28 +614,6 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     } else {
       command("focus", { filename: e.currentTarget.dataset.name });
     }
-  };
-
-  const onkeydownFilter: React.KeyboardEventHandler = (e) => {
-    if (onKeyDownCommon(e)) {
-      // ...
-    } else if (e.key == "ArrowLeft") {
-      if (filter.length > 0) {
-        command("set_filter", {
-          filter: focused.substring(0, filter.length - 1),
-        });
-      }
-    } else if (e.key == "ArrowRight") {
-      if (filter.length < focused.length) {
-        command("set_filter", {
-          filter: focused.substring(0, filter.length + 1),
-        });
-      }
-    } else {
-      return;
-    }
-
-    e.preventDefault();
   };
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
@@ -819,11 +823,13 @@ function App() {
   const terminalData = useTerminalData([]);
 
   const onkeydown = (e) => {
-    if (e.key.toLowerCase() == "h" && e.ctrlKey) {
+    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+
+    if (e.key.toLowerCase() == "h" && ctrlOrMeta) {
       safeCommand("toggle_hidden");
-    } else if (e.key.toLowerCase() == "n" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "n" && ctrlOrMeta) {
       safeCommand("new_window");
-    } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "w" && ctrlOrMeta) {
       window.close();
     } else {
       return;

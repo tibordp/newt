@@ -1,5 +1,4 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![feature(io_error_more)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[macro_use]
@@ -8,7 +7,6 @@ extern crate objc; // v0.2.7
 
 pub mod cmd;
 pub mod common;
-pub mod filesystem;
 pub mod main_window;
 
 use common::Error;

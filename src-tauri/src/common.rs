@@ -7,10 +7,13 @@ use tauri::Window;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Tauri(#[from] tauri::Error),
+    #[error("{0}")]
+    Tokio(#[from] tokio::task::JoinError),
     #[error("{0}")]
     Open(#[from] opener::OpenError),
     #[error("{0}")]
@@ -25,6 +28,20 @@ pub enum Error {
     Cancelled,
 }
 
+impl From<newt_common::Error> for Error {
+    fn from(value: newt_common::Error) -> Self {
+        match value {
+            newt_common::Error::Io(x) => Error::Io(x),
+            newt_common::Error::Tokio(x) => Error::Tokio(x),
+            newt_common::Error::Notify(x) => Error::Notify(x),
+            newt_common::Error::Custom(x) => Error::Custom(x),
+            newt_common::Error::Cancelled => Error::Cancelled,
+            newt_common::Error::Connection => Error::Custom("connection error".to_string()),
+            newt_common::Error::Remote(x) => Error::Custom(x),
+        }
+    }
+}
+
 // we must manually implement serde::Serialize
 impl serde::Serialize for Error {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -32,18 +49,6 @@ impl serde::Serialize for Error {
         S: serde::ser::Serializer,
     {
         serializer.serialize_str(self.to_string().as_ref())
-    }
-}
-
-pub trait ToUnix {
-    fn to_unix(&self) -> i128;
-}
-
-impl ToUnix for SystemTime {
-    fn to_unix(&self) -> i128 {
-        self.duration_since(SystemTime::UNIX_EPOCH)
-            .map(|t| t.as_millis() as i128)
-            .unwrap_or_else(|e| -(e.duration().as_millis() as i128))
     }
 }
 
