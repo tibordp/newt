@@ -7,6 +7,7 @@ use tauri::Window;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -35,6 +36,8 @@ impl From<newt_common::Error> for Error {
             newt_common::Error::Notify(x) => Error::Notify(x),
             newt_common::Error::Custom(x) => Error::Custom(x),
             newt_common::Error::Cancelled => Error::Cancelled,
+            newt_common::Error::Connection => Error::Custom("connection error".to_string()),
+            newt_common::Error::Remote(x) => Error::Custom(x),
         }
     }
 }

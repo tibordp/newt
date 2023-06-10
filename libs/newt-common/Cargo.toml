@@ -15,8 +15,11 @@ regex = "1.8"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
 libc = "*"
-tokio-util = "0.7.8"
+tokio-util = { version = "0.7.8", features = ["codec"] }
 async-trait = "0.1.68"
 log = "0.4"
 bytes = { version = "1.4.0", features = ["std", "serde"] }
 ciborium = "0.2.1"
+byteorder = "1.4.3"
+futures = "0.3.28"
+tokio-stream = "0.1.14"

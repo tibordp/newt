@@ -823,11 +823,13 @@ function App() {
   const terminalData = useTerminalData([]);
 
   const onkeydown = (e) => {
-    if (e.key.toLowerCase() == "h" && e.ctrlKey) {
+    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+
+    if (e.key.toLowerCase() == "h" && ctrlOrMeta) {
       safeCommand("toggle_hidden");
-    } else if (e.key.toLowerCase() == "n" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "n" && ctrlOrMeta) {
       safeCommand("new_window");
-    } else if (e.key.toLowerCase() == "w" && e.ctrlKey) {
+    } else if (e.key.toLowerCase() == "w" && ctrlOrMeta) {
       window.close();
     } else {
       return;

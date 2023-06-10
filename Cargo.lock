@@ -1788,14 +1788,22 @@ dependencies = [
 [[package]]
 name = "newt-agent"
 version = "0.1.0"
+dependencies = [
+ "newt-common",
+ "pretty_env_logger",
+ "tokio",
+ "tokio-duplex",
+]
 
 [[package]]
 name = "newt-common"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "byteorder",
  "bytes",
  "ciborium",
+ "futures",
  "libc",
  "log",
  "notify",
@@ -1805,6 +1813,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "uuid",
 ]
@@ -3295,6 +3304,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-duplex"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ad960ebbe79234217390742426a94df5e5d04689a8e02ae702a0fde8c38deb3"
+dependencies = [
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-macros"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3303,6 +3322,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.18",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "397c988d37662c7dda6d2208364a706264bf3d6138b11d436cbac0ad38832842"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -3316,6 +3346,7 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
