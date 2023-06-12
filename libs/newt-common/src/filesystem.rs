@@ -35,15 +35,33 @@ pub struct File {
     pub created: Option<i128>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct FsStats {
+    free_bytes: u64,
+    available_bytes: u64,
+    total_bytes: u64,
+}
+
+impl From<nix::sys::statvfs::Statvfs> for FsStats {
+    fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
+        Self {
+            free_bytes: stats.blocks_available() * stats.fragment_size(),
+            available_bytes: stats.blocks_available() * stats.fragment_size(),
+            total_bytes: stats.blocks() * stats.fragment_size(),
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct FileList {
     path: PathBuf,
+    fs_stats: Option<FsStats>,
     files: Vec<File>,
 }
 
 impl FileList {
-    pub fn new(path: PathBuf, files: Vec<File>) -> Self {
-        Self { path, files }
+    pub fn new(path: PathBuf, files: Vec<File>, fs_stats: Option<FsStats>) -> Self {
+        Self { path, files, fs_stats }
     }
 
     pub fn path(&self) -> &Path {
@@ -52,6 +70,10 @@ impl FileList {
 
     pub fn files(&self) -> &[File] {
         &self.files
+    }
+
+    pub fn fs_stats(&self) -> Option<&FsStats> {
+        self.fs_stats.as_ref()
     }
 }
 
@@ -202,7 +224,13 @@ impl Filesystem for Local {
         loop {
             let path_1 = path.clone();
             match tokio::task::spawn_blocking(move || reload(&path_1)).await? {
-                Ok(files) => return Ok(FileList::new(path, files)),
+                Ok(files) => {
+                    let stats = nix::sys::statvfs::statvfs(&path)
+                        .ok()
+                        .map(Into::into);
+
+                    return Ok(FileList::new(path, files, stats))
+                },
                 Err(Error::Io(e)) => match e.kind() {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
                         if !path.pop() {

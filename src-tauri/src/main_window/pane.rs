@@ -1,6 +1,7 @@
 use log::debug;
 use log::info;
 use log::warn;
+use newt_common::filesystem::FsStats;
 use newt_common::filesystem::resolve;
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
@@ -78,7 +79,7 @@ impl Pane {
         Self {
             fs,
             navigation_mutex: tokio::sync::Mutex::new(tx),
-            file_list: RwLock::new(Arc::new(FileList::new(path, vec![]))),
+            file_list: RwLock::new(Arc::new(FileList::new(path, vec![], None))),
             refresh_queue: AtomicUsize::new(0),
             view_state: RwLock::new(PaneViewState::default()),
             nav_changes_rx: rx,
@@ -158,7 +159,7 @@ impl Pane {
             let mut file_list = self.file_list.write();
             let old_file_list = std::mem::replace(
                 &mut *file_list,
-                Arc::new(FileList::new(target.clone(), Vec::new())),
+                Arc::new(FileList::new(target.clone(), Vec::new(), None)),
             );
 
             if !silent {
@@ -325,6 +326,7 @@ pub struct PaneViewState {
     pub focused: Option<String>,
     pub selected: HashSet<String>,
     pub filter: Option<String>,
+    pub fs_stats: Option<FsStats>,
 
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
@@ -393,6 +395,7 @@ impl PaneViewState {
         // the path is expected to be canonical by now
 
         self.path = file_list.path().to_path_buf();
+        self.fs_stats = file_list.fs_stats().cloned();
         self.files = file_list
             .files()
             .iter()

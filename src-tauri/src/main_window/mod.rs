@@ -284,10 +284,10 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        let mut child = tokio::process::Command::new("/usr/bin/ssh")
+        /*let mut child = tokio::process::Command::new("/usr/bin/ssh")
             .args(&[
-                "localhost",
-                "sh -c /home/tibordp/src/newt/target/debug/newt-agent",
+                "rpi.ojdip.net",
+                "sh -c '/home/tibordp/src/newt/target/release/newt-agent; echo done >&2'",
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -306,12 +306,16 @@ impl MainWindowContext {
         let fs = Remote::new(communicator.clone());
         let terminal_client = newt_common::terminal::Remote::new(communicator);
 
+
+
         tokio::spawn(async move {
             let ret = child.wait().await.unwrap();
             eprintln!("child exited: {}", ret);
         });
-        //let fs = Local::new();
-        //let fs = Slow::new(fs);
+        */
+
+        let fs = newt_common::filesystem::Local::new();
+        let terminal_client = newt_common::terminal::Local::new();
 
         let fs = Arc::new(fs);
         let terminal_client = Arc::new(terminal_client);

@@ -44,12 +44,17 @@
 }
 
 .header {
+  display: flex;
   padding: 0.2em 0.3em 0.2em 0.3em;
   background: #fafafa;
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.header-path {
+  flex: 1;
 }
 
 .table-header {

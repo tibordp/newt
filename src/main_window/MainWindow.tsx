@@ -38,6 +38,51 @@ import { modifiers } from "../lib/keybindings";
 
 enablePatches();
 
+const SI_PREFIXES_CENTER_INDEX = 10;
+
+const siPrefixes: readonly string[] = [
+  "q",
+  "r",
+  "y",
+  "z",
+  "a",
+  "f",
+  "p",
+  "n",
+  "μ",
+  "m",
+  "",
+  "k",
+  "M",
+  "G",
+  "T",
+  "P",
+  "E",
+  "Z",
+  "Y",
+  "R",
+  "Q",
+];
+
+export const getSiPrefixedNumber = (number: number): string => {
+  if (number === 0) return number.toString();
+  const EXP_STEP_SIZE = 3;
+  const base = Math.floor(Math.log10(Math.abs(number)));
+  const siBase = (base < 0 ? Math.ceil : Math.floor)(base / EXP_STEP_SIZE);
+  const prefix = siPrefixes[siBase + SI_PREFIXES_CENTER_INDEX];
+
+  // return number as-is if no prefix is available
+  if (siBase === 0) return number.toString();
+
+  // We're left with a number which needs to be devided by the power of 10e[base]
+  // This outcome is then rounded two decimals and parsed as float to make sure those
+  // decimals only appear when they're actually requird (10.0 -> 10, 10.90 -> 19.9, 10.01 -> 10.01)
+  const baseNumber = parseFloat(
+    (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2)
+  );
+  return `${baseNumber}${prefix}`;
+};
+
 type File = {
   name: string;
   size?: number;
@@ -197,6 +242,12 @@ type Sorting = {
   asc: boolean;
 };
 
+type FsStats = {
+  available_bytes: number;
+  free_bytes: number;
+  total_bytes: number;
+};
+
 type PaneState = {
   path: string;
   pending_path?: string;
@@ -206,6 +257,7 @@ type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
+  fs_stats?: FsStats;
 };
 
 type DisplayOptions = {
@@ -355,6 +407,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     sorting,
     focused,
     pending_path,
+    fs_stats,
   } = props;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
     if (also_when_busy || !pending_path) {
@@ -490,7 +543,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
@@ -529,9 +582,15 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       command("dialog", { dialog: "create_directory" });
     } else if (e.key.toLowerCase() == "l" && ctrlOrMeta) {
       command("dialog", { dialog: "navigate" });
-    } else if ((e.key.toLowerCase() == "c" && ctrlOrMeta) || (e.key == insertKey && e.ctrlKey)) {
+    } else if (
+      (e.key.toLowerCase() == "c" && ctrlOrMeta) ||
+      (e.key == insertKey && e.ctrlKey)
+    ) {
       command("copy_to_clipboard");
-    } else if (e.key == "Delete" || (isMac && e.key == "Backspace" && e.metaKey)) {
+    } else if (
+      e.key == "Delete" ||
+      (isMac && e.key == "Backspace" && e.metaKey)
+    ) {
       let message;
       if (selected.length > 0) {
         message = `Delete ${selected.length} selected files?`;
@@ -561,7 +620,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
@@ -578,7 +637,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
@@ -637,7 +696,14 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">{pending_path || path}</div>
+      <div className="header">
+        <div className="header-path">{pending_path || path}</div>
+        {fs_stats?.available_bytes !== undefined &&
+          <div className="header-stats">
+            {getSiPrefixedNumber(fs_stats.available_bytes)}B free
+          </div>
+        }
+      </div>
       <div className="table-header" ref={tableHeaderRef}>
         <div className="table-header-inner">
           {columns.map((column) => (
@@ -823,7 +889,7 @@ function App() {
   const terminalData = useTerminalData([]);
 
   const onkeydown = (e) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (e.key.toLowerCase() == "h" && ctrlOrMeta) {
       safeCommand("toggle_hidden");
@@ -841,8 +907,6 @@ function App() {
     window.addEventListener("keydown", onkeydown);
     return () => window.removeEventListener("keydown", onkeydown);
   }, []);
-
-  console.log(remoteState);
 
   return (
     <Profiler id="app" onRender={console.log}>
