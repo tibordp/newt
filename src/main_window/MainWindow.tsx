@@ -35,6 +35,7 @@ import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { modifiers } from "../lib/keybindings";
+import CommandPallete from "./CommandPalette";
 
 enablePatches();
 
@@ -80,7 +81,7 @@ export const getSiPrefixedNumber = (number: number): string => {
   const baseNumber = parseFloat(
     (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2)
   );
-  return `${baseNumber}${prefix}`;
+  return `${baseNumber} ${prefix}`;
 };
 
 type File = {
@@ -396,6 +397,35 @@ function ColumnHeader({
   );
 }
 
+function PathBreadcrumbs(props: {path: string, paneHandle: number}) {
+  let { path, paneHandle } = props;
+
+  let segments = ["/", ...path.split("/").filter(s => s)];
+  let joined = segments.map((segment, i) => {
+    if (i == 0) {
+      return ["/", "/"]
+    } else if (i === segments.length - 1) {
+      return [segment, segments.slice(0, i + 1).join("/")]
+    } else {
+      return [`${segment}/`, segments.slice(0, i + 1).join("/")]
+    }
+  });
+
+  return <>
+    {joined.map(([segment, path], i) => <>
+       <a className="path-breadcrumb" href="#" onClick={(e) => {
+        e.preventDefault();
+        if (i === segments.length - 1) {
+          safeCommand("dialog", { paneHandle, dialog: "navigate" });
+        } else {
+          safeCommand("navigate", { paneHandle, path });
+        }
+       }}>{segment}</a>
+      </>
+    )}
+  </>
+}
+
 function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   const {
     paneHandle,
@@ -574,8 +604,12 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && ctrlOrMeta) {
       command("select_all");
-    } else if (e.key == "F3" && noModifiers) {
-      command("view", { filename: files[focusedIndex].name });
+    } else if (e.key == "F3" && (noModifiers || e.shiftKey)) {
+      if (e.shiftKey) {
+        command("open", { filename: "" });
+      } else {
+        command("view", { filename: files[focusedIndex].name });
+      }
     } else if (e.key == "F2" && noModifiers) {
       command("dialog", { dialog: "rename" });
     } else if (e.key == "F7" && noModifiers) {
@@ -697,7 +731,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         tabIndex={-1}
       />
       <div className="header">
-        <div className="header-path">{pending_path || path}</div>
+        <div className="header-path"><PathBreadcrumbs path={pending_path || path} paneHandle={paneHandle} /></div>
         {fs_stats?.available_bytes !== undefined &&
           <div className="header-stats">
             {getSiPrefixedNumber(fs_stats.available_bytes)}B free
@@ -888,6 +922,8 @@ function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
   const terminalData = useTerminalData([]);
 
+  const [paletteOpen, setPalleteOpen] = useState(false);
+
   const onkeydown = (e) => {
     const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
@@ -896,7 +932,9 @@ function App() {
     } else if (e.key.toLowerCase() == "n" && ctrlOrMeta) {
       safeCommand("new_window");
     } else if (e.key.toLowerCase() == "w" && ctrlOrMeta) {
-      window.close();
+      safeCommand("close_window");
+    } else if (e.key.toLowerCase() == "p" && ctrlOrMeta) {
+      setPalleteOpen(true);
     } else {
       return;
     }
@@ -919,6 +957,7 @@ function App() {
         >
           <ModalContent state={remoteState?.modal} />
         </ReactModal>
+        <CommandPallete open={paletteOpen} onClose={() => setPalleteOpen(false)} />
         <Allotment vertical className="container" separator>
           <Allotment minSize={200}>
             {remoteState &&

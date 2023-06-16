@@ -45,9 +45,9 @@ pub struct FsStats {
 impl From<nix::sys::statvfs::Statvfs> for FsStats {
     fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
         Self {
-            free_bytes: stats.blocks_available() * stats.fragment_size(),
-            available_bytes: stats.blocks_available() * stats.fragment_size(),
-            total_bytes: stats.blocks() * stats.fragment_size(),
+            free_bytes: (stats.blocks_available() as u64) * (stats.fragment_size() as u64),
+            available_bytes: (stats.blocks_available() as u64) * (stats.fragment_size() as u64),
+            total_bytes: (stats.blocks() as u64) * (stats.fragment_size() as u64),
         }
     }
 }

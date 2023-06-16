@@ -39,7 +39,7 @@ export default function Navigate({ path, cancel, context }: NavigateProps) {
           />
         </div>
         <div className="dialog-buttons">
-          <input type="submit" value="Create" disabled={!newPath} />
+          <input type="submit" value="Navigate" disabled={!newPath} />
           <input type="button" value="Cancel" onClick={cancel} />
         </div>
       </form>

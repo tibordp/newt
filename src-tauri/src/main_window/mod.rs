@@ -211,7 +211,7 @@ impl MainWindowState {
             terminals: Terminals::new(),
             modal: ModalState::default(),
             display_options,
-            window_title: "File Manager".to_string(),
+            window_title: "Newt".to_string(),
         }
     }
 
@@ -306,8 +306,6 @@ impl MainWindowContext {
         let fs = Remote::new(communicator.clone());
         let terminal_client = newt_common::terminal::Remote::new(communicator);
 
-
-
         tokio::spawn(async move {
             let ret = child.wait().await.unwrap();
             eprintln!("child exited: {}", ret);
@@ -381,7 +379,7 @@ impl MainWindowContext {
         if let Some(pane) = self.active_pane() {
             self.inner
                 .window
-                .set_title(&format!("{} - newt", pane.path().display()))
+                .set_title(&format!("{} - Newt", pane.path().display()))
                 .unwrap();
         }
 
@@ -399,7 +397,7 @@ impl MainWindowContext {
         if let Some(pane) = self.active_pane() {
             self.inner
                 .window
-                .set_title(&format!("{} - newt", pane.path().display()))
+                .set_title(&format!("{} - Newt", pane.path().display()))
                 .unwrap();
         }
 
