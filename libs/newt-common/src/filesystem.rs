@@ -61,7 +61,11 @@ pub struct FileList {
 
 impl FileList {
     pub fn new(path: PathBuf, files: Vec<File>, fs_stats: Option<FsStats>) -> Self {
-        Self { path, files, fs_stats }
+        Self {
+            path,
+            files,
+            fs_stats,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -225,12 +229,10 @@ impl Filesystem for Local {
             let path_1 = path.clone();
             match tokio::task::spawn_blocking(move || reload(&path_1)).await? {
                 Ok(files) => {
-                    let stats = nix::sys::statvfs::statvfs(&path)
-                        .ok()
-                        .map(Into::into);
+                    let stats = nix::sys::statvfs::statvfs(&path).ok().map(Into::into);
 
-                    return Ok(FileList::new(path, files, stats))
-                },
+                    return Ok(FileList::new(path, files, stats));
+                }
                 Err(Error::Io(e)) => match e.kind() {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
                         if !path.pop() {
