@@ -35,8 +35,54 @@ import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { modifiers } from "../lib/keybindings";
+import CommandPallete from "./CommandPalette";
 
 enablePatches();
+
+const SI_PREFIXES_CENTER_INDEX = 10;
+
+const siPrefixes: readonly string[] = [
+  "q",
+  "r",
+  "y",
+  "z",
+  "a",
+  "f",
+  "p",
+  "n",
+  "μ",
+  "m",
+  "",
+  "k",
+  "M",
+  "G",
+  "T",
+  "P",
+  "E",
+  "Z",
+  "Y",
+  "R",
+  "Q",
+];
+
+export const getSiPrefixedNumber = (number: number): string => {
+  if (number === 0) return number.toString();
+  const EXP_STEP_SIZE = 3;
+  const base = Math.floor(Math.log10(Math.abs(number)));
+  const siBase = (base < 0 ? Math.ceil : Math.floor)(base / EXP_STEP_SIZE);
+  const prefix = siPrefixes[siBase + SI_PREFIXES_CENTER_INDEX];
+
+  // return number as-is if no prefix is available
+  if (siBase === 0) return number.toString();
+
+  // We're left with a number which needs to be devided by the power of 10e[base]
+  // This outcome is then rounded two decimals and parsed as float to make sure those
+  // decimals only appear when they're actually requird (10.0 -> 10, 10.90 -> 19.9, 10.01 -> 10.01)
+  const baseNumber = parseFloat(
+    (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2)
+  );
+  return `${baseNumber} ${prefix}`;
+};
 
 type File = {
   name: string;
@@ -197,6 +243,12 @@ type Sorting = {
   asc: boolean;
 };
 
+type FsStats = {
+  available_bytes: number;
+  free_bytes: number;
+  total_bytes: number;
+};
+
 type PaneState = {
   path: string;
   pending_path?: string;
@@ -206,6 +258,7 @@ type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
+  fs_stats?: FsStats;
 };
 
 type DisplayOptions = {
@@ -344,6 +397,35 @@ function ColumnHeader({
   );
 }
 
+function PathBreadcrumbs(props: {path: string, paneHandle: number}) {
+  let { path, paneHandle } = props;
+
+  let segments = ["/", ...path.split("/").filter(s => s)];
+  let joined = segments.map((segment, i) => {
+    if (i == 0) {
+      return ["/", "/"]
+    } else if (i === segments.length - 1) {
+      return [segment, segments.slice(0, i + 1).join("/")]
+    } else {
+      return [`${segment}/`, segments.slice(0, i + 1).join("/")]
+    }
+  });
+
+  return <>
+    {joined.map(([segment, path], i) => <>
+       <a className="path-breadcrumb" href="#" onClick={(e) => {
+        e.preventDefault();
+        if (i === segments.length - 1) {
+          safeCommand("dialog", { paneHandle, dialog: "navigate" });
+        } else {
+          safeCommand("navigate", { paneHandle, path });
+        }
+       }}>{segment}</a>
+      </>
+    )}
+  </>
+}
+
 function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   const {
     paneHandle,
@@ -355,6 +437,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     sorting,
     focused,
     pending_path,
+    fs_stats,
   } = props;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
     if (also_when_busy || !pending_path) {
@@ -490,7 +573,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
@@ -521,17 +604,27 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       command("deselect_all");
     } else if (e.key.toLowerCase() == "a" && ctrlOrMeta) {
       command("select_all");
-    } else if (e.key == "F3" && noModifiers) {
-      command("view", { filename: files[focusedIndex].name });
+    } else if (e.key == "F3" && (noModifiers || e.shiftKey)) {
+      if (e.shiftKey) {
+        command("open", { filename: "" });
+      } else {
+        command("view", { filename: files[focusedIndex].name });
+      }
     } else if (e.key == "F2" && noModifiers) {
       command("dialog", { dialog: "rename" });
     } else if (e.key == "F7" && noModifiers) {
       command("dialog", { dialog: "create_directory" });
     } else if (e.key.toLowerCase() == "l" && ctrlOrMeta) {
       command("dialog", { dialog: "navigate" });
-    } else if ((e.key.toLowerCase() == "c" && ctrlOrMeta) || (e.key == insertKey && e.ctrlKey)) {
+    } else if (
+      (e.key.toLowerCase() == "c" && ctrlOrMeta) ||
+      (e.key == insertKey && e.ctrlKey)
+    ) {
       command("copy_to_clipboard");
-    } else if (e.key == "Delete" || (isMac && e.key == "Backspace" && e.metaKey)) {
+    } else if (
+      e.key == "Delete" ||
+      (isMac && e.key == "Backspace" && e.metaKey)
+    ) {
       let message;
       if (selected.length > 0) {
         message = `Delete ${selected.length} selected files?`;
@@ -561,7 +654,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
@@ -578,7 +671,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
@@ -637,7 +730,14 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">{pending_path || path}</div>
+      <div className="header">
+        <div className="header-path"><PathBreadcrumbs path={pending_path || path} paneHandle={paneHandle} /></div>
+        {fs_stats?.available_bytes !== undefined &&
+          <div className="header-stats">
+            {getSiPrefixedNumber(fs_stats.available_bytes)}B free
+          </div>
+        }
+      </div>
       <div className="table-header" ref={tableHeaderRef}>
         <div className="table-header-inner">
           {columns.map((column) => (
@@ -822,15 +922,19 @@ function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
   const terminalData = useTerminalData([]);
 
+  const [paletteOpen, setPalleteOpen] = useState(false);
+
   const onkeydown = (e) => {
-    const {isMac, noModifiers, ctrlOrMeta, insertKey} = modifiers(e);
+    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (e.key.toLowerCase() == "h" && ctrlOrMeta) {
       safeCommand("toggle_hidden");
     } else if (e.key.toLowerCase() == "n" && ctrlOrMeta) {
       safeCommand("new_window");
     } else if (e.key.toLowerCase() == "w" && ctrlOrMeta) {
-      window.close();
+      safeCommand("close_window");
+    } else if (e.key.toLowerCase() == "p" && ctrlOrMeta) {
+      setPalleteOpen(true);
     } else {
       return;
     }
@@ -841,8 +945,6 @@ function App() {
     window.addEventListener("keydown", onkeydown);
     return () => window.removeEventListener("keydown", onkeydown);
   }, []);
-
-  console.log(remoteState);
 
   return (
     <Profiler id="app" onRender={console.log}>
@@ -855,6 +957,7 @@ function App() {
         >
           <ModalContent state={remoteState?.modal} />
         </ReactModal>
+        <CommandPallete open={paletteOpen} onClose={() => setPalleteOpen(false)} />
         <Allotment vertical className="container" separator>
           <Allotment minSize={200}>
             {remoteState &&

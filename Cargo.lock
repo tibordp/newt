@@ -1911,6 +1911,7 @@ dependencies = [
  "futures",
  "libc",
  "log",
+ "nix 0.26.2",
  "notify",
  "parking_lot",
  "pty-process",

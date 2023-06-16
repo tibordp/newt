@@ -211,7 +211,7 @@ impl MainWindowState {
             terminals: Terminals::new(),
             modal: ModalState::default(),
             display_options,
-            window_title: "File Manager".to_string(),
+            window_title: "Newt".to_string(),
         }
     }
 
@@ -284,10 +284,10 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        let mut child = tokio::process::Command::new("/usr/bin/ssh")
+        /*let mut child = tokio::process::Command::new("/usr/bin/ssh")
             .args(&[
-                "localhost",
-                "sh -c /home/tibordp/src/newt/target/debug/newt-agent",
+                "rpi.ojdip.net",
+                "sh -c '/home/tibordp/src/newt/target/release/newt-agent; echo done >&2'",
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -310,8 +310,10 @@ impl MainWindowContext {
             let ret = child.wait().await.unwrap();
             eprintln!("child exited: {}", ret);
         });
-        //let fs = Local::new();
-        //let fs = Slow::new(fs);
+        */
+
+        let fs = newt_common::filesystem::Local::new();
+        let terminal_client = newt_common::terminal::Local::new();
 
         let fs = Arc::new(fs);
         let terminal_client = Arc::new(terminal_client);
@@ -377,7 +379,7 @@ impl MainWindowContext {
         if let Some(pane) = self.active_pane() {
             self.inner
                 .window
-                .set_title(&format!("{} - newt", pane.path().display()))
+                .set_title(&format!("{} - Newt", pane.path().display()))
                 .unwrap();
         }
 
@@ -395,7 +397,7 @@ impl MainWindowContext {
         if let Some(pane) = self.active_pane() {
             self.inner
                 .window
-                .set_title(&format!("{} - newt", pane.path().display()))
+                .set_title(&format!("{} - Newt", pane.path().display()))
                 .unwrap();
         }
 

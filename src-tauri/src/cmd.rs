@@ -461,6 +461,14 @@ pub async fn rename(
     .await
 }
 
+#[tauri::command]
+pub fn close_window(window: Window) -> Result<(), Error> {
+    window.close()?;
+
+    Ok(())
+}
+
+
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
         cancel,
@@ -490,6 +498,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         dialog,
         create_directory,
         delete_selected,
-        rename
+        rename,
+        close_window
     ])
 }

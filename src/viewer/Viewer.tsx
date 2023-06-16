@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import "./Viewer.css";
+import { safeCommand } from "../lib/ipc";
 
 function Viewer() {
   let [searchParams] = useSearchParams();
@@ -12,7 +13,7 @@ function Viewer() {
   const ref = useRef(null);
   const onkeydown = (e) => {
     if (e.key == "Escape") {
-      window.close();
+      safeCommand("close_window");
     } else {
       return;
     }
