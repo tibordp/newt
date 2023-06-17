@@ -8,7 +8,7 @@
   justify-content: center;
 }
 
-.command-pallete-overlay {
+.command-palette-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -66,7 +66,7 @@ label {
 }
 
 .modal,
-.command-pallete {
+.command-palette {
   .synthetic-focus,
   [tabindex="0"]:focus,
   [tabindex="-1"]:focus,
@@ -113,7 +113,7 @@ label {
   }
 }
 
-.command-pallete {
+.command-palette {
   background-color: #fefefe;
   border-radius: 0.5em;
   border: 1px solid #ccc;
@@ -125,7 +125,7 @@ label {
   pointer-events: initial;
 }
 
-.command-pallete-header {
+.command-palette-header {
   padding: 6px;
   display: flex;
   flex-direction: row;

@@ -217,7 +217,6 @@ impl Dispatcher for NullDispatcher {
     }
 }
 
-
 /// Attempt to cancel a remote invocation when the guard is dropped.
 pub struct CancelGuard<'a>(&'a CommunicatorInner, RequestId);
 impl<'a> Drop for CancelGuard<'a> {
@@ -387,9 +386,7 @@ impl Communicator {
         let guard = CancelGuard(&self.0, id);
 
         let message = Message::InvokeRequest(api, id, bytes.into());
-        self.0.outbox
-            .send(message)
-            .map_err(|_| Error::Connection)?;
+        self.0.outbox.send(message).map_err(|_| Error::Connection)?;
 
         let resp = rx.await.map_err(|_| Error::Connection)?;
 
@@ -399,14 +396,12 @@ impl Communicator {
 
     pub async fn notify<Req>(&self, api: Api, req: &Req) -> Result<(), Error>
     where
-        Req: serde::Serialize
+        Req: serde::Serialize,
     {
         let bytes = bincode::serialize(req).unwrap();
 
         let message = Message::Notify(api, bytes.into());
-        self.0.outbox
-            .send(message)
-            .map_err(|_| Error::Connection)?;
+        self.0.outbox.send(message).map_err(|_| Error::Connection)?;
 
         Ok(())
     }

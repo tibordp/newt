@@ -147,7 +147,6 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
         None => return,
     };
 
-
     let base_url = window.url();
     let mut url = base_url.join("/viewer").unwrap();
     url.query_pairs_mut()
@@ -180,7 +179,7 @@ async fn new_window(handle: tauri::AppHandle) {
 async fn open(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
-    filename: Option<String>
+    filename: Option<String>,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
 
@@ -199,10 +198,7 @@ async fn open(
 }
 
 #[tauri::command]
-async fn open_folder(
-    ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
+async fn open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
 
@@ -305,7 +301,7 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 #[tauri::command]
 pub async fn send_to_terminal(
     ctx: MainWindowContext,
-    pane_handle: PaneHandle
+    pane_handle: PaneHandle,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let terminal = if let Some(terminal) = ctx.active_terminal() {
@@ -335,6 +331,7 @@ pub async fn send_to_terminal(
     Ok(())
 }
 
+
 #[tauri::command]
 pub async fn terminal_write(
     ctx: MainWindowContext,
@@ -349,6 +346,7 @@ pub async fn terminal_write(
 
     Ok(())
 }
+
 
 #[tauri::command]
 pub async fn terminal_resize(
@@ -367,7 +365,7 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
-pub fn focus_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
+pub fn terminal_focus(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|gs| {
         let mut opts = gs.display_options.0.write();
         opts.active_terminal = Some(handle);
@@ -492,7 +490,6 @@ pub fn close_window(window: Window) -> Result<(), Error> {
     Ok(())
 }
 
-
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
         cancel,
@@ -518,6 +515,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         zoom,
         terminal_write,
         terminal_resize,
+        terminal_focus,
         send_to_terminal,
         close_modal,
         dialog,

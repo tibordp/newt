@@ -1,8 +1,8 @@
 #![feature(io_error_more)]
 
+pub mod api;
 pub mod filesystem;
 pub mod rpc;
-pub mod api;
 pub mod terminal;
 
 use std::time::SystemTime;
