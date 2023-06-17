@@ -3,7 +3,7 @@ import { message } from "@tauri-apps/api/dialog";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import "./Viewer.css";
+import "./Viewer.scss";
 import { safeCommand } from "../lib/ipc";
 
 function Viewer() {

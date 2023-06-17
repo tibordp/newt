@@ -175,7 +175,7 @@ export const useTerminalData = (deps: any[] = []): any => {
 
 export const registerTerminalDataHandler = (
   context: TerminalDataState,
-  handle: string,
+  handle: number,
   listener: DataCallback
 ): (() => void) => {
   if (!(handle in context)) {

@@ -294,6 +294,15 @@ impl Pane {
                 .collect()
         }
     }
+
+    pub fn get_focused_file(&self) -> Option<PathBuf> {
+        let view_state = self.view_state.read();
+
+        view_state
+            .focused
+            .as_ref()
+            .map(|s| view_state.path.join(s))
+    }
 }
 
 impl serde::Serialize for Pane {

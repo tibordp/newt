@@ -3,7 +3,7 @@ import { safeCommand } from "../../lib/ipc";
 import CreateDirectory from "./CreateDirectory";
 import Navigate from "./Navigate";
 
-import "./ModalContent.css";
+import "./ModalContent.scss";
 import Rename from "./Rename";
 
 export type ModalState = {
