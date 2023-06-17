@@ -140,9 +140,13 @@ pub async fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resul
 }
 
 #[tauri::command]
-async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle, filename: String) {
+async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let full_path = pane.path().join(filename);
+    let full_path = match pane.get_focused_file() {
+        Some(s) => s,
+        None => return,
+    };
+
 
     let base_url = window.url();
     let mut url = base_url.join("/viewer").unwrap();
@@ -154,7 +158,7 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle, f
         uuid::Uuid::new_v4().to_string(),
         tauri::WindowUrl::App(url.to_string().into()), /* the url */
     )
-    .title(format!("{} - viewer", full_path.display()))
+    .title(format!("{} - Viewer", full_path.display()))
     .center()
     .focused(true)
     .build()
@@ -176,10 +180,31 @@ async fn new_window(handle: tauri::AppHandle) {
 async fn open(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
-    filename: String,
+    filename: Option<String>
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let full_path = pane.path().join(filename);
+
+    let full_path = if let Some(filename) = filename {
+        pane.path().join(filename)
+    } else {
+        match pane.get_focused_file() {
+            Some(s) => s,
+            None => return Ok(()),
+        }
+    };
+
+    opener::open(full_path)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_folder(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let full_path = pane.path();
 
     opener::open(full_path)?;
 
@@ -280,8 +305,7 @@ pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
 #[tauri::command]
 pub async fn send_to_terminal(
     ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-    _filename: String,
+    pane_handle: PaneHandle
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let terminal = if let Some(terminal) = ctx.active_terminal() {
@@ -487,6 +511,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         toggle_hidden,
         read_file,
         open,
+        open_folder,
         view,
         copy_to_clipboard,
         paste_from_clipboard,

@@ -5,11 +5,12 @@ import {
   useMemo,
   useLayoutEffect,
   useContext,
+  Fragment,
 } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 
 import { Allotment } from "allotment";
-import "./MainWindow.css";
+import "./MainWindow.scss";
 import "allotment/dist/style.css";
 import { confirm } from "@tauri-apps/api/dialog";
 
@@ -34,8 +35,8 @@ import ReactModal from "react-modal";
 import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
-import { modifiers } from "../lib/keybindings";
-import CommandPallete from "./CommandPalette";
+import { commands, modifiers } from "../lib/commands";
+import CommandPallete from "./modals/CommandPalette";
 
 enablePatches();
 
@@ -355,6 +356,7 @@ function ColumnHeader({
       >
         {column.subcolumns.map((subcol, i) => (
           <div
+            key={i}
             ref={ref}
             className={`subcolumn ${subcol.sortKey ? "sortable" : ""}`}
             onClick={(e: React.MouseEvent) => {
@@ -397,33 +399,42 @@ function ColumnHeader({
   );
 }
 
-function PathBreadcrumbs(props: {path: string, paneHandle: number}) {
+function PathBreadcrumbs(props: { path: string; paneHandle: number }) {
   let { path, paneHandle } = props;
 
-  let segments = ["/", ...path.split("/").filter(s => s)];
+  let segments = ["/", ...path.split("/").filter((s) => s)];
   let joined = segments.map((segment, i) => {
     if (i == 0) {
-      return ["/", "/"]
+      return ["/", "/"];
     } else if (i === segments.length - 1) {
-      return [segment, segments.slice(0, i + 1).join("/")]
+      return [segment, segments.slice(0, i + 1).join("/")];
     } else {
-      return [`${segment}/`, segments.slice(0, i + 1).join("/")]
+      return [`${segment}/`, segments.slice(0, i + 1).join("/")];
     }
   });
 
-  return <>
-    {joined.map(([segment, path], i) => <>
-       <a className="path-breadcrumb" href="#" onClick={(e) => {
-        e.preventDefault();
-        if (i === segments.length - 1) {
-          safeCommand("dialog", { paneHandle, dialog: "navigate" });
-        } else {
-          safeCommand("navigate", { paneHandle, path });
-        }
-       }}>{segment}</a>
-      </>
-    )}
-  </>
+  return (
+    <>
+      {joined.map(([segment, path], i) => (
+        <Fragment key={i}>
+          <a
+            className="path-breadcrumb"
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              if (i === segments.length - 1) {
+                safeCommand("dialog", { paneHandle, dialog: "navigate" });
+              } else {
+                safeCommand("navigate", { paneHandle, path });
+              }
+            }}
+          >
+            {segment}
+          </a>
+        </Fragment>
+      ))}
+    </>
+  );
 }
 
 function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
@@ -587,66 +598,25 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       relativeJump(-Math.pow(2, 31), e.shiftKey);
     } else if (e.key == "End" && noModifiers) {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
-    } else if (e.key == "Enter" && (noModifiers || ctrlOrMeta)) {
-      if (ctrlOrMeta) {
-        command("send_to_terminal", { filename: files[focusedIndex].name });
-      } else {
-        open(files[focusedIndex]);
-      }
+    } else if (e.key == "Enter" && noModifiers) {
+      open(files[focusedIndex]);
     } else if (e.key == "Tab" && noModifiers) {
       invoke("focus", { paneHandle: 1 - paneHandle });
-    } else if (e.key == "." && ctrlOrMeta) {
-      command("copy_pane");
     } else if (e.key == "Escape" && noModifiers) {
       command("cancel", {}, true);
       command("set_filter", { filter: null });
-    } else if (e.key.toLowerCase() == "d" && ctrlOrMeta) {
-      command("deselect_all");
-    } else if (e.key.toLowerCase() == "a" && ctrlOrMeta) {
-      command("select_all");
-    } else if (e.key == "F3" && (noModifiers || e.shiftKey)) {
-      if (e.shiftKey) {
-        command("open", { filename: "" });
-      } else {
-        command("view", { filename: files[focusedIndex].name });
-      }
-    } else if (e.key == "F2" && noModifiers) {
-      command("dialog", { dialog: "rename" });
-    } else if (e.key == "F7" && noModifiers) {
-      command("dialog", { dialog: "create_directory" });
-    } else if (e.key.toLowerCase() == "l" && ctrlOrMeta) {
-      command("dialog", { dialog: "navigate" });
-    } else if (
-      (e.key.toLowerCase() == "c" && ctrlOrMeta) ||
-      (e.key == insertKey && e.ctrlKey)
-    ) {
-      command("copy_to_clipboard");
-    } else if (
-      e.key == "Delete" ||
-      (isMac && e.key == "Backspace" && e.metaKey)
-    ) {
-      let message;
-      if (selected.length > 0) {
-        message = `Delete ${selected.length} selected files?`;
-      } else {
-        message = `Delete ${files[focusedIndex].name}?`;
-      }
-      confirm(message, { title: "Delete" }).then((confirmed) => {
-        if (confirmed) {
-          command("delete_selected");
-        }
-      });
-    } else if (
-      (e.key.toLowerCase() == "v" && ctrlOrMeta) ||
-      (e.key == "Insert" && e.shiftKey)
-    ) {
-      command("paste_from_clipboard", {}, true);
     } else if (e.key == insertKey && noModifiers) {
       command("toggle_selected", {
         filename: files[focusedIndex].name,
         focusNext: true,
       });
     } else {
+      for (const cmd of commands) {
+        if (!cmd.noPane && cmd.shortcut?.matches(e.nativeEvent)) {
+          command(cmd.command, cmd.args);
+          return true;
+        }
+      }
       return false;
     }
 
@@ -695,8 +665,6 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
   };
 
   const onClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
-    e.stopPropagation();
-
     if (e.ctrlKey) {
       command("toggle_selected", {
         filename: e.currentTarget.dataset.name,
@@ -731,12 +699,17 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         tabIndex={-1}
       />
       <div className="header">
-        <div className="header-path"><PathBreadcrumbs path={pending_path || path} paneHandle={paneHandle} /></div>
-        {fs_stats?.available_bytes !== undefined &&
+        <div className="header-path">
+          <PathBreadcrumbs
+            path={pending_path || path}
+            paneHandle={paneHandle}
+          />
+        </div>
+        {fs_stats?.available_bytes !== undefined && (
           <div className="header-stats">
             {getSiPrefixedNumber(fs_stats.available_bytes)}B free
           </div>
-        }
+        )}
       </div>
       <div className="table-header" ref={tableHeaderRef}>
         <div className="table-header-inner">
@@ -927,18 +900,16 @@ function App() {
   const onkeydown = (e) => {
     const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
-    if (e.key.toLowerCase() == "h" && ctrlOrMeta) {
-      safeCommand("toggle_hidden");
-    } else if (e.key.toLowerCase() == "n" && ctrlOrMeta) {
-      safeCommand("new_window");
-    } else if (e.key.toLowerCase() == "w" && ctrlOrMeta) {
-      safeCommand("close_window");
-    } else if (e.key.toLowerCase() == "p" && ctrlOrMeta) {
+    if (e.key.toLowerCase() == "p" && ctrlOrMeta) {
       setPalleteOpen(true);
     } else {
-      return;
+      for (const cmd of commands) {
+        if (cmd.noPane && cmd.shortcut?.matches(e)) {
+          safeCommand(cmd.command, cmd.args);
+          e.preventDefault();
+        }
+      }
     }
-    e.preventDefault();
   };
 
   useEffect(() => {
@@ -953,11 +924,20 @@ function App() {
           isOpen={!!remoteState?.modal}
           onRequestClose={() => safeCommand("close_modal")}
           overlayClassName={"modal-overlay"}
-          className={"modal-content"}
+          className={"modal"}
         >
           <ModalContent state={remoteState?.modal} />
         </ReactModal>
-        <CommandPallete open={paletteOpen} onClose={() => setPalleteOpen(false)} />
+        <ReactModal
+          isOpen={paletteOpen}
+          overlayClassName={"command-pallete-overlay"}
+          className={"command-pallete"}
+        >
+          <CommandPallete
+            paneHandle={remoteState?.display_options.panes_focused && remoteState?.display_options.active_pane}
+            onClose={() => setPalleteOpen(false)}
+          />
+        </ReactModal>
         <Allotment vertical className="container" separator>
           <Allotment minSize={200}>
             {remoteState &&

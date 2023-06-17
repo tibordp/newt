@@ -4,7 +4,7 @@ import MainWindow from "./main_window/MainWindow";
 import Viewer from "./viewer/Viewer";
 
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
-import "./styles.css";
+import "./styles.scss";
 import { safeCommand } from "./lib/ipc";
 
 const router = createBrowserRouter([
