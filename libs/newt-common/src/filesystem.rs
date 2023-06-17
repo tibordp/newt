@@ -23,6 +23,11 @@ use crate::Error;
 use crate::ToUnix;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ListFilesOptions {
+    pub strict: bool,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
@@ -101,7 +106,8 @@ pub fn resolve(path: &Path) -> PathBuf {
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
-    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error>;
+    async fn list_files(&self, path: PathBuf, options: ListFilesOptions)
+        -> Result<FileList, Error>;
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error>;
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error>;
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
@@ -163,7 +169,11 @@ impl Filesystem for Local {
         Ok(())
     }
 
-    async fn list_files(&self, mut path: PathBuf) -> Result<FileList, Error> {
+    async fn list_files(
+        &self,
+        mut path: PathBuf,
+        options: ListFilesOptions,
+    ) -> Result<FileList, Error> {
         fn reload(path: &Path) -> Result<Vec<File>, Error> {
             let mut ret = Vec::new();
             if let Some(parent) = path.parent() {
@@ -233,8 +243,9 @@ impl Filesystem for Local {
 
                     return Ok(FileList::new(path, files, stats));
                 }
-                Err(Error::Io(e)) => match e.kind() {
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
+                Err(Error::Io(e)) => match (e.kind(), options.strict) {
+                    (std::io::ErrorKind::NotFound, false)
+                    | (std::io::ErrorKind::NotADirectory, _) => {
                         if !path.pop() {
                             return Err(e.into());
                         }
@@ -284,9 +295,13 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
         self.0.poll_changes(path).await
     }
-    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error> {
+    async fn list_files(
+        &self,
+        path: PathBuf,
+        options: ListFilesOptions,
+    ) -> Result<FileList, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.list_files(path).await
+        self.0.list_files(path, options).await
     }
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -322,10 +337,14 @@ impl Filesystem for Remote {
 
         Ok(ret?)
     }
-    async fn list_files(&self, path: PathBuf) -> Result<FileList, Error> {
+    async fn list_files(
+        &self,
+        path: PathBuf,
+        options: ListFilesOptions,
+    ) -> Result<FileList, Error> {
         let ret: Result<FileList, Error> = self
             .communicator
-            .invoke(crate::api::API_LIST_FILES, &path)
+            .invoke(crate::api::API_LIST_FILES, &(path, options))
             .await?;
 
         Ok(ret?)

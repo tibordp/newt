@@ -1,3 +1,7 @@
+import { MainWindowState } from "../main_window/MainWindow";
+import { confirm } from "@tauri-apps/api/dialog";
+import { safeCommand } from "./ipc";
+
 export const modifiers = (e: React.KeyboardEvent<Element>) => {
   const isMac = navigator.platform.indexOf("Mac") === 0;
   const noModifiers = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
@@ -112,7 +116,7 @@ export type Command = {
   noPane?: boolean;
   shortcut?: Shortcut;
   args?: object;
-  callback?: () => void;
+  callback?: (MainWindowState) => Promise<void>;
 };
 
 export const commands: Command[] = [
@@ -146,7 +150,22 @@ export const commands: Command[] = [
   },
   {
     name: "Delete Selected",
-    command: "delete_selected",
+    callback: async (state: MainWindowState) => {
+      const paneHandle = state.display_options.active_pane;
+      const pane = state.panes[paneHandle];
+
+      let message;
+      if (pane.selected.length > 0) {
+        message = `Delete ${pane.selected.length} selected files?`;
+      } else {
+        message = `Delete ${pane.focused}?`;
+      }
+      confirm(message, { title: "Delete" }).then(async (confirmed) => {
+        if (confirmed) {
+          await safeCommand("delete_selected", { paneHandle });
+        }
+      });
+    },
     shortcut: new Shortcut().shift().key("Delete"),
   },
   {
@@ -183,6 +202,11 @@ export const commands: Command[] = [
     shortcut: new Shortcut().cmd().char("c"),
   },
   {
+    name: "Paste Path from Clipboard",
+    command: "paste_from_clipboard",
+    shortcut: new Shortcut().cmd().char("v"),
+  },
+  {
     name: "Toggle Hidden Files",
     command: "toggle_hidden",
     noPane: true,
@@ -196,12 +220,27 @@ export const commands: Command[] = [
   },
   {
     name: "Reload Window",
-    callback: () => window.location.reload(),
+    callback: async () => window.location.reload(),
     noPane: true,
   },
   {
     name: "Open Folder in Default File Manager",
     command: "open_folder",
     shortcut: new Shortcut().shift().key("F3"),
-  }
+  },
 ];
+
+export const executeCommand = async (
+  command: Command,
+  state: MainWindowState
+) => {
+  if (command.command) {
+    const paneHandle = state.display_options.active_pane;
+    await safeCommand(command.command, {
+      ...(command.args || {}),
+      paneHandle,
+    });
+  } else if (command.callback) {
+    await command.callback(state);
+  }
+};

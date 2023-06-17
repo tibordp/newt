@@ -8,10 +8,11 @@ import {
   useState,
 } from "react";
 import { safeCommand } from "../../lib/ipc";
-import { Command, commands } from "../../lib/commands";
+import { Command, commands, executeCommand } from "../../lib/commands";
+import { MainWindowState } from "../MainWindow";
 
-type CommandPalleteProps = {
-  paneHandle?: number;
+type CommandPaletteProps = {
+  state: MainWindowState;
   onClose: () => void;
 };
 
@@ -47,12 +48,15 @@ function Highlight(props: {
   return <span>{parts}</span>;
 }
 
-export default function CommandPallete({
-  paneHandle,
+export default function CommandPalette({
+  state,
   onClose,
-}: CommandPalleteProps) {
+}: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+
+  const paneHandle =
+    state.display_options.panes_focused && state.display_options.active_pane;
 
   const [filter, setFilter] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -95,18 +99,17 @@ export default function CommandPallete({
 
     ret = ret.filter(
       ({ matches, command }) =>
-        matches &&
-        (command.noPane || (!!paneHandle || paneHandle === 0))
+        matches && (command.noPane || !!paneHandle || paneHandle === 0)
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);
   }, [filter]);
 
-  const onClick = (command: Command) => {
-    if (command.command) {
-      safeCommand(command.command, { ...(command.args || {}), paneHandle });
-    } else if (command.callback) {
-      command.callback();
+  const onClick = async (command: Command) => {
+    try {
+      await executeCommand(command, state);
+    } finally {
+      onClose();
     }
   };
 
@@ -119,7 +122,6 @@ export default function CommandPallete({
       );
     } else if (e.key === "Enter") {
       onClick(filteredCommands[activeIndex]);
-      onClose();
     } else if (e.key === "Escape") {
       onClose();
     } else {
@@ -140,7 +142,7 @@ export default function CommandPallete({
 
   return (
     <>
-      <div className="command-pallete-header">
+      <div className="command-palette-header">
         <input
           ref={inputRef}
           onKeyDown={onKeyDown}

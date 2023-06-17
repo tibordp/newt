@@ -1,11 +1,12 @@
 use log::debug;
 use log::info;
 use log::warn;
-use newt_common::filesystem::FsStats;
 use newt_common::filesystem::resolve;
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
+use newt_common::filesystem::FsStats;
+use newt_common::filesystem::ListFilesOptions;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -175,7 +176,12 @@ impl Pane {
 
         let fut = {
             let target = target.clone();
-            async move { Ok(self.fs.list_files(target).await?) }
+            async move {
+                Ok(self
+                    .fs
+                    .list_files(target, ListFilesOptions { strict: !silent })
+                    .await?)
+            }
         };
 
         let new_file_list = match self.cancellable(fut).await {
@@ -298,10 +304,7 @@ impl Pane {
     pub fn get_focused_file(&self) -> Option<PathBuf> {
         let view_state = self.view_state.read();
 
-        view_state
-            .focused
-            .as_ref()
-            .map(|s| view_state.path.join(s))
+        view_state.focused.as_ref().map(|s| view_state.path.join(s))
     }
 }
 

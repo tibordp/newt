@@ -6,13 +6,14 @@ import {
   useLayoutEffect,
   useContext,
   Fragment,
+  useCallback,
 } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 
 import { Allotment } from "allotment";
 import "./MainWindow.scss";
 import "allotment/dist/style.css";
-import { confirm } from "@tauri-apps/api/dialog";
+
 
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
@@ -35,8 +36,8 @@ import ReactModal from "react-modal";
 import "xterm/css/xterm.css";
 import "@fontsource-variable/roboto-mono";
 import { ModalContent, ModalState } from "./modals/ModalContent";
-import { commands, modifiers } from "../lib/commands";
-import CommandPallete from "./modals/CommandPalette";
+import { commands, executeCommand, modifiers } from "../lib/commands";
+import CommandPalette from "./modals/CommandPalette";
 
 enablePatches();
 
@@ -130,9 +131,8 @@ function FileName({ focused, filter, info }) {
 
   return (
     <div
-      className={`filename ${is_hidden ? "hidden-file" : ""} ${
-        is_symlink ? "symlink" : ""
-      }`}
+      className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
+        }`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
@@ -197,8 +197,8 @@ const columns: ColumnDef[] = [
         {info.size !== null
           ? info.size.toLocaleString()
           : info.is_dir
-          ? "DIR"
-          : "???"}
+            ? "DIR"
+            : "???"}
       </>
     ),
   },
@@ -273,7 +273,7 @@ type Terminal = {
   handle: number;
 };
 
-type MainWindowState = {
+export type MainWindowState = {
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;
@@ -611,12 +611,6 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
         focusNext: true,
       });
     } else {
-      for (const cmd of commands) {
-        if (!cmd.noPane && cmd.shortcut?.matches(e.nativeEvent)) {
-          command(cmd.command, cmd.args);
-          return true;
-        }
-      }
       return false;
     }
 
@@ -748,9 +742,8 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
               <li
                 key={row.name}
                 data-name={row.name}
-                className={`file-item ${
-                  active && row.name == focused ? "focused" : ""
-                } ${selectedLookup.has(row.name) ? "selected" : ""}`}
+                className={`file-item ${active && row.name == focused ? "focused" : ""
+                  } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
                 onDoubleClick={() => open(row)}
               >
@@ -844,10 +837,6 @@ function Terminal({ handle, active }: { handle: number; active: boolean }) {
       safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
     };
 
-    term.element.addEventListener("focus", () => {
-      safeCommandSilent("terminal_focus", { handle });
-    });
-
     term.onBinary(onUserInput);
     term.onData(onUserInput);
     term.onResize((size) => {
@@ -885,8 +874,8 @@ function Terminal({ handle, active }: { handle: number; active: boolean }) {
   }, [active]);
 
   return (
-    <div className="terminal-container">
-      <div className="terminal" ref={ref} />
+    <div className="terminal-container" >
+      <div className="terminal" ref={ref} tabIndex={-1} onFocus={() => safeCommandSilent("terminal_focus", { handle })} />
     </div>
   );
 }
@@ -895,27 +884,27 @@ function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
   const terminalData = useTerminalData([]);
 
-  const [paletteOpen, setPalleteOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
-  const onkeydown = (e) => {
-    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
+  const onkeydown = useCallback((e) => {
+    const { ctrlOrMeta } = modifiers(e);
 
     if (e.key.toLowerCase() == "p" && ctrlOrMeta) {
-      setPalleteOpen(true);
+      setPaletteOpen(true);
     } else {
       for (const cmd of commands) {
-        if (cmd.noPane && cmd.shortcut?.matches(e)) {
-          safeCommand(cmd.command, cmd.args);
+        if (cmd.shortcut?.matches(e)) {
+          executeCommand(cmd, remoteState);
           e.preventDefault();
         }
       }
     }
-  };
+  }, [remoteState]);
 
   useEffect(() => {
     window.addEventListener("keydown", onkeydown);
     return () => window.removeEventListener("keydown", onkeydown);
-  }, []);
+  }, [onkeydown]);
 
   return (
     <Profiler id="app" onRender={console.log}>
@@ -925,18 +914,22 @@ function App() {
           onRequestClose={() => safeCommand("close_modal")}
           overlayClassName={"modal-overlay"}
           className={"modal"}
+          ariaHideApp={false}
         >
           <ModalContent state={remoteState?.modal} />
         </ReactModal>
         <ReactModal
           isOpen={paletteOpen}
-          overlayClassName={"command-pallete-overlay"}
-          className={"command-pallete"}
+          overlayClassName={"command-palette-overlay"}
+          className={"command-palette"}
+          ariaHideApp={false}
         >
-          <CommandPallete
-            paneHandle={remoteState?.display_options.panes_focused && remoteState?.display_options.active_pane}
-            onClose={() => setPalleteOpen(false)}
-          />
+          {remoteState && (
+            <CommandPalette
+              state={remoteState}
+              onClose={() => setPaletteOpen(false)}
+            />
+          )}
         </ReactModal>
         <Allotment vertical className="container" separator>
           <Allotment minSize={200}>

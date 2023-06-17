@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    filesystem::Filesystem,
+    filesystem::{Filesystem, ListFilesOptions},
     rpc::{Api, Dispatcher},
     terminal::TerminalClient,
     Error,
@@ -43,8 +43,8 @@ impl Dispatcher for FilesystemDispatcher {
                 bincode::serialize(&ret).unwrap()
             }
             API_LIST_FILES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.list_files(path).await;
+                let args: (PathBuf, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.filesystem.list_files(args.0, args.1).await;
 
                 bincode::serialize(&ret).unwrap()
             }
