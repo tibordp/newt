@@ -1,9 +1,9 @@
 import { safeCommand } from "../../lib/ipc";
 
 import CreateDirectory from "./CreateDirectory";
+import CreateFile from "./CreateFile";
 import Navigate from "./Navigate";
 
-import "./ModalContent.scss";
 import Rename from "./Rename";
 
 export type ModalState = {
@@ -31,6 +31,8 @@ export function ModalContent({ state }) {
   switch (state?.type) {
     case "create_directory":
       return <CreateDirectory {...state.data} {...commonProps} />;
+    case "create_file":
+      return <CreateFile {...state.data} {...commonProps} />;
     case "navigate":
       return <Navigate {...state.data} {...commonProps} />;
     case "rename":

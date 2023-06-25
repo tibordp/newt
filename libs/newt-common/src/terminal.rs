@@ -69,20 +69,11 @@ impl Local {
     }
 }
 
-struct Foo(usize);
-impl Drop for Foo {
-    fn drop(&mut self) {
-        eprintln!("dropped {}", self.0);
-    }
-}
-
 #[async_trait::async_trait]
 impl TerminalClient for Local {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
         let inner = self.0.clone();
-        let _guard = Foo(0);
         let ret = tokio::task::spawn_blocking(move || {
-            let _guard = Foo(1);
             let handle = TerminalHandle(
                 inner
                     .handle
@@ -116,8 +107,6 @@ impl TerminalClient for Local {
                 cmd.envs(env);
             }
             let child = cmd.spawn(&pty_slave);
-
-            eprintln!("child: {:?}", child);
             let child = child?;
             let (read, write) = pty_master.into_split();
             inner.terminals.lock().insert(
@@ -131,8 +120,6 @@ impl TerminalClient for Local {
             Ok(handle)
         })
         .await;
-
-        eprintln!("ret: {:?}", ret);
 
         ret?
     }

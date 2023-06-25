@@ -894,11 +894,16 @@ function App() {
     } else {
       for (const cmd of commands) {
         if (cmd.shortcut?.matches(e)) {
-          executeCommand(cmd, remoteState);
-          e.preventDefault();
+          if (executeCommand(cmd, remoteState) !== null) {
+            e.preventDefault();
+            return;
+          }
         }
       }
+      return;
     }
+
+    e.preventDefault();
   }, [remoteState]);
 
   useEffect(() => {

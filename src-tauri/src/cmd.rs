@@ -331,7 +331,6 @@ pub async fn send_to_terminal(
     Ok(())
 }
 
-
 #[tauri::command]
 pub async fn terminal_write(
     ctx: MainWindowContext,
@@ -346,7 +345,6 @@ pub async fn terminal_write(
 
     Ok(())
 }
-
 
 #[tauri::command]
 pub async fn terminal_resize(
@@ -397,6 +395,7 @@ pub fn dialog(
             kind: match &dialog[..] {
                 "navigate" => ModalDataKind::Navigate { path: pane.path() },
                 "create_directory" => ModalDataKind::CreateDirectory { path: pane.path() },
+                "create_file" => ModalDataKind::CreateFile { path: pane.path() },
                 "rename" => ModalDataKind::Rename {
                     base_path: pane.path(),
                     name: match pane.view_state().focused {
@@ -426,6 +425,31 @@ pub async fn create_directory(
     let dir_path = dir_path.join(name.clone());
 
     ctx.fs().create_directory(dir_path).await?;
+
+    ctx.with_update_async(|gs| async move {
+        gs.close_modal();
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh(None).await?;
+            pane.view_state_mut().focus(name);
+        }
+
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn touch_file(
+    ctx: MainWindowContext,
+    pane_handle: Option<PaneHandle>,
+    path: String,
+    name: String,
+) -> Result<(), Error> {
+    let dir_path = PathBuf::from(path.clone());
+    let file_path = dir_path.join(name.clone());
+
+    ctx.fs().touch(file_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -520,6 +544,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
         close_modal,
         dialog,
         create_directory,
+        touch_file,
         delete_selected,
         rename,
         close_window

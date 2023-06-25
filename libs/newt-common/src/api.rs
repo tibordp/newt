@@ -12,6 +12,7 @@ pub const API_LIST_FILES: Api = Api(1);
 pub const API_RENAME: Api = Api(2);
 pub const API_CREATE_DIRECTORY: Api = Api(3);
 pub const API_DELETE_ALL: Api = Api(4);
+pub const API_TOUCH: Api = Api(5);
 
 pub const API_TERMINAL_CREATE: Api = Api(100);
 pub const API_TERMINAL_KILL: Api = Api(101);
@@ -52,6 +53,12 @@ impl Dispatcher for FilesystemDispatcher {
                 let (old_path, new_path): (PathBuf, PathBuf) =
                     bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.rename(old_path, new_path).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_TOUCH => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.filesystem.touch(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
