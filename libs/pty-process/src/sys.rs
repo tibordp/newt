@@ -5,14 +5,14 @@ pub struct Pty(pub nix::pty::PtyMaster);
 
 impl Pty {
     pub fn open() -> crate::Result<Self> {
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "linux"))]
         let pt = nix::pty::posix_openpt(
             nix::fcntl::OFlag::O_RDWR
                 | nix::fcntl::OFlag::O_NOCTTY
                 | nix::fcntl::OFlag::O_CLOEXEC
                 | nix::fcntl::OFlag::O_NONBLOCK,
         )?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         let pt = nix::pty::posix_openpt(
             nix::fcntl::OFlag::O_RDWR | nix::fcntl::OFlag::O_NOCTTY | nix::fcntl::OFlag::O_CLOEXEC,
         )?;
@@ -44,7 +44,7 @@ impl Pty {
             .into()))
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "linux"))]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
         use std::ffi::{CStr, OsStr};
         use std::os::raw::c_char;
@@ -68,12 +68,12 @@ impl Pty {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
         Ok(nix::pty::ptsname_r(&self.0)?.into())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     pub fn set_nonblocking(&self) -> nix::Result<()> {
         let bits = nix::fcntl::fcntl(self.0.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL)?;
         // Safety: bits was just returned from a F_GETFL call. ideally i would
