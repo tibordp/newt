@@ -3,16 +3,34 @@ use std::os::fd::{AsRawFd as _, FromRawFd as _};
 #[derive(Debug)]
 pub struct Pty(pub nix::pty::PtyMaster);
 
+#[cfg(any(target_os = "android", target_os = "linux", target_os = "freebsd"))]
+#[cfg_attr(docsrs, doc(cfg(all())))]
+#[inline]
+pub fn ptsname_r(fd: &nix::pty::PtyMaster) -> nix::Result<String> {
+    let mut name_buf = Vec::<libc::c_char>::with_capacity(64);
+    let name_buf_ptr = name_buf.as_mut_ptr();
+    let cname = unsafe {
+        let cap = name_buf.capacity();
+        if libc::ptsname_r(fd.as_raw_fd(), name_buf_ptr, cap) != 0 {
+            return Err(nix::Error::last());
+        }
+        std::ffi::CStr::from_ptr(name_buf.as_ptr())
+    };
+
+    let name = cname.to_string_lossy().into_owned();
+    Ok(name)
+}
+
 impl Pty {
     pub fn open() -> crate::Result<Self> {
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "linux"))]
         let pt = nix::pty::posix_openpt(
             nix::fcntl::OFlag::O_RDWR
                 | nix::fcntl::OFlag::O_NOCTTY
                 | nix::fcntl::OFlag::O_CLOEXEC
                 | nix::fcntl::OFlag::O_NONBLOCK,
         )?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         let pt = nix::pty::posix_openpt(
             nix::fcntl::OFlag::O_RDWR | nix::fcntl::OFlag::O_NOCTTY | nix::fcntl::OFlag::O_CLOEXEC,
         )?;
@@ -68,12 +86,12 @@ impl Pty {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
-        Ok(nix::pty::ptsname_r(&self.0)?.into())
+        Ok(ptsname_r(&self.0)?.into())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     pub fn set_nonblocking(&self) -> nix::Result<()> {
         let bits = nix::fcntl::fcntl(self.0.as_raw_fd(), nix::fcntl::FcntlArg::F_GETFL)?;
         // Safety: bits was just returned from a F_GETFL call. ideally i would

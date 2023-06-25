@@ -15,7 +15,7 @@ impl Pty {
     /// unable to put it into non-blocking mode.
     pub fn new() -> crate::Result<Self> {
         let pty = crate::sys::Pty::open()?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         pty.set_nonblocking()?;
         Ok(Self(tokio::io::unix::AsyncFd::new(pty)?))
     }
