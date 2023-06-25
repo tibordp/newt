@@ -109,6 +109,7 @@ pub trait Filesystem: Send + Sync {
     async fn list_files(&self, path: PathBuf, options: ListFilesOptions)
         -> Result<FileList, Error>;
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error>;
+    async fn touch(&self, path: PathBuf) -> Result<(), Error>;
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error>;
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
 }
@@ -257,6 +258,18 @@ impl Filesystem for Local {
         }
     }
 
+    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+        tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(path)
+                .map_err(Error::Io)
+        })
+        .await?
+        .map(|_| ())
+    }
+
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
         tokio::task::spawn_blocking(move || std::fs::rename(old_path, new_path).map_err(Error::Io))
             .await?
@@ -306,6 +319,10 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.rename(old_path, new_path).await
+    }
+    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.touch(path).await
     }
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -357,6 +374,16 @@ impl Filesystem for Remote {
 
         Ok(ret?)
     }
+
+    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_TOUCH, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
     async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator

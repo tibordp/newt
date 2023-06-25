@@ -159,6 +159,7 @@ impl serde::Serialize for Terminals {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory { path: PathBuf },
+    CreateFile { path: PathBuf },
     Navigate { path: PathBuf },
     Rename { base_path: PathBuf, name: String },
 }

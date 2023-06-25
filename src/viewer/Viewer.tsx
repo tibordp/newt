@@ -50,7 +50,7 @@ function Viewer() {
   }, []);
 
   return (
-    <div className="viewer" ref={ref} tabIndex={0}>
+    <div className="viewer" ref={ref} tabIndex={-1}>
       <pre>{contents}</pre>
     </div>
   );

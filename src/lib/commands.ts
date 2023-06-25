@@ -175,6 +175,12 @@ export const commands: Command[] = [
     shortcut: new Shortcut().key("F7"),
   },
   {
+    name: "Create File...",
+    command: "dialog",
+    args: { dialog: "create_file" },
+    shortcut: new Shortcut().shift().key("F4"),
+  },
+  {
     name: "Go To...",
     command: "dialog",
     args: { dialog: "navigate" },
@@ -230,17 +236,21 @@ export const commands: Command[] = [
   },
 ];
 
-export const executeCommand = async (
+export const executeCommand = (
   command: Command,
   state: MainWindowState
-) => {
+): Promise<void> | null => {
+  const paneHandle = state.display_options.active_pane;
+  if (!command.noPane && (!paneHandle && paneHandle !== 0)) {
+    return null;
+  }
+
   if (command.command) {
-    const paneHandle = state.display_options.active_pane;
-    await safeCommand(command.command, {
+    return safeCommand(command.command, {
       ...(command.args || {}),
       paneHandle,
     });
   } else if (command.callback) {
-    await command.callback(state);
+    return command.callback(state);
   }
 };

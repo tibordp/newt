@@ -10,7 +10,6 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-  /* zoom: 1.2; */
 }
 
 * {
@@ -24,6 +23,8 @@ body {
 
   user-select: none;
   -webkit-user-select: none;
+  cursor: default;
+
   overflow: hidden;
 }
 

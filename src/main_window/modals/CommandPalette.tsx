@@ -1,13 +1,11 @@
 import {
   Fragment,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { safeCommand } from "../../lib/ipc";
 import { Command, commands, executeCommand } from "../../lib/commands";
 import { MainWindowState } from "../MainWindow";
 
@@ -105,12 +103,9 @@ export default function CommandPalette({
     return ret.map(({ command }) => command);
   }, [filter]);
 
-  const onClick = async (command: Command) => {
-    try {
-      await executeCommand(command, state);
-    } finally {
-      onClose();
-    }
+  const onClick = (command: Command) => {
+    executeCommand(command, state);
+    onClose();
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
