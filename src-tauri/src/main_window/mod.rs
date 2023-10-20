@@ -3,6 +3,7 @@ pub mod terminal;
 
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::Remote;
+use newt_common::filesystem::UserGroup;
 use newt_common::rpc::Communicator;
 
 use newt_common::terminal::TerminalClient;
@@ -158,10 +159,26 @@ impl serde::Serialize for Terminals {
 #[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
-    CreateDirectory { path: PathBuf },
-    CreateFile { path: PathBuf },
-    Navigate { path: PathBuf },
-    Rename { base_path: PathBuf, name: String },
+    CreateDirectory {
+        path: PathBuf,
+    },
+    CreateFile {
+        path: PathBuf,
+    },
+    Properties {
+        paths: Vec<PathBuf>,
+
+        mode: Option<u32>,
+        owner: Option<UserGroup>,
+        group: Option<UserGroup>,
+    },
+    Navigate {
+        path: PathBuf,
+    },
+    Rename {
+        base_path: PathBuf,
+        name: String,
+    },
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -285,34 +302,34 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
-        /*let mut child = tokio::process::Command::new("/usr/bin/ssh")
-            .args(&[
-                "rpi.ojdip.net",
-                "sh -c '/home/tibordp/src/newt/target/release/newt-agent; echo done >&2'",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+        /*       let mut child = tokio::process::Command::new("/usr/bin/ssh")
+                    .args(&[
+                        "192.168.100.177",
+                        "sh -c 'truss /usr/home/tibordp/src/newt/target/debug/newt-agent 2>~/truss.out; echo done >&2'",
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
+                    .spawn()?;
 
-        /* let child = tokio::process::Command::new("pkexec")
-        .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;*/
+                /* let child = tokio::process::Command::new("pkexec")
+                .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()?;*/
 
-        let stream = tokio_duplex::Duplex::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
-        let communicator = Communicator::new(stream);
-        let fs = Remote::new(communicator.clone());
-        let terminal_client = newt_common::terminal::Remote::new(communicator);
+                let stream = tokio_duplex::Duplex::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
+                let communicator = Communicator::new(stream);
+                let fs = Remote::new(communicator.clone());
+                let terminal_client = newt_common::terminal::Remote::new(communicator);
 
-        tokio::spawn(async move {
-            let ret = child.wait().await.unwrap();
-            eprintln!("child exited: {}", ret);
-        });
+                tokio::spawn(async move {
+                    let ret = child.wait().await.unwrap();
+                    eprintln!("child exited: {}", ret);
+                });
+
         */
-
         let fs = newt_common::filesystem::Local::new();
         let terminal_client = newt_common::terminal::Local::new();
 

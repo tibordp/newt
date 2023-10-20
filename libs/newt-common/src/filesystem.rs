@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::os::unix::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
@@ -17,6 +18,7 @@ use notify::RecommendedWatcher;
 use notify::RecursiveMode;
 use notify::Watcher;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 use crate::rpc::Communicator;
 use crate::Error;
@@ -28,13 +30,45 @@ pub struct ListFilesOptions {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum UserGroup {
+    Name(String),
+    Id(u32),
+}
+
+impl PartialEq for UserGroup {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Name(a), Self::Name(b)) => a == b,
+            (Self::Id(a), Self::Id(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for UserGroup {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Name(a), Self::Name(b)) => a.partial_cmp(b),
+            (Self::Id(a), Self::Id(b)) => a.partial_cmp(b),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash)]
+pub struct Mode(u32);
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
-    pub mode: String,
+    pub user: Option<UserGroup>,
+    pub group: Option<UserGroup>,
+    pub mode: Mode,
     pub modified: Option<i128>,
     pub accessed: Option<i128>,
     pub created: Option<i128>,
@@ -103,6 +137,60 @@ pub fn resolve(path: &Path) -> PathBuf {
     ret
 }
 
+struct UidGidCache {
+    local_users: RwLock<HashMap<u32, UserGroup>>,
+    local_groups: RwLock<HashMap<u32, UserGroup>>,
+}
+
+impl UidGidCache {
+    pub fn new() -> Self {
+        Self {
+            local_users: RwLock::new(HashMap::new()),
+            local_groups: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
+        {
+            let groups = self.local_groups.read();
+            if let Some(group) = groups.get(&gid) {
+                return Ok(group.clone());
+            }
+        }
+
+        let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
+        let group = match group {
+            Some(g) => UserGroup::Name(g.name),
+            None => UserGroup::Id(gid),
+        };
+
+        let mut groups = self.local_groups.write();
+        groups.insert(gid, group.clone());
+
+        Ok(group)
+    }
+
+    fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
+        {
+            let users = self.local_users.read();
+            if let Some(user) = users.get(&uid) {
+                return Ok(user.clone());
+            }
+        }
+
+        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
+        let user = match user {
+            Some(u) => UserGroup::Name(u.name),
+            None => UserGroup::Id(uid),
+        };
+
+        let mut users = self.local_users.write();
+        users.insert(uid, user.clone());
+
+        Ok(user)
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
@@ -114,12 +202,15 @@ pub trait Filesystem: Send + Sync {
     async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
 }
 
-#[derive(Default)]
-pub struct Local {}
+pub struct Local {
+    cache: Arc<UidGidCache>,
+}
 
 impl Local {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            cache: Arc::new(UidGidCache::new()),
+        }
     }
 }
 
@@ -175,70 +266,77 @@ impl Filesystem for Local {
         mut path: PathBuf,
         options: ListFilesOptions,
     ) -> Result<FileList, Error> {
-        fn reload(path: &Path) -> Result<Vec<File>, Error> {
-            let mut ret = Vec::new();
-            if let Some(parent) = path.parent() {
-                let metadata = parent.symlink_metadata()?;
-
-                #[cfg(target_family = "unix")]
-                let mode = metadata.mode();
-                #[cfg(target_family = "windows")]
-                let mode = metadata.file_attributes() as _;
-
-                ret.push(File {
-                    name: "..".to_string(),
-                    size: None,
-                    is_dir: true,
-                    is_symlink: metadata.is_symlink(),
-                    is_hidden: false,
-                    mode: mode_string(mode),
-                    modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                    accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                    created: metadata.created().map(|t| t.to_unix()).ok(),
-                });
-            }
-
-            for maybe_entry in std::fs::read_dir(path)? {
-                let entry = maybe_entry?;
-                let metadata = entry.metadata()?;
-                let file_type = metadata.file_type();
-
-                let name = entry.file_name().into_string().unwrap();
-                let mut is_dir = file_type.is_dir();
-
-                if file_type.is_symlink() {
-                    let target_metadata = std::fs::metadata(entry.path());
-                    // If we e.g. don't have permission to read the target, we show the link details
-                    if let Ok(target_metadata) = target_metadata {
-                        is_dir = target_metadata.is_dir();
-                    }
-                }
-
-                #[cfg(target_family = "unix")]
-                let mode = metadata.mode();
-                #[cfg(target_family = "windows")]
-                let mode = metadata.file_attributes() as _;
-
-                ret.push(File {
-                    name: name.clone(),
-                    size: (!is_dir).then_some(metadata.len()),
-                    is_dir,
-                    is_symlink: file_type.is_symlink(),
-                    is_hidden: name.starts_with('.'),
-                    mode: mode_string(mode),
-                    modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                    accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                    created: metadata.created().map(|t| t.to_unix()).ok(),
-                });
-            }
-
-            Ok(ret)
-        }
-
         assert!(path.is_absolute());
         loop {
-            let path_1 = path.clone();
-            match tokio::task::spawn_blocking(move || reload(&path_1)).await? {
+            match tokio::task::spawn_blocking({
+                let path = path.clone();
+                let cache = self.cache.clone();
+                move || -> Result<Vec<File>, Error> {
+                    let mut ret = Vec::new();
+                    if let Some(parent) = path.parent() {
+                        let metadata = parent.symlink_metadata()?;
+
+                        #[cfg(target_family = "unix")]
+                        let mode = metadata.mode();
+                        #[cfg(target_family = "windows")]
+                        let mode = metadata.file_attributes() as _;
+
+                        ret.push(File {
+                            name: "..".to_string(),
+                            size: None,
+                            is_dir: true,
+                            is_symlink: metadata.is_symlink(),
+                            is_hidden: false,
+                            user: cache.user_name(metadata.uid()).ok(),
+                            group: cache.group_name(metadata.gid()).ok(),
+                            mode: Mode(mode),
+                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                            created: metadata.created().map(|t| t.to_unix()).ok(),
+                        });
+                    }
+
+                    for maybe_entry in std::fs::read_dir(path)? {
+                        let entry = maybe_entry?;
+                        let metadata = entry.metadata()?;
+                        let file_type = metadata.file_type();
+
+                        let name = entry.file_name().into_string().unwrap();
+                        let mut is_dir = file_type.is_dir();
+
+                        if file_type.is_symlink() {
+                            let target_metadata = std::fs::metadata(entry.path());
+                            // If we e.g. don't have permission to read the target, we show the link details
+                            if let Ok(target_metadata) = target_metadata {
+                                is_dir = target_metadata.is_dir();
+                            }
+                        }
+
+                        #[cfg(target_family = "unix")]
+                        let mode = metadata.mode();
+                        #[cfg(target_family = "windows")]
+                        let mode = metadata.file_attributes() as _;
+
+                        ret.push(File {
+                            name: name.clone(),
+                            size: (!is_dir).then_some(metadata.len()),
+                            is_dir,
+                            is_symlink: file_type.is_symlink(),
+                            is_hidden: name.starts_with('.'),
+                            user: cache.user_name(metadata.uid()).ok(),
+                            group: cache.group_name(metadata.gid()).ok(),
+                            mode: Mode(mode),
+                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                            created: metadata.created().map(|t| t.to_unix()).ok(),
+                        });
+                    }
+
+                    Ok(ret)
+                }
+            })
+            .await?
+            {
                 Ok(files) => {
                     let stats = nix::sys::statvfs::statvfs(&path).ok().map(Into::into);
 
