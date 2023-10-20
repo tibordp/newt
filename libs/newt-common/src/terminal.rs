@@ -316,6 +316,7 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>, Error> {
     })
 }
 
+
 /// User information that is required for a new shell session.
 struct ShellUser {
     user: String,

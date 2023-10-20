@@ -149,6 +149,12 @@ export const commands: Command[] = [
     shortcut: new Shortcut().key("F2"),
   },
   {
+    name: "File properties...",
+    command: "dialog",
+    args: { dialog: "properties" },
+    shortcut: new Shortcut().alt().key("Enter"),
+  },
+  {
     name: "Delete Selected",
     callback: async (state: MainWindowState) => {
       const paneHandle = state.display_options.active_pane;

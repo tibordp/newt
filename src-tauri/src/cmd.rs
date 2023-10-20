@@ -396,6 +396,25 @@ pub fn dialog(
                 "navigate" => ModalDataKind::Navigate { path: pane.path() },
                 "create_directory" => ModalDataKind::CreateDirectory { path: pane.path() },
                 "create_file" => ModalDataKind::CreateFile { path: pane.path() },
+                "properties" => {
+                    /*let vs = pane.view_state();
+                    let selection = pane.get_effective_selection();
+
+                    let mode = HashSet<strin>;
+
+                    for f in vs.files {
+                        for s in selection {
+                            if f.name == s.file_name() {
+
+                            }
+                        }
+                    }
+
+                    pane.view_state() view_state().
+                    ModalDataKind::Properties {
+                        path: pane.path(),
+                    }*/ todo!()
+                }
                 "rename" => ModalDataKind::Rename {
                     base_path: pane.path(),
                     name: match pane.view_state().focused {
@@ -403,7 +422,7 @@ pub fn dialog(
                         None => return Ok(()),
                     },
                 },
-                _ => panic!(),
+                _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext {
                 pane_handle: Some(pane_handle),

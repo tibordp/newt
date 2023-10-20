@@ -86,12 +86,101 @@ export const getSiPrefixedNumber = (number: number): string => {
   return `${baseNumber} ${prefix}`;
 };
 
+/*
+In rust:
+pub fn mode_string(mode: u32) -> String {
+    const TYPE_CHARS: &[u8] = b"?pc?d?b?-?l?s???";
+    const MODE_CHARS: &[u8] = b"rwxSTst";
+
+    let mut ret = vec![0; 10];
+    let mut idx = 0usize;
+
+    ret[idx] = TYPE_CHARS[((mode >> 12) & 0xf) as usize];
+    let mut i = 0;
+    let mut m = 0o400;
+    loop {
+        let mut j = 0;
+        let mut k = 0;
+
+        loop {
+            idx += 1;
+            ret[idx] = b'-';
+            if mode & m != 0 {
+                ret[idx] = MODE_CHARS[j];
+                k = j;
+            }
+            m >>= 1;
+            j += 1;
+            if j >= 3 {
+                break;
+            }
+        }
+        i += 1;
+
+        if mode & (0o10000 >> i) != 0 {
+            ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) as usize)];
+        }
+        if i >= 3 {
+            break;
+        }
+    }
+
+    unsafe { String::from_utf8_unchecked(ret) }
+}
+
+
+*/
+
+
+const modeString = (mode: number) => {
+  const TYPE_CHARS = "?pc?d?b?-?l?s???";
+  const MODE_CHARS = "rwxSTst";
+
+  let ret = Array(10).fill("-");
+  let idx = 0;
+
+  ret[idx] = TYPE_CHARS[(mode >> 12) & 0xf];
+  let i = 0;
+  let m = 0o400;
+  while (true) {
+    let j = 0;
+    let k = 0;
+
+    while (true) {
+      idx += 1;
+      ret[idx] = "-";
+      if ((mode & m) != 0) {
+        ret[idx] = MODE_CHARS[j];
+        k = j;
+      }
+      m = m >> 1;
+      j += 1;
+      if (j >= 3) {
+        break;
+      }
+    }
+    i += 1;
+
+    if ((mode & (0o10000 >> i)) != 0) {
+      ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) ? 1 : 0)];
+    }
+    if (i >= 3) {
+      break;
+    }
+  }
+
+  return ret.join("");
+}
+
+
 type File = {
   name: string;
   size?: number;
   is_dir: boolean;
   is_symlink: boolean;
   is_hidden: boolean;
+  user: number | string;
+  group: number | string;
   mode: number;
   modified: number;
   accessed: number;
@@ -204,7 +293,7 @@ const columns: ColumnDef[] = [
   },
   {
     align: "right",
-    initialWidth: 70,
+    initialWidth: 80,
     key: "modified_date",
     subcolumns: [
       {
@@ -216,7 +305,7 @@ const columns: ColumnDef[] = [
   },
   {
     align: "right",
-    initialWidth: 70,
+    initialWidth: 80,
     key: "modified_time",
     subcolumns: [
       {
@@ -229,13 +318,38 @@ const columns: ColumnDef[] = [
   {
     align: "left",
     initialWidth: 70,
+    key: "user",
+    subcolumns: [
+      {
+        name: "User",
+        sortKey: "user",
+      },
+    ],
+    render: (info) => <>{info.user}</>,
+  },
+  {
+    align: "left",
+    initialWidth: 70,
+    key: "group",
+    subcolumns: [
+      {
+        name: "Group",
+        sortKey: "group",
+      },
+    ],
+    render: (info) => <>{info.group}</>,
+  },
+  {
+    align: "left",
+    initialWidth: 70,
     key: "mode",
     subcolumns: [
       {
         name: "Mode",
+        sortKey: "mode",
       },
     ],
-    render: (info) => <>{info.mode}</>,
+    render: (info) => <>{modeString(info.mode)}</>,
   },
 ];
 

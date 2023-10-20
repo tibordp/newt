@@ -36,6 +36,9 @@ pub enum SortingKey {
     Name,
     Extension,
     Size,
+    User,
+    Mode,
+    Group,
     Modified,
     Accessed,
     Created,
@@ -367,6 +370,11 @@ impl PaneViewState {
                 SortingKey::Name => a.name.cmp(&b.name),
                 SortingKey::Extension => compare_extension(a, b),
                 SortingKey::Size => a.size.cmp(&b.size),
+                SortingKey::User => a.user.partial_cmp(&b.user).unwrap_or(std::cmp::Ordering::Less),
+                SortingKey::Group => {
+                    a.group.partial_cmp(&b.group).unwrap_or(std::cmp::Ordering::Less)
+                }
+                SortingKey::Mode => a.mode.cmp(&b.mode),
                 SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
                 SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
                 SortingKey::Created => a.created.unwrap_or(0).cmp(&b.created.unwrap_or(0)),

@@ -4,6 +4,7 @@ pub mod api;
 pub mod filesystem;
 pub mod rpc;
 pub mod terminal;
+pub mod sys;
 
 use std::time::SystemTime;
 
@@ -17,6 +18,8 @@ pub enum Error {
     Notify(#[from] notify::Error),
     #[error("{0}")]
     PtyProcess(#[from] pty_process::Error),
+    #[error("{0}")]
+    Nix(#[from] nix::Error),
     #[error("{0}")]
     Custom(String),
     #[error("operation cancelled")]
