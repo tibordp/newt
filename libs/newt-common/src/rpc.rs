@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -17,10 +16,7 @@ use tokio::{
 
 use tokio_util::codec::Framed;
 
-use crate::{
-    filesystem::{FileList, Filesystem},
-    Error,
-};
+use crate::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Api(pub u16);
@@ -251,7 +247,7 @@ impl CommunicatorInner {
         let sender = {
             tokio::spawn(async move {
                 while let Some(msg) = inbox.recv().await {
-                    tx.send(msg).await?;
+                    tx.feed(msg).await?;
                     // Since this is an interactive RPC, we flush after every message
                     tx.flush().await?;
                 }
@@ -375,8 +371,8 @@ impl Communicator {
 
     pub async fn invoke<Req, Resp>(&self, api: Api, req: &Req) -> Result<Resp, Error>
     where
-        Req: serde::Serialize,
-        Resp: for<'de> serde::Deserialize<'de>,
+        Req: serde::Serialize + std::fmt::Debug,
+        Resp: for<'de> serde::Deserialize<'de> + std::fmt::Debug,
     {
         let id = RequestId(self.0.request_id.fetch_add(1, Ordering::SeqCst));
         let bytes = bincode::serialize(req).unwrap();
@@ -396,7 +392,7 @@ impl Communicator {
 
     pub async fn notify<Req>(&self, api: Api, req: &Req) -> Result<(), Error>
     where
-        Req: serde::Serialize,
+        Req: serde::Serialize + std::fmt::Debug,
     {
         let bytes = bincode::serialize(req).unwrap();
 

@@ -13,6 +13,7 @@ pub const API_RENAME: Api = Api(2);
 pub const API_CREATE_DIRECTORY: Api = Api(3);
 pub const API_DELETE_ALL: Api = Api(4);
 pub const API_TOUCH: Api = Api(5);
+pub const API_SHELL_EXPAND: Api = Api(6);
 
 pub const API_TERMINAL_CREATE: Api = Api(100);
 pub const API_TERMINAL_KILL: Api = Api(101);
@@ -74,16 +75,20 @@ impl Dispatcher for FilesystemDispatcher {
 
                 bincode::serialize(&ret).unwrap()
             }
+            API_SHELL_EXPAND => {
+                let path: String = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.filesystem.shell_expand(path).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
             _ => return Ok(None),
         };
 
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        match api {
-            _ => Ok(false),
-        }
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
     }
 }
 
@@ -107,7 +112,6 @@ impl Dispatcher for TerminalDispatcher {
                 let options: crate::terminal::TerminalOptions =
                     bincode::deserialize(&req[..]).unwrap();
                 let ret = self.terminal.create(options).await;
-                eprintln!("ret: {:?}", ret);
 
                 bincode::serialize(&ret).unwrap()
             }
@@ -152,9 +156,7 @@ impl Dispatcher for TerminalDispatcher {
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        match api {
-            _ => Ok(false),
-        }
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
     }
 }

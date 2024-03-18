@@ -179,8 +179,14 @@ type File = {
   is_dir: boolean;
   is_symlink: boolean;
   is_hidden: boolean;
-  user: number | string;
-  group: number | string;
+  user: {
+    name?: string,
+    id?: number
+  },
+  group: {
+    name?: string,
+    id?: number
+  },
   mode: number;
   modified: number;
   accessed: number;
@@ -325,7 +331,7 @@ const columns: ColumnDef[] = [
         sortKey: "user",
       },
     ],
-    render: (info) => <>{info.user}</>,
+    render: (info) => <>{info.user.name || info.user.id}</>,
   },
   {
     align: "left",
@@ -337,7 +343,7 @@ const columns: ColumnDef[] = [
         sortKey: "group",
       },
     ],
-    render: (info) => <>{info.group}</>,
+    render: (info) => <>{info.group.name || info.user.id}</>,
   },
   {
     align: "left",
@@ -539,7 +545,7 @@ function PathBreadcrumbs(props: { path: string; paneHandle: number }) {
               if (i === segments.length - 1) {
                 safeCommand("dialog", { paneHandle, dialog: "navigate" });
               } else {
-                safeCommand("navigate", { paneHandle, path });
+                safeCommand("navigate", { paneHandle, path, exact: true });
               }
             }}
           >
@@ -687,7 +693,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     if (!file) return;
 
     if (file.is_dir) {
-      command("navigate", { path: file.name });
+      command("navigate", { path: file.name, exact: true });
     } else {
       command("open", { filename: file.name });
     }
@@ -737,7 +743,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "Backspace" && noModifiers) {
-      command("navigate", { path: ".." }, true);
+      command("navigate", { path: "..", exact: true }, true);
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.

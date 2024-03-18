@@ -1,17 +1,13 @@
-use std::ffi::CStr;
-use std::mem::MaybeUninit;
 use std::path::Path;
 use std::sync::Arc;
 
 use log::info;
-use log::warn;
+
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalOptions;
 use tauri::Window;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::common::Error;
 

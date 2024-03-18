@@ -1,5 +1,3 @@
-use libc::kill;
-
 /// Wrapper around [`tokio::process::Command`]
 pub struct Command {
     inner: tokio::process::Command,

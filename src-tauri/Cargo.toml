@@ -8,22 +8,21 @@ repository = ""
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "1.3", features = [] }
-newt-agent = { path = "../libs/newt-agent" }
+tauri-build = { version = "1", features = [] }
 
 [dependencies]
-tauri = { version = "1.3", features = ["dialog-ask", "dialog-confirm", "dialog-message", "shell-open"] }
+tauri = { version = "1", features = ["dialog-ask", "dialog-confirm", "dialog-message", "shell-open"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1"
 anyhow = "1"
 serde_json = "1.0"
 opener = "0.6"
-once_cell = "1.17"
-notify = "6.0"
+once_cell = "1"
+notify = "6"
 uuid = { version = "1.3", features = ["serde", "v4"] }
-url = "2.3"
-regex = "1.8"
-arboard = "3.2"
+url = "2"
+regex = "1"
+arboard = "3"
 parking_lot = "0.12"
 treediff = { version = "4", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }
@@ -37,7 +36,7 @@ log = "0.4"
 pretty_env_logger = "0.5"
 tokio-duplex = "1.0.1"
 clap = { version = "4", features = ["derive"] }
-async-compression = { version = "0.4.0", features = ["zstd", "tokio"] }
+async-compression = { version = "0.4.4", features = ["zstd", "tokio"] }
 nix = { version = "0.26.2", features = ["fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

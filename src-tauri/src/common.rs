@@ -170,7 +170,7 @@ impl PatchDelegate {
                 self.removals
                     .into_iter()
                     .rev()
-                    .chain(self.additions.into_iter())
+                    .chain(self.additions)
                     .collect(),
             )
         }

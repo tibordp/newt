@@ -6,6 +6,7 @@ use tauri::Invoke;
 use tauri::Manager;
 use tauri::Window;
 use tauri::Wry;
+use url::Url;
 
 use crate::common::Error;
 
@@ -30,7 +31,18 @@ pub async fn navigate(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
     path: &str,
+    exact: bool,
 ) -> Result<(), Error> {
+    let mut path = path.to_string();
+    if !exact {
+        path = ctx
+            .fs()
+            .shell_expand(path.to_string())
+            .await?
+            .to_string_lossy()
+            .to_string()
+    }
+
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
         pane.navigate(path).await?;
@@ -147,20 +159,23 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
         None => return,
     };
 
-    let base_url = window.url();
-    let mut url = base_url.join("/viewer").unwrap();
+    let mut url = Url::parse("newt-preview://viewer").unwrap();
     url.query_pairs_mut()
         .append_pair("path", full_path.to_string_lossy().as_ref());
 
-    tauri::WindowBuilder::new(
+    let window = tauri::WindowBuilder::new(
         &window.app_handle(),
         uuid::Uuid::new_v4().to_string(),
-        tauri::WindowUrl::App(url.to_string().into()), /* the url */
+        tauri::WindowUrl::External(url)
     )
     .title(format!("{} - Viewer", full_path.display()))
     .center()
     .focused(true)
     .build()
+    .unwrap();
+
+    window
+    .eval(crate::viewer::SCRIPT)
     .unwrap();
 }
 
@@ -413,7 +428,8 @@ pub fn dialog(
                     pane.view_state() view_state().
                     ModalDataKind::Properties {
                         path: pane.path(),
-                    }*/ todo!()
+                    }*/
+                    todo!()
                 }
                 "rename" => ModalDataKind::Rename {
                     base_path: pane.path(),

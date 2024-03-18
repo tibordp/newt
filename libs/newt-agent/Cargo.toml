@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-compression = { version = "0.4.0", features = ["zstd", "tokio"] }
+async-compression = { version = "0.4.4", features = ["zstd", "tokio"] }
 clap = { version = "4.3.3", features = ["derive"] }
 newt-common = { path = "../newt-common" }
 pretty_env_logger = "0.5.0"

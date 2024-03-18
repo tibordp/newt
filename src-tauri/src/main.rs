@@ -8,12 +8,14 @@ extern crate objc; // v0.2.7
 pub mod cmd;
 pub mod common;
 pub mod main_window;
+pub mod viewer;
 
 use common::Error;
 use log::debug;
 use log::info;
 use main_window::MainWindowContext;
 use parking_lot::Mutex;
+use tauri::http::ResponseBuilder;
 use std::collections::HashMap;
 use tauri::Invoke;
 use tauri::Manager;
@@ -60,15 +62,19 @@ fn main() {
     let global_ctx = GlobalContext::default();
     tauri::Builder::default()
         .manage(global_ctx)
-        .on_page_load(|w, payload| {
+        .on_page_load(|w, _payload| {
             let app_handle = w.app_handle();
             let global_ctx: State<GlobalContext> = app_handle.state();
 
-            match w.url().path() {
-                "/" => {
+            eprintln!("{:?}", w.url());
+
+            match w.url().scheme() {
+                "newt-preview" => {
+
+                }
+                _ => {
                     tauri::async_runtime::block_on(global_ctx.create_main_window(w)).unwrap();
                 }
-                _ => {}
             }
         })
         .on_window_event(
@@ -90,6 +96,7 @@ fn main() {
                 }
             },
         )
+        .register_uri_scheme_protocol("newt-preview", crate::viewer::url_handler)
         .invoke_handler(handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
