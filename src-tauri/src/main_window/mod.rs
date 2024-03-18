@@ -1,6 +1,8 @@
 pub mod pane;
 pub mod terminal;
 
+use async_compression::tokio::bufread::ZstdDecoder;
+use async_compression::tokio::write::ZstdEncoder;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::Remote;
 use newt_common::filesystem::UserGroup;
@@ -11,6 +13,8 @@ use newt_common::terminal::TerminalHandle;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
 use std::collections::HashMap;
 
 use std::future::Future;
@@ -80,6 +84,12 @@ pub struct PaneHandle(usize);
 #[derive(Clone)]
 pub struct Panes(Arc<RwLock<Vec<Arc<Pane>>>>);
 
+impl Default for Panes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Panes {
     pub fn new() -> Self {
         Self(Arc::new(RwLock::new(Vec::new())))
@@ -115,6 +125,12 @@ impl serde::Serialize for Panes {
 
 #[derive(Clone)]
 pub struct Terminals(Arc<RwLock<HashMap<TerminalHandle, Arc<Terminal>>>>);
+
+impl Default for Terminals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Terminals {
     pub fn new() -> Self {
@@ -303,35 +319,46 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 impl MainWindowContext {
     pub async fn create(window: Window) -> Result<Self, Error> {
         /*       let mut child = tokio::process::Command::new("/usr/bin/ssh")
-                    .args(&[
-                        "192.168.100.177",
-                        "sh -c 'truss /usr/home/tibordp/src/newt/target/debug/newt-agent 2>~/truss.out; echo done >&2'",
-                    ])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .spawn()?;
-
-                /* let child = tokio::process::Command::new("pkexec")
-                .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()?;*/
-
-                let stream = tokio_duplex::Duplex::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
-                let communicator = Communicator::new(stream);
-                let fs = Remote::new(communicator.clone());
-                let terminal_client = newt_common::terminal::Remote::new(communicator);
-
-                tokio::spawn(async move {
-                    let ret = child.wait().await.unwrap();
-                    eprintln!("child exited: {}", ret);
-                });
-
+                            .args(&[
+                                "192.168.100.177",
+                                "sh -c 'truss /usr/home/tibordp/src/newt/target/debug/newt-agent 2>~/truss.out; echo done >&2'",
+                            ])
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::inherit())
+                            .spawn()?;
         */
+        let mut child = tokio::process::Command::new("/bin/env")
+            .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        let mut rx: Box<dyn AsyncRead + Send + Unpin>= Box::new(child.stdout.take().unwrap());
+        let mut tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(child.stdin.take().unwrap());
+
+        if false {
+            rx = Box::new(ZstdDecoder::new(tokio::io::BufReader::new(rx)));
+            tx = Box::new(ZstdEncoder::new(tx));
+        }
+
+        let stream = tokio_duplex::Duplex::new(rx, tx);
+        let communicator = Communicator::new(stream);
+        let fs = Remote::new(communicator.clone());
+        let terminal_client = newt_common::terminal::Remote::new(communicator);
+
+        tokio::spawn(async move {
+            let ret = child.wait().await.unwrap();
+            eprintln!("child exited: {}", ret);
+        });
+
+        /*
+
         let fs = newt_common::filesystem::Local::new();
         let terminal_client = newt_common::terminal::Local::new();
+
+        */
 
         let fs = Arc::new(fs);
         let terminal_client = Arc::new(terminal_client);

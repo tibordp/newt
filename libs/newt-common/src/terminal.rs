@@ -63,6 +63,12 @@ impl LocalInner {
 
 pub struct Local(Arc<LocalInner>);
 
+impl Default for Local {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Local {
     pub fn new() -> Self {
         Self(Arc::new(LocalInner::new()))
@@ -315,7 +321,6 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>, Error> {
         shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
     })
 }
-
 
 /// User information that is required for a new shell session.
 struct ShellUser {

@@ -370,10 +370,14 @@ impl PaneViewState {
                 SortingKey::Name => a.name.cmp(&b.name),
                 SortingKey::Extension => compare_extension(a, b),
                 SortingKey::Size => a.size.cmp(&b.size),
-                SortingKey::User => a.user.partial_cmp(&b.user).unwrap_or(std::cmp::Ordering::Less),
-                SortingKey::Group => {
-                    a.group.partial_cmp(&b.group).unwrap_or(std::cmp::Ordering::Less)
-                }
+                SortingKey::User => a
+                    .user
+                    .partial_cmp(&b.user)
+                    .unwrap_or(std::cmp::Ordering::Less),
+                SortingKey::Group => a
+                    .group
+                    .partial_cmp(&b.group)
+                    .unwrap_or(std::cmp::Ordering::Less),
                 SortingKey::Mode => a.mode.cmp(&b.mode),
                 SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
                 SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
@@ -398,7 +402,7 @@ impl PaneViewState {
                 .file_lookup
                 .contains_key(self.focused.as_ref().unwrap())
         {
-            self.focused = self.files.get(0).map(|f| f.name.clone());
+            self.focused = self.files.first().map(|f| f.name.clone());
         }
     }
 
@@ -469,15 +473,13 @@ impl PaneViewState {
             .focused
             .as_deref()
             .map(|f| self.file_lookup.get(f).unwrap())
-            else {
-                return;
-            };
+        else {
+            return;
+        };
 
-        let Some(&end_index) = self
-            .file_lookup
-            .get(&filename) else {
-                return;
-            };
+        let Some(&end_index) = self.file_lookup.get(&filename) else {
+            return;
+        };
 
         for i in start_index.min(end_index)..=start_index.max(end_index) {
             self.selected.insert(self.files[i].name.clone());

@@ -24,13 +24,12 @@ use crate::rpc::Communicator;
 use crate::Error;
 use crate::ToUnix;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ListFilesOptions {
     pub strict: bool,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum UserGroup {
     Name(String),
     Id(u32),
@@ -56,10 +55,12 @@ impl PartialOrd for UserGroup {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash,
+)]
 pub struct Mode(u32);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
@@ -74,7 +75,7 @@ pub struct File {
     pub created: Option<i128>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FsStats {
     free_bytes: u64,
     available_bytes: u64,
@@ -84,14 +85,14 @@ pub struct FsStats {
 impl From<nix::sys::statvfs::Statvfs> for FsStats {
     fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
         Self {
-            free_bytes: (stats.blocks_available() as u64) * (stats.fragment_size() as u64),
-            available_bytes: (stats.blocks_available() as u64) * (stats.fragment_size() as u64),
-            total_bytes: (stats.blocks() as u64) * (stats.fragment_size() as u64),
+            free_bytes: stats.blocks_available() * stats.fragment_size(),
+            available_bytes: stats.blocks_available() * stats.fragment_size(),
+            total_bytes: stats.blocks() * stats.fragment_size(),
         }
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct FileList {
     path: PathBuf,
     fs_stats: Option<FsStats>,
@@ -193,6 +194,7 @@ impl UidGidCache {
 
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
+    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error>;
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
     async fn list_files(&self, path: PathBuf, options: ListFilesOptions)
         -> Result<FileList, Error>;
@@ -206,6 +208,12 @@ pub struct Local {
     cache: Arc<UidGidCache>,
 }
 
+impl Default for Local {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Local {
     pub fn new() -> Self {
         Self {
@@ -216,6 +224,10 @@ impl Local {
 
 #[async_trait::async_trait]
 impl Filesystem for Local {
+    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
+        Ok(tokio::task::spawn_blocking(move || expanduser::expanduser(path)).await??)
+    }
+
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
@@ -228,10 +240,12 @@ impl Filesystem for Local {
                         Ok(event) => {
                             debug!("{:?} (while watching {})", event, path.display());
                             let should_notify = match event.kind {
+                                // For removals we care about any direct ancestor or descendant...
                                 EventKind::Remove(RemoveKind::Folder) => event
                                     .paths
                                     .iter()
                                     .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                // ... for everything else, just a direct descendant
                                 _ => event.paths.iter().any(|p| p.starts_with(&path)),
                             };
 
@@ -403,6 +417,10 @@ impl<T: Filesystem> Slow<T> {
 
 #[async_trait::async_trait]
 impl<T: Filesystem> Filesystem for Slow<T> {
+    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
+        self.0.shell_expand(path).await
+    }
+
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
         self.0.poll_changes(path).await
     }
@@ -444,6 +462,15 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl Filesystem for Remote {
+    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
+        let ret: Result<PathBuf, Error> = self
+            .communicator
+            .invoke(crate::api::API_SHELL_EXPAND, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
     async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator

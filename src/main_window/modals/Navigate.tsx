@@ -15,6 +15,7 @@ export default function Navigate({ path, cancel, context }: NavigateProps) {
     safeCommand("navigate", {
       paneHandle: context?.pane_handle,
       path: newPath,
+      exact: false
     });
   }
 

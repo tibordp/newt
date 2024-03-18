@@ -3,8 +3,8 @@
 pub mod api;
 pub mod filesystem;
 pub mod rpc;
-pub mod terminal;
 pub mod sys;
+pub mod terminal;
 
 use std::time::SystemTime;
 
