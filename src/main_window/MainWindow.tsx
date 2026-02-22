@@ -8,7 +8,7 @@ import {
   Fragment,
   useCallback,
 } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 
 import { Allotment } from "allotment";
 import "./MainWindow.scss";
@@ -34,7 +34,7 @@ import { FitAddon } from "xterm-addon-fit";
 import ReactModal from "react-modal";
 
 import "xterm/css/xterm.css";
-import "@fontsource-variable/roboto-mono";
+
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { commands, executeCommand, modifiers } from "../lib/commands";
 import CommandPalette from "./modals/CommandPalette";
@@ -663,14 +663,14 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
           index: focusedIndex,
           delay: 0,
           alignToTop: true,
-          prerender: Math.ceil(containerHeight / 20),
+          prerender: Math.ceil(containerHeight / 22),
         });
-      } else if (focusedIndex >= pos.index + Math.floor(containerHeight / 20)) {
+      } else if (focusedIndex >= pos.index + Math.floor(containerHeight / 22)) {
         viewPortRef.current.scrollToIndex({
           index: focusedIndex,
           delay: 0,
           alignToTop: false,
-          prerender: Math.ceil(containerHeight / 20),
+          prerender: Math.ceil(containerHeight / 22),
         });
       }
     }
@@ -856,7 +856,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
             ref={viewPortRef}
             viewportRef={containerRef}
             items={files}
-            itemSize={20}
+            itemSize={22}
           >
             {(row: File) => (
               <li
@@ -910,9 +910,8 @@ function Terminal({ handle, active }: { handle: number; active: boolean }) {
   useEffect(() => {
     const term = new XTermJSTerminal({
       scrollback: 1000,
-      fontFamily:
-        "Consolas, Menlo, Monaco, 'Lucida Console', 'Liberation Mono', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Courier New', monospace, serif",
-      fontSize: 12,
+      fontFamily: "monospace",
+      fontSize: 13,
       cursorStyle: "block",
       allowTransparency: true,
       allowProposedApi: true,

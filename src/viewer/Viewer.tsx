@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
-import { message } from "@tauri-apps/api/dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
@@ -35,7 +35,7 @@ function Viewer() {
           setContents(contents);
         } catch (e) {
           await message(e.toString(), {
-            type: "error",
+            kind: "error",
             title: "Error",
           });
         }

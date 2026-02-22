@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/tauri";
-import { message } from "@tauri-apps/api/dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { message } from "@tauri-apps/plugin-dialog";
 import { createContext, useEffect, useRef, useState } from "react";
-import { listen, Event } from "@tauri-apps/api/event";
-import { appWindow } from "@tauri-apps/api/window";
+import { Event } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { enablePatches, applyPatches, Patch } from "immer";
 
 export const safeCommand = async (
@@ -13,7 +13,7 @@ export const safeCommand = async (
     await invoke(command, { ...args });
   } catch (e) {
     await message(e.toString(), {
-      type: "error",
+      kind: "error",
       title: "Error",
     });
   }
@@ -91,32 +91,31 @@ export const useRemoteState = <T>(
   const [state, setState] = useState<T>(null);
 
   useEffect(() => {
-    let listenPromise = listen(
+    const appWindow = getCurrentWebviewWindow();
+    let listenPromise = appWindow.listen(
       `update:${event_name}`,
       (event: Event<ChangePayload<T>>) => {
-        if (event.windowLabel === appWindow.label) {
-          // State is serialized, so we perform a "deep" update (diff), updating
-          // only the changed parts of the current state. This is to avoid losing
-          // the reference to the state object, which would cause a re-render of
-          // the entire component tree.
-          setState((s) => {
-            let ret;
-            if (event.payload.patch) {
-              if (event.payload.version === version.current + 1) {
-                version.current = event.payload.version;
-                ret = applyPatches(s, event.payload.patch);
-              } else if (version.current !== null) {
-                // this should never happen, but just in case
-                console.warn("version mismatch, requesting full state...");
-                invoke("ping", {});
-              }
-            } else {
+        // State is serialized, so we perform a "deep" update (diff), updating
+        // only the changed parts of the current state. This is to avoid losing
+        // the reference to the state object, which would cause a re-render of
+        // the entire component tree.
+        setState((s) => {
+          let ret;
+          if (event.payload.patch) {
+            if (event.payload.version === version.current + 1) {
               version.current = event.payload.version;
-              ret = deepUpdate(s, event.payload.state!);
+              ret = applyPatches(s, event.payload.patch);
+            } else if (version.current !== null) {
+              // this should never happen, but just in case
+              console.warn("version mismatch, requesting full state...");
+              invoke("ping", {});
             }
-            return ret;
-          });
-        }
+          } else {
+            version.current = event.payload.version;
+            ret = deepUpdate(s, event.payload.state!);
+          }
+          return ret;
+        });
       }
     );
     listenPromise.then(() => invoke("ping", {}));
@@ -144,23 +143,22 @@ export const useTerminalData = (deps: any[] = []): any => {
   const state = useRef<TerminalDataState>({});
 
   useEffect(() => {
-    let listenPromise = listen(
+    const appWindow = getCurrentWebviewWindow();
+    let listenPromise = appWindow.listen(
       "terminal_data",
       (event: Event<TerminalData>) => {
-        if (event.windowLabel === appWindow.label) {
-          if (!(event.payload.handle in state.current)) {
-            state.current[event.payload.handle] = {
-              messages: [],
-              listener: null,
-            };
-          }
-          const cur = state.current[event.payload.handle];
-          if (!cur.disconnected) {
-            if (cur.listener) {
-              cur.listener(event.payload.data);
-            } else {
-              cur.messages.push(event.payload.data);
-            }
+        if (!(event.payload.handle in state.current)) {
+          state.current[event.payload.handle] = {
+            messages: [],
+            listener: null,
+          };
+        }
+        const cur = state.current[event.payload.handle];
+        if (!cur.disconnected) {
+          if (cur.listener) {
+            cur.listener(event.payload.data);
+          } else {
+            cur.messages.push(event.payload.data);
           }
         }
       }

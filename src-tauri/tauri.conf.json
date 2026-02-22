@@ -2,46 +2,26 @@
   "build": {
     "beforeDevCommand": "yarn dev",
     "beforeBuildCommand": "yarn build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist",
-    "withGlobalTauri": false
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
-  "package": {
-    "productName": "newt",
-    "version": "0.0.0"
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/128x128@2x.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/32x32.png",
+      "icons/icon.ico"
+    ],
+    "targets": "all"
   },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "dialog": {
-        "ask": true,
-        "confirm": true,
-        "message": true
-      }
-    },
-
-    "bundle": {
-      "active": true,
-      "icon": [
-        "icons/128x128@2x.png",
-        "icons/128x128.png",
-        "icons/icon.icns",
-        "icons/32x32.png",
-        "icons/icon.ico"
-      ],
-      "identifier": "com.newt",
-      "targets": "all"
-    },
-    "security": {
-      "csp": null
-    },
-    "updater": {
-      "active": false
-    },
+  "productName": "newt",
+  "version": "0.0.0",
+  "identifier": "com.newt",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": false,
     "windows": [
       {
         "fullscreen": false,
@@ -51,6 +31,9 @@
         "height": 600,
         "url": "/"
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
   }
 }

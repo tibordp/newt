@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
 use parking_lot::Mutex;
-use tauri::Window;
+use tauri::Emitter;
+use tauri::WebviewWindow;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -204,7 +205,7 @@ pub struct UpdatePayload {
 }
 
 pub struct UpdatePublisher<T> {
-    window: Window,
+    window: WebviewWindow,
     event_name: String,
     base: Mutex<(usize, serde_json::Value)>,
     state: T,
@@ -212,7 +213,7 @@ pub struct UpdatePublisher<T> {
 }
 
 impl<T: serde::Serialize> UpdatePublisher<T> {
-    pub fn new(window: Window, event_name: &str, state: T) -> Self {
+    pub fn new(window: WebviewWindow, event_name: &str, state: T) -> Self {
         Self {
             event_name: format!("update:{}", event_name),
             window,

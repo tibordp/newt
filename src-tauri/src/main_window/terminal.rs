@@ -5,9 +5,8 @@ use log::info;
 
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalOptions;
-use tauri::Window;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
+use tauri::Emitter;
+use tauri::WebviewWindow;
 
 use crate::common::Error;
 
@@ -37,7 +36,7 @@ pub struct Terminal {
 impl Terminal {
     pub async fn create(
         context: MainWindowContext,
-        window: Window,
+        window: WebviewWindow,
         working_dir: Option<&Path>,
     ) -> Result<Self, Error> {
         let terminal_client = context.terminal_client();
