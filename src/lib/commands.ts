@@ -1,5 +1,5 @@
 import { MainWindowState } from "../main_window/MainWindow";
-import { confirm } from "@tauri-apps/api/dialog";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { safeCommand } from "./ipc";
 
 export const modifiers = (e: React.KeyboardEvent<Element>) => {

@@ -13,9 +13,9 @@ use newt_common::terminal::TerminalHandle;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
+use std::collections::HashMap;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
-use std::collections::HashMap;
 
 use std::future::Future;
 use std::path::Path;
@@ -25,7 +25,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
-use tauri::Window;
+use tauri::WebviewWindow;
 use tauri::Wry;
 
 use crate::common::Error;
@@ -294,7 +294,7 @@ struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
     terminal_client: Arc<dyn TerminalClient>,
 
-    window: Window,
+    window: WebviewWindow,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
@@ -304,11 +304,11 @@ pub struct MainWindowContext {
     inner: Arc<MainWindowContextInner>,
 }
 
-impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
+impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
     fn from_command(
-        command: tauri::command::CommandItem<'de, Wry>,
-    ) -> Result<Self, tauri::InvokeError> {
-        let window = command.message.window();
+        command: tauri::ipc::CommandItem<'de, Wry>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        let window = command.message.webview();
         let app_handle = window.app_handle();
         let s: State<GlobalContext> = app_handle.state();
 
@@ -317,7 +317,7 @@ impl<'de> tauri::command::CommandArg<'de, Wry> for MainWindowContext {
 }
 
 impl MainWindowContext {
-    pub async fn create(window: Window) -> Result<Self, Error> {
+    pub async fn create(window: WebviewWindow) -> Result<Self, Error> {
         /*       let mut child = tokio::process::Command::new("/usr/bin/ssh")
                             .args(&[
                                 "192.168.100.177",
@@ -335,7 +335,7 @@ impl MainWindowContext {
             .stderr(Stdio::inherit())
             .spawn()?;
 
-        let mut rx: Box<dyn AsyncRead + Send + Unpin>= Box::new(child.stdout.take().unwrap());
+        let mut rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(child.stdout.take().unwrap());
         let mut tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(child.stdin.take().unwrap());
 
         if false {
@@ -409,7 +409,7 @@ impl MainWindowContext {
         self.inner.terminal_client.clone()
     }
 
-    pub fn window(&self) -> Window {
+    pub fn window(&self) -> WebviewWindow {
         self.inner.window.clone()
     }
 

@@ -2,8 +2,9 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use newt_common::terminal::TerminalHandle;
-use tauri::Invoke;
+use tauri::ipc::Invoke;
 use tauri::Manager;
+use tauri::WebviewWindow;
 use tauri::Window;
 use tauri::Wry;
 use url::Url;
@@ -152,7 +153,7 @@ pub async fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resul
 }
 
 #[tauri::command]
-async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
+async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHandle) {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = match pane.get_focused_file() {
         Some(s) => s,
@@ -163,10 +164,10 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
     url.query_pairs_mut()
         .append_pair("path", full_path.to_string_lossy().as_ref());
 
-    let window = tauri::WindowBuilder::new(
-        &window.app_handle(),
+    let window = tauri::WebviewWindowBuilder::new(
+        window.app_handle(),
         uuid::Uuid::new_v4().to_string(),
-        tauri::WindowUrl::External(url)
+        tauri::WebviewUrl::External(url),
     )
     .title(format!("{} - Viewer", full_path.display()))
     .center()
@@ -174,17 +175,15 @@ async fn view(window: Window, ctx: MainWindowContext, pane_handle: PaneHandle) {
     .build()
     .unwrap();
 
-    window
-    .eval(crate::viewer::SCRIPT)
-    .unwrap();
+    window.eval(crate::viewer::SCRIPT).unwrap();
 }
 
 #[tauri::command]
 async fn new_window(handle: tauri::AppHandle) {
-    tauri::WindowBuilder::new(
+    tauri::WebviewWindowBuilder::new(
         &handle,
         uuid::Uuid::new_v4().to_string(),
-        tauri::WindowUrl::App("/".into()), /* the url */
+        tauri::WebviewUrl::App("/".into()), /* the url */
     )
     .build()
     .unwrap();
@@ -288,13 +287,13 @@ pub async fn paste_from_clipboard(
 }
 
 #[tauri::command]
-pub fn zoom(window: Window, factor: f64) -> Result<(), Error> {
+pub fn zoom(window: tauri::Webview, factor: f64) -> Result<(), Error> {
     window.with_webview(move |webview| {
         #[cfg(target_os = "linux")]
         {
             // see https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/struct.WebView.html
             // and https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/trait.WebViewExt.html
-            use webkit2gtk::traits::WebViewExt;
+            use webkit2gtk::WebViewExt;
             webview.inner().set_zoom_level(factor);
         }
 
@@ -549,7 +548,7 @@ pub fn close_window(window: Window) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) + Send + Sync + 'static> {
+pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
         cancel,
         navigate,
