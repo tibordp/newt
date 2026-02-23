@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -9,6 +9,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::rpc::Communicator;
+use crate::vfs::{Vfs, VfsPath, VfsRegistry};
 
 pub type OperationId = u64;
 pub type IssueId = u64;
@@ -67,19 +68,19 @@ pub struct CopyOptions {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum OperationRequest {
     Copy {
-        sources: Vec<PathBuf>,
-        destination: PathBuf,
+        sources: Vec<VfsPath>,
+        destination: VfsPath,
         #[serde(default)]
         options: CopyOptions,
     },
     Move {
-        sources: Vec<PathBuf>,
-        destination: PathBuf,
+        sources: Vec<VfsPath>,
+        destination: VfsPath,
         #[serde(default)]
         options: CopyOptions,
     },
     Delete {
-        paths: Vec<PathBuf>,
+        paths: Vec<VfsPath>,
     },
 }
 
@@ -152,6 +153,12 @@ pub struct OperationHandle {
     pub issue_resolvers: IssueResolvers,
 }
 
+// --- OperationContext ---
+
+pub struct OperationContext {
+    pub registry: Arc<VfsRegistry>,
+}
+
 // --- OperationsClient trait ---
 
 #[async_trait::async_trait]
@@ -167,14 +174,19 @@ pub struct Local {
     operations: Arc<Mutex<HashMap<OperationId, OperationHandle>>>,
     next_issue_id: Arc<AtomicU64>,
     progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
+    context: Arc<OperationContext>,
 }
 
 impl Local {
-    pub fn new(progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>) -> Self {
+    pub fn new(
+        progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
+        context: Arc<OperationContext>,
+    ) -> Self {
         Self {
             operations: Arc::new(Mutex::new(HashMap::new())),
             next_issue_id: Arc::new(AtomicU64::new(1)),
             progress_tx,
+            context,
         }
     }
 }
@@ -193,10 +205,11 @@ impl OperationsClient for Local {
         let operations = self.operations.clone();
         let next_issue_id = self.next_issue_id.clone();
         let progress_tx = self.progress_tx.clone();
+        let context = self.context.clone();
         let id = req.id;
 
         tokio::spawn(async move {
-            execute_operation(id, req.request, progress_tx, cancel, issue_resolvers, next_issue_id)
+            execute_operation(id, req.request, progress_tx, cancel, issue_resolvers, next_issue_id, context)
                 .await;
             operations.lock().remove(&id);
         });
@@ -463,23 +476,28 @@ pub async fn execute_operation(
     cancel: CancellationToken,
     issue_resolvers: IssueResolvers,
     next_issue_id: Arc<AtomicU64>,
+    context: Arc<OperationContext>,
 ) {
     let mut reporter = ProgressReporter::new(id, progress_tx, issue_resolvers, next_issue_id, cancel.clone());
 
     let result = match request {
         OperationRequest::Delete { paths } => {
-            execute_delete(&mut reporter, paths, cancel.clone()).await
+            execute_delete(&mut reporter, &context, paths, cancel.clone()).await
         }
         OperationRequest::Copy {
             sources,
             destination,
             options,
-        } => execute_copy(&mut reporter, sources, destination, options, cancel.clone()).await,
+        } => {
+            execute_copy(&mut reporter, &context, sources, destination, options, cancel.clone()).await
+        }
         OperationRequest::Move {
             sources,
             destination,
             options,
-        } => execute_move(&mut reporter, sources, destination, options, cancel.clone()).await,
+        } => {
+            execute_move(&mut reporter, &context, sources, destination, options, cancel.clone()).await
+        }
     };
 
     match result {
@@ -489,9 +507,13 @@ pub async fn execute_operation(
     }
 }
 
-// --- Plan copy ---
+// --- Plan copy (async, uses Vfs) ---
 
-fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, crate::Error> {
+async fn plan_copy(
+    src_vfs: &dyn Vfs,
+    sources: &[PathBuf],
+    destination: &Path,
+) -> Result<CopyPlan, crate::Error> {
     let mut entries = Vec::new();
     let mut total_bytes = 0u64;
 
@@ -501,17 +523,17 @@ fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, cra
             .ok_or_else(|| crate::Error::Custom("source has no file name".to_string()))?;
         let dest_base = destination.join(file_name);
 
-        let meta = std::fs::symlink_metadata(source)?;
+        let meta = src_vfs.symlink_metadata(source).await?;
 
-        if meta.is_symlink() {
-            let target = std::fs::read_link(source)?;
+        if meta.is_symlink {
+            let target = src_vfs.read_link(source).await?;
             entries.push(CopyEntry {
                 source: source.clone(),
                 dest: dest_base,
                 kind: CopyEntryKind::Symlink { target },
                 size: 0,
             });
-        } else if meta.is_dir() {
+        } else if meta.is_dir {
             let mut stack = vec![(source.clone(), dest_base.clone())];
             entries.push(CopyEntry {
                 source: source.clone(),
@@ -521,21 +543,22 @@ fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, cra
             });
 
             while let Some((src_dir, dst_dir)) = stack.pop() {
-                for entry in std::fs::read_dir(&src_dir)? {
-                    let entry = entry?;
-                    let src_path = entry.path();
-                    let dst_path = dst_dir.join(entry.file_name());
-                    let metadata = std::fs::symlink_metadata(&src_path)?;
+                let dir_entries = src_vfs.read_dir(&src_dir).await?;
+                for dir_entry in dir_entries {
+                    let name = dir_entry.name;
+                    let src_path = src_dir.join(&name);
+                    let dst_path = dst_dir.join(&name);
+                    let metadata = dir_entry.metadata;
 
-                    if metadata.is_symlink() {
-                        let target = std::fs::read_link(&src_path)?;
+                    if metadata.is_symlink {
+                        let target = src_vfs.read_link(&src_path).await?;
                         entries.push(CopyEntry {
                             source: src_path,
                             dest: dst_path,
                             kind: CopyEntryKind::Symlink { target },
                             size: 0,
                         });
-                    } else if metadata.is_dir() {
+                    } else if metadata.is_dir {
                         entries.push(CopyEntry {
                             source: src_path.clone(),
                             dest: dst_path.clone(),
@@ -544,7 +567,7 @@ fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, cra
                         });
                         stack.push((src_path, dst_path));
                     } else {
-                        let size = metadata.len();
+                        let size = metadata.size;
                         total_bytes += size;
                         entries.push(CopyEntry {
                             source: src_path,
@@ -556,7 +579,7 @@ fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, cra
                 }
             }
         } else {
-            let size = meta.len();
+            let size = meta.size;
             total_bytes += size;
             entries.push(CopyEntry {
                 source: source.clone(),
@@ -573,93 +596,158 @@ fn plan_copy(sources: &[PathBuf], destination: &PathBuf) -> Result<CopyPlan, cra
     })
 }
 
-// --- Chunked file copy (runs in spawn_blocking) ---
+// --- Chunked byte copy (runs in spawn_blocking with trait objects) ---
 
-fn copy_file_chunked(
-    source: &PathBuf,
-    dest: &PathBuf,
+fn copy_bytes_sync(
+    reader: &mut dyn std::io::Read,
+    writer: &mut dyn std::io::Write,
     cancel: &CancellationToken,
     sender: &mut SyncProgressSender,
     bytes_done: &mut u64,
     items_done: u64,
-    options: &CopyOptions,
+    display: &str,
 ) -> Result<(), crate::Error> {
-    use std::io::{Read, Write};
-
-    let src_metadata = std::fs::metadata(source)?;
-    let mut src = std::fs::File::open(source)?;
-    let mut dst = std::fs::File::create(dest)?;
-
     let mut buf = [0u8; 64 * 1024];
-    let display = source.display().to_string();
 
     loop {
         if cancel.is_cancelled() {
             return Err(crate::Error::Cancelled);
         }
 
-        let n = src.read(&mut buf)?;
+        let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        dst.write_all(&buf[..n])?;
+        writer.write_all(&buf[..n])?;
         *bytes_done += n as u64;
-        sender.maybe_send_progress(*bytes_done, items_done, &display);
-    }
-
-    // Preserve permissions
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(dest, src_metadata.permissions())?;
-    }
-
-    // Preserve timestamps
-    if options.preserve_timestamps {
-        let atime = filetime::FileTime::from_last_access_time(&src_metadata);
-        let mtime = filetime::FileTime::from_last_modification_time(&src_metadata);
-        filetime::set_file_times(dest, atime, mtime)?;
-    }
-
-    // Preserve owner/group
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        let uid = if options.preserve_owner {
-            Some(nix::unistd::Uid::from_raw(src_metadata.uid()))
-        } else {
-            None
-        };
-        let gid = if options.preserve_group {
-            Some(nix::unistd::Gid::from_raw(src_metadata.gid()))
-        } else {
-            None
-        };
-        if uid.is_some() || gid.is_some() {
-            nix::unistd::chown(dest.as_path(), uid, gid)?;
-        }
+        sender.maybe_send_progress(*bytes_done, items_done, display);
     }
 
     Ok(())
 }
 
-// --- Execute Copy (async outer loop) ---
+// --- Copy a single file through VFS, with strategy cascade ---
+
+async fn copy_single_file(
+    src_vfs: &dyn Vfs,
+    src_path: &Path,
+    dst_vfs: &dyn Vfs,
+    dst_path: &Path,
+    same_vfs: bool,
+    cancel: &CancellationToken,
+    sender: &mut SyncProgressSender,
+    bytes_done: &mut u64,
+    items_done: u64,
+    options: &CopyOptions,
+) -> Result<(), crate::Error> {
+    // Strategy cascade for same-VFS: try fast paths first
+    if same_vfs {
+        if src_vfs.clone_file(src_path, dst_path).await.is_ok() {
+            return preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await;
+        }
+        if src_vfs.copy_file(src_path, dst_path).await.is_ok() {
+            return preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await;
+        }
+    }
+
+    // Fall back to byte copy via open_read/open_write
+    let mut reader = src_vfs.open_read(src_path).await?;
+    let mut writer = dst_vfs.open_write(dst_path).await?;
+
+    let cancel2 = cancel.clone();
+    let mut sender2 = sender.clone();
+    let bd = *bytes_done;
+    let id = items_done;
+    let display = src_path.display().to_string();
+
+    let bd_back = tokio::task::spawn_blocking(move || {
+        let mut bd_local = bd;
+        let result = copy_bytes_sync(
+            &mut *reader,
+            &mut *writer,
+            &cancel2,
+            &mut sender2,
+            &mut bd_local,
+            id,
+            &display,
+        );
+        (bd_local, result)
+    })
+    .await?;
+
+    *bytes_done = bd_back.0;
+    bd_back.1?;
+
+    preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await
+}
+
+// --- Preserve metadata after copy ---
+
+async fn preserve_metadata(
+    src_vfs: &dyn Vfs,
+    src_path: &Path,
+    dst_vfs: &dyn Vfs,
+    dst_path: &Path,
+    options: &CopyOptions,
+) -> Result<(), crate::Error> {
+    // Always try to preserve permissions; additionally preserve timestamps/owner/group if requested
+    let meta = match src_vfs.get_metadata(src_path).await {
+        Ok(m) => m,
+        Err(_) => return Ok(()), // source doesn't support metadata, nothing to preserve
+    };
+
+    let mut to_set = crate::vfs::VfsMetadata {
+        permissions: meta.permissions,
+        ..Default::default()
+    };
+
+    if options.preserve_timestamps {
+        to_set.atime = meta.atime;
+        to_set.mtime = meta.mtime;
+    }
+    if options.preserve_owner {
+        to_set.uid = meta.uid;
+    }
+    if options.preserve_group {
+        to_set.gid = meta.gid;
+    }
+
+    // Ignore errors on destination that doesn't support metadata
+    let _ = dst_vfs.set_metadata(dst_path, &to_set).await;
+
+    Ok(())
+}
+
+// --- Execute Copy (async outer loop, uses Vfs) ---
 
 async fn execute_copy(
     reporter: &mut ProgressReporter,
-    sources: Vec<PathBuf>,
-    destination: PathBuf,
+    context: &OperationContext,
+    sources: Vec<VfsPath>,
+    destination: VfsPath,
     options: CopyOptions,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
+    let first_source = sources.first().ok_or_else(|| {
+        crate::Error::Custom("no sources provided".into())
+    })?;
+    let (src_vfs, _) = context.registry.resolve(first_source)?;
+    let (dst_vfs, dst_path) = context.registry.resolve(&destination)?;
+
+    let src_vfs_id = first_source.vfs_id;
+    let dst_vfs_id = destination.vfs_id;
+    let same_vfs = src_vfs_id == dst_vfs_id;
+
+    let source_paths: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
+
     // Handle create_symlink for single-file copy
     if options.create_symlink {
-        if sources.len() != 1 {
+        if source_paths.len() != 1 {
             return Err(crate::Error::Custom(
                 "Symlink creation only supported for single file".to_string(),
             ));
         }
-        let source = sources[0].clone();
+        let source = &source_paths[0];
         let file_name = match source.file_name() {
             Some(f) => f.to_owned(),
             None => {
@@ -668,38 +756,14 @@ async fn execute_copy(
                 ))
             }
         };
-        let dest = destination.join(file_name);
+        let dest = dst_path.join(file_name);
         reporter.send_prepared(0, 1);
-
-        match tokio::task::spawn_blocking(move || {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&source, &dest)?;
-            #[cfg(not(unix))]
-            return Err(crate::Error::Custom(
-                "Symlink creation not supported on this platform".to_string(),
-            ));
-            Ok::<(), crate::Error>(())
-        })
-        .await
-        {
-            Ok(Ok(())) => return Ok(()),
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(e.into()),
-        }
+        dst_vfs.create_symlink(&dest, source).await?;
+        return Ok(());
     }
 
-    let plan_task = tokio::task::spawn_blocking({
-        let sources = sources.clone();
-        let destination = destination.clone();
-        move || plan_copy(&sources, &destination)
-    });
-
     let plan = tokio::select! {
-        result = plan_task => match result {
-            Ok(Ok(plan)) => plan,
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(e.into()),
-        },
+        result = plan_copy(&*src_vfs, &source_paths, &dst_path) => result?,
         _ = cancel.cancelled() => return Err(crate::Error::Cancelled),
     };
 
@@ -718,11 +782,11 @@ async fn execute_copy(
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
         // Check for destination conflicts
-        let dest_meta = tokio::fs::symlink_metadata(&entry.dest).await;
+        let dest_meta = dst_vfs.symlink_metadata(&entry.dest).await;
         if let Ok(dest_meta) = dest_meta {
             match &entry.kind {
                 CopyEntryKind::Directory => {
-                    if dest_meta.is_dir() {
+                    if dest_meta.is_dir {
                         // Merge: directory already exists, skip mkdir
                         items_done += 1;
                         continue;
@@ -750,7 +814,7 @@ async fn execute_copy(
                     }
                 }
                 CopyEntryKind::File | CopyEntryKind::Symlink { .. } => {
-                    if dest_meta.is_dir() {
+                    if dest_meta.is_dir {
                         // Type mismatch
                         match reporter
                             .raise_issue(
@@ -790,15 +854,7 @@ async fn execute_copy(
                                 continue;
                             }
                             Ok(IssueAction::Overwrite) => {
-                                let dest = entry.dest.clone();
-                                let remove_result =
-                                    tokio::task::spawn_blocking(move || std::fs::remove_file(&dest))
-                                        .await;
-                                match remove_result {
-                                    Ok(Ok(())) => {}
-                                    Ok(Err(e)) => return Err(e.into()),
-                                    Err(e) => return Err(e.into()),
-                                }
+                                dst_vfs.remove(&entry.dest).await.map_err(crate::Error::from)?;
                             }
                             Err(e) => return Err(e),
                             _ => unreachable!("not offered"),
@@ -815,55 +871,26 @@ async fn execute_copy(
 
             let result = match &entry.kind {
                 CopyEntryKind::Directory => {
-                    let dest = entry.dest.clone();
-                    tokio::task::spawn_blocking(move || std::fs::create_dir(&dest))
-                        .await
-                        .map_err(crate::Error::from)
-                        .and_then(|r| r.map_err(crate::Error::from))
+                    dst_vfs.create_directory(&entry.dest).await
                 }
                 CopyEntryKind::Symlink { target } => {
-                    let target = target.clone();
-                    let dest = entry.dest.clone();
-                    #[cfg(unix)]
-                    {
-                        tokio::task::spawn_blocking(move || {
-                            std::os::unix::fs::symlink(&target, &dest)
-                        })
-                        .await
-                        .map_err(crate::Error::from)
-                        .and_then(|r| r.map_err(crate::Error::from))
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        Err(crate::Error::Custom(
-                            "Symlink not supported on this platform".to_string(),
-                        ))
-                    }
+                    dst_vfs.create_symlink(&entry.dest, target).await
                 }
                 CopyEntryKind::File => {
-                    let source = entry.source.clone();
-                    let dest = entry.dest.clone();
-                    let cancel2 = cancel.clone();
-                    let opts = options.clone();
                     let mut sender = reporter.sync_sender();
-                    let bd = bytes_done;
-                    let id = items_done;
-
-                    match tokio::task::spawn_blocking(move || {
-                        let mut bd_local = bd;
-                        let result = copy_file_chunked(
-                            &source, &dest, &cancel2, &mut sender, &mut bd_local, id, &opts,
-                        );
-                        (bd_local, result)
-                    })
+                    copy_single_file(
+                        &*src_vfs,
+                        &entry.source,
+                        &*dst_vfs,
+                        &entry.dest,
+                        same_vfs,
+                        &cancel,
+                        &mut sender,
+                        &mut bytes_done,
+                        items_done,
+                        &options,
+                    )
                     .await
-                    {
-                        Ok((bd_back, result)) => {
-                            bytes_done = bd_back;
-                            result.map_err(crate::Error::from)
-                        }
-                        Err(e) => Err(e.into()),
-                    }
                 }
             };
 
@@ -897,11 +924,12 @@ async fn execute_copy(
     Ok(())
 }
 
-// --- Execute Delete (async outer loop) ---
+// --- Execute Delete (async outer loop, uses Vfs) ---
 
 async fn execute_delete(
     reporter: &mut ProgressReporter,
-    paths: Vec<PathBuf>,
+    context: &OperationContext,
+    paths: Vec<VfsPath>,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     let total_items = paths.len() as u64;
@@ -909,39 +937,27 @@ async fn execute_delete(
 
     let mut items_done = 0u64;
 
-    for path in &paths {
+    for vfs_path in &paths {
         if cancel.is_cancelled() {
             return Err(crate::Error::Cancelled);
         }
 
-        let display = path.display().to_string();
+        let display = vfs_path.to_string();
         reporter.maybe_send_progress(0, items_done, &display);
+
+        let (vfs, local_path) = context.registry.resolve(vfs_path)?;
 
         let mut retry = true;
         while retry {
             retry = false;
 
-            let p = path.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                if p.is_dir() {
-                    std::fs::remove_dir_all(&p)
-                } else {
-                    std::fs::remove_file(&p)
-                }
-            })
-            .await;
-
-            let result = match result {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(e)) => Err(crate::Error::from(e)),
-                Err(e) => Err(crate::Error::from(e)),
-            };
+            let result = vfs.remove_tree(&local_path).await;
 
             if let Err(e) = result {
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Error deleting {}", path.display()),
+                        &format!("Error deleting {}", vfs_path),
                         None,
                         &cancel,
                         true,
@@ -963,62 +979,83 @@ async fn execute_delete(
     Ok(())
 }
 
-// --- Execute Move (async) ---
+// --- Execute Move (async, uses Vfs) ---
+
+fn is_cross_device(e: &crate::Error) -> bool {
+    match e {
+        crate::Error::Io(io_err) => io_err.raw_os_error() == Some(libc::EXDEV),
+        _ => false,
+    }
+}
 
 async fn execute_move(
     reporter: &mut ProgressReporter,
-    sources: Vec<PathBuf>,
-    destination: PathBuf,
+    context: &OperationContext,
+    sources: Vec<VfsPath>,
+    destination: VfsPath,
     options: CopyOptions,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
+    let src_vfs_id = sources.first()
+        .ok_or_else(|| crate::Error::Custom("no sources provided".into()))?
+        .vfs_id;
+    let dst_vfs_id = destination.vfs_id;
+    let same_vfs = src_vfs_id == dst_vfs_id;
+
+    let (src_vfs, _) = context.registry.resolve(&sources[0])?;
+    let (_, dst_path) = context.registry.resolve(&destination)?;
+
     let mut needs_copy = Vec::new();
 
-    for source in &sources {
-        if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
-        }
-
-        let file_name = match source.file_name() {
-            Some(f) => f,
-            None => {
-                return Err(crate::Error::Custom(
-                    "source has no file name".to_string(),
-                ))
+    if same_vfs {
+        // Try rename first for each source (instant for same-VFS, same-device)
+        for source in &sources {
+            if cancel.is_cancelled() {
+                return Err(crate::Error::Cancelled);
             }
-        };
-        let dest_path = destination.join(file_name);
 
-        let src = source.clone();
-        let dst = dest_path.clone();
-        let result = tokio::task::spawn_blocking(move || std::fs::rename(&src, &dst)).await;
+            let file_name = match source.path.file_name() {
+                Some(f) => f,
+                None => {
+                    return Err(crate::Error::Custom(
+                        "source has no file name".to_string(),
+                    ))
+                }
+            };
+            let dest_local = dst_path.join(file_name);
 
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) if e.raw_os_error() == Some(libc::EXDEV) => {
-                needs_copy.push(source.clone());
-            }
-            Ok(Err(e)) => {
-                let io_kind = issue_kind_from_io_error(&e);
-                match reporter
-                    .raise_issue(
-                        io_kind,
-                        format!("Error moving {}: {}", source.display(), e),
-                        Some(format!("{} -> {}", source.display(), dest_path.display())),
-                        vec![IssueAction::Skip, IssueAction::Retry],
-                    )
-                    .await
-                {
-                    Ok(IssueAction::Skip) => {}
-                    Err(e) => return Err(e),
-                    Ok(IssueAction::Retry) => {
-                        // TODO: implement retry for rename
+            match src_vfs.rename(&source.path, &dest_local).await {
+                Ok(()) => {}
+                Err(e) if is_cross_device(&e) => {
+                    needs_copy.push(source.clone());
+                }
+                Err(e) => {
+                    let kind = match &e {
+                        crate::Error::Io(io_err) => issue_kind_from_io_error(io_err),
+                        _ => IssueKind::Other(format!("{}", e)),
+                    };
+                    match reporter
+                        .raise_issue(
+                            kind,
+                            format!("Error moving {}: {}", source, e),
+                            Some(format!("{} -> {}", source.path.display(), dest_local.display())),
+                            vec![IssueAction::Skip, IssueAction::Retry],
+                        )
+                        .await
+                    {
+                        Ok(IssueAction::Skip) => {}
+                        Err(e) => return Err(e),
+                        Ok(IssueAction::Retry) => {
+                            // TODO: implement retry for rename
+                        }
+                        _ => unreachable!("not offered"),
                     }
-                    _ => unreachable!("not offered"),
                 }
             }
-            Err(e) => return Err(e.into()),
         }
+    } else {
+        // Cross-VFS: all sources need copy+delete
+        needs_copy = sources.clone();
     }
 
     if needs_copy.is_empty() {
@@ -1026,23 +1063,14 @@ async fn execute_move(
         return Ok(());
     }
 
-    // Fall back to copy+delete for cross-device moves
-    execute_copy(reporter, needs_copy.clone(), destination, options, cancel).await?;
+    // Fall back to copy+delete for cross-device/cross-VFS moves
+    execute_copy(reporter, context, needs_copy.clone(), destination, options, cancel).await?;
 
     // Delete originals after successful copy
-    match tokio::task::spawn_blocking(move || -> Result<(), crate::Error> {
-        for path in &needs_copy {
-            if path.is_dir() {
-                std::fs::remove_dir_all(path)?;
-            } else {
-                std::fs::remove_file(path)?;
-            }
-        }
-        Ok(())
-    })
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => Err(e.into()),
+    for source in &needs_copy {
+        let (vfs, local_path) = context.registry.resolve(source)?;
+        vfs.remove_tree(&local_path).await?;
     }
+
+    Ok(())
 }

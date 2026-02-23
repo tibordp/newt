@@ -1,12 +1,13 @@
 use log::debug;
 use log::info;
 use log::warn;
-use newt_common::filesystem::resolve;
+use newt_common::filesystem::resolve_vfs;
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
+use newt_common::vfs::VfsPath;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -20,7 +21,6 @@ use std::collections::HashSet;
 
 use std::future::Future;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -74,7 +74,7 @@ pub struct Pane {
 impl Pane {
     pub fn new(
         fs: Arc<dyn Filesystem>,
-        path: PathBuf,
+        path: VfsPath,
         display_options: DisplayOptions,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
     ) -> Self {
@@ -96,9 +96,9 @@ impl Pane {
     pub async fn watch_changes(self: Arc<Self>) {
         let mut rx = self.nav_changes_rx.clone();
         loop {
-            let path = self.path();
+            let vfs_path = self.path();
             tokio::select! {
-                ret = self.fs.poll_changes(path.clone()) => {
+                ret = self.fs.poll_changes(vfs_path.clone()) => {
                     match ret {
                         Ok(()) => {
                             info!("changes detected")
@@ -118,7 +118,7 @@ impl Pane {
 
             let cloned = self.clone();
             tauri::async_runtime::spawn(async move {
-                match cloned.refresh(Some(path)).await {
+                match cloned.refresh(Some(vfs_path)).await {
                     Ok(()) => cloned.publisher.publish().unwrap(),
                     Err(e) => warn!("failed to refresh pane: {}", e),
                 }
@@ -126,8 +126,8 @@ impl Pane {
         }
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.file_list.read().path().to_path_buf()
+    pub fn path(&self) -> VfsPath {
+        self.file_list.read().path().clone()
     }
 
     async fn cancellable<T, Fut>(&self, f: Fut) -> Result<T, Error>
@@ -151,7 +151,7 @@ impl Pane {
 
     async fn navigate_impl(
         &self,
-        target: PathBuf,
+        target: VfsPath,
         silent: bool,
         changes_sender: &mut tokio::sync::watch::Sender<()>,
     ) -> Result<(), Error> {
@@ -222,10 +222,10 @@ impl Pane {
         ws.update(display_options, &new_file_list);
 
         if has_path_changed {
-            if target == new_file_list.path() {
-                ws.focus_descendant(old_file_list.path());
+            if target == *new_file_list.path() {
+                ws.focus_descendant(&old_file_list.path().path);
             } else {
-                ws.focus_descendant(&target);
+                ws.focus_descendant(&target.path);
             }
         }
 
@@ -257,7 +257,7 @@ impl Pane {
         view_state.update(display_options, &file_list);
     }
 
-    pub async fn refresh(&self, expected_path: Option<PathBuf>) -> Result<(), Error> {
+    pub async fn refresh(&self, expected_path: Option<VfsPath>) -> Result<(), Error> {
         let Some(expected_path) = expected_path else {
             return self.navigate(".").await;
         };
@@ -274,8 +274,17 @@ impl Pane {
     }
 
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
-        let target = resolve(&self.path().join(path));
+        let current = self.path();
+        let target = resolve_vfs(&current.join(path));
 
+        // Cancel any pending navigation
+        self.cancel();
+
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        self.navigate_impl(target, false, &mut changes_sender).await
+    }
+
+    pub async fn navigate_to(&self, target: VfsPath) -> Result<(), Error> {
         // Cancel any pending navigation
         self.cancel();
 
@@ -286,7 +295,7 @@ impl Pane {
     /// If the selection is empty, returns the focused file.
     /// Otherwise, returns the selected files. The focused file is NOT included
     /// in the selection in this case.
-    pub fn get_effective_selection(&self) -> Vec<PathBuf> {
+    pub fn get_effective_selection(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
 
         if view_state.selected.is_empty() {
@@ -304,7 +313,7 @@ impl Pane {
         }
     }
 
-    pub fn get_focused_file(&self) -> Option<PathBuf> {
+    pub fn get_focused_file(&self) -> Option<VfsPath> {
         let view_state = self.view_state.read();
 
         view_state.focused.as_ref().map(|s| view_state.path.join(s))
@@ -349,8 +358,8 @@ fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PaneViewState {
-    pub path: PathBuf,
-    pub pending_path: Option<PathBuf>,
+    pub path: VfsPath,
+    pub pending_path: Option<VfsPath>,
     pub sorting: Sorting,
     pub files: Vec<File>,
     pub focused: Option<String>,
@@ -433,7 +442,7 @@ impl PaneViewState {
     pub fn update(&mut self, display_options: DisplayOptionsInner, file_list: &FileList) {
         // the path is expected to be canonical by now
 
-        self.path = file_list.path().to_path_buf();
+        self.path = file_list.path().clone();
         self.fs_stats = file_list.fs_stats().cloned();
         self.files = file_list
             .files()
@@ -454,7 +463,7 @@ impl PaneViewState {
 
     pub fn focus_descendant(&mut self, path: &Path) {
         if let Some(filename) = path
-            .strip_prefix(&self.path)
+            .strip_prefix(&self.path.path)
             .ok()
             .and_then(|prefix| prefix.iter().next())
         {

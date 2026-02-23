@@ -5,6 +5,8 @@ pub mod operation;
 pub mod rpc;
 pub mod sys;
 pub mod terminal;
+pub mod vfs;
+pub mod vfs_archive;
 
 use std::time::SystemTime;
 
@@ -28,6 +30,8 @@ pub enum Error {
     Connection,
     #[error("{0}")]
     Remote(String),
+    #[error("operation not supported")]
+    NotSupported,
 }
 
 impl serde::Serialize for Error {

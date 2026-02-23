@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-
+use newt_common::vfs::VfsPath;
 use newt_common::file_reader::FileChunk;
 use newt_common::file_reader::FileInfo;
 use newt_common::operation::{
@@ -78,22 +77,27 @@ pub async fn navigate(
     path: &str,
     exact: bool,
 ) -> Result<(), Error> {
-    let mut path = path.to_string();
     if !exact {
-        path = ctx
+        let expanded = ctx
             .fs()
             .shell_expand(path.to_string())
-            .await?
-            .to_string_lossy()
-            .to_string()
-    }
+            .await?;
 
-    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-        gs.close_modal();
-        pane.navigate(path).await?;
-        Ok(())
-    })
-    .await
+        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+            gs.close_modal();
+            pane.navigate_to(expanded).await?;
+            Ok(())
+        })
+        .await
+    } else {
+        let path = path.to_string();
+        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+            gs.close_modal();
+            pane.navigate(path).await?;
+            Ok(())
+        })
+        .await
+    }
 }
 
 #[tauri::command]
@@ -234,8 +238,9 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
             .insert(viewer_label.clone(), ctx.clone());
     }
 
+    let path_display = full_path.to_string();
     let query: String = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("path", full_path.to_string_lossy().as_ref())
+        .append_pair("path", &path_display)
         .finish();
     let url_path = format!("/viewer?{}", query);
 
@@ -244,7 +249,7 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
         &viewer_label,
         tauri::WebviewUrl::App(url_path.into()),
     )
-    .title(format!("{} - Viewer", full_path.display()))
+    .title(format!("{} - Viewer", path_display))
     .center()
     .focused(true)
     .build()
@@ -275,7 +280,8 @@ async fn open(
         }
     };
 
-    opener::open(full_path)?;
+    // open only works for local paths
+    opener::open(&full_path.path)?;
 
     Ok(())
 }
@@ -285,27 +291,27 @@ async fn open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
 
-    opener::open(full_path)?;
+    opener::open(&full_path.path)?;
 
     Ok(())
 }
 
 #[tauri::command]
-async fn file_info(ctx: MainWindowContext, path: String) -> Result<FileInfo, Error> {
-    let info = ctx.file_reader().file_info(PathBuf::from(path)).await?;
+async fn file_info(ctx: MainWindowContext, path: VfsPath) -> Result<FileInfo, Error> {
+    let info = ctx.file_reader().file_info(path).await?;
     Ok(info)
 }
 
 #[tauri::command]
 async fn read_file_range(
     ctx: MainWindowContext,
-    path: String,
+    path: VfsPath,
     offset: u64,
     length: u64,
 ) -> Result<FileChunk, Error> {
     let chunk = ctx
         .file_reader()
-        .read_range(PathBuf::from(path), offset, length)
+        .read_range(path, offset, length)
         .await?;
     Ok(chunk)
 }
@@ -334,7 +340,7 @@ pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
 
     let mut text = String::new();
     for line in pane.get_effective_selection() {
-        text.push_str(line.to_string_lossy().as_ref());
+        text.push_str(&line.to_string());
         text.push_str(LINE_ENDING);
     }
 
@@ -398,14 +404,14 @@ pub async fn send_to_terminal(
         })?;
         terminal
     } else {
-        ctx.create_terminal(Some(&pane.path())).await?
+        ctx.create_terminal(Some(&pane.path().path)).await?
     };
 
     let input: Vec<_> = pane
         .get_effective_selection()
         .iter()
         .filter_map(|p| {
-            p.file_name().map(shell_quote::bash::escape).map(|mut b| {
+            p.path.file_name().map(shell_quote::bash::escape).map(|mut b| {
                 b.push(b' ');
                 b
             })
@@ -531,11 +537,10 @@ pub fn dialog(
 pub async fn create_directory(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
-    path: String,
+    path: VfsPath,
     name: String,
 ) -> Result<(), Error> {
-    let dir_path = PathBuf::from(path.clone());
-    let dir_path = dir_path.join(name.clone());
+    let dir_path = path.join(&name);
 
     ctx.fs().create_directory(dir_path).await?;
 
@@ -556,11 +561,10 @@ pub async fn create_directory(
 pub async fn touch_file(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
-    path: String,
+    path: VfsPath,
     name: String,
 ) -> Result<(), Error> {
-    let dir_path = PathBuf::from(path.clone());
-    let file_path = dir_path.join(name.clone());
+    let file_path = path.join(&name);
 
     ctx.fs().touch(file_path).await?;
 
@@ -582,9 +586,9 @@ pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let fs = ctx.fs();
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        let selected = pane.get_effective_selection();
+        let selection = pane.get_effective_selection();
 
-        let ret = fs.delete_all(selected).await;
+        let ret = fs.delete_all(selection).await;
         pane.refresh(None).await?;
 
         ret?;
@@ -598,12 +602,12 @@ pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 pub async fn rename(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
-    base_path: String,
+    base_path: VfsPath,
     old_name: String,
     new_name: String,
 ) -> Result<(), Error> {
-    let old_path = PathBuf::from(base_path.clone()).join(old_name.clone());
-    let new_path = PathBuf::from(base_path).join(new_name.clone());
+    let old_path = base_path.join(&old_name);
+    let new_path = base_path.join(&new_name);
 
     ctx.fs().rename(old_path, new_path).await?;
 
@@ -637,7 +641,7 @@ pub async fn start_operation(
             format!(
                 "Copying {} item(s) to {}",
                 sources.len(),
-                destination.display()
+                destination,
             ),
         ),
         OperationRequest::Move {
@@ -649,7 +653,7 @@ pub async fn start_operation(
             format!(
                 "Moving {} item(s) to {}",
                 sources.len(),
-                destination.display()
+                destination,
             ),
         ),
         OperationRequest::Delete { paths } => (
@@ -839,10 +843,10 @@ pub async fn execute_dnd(
     })?;
 
     let destination = match subdirectory {
-        Some(sub) => dest_path.join(sub),
+        Some(sub) => dest_path.join(&sub),
         None => dest_path,
     };
-    let sources: Vec<PathBuf> = dnd_files
+    let sources: Vec<VfsPath> = dnd_files
         .iter()
         .map(|f| source_path.join(&f.name))
         .collect();

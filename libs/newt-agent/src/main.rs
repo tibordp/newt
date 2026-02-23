@@ -1,7 +1,14 @@
+use std::sync::Arc;
+
 use log::info;
 use newt_common::{
-    api::{FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, TerminalDispatcher},
+    api::{
+        FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, TerminalDispatcher,
+        VfsDispatcher,
+    },
+    operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
+    vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
     Error,
 };
 
@@ -38,10 +45,14 @@ async fn main() -> Result<(), Error> {
     // Create outbox channel first so OperationDispatcher can use it
     let (outbox, inbox) = Communicator::create_outbox();
 
-    let dispatcher = FilesystemDispatcher::new(newt_common::filesystem::Local::new())
+    let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+    let op_context = Arc::new(OperationContext { registry: registry.clone() });
+
+    let dispatcher = FilesystemDispatcher::new(VfsRegistryFs::new(registry.clone()))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
-        .chain(FileReaderDispatcher::new(newt_common::file_reader::Local::new()))
-        .chain(OperationDispatcher::new(outbox.clone()));
+        .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(registry.clone())))
+        .chain(OperationDispatcher::new(outbox.clone(), op_context))
+        .chain(VfsDispatcher::new(registry.clone()));
 
     info!("agent started, entering RPC loop");
 

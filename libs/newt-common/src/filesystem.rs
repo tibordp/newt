@@ -21,6 +21,7 @@ use parking_lot::Mutex;
 use parking_lot::RwLock;
 
 use crate::rpc::Communicator;
+use crate::vfs::VfsPath;
 use crate::Error;
 use crate::ToUnix;
 
@@ -56,9 +57,9 @@ impl PartialOrd for UserGroup {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash,
+    Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash,
 )]
-pub struct Mode(u32);
+pub struct Mode(pub u32);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
@@ -94,13 +95,13 @@ impl From<nix::sys::statvfs::Statvfs> for FsStats {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct FileList {
-    path: PathBuf,
+    path: VfsPath,
     fs_stats: Option<FsStats>,
     files: Vec<File>,
 }
 
 impl FileList {
-    pub fn new(path: PathBuf, files: Vec<File>, fs_stats: Option<FsStats>) -> Self {
+    pub fn new(path: VfsPath, files: Vec<File>, fs_stats: Option<FsStats>) -> Self {
         Self {
             path,
             files,
@@ -108,7 +109,7 @@ impl FileList {
         }
     }
 
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &VfsPath {
         &self.path
     }
 
@@ -138,7 +139,15 @@ pub fn resolve(path: &Path) -> PathBuf {
     ret
 }
 
-struct UidGidCache {
+/// Resolve a VfsPath by canonicalizing its path component.
+pub fn resolve_vfs(vfs_path: &VfsPath) -> VfsPath {
+    VfsPath {
+        vfs_id: vfs_path.vfs_id,
+        path: resolve(&vfs_path.path),
+    }
+}
+
+pub struct UidGidCache {
     local_users: RwLock<HashMap<u32, UserGroup>>,
     local_groups: RwLock<HashMap<u32, UserGroup>>,
 }
@@ -194,14 +203,14 @@ impl UidGidCache {
 
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
-    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error>;
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error>;
-    async fn list_files(&self, path: PathBuf, options: ListFilesOptions)
+    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error>;
+    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error>;
+    async fn list_files(&self, path: VfsPath, options: ListFilesOptions)
         -> Result<FileList, Error>;
-    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error>;
-    async fn touch(&self, path: PathBuf) -> Result<(), Error>;
-    async fn create_directory(&self, path: PathBuf) -> Result<(), Error>;
-    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error>;
+    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
+    async fn touch(&self, path: VfsPath) -> Result<(), Error>;
+    async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
+    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error>;
 }
 
 pub struct Local {
@@ -220,15 +229,35 @@ impl Local {
             cache: Arc::new(UidGidCache::new()),
         }
     }
+
+    pub fn with_cache(cache: Arc<UidGidCache>) -> Self {
+        Self { cache }
+    }
+
+    /// Inner implementation of list_files, taking a `&Path` for reuse from `LocalVfs`.
+    pub async fn list_files_impl(
+        &self,
+        path: &Path,
+        options: ListFilesOptions,
+    ) -> Result<FileList, Error> {
+        self.list_files(VfsPath::root(path), options).await
+    }
+
+    /// Inner implementation of poll_changes, taking a `&Path` for reuse from `LocalVfs`.
+    pub async fn poll_changes_impl(&self, path: &Path) -> Result<(), Error> {
+        self.poll_changes(VfsPath::root(path)).await
+    }
 }
 
 #[async_trait::async_trait]
 impl Filesystem for Local {
-    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
-        Ok(tokio::task::spawn_blocking(move || expanduser::expanduser(path)).await??)
+    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
+        let expanded = tokio::task::spawn_blocking(move || expanduser::expanduser(path)).await??;
+        Ok(VfsPath::root(expanded))
     }
 
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
+        let path = path.path;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
 
@@ -277,9 +306,10 @@ impl Filesystem for Local {
 
     async fn list_files(
         &self,
-        mut path: PathBuf,
+        vfs_path: VfsPath,
         options: ListFilesOptions,
     ) -> Result<FileList, Error> {
+        let mut path = vfs_path.path;
         assert!(path.is_absolute());
         loop {
             match tokio::task::spawn_blocking({
@@ -354,7 +384,7 @@ impl Filesystem for Local {
                 Ok(files) => {
                     let stats = nix::sys::statvfs::statvfs(&path).ok().map(Into::into);
 
-                    return Ok(FileList::new(path, files, stats));
+                    return Ok(FileList::new(VfsPath::root(path), files, stats));
                 }
                 Err(Error::Io(e)) => match (e.kind(), options.strict) {
                     (std::io::ErrorKind::NotFound, false)
@@ -370,7 +400,8 @@ impl Filesystem for Local {
         }
     }
 
-    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+    async fn touch(&self, path: VfsPath) -> Result<(), Error> {
+        let path = path.path;
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -382,19 +413,23 @@ impl Filesystem for Local {
         .map(|_| ())
     }
 
-    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
+    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
+        let old_path = old_path.path;
+        let new_path = new_path.path;
         tokio::task::spawn_blocking(move || std::fs::rename(old_path, new_path).map_err(Error::Io))
             .await?
     }
 
-    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
+    async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
+        let path = path.path;
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(path).map_err(Error::Io))
             .await?
     }
 
-    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
+    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
         tokio::task::spawn_blocking(move || {
-            for path in paths {
+            for vfs_path in paths {
+                let path = vfs_path.path;
                 if path.is_dir() {
                     std::fs::remove_dir_all(path)?;
                 } else {
@@ -417,34 +452,34 @@ impl<T: Filesystem> Slow<T> {
 
 #[async_trait::async_trait]
 impl<T: Filesystem> Filesystem for Slow<T> {
-    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
+    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
         self.0.shell_expand(path).await
     }
 
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
         self.0.poll_changes(path).await
     }
     async fn list_files(
         &self,
-        path: PathBuf,
+        path: VfsPath,
         options: ListFilesOptions,
     ) -> Result<FileList, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.list_files(path, options).await
     }
-    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
+    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.rename(old_path, new_path).await
     }
-    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+    async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.touch(path).await
     }
-    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
+    async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.create_directory(path).await
     }
-    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
+    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.delete_all(paths).await
     }
@@ -462,8 +497,8 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl Filesystem for Remote {
-    async fn shell_expand(&self, path: String) -> Result<PathBuf, Error> {
-        let ret: Result<PathBuf, Error> = self
+    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
+        let ret: Result<VfsPath, Error> = self
             .communicator
             .invoke(crate::api::API_SHELL_EXPAND, &path)
             .await?;
@@ -471,7 +506,7 @@ impl Filesystem for Remote {
         Ok(ret?)
     }
 
-    async fn poll_changes(&self, path: PathBuf) -> Result<(), Error> {
+    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_POLL_CHANGES, &path)
@@ -481,7 +516,7 @@ impl Filesystem for Remote {
     }
     async fn list_files(
         &self,
-        path: PathBuf,
+        path: VfsPath,
         options: ListFilesOptions,
     ) -> Result<FileList, Error> {
         let ret: Result<FileList, Error> = self
@@ -491,7 +526,7 @@ impl Filesystem for Remote {
 
         Ok(ret?)
     }
-    async fn rename(&self, old_path: PathBuf, new_path: PathBuf) -> Result<(), Error> {
+    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_RENAME, &(old_path, new_path))
@@ -500,7 +535,7 @@ impl Filesystem for Remote {
         Ok(ret?)
     }
 
-    async fn touch(&self, path: PathBuf) -> Result<(), Error> {
+    async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_TOUCH, &path)
@@ -509,7 +544,7 @@ impl Filesystem for Remote {
         Ok(ret?)
     }
 
-    async fn create_directory(&self, path: PathBuf) -> Result<(), Error> {
+    async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_CREATE_DIRECTORY, &path)
@@ -517,7 +552,7 @@ impl Filesystem for Remote {
 
         Ok(ret?)
     }
-    async fn delete_all(&self, paths: Vec<PathBuf>) -> Result<(), Error> {
+    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_DELETE_ALL, &paths)

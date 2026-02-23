@@ -2,9 +2,10 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { VfsPath } from "../../lib/types";
 
 type CreateDirectoryProps = CommonDialogProps & {
-  path: string;
+  path: VfsPath;
 };
 
 export default function CreateDirectory({

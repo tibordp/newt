@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { VfsPath } from "../../lib/types";
 
 type NavigateProps = CommonDialogProps & {
-  path: string;
+  path: VfsPath;
 };
 
 export default function Navigate({ path, cancel, context }: NavigateProps) {
-  const [newPath, setNewPath] = useState(path);
+  const [newPath, setNewPath] = useState(path.path);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

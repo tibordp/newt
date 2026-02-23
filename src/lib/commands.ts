@@ -1,6 +1,7 @@
 import { MainWindowState } from "../main_window/MainWindow";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { safeCommand } from "./ipc";
+import { joinVfsPath } from "./types";
 
 export const modifiers = (e: React.KeyboardEvent<Element>) => {
   const isMac = navigator.platform.indexOf("Mac") === 0;
@@ -161,8 +162,8 @@ export const commands: Command[] = [
       const pane = state.panes[paneHandle];
 
       const paths = pane.selected.length > 0
-        ? pane.selected.map((name) => pane.path + "/" + name)
-        : pane.focused ? [pane.path + "/" + pane.focused] : [];
+        ? pane.selected.map((name) => joinVfsPath(pane.path, name))
+        : pane.focused ? [joinVfsPath(pane.path, pane.focused)] : [];
 
       if (paths.length === 0) return;
 
