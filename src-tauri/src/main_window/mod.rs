@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use std::process::Stdio;
 use std::sync::Arc;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
 use tauri::WebviewWindow;
@@ -302,11 +303,42 @@ impl serde::Serialize for ModalState {
     }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct DndFile {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct DndData {
+    pub source_pane: PaneHandle,
+    pub files: Vec<DndFile>,
+}
+
+#[derive(Clone)]
+pub struct DndState(pub Arc<RwLock<Option<DndData>>>);
+
+impl Default for DndState {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(None)))
+    }
+}
+
+impl serde::Serialize for DndState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.0.read().serialize(serializer)
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct MainWindowState {
     pub panes: Panes,
     pub terminals: Terminals,
     pub modal: ModalState,
+    pub dnd: DndState,
     pub display_options: DisplayOptions,
     pub operations: Operations,
     pub window_title: String,
@@ -320,6 +352,7 @@ impl MainWindowState {
             panes: Panes::new(),
             terminals: Terminals::new(),
             modal: ModalState::default(),
+            dnd: DndState::default(),
             display_options,
             operations: Operations::default(),
             window_title: "Newt".to_string(),
@@ -411,7 +444,53 @@ impl ChildWaitHandle {
 }
 
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
-const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Compute a hash that changes whenever any agent binary changes.
+/// We hash all agent binaries we can find so the remote cache is invalidated
+/// when any agent is rebuilt, regardless of which triple the remote needs.
+fn agent_hash() -> Result<String, Error> {
+    let mut hasher = blake3::Hasher::new();
+    let mut found = false;
+
+    // Collect paths from NEWT_AGENT_DIR and dist/agents/
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
+        dirs.push(PathBuf::from(dir));
+    }
+    dirs.push(PathBuf::from("dist/agents"));
+
+    for dir in &dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path().join("newt-agent");
+                if path.is_file() {
+                    hasher.update(&std::fs::read(&path)?);
+                    found = true;
+                }
+                // Also check flat layout (NEWT_AGENT_DIR/newt-agent)
+                let flat = entry.path();
+                if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
+                    hasher.update(&std::fs::read(&flat)?);
+                    found = true;
+                }
+            }
+        }
+        // Flat layout: dir/newt-agent directly
+        let flat = dir.join("newt-agent");
+        if flat.is_file() {
+            hasher.update(&std::fs::read(&flat)?);
+            found = true;
+        }
+    }
+
+    if !found {
+        return Err(Error::Custom(
+            "no agent binaries found to compute hash".into(),
+        ));
+    }
+
+    Ok(hasher.finalize().to_hex()[..16].to_string())
+}
 
 /// Look up the agent binary for a given target triple.
 /// Checks `NEWT_AGENT_DIR` env var first (for development), then `dist/agents/`.
@@ -486,7 +565,7 @@ async fn create_remote_connection(
     // Pass the bootstrap script as a `sh -c` argument so that stdin remains
     // free for the binary upload protocol (otherwise the shell buffers ahead
     // and eats the data meant for `read` inside the script).
-    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_VERSION__", AGENT_VERSION);
+    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_hash()?);
     let escaped = script.replace('\'', "'\\''");
     let sh_cmd = format!("sh -c '{}'", escaped);
 
@@ -581,7 +660,8 @@ impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
         let app_handle = window.app_handle();
         let s: State<GlobalContext> = app_handle.state();
 
-        Ok(s.main_window(&window).expect("window not found"))
+        s.main_window(&window)
+            .ok_or_else(|| tauri::ipc::InvokeError::from("window not yet initialized"))
     }
 }
 
@@ -708,6 +788,7 @@ impl MainWindowContext {
                 )
             }
             ConnectionTarget::Remote { transport_cmd } => {
+                let _ = window.emit("init_status", "Connecting to remote host...");
                 let (child, stream) =
                     create_remote_connection(transport_cmd, &publisher).await?;
 
@@ -753,6 +834,7 @@ impl MainWindowContext {
                     ));
                 }
 
+                let _ = window.emit("init_status", "Waiting for authorization...");
                 let agent_path = find_local_agent_binary()?;
                 let mut child = tokio::process::Command::new("pkexec")
                     .arg(&agent_path)
@@ -816,6 +898,7 @@ impl MainWindowContext {
             global_state.display_options.clone(),
             publisher.clone(),
         ));
+        let _ = window.emit("init_status", "Loading...");
         global_state.refresh().await?;
 
         for pane in global_state.panes.all() {

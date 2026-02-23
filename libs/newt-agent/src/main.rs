@@ -1,3 +1,4 @@
+use log::info;
 use newt_common::{
     api::{FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, TerminalDispatcher},
     rpc::{Communicator, DispatcherExt},
@@ -42,8 +43,11 @@ async fn main() -> Result<(), Error> {
         .chain(FileReaderDispatcher::new(newt_common::file_reader::Local::new()))
         .chain(OperationDispatcher::new(outbox.clone()));
 
+    info!("agent started, entering RPC loop");
+
     let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
     rpc.closed().await;
 
+    info!("RPC connection closed, agent exiting");
     Ok(())
 }

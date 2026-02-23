@@ -11,6 +11,8 @@ use parking_lot::Mutex;
 use pty_process::{OwnedReadPty, OwnedWritePty};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use log::{debug, info, error};
+
 use crate::{rpc::Communicator, Error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -78,6 +80,7 @@ impl Local {
 #[async_trait::async_trait]
 impl TerminalClient for Local {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
+        info!("terminal::create called with options: {:?}", options);
         let inner = self.0.clone();
         let ret = tokio::task::spawn_blocking(move || {
             let handle = TerminalHandle(
@@ -86,10 +89,14 @@ impl TerminalClient for Local {
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             );
 
+            debug!("allocating PTY for handle {:?}", handle);
             let pty_master = pty_process::Pty::new()?;
+            debug!("PTY master allocated, getting pts");
             let pty_slave = pty_master.pts()?;
+            debug!("PTY slave obtained");
 
             let mut cmd = if let Some(command) = options.command {
+                info!("spawning command: {}", command);
                 let mut cmd = pty_process::Command::new(command);
                 if let Some(args) = options.args {
                     cmd.args(args);
@@ -97,6 +104,7 @@ impl TerminalClient for Local {
                 cmd
             } else {
                 let user = ShellUser::from_env()?;
+                info!("spawning default shell: {}", user.shell);
                 let mut cmd = pty_process::Command::new(&user.shell);
                 cmd.env("USER", user.user);
                 cmd.env("TERM", "xterm-256color");
@@ -106,13 +114,19 @@ impl TerminalClient for Local {
             };
             cmd.kill_on_drop(true);
             if let Some(working_dir) = options.working_dir {
+                debug!("setting working dir: {:?}", working_dir);
                 cmd.current_dir(working_dir);
             }
 
             if let Some(env) = options.env {
                 cmd.envs(env);
             }
+            debug!("spawning child process");
             let child = cmd.spawn(&pty_slave);
+            match &child {
+                Ok(_) => info!("child process spawned successfully for handle {:?}", handle),
+                Err(e) => error!("failed to spawn child process: {}", e),
+            }
             let child = child?;
             let (read, write) = pty_master.into_split();
             inner.terminals.lock().insert(
@@ -123,14 +137,21 @@ impl TerminalClient for Local {
                     child: tokio::sync::Mutex::new(child),
                 }),
             );
+            info!("terminal {:?} created successfully", handle);
             Ok(handle)
         })
         .await;
 
+        match &ret {
+            Ok(Ok(handle)) => debug!("terminal::create returning handle {:?}", handle),
+            Ok(Err(e)) => error!("terminal::create failed: {}", e),
+            Err(e) => error!("terminal::create task panicked: {}", e),
+        }
         ret?
     }
 
     async fn kill(&self, handle: TerminalHandle) -> Result<(), Error> {
+        info!("terminal::kill {:?}", handle);
         self.0
             .terminals
             .lock()
@@ -141,6 +162,7 @@ impl TerminalClient for Local {
     }
 
     async fn resize(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<(), Error> {
+        debug!("terminal::resize {:?} rows={} cols={}", handle, rows, cols);
         let terminal = self
             .0
             .terminals

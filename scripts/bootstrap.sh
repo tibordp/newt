@@ -15,7 +15,7 @@
 
 set -e
 
-NEWT_VERSION="__NEWT_VERSION__"
+NEWT_HASH="__NEWT_HASH__"
 
 # --- Detect platform ---
 OS=$(uname -s)
@@ -52,7 +52,7 @@ fi
 
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
-AGENT_PATH="${CACHE_DIR}/newt-agent-${NEWT_VERSION}"
+AGENT_PATH="${CACHE_DIR}/newt-agent-${NEWT_HASH}"
 
 # --- Check cached binary ---
 if [ -x "$AGENT_PATH" ]; then
@@ -100,3 +100,4 @@ else
 fi
 
 exec "$AGENT_PATH"
+
