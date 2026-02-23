@@ -400,6 +400,7 @@ export type MainWindowState = {
   display_options: DisplayOptions;
   modal?: ModalState;
   operations: Record<string, OperationState>;
+  window_title: string;
 };
 
 type ColumnHeaderProps = {
@@ -559,6 +560,46 @@ function PathBreadcrumbs(props: { path: string; paneHandle: number }) {
   );
 }
 
+type DragMode = "normal" | "ctrl" | "shift";
+
+type DragState = {
+  active: boolean;
+  startX: number;
+  startY: number;
+  startScrollX: number;
+  startScrollY: number;
+  mode: DragMode;
+  baseSelection: Set<string>;
+  lastSentStartIdx: number;
+  lastSentEndIdx: number;
+  lastClientY: number;
+  lastCurScrollX: number;
+  scrollIntervalId: number | null;
+};
+
+function computeDragSelection(
+  startIdx: number,
+  endIdx: number,
+  files: File[],
+  baseSelection: Set<string> | null,
+): string[] {
+  const lo = Math.min(startIdx, endIdx);
+  const hi = Math.max(startIdx, endIdx);
+  const range = new Set<string>();
+  for (let i = lo; i <= hi; i++) {
+    const name = files[i].name;
+    if (name !== "..") range.add(name);
+  }
+
+  if (baseSelection) {
+    for (const name of baseSelection) {
+      range.add(name);
+    }
+  }
+
+  return [...range];
+}
+
 function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
   const {
     paneHandle,
@@ -654,6 +695,12 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
   const viewPortRef = useRef<ViewportListRef>(null);
   const tableHeaderRef = useRef<HTMLDivElement>(null);
 
+  const dragRef = useRef<DragState | null>(null);
+  const dragRectRef = useRef<HTMLDivElement>(null);
+  const suppressClickRef = useRef(false);
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
   useLayoutEffect(() => {
     if (active && files && viewPortRef.current) {
       const containerHeight = containerRef.current!.offsetHeight;
@@ -691,6 +738,224 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
       containerRef.current?.blur();
     }
   }, [active, path, filter, focusGeneration]);
+
+  // --- Drag-to-select logic ---
+
+  const getFileIndexAtY = useCallback((clientY: number): number => {
+    const container = containerRef.current;
+    if (!container) return 0;
+    const rect = container.getBoundingClientRect();
+    const index = Math.floor((clientY - rect.top + container.scrollTop) / 22);
+    return Math.max(0, Math.min(filesRef.current.length - 1, index));
+  }, []);
+
+  const sendDragSelection = useCallback((drag: DragState, startIdx: number, endIdx: number) => {
+    const currentFiles = filesRef.current;
+    if (!currentFiles.length) return;
+    const base = drag.mode === "ctrl" ? drag.baseSelection : null;
+    const sel = computeDragSelection(startIdx, endIdx, currentFiles, base);
+    safeCommandSilent("set_selection", {
+      paneHandle,
+      selected: sel,
+      focused: null,
+    });
+  }, [paneHandle]);
+
+  const updateDragRect = useCallback((drag: DragState, curScrollX: number, curScrollY: number) => {
+    const el = dragRectRef.current;
+    if (!el) return;
+    el.style.display = "block";
+    el.style.left = Math.min(drag.startScrollX, curScrollX) + "px";
+    el.style.top = Math.min(drag.startScrollY, curScrollY) + "px";
+    el.style.width = Math.abs(curScrollX - drag.startScrollX) + "px";
+    el.style.height = Math.abs(curScrollY - drag.startScrollY) + "px";
+  }, []);
+
+  const hideDragRect = useCallback(() => {
+    const el = dragRectRef.current;
+    if (el) el.style.display = "none";
+  }, []);
+
+  const updateDragSelection = useCallback((drag: DragState, curScrollY: number) => {
+    const currentFiles = filesRef.current;
+    if (!currentFiles.length) return;
+
+    const rectTop = Math.min(drag.startScrollY, curScrollY);
+    const rectBottom = Math.max(drag.startScrollY, curScrollY);
+    const startIdx = Math.max(0, Math.floor(rectTop / 22));
+    const endIdx = Math.min(currentFiles.length - 1, Math.ceil(rectBottom / 22) - 1);
+
+    if (startIdx !== drag.lastSentStartIdx || endIdx !== drag.lastSentEndIdx) {
+      drag.lastSentStartIdx = startIdx;
+      drag.lastSentEndIdx = endIdx;
+      sendDragSelection(drag, startIdx, endIdx);
+    }
+  }, [sendDragSelection]);
+
+  const updateAutoScroll = useCallback((clientY: number) => {
+    const drag = dragRef.current;
+    if (!drag || !drag.active) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const edgeZone = 44; // 2 rows
+    const topEdge = clientY - rect.top;
+    const bottomEdge = rect.bottom - clientY;
+
+    if (topEdge < edgeZone && topEdge >= 0) {
+      const speed = Math.max(1, Math.round((1 - topEdge / edgeZone) * 10));
+      if (drag.scrollIntervalId === null) {
+        drag.scrollIntervalId = window.setInterval(() => {
+          const d = dragRef.current;
+          if (!d || !d.active) return;
+          container.scrollTop = Math.max(0, container.scrollTop - speed);
+          const r = container.getBoundingClientRect();
+          const curScrollY = d.lastClientY - r.top + container.scrollTop;
+          updateDragRect(d, d.lastCurScrollX, curScrollY);
+          updateDragSelection(d, curScrollY);
+        }, 16);
+      }
+    } else if (bottomEdge < edgeZone && bottomEdge >= 0) {
+      const speed = Math.max(1, Math.round((1 - bottomEdge / edgeZone) * 10));
+      if (drag.scrollIntervalId === null) {
+        drag.scrollIntervalId = window.setInterval(() => {
+          const d = dragRef.current;
+          if (!d || !d.active) return;
+          container.scrollTop += speed;
+          const r = container.getBoundingClientRect();
+          const curScrollY = d.lastClientY - r.top + container.scrollTop;
+          updateDragRect(d, d.lastCurScrollX, curScrollY);
+          updateDragSelection(d, curScrollY);
+        }, 16);
+      }
+    } else {
+      if (drag.scrollIntervalId !== null) {
+        clearInterval(drag.scrollIntervalId);
+        drag.scrollIntervalId = null;
+      }
+    }
+  }, [updateDragRect, updateDragSelection]);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      const container = containerRef.current;
+      if (!container) return;
+
+      // Detect mouseup that happened outside the window
+      if (e.buttons === 0) {
+        if (drag.scrollIntervalId !== null) clearInterval(drag.scrollIntervalId);
+        if (drag.active) suppressClickRef.current = true;
+        hideDragRect();
+        dragRef.current = null;
+        return;
+      }
+
+      drag.lastClientY = e.clientY;
+
+      if (!drag.active) {
+        const dx = e.clientX - drag.startX;
+        const dy = e.clientY - drag.startY;
+        if (dx * dx + dy * dy < 25) return; // 5px threshold
+        drag.active = true;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const curScrollX = e.clientX - rect.left + container.scrollLeft;
+      const curScrollY = e.clientY - rect.top + container.scrollTop;
+      drag.lastCurScrollX = curScrollX;
+
+      updateDragRect(drag, curScrollX, curScrollY);
+      updateDragSelection(drag, curScrollY);
+      updateAutoScroll(e.clientY);
+    };
+
+    const onMouseUp = (_e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (drag.scrollIntervalId !== null) clearInterval(drag.scrollIntervalId);
+      if (drag.active) suppressClickRef.current = true;
+      hideDragRect();
+      dragRef.current = null;
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [getFileIndexAtY, sendDragSelection, updateAutoScroll, updateDragRect, updateDragSelection, hideDragRect]);
+
+  // Cancel drag when files change (e.g. directory navigation)
+  useEffect(() => {
+    const drag = dragRef.current;
+    if (drag) {
+      if (drag.scrollIntervalId !== null) clearInterval(drag.scrollIntervalId);
+      hideDragRect();
+      dragRef.current = null;
+    }
+  }, [files]);
+
+  const onMouseDown = useCallback((e: React.MouseEvent<HTMLUListElement>) => {
+    if (e.button !== 0) return;
+    // Only start drag from empty space — not on file icon or filename text
+    const target = e.target as HTMLElement;
+    if (target.closest(".file-icon") || target.closest(".filename-part")) return;
+    e.preventDefault(); // block text selection
+
+    const container = containerRef.current;
+    if (!container) return;
+    const currentFiles = filesRef.current;
+    if (!currentFiles.length) return;
+
+    // Focus the pane and the file under cursor (if any)
+    const rect = container.getBoundingClientRect();
+    const clickScrollY = e.clientY - rect.top + container.scrollTop;
+    const clickIdx = Math.floor(clickScrollY / 22);
+    if (clickIdx >= 0 && clickIdx < currentFiles.length) {
+      safeCommandSilent("focus", { paneHandle, filename: currentFiles[clickIdx].name });
+    } else if (!active) {
+      safeCommandSilent("focus", { paneHandle });
+    }
+
+    let startScrollX = e.clientX - rect.left + container.scrollLeft;
+    let startScrollY = e.clientY - rect.top + container.scrollTop;
+
+    let mode: DragMode = "normal";
+    let baseSelection = new Set<string>();
+
+    if (e.ctrlKey) {
+      mode = "ctrl";
+      baseSelection = new Set(selected);
+    } else if (e.shiftKey) {
+      mode = "shift";
+      // Start rect from focused file's top edge
+      const fi = currentFiles.findIndex((f) => f.name === focused);
+      if (fi >= 0) startScrollY = fi * 22;
+    }
+
+    dragRef.current = {
+      active: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      startScrollX,
+      startScrollY,
+      mode,
+      baseSelection,
+      lastSentStartIdx: -1,
+      lastSentEndIdx: -1,
+      lastClientY: e.clientY,
+      lastCurScrollX: startScrollX,
+      scrollIntervalId: null,
+    };
+  }, [active, paneHandle, selected, focused]);
+
+  // --- End drag-to-select logic ---
 
   const open = async (file: File) => {
     if (!file) return;
@@ -782,6 +1047,10 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
   };
 
   const onClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     if (e.ctrlKey) {
       command("toggle_selected", {
         filename: e.currentTarget.dataset.name,
@@ -850,6 +1119,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
           className="files"
           ref={containerRef}
           onKeyDown={onkeydown}
+          onMouseDown={onMouseDown}
           tabIndex={-1}
           onScroll={onScroll}
         >
@@ -885,6 +1155,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
               </li>
             )}
           </ViewportList>
+          <div className="drag-rect" ref={dragRectRef} />
         </ul>
       )}
       <div className="statusbar">

@@ -309,6 +309,21 @@ impl Pane {
 
         view_state.focused.as_ref().map(|s| view_state.path.join(s))
     }
+
+    /// Returns true if the focused item is known to be a directory.
+    /// Returns false for non-directories, unknown items, or if nothing is focused.
+    pub fn is_focused_dir(&self) -> bool {
+        let view_state = self.view_state.read();
+        let focused = match view_state.focused.as_ref() {
+            Some(f) => f,
+            None => return false,
+        };
+        view_state
+            .files
+            .iter()
+            .find(|f| f.name == *focused)
+            .map_or(false, |f| f.is_dir)
+    }
 }
 
 impl serde::Serialize for Pane {
@@ -500,6 +515,17 @@ impl PaneViewState {
         self.update_filter(None);
         self.filter_regex = None;
         self.selected.clear();
+    }
+
+    pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
+        self.update_filter(None);
+        self.selected = selected;
+        self.selected.remove("..");
+        if let Some(ref f) = focused {
+            if self.file_lookup.contains_key(f) {
+                self.focused = Some(f.clone());
+            }
+        }
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {

@@ -22,16 +22,7 @@
   "plugins": {},
   "app": {
     "withGlobalTauri": false,
-    "windows": [
-      {
-        "fullscreen": false,
-        "resizable": true,
-        "title": "newt",
-        "width": 800,
-        "height": 600,
-        "url": "/"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

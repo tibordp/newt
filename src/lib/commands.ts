@@ -246,6 +246,18 @@ export const commands: Command[] = [
     noPane: true,
   },
   {
+    name: "Connect to Remote Host...",
+    command: "dialog",
+    args: { dialog: "connect_remote" },
+    noPane: true,
+    shortcut: new Shortcut().cmd().shift().char("r"),
+  },
+  {
+    name: "Open Elevated",
+    command: "open_elevated",
+    noPane: true,
+  },
+  {
     name: "Open Folder in Default File Manager",
     command: "open_folder",
     shortcut: new Shortcut().shift().key("F3"),
