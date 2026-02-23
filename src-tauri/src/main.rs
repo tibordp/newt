@@ -19,7 +19,6 @@ use main_window::MainWindowContext;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use tauri::ipc::Invoke;
-use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
 use tauri::Webview;
@@ -67,6 +66,7 @@ impl GlobalContext {
             webview_window,
             self.connection_target.clone(),
             self.window_title.clone(),
+            None,
         )
         .await?;
         self.main_windows.lock().insert(label, window_context);
@@ -143,45 +143,11 @@ fn main() {
                 return;
             }
 
-            match &global_ctx.connection_target {
-                ConnectionTarget::Local => {
-                    tauri::async_runtime::block_on(global_ctx.create_main_window(webview))
-                        .unwrap();
-                }
-                _ => {
-                    // For remote/elevated connections, spawn async so the event
-                    // loop keeps running and the webview can render a connecting
-                    // indicator while SSH/pkexec completes.
-                    let connection_target = global_ctx.connection_target.clone();
-                    let window_title = global_ctx.window_title.clone();
-                    let app_handle = app_handle.clone();
-                    let label = webview.label().to_string();
-                    tauri::async_runtime::spawn(async move {
-                        let webview_window = app_handle
-                            .get_webview_window(&label)
-                            .expect("webview window not found");
-                        match MainWindowContext::create(
-                            webview_window.clone(),
-                            connection_target,
-                            window_title,
-                        )
-                        .await
-                        {
-                            Ok(ctx) => {
-                                app_handle
-                                    .state::<GlobalContext>()
-                                    .main_windows
-                                    .lock()
-                                    .insert(label, ctx.clone());
-                                let _ = ctx.publish_full();
-                            }
-                            Err(e) => {
-                                log::error!("Failed to initialize: {}", e);
-                                let _ = webview_window.emit("init_error", e.to_string());
-                            }
-                        }
-                    });
-                }
+            // Local mode: init is instant, block to have state ready before JS runs.
+            // Remote/Elevated: frontend drives init via the `init` command + Channel.
+            if matches!(global_ctx.connection_target, ConnectionTarget::Local) {
+                tauri::async_runtime::block_on(global_ctx.create_main_window(webview))
+                    .unwrap();
             }
         })
         .on_window_event(

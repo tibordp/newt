@@ -21,11 +21,47 @@ use crate::main_window::OperationStatus;
 
 use crate::main_window::DndData;
 use crate::main_window::DndFile;
+use crate::main_window::InitEvent;
 use crate::main_window::MainWindowContext;
 use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
 use crate::main_window::ModalDataKind;
 use crate::main_window::PaneHandle;
+use crate::GlobalContext;
+
+#[tauri::command]
+pub async fn init(
+    webview: tauri::Webview,
+    global_ctx: tauri::State<'_, GlobalContext>,
+    on_event: tauri::ipc::Channel<InitEvent>,
+) -> Result<(), Error> {
+    // Already initialized (e.g. local mode via on_page_load) — just publish state.
+    if let Some(ctx) = global_ctx.main_window(&webview) {
+        ctx.publish_full()?;
+        return Ok(());
+    }
+
+    let label = webview.label().to_string();
+    let webview_window = webview
+        .app_handle()
+        .get_webview_window(&label)
+        .expect("webview window not found");
+
+    let ctx = MainWindowContext::create(
+        webview_window,
+        global_ctx.connection_target.clone(),
+        global_ctx.window_title.clone(),
+        Some(&on_event),
+    )
+    .await?;
+
+    global_ctx
+        .main_windows
+        .lock()
+        .insert(label, ctx.clone());
+    ctx.publish_full()?;
+    Ok(())
+}
 
 #[tauri::command]
 pub fn cancel(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
@@ -837,6 +873,7 @@ pub fn close_window(window: Window) -> Result<(), Error> {
 
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'static> {
     Box::new(tauri::generate_handler![
+        init,
         cancel,
         navigate,
         ping,

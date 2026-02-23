@@ -1507,22 +1507,6 @@ function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusGeneration, setFocusGeneration] = useState(0);
-  const [initStatus, setInitStatus] = useState("Connecting...");
-  const [initError, setInitError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const appWindow = getCurrentWebviewWindow();
-    const unlistenStatus = appWindow.listen<string>("init_status", (e) => {
-      setInitStatus(e.payload);
-    });
-    const unlistenError = appWindow.listen<string>("init_error", (e) => {
-      setInitError(e.payload);
-    });
-    return () => {
-      unlistenStatus.then((f) => f());
-      unlistenError.then((f) => f());
-    };
-  }, []);
 
   // Derive the foreground operation: first non-backgrounded op by ID order
   const foregroundOp = useMemo(() => {
@@ -1583,13 +1567,6 @@ function App() {
           onCloseAutoFocus={refocusActivePane}
         />
         <div className="container">
-          {!remoteState && (
-            <div className="connecting-screen">
-              {!initError && <div className="connecting-spinner" />}
-              {!initError && <div className="connecting-text">{initStatus}</div>}
-              {initError && <div className="connecting-error">{initError}</div>}
-            </div>
-          )}
           {remoteState && (
             <>
               <Allotment vertical separator>

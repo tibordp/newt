@@ -24,7 +24,7 @@ use std::path::PathBuf;
 
 use std::process::Stdio;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::ipc::Channel;
 use tauri::Manager;
 use tauri::State;
 use tauri::WebviewWindow;
@@ -42,6 +42,20 @@ pub enum ConnectionTarget {
     Local,
     Remote { transport_cmd: Vec<String> },
     Elevated,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub enum InitEvent {
+    Status { message: String },
+}
+
+fn send_init_status(channel: Option<&Channel<InitEvent>>, message: &str) {
+    if let Some(ch) = channel {
+        let _ = ch.send(InitEvent::Status {
+            message: message.to_string(),
+        });
+    }
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -737,6 +751,7 @@ impl MainWindowContext {
         window: WebviewWindow,
         connection_target: ConnectionTarget,
         window_title: String,
+        init_channel: Option<&Channel<InitEvent>>,
     ) -> Result<Self, Error> {
         // Create state and publisher first
         let mut global_state = MainWindowState::new();
@@ -788,7 +803,7 @@ impl MainWindowContext {
                 )
             }
             ConnectionTarget::Remote { transport_cmd } => {
-                let _ = window.emit("init_status", "Connecting to remote host...");
+                send_init_status(init_channel, "Connecting to remote host...");
                 let (child, stream) =
                     create_remote_connection(transport_cmd, &publisher).await?;
 
@@ -834,7 +849,7 @@ impl MainWindowContext {
                     ));
                 }
 
-                let _ = window.emit("init_status", "Waiting for authorization...");
+                send_init_status(init_channel, "Waiting for authorization...");
                 let agent_path = find_local_agent_binary()?;
                 let mut child = tokio::process::Command::new("pkexec")
                     .arg(&agent_path)
@@ -898,7 +913,7 @@ impl MainWindowContext {
             global_state.display_options.clone(),
             publisher.clone(),
         ));
-        let _ = window.emit("init_status", "Loading...");
+        send_init_status(init_channel, "Loading...");
         global_state.refresh().await?;
 
         for pane in global_state.panes.all() {
