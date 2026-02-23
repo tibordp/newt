@@ -19,6 +19,8 @@ use crate::main_window::pane::Sorting;
 use crate::main_window::OperationState;
 use crate::main_window::OperationStatus;
 
+use crate::main_window::DndData;
+use crate::main_window::DndFile;
 use crate::main_window::MainWindowContext;
 use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
@@ -751,6 +753,82 @@ pub async fn open_elevated() -> Result<(), Error> {
 }
 
 #[tauri::command]
+pub fn start_dnd(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    files: Vec<DndFile>,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        *gs.dnd.0.write() = Some(DndData {
+            source_pane: pane_handle,
+            files,
+        });
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn cancel_dnd(ctx: MainWindowContext) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        *gs.dnd.0.write() = None;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn execute_dnd(
+    ctx: MainWindowContext,
+    destination_pane: PaneHandle,
+    subdirectory: Option<String>,
+    is_move: bool,
+) -> Result<OperationId, Error> {
+    let (source_path, dest_path, dnd_files) = ctx.with_update(|gs| {
+        let dnd_data = gs
+            .dnd
+            .0
+            .write()
+            .take()
+            .ok_or_else(|| Error::Custom("no active DnD session".into()))?;
+
+        let source_pane = gs
+            .panes
+            .get(dnd_data.source_pane)
+            .ok_or_else(|| Error::Custom("source pane not found".into()))?;
+        let dest_pane = gs
+            .panes
+            .get(destination_pane)
+            .ok_or_else(|| Error::Custom("destination pane not found".into()))?;
+
+        Ok((source_pane.path(), dest_pane.path(), dnd_data.files))
+    })?;
+
+    let destination = match subdirectory {
+        Some(sub) => dest_path.join(sub),
+        None => dest_path,
+    };
+    let sources: Vec<PathBuf> = dnd_files
+        .iter()
+        .map(|f| source_path.join(&f.name))
+        .collect();
+
+    let request = if is_move {
+        OperationRequest::Move {
+            sources,
+            destination,
+            options: Default::default(),
+        }
+    } else {
+        OperationRequest::Copy {
+            sources,
+            destination,
+            options: Default::default(),
+        }
+    };
+
+    start_operation(ctx, request).await
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -799,6 +877,9 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         background_operation,
         connect_remote,
         open_elevated,
-        close_window
+        close_window,
+        start_dnd,
+        cancel_dnd,
+        execute_dnd
     ])
 }

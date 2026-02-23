@@ -28,6 +28,7 @@ import {
   useRemoteState,
   useTerminalData,
 } from "../lib/ipc";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal as XTermJSTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 
@@ -394,11 +395,22 @@ type Terminal = {
   handle: number;
 };
 
+type DndFileInfo = {
+  name: string;
+  is_dir: boolean;
+};
+
+type DndState = {
+  source_pane: number;
+  files: DndFileInfo[];
+};
+
 export type MainWindowState = {
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;
   modal?: ModalState;
+  dnd?: DndState;
   operations: Record<string, OperationState>;
   window_title: string;
 };
@@ -600,6 +612,23 @@ function computeDragSelection(
   return [...range];
 }
 
+type LocalDndState = {
+  active: boolean;
+  startX: number;
+  startY: number;
+  files: DndFileInfo[];
+};
+
+function getFileIconChar(name: string, isDir: boolean): { ch: string; color: string } {
+  if (isDir) return { ch: "\uE5FF", color: "" }; // folder icon fallback
+  const icon =
+    iconMapping.light.fileNames[name] ||
+    iconMapping.light.fileExtensions[name.substr(name.indexOf(".") + 1)] ||
+    iconMapping.light.file;
+  const { fontCharacter, fontColor } = iconMapping.iconDefinitions[icon];
+  return { ch: String.fromCodePoint(parseInt(fontCharacter, 16)), color: fontColor };
+}
+
 function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
   const {
     paneHandle,
@@ -700,6 +729,10 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
   const suppressClickRef = useRef(false);
   const filesRef = useRef(files);
   filesRef.current = files;
+
+  // --- DnD (drag-and-drop between panes) refs ---
+  const dndRef = useRef<LocalDndState | null>(null);
+  const dndGhostRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (active && files && viewPortRef.current) {
@@ -957,6 +990,198 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
 
   // --- End drag-to-select logic ---
 
+  // --- DnD (drag-and-drop between panes) logic ---
+
+  const onDndMouseDown = useCallback((e: React.MouseEvent<HTMLLIElement>) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (!target.closest(".file-icon") && !target.closest(".filename-part")) return;
+    const fileName = e.currentTarget.dataset.name;
+    if (!fileName || fileName === "..") return;
+
+    e.preventDefault();
+    e.stopPropagation(); // prevent drag-to-select
+
+    const filesToDrag = selectedLookup.has(fileName)
+      ? files.filter(f => selectedLookup.has(f.name) && f.name !== "..")
+      : [files.find(f => f.name === fileName)!];
+
+    dndRef.current = {
+      active: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      files: filesToDrag.map(f => ({ name: f.name, is_dir: f.is_dir })),
+    };
+  }, [files, selectedLookup]);
+
+  const cleanupDnd = useCallback(() => {
+    const ghost = dndGhostRef.current;
+    if (ghost) ghost.style.display = "none";
+    document.querySelectorAll(".dnd-drop-target, .dnd-drop-hover").forEach(el => {
+      el.classList.remove("dnd-drop-target", "dnd-drop-hover");
+    });
+  }, []);
+
+  useEffect(() => {
+    const onDndMouseMove = (e: MouseEvent) => {
+      const dnd = dndRef.current;
+      if (!dnd) return;
+
+      // Detect mouseup that happened outside the window
+      if (e.buttons === 0) {
+        if (dnd.active) {
+          safeCommandSilent("cancel_dnd");
+          suppressClickRef.current = true;
+        }
+        cleanupDnd();
+        dndRef.current = null;
+        return;
+      }
+
+      if (!dnd.active) {
+        const dx = e.clientX - dnd.startX;
+        const dy = e.clientY - dnd.startY;
+        if (dx * dx + dy * dy < 25) return; // 5px threshold
+        dnd.active = true;
+
+        // Populate and show ghost
+        const ghost = dndGhostRef.current;
+        if (ghost) {
+          if (dnd.files.length === 1) {
+            const f = dnd.files[0];
+            if (f.is_dir) {
+              ghost.innerHTML = `<div class="file-icon folder"></div> ${f.name}`;
+            } else {
+              const { ch, color } = getFileIconChar(f.name, f.is_dir);
+              ghost.innerHTML = `<div class="file-icon" style="color: ${color}">${ch}</div> ${f.name}`;
+            }
+          } else {
+            ghost.textContent = `${dnd.files.length} items`;
+          }
+          ghost.style.display = "flex";
+        }
+
+        safeCommandSilent("start_dnd", { paneHandle, files: dnd.files });
+      }
+
+      // Position ghost
+      const ghost = dndGhostRef.current;
+      if (ghost) {
+        ghost.style.left = `${e.clientX + 12}px`;
+        ghost.style.top = `${e.clientY + 12}px`;
+      }
+
+      // Highlight drop targets
+      document.querySelectorAll(".dnd-drop-target, .dnd-drop-hover").forEach(el => {
+        el.classList.remove("dnd-drop-target", "dnd-drop-hover");
+      });
+
+      const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
+      if (!elementUnder) return;
+
+      const targetPane = elementUnder.closest(".pane[data-pane-handle]") as HTMLElement | null;
+      if (targetPane) {
+        const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
+        const isSamePane = targetPaneHandle === paneHandle;
+        const targetLi = elementUnder.closest("li.file-item[data-is-dir='true']") as HTMLElement | null;
+
+        if (!isSamePane) {
+          targetPane.classList.add("dnd-drop-target");
+        }
+
+        if (targetLi) {
+          const targetName = targetLi.dataset.name!;
+          // In same pane: don't highlight ".." or dirs being dragged (can't drop into yourself)
+          if (isSamePane) {
+            const dnd = dndRef.current;
+            const draggedNames = dnd ? new Set(dnd.files.map(f => f.name)) : new Set<string>();
+            if (targetName !== ".." && !draggedNames.has(targetName)) {
+              targetLi.classList.add("dnd-drop-hover");
+            }
+          } else {
+            targetLi.classList.add("dnd-drop-hover");
+          }
+        }
+      }
+    };
+
+    const onDndMouseUp = (e: MouseEvent) => {
+      const dnd = dndRef.current;
+      if (!dnd) return;
+
+      cleanupDnd();
+
+      if (!dnd.active) {
+        dndRef.current = null;
+        return;
+      }
+
+      suppressClickRef.current = true;
+      dndRef.current = null;
+
+      const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
+      if (!elementUnder) {
+        safeCommandSilent("cancel_dnd");
+        return;
+      }
+
+      const targetPane = elementUnder.closest(".pane[data-pane-handle]") as HTMLElement | null;
+      if (!targetPane) {
+        safeCommandSilent("cancel_dnd");
+        return;
+      }
+
+      const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
+      const isSamePane = targetPaneHandle === paneHandle;
+
+      let subdirectory: string | null = null;
+      const targetLi = elementUnder.closest("li.file-item[data-is-dir='true']") as HTMLElement | null;
+      if (targetLi) {
+        const targetName = targetLi.dataset.name || null;
+        if (isSamePane) {
+          // Same pane: don't drop onto ".." or a dir being dragged
+          const draggedNames = new Set(dnd.files.map(f => f.name));
+          if (targetName && targetName !== ".." && !draggedNames.has(targetName)) {
+            subdirectory = targetName;
+          }
+        } else if (targetName) {
+          subdirectory = targetName;
+        }
+      }
+
+      // Same pane requires a directory target (otherwise it's a no-op)
+      if (isSamePane && !subdirectory) {
+        safeCommandSilent("cancel_dnd");
+        return;
+      }
+
+      safeCommand("execute_dnd", {
+        destinationPane: targetPaneHandle,
+        subdirectory,
+        isMove: e.shiftKey,
+      });
+    };
+
+    document.addEventListener("mousemove", onDndMouseMove);
+    document.addEventListener("mouseup", onDndMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onDndMouseMove);
+      document.removeEventListener("mouseup", onDndMouseUp);
+    };
+  }, [paneHandle, cleanupDnd]);
+
+  // Cancel DnD when files change
+  useEffect(() => {
+    const dnd = dndRef.current;
+    if (dnd?.active) {
+      cleanupDnd();
+      safeCommandSilent("cancel_dnd");
+    }
+    dndRef.current = null;
+  }, [files]);
+
+  // --- End DnD logic ---
+
   const open = async (file: File) => {
     if (!file) return;
 
@@ -1072,6 +1297,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
   return (
     <div
       className={`pane ${showSpinner ? "pane-busy" : ""}`}
+      data-pane-handle={paneHandle}
       onClick={() => command("focus")}
     >
       <input
@@ -1135,9 +1361,11 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
               <li
                 key={row.name}
                 data-name={row.name}
+                data-is-dir={row.is_dir ? "true" : undefined}
                 className={`file-item ${active && row.name == focused ? "focused" : ""
                   } ${selectedLookup.has(row.name) ? "selected" : ""}`}
                 onClick={onClick}
+                onMouseDown={onDndMouseDown}
                 onDoubleClick={() => open(row)}
               >
                 {columns.map((column) => (
@@ -1158,6 +1386,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
           <div className="drag-rect" ref={dragRectRef} />
         </ul>
       )}
+      <div className="dnd-ghost" ref={dndGhostRef} />
       <div className="statusbar">
         {showSpinner && "Loading file list..."}
         {!showSpinner && selected.length > 0 && (
@@ -1279,6 +1508,22 @@ function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusGeneration, setFocusGeneration] = useState(0);
+  const [initStatus, setInitStatus] = useState("Connecting...");
+  const [initError, setInitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const appWindow = getCurrentWebviewWindow();
+    const unlistenStatus = appWindow.listen<string>("init_status", (e) => {
+      setInitStatus(e.payload);
+    });
+    const unlistenError = appWindow.listen<string>("init_error", (e) => {
+      setInitError(e.payload);
+    });
+    return () => {
+      unlistenStatus.then((f) => f());
+      unlistenError.then((f) => f());
+    };
+  }, []);
 
   // Derive the foreground operation: first non-backgrounded op by ID order
   const foregroundOp = useMemo(() => {
@@ -1339,40 +1584,49 @@ function App() {
           onCloseAutoFocus={refocusActivePane}
         />
         <div className="container">
-          <Allotment vertical separator>
-            <Allotment minSize={200}>
-              {remoteState &&
-                remoteState.panes.map((props, i) => (
-                  <Pane
-                    key={i}
-                    paneHandle={i}
-                    {...props}
-                    focusGeneration={focusGeneration}
-                    active={
-                      remoteState.display_options.panes_focused &&
-                      remoteState.display_options.active_pane === i
-                    }
-                  />
+          {!remoteState && (
+            <div className="connecting-screen">
+              {!initError && <div className="connecting-spinner" />}
+              {!initError && <div className="connecting-text">{initStatus}</div>}
+              {initError && <div className="connecting-error">{initError}</div>}
+            </div>
+          )}
+          {remoteState && (
+            <>
+              <Allotment vertical separator>
+                <Allotment minSize={200}>
+                  {remoteState.panes.map((props, i) => (
+                    <Pane
+                      key={i}
+                      paneHandle={i}
+                      {...props}
+                      focusGeneration={focusGeneration}
+                      active={
+                        remoteState.display_options.panes_focused &&
+                        remoteState.display_options.active_pane === i
+                      }
+                    />
+                  ))}
+                </Allotment>
+                {Object.values(remoteState.terminals).map((term) => (
+                  <Allotment.Pane preferredSize="20%" key={term.handle}>
+                    <Terminal
+                      handle={term.handle}
+                      active={
+                        !remoteState.display_options.panes_focused &&
+                        remoteState.display_options.active_terminal === term.handle
+                      }
+                    />
+                  </Allotment.Pane>
                 ))}
-            </Allotment>
-            {remoteState &&
-              Object.values(remoteState.terminals).map((term) => (
-                <Allotment.Pane preferredSize="20%" key={term.handle}>
-                  <Terminal
-                    handle={term.handle}
-                    active={
-                      !remoteState.display_options.panes_focused &&
-                      remoteState.display_options.active_terminal === term.handle
-                    }
-                  />
-                </Allotment.Pane>
-              ))}
-          </Allotment>
-          {remoteState && Object.keys(remoteState.operations).length > 0 && (
-            <OperationsPanel
-              operations={remoteState.operations}
-              foregroundOperationId={foregroundOp?.id}
-            />
+              </Allotment>
+              {Object.keys(remoteState.operations).length > 0 && (
+                <OperationsPanel
+                  operations={remoteState.operations}
+                  foregroundOperationId={foregroundOp?.id}
+                />
+              )}
+            </>
           )}
         </div>
       </TerminalData.Provider>

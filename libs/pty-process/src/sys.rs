@@ -151,11 +151,20 @@ impl Pts {
     }
 
     pub fn session_leader(&self) -> impl FnMut() -> std::io::Result<()> {
-        let pts_fd = self.0.as_raw_fd();
         move || {
             nix::unistd::setsid()?;
-            // Safety: OwnedFds are required to contain a valid file descriptor
-            unsafe { set_controlling_terminal_unsafe(pts_fd, std::ptr::null()) }?;
+            // Use fd 0 (stdin) for TIOCSCTTY — by this point stdin has been
+            // dup2'd to the PTS slave. We can't use the original PTS fd because
+            // std::process closes all O_CLOEXEC fds before running pre_exec.
+            //
+            // Call libc::ioctl directly instead of using the nix ioctl_write_ptr_bad!
+            // macro, because TIOCSCTTY expects an integer argument (0 = don't steal),
+            // not a pointer. The nix macro passes a *const c_int which may not be
+            // equivalent to integer 0 with musl's variadic argument handling.
+            let ret = unsafe { libc::ioctl(0, libc::TIOCSCTTY, 0 as libc::c_int) };
+            if ret != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         }
     }
