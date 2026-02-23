@@ -1,29 +1,29 @@
 import {
   Fragment,
-  useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
-import { Command, commands, executeCommand } from "../../lib/commands";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Command } from "cmdk";
+import { Command as CommandType, commands, executeCommand } from "../../lib/commands";
 import { MainWindowState } from "../MainWindow";
 
 type CommandPaletteProps = {
-  state: MainWindowState;
+  open: boolean;
+  state: MainWindowState | null;
   onClose: () => void;
+  onCloseAutoFocus: (e: Event) => void;
 };
 
 function Highlight(props: {
   name: string;
   filter: string;
-  paneHandle?: number;
 }) {
   const { name, filter } = props;
   let key = 0;
   let a = 0;
   let b = 0;
-  const parts = [];
+  const parts: JSX.Element[] = [];
   while (a < filter.length && b < name.length) {
     if (filter[a].toLowerCase() === name[b].toLowerCase()) {
       parts.push(
@@ -47,27 +47,15 @@ function Highlight(props: {
 }
 
 export default function CommandPalette({
+  open,
   state,
   onClose,
+  onCloseAutoFocus,
 }: CommandPaletteProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
+  const [filter, setFilter] = useState("");
 
   const paneHandle =
-    state.display_options.panes_focused && state.display_options.active_pane;
-
-  const [filter, setFilter] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  useEffect(() => {
-    setFilter("");
-    setActiveIndex(0);
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [filter]);
+    state?.display_options.panes_focused && state?.display_options.active_pane;
 
   const filteredCommands = useMemo(() => {
     let ret = commands.map((command) => {
@@ -101,82 +89,55 @@ export default function CommandPalette({
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);
-  }, [filter]);
+  }, [filter, paneHandle]);
 
-  const onClick = (command: Command) => {
-    executeCommand(command, state);
+  const onSelect = (value: string) => {
+    const index = parseInt(value, 10);
+    const command = filteredCommands[index];
+    if (command && state) {
+      executeCommand(command, state);
+    }
     onClose();
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown") {
-      setActiveIndex((i) => (i + 1) % filteredCommands.length);
-    } else if (e.key === "ArrowUp") {
-      setActiveIndex(
-        (i) => (i - 1 + filteredCommands.length) % filteredCommands.length
-      );
-    } else if (e.key === "Enter") {
-      onClick(filteredCommands[activeIndex]);
-    } else if (e.key === "Escape") {
-      onClose();
-    } else {
-      return;
-    }
-
-    e.preventDefault();
-  };
-
-  useLayoutEffect(() => {
-    if (listRef.current) {
-      const activeElement = listRef.current.querySelector(".active");
-      if (activeElement) {
-        activeElement.scrollIntoView({ block: "nearest" });
-      }
-    }
-  }, [activeIndex]);
-
   return (
-    <>
-      <div className="command-palette-header">
-        <input
-          ref={inputRef}
-          onKeyDown={onKeyDown}
-          type="text"
-          name="path"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          onBlur={onClose}
-          placeholder="Start typing to filter commands"
-          size={60}
-          autoFocus
-        />
-      </div>
-      <ul className="commands" ref={listRef}>
-        {!filteredCommands.length && (
-          <li>
-            <span>No commands found</span>
-          </li>
-        )}
-        {filteredCommands.map((command, i) => (
-          <li
-            className={`command ${i === activeIndex ? "active" : ""}`}
-            onClick={() => onClick(command)}
-            key={i}
-          >
-            <Highlight name={command.name} filter={filter} />
-            {command.shortcut && (
-              <div className="shortcut">
-                {command.shortcut.render().map((e, i) => (
-                  <Fragment key={i}>
-                    {i !== 0 ? " + " : ""}
-                    <kbd>{e}</kbd>
-                  </Fragment>
-                ))}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </>
+    <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Content className="command-palette-content" onCloseAutoFocus={onCloseAutoFocus}>
+          <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
+          <Command shouldFilter={false}>
+            <div className="command-palette-header">
+              <Command.Input
+                value={filter}
+                onValueChange={setFilter}
+                placeholder="Start typing to filter commands"
+              />
+            </div>
+            <Command.List>
+              <Command.Empty>No commands found</Command.Empty>
+              {filteredCommands.map((command, i) => (
+                <Command.Item
+                  key={`${command.name}-${i}`}
+                  value={String(i)}
+                  onSelect={onSelect}
+                >
+                  <Highlight name={command.name} filter={filter} />
+                  {command.shortcut && (
+                    <div className="shortcut">
+                      {command.shortcut.render().map((e, i) => (
+                        <Fragment key={i}>
+                          {i !== 0 ? " + " : ""}
+                          <kbd>{e}</kbd>
+                        </Fragment>
+                      ))}
+                    </div>
+                  )}
+                </Command.Item>
+              ))}
+            </Command.List>
+          </Command>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

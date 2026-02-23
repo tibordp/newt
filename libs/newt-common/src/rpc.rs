@@ -335,9 +335,27 @@ impl Communicator {
         Self::with_dispatcher(NullDispatcher, stream)
     }
 
-    pub fn with_dispatcher<D: Dispatcher, S: Stream>(dispatcher: D, stream: S) -> Self {
-        let (outbox, inbox) = tokio::sync::mpsc::unbounded_channel();
+    /// Create a pre-connected outbox channel that can be passed to
+    /// `with_dispatcher_and_outbox`. This allows other components (like
+    /// OperationDispatcher) to send messages before the Communicator is built.
+    pub fn create_outbox() -> (
+        tokio::sync::mpsc::UnboundedSender<Message>,
+        tokio::sync::mpsc::UnboundedReceiver<Message>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
 
+    pub fn with_dispatcher<D: Dispatcher, S: Stream>(dispatcher: D, stream: S) -> Self {
+        let (outbox, inbox) = Self::create_outbox();
+        Self::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox)
+    }
+
+    pub fn with_dispatcher_and_outbox<D: Dispatcher, S: Stream>(
+        dispatcher: D,
+        stream: S,
+        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+        inbox: tokio::sync::mpsc::UnboundedReceiver<Message>,
+    ) -> Self {
         let ret = Arc::new(CommunicatorInner {
             request_id: AtomicU64::new(0),
             tasks: Mutex::new(HashMap::new()),
@@ -400,6 +418,10 @@ impl Communicator {
         self.0.outbox.send(message).map_err(|_| Error::Connection)?;
 
         Ok(())
+    }
+
+    pub fn outbox(&self) -> tokio::sync::mpsc::UnboundedSender<Message> {
+        self.0.outbox.clone()
     }
 
     pub async fn closed(&self) {

@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod filesystem;
+pub mod operation;
 pub mod rpc;
 pub mod sys;
 pub mod terminal;

@@ -6,6 +6,67 @@
   font-size: 150%;
 }
 
+/* Adwaita button styles */
+button,
+input[type="submit"] {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--fg-color);
+  background: var(--button-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: default;
+
+  &:hover {
+    background: var(--button-hover-bg);
+  }
+
+  &:active {
+    background: var(--button-active-bg);
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+
+  &.suggested {
+    background: var(--suggested-bg);
+    color: var(--accent-fg);
+    border-color: transparent;
+
+    &:hover {
+      background: var(--suggested-hover-bg);
+    }
+
+    &:active {
+      background: var(--suggested-active-bg);
+    }
+  }
+}
+
+/* Adwaita input styles */
+input[type="text"] {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--fg-color);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+
+  &:focus {
+    outline: var(--focus-ring);
+    outline-offset: -1px;
+  }
+}
+
 .file-icon {
   position: relative;
   display: inline-block;
@@ -60,8 +121,8 @@
   display: flex;
   gap: 5px;
   padding: 0.2em 0.3em 0.2em 0.3em;
-  background: #fafafa;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--headerbar-bg);
+  border-bottom: 1px solid var(--border-color);
   z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -82,7 +143,7 @@
   flex-shrink: 0;
   overflow-x: hidden;
   z-index: 1;
-  background: #fafafa;
+  background: var(--headerbar-bg);
   box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
 }
 
@@ -113,11 +174,11 @@ ul.files {
     padding-right: 20px;
 
     &.focused {
-      background: #e8f0fe;
+      background: var(--selected-bg);
     }
 
     &.selected {
-      color: red;
+      color: var(--accent-color);
     }
   }
 }
@@ -138,10 +199,10 @@ ul.files {
   display: flex;
   gap: 1em;
   position: relative;
-  border-right: 1px solid rgba(0, 0, 0, 0.15);
+  border-right: 1px solid var(--border-color);
 
   .sorting-indicator {
-    color: #aaa;
+    color: var(--dim-fg-color);
   }
 
   .subcolumn {
@@ -163,7 +224,7 @@ ul.files {
 }
 
 .sortable:hover {
-  background: #f4f4f4;
+  background: var(--button-bg);
   cursor: pointer;
 }
 
@@ -191,7 +252,7 @@ ul.files {
   margin-left: -0.75px;
   margin-right: -0.75px;
   height: 22px;
-  border-left: 1.5px solid black;
+  border-left: 1.5px solid var(--fg-color);
   left: 0;
   animation: blink step-end 1s infinite;
 }
@@ -205,7 +266,7 @@ ul.files {
 
 .statusbar {
   padding: 0.2em;
-  background: #f0f0f0;
+  background: var(--statusbar-bg);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -247,48 +308,33 @@ ul.files {
 }
 
 a.path-breadcrumb {
-  color: black;
+  color: var(--fg-color);
   text-decoration: none;
 }
 
 a.path-breadcrumb:hover {
-  color: black;
+  color: var(--fg-color);
   text-decoration: underline;
 }
 
-.modal-overlay {
+/* Dialog content (Radix Dialog) */
+.dialog-content {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.05);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.command-palette-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  z-index: 100;
-  pointer-events: none;
-}
-
-.modal {
-  margin: 1em;
-  background-color: #fefefe;
-  border-radius: 0.5em;
-  border: 1px solid #ccc;
-  box-shadow: 0 1px 10px 6px rgba(0, 0, 0, 0.1);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--base-color);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
   z-index: 201;
   max-width: 80%;
   max-height: 80%;
   overflow: auto;
+
+  &:focus {
+    outline: none;
+  }
 }
 
 .dialog-contents {
@@ -300,15 +346,19 @@ a.path-breadcrumb:hover {
 .dialog-buttons {
   padding: 1em;
   display: flex;
-  gap: 1em;
+  gap: 0.5em;
   justify-content: flex-end;
 }
 
-h2 {
+.dialog-title {
   font-weight: bold;
   font-size: 1.2em;
   margin: 0;
   padding-bottom: 0.5em;
+}
+
+.dialog-summary {
+  margin: 0 0 0.5em 0;
 }
 
 label {
@@ -317,70 +367,24 @@ label {
   padding-bottom: 0.2em;
 }
 
-.modal input {
-  color: inherit;
-  font-family: inherit;
-  font-size: 100%;
-}
-
-.modal,
-.command-palette {
-  .synthetic-focus,
-  [tabindex="0"]:focus,
-  [tabindex="-1"]:focus,
-  button:focus,
-  input[type="button"]:focus,
-  input[type="submit"]:focus,
-  input[type="checkbox"]:focus,
-  input[type="search"]:focus,
-  input[type="text"]:focus,
-  select:focus,
-  textarea:focus {
-    outline-width: 1px;
-    outline-style: solid;
-    outline-offset: -1px;
-    outline-color: #0090f1;
-    opacity: 1;
-  }
-
-  [tabindex="0"]:active,
-  [tabindex="-1"]:active,
-  input[type="button"]:active,
-  input[type="submit"]:active,
-  input[type="checkbox"]:active,
-  select:active {
-    outline: 0 !important;
-  }
-
-  input[type="text"] {
-    background-color: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-size: 13px;
-    width: 100%;
-    outline-width: 1px;
-    outline-style: solid;
-    outline-offset: -1px;
-    outline-color: #ccc;
-    padding: 4px 6px;
-    text-overflow: ellipsis;
-  }
-
-  input[type="text"]:focus {
-    outline-color: #0090f1;
-  }
-}
-
-.command-palette {
-  background-color: #fefefe;
-  border-radius: 0.5em;
-  border: 1px solid #ccc;
-  box-shadow: 0 1px 10px 6px rgba(0, 0, 0, 0.1);
+/* Command palette content (Radix Dialog + cmdk) */
+.command-palette-content {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--base-color);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
   z-index: 201;
+  width: 500px;
   max-width: 80%;
-  max-height: 80%;
-  overflow: auto;
-  pointer-events: initial;
+  overflow: hidden;
+
+  &:focus {
+    outline: none;
+  }
 }
 
 .command-palette-header {
@@ -389,52 +393,246 @@ label {
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.08);
+
+  [cmdk-input] {
+    font-family: inherit;
+    font-size: inherit;
+    color: var(--fg-color);
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    width: 100%;
+    outline: none;
+
+    &:focus {
+      outline: var(--focus-ring);
+      outline-offset: -1px;
+    }
+  }
 }
 
-ul.commands {
+[cmdk-list] {
   padding: 6px;
-  list-style: none;
   margin: 0;
-
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden;
   max-height: 250px;
+}
 
-  > li {
-    cursor: pointer;
-    display: flex;
-    border-radius: 3px;
-    width: 100%;
-    height: 24px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px;
+[cmdk-item] {
+  cursor: pointer;
+  display: flex;
+  border-radius: 6px;
+  width: 100%;
+  height: 24px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px;
 
-    &.command:hover {
-      background: #f4f4f4;
+  &:hover {
+    background: var(--button-bg);
+  }
+
+  &[data-selected="true"] {
+    background: var(--accent-bg);
+    color: var(--accent-fg);
+
+    .shortcut kbd {
+      color: var(--accent-fg);
+      background: rgba(255, 255, 255, 0.2);
+      box-shadow: none;
     }
+  }
 
-    &.command.active {
-      background: #0f61b3;
-      color: white;
+  .highlight {
+    font-weight: bold;
+  }
+
+  .shortcut {
+    font-size: 10px;
+
+    kbd {
+      color: #222;
+      background: #eee;
+      border-radius: 3px;
+      padding: 2px 4px;
+      box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+      font-family: system-ui, -apple-system, sans-serif;
     }
+  }
+}
 
-    .highlight {
-      font-weight: bold;
-    }
+[cmdk-empty] {
+  padding: 6px;
+  text-align: center;
+  color: var(--dim-fg-color);
+}
 
-    .shortcut {
-      font-size: 10px;
+/* Operations panel */
+.operations-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 30%;
+  background: var(--base-color);
+  border-top: 1px solid var(--border-color);
+  padding: 2px 8px;
+}
 
-      kbd {
-        color: #222;
-        background: #eee;
-        border-radius: 3px;
-        padding: 2px 4px;
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
-        font-family: system-ui, -apple-system, sans-serif;
-      }
-    }
+.operation-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  min-height: 24px;
+
+  & + & {
+    border-top: 1px solid var(--border-color);
+  }
+}
+
+.operation-info {
+  flex-shrink: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+}
+
+.operation-kind {
+  font-weight: bold;
+  text-transform: capitalize;
+  flex-shrink: 0;
+  font-size: 0.9em;
+}
+
+.operation-description {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim-fg-color);
+  font-size: 0.9em;
+}
+
+.operation-progress {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.progress-bar {
+  width: 80px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+.progress-text {
+  font-size: 0.8em;
+  color: var(--dim-fg-color);
+  white-space: nowrap;
+}
+
+.operation-status-done {
+  color: #00BC00;
+  font-size: 0.85em;
+}
+
+.operation-status-failed {
+  color: #cd3131;
+  font-size: 0.85em;
+}
+
+.operation-status-cancelled {
+  color: var(--dim-fg-color);
+  font-size: 0.85em;
+}
+
+.operation-actions {
+  flex-shrink: 0;
+
+  button {
+    padding: 2px 8px;
+    font-size: 0.8em;
+  }
+}
+
+/* Issue resolution inline UI */
+.issue-resolution {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.issue-message {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #cd3131;
+  font-size: 0.85em;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.issue-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+
+  button {
+    padding: 1px 8px;
+    font-size: 0.8em;
+  }
+}
+
+.apply-to-all {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8em !important;
+  padding-bottom: 0 !important;
+  white-space: nowrap;
+  cursor: pointer;
+
+  input[type="checkbox"] {
+    margin: 0;
+  }
+}
+
+/* Copy/Move dialog options */
+.copy-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.option-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95em !important;
+  padding-bottom: 0 !important;
+  cursor: pointer;
+
+  input[type="checkbox"] {
+    margin: 0;
   }
 }

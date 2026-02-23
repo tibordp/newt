@@ -3,9 +3,11 @@ pub mod terminal;
 
 use async_compression::tokio::bufread::ZstdDecoder;
 use async_compression::tokio::write::ZstdEncoder;
+use newt_common::api::API_OPERATION_PROGRESS;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::Remote;
 use newt_common::filesystem::UserGroup;
+use newt_common::operation::{OperationId, OperationProgress};
 use newt_common::rpc::Communicator;
 
 use newt_common::terminal::TerminalClient;
@@ -14,6 +16,7 @@ use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
@@ -173,6 +176,64 @@ impl serde::Serialize for Terminals {
 }
 
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatus {
+    Scanning,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    WaitingForInput,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct OperationIssueInfo {
+    pub issue_id: u64,
+    pub kind: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub actions: Vec<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct OperationState {
+    pub id: OperationId,
+    pub kind: String,
+    pub description: String,
+    pub total_bytes: Option<u64>,
+    pub total_items: Option<u64>,
+    pub bytes_done: u64,
+    pub items_done: u64,
+    pub current_item: String,
+    pub status: OperationStatus,
+    pub error: Option<String>,
+    pub issue: Option<OperationIssueInfo>,
+}
+
+#[derive(Clone)]
+pub struct Operations(pub Arc<RwLock<HashMap<OperationId, OperationState>>>);
+
+impl Default for Operations {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(HashMap::new())))
+    }
+}
+
+impl serde::Serialize for Operations {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        let lock = self.0.read();
+        let mut map = serializer.serialize_map(Some(lock.len()))?;
+        for (k, v) in lock.iter() {
+            map.serialize_entry(&k.to_string(), v)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory {
@@ -194,6 +255,11 @@ pub enum ModalDataKind {
     Rename {
         base_path: PathBuf,
         name: String,
+    },
+    CopyMove {
+        kind: String,
+        sources: Vec<PathBuf>,
+        destination: PathBuf,
     },
 }
 
@@ -233,6 +299,7 @@ pub struct MainWindowState {
     pub terminals: Terminals,
     pub modal: ModalState,
     pub display_options: DisplayOptions,
+    pub operations: Operations,
     pub window_title: String,
 }
 
@@ -245,11 +312,12 @@ impl MainWindowState {
             terminals: Terminals::new(),
             modal: ModalState::default(),
             display_options,
+            operations: Operations::default(),
             window_title: "Newt".to_string(),
         }
     }
 
-    fn other_pane(&self, handle: PaneHandle) -> Arc<Pane> {
+    pub fn other_pane(&self, handle: PaneHandle) -> Arc<Pane> {
         self.panes.get(PaneHandle(1 - handle.0)).unwrap()
     }
 
@@ -290,9 +358,118 @@ impl MainWindowState {
         }
     }
 }
+struct HostDispatcher {
+    operations: Operations,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
+}
+
+#[async_trait::async_trait]
+impl newt_common::rpc::Dispatcher for HostDispatcher {
+    async fn invoke(
+        &self,
+        _api: newt_common::rpc::Api,
+        _req: bytes::Bytes,
+    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
+        Ok(None)
+    }
+
+    async fn notify(
+        &self,
+        api: newt_common::rpc::Api,
+        req: bytes::Bytes,
+    ) -> Result<bool, newt_common::Error> {
+        if api == API_OPERATION_PROGRESS {
+            let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
+
+            {
+                let mut ops = self.operations.0.write();
+                match progress {
+                    OperationProgress::Prepared {
+                        id,
+                        total_bytes,
+                        total_items,
+                    } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.total_bytes = Some(total_bytes);
+                            op.total_items = Some(total_items);
+                            op.status = OperationStatus::Running;
+                        }
+                    }
+                    OperationProgress::Progress {
+                        id,
+                        bytes_done,
+                        items_done,
+                        current_item,
+                    } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.bytes_done = bytes_done;
+                            op.items_done = items_done;
+                            op.current_item = current_item;
+                            op.status = OperationStatus::Running;
+                            op.issue = None;
+                        }
+                    }
+                    OperationProgress::Completed { id } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.status = OperationStatus::Completed;
+                        }
+                    }
+                    OperationProgress::Failed { id, error } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.status = OperationStatus::Failed;
+                            op.error = Some(error);
+                        }
+                    }
+                    OperationProgress::Cancelled { id } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.status = OperationStatus::Cancelled;
+                        }
+                    }
+                    OperationProgress::Issue { id, issue } => {
+                        if let Some(op) = ops.get_mut(&id) {
+                            op.status = OperationStatus::WaitingForInput;
+                            op.issue = Some(OperationIssueInfo {
+                                issue_id: issue.issue_id,
+                                kind: format!("{:?}", issue.kind),
+                                message: issue.message,
+                                detail: issue.detail,
+                                actions: issue
+                                    .actions
+                                    .iter()
+                                    .map(|a| match a {
+                                        newt_common::operation::IssueAction::Skip => {
+                                            "skip".to_string()
+                                        }
+                                        newt_common::operation::IssueAction::Overwrite => {
+                                            "overwrite".to_string()
+                                        }
+                                        newt_common::operation::IssueAction::Retry => {
+                                            "retry".to_string()
+                                        }
+                                        newt_common::operation::IssueAction::Abort => {
+                                            "abort".to_string()
+                                        }
+                                    })
+                                    .collect(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            let _ = self.publisher.publish();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
 struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
     terminal_client: Arc<dyn TerminalClient>,
+    communicator: Communicator,
+    next_operation_id: AtomicU64,
 
     window: WebviewWindow,
     main_window_state: MainWindowState,
@@ -344,31 +521,30 @@ impl MainWindowContext {
         }
 
         let stream = tokio_duplex::Duplex::new(rx, tx);
-        let communicator = Communicator::new(stream);
+
+        // Create state and publisher first, so HostDispatcher can reference them
+        let global_state = MainWindowState::new();
+        let publisher = Arc::new(UpdatePublisher::new(
+            window.clone(),
+            "main_window",
+            global_state.clone(),
+        ));
+
+        let host_dispatcher = HostDispatcher {
+            operations: global_state.operations.clone(),
+            publisher: publisher.clone(),
+        };
+        let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
         let fs = Remote::new(communicator.clone());
-        let terminal_client = newt_common::terminal::Remote::new(communicator);
+        let terminal_client = newt_common::terminal::Remote::new(communicator.clone());
 
         tokio::spawn(async move {
             let ret = child.wait().await.unwrap();
             eprintln!("child exited: {}", ret);
         });
 
-        /*
-
-        let fs = newt_common::filesystem::Local::new();
-        let terminal_client = newt_common::terminal::Local::new();
-
-        */
-
         let fs = Arc::new(fs);
         let terminal_client = Arc::new(terminal_client);
-        let global_state = MainWindowState::new();
-
-        let publisher = Arc::new(UpdatePublisher::new(
-            window.clone(),
-            "main_window",
-            global_state.clone(),
-        ));
 
         global_state.panes.add(Pane::new(
             fs.clone(),
@@ -394,6 +570,8 @@ impl MainWindowContext {
             inner: Arc::new(MainWindowContextInner {
                 fs,
                 terminal_client,
+                communicator,
+                next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
                 main_window_state: global_state,
@@ -517,8 +695,24 @@ impl MainWindowContext {
         })
     }
 
+    pub fn communicator(&self) -> &Communicator {
+        &self.inner.communicator
+    }
+
+    pub fn next_operation_id(&self) -> OperationId {
+        self.inner.next_operation_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn operations(&self) -> &Operations {
+        &self.inner.main_window_state.operations
+    }
+
     pub fn publish_full(&self) -> Result<(), Error> {
         self.inner.publisher.publish_full()
+    }
+
+    pub fn publish(&self) -> Result<(), Error> {
+        self.inner.publisher.publish()
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {
