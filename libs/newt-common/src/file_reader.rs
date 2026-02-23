@@ -1,6 +1,5 @@
-use std::path::PathBuf;
-
 use crate::rpc::Communicator;
+use crate::vfs::VfsPath;
 use crate::Error;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -18,8 +17,8 @@ pub struct FileChunk {
 
 #[async_trait::async_trait]
 pub trait FileReader: Send + Sync {
-    async fn file_info(&self, path: PathBuf) -> Result<FileInfo, Error>;
-    async fn read_range(&self, path: PathBuf, offset: u64, length: u64)
+    async fn file_info(&self, path: VfsPath) -> Result<FileInfo, Error>;
+    async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
         -> Result<FileChunk, Error>;
 }
 
@@ -39,7 +38,8 @@ impl Default for Local {
 
 #[async_trait::async_trait]
 impl FileReader for Local {
-    async fn file_info(&self, path: PathBuf) -> Result<FileInfo, Error> {
+    async fn file_info(&self, path: VfsPath) -> Result<FileInfo, Error> {
+        let path = path.path;
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
 
@@ -60,10 +60,11 @@ impl FileReader for Local {
 
     async fn read_range(
         &self,
-        path: PathBuf,
+        path: VfsPath,
         offset: u64,
         length: u64,
     ) -> Result<FileChunk, Error> {
+        let path = path.path;
         tokio::task::spawn_blocking(move || {
             use std::io::{Read, Seek, SeekFrom};
 
@@ -107,7 +108,7 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl FileReader for Remote {
-    async fn file_info(&self, path: PathBuf) -> Result<FileInfo, Error> {
+    async fn file_info(&self, path: VfsPath) -> Result<FileInfo, Error> {
         let ret: Result<FileInfo, Error> = self
             .communicator
             .invoke(crate::api::API_FILE_INFO, &path)
@@ -118,7 +119,7 @@ impl FileReader for Remote {
 
     async fn read_range(
         &self,
-        path: PathBuf,
+        path: VfsPath,
         offset: u64,
         length: u64,
     ) -> Result<FileChunk, Error> {

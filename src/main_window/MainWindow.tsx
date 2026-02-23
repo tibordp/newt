@@ -37,6 +37,7 @@ import "xterm/css/xterm.css";
 
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { commands, executeCommand, modifiers } from "../lib/commands";
+import { VfsPath } from "../lib/types";
 import CommandPalette from "./modals/CommandPalette";
 import OperationsPanel, { OperationState, OperationProgressModal } from "./OperationsPanel";
 
@@ -332,7 +333,7 @@ const columns: ColumnDef[] = [
         sortKey: "user",
       },
     ],
-    render: (info) => <>{info.user.name || info.user.id}</>,
+    render: (info) => <>{info.user?.name || info.user?.id}</>,
   },
   {
     align: "left",
@@ -344,7 +345,7 @@ const columns: ColumnDef[] = [
         sortKey: "group",
       },
     ],
-    render: (info) => <>{info.group.name || info.user.id}</>,
+    render: (info) => <>{info.group?.name || info.group?.id}</>,
   },
   {
     align: "left",
@@ -372,8 +373,8 @@ type FsStats = {
 };
 
 type PaneState = {
-  path: string;
-  pending_path?: string;
+  path: VfsPath;
+  pending_path?: VfsPath;
   sorting: Sorting;
   files: File[];
   focused?: string;
@@ -533,10 +534,11 @@ function ColumnHeader({
   );
 }
 
-function PathBreadcrumbs(props: { path: string; paneHandle: number }) {
-  let { path, paneHandle } = props;
+function PathBreadcrumbs(props: { path: VfsPath; paneHandle: number }) {
+  let { path: vfsPath, paneHandle } = props;
+  let pathStr = vfsPath.path;
 
-  let segments = ["/", ...path.split("/").filter((s) => s)];
+  let segments = ["/", ...pathStr.split("/").filter((s) => s)];
   let joined = segments.map((segment, i) => {
     if (i == 0) {
       return ["/", "/"];
@@ -1312,7 +1314,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGen
       <div className="header">
         <div className="header-path">
           <PathBreadcrumbs
-            path={pending_path || path}
+            path={pending_path ?? path}
             paneHandle={paneHandle}
           />
         </div>

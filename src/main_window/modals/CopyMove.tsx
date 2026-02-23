@@ -2,11 +2,12 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { VfsPath } from "../../lib/types";
 
 type CopyMoveProps = CommonDialogProps & {
   kind: string;
-  sources: string[];
-  destination: string;
+  sources: VfsPath[];
+  destination: VfsPath;
 };
 
 export default function CopyMove({
@@ -15,7 +16,7 @@ export default function CopyMove({
   destination: initialDestination,
   cancel,
 }: CopyMoveProps) {
-  const [destination, setDestination] = useState(initialDestination);
+  const [destinationPath, setDestinationPath] = useState(initialDestination.path);
   const [preserveTimestamps, setPreserveTimestamps] = useState(false);
   const [preserveOwner, setPreserveOwner] = useState(false);
   const [preserveGroup, setPreserveGroup] = useState(false);
@@ -35,6 +36,8 @@ export default function CopyMove({
       create_symlink: createSymlink,
     };
 
+    const destination = { vfs_id: initialDestination.vfs_id, path: destinationPath };
+
     const request = isCopy
       ? { Copy: { sources, destination, options } }
       : { Move: { sources, destination, options } };
@@ -46,7 +49,7 @@ export default function CopyMove({
   const itemCount = sources.length;
   const summary =
     itemCount === 1
-      ? sources[0].split("/").pop()
+      ? sources[0].path.split("/").pop()
       : `${itemCount} items`;
 
   return (
@@ -60,8 +63,8 @@ export default function CopyMove({
         </p>
         <input
           type="text"
-          value={destination}
-          onChange={(e) => setDestination(e.target.value)}
+          value={destinationPath}
+          onChange={(e) => setDestinationPath(e.target.value)}
           size={50}
           autoFocus
         />
@@ -109,7 +112,7 @@ export default function CopyMove({
         <button type="button" onClick={cancel}>
           Cancel
         </button>
-        <button type="submit" className="suggested" disabled={!destination}>
+        <button type="submit" className="suggested" disabled={!destinationPath}>
           {title}
         </button>
       </div>

@@ -10,6 +10,12 @@ use newt_common::rpc::Communicator;
 
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
+use newt_common::operation::OperationContext;
+use newt_common::vfs::{
+    LocalVfs, MountRequest, MountResponse, Vfs, VfsId, VfsRegistry, VfsRegistryFileReader,
+    VfsRegistryFs,
+};
+use newt_common::vfs_archive::ArchiveVfs;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -18,6 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
+use newt_common::vfs::VfsPath;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -258,29 +265,29 @@ impl serde::Serialize for Operations {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory {
-        path: PathBuf,
+        path: VfsPath,
     },
     CreateFile {
-        path: PathBuf,
+        path: VfsPath,
     },
     Properties {
-        paths: Vec<PathBuf>,
+        paths: Vec<VfsPath>,
 
         mode: Option<u32>,
         owner: Option<UserGroup>,
         group: Option<UserGroup>,
     },
     Navigate {
-        path: PathBuf,
+        path: VfsPath,
     },
     Rename {
-        base_path: PathBuf,
+        base_path: VfsPath,
         name: String,
     },
     CopyMove {
         kind: String,
-        sources: Vec<PathBuf>,
-        destination: PathBuf,
+        sources: Vec<VfsPath>,
+        destination: VfsPath,
     },
     ConnectRemote {
         host: String,
@@ -398,7 +405,7 @@ impl MainWindowState {
         let other_pane = self.other_pane(handle);
         let pane = self.panes.get(handle).unwrap();
 
-        pane.navigate(other_pane.path()).await?;
+        pane.navigate_to(other_pane.path()).await?;
 
         Ok(())
     }
@@ -653,6 +660,7 @@ struct MainWindowContextInner {
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
     communicator: Option<Communicator>,
+    registry: Option<Arc<VfsRegistry>>,
     next_operation_id: AtomicU64,
 
     window: WebviewWindow,
@@ -762,24 +770,27 @@ impl MainWindowContext {
             global_state.clone(),
         ));
 
-        let (fs, terminal_client, file_reader, operations_client, communicator, initial_dir): (
+        let (fs, terminal_client, file_reader, operations_client, communicator, registry, initial_dir): (
             Arc<dyn Filesystem>,
             Arc<dyn TerminalClient>,
             Arc<dyn FileReader>,
             Arc<dyn OperationsClient>,
             Option<Communicator>,
-            PathBuf,
+            Option<Arc<VfsRegistry>>,
+            VfsPath,
         ) = match &connection_target {
             ConnectionTarget::Local => {
                 let (progress_tx, mut progress_rx) =
                     tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
 
-                let fs = Arc::new(newt_common::filesystem::Local::new());
+                let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+                let op_context = Arc::new(OperationContext { registry: registry.clone() });
+                let fs: Arc<dyn Filesystem> = Arc::new(VfsRegistryFs::new(registry.clone()));
                 let terminal_client = Arc::new(newt_common::terminal::Local::new());
                 let file_reader: Arc<dyn FileReader> =
-                    Arc::new(newt_common::file_reader::Local::new());
+                    Arc::new(VfsRegistryFileReader::new(registry.clone()));
                 let operations_client: Arc<dyn OperationsClient> =
-                    Arc::new(newt_common::operation::Local::new(progress_tx));
+                    Arc::new(newt_common::operation::Local::new(progress_tx, op_context));
 
                 // Spawn a task to forward local progress updates to the UI state
                 let operations = global_state.operations.clone();
@@ -791,7 +802,7 @@ impl MainWindowContext {
                     }
                 });
 
-                let initial_dir = std::env::current_dir().unwrap();
+                let initial_dir = VfsPath::root(std::env::current_dir().unwrap());
 
                 (
                     fs,
@@ -799,6 +810,7 @@ impl MainWindowContext {
                     file_reader,
                     operations_client,
                     None,
+                    Some(registry),
                     initial_dir,
                 )
             }
@@ -831,7 +843,7 @@ impl MainWindowContext {
                 let initial_dir = fs
                     .shell_expand("~".to_string())
                     .await
-                    .unwrap_or_else(|_| PathBuf::from("/"));
+                    .unwrap_or_else(|_| VfsPath::root("/"));
 
                 (
                     fs,
@@ -839,6 +851,7 @@ impl MainWindowContext {
                     file_reader,
                     operations_client,
                     Some(communicator),
+                    None, // registry lives in the remote agent
                     initial_dir,
                 )
             }
@@ -888,7 +901,7 @@ impl MainWindowContext {
                 let initial_dir = fs
                     .shell_expand("~".to_string())
                     .await
-                    .unwrap_or_else(|_| PathBuf::from("/"));
+                    .unwrap_or_else(|_| VfsPath::root("/"));
 
                 (
                     fs,
@@ -896,6 +909,7 @@ impl MainWindowContext {
                     file_reader,
                     operations_client,
                     Some(communicator),
+                    None, // registry lives in the elevated agent
                     initial_dir,
                 )
             }
@@ -929,6 +943,7 @@ impl MainWindowContext {
                 file_reader,
                 operations_client,
                 communicator,
+                registry,
                 next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
@@ -1066,6 +1081,45 @@ impl MainWindowContext {
 
     pub fn publish(&self) -> Result<(), Error> {
         self.inner.publisher.publish()
+    }
+
+    pub async fn mount_archive(&self, host_path: VfsPath) -> Result<MountResponse, Error> {
+        if let Some(registry) = &self.inner.registry {
+            // Local mode: mount directly using the registry
+            let (host_vfs, local_path) = registry.resolve(&host_path)?;
+            let archive_vfs = ArchiveVfs::open(&*host_vfs, &local_path, host_path).await?;
+            let caps = archive_vfs.capabilities();
+            let vfs_id = registry.mount(Arc::new(archive_vfs));
+            Ok(MountResponse {
+                vfs_id,
+                capabilities: caps,
+            })
+        } else {
+            // Remote mode: use RPC
+            let ret: Result<MountResponse, newt_common::Error> = self
+                .communicator()
+                .invoke(
+                    newt_common::api::API_MOUNT_VFS,
+                    &MountRequest::Archive { host_path },
+                )
+                .await?;
+            Ok(ret?)
+        }
+    }
+
+    pub async fn unmount_vfs(&self, vfs_id: VfsId) -> Result<(), Error> {
+        if let Some(registry) = &self.inner.registry {
+            registry
+                .unmount(vfs_id)
+                .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)))?;
+            Ok(())
+        } else {
+            let ret: Result<(), newt_common::Error> = self
+                .communicator()
+                .invoke(newt_common::api::API_UNMOUNT_VFS, &vfs_id)
+                .await?;
+            Ok(ret?)
+        }
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {

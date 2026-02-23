@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -13,6 +12,8 @@ use crate::{
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
+    vfs::{MountRequest, MountResponse, Vfs, VfsCapabilities, VfsId, VfsPath, VfsRegistry},
+    vfs_archive::ArchiveVfs,
     Error,
 };
 
@@ -39,6 +40,10 @@ pub const API_TERMINAL_WAIT: Api = Api(105);
 pub const API_FILE_INFO: Api = Api(300);
 pub const API_READ_RANGE: Api = Api(301);
 
+pub const API_MOUNT_VFS: Api = Api(400);
+pub const API_UNMOUNT_VFS: Api = Api(401);
+pub const API_VFS_CAPABILITIES: Api = Api(402);
+
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
 }
@@ -56,38 +61,38 @@ impl Dispatcher for FilesystemDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_POLL_CHANGES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.poll_changes(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_LIST_FILES => {
-                let args: (PathBuf, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
+                let args: (VfsPath, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.list_files(args.0, args.1).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_RENAME => {
-                let (old_path, new_path): (PathBuf, PathBuf) =
+                let (old_path, new_path): (VfsPath, VfsPath) =
                     bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.rename(old_path, new_path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_TOUCH => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.touch(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_CREATE_DIRECTORY => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.create_directory(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_DELETE_ALL => {
-                let paths: Vec<PathBuf> = bincode::deserialize(&req[..]).unwrap();
+                let paths: Vec<VfsPath> = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.delete_all(paths).await;
 
                 bincode::serialize(&ret).unwrap()
@@ -195,13 +200,13 @@ impl Dispatcher for FileReaderDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_FILE_INFO => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.file_reader.file_info(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
             API_READ_RANGE => {
-                let (path, offset, length): (PathBuf, u64, u64) =
+                let (path, offset, length): (VfsPath, u64, u64) =
                     bincode::deserialize(&req[..]).unwrap();
                 let ret = self.file_reader.read_range(path, offset, length).await;
 
@@ -222,14 +227,19 @@ pub struct OperationDispatcher {
     outbox: tokio::sync::mpsc::UnboundedSender<Message>,
     operations: Arc<Mutex<HashMap<OperationId, OperationHandle>>>,
     next_issue_id: Arc<AtomicU64>,
+    context: Arc<operation::OperationContext>,
 }
 
 impl OperationDispatcher {
-    pub fn new(outbox: tokio::sync::mpsc::UnboundedSender<Message>) -> Self {
+    pub fn new(
+        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+        context: Arc<operation::OperationContext>,
+    ) -> Self {
         Self {
             outbox,
             operations: Arc::new(Mutex::new(HashMap::new())),
             next_issue_id: Arc::new(AtomicU64::new(1)),
+            context,
         }
     }
 }
@@ -268,6 +278,7 @@ impl Dispatcher for OperationDispatcher {
                     }
                 });
 
+                let context = self.context.clone();
                 tokio::spawn(async move {
                     operation::execute_operation(
                         id,
@@ -276,6 +287,7 @@ impl Dispatcher for OperationDispatcher {
                         cancel,
                         issue_resolvers,
                         next_issue_id,
+                        context,
                     )
                     .await;
                     operations.lock().remove(&id);
@@ -307,6 +319,77 @@ impl Dispatcher for OperationDispatcher {
             }
             _ => Ok(None),
         }
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+pub struct VfsDispatcher {
+    registry: Arc<VfsRegistry>,
+}
+
+impl VfsDispatcher {
+    pub fn new(registry: Arc<VfsRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for VfsDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_MOUNT_VFS => {
+                let request: MountRequest = bincode::deserialize(&req[..]).unwrap();
+                let ret: Result<MountResponse, Error> = match request {
+                    MountRequest::Archive { host_path } => {
+                        let resolve_result = self.registry.resolve(&host_path);
+                        match resolve_result {
+                            Ok((host_vfs, local_path)) => {
+                                match ArchiveVfs::open(&*host_vfs, &local_path, host_path).await {
+                                    Ok(archive_vfs) => {
+                                        let caps = archive_vfs.capabilities();
+                                        let vfs_id = self.registry.mount(Arc::new(archive_vfs));
+                                        Ok(MountResponse {
+                                            vfs_id,
+                                            capabilities: caps,
+                                        })
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                };
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_UNMOUNT_VFS => {
+                let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
+                let ret: Result<(), Error> = self
+                    .registry
+                    .unmount(vfs_id)
+                    .map(|_| ())
+                    .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)));
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_VFS_CAPABILITIES => {
+                let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
+                let ret: Result<VfsCapabilities, Error> = self
+                    .registry
+                    .get(vfs_id)
+                    .map(|vfs| vfs.capabilities())
+                    .ok_or_else(|| Error::Custom(format!("VFS {} not found", vfs_id)));
+
+                bincode::serialize(&ret).unwrap()
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ret.into()))
     }
 
     async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
