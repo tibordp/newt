@@ -208,6 +208,7 @@ pub struct OperationState {
     pub status: OperationStatus,
     pub error: Option<String>,
     pub issue: Option<OperationIssueInfo>,
+    pub backgrounded: bool,
 }
 
 #[derive(Clone)]
@@ -410,9 +411,7 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
                         }
                     }
                     OperationProgress::Completed { id } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.status = OperationStatus::Completed;
-                        }
+                        ops.remove(&id);
                     }
                     OperationProgress::Failed { id, error } => {
                         if let Some(op) = ops.get_mut(&id) {
@@ -421,9 +420,7 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
                         }
                     }
                     OperationProgress::Cancelled { id } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.status = OperationStatus::Cancelled;
-                        }
+                        ops.remove(&id);
                     }
                     OperationProgress::Issue { id, issue } => {
                         if let Some(op) = ops.get_mut(&id) {

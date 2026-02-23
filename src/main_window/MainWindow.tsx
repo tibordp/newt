@@ -38,7 +38,7 @@ import "xterm/css/xterm.css";
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { commands, executeCommand, modifiers } from "../lib/commands";
 import CommandPalette from "./modals/CommandPalette";
-import OperationsPanel, { OperationState } from "./OperationsPanel";
+import OperationsPanel, { OperationState, OperationProgressModal } from "./OperationsPanel";
 
 enablePatches();
 
@@ -1009,6 +1009,15 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusGeneration, setFocusGeneration] = useState(0);
 
+  // Derive the foreground operation: first non-backgrounded op by ID order
+  const foregroundOp = useMemo(() => {
+    if (!remoteState) return null;
+    const ops = Object.values(remoteState.operations)
+      .filter((op) => !op.backgrounded)
+      .sort((a, b) => a.id - b.id);
+    return ops.length > 0 ? ops[0] : null;
+  }, [remoteState?.operations]);
+
   const refocusActivePane = useCallback((e?: Event) => {
     e?.preventDefault();
     setFocusGeneration(g => g + 1);
@@ -1049,6 +1058,9 @@ function App() {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+        {foregroundOp && (
+          <OperationProgressModal op={foregroundOp} onCloseAutoFocus={refocusActivePane} />
+        )}
         <CommandPalette
           open={paletteOpen}
           state={remoteState}
@@ -1086,7 +1098,10 @@ function App() {
               ))}
           </Allotment>
           {remoteState && Object.keys(remoteState.operations).length > 0 && (
-            <OperationsPanel operations={remoteState.operations} />
+            <OperationsPanel
+              operations={remoteState.operations}
+              foregroundOperationId={foregroundOp?.id}
+            />
           )}
         </div>
       </TerminalData.Provider>

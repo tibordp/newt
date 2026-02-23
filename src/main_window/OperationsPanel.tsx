@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { safeCommand } from "../lib/ipc";
+import * as Dialog from "@radix-ui/react-dialog";
 
-export type IssueAction = "skip" | "overwrite" | "retry" | "abort";
+export type IssueAction = "skip" | "overwrite" | "retry";
 
 export type OperationIssue = {
   issue_id: number;
@@ -29,9 +30,10 @@ export type OperationState = {
     | "waiting_for_input";
   error: string | null;
   issue: OperationIssue | null;
+  backgrounded: boolean;
 };
 
-function progressFraction(op: OperationState): number {
+export function progressFraction(op: OperationState): number {
   if (op.status === "scanning") return 0;
   if (op.total_bytes !== null && op.total_bytes > 0) {
     return op.bytes_done / op.total_bytes;
@@ -42,7 +44,7 @@ function progressFraction(op: OperationState): number {
   return 0;
 }
 
-function formatProgress(op: OperationState): string {
+export function formatProgress(op: OperationState): string {
   if (op.status === "scanning") return "Scanning...";
   if (op.total_bytes !== null && op.total_bytes > 0) {
     const pct = Math.round((op.bytes_done / op.total_bytes) * 100);
@@ -54,11 +56,10 @@ function formatProgress(op: OperationState): string {
   return "";
 }
 
-const ACTION_LABELS: Record<IssueAction, string> = {
+export const ACTION_LABELS: Record<IssueAction, string> = {
   skip: "Skip",
   overwrite: "Overwrite",
   retry: "Retry",
-  abort: "Abort",
 };
 
 function IssueResolution({
@@ -85,8 +86,8 @@ function IssueResolution({
     <div className="issue-resolution">
       <span className="issue-message">{issue.message}</span>
       <div className="issue-actions">
-        {issue.actions.map((action) => (
-          <button key={action} onClick={() => resolve(action)}>
+        {issue.actions.map((action, i) => (
+          <button key={action} autoFocus={i === 0} onClick={() => resolve(action)}>
             {ACTION_LABELS[action] || action}
           </button>
         ))}
@@ -109,12 +110,6 @@ function OperationRow({ op }: { op: OperationState }) {
     op.status === "running" ||
     op.status === "waiting_for_input";
   const isWaiting = op.status === "waiting_for_input" && op.issue;
-
-  useEffect(() => {
-    if (op.status === "completed" || op.status === "cancelled") {
-      safeCommand("dismiss_operation", { operationId: op.id });
-    }
-  }, [op.status, op.id]);
 
   return (
     <div className="operation-row">
@@ -174,12 +169,118 @@ function OperationRow({ op }: { op: OperationState }) {
   );
 }
 
+export function OperationProgressModal({
+  op,
+  onCloseAutoFocus,
+}: {
+  op: OperationState;
+  onCloseAutoFocus?: (e: Event) => void;
+}) {
+  const isActive =
+    op.status === "scanning" ||
+    op.status === "running" ||
+    op.status === "waiting_for_input";
+  const isWaiting = op.status === "waiting_for_input" && op.issue;
+
+  const backgroundOp = useCallback(() => {
+    safeCommand("background_operation", { operationId: op.id });
+  }, [op.id]);
+
+  const fraction = progressFraction(op);
+  const progress = formatProgress(op);
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) backgroundOp(); }}>
+      <Dialog.Portal>
+        <Dialog.Content
+          className="operation-modal-content"
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
+          <Dialog.Title className="operation-modal-header">
+            <span className="operation-modal-kind">{op.kind}</span>
+            <span className="operation-modal-description">{op.description}</span>
+          </Dialog.Title>
+
+          <div className="operation-modal-body">
+            {isWaiting ? (
+              <IssueResolution op={op} />
+            ) : (
+              <>
+                {(op.status === "scanning" || op.status === "running") && (
+                  <>
+                    <div className="operation-modal-progress-bar">
+                      <div
+                        className="operation-modal-progress-fill"
+                        style={{ width: `${fraction * 100}%` }}
+                      />
+                    </div>
+                    <div className="operation-modal-progress-info">
+                      <span className="operation-modal-progress-text">{progress}</span>
+                      {op.current_item && (
+                        <span className="operation-modal-current-item" title={op.current_item}>
+                          {op.current_item}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+                {op.status === "completed" && (
+                  <div className="operation-modal-status operation-modal-status-done">
+                    Completed
+                  </div>
+                )}
+                {op.status === "failed" && (
+                  <div className="operation-modal-status operation-modal-status-failed">
+                    Failed{op.error ? `: ${op.error}` : ""}
+                  </div>
+                )}
+                {op.status === "cancelled" && (
+                  <div className="operation-modal-status operation-modal-status-cancelled">
+                    Cancelled
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="operation-modal-footer">
+            {isActive && (
+              <>
+                <button
+                  onClick={() => safeCommand("cancel_operation", { operationId: op.id })}
+                >
+                  Cancel
+                </button>
+                <button className="suggested" autoFocus onClick={backgroundOp}>
+                  Background
+                </button>
+              </>
+            )}
+            {op.status === "failed" && (
+              <button
+                autoFocus
+                onClick={() => safeCommand("dismiss_operation", { operationId: op.id })}
+              >
+                Close
+              </button>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export default function OperationsPanel({
   operations,
+  foregroundOperationId,
 }: {
   operations: Record<string, OperationState>;
+  foregroundOperationId?: number;
 }) {
-  const ops = Object.values(operations);
+  const ops = Object.values(operations).filter(
+    (op) => op.id !== foregroundOperationId
+  );
 
   if (ops.length === 0) return null;
 

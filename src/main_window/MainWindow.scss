@@ -616,6 +616,139 @@ label {
   }
 }
 
+/* Operation progress modal */
+.operation-modal-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--base-color);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  z-index: 201;
+  width: 480px;
+  max-width: 90%;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.operation-modal-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 1em;
+  font-weight: normal;
+  margin: 0;
+}
+
+.operation-modal-kind {
+  font-weight: bold;
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+
+.operation-modal-description {
+  color: var(--dim-fg-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.operation-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .issue-resolution {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+
+    .issue-message {
+      white-space: normal;
+      font-size: 0.95em;
+    }
+
+    .issue-actions {
+      button {
+        padding: 4px 12px;
+        font-size: 0.9em;
+      }
+    }
+  }
+}
+
+.operation-modal-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.operation-modal-progress-fill {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: 4px;
+  transition: width 0.1s linear;
+}
+
+.operation-modal-progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.operation-modal-progress-text {
+  font-size: 0.9em;
+  color: var(--dim-fg-color);
+  flex-shrink: 0;
+}
+
+.operation-modal-current-item {
+  font-size: 0.85em;
+  color: var(--dim-fg-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+
+.operation-modal-status {
+  text-align: center;
+  font-size: 1em;
+  padding: 8px 0;
+}
+
+.operation-modal-status-done {
+  color: #00BC00;
+}
+
+.operation-modal-status-failed {
+  color: #cd3131;
+}
+
+.operation-modal-status-cancelled {
+  color: var(--dim-fg-color);
+}
+
+.operation-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* Copy/Move dialog options */
 .copy-options {
   display: flex;
