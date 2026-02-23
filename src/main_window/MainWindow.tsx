@@ -28,7 +28,6 @@ import {
   useRemoteState,
   useTerminalData,
 } from "../lib/ipc";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Terminal as XTermJSTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 
