@@ -1,6 +1,10 @@
 use std::io::Read;
 use std::path::PathBuf;
 
+use newt_common::operation::{
+    IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
+    StartOperationRequest,
+};
 use newt_common::terminal::TerminalHandle;
 use tauri::ipc::Invoke;
 use tauri::Manager;
@@ -12,6 +16,8 @@ use url::Url;
 use crate::common::Error;
 
 use crate::main_window::pane::Sorting;
+use crate::main_window::OperationState;
+use crate::main_window::OperationStatus;
 
 use crate::main_window::MainWindowContext;
 use crate::main_window::ModalContext;
@@ -437,6 +443,18 @@ pub fn dialog(
                         None => return Ok(()),
                     },
                 },
+                "copy" | "move" => {
+                    let sources = pane.get_effective_selection();
+                    if sources.is_empty() {
+                        return Ok(());
+                    }
+                    let other_pane = gs.other_pane(pane_handle);
+                    ModalDataKind::CopyMove {
+                        kind: dialog.clone(),
+                        sources,
+                        destination: other_pane.path(),
+                    }
+                }
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext {
@@ -542,6 +560,158 @@ pub async fn rename(
 }
 
 #[tauri::command]
+pub async fn start_operation(
+    ctx: MainWindowContext,
+    request: OperationRequest,
+) -> Result<OperationId, Error> {
+    let id = ctx.next_operation_id();
+
+    let (kind, description) = match &request {
+        OperationRequest::Copy {
+            sources,
+            destination,
+            ..
+        } => (
+            "copy".to_string(),
+            format!(
+                "Copying {} item(s) to {}",
+                sources.len(),
+                destination.display()
+            ),
+        ),
+        OperationRequest::Move {
+            sources,
+            destination,
+            ..
+        } => (
+            "move".to_string(),
+            format!(
+                "Moving {} item(s) to {}",
+                sources.len(),
+                destination.display()
+            ),
+        ),
+        OperationRequest::Delete { paths } => (
+            "delete".to_string(),
+            format!("Deleting {} item(s)", paths.len()),
+        ),
+    };
+
+    // Insert initial operation state
+    {
+        let mut ops = ctx.operations().0.write();
+        ops.insert(
+            id,
+            OperationState {
+                id,
+                kind,
+                description,
+                total_bytes: None,
+                total_items: None,
+                bytes_done: 0,
+                items_done: 0,
+                current_item: String::new(),
+                status: OperationStatus::Scanning,
+                error: None,
+                issue: None,
+            },
+        );
+    }
+    ctx.publish()?;
+
+    // Send to agent
+    let req = StartOperationRequest { id, request };
+    let ret: Result<(), newt_common::Error> = match ctx
+        .communicator()
+        .invoke(newt_common::api::API_START_OPERATION, &req)
+        .await
+    {
+        Ok(ret) => ret,
+        Err(e) => {
+            // Agent communication failed — mark operation as failed so it doesn't get stuck
+            let mut ops = ctx.operations().0.write();
+            if let Some(op) = ops.get_mut(&id) {
+                op.status = OperationStatus::Failed;
+                op.error = Some(e.to_string());
+            }
+            ctx.publish()?;
+            return Err(e.into());
+        }
+    };
+    if let Err(e) = ret {
+        // Agent returned an error — mark operation as failed
+        let mut ops = ctx.operations().0.write();
+        if let Some(op) = ops.get_mut(&id) {
+            op.status = OperationStatus::Failed;
+            op.error = Some(e.to_string());
+        }
+        ctx.publish()?;
+        return Err(e.into());
+    }
+
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn cancel_operation(
+    ctx: MainWindowContext,
+    operation_id: OperationId,
+) -> Result<(), Error> {
+    let ret: Result<(), newt_common::Error> = ctx
+        .communicator()
+        .invoke(newt_common::api::API_CANCEL_OPERATION, &operation_id)
+        .await?;
+    ret?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resolve_issue(
+    ctx: MainWindowContext,
+    operation_id: OperationId,
+    issue_id: u64,
+    action: String,
+    apply_to_all: bool,
+) -> Result<(), Error> {
+    let issue_action = match action.as_str() {
+        "skip" => IssueAction::Skip,
+        "overwrite" => IssueAction::Overwrite,
+        "retry" => IssueAction::Retry,
+        "abort" => IssueAction::Abort,
+        _ => return Err(Error::Custom(format!("unknown action: {}", action))),
+    };
+
+    let req = ResolveIssueRequest {
+        operation_id,
+        issue_id,
+        response: IssueResponse {
+            action: issue_action,
+            apply_to_all,
+        },
+    };
+
+    let ret: Result<(), newt_common::Error> = ctx
+        .communicator()
+        .invoke(newt_common::api::API_RESOLVE_ISSUE, &req)
+        .await?;
+    ret?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn dismiss_operation(
+    ctx: MainWindowContext,
+    operation_id: OperationId,
+) -> Result<(), Error> {
+    {
+        let mut ops = ctx.operations().0.write();
+        ops.remove(&operation_id);
+    }
+    ctx.publish()?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -581,6 +751,10 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         touch_file,
         delete_selected,
         rename,
+        start_operation,
+        cancel_operation,
+        resolve_issue,
+        dismiss_operation,
         close_window
     ])
 }

@@ -1,5 +1,6 @@
 import { safeCommand } from "../../lib/ipc";
 
+import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
 import Navigate from "./Navigate";
@@ -37,6 +38,8 @@ export function ModalContent({ state }) {
       return <Navigate {...state.data} {...commonProps} />;
     case "rename":
       return <Rename {...state.data} {...commonProps} />;
+    case "copy_move":
+      return <CopyMove {...state.data} {...commonProps} />;
     default:
       return null;
   }

@@ -1,6 +1,6 @@
 use newt_common::{
-    api::{FilesystemDispatcher, TerminalDispatcher},
-    rpc::DispatcherExt,
+    api::{FilesystemDispatcher, OperationDispatcher, TerminalDispatcher},
+    rpc::{Communicator, DispatcherExt},
     Error,
 };
 
@@ -33,10 +33,15 @@ async fn main() -> Result<(), Error> {
     }
 
     let stream = Duplex::new(rx, tx);
-    let dispatcher = FilesystemDispatcher::new(newt_common::filesystem::Local::new())
-        .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()));
 
-    let rpc = newt_common::rpc::Communicator::with_dispatcher(dispatcher, stream);
+    // Create outbox channel first so OperationDispatcher can use it
+    let (outbox, inbox) = Communicator::create_outbox();
+
+    let dispatcher = FilesystemDispatcher::new(newt_common::filesystem::Local::new())
+        .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
+        .chain(OperationDispatcher::new(outbox.clone()));
+
+    let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
     rpc.closed().await;
 
     Ok(())

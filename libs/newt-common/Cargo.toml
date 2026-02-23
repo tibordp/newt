@@ -22,4 +22,5 @@ futures = "0.3.28"
 tokio-stream = "0.1.14"
 bincode = "1.3.3"
 nix = { version = "0.26.2", features = ["fs"] }
+filetime = "0.2"
 expanduser = "*"

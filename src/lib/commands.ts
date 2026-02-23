@@ -160,6 +160,12 @@ export const commands: Command[] = [
       const paneHandle = state.display_options.active_pane;
       const pane = state.panes[paneHandle];
 
+      const paths = pane.selected.length > 0
+        ? pane.selected.map((name) => pane.path + "/" + name)
+        : pane.focused ? [pane.path + "/" + pane.focused] : [];
+
+      if (paths.length === 0) return;
+
       let message;
       if (pane.selected.length > 0) {
         message = `Delete ${pane.selected.length} selected files?`;
@@ -168,7 +174,9 @@ export const commands: Command[] = [
       }
       confirm(message, { title: "Delete" }).then(async (confirmed) => {
         if (confirmed) {
-          await safeCommand("delete_selected", { paneHandle });
+          await safeCommand("start_operation", {
+            request: { Delete: { paths } },
+          });
         }
       });
     },
@@ -199,13 +207,15 @@ export const commands: Command[] = [
     shortcut: new Shortcut().cmd().key("Enter"),
   },
   {
-    name: "Copy to Other Pane",
-    command: "copy",
+    name: "Copy to Other Pane...",
+    command: "dialog",
+    args: { dialog: "copy" },
     shortcut: new Shortcut().key("F5"),
   },
   {
-    name: "Move to Other Pane",
-    command: "move",
+    name: "Move to Other Pane...",
+    command: "dialog",
+    args: { dialog: "move" },
     shortcut: new Shortcut().key("F6"),
   },
   {

@@ -10,15 +10,15 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fontsource-variable/roboto-mono": "^5.0.3",
+    "@radix-ui/react-dialog": "^1.1.15",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2",
     "allotment": "^1.19.0",
+    "cmdk": "^1.1.1",
     "immer": "^10.0.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-modal": "^3.16.1",
     "react-router-dom": "^6.11.2",
     "react-viewport-list": "^7.1.1",
     "uuid": "^9.0.0",

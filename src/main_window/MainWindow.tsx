@@ -31,13 +31,14 @@ import {
 import { Terminal as XTermJSTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 
-import ReactModal from "react-modal";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import "xterm/css/xterm.css";
 
 import { ModalContent, ModalState } from "./modals/ModalContent";
 import { commands, executeCommand, modifiers } from "../lib/commands";
 import CommandPalette from "./modals/CommandPalette";
+import OperationsPanel, { OperationState } from "./OperationsPanel";
 
 enablePatches();
 
@@ -398,6 +399,7 @@ export type MainWindowState = {
   terminals: Terminal[];
   display_options: DisplayOptions;
   modal?: ModalState;
+  operations: Record<string, OperationState>;
 };
 
 type ColumnHeaderProps = {
@@ -557,10 +559,11 @@ function PathBreadcrumbs(props: { path: string; paneHandle: number }) {
   );
 }
 
-function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
+function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
   const {
     paneHandle,
     active,
+    focusGeneration,
     filter,
     path,
     files,
@@ -687,7 +690,7 @@ function Pane(props: PaneState & { paneHandle: number; active: boolean }) {
       inputRef.current?.blur();
       containerRef.current?.blur();
     }
-  }, [active, path, filter]);
+  }, [active, path, filter, focusGeneration]);
 
   const open = async (file: File) => {
     if (!file) return;
@@ -990,7 +993,7 @@ function Terminal({ handle, active }: { handle: number; active: boolean }) {
     } else {
       terminalRef.current?.blur();
     }
-  }, [active]);
+  }, [active, handle]);
 
   return (
     <div className="terminal-container" >
@@ -1004,6 +1007,12 @@ function App() {
   const terminalData = useTerminalData([]);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [focusGeneration, setFocusGeneration] = useState(0);
+
+  const refocusActivePane = useCallback((e?: Event) => {
+    e?.preventDefault();
+    setFocusGeneration(g => g + 1);
+  }, []);
 
   const onkeydown = useCallback((e) => {
     const { ctrlOrMeta } = modifiers(e);
@@ -1033,56 +1042,53 @@ function App() {
   return (
     <Profiler id="app" onRender={console.log}>
       <TerminalData.Provider value={terminalData}>
-        <ReactModal
-          isOpen={!!remoteState?.modal}
-          onRequestClose={() => safeCommand("close_modal")}
-          overlayClassName={"modal-overlay"}
-          className={"modal"}
-          ariaHideApp={false}
-        >
-          <ModalContent state={remoteState?.modal} />
-        </ReactModal>
-        <ReactModal
-          isOpen={paletteOpen}
-          overlayClassName={"command-palette-overlay"}
-          className={"command-palette"}
-          ariaHideApp={false}
-        >
-          {remoteState && (
-            <CommandPalette
-              state={remoteState}
-              onClose={() => setPaletteOpen(false)}
-            />
-          )}
-        </ReactModal>
-        <Allotment vertical className="container" separator>
-          <Allotment minSize={200}>
+        <Dialog.Root open={!!remoteState?.modal} onOpenChange={open => { if (!open) safeCommand("close_modal"); }}>
+          <Dialog.Portal>
+            <Dialog.Content className="dialog-content" onCloseAutoFocus={refocusActivePane}>
+              <ModalContent state={remoteState?.modal} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <CommandPalette
+          open={paletteOpen}
+          state={remoteState}
+          onClose={() => setPaletteOpen(false)}
+          onCloseAutoFocus={refocusActivePane}
+        />
+        <div className="container">
+          <Allotment vertical separator>
+            <Allotment minSize={200}>
+              {remoteState &&
+                remoteState.panes.map((props, i) => (
+                  <Pane
+                    key={i}
+                    paneHandle={i}
+                    {...props}
+                    focusGeneration={focusGeneration}
+                    active={
+                      remoteState.display_options.panes_focused &&
+                      remoteState.display_options.active_pane === i
+                    }
+                  />
+                ))}
+            </Allotment>
             {remoteState &&
-              remoteState.panes.map((props, i) => (
-                <Pane
-                  key={i}
-                  paneHandle={i}
-                  {...props}
-                  active={
-                    remoteState.display_options.panes_focused &&
-                    remoteState.display_options.active_pane === i
-                  }
-                />
+              Object.values(remoteState.terminals).map((term) => (
+                <Allotment.Pane preferredSize="20%" key={term.handle}>
+                  <Terminal
+                    handle={term.handle}
+                    active={
+                      !remoteState.display_options.panes_focused &&
+                      remoteState.display_options.active_terminal === term.handle
+                    }
+                  />
+                </Allotment.Pane>
               ))}
           </Allotment>
-          {remoteState &&
-            Object.values(remoteState.terminals).map((term) => (
-              <Allotment.Pane preferredSize="20%" key={term.handle}>
-                <Terminal
-                  handle={term.handle}
-                  active={
-                    !remoteState.display_options.panes_focused &&
-                    remoteState.display_options.active_terminal === term.handle
-                  }
-                />
-              </Allotment.Pane>
-            ))}
-        </Allotment>
+          {remoteState && Object.keys(remoteState.operations).length > 0 && (
+            <OperationsPanel operations={remoteState.operations} />
+          )}
+        </div>
       </TerminalData.Provider>
     </Profiler>
   );
