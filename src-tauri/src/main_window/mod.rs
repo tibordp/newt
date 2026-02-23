@@ -1,13 +1,11 @@
 pub mod pane;
 pub mod terminal;
 
-use async_compression::tokio::bufread::ZstdDecoder;
-use async_compression::tokio::write::ZstdEncoder;
 use newt_common::api::API_OPERATION_PROGRESS;
+use newt_common::file_reader::FileReader;
 use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::Remote;
 use newt_common::filesystem::UserGroup;
-use newt_common::operation::{OperationId, OperationProgress};
+use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::rpc::Communicator;
 
 use newt_common::terminal::TerminalClient;
@@ -37,6 +35,13 @@ use crate::GlobalContext;
 
 use self::pane::Pane;
 use self::terminal::Terminal;
+
+#[derive(Clone, Debug)]
+pub enum ConnectionTarget {
+    Local,
+    Remote { transport_cmd: Vec<String> },
+    Elevated,
+}
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayOptionsInner {
@@ -262,6 +267,9 @@ pub enum ModalDataKind {
         sources: Vec<PathBuf>,
         destination: PathBuf,
     },
+    ConnectRemote {
+        host: String,
+    },
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -381,79 +389,7 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
     ) -> Result<bool, newt_common::Error> {
         if api == API_OPERATION_PROGRESS {
             let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
-
-            {
-                let mut ops = self.operations.0.write();
-                match progress {
-                    OperationProgress::Prepared {
-                        id,
-                        total_bytes,
-                        total_items,
-                    } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.total_bytes = Some(total_bytes);
-                            op.total_items = Some(total_items);
-                            op.status = OperationStatus::Running;
-                        }
-                    }
-                    OperationProgress::Progress {
-                        id,
-                        bytes_done,
-                        items_done,
-                        current_item,
-                    } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.bytes_done = bytes_done;
-                            op.items_done = items_done;
-                            op.current_item = current_item;
-                            op.status = OperationStatus::Running;
-                            op.issue = None;
-                        }
-                    }
-                    OperationProgress::Completed { id } => {
-                        ops.remove(&id);
-                    }
-                    OperationProgress::Failed { id, error } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.status = OperationStatus::Failed;
-                            op.error = Some(error);
-                        }
-                    }
-                    OperationProgress::Cancelled { id } => {
-                        ops.remove(&id);
-                    }
-                    OperationProgress::Issue { id, issue } => {
-                        if let Some(op) = ops.get_mut(&id) {
-                            op.status = OperationStatus::WaitingForInput;
-                            op.issue = Some(OperationIssueInfo {
-                                issue_id: issue.issue_id,
-                                kind: format!("{:?}", issue.kind),
-                                message: issue.message,
-                                detail: issue.detail,
-                                actions: issue
-                                    .actions
-                                    .iter()
-                                    .map(|a| match a {
-                                        newt_common::operation::IssueAction::Skip => {
-                                            "skip".to_string()
-                                        }
-                                        newt_common::operation::IssueAction::Overwrite => {
-                                            "overwrite".to_string()
-                                        }
-                                        newt_common::operation::IssueAction::Retry => {
-                                            "retry".to_string()
-                                        }
-                                        newt_common::operation::IssueAction::Abort => {
-                                            "abort".to_string()
-                                        }
-                                    })
-                                    .collect(),
-                            });
-                        }
-                    }
-                }
-            }
-
+            apply_operation_progress(&self.operations, progress);
             let _ = self.publisher.publish();
             Ok(true)
         } else {
@@ -462,15 +398,174 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
     }
 }
 
+/// A child process handle that can be awaited for exit.
+/// Wraps `tokio::process::Child` but only exposes the wait handle.
+struct ChildWaitHandle {
+    child: tokio::process::Child,
+}
+
+impl ChildWaitHandle {
+    async fn wait(mut self) -> Result<std::process::ExitStatus, std::io::Error> {
+        self.child.wait().await
+    }
+}
+
+const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
+const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Look up the agent binary for a given target triple.
+/// Checks `NEWT_AGENT_DIR` env var first (for development), then `dist/agents/`.
+fn find_agent_binary(triple: &str) -> Result<PathBuf, Error> {
+    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
+        let dir = PathBuf::from(dir);
+        // Try triple-based layout: $NEWT_AGENT_DIR/<triple>/newt-agent
+        let path = dir.join(triple).join("newt-agent");
+        if path.exists() {
+            return Ok(path);
+        }
+        // Try flat layout: $NEWT_AGENT_DIR/newt-agent (dev — e.g. target/debug/)
+        let path = dir.join("newt-agent");
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    // Bundled agents
+    let path = PathBuf::from("dist/agents").join(triple).join("newt-agent");
+    if path.exists() {
+        return Ok(path);
+    }
+
+    Err(Error::Custom(format!(
+        "agent binary not found for triple: {}. Set NEWT_AGENT_DIR to the directory containing the agent binary.",
+        triple
+    )))
+}
+
+/// Find the agent binary on the local machine (for elevated mode).
+fn find_local_agent_binary() -> Result<PathBuf, Error> {
+    // Dev: NEWT_AGENT_DIR with flat layout
+    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
+        let path = PathBuf::from(dir).join("newt-agent");
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    // Next to the current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let path = dir.join("newt-agent");
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
+    Err(Error::Custom(
+        "local agent binary not found. Set NEWT_AGENT_DIR to the directory containing the agent binary.".into(),
+    ))
+}
+
+async fn create_remote_connection(
+    transport_cmd: &[String],
+    _publisher: &Arc<UpdatePublisher<MainWindowState>>,
+) -> Result<
+    (
+        ChildWaitHandle,
+        impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+    ),
+    Error,
+> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (program, args) = transport_cmd
+        .split_first()
+        .ok_or_else(|| Error::Custom("empty transport command".into()))?;
+
+    // Pass the bootstrap script as a `sh -c` argument so that stdin remains
+    // free for the binary upload protocol (otherwise the shell buffers ahead
+    // and eats the data meant for `read` inside the script).
+    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_VERSION__", AGENT_VERSION);
+    let escaped = script.replace('\'', "'\\''");
+    let sh_cmd = format!("sh -c '{}'", escaped);
+
+    let mut child = tokio::process::Command::new(program)
+        .args(args)
+        .arg(&sh_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    // Read status line, skipping any noise from .bashrc etc.
+    let mut reader = BufReader::new(stdout);
+    let status_line = loop {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).await?;
+        if n == 0 {
+            return Err(Error::Custom(
+                "remote connection closed before bootstrap completed".into(),
+            ));
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("NEWT:") {
+            break trimmed.to_string();
+        }
+        // Skip non-protocol lines (shell init noise)
+        log::debug!("bootstrap noise: {}", trimmed);
+    };
+    let status_line = status_line.as_str();
+
+    if status_line == "NEWT:READY" {
+        // Agent is cached and valid, stdout is now the RPC stream
+        let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(reader);
+        let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
+        let stream = tokio_duplex::Duplex::new(rx, tx);
+        Ok((ChildWaitHandle { child }, stream))
+    } else if let Some(triple) = status_line.strip_prefix("NEWT:NEED:") {
+        // Need to upload the binary
+        let binary_path = find_agent_binary(triple)?;
+        let binary_data = tokio::fs::read(&binary_path).await?;
+        let size = binary_data.len();
+
+        // Write size line then binary data
+        stdin
+            .write_all(format!("{}\n", size).as_bytes())
+            .await?;
+        stdin.write_all(&binary_data).await?;
+        stdin.flush().await?;
+
+        // After upload, the script execs the agent — stdout becomes RPC stream
+        let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(reader);
+        let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
+        let stream = tokio_duplex::Duplex::new(rx, tx);
+        Ok((ChildWaitHandle { child }, stream))
+    } else if let Some(error) = status_line.strip_prefix("NEWT:ERROR:") {
+        Err(Error::Custom(format!("remote bootstrap error: {}", error)))
+    } else {
+        Err(Error::Custom(format!(
+            "unexpected bootstrap response: {}",
+            status_line
+        )))
+    }
+}
+
 struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
     terminal_client: Arc<dyn TerminalClient>,
-    communicator: Communicator,
+    file_reader: Arc<dyn FileReader>,
+    operations_client: Arc<dyn OperationsClient>,
+    communicator: Option<Communicator>,
     next_operation_id: AtomicU64,
 
     window: WebviewWindow,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
+    connection_target: ConnectionTarget,
 }
 
 #[derive(Clone)]
@@ -490,68 +585,234 @@ impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
     }
 }
 
-impl MainWindowContext {
-    pub async fn create(window: WebviewWindow) -> Result<Self, Error> {
-        /*       let mut child = tokio::process::Command::new("/usr/bin/ssh")
-                            .args(&[
-                                "192.168.100.177",
-                                "sh -c 'truss /usr/home/tibordp/src/newt/target/debug/newt-agent 2>~/truss.out; echo done >&2'",
-                            ])
-                            .stdin(Stdio::piped())
-                            .stdout(Stdio::piped())
-                            .stderr(Stdio::inherit())
-                            .spawn()?;
-        */
-        let mut child = tokio::process::Command::new("/bin/env")
-            .args(["/home/tibordp/src/newt/target/debug/newt-agent"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-
-        let mut rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(child.stdout.take().unwrap());
-        let mut tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(child.stdin.take().unwrap());
-
-        if false {
-            rx = Box::new(ZstdDecoder::new(tokio::io::BufReader::new(rx)));
-            tx = Box::new(ZstdEncoder::new(tx));
+/// Apply an `OperationProgress` update to the operations state map
+fn apply_operation_progress(operations: &Operations, progress: OperationProgress) {
+    let mut ops = operations.0.write();
+    match progress {
+        OperationProgress::Prepared {
+            id,
+            total_bytes,
+            total_items,
+        } => {
+            if let Some(op) = ops.get_mut(&id) {
+                op.total_bytes = Some(total_bytes);
+                op.total_items = Some(total_items);
+                op.status = OperationStatus::Running;
+            }
         }
+        OperationProgress::Progress {
+            id,
+            bytes_done,
+            items_done,
+            current_item,
+        } => {
+            if let Some(op) = ops.get_mut(&id) {
+                op.bytes_done = bytes_done;
+                op.items_done = items_done;
+                op.current_item = current_item;
+                op.status = OperationStatus::Running;
+                op.issue = None;
+            }
+        }
+        OperationProgress::Completed { id } => {
+            ops.remove(&id);
+        }
+        OperationProgress::Failed { id, error } => {
+            if let Some(op) = ops.get_mut(&id) {
+                op.status = OperationStatus::Failed;
+                op.error = Some(error);
+            }
+        }
+        OperationProgress::Cancelled { id } => {
+            ops.remove(&id);
+        }
+        OperationProgress::Issue { id, issue } => {
+            if let Some(op) = ops.get_mut(&id) {
+                op.status = OperationStatus::WaitingForInput;
+                op.issue = Some(OperationIssueInfo {
+                    issue_id: issue.issue_id,
+                    kind: format!("{:?}", issue.kind),
+                    message: issue.message,
+                    detail: issue.detail,
+                    actions: issue
+                        .actions
+                        .iter()
+                        .map(|a| match a {
+                            newt_common::operation::IssueAction::Skip => "skip".to_string(),
+                            newt_common::operation::IssueAction::Overwrite => {
+                                "overwrite".to_string()
+                            }
+                            newt_common::operation::IssueAction::Retry => "retry".to_string(),
+                            newt_common::operation::IssueAction::Abort => "abort".to_string(),
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+}
 
-        let stream = tokio_duplex::Duplex::new(rx, tx);
-
-        // Create state and publisher first, so HostDispatcher can reference them
-        let global_state = MainWindowState::new();
+impl MainWindowContext {
+    pub async fn create(
+        window: WebviewWindow,
+        connection_target: ConnectionTarget,
+        window_title: String,
+    ) -> Result<Self, Error> {
+        // Create state and publisher first
+        let mut global_state = MainWindowState::new();
+        global_state.window_title = window_title;
         let publisher = Arc::new(UpdatePublisher::new(
             window.clone(),
             "main_window",
             global_state.clone(),
         ));
 
-        let host_dispatcher = HostDispatcher {
-            operations: global_state.operations.clone(),
-            publisher: publisher.clone(),
+        let (fs, terminal_client, file_reader, operations_client, communicator, initial_dir): (
+            Arc<dyn Filesystem>,
+            Arc<dyn TerminalClient>,
+            Arc<dyn FileReader>,
+            Arc<dyn OperationsClient>,
+            Option<Communicator>,
+            PathBuf,
+        ) = match &connection_target {
+            ConnectionTarget::Local => {
+                let (progress_tx, mut progress_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
+
+                let fs = Arc::new(newt_common::filesystem::Local::new());
+                let terminal_client = Arc::new(newt_common::terminal::Local::new());
+                let file_reader: Arc<dyn FileReader> =
+                    Arc::new(newt_common::file_reader::Local::new());
+                let operations_client: Arc<dyn OperationsClient> =
+                    Arc::new(newt_common::operation::Local::new(progress_tx));
+
+                // Spawn a task to forward local progress updates to the UI state
+                let operations = global_state.operations.clone();
+                let publisher_clone = publisher.clone();
+                tokio::spawn(async move {
+                    while let Some(progress) = progress_rx.recv().await {
+                        apply_operation_progress(&operations, progress);
+                        let _ = publisher_clone.publish();
+                    }
+                });
+
+                let initial_dir = std::env::current_dir().unwrap();
+
+                (
+                    fs,
+                    terminal_client,
+                    file_reader,
+                    operations_client,
+                    None,
+                    initial_dir,
+                )
+            }
+            ConnectionTarget::Remote { transport_cmd } => {
+                let (child, stream) =
+                    create_remote_connection(transport_cmd, &publisher).await?;
+
+                let host_dispatcher = HostDispatcher {
+                    operations: global_state.operations.clone(),
+                    publisher: publisher.clone(),
+                };
+                let communicator =
+                    Communicator::with_dispatcher(host_dispatcher, stream);
+
+                let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let terminal_client =
+                    Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
+                let file_reader: Arc<dyn FileReader> =
+                    Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
+                let operations_client: Arc<dyn OperationsClient> =
+                    Arc::new(newt_common::operation::Remote::new(communicator.clone()));
+
+                tokio::spawn(async move {
+                    let ret = child.wait().await.unwrap();
+                    eprintln!("child exited: {}", ret);
+                });
+
+                // For remote, resolve home directory
+                let initial_dir = fs
+                    .shell_expand("~".to_string())
+                    .await
+                    .unwrap_or_else(|_| PathBuf::from("/"));
+
+                (
+                    fs,
+                    terminal_client,
+                    file_reader,
+                    operations_client,
+                    Some(communicator),
+                    initial_dir,
+                )
+            }
+            ConnectionTarget::Elevated => {
+                if cfg!(not(target_os = "linux")) {
+                    return Err(Error::Custom(
+                        "elevated mode is not supported on this platform".into(),
+                    ));
+                }
+
+                let agent_path = find_local_agent_binary()?;
+                let mut child = tokio::process::Command::new("pkexec")
+                    .arg(&agent_path)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
+                    .spawn()?;
+
+                let stdin = child.stdin.take().unwrap();
+                let stdout = child.stdout.take().unwrap();
+
+                let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(stdout);
+                let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
+                let stream = tokio_duplex::Duplex::new(rx, tx);
+
+                let host_dispatcher = HostDispatcher {
+                    operations: global_state.operations.clone(),
+                    publisher: publisher.clone(),
+                };
+                let communicator =
+                    Communicator::with_dispatcher(host_dispatcher, stream);
+
+                let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let terminal_client =
+                    Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
+                let file_reader: Arc<dyn FileReader> =
+                    Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
+                let operations_client: Arc<dyn OperationsClient> =
+                    Arc::new(newt_common::operation::Remote::new(communicator.clone()));
+
+                tokio::spawn(async move {
+                    let ret = child.wait().await.unwrap();
+                    eprintln!("elevated agent exited: {}", ret);
+                });
+
+                let initial_dir = fs
+                    .shell_expand("~".to_string())
+                    .await
+                    .unwrap_or_else(|_| PathBuf::from("/"));
+
+                (
+                    fs,
+                    terminal_client,
+                    file_reader,
+                    operations_client,
+                    Some(communicator),
+                    initial_dir,
+                )
+            }
         };
-        let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
-        let fs = Remote::new(communicator.clone());
-        let terminal_client = newt_common::terminal::Remote::new(communicator.clone());
-
-        tokio::spawn(async move {
-            let ret = child.wait().await.unwrap();
-            eprintln!("child exited: {}", ret);
-        });
-
-        let fs = Arc::new(fs);
-        let terminal_client = Arc::new(terminal_client);
 
         global_state.panes.add(Pane::new(
             fs.clone(),
-            std::env::current_dir().unwrap(),
+            initial_dir.clone(),
             global_state.display_options.clone(),
             publisher.clone(),
         ));
         global_state.panes.add(Pane::new(
             fs.clone(),
-            std::env::current_dir().unwrap(),
+            initial_dir,
             global_state.display_options.clone(),
             publisher.clone(),
         ));
@@ -567,11 +828,14 @@ impl MainWindowContext {
             inner: Arc::new(MainWindowContextInner {
                 fs,
                 terminal_client,
+                file_reader,
+                operations_client,
                 communicator,
                 next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
                 main_window_state: global_state,
+                connection_target,
             }),
         })
     }
@@ -584,6 +848,10 @@ impl MainWindowContext {
         self.inner.terminal_client.clone()
     }
 
+    pub fn file_reader(&self) -> Arc<dyn FileReader> {
+        self.inner.file_reader.clone()
+    }
+
     pub fn window(&self) -> WebviewWindow {
         self.inner.window.clone()
     }
@@ -593,16 +861,7 @@ impl MainWindowContext {
         f: impl FnOnce(&MainWindowState) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let ret = f(&self.inner.main_window_state);
-
         self.inner.publisher.publish()?;
-
-        if let Some(pane) = self.active_pane() {
-            self.inner
-                .window
-                .set_title(&format!("{} - Newt", pane.path().display()))
-                .unwrap();
-        }
-
         ret
     }
 
@@ -612,15 +871,7 @@ impl MainWindowContext {
         F: FnOnce(MainWindowState) -> Fut,
     {
         let ret = f(self.inner.main_window_state.clone()).await;
-
         self.inner.publisher.publish()?;
-        if let Some(pane) = self.active_pane() {
-            self.inner
-                .window
-                .set_title(&format!("{} - Newt", pane.path().display()))
-                .unwrap();
-        }
-
         ret
     }
 
@@ -692,8 +943,15 @@ impl MainWindowContext {
         })
     }
 
+    pub fn operations_client(&self) -> Arc<dyn OperationsClient> {
+        self.inner.operations_client.clone()
+    }
+
     pub fn communicator(&self) -> &Communicator {
-        &self.inner.communicator
+        self.inner
+            .communicator
+            .as_ref()
+            .expect("communicator only available in remote mode")
     }
 
     pub fn next_operation_id(&self) -> OperationId {

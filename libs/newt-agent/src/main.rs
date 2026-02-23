@@ -1,5 +1,5 @@
 use newt_common::{
-    api::{FilesystemDispatcher, OperationDispatcher, TerminalDispatcher},
+    api::{FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, TerminalDispatcher},
     rpc::{Communicator, DispatcherExt},
     Error,
 };
@@ -39,6 +39,7 @@ async fn main() -> Result<(), Error> {
 
     let dispatcher = FilesystemDispatcher::new(newt_common::filesystem::Local::new())
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
+        .chain(FileReaderDispatcher::new(newt_common::file_reader::Local::new()))
         .chain(OperationDispatcher::new(outbox.clone()));
 
     let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);

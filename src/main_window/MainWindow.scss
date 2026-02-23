@@ -166,6 +166,7 @@ ul.files {
   overflow-y: auto;
   overflow-x: auto;
   cursor: default;
+  position: relative;
 
   li.file-item {
     display: flex;
@@ -180,6 +181,15 @@ ul.files {
     &.selected {
       color: var(--accent-color);
     }
+  }
+
+  .drag-rect {
+    display: none;
+    position: absolute;
+    background: rgba(0, 120, 215, 0.15);
+    border: 1px solid rgba(0, 120, 215, 0.6);
+    pointer-events: none;
+    z-index: 10;
   }
 }
 

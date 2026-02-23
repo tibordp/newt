@@ -1,6 +1,5 @@
-#![feature(io_error_more)]
-
 pub mod api;
+pub mod file_reader;
 pub mod filesystem;
 pub mod operation;
 pub mod rpc;

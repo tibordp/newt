@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use std::sync::atomic::AtomicU64;
 
 use crate::{
+    file_reader::FileReader,
     filesystem::{Filesystem, ListFilesOptions},
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
@@ -34,6 +35,9 @@ pub const API_TERMINAL_RESIZE: Api = Api(102);
 pub const API_TERMINAL_INPUT: Api = Api(103);
 pub const API_TERMINAL_READ: Api = Api(104);
 pub const API_TERMINAL_WAIT: Api = Api(105);
+
+pub const API_FILE_INFO: Api = Api(300);
+pub const API_READ_RANGE: Api = Api(301);
 
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
@@ -174,6 +178,46 @@ impl Dispatcher for TerminalDispatcher {
     }
 }
 
+pub struct FileReaderDispatcher {
+    file_reader: Box<dyn FileReader>,
+}
+
+impl FileReaderDispatcher {
+    pub fn new<F: FileReader + 'static>(file_reader: F) -> Self {
+        Self {
+            file_reader: Box::new(file_reader),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for FileReaderDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_FILE_INFO => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.file_reader.file_info(path).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_READ_RANGE => {
+                let (path, offset, length): (PathBuf, u64, u64) =
+                    bincode::deserialize(&req[..]).unwrap();
+                let ret = self.file_reader.read_range(path, offset, length).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
 pub struct OperationDispatcher {
     outbox: tokio::sync::mpsc::UnboundedSender<Message>,
     operations: Arc<Mutex<HashMap<OperationId, OperationHandle>>>,
@@ -210,11 +254,25 @@ impl Dispatcher for OperationDispatcher {
                 let next_issue_id = self.next_issue_id.clone();
                 let id = request.id;
 
+                // Create a progress channel and bridge it to the RPC outbox
+                let (progress_tx, mut progress_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<operation::OperationProgress>();
+
+                // Spawn a task to forward progress to the RPC outbox
+                let outbox_for_bridge = outbox.clone();
+                tokio::spawn(async move {
+                    while let Some(progress) = progress_rx.recv().await {
+                        let bytes = bincode::serialize(&progress).unwrap();
+                        let _ = outbox_for_bridge
+                            .send(Message::Notify(API_OPERATION_PROGRESS, bytes.into()));
+                    }
+                });
+
                 tokio::spawn(async move {
                     operation::execute_operation(
                         id,
                         request.request,
-                        outbox,
+                        progress_tx,
                         cancel,
                         issue_resolvers,
                         next_issue_id,

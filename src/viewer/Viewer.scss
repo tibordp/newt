@@ -1,11 +1,12 @@
 .viewer {
-  overflow: auto;
-
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
+
+  display: flex;
+  flex-direction: column;
 
   margin: 0;
   padding: 0;
@@ -13,13 +14,94 @@
   background: var(--base-color);
   color: var(--fg-color);
 
-  user-select: initial;
-  -webkit-user-select: initial;
-
   cursor: initial;
+  outline: none;
+}
+
+.viewer-content {
+  flex: 1;
+  overflow: auto;
 
   pre {
     margin: 0;
     padding: 0;
   }
+
+  pre, .viewer-gutter {
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 18px;
+  }
+}
+
+// Gutter: absolutely positioned, outside selection flow
+.viewer-gutter {
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  color: var(--fg-muted-color, #888);
+}
+
+.gutter-line {
+  white-space: pre;
+  height: 18px;
+  text-align: right;
+  padding-right: 1ch;
+}
+
+// Content: explicitly selectable (body has user-select: none globally)
+.viewer-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+// Content lines
+.viewer-line {
+  white-space: pre;
+  height: 18px;
+}
+
+// Hex ASCII column
+.hex-ascii {
+  color: var(--fg-secondary-color, #aaa);
+}
+
+// Hex gutter doesn't need right-align
+.hex-gutter .gutter-line {
+  text-align: left;
+  padding-right: 0;
+}
+
+// Status bar — matches main window .statusbar
+.viewer-status {
+  display: flex;
+  align-items: center;
+  padding: 0.2em;
+  background: var(--statusbar-bg);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.status-separator {
+  margin: 0 0.5em;
+  color: var(--dim-fg-color);
+}
+
+// Loading / error states
+.viewer-loading,
+.viewer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-family: monospace;
+  font-size: 14px;
+}
+
+.viewer-error {
+  color: var(--error-color, #f44);
 }

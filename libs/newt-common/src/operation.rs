@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use crate::rpc::Communicator;
+
 pub type OperationId = u64;
 pub type IssueId = u64;
 
@@ -150,22 +152,126 @@ pub struct OperationHandle {
     pub issue_resolvers: IssueResolvers,
 }
 
+// --- OperationsClient trait ---
+
+#[async_trait::async_trait]
+pub trait OperationsClient: Send + Sync {
+    async fn start_operation(&self, req: StartOperationRequest) -> Result<(), crate::Error>;
+    async fn cancel_operation(&self, id: OperationId) -> Result<(), crate::Error>;
+    async fn resolve_issue(&self, req: ResolveIssueRequest) -> Result<(), crate::Error>;
+}
+
+// --- Local implementation ---
+
+pub struct Local {
+    operations: Arc<Mutex<HashMap<OperationId, OperationHandle>>>,
+    next_issue_id: Arc<AtomicU64>,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
+}
+
+impl Local {
+    pub fn new(progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>) -> Self {
+        Self {
+            operations: Arc::new(Mutex::new(HashMap::new())),
+            next_issue_id: Arc::new(AtomicU64::new(1)),
+            progress_tx,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl OperationsClient for Local {
+    async fn start_operation(&self, req: StartOperationRequest) -> Result<(), crate::Error> {
+        let handle = OperationHandle {
+            cancel: CancellationToken::new(),
+            issue_resolvers: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let cancel = handle.cancel.clone();
+        let issue_resolvers = handle.issue_resolvers.clone();
+        self.operations.lock().insert(req.id, handle);
+
+        let operations = self.operations.clone();
+        let next_issue_id = self.next_issue_id.clone();
+        let progress_tx = self.progress_tx.clone();
+        let id = req.id;
+
+        tokio::spawn(async move {
+            execute_operation(id, req.request, progress_tx, cancel, issue_resolvers, next_issue_id)
+                .await;
+            operations.lock().remove(&id);
+        });
+
+        Ok(())
+    }
+
+    async fn cancel_operation(&self, id: OperationId) -> Result<(), crate::Error> {
+        if let Some(handle) = self.operations.lock().get(&id) {
+            handle.cancel.cancel();
+        }
+        Ok(())
+    }
+
+    async fn resolve_issue(&self, req: ResolveIssueRequest) -> Result<(), crate::Error> {
+        if let Some(handle) = self.operations.lock().get(&req.operation_id) {
+            if let Some(sender) = handle.issue_resolvers.lock().remove(&req.issue_id) {
+                let _ = sender.send(req.response);
+            }
+        }
+        Ok(())
+    }
+}
+
+// --- Remote implementation ---
+
+pub struct Remote {
+    communicator: Communicator,
+}
+
+impl Remote {
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl OperationsClient for Remote {
+    async fn start_operation(&self, req: StartOperationRequest) -> Result<(), crate::Error> {
+        let ret: Result<(), crate::Error> = self
+            .communicator
+            .invoke(crate::api::API_START_OPERATION, &req)
+            .await?;
+        ret
+    }
+
+    async fn cancel_operation(&self, id: OperationId) -> Result<(), crate::Error> {
+        let ret: Result<(), crate::Error> = self
+            .communicator
+            .invoke(crate::api::API_CANCEL_OPERATION, &id)
+            .await?;
+        ret
+    }
+
+    async fn resolve_issue(&self, req: ResolveIssueRequest) -> Result<(), crate::Error> {
+        let ret: Result<(), crate::Error> = self
+            .communicator
+            .invoke(crate::api::API_RESOLVE_ISSUE, &req)
+            .await?;
+        ret
+    }
+}
+
 // --- SyncProgressSender: cloneable, movable into spawn_blocking ---
 
 #[derive(Clone)]
 struct SyncProgressSender {
     id: OperationId,
-    outbox: tokio::sync::mpsc::UnboundedSender<crate::rpc::Message>,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
     last_report: Arc<Mutex<std::time::Instant>>,
 }
 
 impl SyncProgressSender {
     fn send(&self, progress: OperationProgress) {
-        let bytes = bincode::serialize(&progress).unwrap();
-        let _ = self.outbox.send(crate::rpc::Message::Notify(
-            crate::api::API_OPERATION_PROGRESS,
-            bytes.into(),
-        ));
+        let _ = self.progress_tx.send(progress);
     }
 
     fn maybe_send_progress(&mut self, bytes_done: u64, items_done: u64, current_item: &str) {
@@ -204,7 +310,7 @@ struct ProgressReporter {
 impl ProgressReporter {
     fn new(
         id: OperationId,
-        outbox: tokio::sync::mpsc::UnboundedSender<crate::rpc::Message>,
+        progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
         issue_resolvers: IssueResolvers,
         next_issue_id: Arc<AtomicU64>,
         cancel: CancellationToken,
@@ -212,7 +318,7 @@ impl ProgressReporter {
         Self {
             sync_sender: SyncProgressSender {
                 id,
-                outbox,
+                progress_tx,
                 last_report: Arc::new(Mutex::new(std::time::Instant::now())),
             },
             issue_resolvers,
@@ -353,12 +459,12 @@ fn issue_kind_from_io_error(e: &std::io::Error) -> IssueKind {
 pub async fn execute_operation(
     id: OperationId,
     request: OperationRequest,
-    outbox: tokio::sync::mpsc::UnboundedSender<crate::rpc::Message>,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
     cancel: CancellationToken,
     issue_resolvers: IssueResolvers,
     next_issue_id: Arc<AtomicU64>,
 ) {
-    let mut reporter = ProgressReporter::new(id, outbox, issue_resolvers, next_issue_id, cancel.clone());
+    let mut reporter = ProgressReporter::new(id, progress_tx, issue_resolvers, next_issue_id, cancel.clone());
 
     let result = match request {
         OperationRequest::Delete { paths } => {

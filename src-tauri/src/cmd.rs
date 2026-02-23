@@ -1,6 +1,7 @@
-use std::io::Read;
 use std::path::PathBuf;
 
+use newt_common::file_reader::FileChunk;
+use newt_common::file_reader::FileInfo;
 use newt_common::operation::{
     IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
     StartOperationRequest,
@@ -11,7 +12,6 @@ use tauri::Manager;
 use tauri::WebviewWindow;
 use tauri::Window;
 use tauri::Wry;
-use url::Url;
 
 use crate::common::Error;
 
@@ -128,6 +128,20 @@ pub fn deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(
 }
 
 #[tauri::command]
+pub fn set_selection(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    selected: Vec<String>,
+    focused: Option<String>,
+) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.view_state_mut()
+            .set_selection(selected.into_iter().collect(), focused);
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub fn relative_jump(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -161,38 +175,49 @@ pub async fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resul
 #[tauri::command]
 async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHandle) {
     let pane = ctx.panes().get(pane_handle).unwrap();
+    if pane.is_focused_dir() {
+        return;
+    }
     let full_path = match pane.get_focused_file() {
         Some(s) => s,
         None => return,
     };
 
-    let mut url = Url::parse("newt-preview://viewer").unwrap();
-    url.query_pairs_mut()
-        .append_pair("path", full_path.to_string_lossy().as_ref());
+    let viewer_label = uuid::Uuid::new_v4().to_string();
 
-    let window = tauri::WebviewWindowBuilder::new(
+    // Pre-register the parent's MainWindowContext for the viewer window label
+    // so that on_page_load sees it and doesn't spawn a new agent.
+    {
+        let app_handle = window.app_handle();
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx
+            .main_windows
+            .lock()
+            .insert(viewer_label.clone(), ctx.clone());
+    }
+
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("path", full_path.to_string_lossy().as_ref())
+        .finish();
+    let url_path = format!("/viewer?{}", query);
+
+    tauri::WebviewWindowBuilder::new(
         window.app_handle(),
-        uuid::Uuid::new_v4().to_string(),
-        tauri::WebviewUrl::External(url),
+        &viewer_label,
+        tauri::WebviewUrl::App(url_path.into()),
     )
     .title(format!("{} - Viewer", full_path.display()))
     .center()
     .focused(true)
     .build()
     .unwrap();
-
-    window.eval(crate::viewer::SCRIPT).unwrap();
 }
 
 #[tauri::command]
-async fn new_window(handle: tauri::AppHandle) {
-    tauri::WebviewWindowBuilder::new(
-        &handle,
-        uuid::Uuid::new_v4().to_string(),
-        tauri::WebviewUrl::App("/".into()), /* the url */
-    )
-    .build()
-    .unwrap();
+async fn new_window() -> Result<(), Error> {
+    let exe = std::env::current_exe()?;
+    tokio::process::Command::new(exe).spawn()?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -228,19 +253,23 @@ async fn open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<
 }
 
 #[tauri::command]
-async fn read_file(filename: String) -> Result<String, Error> {
-    let mut file = std::fs::File::open(filename)?;
-    let metadata = file.metadata()?;
+async fn file_info(ctx: MainWindowContext, path: String) -> Result<FileInfo, Error> {
+    let info = ctx.file_reader().file_info(PathBuf::from(path)).await?;
+    Ok(info)
+}
 
-    if metadata.len() > 10 * 1024 * 1024 {
-        return Err(Error::Custom("file too large to be previewed".into()));
-    }
-
-    let mut vec = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut vec)?;
-
-    // TODO: do-this in place to avoid allocation
-    Ok(String::from_utf8_lossy(&vec).to_string())
+#[tauri::command]
+async fn read_file_range(
+    ctx: MainWindowContext,
+    path: String,
+    offset: u64,
+    length: u64,
+) -> Result<FileChunk, Error> {
+    let chunk = ctx
+        .file_reader()
+        .read_range(PathBuf::from(path), offset, length)
+        .await?;
+    Ok(chunk)
 }
 
 #[tauri::command]
@@ -405,61 +434,55 @@ pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
 pub fn dialog(
     ctx: MainWindowContext,
     dialog: String,
-    pane_handle: PaneHandle,
+    pane_handle: Option<PaneHandle>,
 ) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
-
     ctx.with_update(|gs| {
+        let pane = pane_handle.map(|h| gs.panes.get(h).unwrap());
         let mut modal_state = gs.modal.0.write();
         *modal_state = Some(ModalData {
             kind: match &dialog[..] {
-                "navigate" => ModalDataKind::Navigate { path: pane.path() },
-                "create_directory" => ModalDataKind::CreateDirectory { path: pane.path() },
-                "create_file" => ModalDataKind::CreateFile { path: pane.path() },
+                "navigate" => ModalDataKind::Navigate {
+                    path: pane.unwrap().path(),
+                },
+                "create_directory" => ModalDataKind::CreateDirectory {
+                    path: pane.unwrap().path(),
+                },
+                "create_file" => ModalDataKind::CreateFile {
+                    path: pane.unwrap().path(),
+                },
                 "properties" => {
-                    /*let vs = pane.view_state();
-                    let selection = pane.get_effective_selection();
-
-                    let mode = HashSet<strin>;
-
-                    for f in vs.files {
-                        for s in selection {
-                            if f.name == s.file_name() {
-
-                            }
-                        }
-                    }
-
-                    pane.view_state() view_state().
-                    ModalDataKind::Properties {
-                        path: pane.path(),
-                    }*/
                     todo!()
                 }
-                "rename" => ModalDataKind::Rename {
-                    base_path: pane.path(),
-                    name: match pane.view_state().focused {
+                "rename" => {
+                    let pane = pane.unwrap();
+                    let name = match pane.view_state().focused {
                         Some(ref selected) => selected.clone(),
                         None => return Ok(()),
-                    },
-                },
+                    };
+                    ModalDataKind::Rename {
+                        base_path: pane.path(),
+                        name,
+                    }
+                }
                 "copy" | "move" => {
+                    let pane = pane.unwrap();
                     let sources = pane.get_effective_selection();
                     if sources.is_empty() {
                         return Ok(());
                     }
-                    let other_pane = gs.other_pane(pane_handle);
+                    let other_pane = gs.other_pane(pane_handle.unwrap());
                     ModalDataKind::CopyMove {
                         kind: dialog.clone(),
                         sources,
                         destination: other_pane.path(),
                     }
                 }
+                "connect_remote" => ModalDataKind::ConnectRemote {
+                    host: String::new(),
+                },
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
-            context: ModalContext {
-                pane_handle: Some(pane_handle),
-            },
+            context: ModalContext { pane_handle },
         });
 
         Ok(())
@@ -620,27 +643,10 @@ pub async fn start_operation(
     }
     ctx.publish()?;
 
-    // Send to agent
+    // Send to operations client
     let req = StartOperationRequest { id, request };
-    let ret: Result<(), newt_common::Error> = match ctx
-        .communicator()
-        .invoke(newt_common::api::API_START_OPERATION, &req)
-        .await
-    {
-        Ok(ret) => ret,
-        Err(e) => {
-            // Agent communication failed — mark operation as failed so it doesn't get stuck
-            let mut ops = ctx.operations().0.write();
-            if let Some(op) = ops.get_mut(&id) {
-                op.status = OperationStatus::Failed;
-                op.error = Some(e.to_string());
-            }
-            ctx.publish()?;
-            return Err(e.into());
-        }
-    };
-    if let Err(e) = ret {
-        // Agent returned an error — mark operation as failed
+    if let Err(e) = ctx.operations_client().start_operation(req).await {
+        // Operation failed to start — mark as failed so it doesn't get stuck
         let mut ops = ctx.operations().0.write();
         if let Some(op) = ops.get_mut(&id) {
             op.status = OperationStatus::Failed;
@@ -658,11 +664,9 @@ pub async fn cancel_operation(
     ctx: MainWindowContext,
     operation_id: OperationId,
 ) -> Result<(), Error> {
-    let ret: Result<(), newt_common::Error> = ctx
-        .communicator()
-        .invoke(newt_common::api::API_CANCEL_OPERATION, &operation_id)
+    ctx.operations_client()
+        .cancel_operation(operation_id)
         .await?;
-    ret?;
     Ok(())
 }
 
@@ -691,11 +695,7 @@ pub async fn resolve_issue(
         },
     };
 
-    let ret: Result<(), newt_common::Error> = ctx
-        .communicator()
-        .invoke(newt_common::api::API_RESOLVE_ISSUE, &req)
-        .await?;
-    ret?;
+    ctx.operations_client().resolve_issue(req).await?;
     Ok(())
 }
 
@@ -728,6 +728,29 @@ pub fn background_operation(
 }
 
 #[tauri::command]
+pub async fn connect_remote(host: String) -> Result<(), Error> {
+    let exe = std::env::current_exe()?;
+    tokio::process::Command::new(exe)
+        .arg("--connect")
+        .arg(&host)
+        .arg("--title")
+        .arg(&host)
+        .spawn()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_elevated() -> Result<(), Error> {
+    let exe = std::env::current_exe()?;
+    tokio::process::Command::new(exe)
+        .arg("--elevated")
+        .arg("--title")
+        .arg("Elevated")
+        .spawn()?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -745,12 +768,14 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         select_range,
         select_all,
         deselect_all,
+        set_selection,
         relative_jump,
         set_filter,
         copy_pane,
         new_window,
         toggle_hidden,
-        read_file,
+        file_info,
+        read_file_range,
         open,
         open_folder,
         view,
@@ -772,6 +797,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         resolve_issue,
         dismiss_operation,
         background_operation,
+        connect_remote,
+        open_elevated,
         close_window
     ])
 }
