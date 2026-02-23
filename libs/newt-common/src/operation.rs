@@ -198,6 +198,7 @@ struct ProgressReporter {
     issue_resolvers: IssueResolvers,
     next_issue_id: Arc<AtomicU64>,
     sticky_resolutions: HashMap<IssueKind, IssueAction>,
+    cancel: CancellationToken,
 }
 
 impl ProgressReporter {
@@ -206,6 +207,7 @@ impl ProgressReporter {
         outbox: tokio::sync::mpsc::UnboundedSender<crate::rpc::Message>,
         issue_resolvers: IssueResolvers,
         next_issue_id: Arc<AtomicU64>,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             sync_sender: SyncProgressSender {
@@ -216,6 +218,7 @@ impl ProgressReporter {
             issue_resolvers,
             next_issue_id,
             sticky_resolutions: HashMap::new(),
+            cancel,
         }
     }
 
@@ -287,15 +290,22 @@ impl ProgressReporter {
             },
         });
 
-        match rx.await {
-            Ok(response) => {
-                if response.apply_to_all {
-                    self.sticky_resolutions
-                        .insert(kind, response.action.clone());
+        tokio::select! {
+            result = rx => {
+                match result {
+                    Ok(response) => {
+                        if response.apply_to_all {
+                            self.sticky_resolutions
+                                .insert(kind, response.action.clone());
+                        }
+                        Ok(response.action)
+                    }
+                    Err(_) => Err(crate::Error::Cancelled),
                 }
-                Ok(response.action)
             }
-            Err(_) => Err(crate::Error::Cancelled),
+            _ = self.cancel.cancelled() => {
+                Err(crate::Error::Cancelled)
+            }
         }
     }
 
@@ -318,7 +328,6 @@ impl ProgressReporter {
         if allow_retry {
             actions.push(IssueAction::Retry);
         }
-        actions.push(IssueAction::Abort);
 
         match self
             .raise_issue(kind, format!("{}: {}", context, error), detail, actions)
@@ -326,8 +335,7 @@ impl ProgressReporter {
         {
             IssueAction::Skip => Ok(IssueOutcome::Skip),
             IssueAction::Retry => Ok(IssueOutcome::Retry),
-            IssueAction::Abort => Err(crate::Error::Cancelled),
-            IssueAction::Overwrite => unreachable!("overwrite not offered"),
+            _ => unreachable!("not offered"),
         }
     }
 }
@@ -350,7 +358,7 @@ pub async fn execute_operation(
     issue_resolvers: IssueResolvers,
     next_issue_id: Arc<AtomicU64>,
 ) {
-    let mut reporter = ProgressReporter::new(id, outbox, issue_resolvers, next_issue_id);
+    let mut reporter = ProgressReporter::new(id, outbox, issue_resolvers, next_issue_id, cancel.clone());
 
     let result = match request {
         OperationRequest::Delete { paths } => {
@@ -574,16 +582,19 @@ async fn execute_copy(
         }
     }
 
-    let plan = match tokio::task::spawn_blocking({
+    let plan_task = tokio::task::spawn_blocking({
         let sources = sources.clone();
         let destination = destination.clone();
         move || plan_copy(&sources, &destination)
-    })
-    .await
-    {
-        Ok(Ok(plan)) => plan,
-        Ok(Err(e)) => return Err(e),
-        Err(e) => return Err(e.into()),
+    });
+
+    let plan = tokio::select! {
+        result = plan_task => match result {
+            Ok(Ok(plan)) => plan,
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(e.into()),
+        },
+        _ = cancel.cancelled() => return Err(crate::Error::Cancelled),
     };
 
     let total_items = plan.entries.len() as u64;
@@ -619,7 +630,7 @@ async fn execute_copy(
                                     entry.dest.display()
                                 ),
                                 None,
-                                vec![IssueAction::Skip, IssueAction::Abort],
+                                vec![IssueAction::Skip],
                             )
                             .await
                         {
@@ -627,11 +638,8 @@ async fn execute_copy(
                                 items_done += 1;
                                 continue;
                             }
-                            Ok(IssueAction::Abort) => return Err(crate::Error::Cancelled),
                             Err(e) => return Err(e),
-                            Ok(IssueAction::Overwrite) | Ok(IssueAction::Retry) => {
-                                unreachable!("not offered")
-                            }
+                            _ => unreachable!("not offered"),
                         }
                     }
                 }
@@ -646,7 +654,7 @@ async fn execute_copy(
                                     entry.dest.display()
                                 ),
                                 None,
-                                vec![IssueAction::Skip, IssueAction::Abort],
+                                vec![IssueAction::Skip],
                             )
                             .await
                         {
@@ -654,11 +662,8 @@ async fn execute_copy(
                                 items_done += 1;
                                 continue;
                             }
-                            Ok(IssueAction::Abort) => return Err(crate::Error::Cancelled),
                             Err(e) => return Err(e),
-                            Ok(IssueAction::Overwrite) | Ok(IssueAction::Retry) => {
-                                unreachable!("not offered")
-                            }
+                            _ => unreachable!("not offered"),
                         }
                     } else {
                         // Both are files (or symlinks)
@@ -670,7 +675,6 @@ async fn execute_copy(
                                 vec![
                                     IssueAction::Skip,
                                     IssueAction::Overwrite,
-                                    IssueAction::Abort,
                                 ],
                             )
                             .await
@@ -690,9 +694,8 @@ async fn execute_copy(
                                     Err(e) => return Err(e.into()),
                                 }
                             }
-                            Ok(IssueAction::Abort) => return Err(crate::Error::Cancelled),
                             Err(e) => return Err(e),
-                            Ok(IssueAction::Retry) => unreachable!("retry not offered"),
+                            _ => unreachable!("not offered"),
                         }
                     }
                 }
@@ -896,17 +899,16 @@ async fn execute_move(
                         io_kind,
                         format!("Error moving {}: {}", source.display(), e),
                         Some(format!("{} -> {}", source.display(), dest_path.display())),
-                        vec![IssueAction::Skip, IssueAction::Retry, IssueAction::Abort],
+                        vec![IssueAction::Skip, IssueAction::Retry],
                     )
                     .await
                 {
                     Ok(IssueAction::Skip) => {}
-                    Ok(IssueAction::Abort) => return Err(crate::Error::Cancelled),
                     Err(e) => return Err(e),
                     Ok(IssueAction::Retry) => {
                         // TODO: implement retry for rename
                     }
-                    Ok(IssueAction::Overwrite) => unreachable!("overwrite not offered"),
+                    _ => unreachable!("not offered"),
                 }
             }
             Err(e) => return Err(e.into()),

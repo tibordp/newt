@@ -614,6 +614,7 @@ pub async fn start_operation(
                 status: OperationStatus::Scanning,
                 error: None,
                 issue: None,
+                backgrounded: false,
             },
         );
     }
@@ -712,6 +713,21 @@ pub fn dismiss_operation(
 }
 
 #[tauri::command]
+pub fn background_operation(
+    ctx: MainWindowContext,
+    operation_id: OperationId,
+) -> Result<(), Error> {
+    {
+        let mut ops = ctx.operations().0.write();
+        if let Some(op) = ops.get_mut(&operation_id) {
+            op.backgrounded = true;
+        }
+    }
+    ctx.publish()?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -755,6 +771,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cancel_operation,
         resolve_issue,
         dismiss_operation,
+        background_operation,
         close_window
     ])
 }
