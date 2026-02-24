@@ -2,6 +2,7 @@ import {
   Fragment,
   useMemo,
   useState,
+  ReactElement
 } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
@@ -23,7 +24,7 @@ function Highlight(props: {
   let key = 0;
   let a = 0;
   let b = 0;
-  const parts: JSX.Element[] = [];
+  const parts: ReactElement[] = [];
   while (a < filter.length && b < name.length) {
     if (filter[a].toLowerCase() === name[b].toLowerCase()) {
       parts.push(
