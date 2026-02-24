@@ -124,6 +124,11 @@ export const useRemoteState = <T>(
     };
   }, deps);
 
+  // @ts-ignore
+  window.__NEWT_STATE = window.__NEWT_STATE ?? {};
+  // @ts-ignore
+  window.__NEWT_STATE[event_name] = state;
+
   return state;
 };
 

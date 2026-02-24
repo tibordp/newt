@@ -802,3 +802,9 @@ label {
     margin: 0;
   }
 }
+
+.xterm {
+  .xterm-viewport {
+    background-color: transparent !important;
+  }
+}

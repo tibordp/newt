@@ -6,6 +6,7 @@ use newt_common::operation::{
     StartOperationRequest,
 };
 use newt_common::terminal::TerminalHandle;
+use shell_quote::Quote;
 use tauri::ipc::Invoke;
 use tauri::Manager;
 use tauri::WebviewWindow;
@@ -254,6 +255,7 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
     .title(format!("{} - Viewer", path_display))
     .center()
     .focused(true)
+    .inner_size(800.0, 600.0)
     .build()
     .unwrap();
 }
@@ -368,27 +370,9 @@ pub async fn paste_from_clipboard(
 }
 
 #[tauri::command]
-pub fn zoom(window: tauri::Webview, factor: f64) -> Result<(), Error> {
-    window.with_webview(move |webview| {
-        #[cfg(target_os = "linux")]
-        {
-            // see https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/struct.WebView.html
-            // and https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/trait.WebViewExt.html
-            use webkit2gtk::WebViewExt;
-            webview.inner().set_zoom_level(factor);
-        }
-
-        #[cfg(windows)]
-        unsafe {
-            // see https://docs.rs/webview2-com/0.19.1/webview2_com/Microsoft/Web/WebView2/Win32/struct.ICoreWebView2Controller.html
-            webview.controller().SetZoomFactor(factor).unwrap();
-        }
-
-        #[cfg(target_os = "macos")]
-        unsafe {
-            let () = msg_send![webview.inner(), setPageZoom: factor];
-        }
-    })?;
+pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
+    webview.set_zoom(factor)
+        .map_err(|_| Error::Custom("terminal does not exit".into()))?;
 
     Ok(())
 }
@@ -413,7 +397,7 @@ pub async fn send_to_terminal(
         .get_effective_selection()
         .iter()
         .filter_map(|p| {
-            p.path.file_name().map(shell_quote::bash::escape).map(|mut b| {
+            p.path.file_name().map(shell_quote::Bash::quote).map(|mut b: Vec<u8>| {
                 b.push(b' ');
                 b
             })
