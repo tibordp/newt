@@ -16,34 +16,44 @@ export default function Terminal({ handle, active }: { handle: number; active: b
   useEffect(() => {
     const term = new XTermJSTerminal({
       scrollback: 1000,
-      fontFamily: "monospace",
-      fontSize: 13,
-      cursorStyle: "block",
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace', // Default Mac VS Code fonts
+      fontSize: 12,
+      lineHeight: 1.2,
+      fontWeight: "normal",
+      fontWeightBold: "bold",
+      cursorStyle: "bar",     // VS Code uses a vertical bar by default
+      cursorBlink: true,      // Makes the terminal feel active
+      cursorWidth: 2,
       allowTransparency: true,
       allowProposedApi: true,
 
       theme: {
-        cursor: "#000000",
-        background: "#ffffff",
-        foreground: "#333333",
-        selectionBackground: "#ADD6FF",
-        black: "#000000",
-        red: "#cd3131",
-        green: "#00BC00",
-        yellow: "#949800",
-        blue: "#0451a5",
-        magenta: "#bc05bc",
-        cyan: "#0598bc",
-        white: "#555555",
-        brightBlack: "#666666",
-        brightRed: "#cd3131",
-        brightGreen: "#14CE14",
-        brightYellow: "#b5ba00",
-        brightBlue: "#0451a5",
-        brightMagenta: "#bc05bc",
-        brightCyan: "#0598bc",
-        brightWhite: "#a5a5a5",
+          background: "#ffffff",
+          foreground: "#3b3b3b",       // Slightly softer than harsh black
+          cursor: "#3b3b3b",
+          selectionBackground: "#ADD6FF",
+
+          // Standard Colors
+          black: "#000000",
+          red: "#a1260d",              // Deeper, more readable red
+          green: "#107c41",            // Microsoft's modern, accessible green
+          yellow: "#82660b",           // Muted yellow for better white-background contrast
+          blue: "#0050a4",
+          magenta: "#9e1c72",
+          cyan: "#007185",
+          white: "#5b5b5b",
+
+          // Bright Colors (Often used for bold text in the terminal)
+          brightBlack: "#666666",
+          brightRed: "#cd3131",
+          brightGreen: "#14ce14",
+          brightYellow: "#b5ba00",
+          brightBlue: "#0451a5",
+          brightMagenta: "#bc05bc",
+          brightCyan: "#0598bc",
+          brightWhite: "#a5a5a5",
       },
+
     });
     term.open(ref.current!);
     terminalRef.current = term;
