@@ -132,7 +132,7 @@ pub fn set_sorting(
 pub fn toggle_selected(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
-    filename: String,
+    filename: Option<String>,
     focus_next: bool,
 ) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {

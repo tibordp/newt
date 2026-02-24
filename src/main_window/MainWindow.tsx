@@ -1,7 +1,6 @@
 import {
   useState,
   useEffect,
-  useMemo,
   useCallback,
 } from "react";
 
@@ -38,14 +37,9 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusGeneration, setFocusGeneration] = useState(0);
 
-  // Derive the foreground operation: first non-backgrounded op by ID order
-  const foregroundOp = useMemo(() => {
-    if (!remoteState) return null;
-    const ops = Object.values(remoteState.operations)
-      .filter((op) => !op.backgrounded)
-      .sort((a, b) => a.id - b.id);
-    return ops.length > 0 ? ops[0] : null;
-  }, [remoteState?.operations]);
+  const foregroundOp = remoteState?.foreground_operation_id != null
+    ? remoteState.operations[remoteState.foreground_operation_id]
+    : null;
 
   const refocusActivePane = useCallback((e?: Event) => {
     e?.preventDefault();

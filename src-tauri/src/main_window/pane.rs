@@ -59,6 +59,16 @@ impl Default for Sorting {
     }
 }
 
+#[derive(Default, Clone, serde::Serialize)]
+pub struct PaneStats {
+    pub file_count: usize,
+    pub dir_count: usize,
+    pub bytes: u64,
+    pub selected_file_count: usize,
+    pub selected_dir_count: usize,
+    pub selected_bytes: u64,
+}
+
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
@@ -366,6 +376,8 @@ pub struct PaneViewState {
     pub selected: HashSet<String>,
     pub filter: Option<String>,
     pub fs_stats: Option<FsStats>,
+    pub stats: PaneStats,
+    pub focused_index: Option<usize>,
 
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
@@ -374,6 +386,31 @@ pub struct PaneViewState {
 }
 
 impl PaneViewState {
+    fn recompute_stats(&mut self) {
+        let mut stats = PaneStats::default();
+        for f in &self.files {
+            if f.is_dir {
+                stats.dir_count += 1;
+            } else {
+                stats.file_count += 1;
+                stats.bytes += f.size.unwrap_or(0);
+            }
+            if self.selected.contains(&f.name) {
+                if f.is_dir {
+                    stats.selected_dir_count += 1;
+                } else {
+                    stats.selected_file_count += 1;
+                    stats.selected_bytes += f.size.unwrap_or(0);
+                }
+            }
+        }
+        self.stats = stats;
+        self.focused_index = self
+            .focused
+            .as_ref()
+            .and_then(|name| self.file_lookup.get(name).copied());
+    }
+
     fn sort(&mut self) {
         self.files.sort_by(|a, b| {
             // Directories first
@@ -453,12 +490,14 @@ impl PaneViewState {
 
         self.sort();
         self.update_focus();
+        self.recompute_stats();
     }
 
     pub fn focus(&mut self, filename: String) {
         self.update_filter(None);
         self.focused = Some(filename);
         self.update_focus();
+        self.recompute_stats();
     }
 
     pub fn focus_descendant(&mut self, path: &Path) {
@@ -474,9 +513,14 @@ impl PaneViewState {
     pub fn set_sorting(&mut self, sorting: Sorting) {
         self.sorting = sorting;
         self.sort();
+        self.recompute_stats();
     }
 
-    pub fn toggle_selected(&mut self, filename: String, focus_next: bool) {
+    pub fn toggle_selected(&mut self, filename: Option<String>, focus_next: bool) {
+        let Some(filename) = filename.as_ref().or(self.focused.as_ref()).cloned() else {
+            return;
+        };
+
         if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
             self.selected.insert(filename.clone());
         }
@@ -489,6 +533,7 @@ impl PaneViewState {
             self.focused = Some(filename);
             self.update_focus();
         }
+        self.recompute_stats();
     }
 
     pub fn select_range(&mut self, filename: String) {
@@ -511,6 +556,7 @@ impl PaneViewState {
         self.selected.remove("..");
 
         self.focused = Some(filename);
+        self.recompute_stats();
     }
 
     pub fn select_all(&mut self) {
@@ -518,12 +564,14 @@ impl PaneViewState {
         self.filter_regex = None;
         self.selected = self.file_lookup.keys().cloned().collect();
         self.selected.remove("..");
+        self.recompute_stats();
     }
 
     pub fn deselect_all(&mut self) {
         self.update_filter(None);
         self.filter_regex = None;
         self.selected.clear();
+        self.recompute_stats();
     }
 
     pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
@@ -535,11 +583,13 @@ impl PaneViewState {
                 self.focused = Some(f.clone());
             }
         }
+        self.recompute_stats();
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {
         let Some(filter) = filter else {
             self.update_filter(None);
+            self.recompute_stats();
             return;
         };
 
@@ -557,6 +607,7 @@ impl PaneViewState {
                 self.focused = Some(f.name.clone());
                 self.filter = Some(filter);
                 self.filter_regex = Some(new_filter);
+                self.recompute_stats();
                 return;
             }
         }
@@ -567,6 +618,7 @@ impl PaneViewState {
                 self.focused = Some(f.name.clone());
                 self.filter = Some(filter);
                 self.filter_regex = Some(new_filter);
+                self.recompute_stats();
                 return;
             }
         }
@@ -574,6 +626,7 @@ impl PaneViewState {
         if self.filter.is_none() {
             self.update_filter(Some(Default::default()));
         }
+        self.recompute_stats();
     }
 
     pub fn relative_jump(&mut self, mut offset: i32, with_selection: bool) {
@@ -611,5 +664,6 @@ impl PaneViewState {
         }
 
         self.focused = Some(self.files[new_index as usize].name.clone());
+        self.recompute_stats();
     }
 }

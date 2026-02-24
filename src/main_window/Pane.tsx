@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useCallback,
   Fragment,
+  memo,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import iconMapping from "../assets/mapping.json";
@@ -16,7 +17,7 @@ import {
 } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { VfsPath } from "../lib/types";
-import { File, PaneState, DndFileInfo } from "./types";
+import { File, PaneState, DndFileInfo, FileRowContext } from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
 
@@ -116,7 +117,54 @@ function getFileIconChar(name: string, isDir: boolean): { ch: string; color: str
   return { ch: String.fromCodePoint(parseInt(fontCharacter, 16)), color: fontColor };
 }
 
-export default function Pane(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
+type FileRowProps = {
+  row: File;
+  isFocused: boolean;
+  isSelected: boolean;
+  filter?: string;
+  widthPrefix: string;
+  onClick: React.MouseEventHandler<HTMLLIElement>;
+  onMouseDown: React.MouseEventHandler<HTMLLIElement>;
+  onOpen: (file: File) => void;
+};
+
+const FileRow = memo(function FileRow({
+  row,
+  isFocused,
+  isSelected,
+  filter,
+  widthPrefix,
+  onClick,
+  onMouseDown,
+  onOpen,
+}: FileRowProps) {
+  const ctx: FileRowContext = { isFocused, filter };
+  return (
+    <li
+      data-name={row.name}
+      data-is-dir={row.is_dir ? "true" : undefined}
+      className={`file-item ${isFocused ? "focused" : ""} ${isSelected ? "selected" : ""}`}
+      onClick={onClick}
+      onMouseDown={onMouseDown}
+      onDoubleClick={() => onOpen(row)}
+    >
+      {columns.map((column) => (
+        <div
+          key={column.key}
+          style={{
+            textAlign: column.align,
+            width: `var(--${widthPrefix}-${column.key})`,
+          }}
+          className="datum"
+        >
+          {column.render(row, ctx)}
+        </div>
+      ))}
+    </li>
+  );
+});
+
+function PaneInner(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
   const {
     paneHandle,
     active,
@@ -129,7 +177,9 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
     focused,
     pending_path,
     fs_stats,
+    stats,
   } = props;
+  const focusedIndex = props.focused_index ?? -1;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
     if (also_when_busy || !pending_path) {
       safeCommand(cmd, { paneHandle, ...args });
@@ -158,53 +208,6 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
     return new Set(selected);
   }, [selected]);
 
-  const [
-    bytes,
-    fileCount,
-    dirCount,
-    selectedBytes,
-    selectedFileCount,
-    selectedDirCount,
-  ] = useMemo(() => {
-    let bytes = 0;
-    let fileCount = 0;
-    let dirCount = 0;
-    let selectedBytes = 0;
-    let selectedFileCount = 0;
-    let selectedDirCount = 0;
-
-    for (const f of files) {
-      if (f.is_dir) {
-        dirCount++;
-      } else {
-        fileCount++;
-        bytes += f.size;
-      }
-      if (selectedLookup.has(f.name)) {
-        if (f.is_dir) {
-          selectedDirCount++;
-        } else {
-          selectedFileCount++;
-          selectedBytes += f.size;
-        }
-      }
-    }
-    return [
-      bytes,
-      fileCount,
-      dirCount,
-      selectedBytes,
-      selectedFileCount,
-      selectedDirCount,
-    ];
-  }, [files, selectedLookup]);
-
-  const focusedIndex = useMemo(() => {
-    if (files) {
-      return files.findIndex((f) => f.name === focused);
-    }
-    return -1;
-  }, [files, focused]);
 
   const containerRef = useRef<HTMLUListElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -216,6 +219,10 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
   const suppressClickRef = useRef(false);
   const filesRef = useRef(files);
   filesRef.current = files;
+  const selectedLookupRef = useRef(selectedLookup);
+  selectedLookupRef.current = selectedLookup;
+  const pendingPathRef = useRef(pending_path);
+  pendingPathRef.current = pending_path;
 
   // --- DnD (drag-and-drop between panes) refs ---
   const dndRef = useRef<LocalDndState | null>(null);
@@ -489,9 +496,11 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
     e.preventDefault();
     e.stopPropagation(); // prevent drag-to-select
 
-    const filesToDrag = selectedLookup.has(fileName)
-      ? files.filter(f => selectedLookup.has(f.name) && f.name !== "..")
-      : [files.find(f => f.name === fileName)!];
+    const currentFiles = filesRef.current;
+    const currentSelected = selectedLookupRef.current;
+    const filesToDrag = currentSelected.has(fileName)
+      ? currentFiles.filter(f => currentSelected.has(f.name) && f.name !== "..")
+      : [currentFiles.find(f => f.name === fileName)!];
 
     dndRef.current = {
       active: false,
@@ -499,7 +508,7 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
       startY: e.clientY,
       files: filesToDrag.map(f => ({ name: f.name, is_dir: f.is_dir })),
     };
-  }, [files, selectedLookup]);
+  }, []);
 
   const cleanupDnd = useCallback(() => {
     const ghost = dndGhostRef.current;
@@ -669,15 +678,14 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
 
   // --- End DnD logic ---
 
-  const open = async (file: File) => {
-    if (!file) return;
-
+  const onOpen = useCallback((file: File) => {
+    if (!file || pendingPathRef.current) return;
     if (file.is_dir) {
-      command("navigate", { path: file.name, exact: true });
+      safeCommand("navigate", { paneHandle, path: file.name, exact: true });
     } else {
-      command("open", { filename: file.name });
+      safeCommand("open", { paneHandle, filename: file.name });
     }
-  };
+  }, [paneHandle]);
 
   const relativeJump = (delta: number, withSelection?: boolean) => {
     command("relative_jump", { offset: delta, withSelection: !!withSelection });
@@ -699,7 +707,7 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
     } else if (e.key == "End" && noModifiers) {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter" && noModifiers) {
-      open(files[focusedIndex]);
+      onOpen(files[focusedIndex]);
     } else if (e.key == "Tab" && noModifiers) {
       invoke("focus", { paneHandle: 1 - paneHandle });
     } else if (e.key == "Escape" && noModifiers) {
@@ -707,7 +715,6 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
       command("set_filter", { filter: null });
     } else if (e.key == insertKey && noModifiers) {
       command("toggle_selected", {
-        filename: files[focusedIndex].name,
         focusNext: true,
       });
     } else {
@@ -758,22 +765,24 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
     e.preventDefault();
   };
 
-  const onClick: React.MouseEventHandler<HTMLLIElement> = (e) => {
+  const onClick = useCallback((e: React.MouseEvent<HTMLLIElement>) => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
     }
+    if (pendingPathRef.current) return;
     if (e.ctrlKey) {
-      command("toggle_selected", {
+      safeCommand("toggle_selected", {
+        paneHandle,
         filename: e.currentTarget.dataset.name,
         focusNext: false,
       });
     } else if (e.shiftKey) {
-      command("select_range", { filename: e.currentTarget.dataset.name });
+      safeCommand("select_range", { paneHandle, filename: e.currentTarget.dataset.name });
     } else {
-      command("focus", { filename: e.currentTarget.dataset.name });
+      safeCommand("focus", { paneHandle, filename: e.currentTarget.dataset.name });
     }
-  };
+  }, [paneHandle]);
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
     tableHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft;
@@ -844,31 +853,22 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
             items={files}
             itemSize={22}
           >
-            {(row: File) => (
-              <li
-                key={row.name}
-                data-name={row.name}
-                data-is-dir={row.is_dir ? "true" : undefined}
-                className={`file-item ${active && row.name == focused ? "focused" : ""
-                  } ${selectedLookup.has(row.name) ? "selected" : ""}`}
-                onClick={onClick}
-                onMouseDown={onDndMouseDown}
-                onDoubleClick={() => open(row)}
-              >
-                {columns.map((column) => (
-                  <div
-                    key={column.key}
-                    style={{
-                      textAlign: column.align,
-                      width: `var(--${widthPrefix}-${column.key})`,
-                    }}
-                    className="datum"
-                  >
-                    {column.render(row, props)}
-                  </div>
-                ))}
-              </li>
-            )}
+            {(row: File) => {
+              const isFocused = active && row.name === focused;
+              return (
+                <FileRow
+                  key={row.name}
+                  row={row}
+                  isFocused={isFocused}
+                  isSelected={selectedLookup.has(row.name)}
+                  filter={isFocused ? filter : undefined}
+                  widthPrefix={widthPrefix}
+                  onClick={onClick}
+                  onMouseDown={onDndMouseDown}
+                  onOpen={onOpen}
+                />
+              );
+            }}
           </ViewportList>
           <div className="drag-rect" ref={dragRectRef} />
         </ul>
@@ -878,16 +878,18 @@ export default function Pane(props: PaneState & { paneHandle: number; active: bo
         {showSpinner && "Loading file list..."}
         {!showSpinner && selected.length > 0 && (
           <>
-            {selectedFileCount} files, {selectedDirCount} directories selected,{" "}
-            {selectedBytes.toLocaleString()} bytes total
+            {stats.selected_file_count} files, {stats.selected_dir_count} directories selected,{" "}
+            {stats.selected_bytes.toLocaleString()} bytes total
           </>
         )}
         {!showSpinner && selected.length == 0 && (
           <>
-            {fileCount} files, {dirCount} directories
+            {stats.file_count} files, {stats.dir_count} directories
           </>
         )}
       </div>
     </div>
   );
 }
+
+export default memo(PaneInner);
