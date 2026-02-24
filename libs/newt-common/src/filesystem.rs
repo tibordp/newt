@@ -1,29 +1,15 @@
 use std::collections::HashMap;
-use std::os::unix::prelude::MetadataExt;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use log::debug;
-
-use log::warn;
-use notify::event::RemoveKind;
-use notify::Config;
-use notify::Event;
-use notify::EventKind;
-use notify::RecommendedWatcher;
-use notify::RecursiveMode;
-use notify::Watcher;
-use parking_lot::Mutex;
 use parking_lot::RwLock;
 
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
 use crate::Error;
-use crate::ToUnix;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ListFilesOptions {
@@ -160,7 +146,7 @@ impl UidGidCache {
         }
     }
 
-    fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
+    pub fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
         {
             let groups = self.local_groups.read();
             if let Some(group) = groups.get(&gid) {
@@ -180,7 +166,7 @@ impl UidGidCache {
         Ok(group)
     }
 
-    fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
+    pub fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
         {
             let users = self.local_users.read();
             if let Some(user) = users.get(&uid) {
@@ -203,7 +189,6 @@ impl UidGidCache {
 
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
-    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error>;
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error>;
     async fn list_files(&self, path: VfsPath, options: ListFilesOptions)
         -> Result<FileList, Error>;
@@ -211,235 +196,6 @@ pub trait Filesystem: Send + Sync {
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
     async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error>;
-}
-
-pub struct Local {
-    cache: Arc<UidGidCache>,
-}
-
-impl Default for Local {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Local {
-    pub fn new() -> Self {
-        Self {
-            cache: Arc::new(UidGidCache::new()),
-        }
-    }
-
-    pub fn with_cache(cache: Arc<UidGidCache>) -> Self {
-        Self { cache }
-    }
-
-    /// Inner implementation of list_files, taking a `&Path` for reuse from `LocalVfs`.
-    pub async fn list_files_impl(
-        &self,
-        path: &Path,
-        options: ListFilesOptions,
-    ) -> Result<FileList, Error> {
-        self.list_files(VfsPath::root(path), options).await
-    }
-
-    /// Inner implementation of poll_changes, taking a `&Path` for reuse from `LocalVfs`.
-    pub async fn poll_changes_impl(&self, path: &Path) -> Result<(), Error> {
-        self.poll_changes(VfsPath::root(path)).await
-    }
-}
-
-#[async_trait::async_trait]
-impl Filesystem for Local {
-    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
-        let expanded = tokio::task::spawn_blocking(move || expanduser::expanduser(path)).await??;
-        Ok(VfsPath::root(expanded))
-    }
-
-    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
-        let path = path.path;
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx = Arc::new(Mutex::new(Some(tx)));
-
-        let mut watcher = {
-            let path = path.clone();
-            RecommendedWatcher::new(
-                move |res: Result<Event, notify::Error>| {
-                    match res {
-                        Ok(event) => {
-                            debug!("{:?} (while watching {})", event, path.display());
-                            let should_notify = match event.kind {
-                                // For removals we care about any direct ancestor or descendant...
-                                EventKind::Remove(RemoveKind::Folder) => event
-                                    .paths
-                                    .iter()
-                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
-                                // ... for everything else, just a direct descendant
-                                _ => event.paths.iter().any(|p| p.starts_with(&path)),
-                            };
-
-                            if should_notify {
-                                if let Some(s) = tx.lock().take() {
-                                    let _ = s.send(());
-                                }
-                            }
-                        }
-                        Err(e) => warn!("watch error: {:?}", e),
-                    };
-                },
-                Config::default(),
-            )?
-        };
-
-        // We need to watch all the parents in order to detect folder deletion
-        let mut path = path;
-        loop {
-            watcher.watch(&path, RecursiveMode::NonRecursive)?;
-            if !path.pop() {
-                break;
-            }
-        }
-
-        let _ = rx.await;
-        Ok(())
-    }
-
-    async fn list_files(
-        &self,
-        vfs_path: VfsPath,
-        options: ListFilesOptions,
-    ) -> Result<FileList, Error> {
-        let mut path = vfs_path.path;
-        assert!(path.is_absolute());
-        loop {
-            match tokio::task::spawn_blocking({
-                let path = path.clone();
-                let cache = self.cache.clone();
-                move || -> Result<Vec<File>, Error> {
-                    let mut ret = Vec::new();
-                    if let Some(parent) = path.parent() {
-                        let metadata = parent.symlink_metadata()?;
-
-                        #[cfg(target_family = "unix")]
-                        let mode = metadata.mode();
-                        #[cfg(target_family = "windows")]
-                        let mode = metadata.file_attributes() as _;
-
-                        ret.push(File {
-                            name: "..".to_string(),
-                            size: None,
-                            is_dir: true,
-                            is_symlink: metadata.is_symlink(),
-                            is_hidden: false,
-                            user: cache.user_name(metadata.uid()).ok(),
-                            group: cache.group_name(metadata.gid()).ok(),
-                            mode: Mode(mode),
-                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                            created: metadata.created().map(|t| t.to_unix()).ok(),
-                        });
-                    }
-
-                    for maybe_entry in std::fs::read_dir(path)? {
-                        let entry = maybe_entry?;
-                        let metadata = entry.metadata()?;
-                        let file_type = metadata.file_type();
-
-                        let name = entry.file_name().into_string().unwrap();
-                        let mut is_dir = file_type.is_dir();
-
-                        if file_type.is_symlink() {
-                            let target_metadata = std::fs::metadata(entry.path());
-                            // If we e.g. don't have permission to read the target, we show the link details
-                            if let Ok(target_metadata) = target_metadata {
-                                is_dir = target_metadata.is_dir();
-                            }
-                        }
-
-                        #[cfg(target_family = "unix")]
-                        let mode = metadata.mode();
-                        #[cfg(target_family = "windows")]
-                        let mode = metadata.file_attributes() as _;
-
-                        ret.push(File {
-                            name: name.clone(),
-                            size: (!is_dir).then_some(metadata.len()),
-                            is_dir,
-                            is_symlink: file_type.is_symlink(),
-                            is_hidden: name.starts_with('.'),
-                            user: cache.user_name(metadata.uid()).ok(),
-                            group: cache.group_name(metadata.gid()).ok(),
-                            mode: Mode(mode),
-                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                            created: metadata.created().map(|t| t.to_unix()).ok(),
-                        });
-                    }
-
-                    Ok(ret)
-                }
-            })
-            .await?
-            {
-                Ok(files) => {
-                    let stats = nix::sys::statvfs::statvfs(&path).ok().map(Into::into);
-
-                    return Ok(FileList::new(VfsPath::root(path), files, stats));
-                }
-                Err(Error::Io(e)) => match (e.kind(), options.strict) {
-                    (std::io::ErrorKind::NotFound, false)
-                    | (std::io::ErrorKind::NotADirectory, _) => {
-                        if !path.pop() {
-                            return Err(e.into());
-                        }
-                    }
-                    _ => return Err(e.into()),
-                },
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    async fn touch(&self, path: VfsPath) -> Result<(), Error> {
-        let path = path.path;
-        tokio::task::spawn_blocking(move || {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .open(path)
-                .map_err(Error::Io)
-        })
-        .await?
-        .map(|_| ())
-    }
-
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
-        let old_path = old_path.path;
-        let new_path = new_path.path;
-        tokio::task::spawn_blocking(move || std::fs::rename(old_path, new_path).map_err(Error::Io))
-            .await?
-    }
-
-    async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
-        let path = path.path;
-        tokio::task::spawn_blocking(move || std::fs::create_dir_all(path).map_err(Error::Io))
-            .await?
-    }
-
-    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
-        tokio::task::spawn_blocking(move || {
-            for vfs_path in paths {
-                let path = vfs_path.path;
-                if path.is_dir() {
-                    std::fs::remove_dir_all(path)?;
-                } else {
-                    std::fs::remove_file(path)?;
-                }
-            }
-            Ok(())
-        })
-        .await?
-    }
 }
 
 pub struct Slow<T: Filesystem>(T);
@@ -452,10 +208,6 @@ impl<T: Filesystem> Slow<T> {
 
 #[async_trait::async_trait]
 impl<T: Filesystem> Filesystem for Slow<T> {
-    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
-        self.0.shell_expand(path).await
-    }
-
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
         self.0.poll_changes(path).await
     }
@@ -497,15 +249,6 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl Filesystem for Remote {
-    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
-        let ret: Result<VfsPath, Error> = self
-            .communicator
-            .invoke(crate::api::API_SHELL_EXPAND, &path)
-            .await?;
-
-        Ok(ret?)
-    }
-
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
@@ -558,6 +301,49 @@ impl Filesystem for Remote {
             .invoke(crate::api::API_DELETE_ALL, &paths)
             .await?;
 
+        Ok(ret?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ShellService — shell expansion (separate from VFS/Filesystem)
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+pub trait ShellService: Send + Sync {
+    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error>;
+}
+
+pub struct LocalShellService;
+
+#[async_trait::async_trait]
+impl ShellService for LocalShellService {
+    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
+        let expanded = tokio::task::spawn_blocking(move || {
+            expanduser::expanduser(input).map_err(Error::Io)
+        })
+        .await??;
+        Ok(VfsPath::root(expanded))
+    }
+}
+
+pub struct ShellRemote {
+    communicator: Communicator,
+}
+
+impl ShellRemote {
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl ShellService for ShellRemote {
+    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
+        let ret: Result<VfsPath, Error> = self
+            .communicator
+            .invoke(crate::api::API_SHELL_EXPAND, &input)
+            .await?;
         Ok(ret?)
     }
 }

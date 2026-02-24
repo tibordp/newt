@@ -1,18 +1,22 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bitflags::bitflags;
-use parking_lot::RwLock;
+use log::{debug, warn};
+use notify::event::RemoveKind;
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::file_reader::{FileChunk, FileInfo, FileReader};
-use crate::filesystem::{FileList, Filesystem, ListFilesOptions};
-use crate::Error;
+use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions, Mode};
+use crate::rpc::Communicator;
+use crate::{Error, ToUnix};
 
 // ---------------------------------------------------------------------------
 // VfsId
@@ -86,20 +90,27 @@ impl std::fmt::Display for VfsPath {
 }
 
 // ---------------------------------------------------------------------------
-// VfsCapabilities
+// VfsDescriptor — type-level metadata for a VFS implementation
 // ---------------------------------------------------------------------------
 
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-    pub struct VfsCapabilities: u32 {
-        const READ         = 0b0000_0001;
-        const WRITE        = 0b0000_0010;
-        const DELETE       = 0b0000_0100;
-        const RENAME       = 0b0000_1000;
-        const WATCH        = 0b0001_0000;
-        const SHELL_EXPAND = 0b0010_0000;
-        const FAST_COPY    = 0b0100_0000;
-    }
+pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
+    fn type_name(&self) -> &'static str;
+    fn can_read(&self) -> bool;
+    fn can_write(&self) -> bool;
+    fn can_delete(&self) -> bool;
+    fn can_rename(&self) -> bool;
+    fn can_watch(&self) -> bool;
+    fn can_fast_copy(&self) -> bool;
+}
+
+// Auto-registration via inventory
+pub struct RegisteredDescriptor(pub &'static dyn VfsDescriptor);
+inventory::collect!(RegisteredDescriptor);
+
+pub fn lookup_descriptor(type_name: &str) -> Option<&'static dyn VfsDescriptor> {
+    inventory::iter::<RegisteredDescriptor>()
+        .find(|r| r.0.type_name() == type_name)
+        .map(|r| r.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -144,10 +155,14 @@ pub struct VfsDirEntry {
 #[async_trait::async_trait]
 pub trait Vfs: Send + Sync {
     // --- Required (browsing) ---
-    fn name(&self) -> &str;
-    fn capabilities(&self) -> VfsCapabilities;
+    fn descriptor(&self) -> &'static dyn VfsDescriptor;
     async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
+
+    // --- Mount metadata (opaque blob for client-side use) ---
+    fn mount_meta(&self) -> Vec<u8> {
+        Vec::new()
+    }
 
     // --- Reading (gated by READ) ---
     async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
@@ -239,17 +254,45 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    // --- Shell ---
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
-        let _ = input;
-        Err(Error::NotSupported)
-    }
-
     // --- VFS origin (for sub-VFS like archives) ---
     fn origin(&self) -> Option<&VfsPath> {
         None
     }
 }
+
+// ---------------------------------------------------------------------------
+// LocalVfsDescriptor
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct LocalVfsDescriptor;
+
+impl VfsDescriptor for LocalVfsDescriptor {
+    fn type_name(&self) -> &'static str {
+        "local"
+    }
+    fn can_read(&self) -> bool {
+        true
+    }
+    fn can_write(&self) -> bool {
+        true
+    }
+    fn can_delete(&self) -> bool {
+        true
+    }
+    fn can_rename(&self) -> bool {
+        true
+    }
+    fn can_watch(&self) -> bool {
+        true
+    }
+    fn can_fast_copy(&self) -> bool {
+        true
+    }
+}
+
+pub static LOCAL_VFS_DESCRIPTOR: LocalVfsDescriptor = LocalVfsDescriptor;
+inventory::submit!(RegisteredDescriptor(&LOCAL_VFS_DESCRIPTOR));
 
 // ---------------------------------------------------------------------------
 // LocalVfs — wraps existing filesystem::Local + file_reader::Local logic
@@ -275,29 +318,134 @@ impl Default for LocalVfs {
 
 #[async_trait::async_trait]
 impl Vfs for LocalVfs {
-    fn name(&self) -> &str {
-        "local"
-    }
-
-    fn capabilities(&self) -> VfsCapabilities {
-        VfsCapabilities::READ
-            | VfsCapabilities::WRITE
-            | VfsCapabilities::DELETE
-            | VfsCapabilities::RENAME
-            | VfsCapabilities::WATCH
-            | VfsCapabilities::SHELL_EXPAND
-            | VfsCapabilities::FAST_COPY
+    fn descriptor(&self) -> &'static dyn VfsDescriptor {
+        &LOCAL_VFS_DESCRIPTOR
     }
 
     async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error> {
-        // Delegate to existing filesystem::Local implementation
-        let local = crate::filesystem::Local::with_cache(self.fs_cache.clone());
-        local.list_files_impl(path, opts).await
+        assert!(path.is_absolute());
+        let mut path = path.to_path_buf();
+        loop {
+            match tokio::task::spawn_blocking({
+                let path = path.clone();
+                let cache = self.fs_cache.clone();
+                move || -> Result<Vec<File>, Error> {
+                    let mut ret = Vec::new();
+                    if let Some(parent) = path.parent() {
+                        let metadata = parent.symlink_metadata()?;
+                        let mode = metadata.mode();
+                        ret.push(File {
+                            name: "..".to_string(),
+                            size: None,
+                            is_dir: true,
+                            is_symlink: metadata.is_symlink(),
+                            is_hidden: false,
+                            user: cache.user_name(metadata.uid()).ok(),
+                            group: cache.group_name(metadata.gid()).ok(),
+                            mode: Mode(mode),
+                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                            created: metadata.created().map(|t| t.to_unix()).ok(),
+                        });
+                    }
+
+                    for maybe_entry in std::fs::read_dir(&path)? {
+                        let entry = maybe_entry?;
+                        let metadata = entry.metadata()?;
+                        let file_type = metadata.file_type();
+
+                        let name = entry.file_name().into_string().unwrap();
+                        let mut is_dir = file_type.is_dir();
+
+                        if file_type.is_symlink() {
+                            let target_metadata = std::fs::metadata(entry.path());
+                            if let Ok(target_metadata) = target_metadata {
+                                is_dir = target_metadata.is_dir();
+                            }
+                        }
+
+                        let mode = metadata.mode();
+                        ret.push(File {
+                            name: name.clone(),
+                            size: (!is_dir).then_some(metadata.len()),
+                            is_dir,
+                            is_symlink: file_type.is_symlink(),
+                            is_hidden: name.starts_with('.'),
+                            user: cache.user_name(metadata.uid()).ok(),
+                            group: cache.group_name(metadata.gid()).ok(),
+                            mode: Mode(mode),
+                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                            created: metadata.created().map(|t| t.to_unix()).ok(),
+                        });
+                    }
+
+                    Ok(ret)
+                }
+            })
+            .await?
+            {
+                Ok(files) => {
+                    let stats = nix::sys::statvfs::statvfs(&path).ok().map(FsStats::from);
+                    return Ok(FileList::new(VfsPath::root(&path), files, stats));
+                }
+                Err(Error::Io(e)) => match (e.kind(), opts.strict) {
+                    (std::io::ErrorKind::NotFound, false)
+                    | (std::io::ErrorKind::NotADirectory, _) => {
+                        if !path.pop() {
+                            return Err(e.into());
+                        }
+                    }
+                    _ => return Err(e.into()),
+                },
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
-        let local = crate::filesystem::Local::with_cache(self.fs_cache.clone());
-        local.poll_changes_impl(path).await
+        let path = path.to_path_buf();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Arc::new(Mutex::new(Some(tx)));
+
+        let mut watcher = {
+            let path = path.clone();
+            RecommendedWatcher::new(
+                move |res: Result<Event, notify::Error>| {
+                    match res {
+                        Ok(event) => {
+                            debug!("{:?} (while watching {})", event, path.display());
+                            let should_notify = match event.kind {
+                                EventKind::Remove(RemoveKind::Folder) => event
+                                    .paths
+                                    .iter()
+                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                _ => event.paths.iter().any(|p| p.starts_with(&path)),
+                            };
+
+                            if should_notify {
+                                if let Some(s) = tx.lock().take() {
+                                    let _ = s.send(());
+                                }
+                            }
+                        }
+                        Err(e) => warn!("watch error: {:?}", e),
+                    };
+                },
+                Config::default(),
+            )?
+        };
+
+        let mut watch_path = path;
+        loop {
+            watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
+            if !watch_path.pop() {
+                break;
+            }
+        }
+
+        let _ = rx.await;
+        Ok(())
     }
 
     async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
@@ -556,12 +704,6 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
-        tokio::task::spawn_blocking(move || {
-            expanduser::expanduser(input).map_err(Error::Io)
-        })
-        .await?
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -624,13 +766,6 @@ impl VfsRegistryFs {
 
 #[async_trait::async_trait]
 impl Filesystem for VfsRegistryFs {
-    async fn shell_expand(&self, path: String) -> Result<VfsPath, Error> {
-        // Shell expand only makes sense on the root (local) VFS
-        let (vfs, _) = self.registry.resolve(&VfsPath::root(""))?;
-        let expanded = vfs.shell_expand(path).await?;
-        Ok(VfsPath::root(expanded))
-    }
-
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.poll_changes(&local_path).await
@@ -716,5 +851,55 @@ pub enum MountRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MountResponse {
     pub vfs_id: VfsId,
-    pub capabilities: VfsCapabilities,
+    pub type_name: String,
+    pub mount_meta: Vec<u8>,
+}
+
+// ---------------------------------------------------------------------------
+// MountedVfsInfo — client-side descriptor + metadata for a mounted VFS
+// ---------------------------------------------------------------------------
+
+pub struct MountedVfsInfo {
+    pub vfs_id: VfsId,
+    pub descriptor: &'static dyn VfsDescriptor,
+    pub mount_meta: Vec<u8>,
+}
+
+// ---------------------------------------------------------------------------
+// VfsManager — trait for mount/unmount operations
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+pub trait VfsManager: Send + Sync {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error>;
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error>;
+}
+
+pub struct VfsManagerRemote {
+    communicator: Communicator,
+}
+
+impl VfsManagerRemote {
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl VfsManager for VfsManagerRemote {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
+        let ret: Result<MountResponse, Error> = self
+            .communicator
+            .invoke(crate::api::API_MOUNT_VFS, &request)
+            .await?;
+        Ok(ret?)
+    }
+
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_UNMOUNT_VFS, &vfs_id)
+            .await?;
+        Ok(ret?)
+    }
 }

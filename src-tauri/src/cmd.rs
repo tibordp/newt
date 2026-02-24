@@ -79,7 +79,7 @@ pub async fn navigate(
 ) -> Result<(), Error> {
     if !exact {
         let expanded = ctx
-            .fs()
+            .shell_service()
             .shell_expand(path.to_string())
             .await?;
 
@@ -239,8 +239,10 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
     }
 
     let path_display = full_path.to_string();
+    let vfs_path_json = serde_json::to_string(&full_path).unwrap();
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("path", &path_display)
+        .append_pair("vfs_path", &vfs_path_json)
         .finish();
     let url_path = format!("/viewer?{}", query);
 

@@ -2001,6 +2001,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2535,12 +2544,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bincode",
- "bitflags 2.11.0",
  "byteorder",
  "bytes",
  "expanduser",
  "filetime",
  "futures",
+ "inventory",
  "libc",
  "log",
  "nix",

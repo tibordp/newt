@@ -11,6 +11,7 @@ import { useSearchParams } from "react-router-dom";
 
 import "./Viewer.scss";
 import { safeCommand } from "../lib/ipc";
+import type { VfsPath } from "../lib/types";
 
 interface FileInfo {
   size: number;
@@ -87,7 +88,7 @@ interface TextLoadingState {
 }
 
 function useChunkedTextLoader(
-  filePath: string,
+  filePath: VfsPath,
   fileSize: number,
   enabled: boolean
 ): TextLoadingState {
@@ -184,7 +185,8 @@ function useChunkedTextLoader(
     return () => {
       cancelled = true;
     };
-  }, [filePath, fileSize, enabled]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(filePath), fileSize, enabled]);
 
   return state;
 }
@@ -589,7 +591,10 @@ function HexViewer({
 
 function Viewer() {
   const [searchParams] = useSearchParams();
-  const filePath = searchParams.get("path") || "";
+  const displayPath = searchParams.get("path") || "";
+  const filePath: VfsPath = JSON.parse(
+    searchParams.get("vfs_path") || `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`
+  );
 
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -598,8 +603,8 @@ function Viewer() {
 
   // Fetch file info (and first binary chunk) on mount
   useEffect(() => {
-    if (!filePath) return;
-    document.title = filePath;
+    if (!displayPath) return;
+    document.title = displayPath;
 
     (async () => {
       try {
@@ -620,7 +625,7 @@ function Viewer() {
         await message(e.toString(), { kind: "error", title: "Error" });
       }
     })();
-  }, [filePath]);
+  }, [displayPath]);
 
   // Chunked text loading — enabled once we know it's a text file
   const textState = useChunkedTextLoader(
@@ -644,7 +649,7 @@ function Viewer() {
         console.error("Failed to load chunk", chunkIndex, e);
       }
     },
-    [filePath]
+    [displayPath]
   );
 
   // Focus the viewer on mount
@@ -663,7 +668,10 @@ function Viewer() {
   if (error) {
     return (
       <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="viewer-error">Error: {error}</div>
+        <div className="viewer-content" />
+        <div className="viewer-status">
+          <span className="status-error">{error}</span>
+        </div>
       </div>
     );
   }
@@ -671,7 +679,10 @@ function Viewer() {
   if (!info) {
     return (
       <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="viewer-loading">Loading...</div>
+        <div className="viewer-content" />
+        <div className="viewer-status">
+          <span>Loading...</span>
+        </div>
       </div>
     );
   }
@@ -680,7 +691,7 @@ function Viewer() {
     return (
       <TextViewer
         lines={textState.lines}
-        filePath={filePath}
+        filePath={displayPath}
         fileSize={info.size}
         bytesLoaded={textState.bytesLoaded}
         loading={!textState.done}
@@ -690,7 +701,7 @@ function Viewer() {
 
   return (
     <HexViewer
-      filePath={filePath}
+      filePath={displayPath}
       fileSize={info.size}
       chunkCache={chunkCache}
       loadChunk={loadChunk}

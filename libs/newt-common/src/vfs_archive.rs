@@ -5,8 +5,42 @@ use std::path::{Path, PathBuf};
 
 use crate::file_reader::{FileChunk, FileInfo};
 use crate::filesystem::{File, FileList, ListFilesOptions, Mode};
-use crate::vfs::{Vfs, VfsCapabilities, VfsDirEntry, VfsEntryMetadata, VfsPath};
+use crate::vfs::{RegisteredDescriptor, Vfs, VfsDescriptor, VfsDirEntry, VfsEntryMetadata, VfsPath};
 use crate::Error;
+
+// ---------------------------------------------------------------------------
+// ArchiveVfsDescriptor
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ArchiveVfsDescriptor;
+
+impl VfsDescriptor for ArchiveVfsDescriptor {
+    fn type_name(&self) -> &'static str {
+        "archive"
+    }
+    fn can_read(&self) -> bool {
+        true
+    }
+    fn can_write(&self) -> bool {
+        false
+    }
+    fn can_delete(&self) -> bool {
+        false
+    }
+    fn can_rename(&self) -> bool {
+        false
+    }
+    fn can_watch(&self) -> bool {
+        false
+    }
+    fn can_fast_copy(&self) -> bool {
+        false
+    }
+}
+
+pub static ARCHIVE_VFS_DESCRIPTOR: ArchiveVfsDescriptor = ArchiveVfsDescriptor;
+inventory::submit!(RegisteredDescriptor(&ARCHIVE_VFS_DESCRIPTOR));
 
 /// A read-only VFS backed by a ZIP archive loaded in memory.
 pub struct ArchiveVfs {
@@ -66,12 +100,12 @@ impl ArchiveVfs {
 
 #[async_trait::async_trait]
 impl Vfs for ArchiveVfs {
-    fn name(&self) -> &str {
-        &self.name
+    fn descriptor(&self) -> &'static dyn VfsDescriptor {
+        &ARCHIVE_VFS_DESCRIPTOR
     }
 
-    fn capabilities(&self) -> VfsCapabilities {
-        VfsCapabilities::READ
+    fn mount_meta(&self) -> Vec<u8> {
+        bincode::serialize(&(&self.name, &self.origin_path)).unwrap_or_default()
     }
 
     async fn list_files(&self, path: &Path, _opts: ListFilesOptions) -> Result<FileList, Error> {
