@@ -1,12 +1,12 @@
 import { useEffect, useRef, useContext } from "react";
-import { Terminal as XTermJSTerminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
+import { Terminal as XTermJSTerminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import {
   TerminalData,
   registerTerminalDataHandler,
   safeCommandSilent,
 } from "../lib/ipc";
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 export default function Terminal({ handle, active }: { handle: number; active: boolean }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
