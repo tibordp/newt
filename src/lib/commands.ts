@@ -1,4 +1,4 @@
-import { MainWindowState } from "../main_window/MainWindow";
+import { MainWindowState } from "../main_window/types";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { safeCommand } from "./ipc";
 import { joinVfsPath } from "./types";

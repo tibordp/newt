@@ -6,7 +6,7 @@ import {
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { Command as CommandType, commands, executeCommand } from "../../lib/commands";
-import { MainWindowState } from "../MainWindow";
+import { MainWindowState } from "../types";
 
 type CommandPaletteProps = {
   open: boolean;
