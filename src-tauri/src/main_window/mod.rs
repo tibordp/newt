@@ -245,6 +245,17 @@ impl Default for Operations {
     }
 }
 
+impl Operations {
+    pub fn foreground_operation_id(&self) -> Option<OperationId> {
+        self.0
+            .read()
+            .values()
+            .filter(|op| !op.backgrounded)
+            .min_by_key(|op| op.id)
+            .map(|op| op.id)
+    }
+}
+
 impl serde::Serialize for Operations {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -352,7 +363,7 @@ impl serde::Serialize for DndState {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone)]
 pub struct MainWindowState {
     pub panes: Panes,
     pub terminals: Terminals,
@@ -361,6 +372,26 @@ pub struct MainWindowState {
     pub display_options: DisplayOptions,
     pub operations: Operations,
     pub window_title: String,
+}
+
+impl serde::Serialize for MainWindowState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let foreground_id = self.operations.foreground_operation_id();
+        let mut s = serializer.serialize_struct("MainWindowState", 8)?;
+        s.serialize_field("panes", &self.panes)?;
+        s.serialize_field("terminals", &self.terminals)?;
+        s.serialize_field("modal", &self.modal)?;
+        s.serialize_field("dnd", &self.dnd)?;
+        s.serialize_field("display_options", &self.display_options)?;
+        s.serialize_field("operations", &self.operations)?;
+        s.serialize_field("window_title", &self.window_title)?;
+        s.serialize_field("foreground_operation_id", &foreground_id)?;
+        s.end()
+    }
 }
 
 impl MainWindowState {

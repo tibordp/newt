@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import iconMapping from "../assets/mapping.json";
-import { File, ColumnDef, PaneState, Sorting } from "./types";
+import { File, ColumnDef, Sorting } from "./types";
 import { modeString } from "./utils";
 
 function FileName({ focused, filter, info }) {
@@ -64,10 +64,10 @@ export const columns: ColumnDef[] = [
         name: "Ext",
       },
     ],
-    render: (info, { filter, focused, active }) => (
+    render: (info, { isFocused, filter }) => (
       <FileName
         filter={filter}
-        focused={active && focused == info.name}
+        focused={isFocused}
         info={info}
       />
     ),

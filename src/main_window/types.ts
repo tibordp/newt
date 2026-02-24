@@ -24,12 +24,17 @@ export type File = {
   created: number;
 };
 
+export type FileRowContext = {
+  isFocused: boolean;
+  filter?: string;
+};
+
 export type ColumnDef = {
   align: "left" | "right" | "center";
   initialWidth: number;
   subcolumns?: SubcolumnDef[];
   key: string;
-  render: (info: File, paneProps: PaneState) => JSX.Element;
+  render: (info: File, ctx: FileRowContext) => JSX.Element;
 };
 
 export type SubcolumnDef = {
@@ -49,6 +54,15 @@ export type FsStats = {
   total_bytes: number;
 };
 
+export type PaneStats = {
+  file_count: number;
+  dir_count: number;
+  bytes: number;
+  selected_file_count: number;
+  selected_dir_count: number;
+  selected_bytes: number;
+};
+
 export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
@@ -59,6 +73,8 @@ export type PaneState = {
   active: boolean;
   filter?: string;
   fs_stats?: FsStats;
+  stats: PaneStats;
+  focused_index?: number;
 };
 
 export type DisplayOptions = {
@@ -90,4 +106,5 @@ export type MainWindowState = {
   dnd?: DndState;
   operations: Record<string, OperationState>;
   window_title: string;
+  foreground_operation_id?: number;
 };
