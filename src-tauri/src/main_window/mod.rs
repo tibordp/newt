@@ -1,10 +1,9 @@
 pub mod pane;
 pub mod terminal;
 
-use newt_common::api::API_OPERATION_PROGRESS;
+use newt_common::api::{VfsRegistryManager, API_OPERATION_PROGRESS};
 use newt_common::file_reader::FileReader;
-use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::UserGroup;
+use newt_common::filesystem::{Filesystem, LocalShellService, ShellRemote, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::rpc::Communicator;
 
@@ -12,10 +11,9 @@ use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::operation::OperationContext;
 use newt_common::vfs::{
-    LocalVfs, MountRequest, MountResponse, Vfs, VfsId, VfsRegistry, VfsRegistryFileReader,
-    VfsRegistryFs,
+    lookup_descriptor, LocalVfs, MountResponse, MountedVfsInfo, VfsId, VfsManager,
+    VfsManagerRemote, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
 };
-use newt_common::vfs_archive::ArchiveVfs;
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -656,11 +654,13 @@ async fn create_remote_connection(
 
 struct MainWindowContextInner {
     fs: Arc<dyn Filesystem>,
+    shell_service: Arc<dyn ShellService>,
+    vfs_manager: Arc<dyn VfsManager>,
     terminal_client: Arc<dyn TerminalClient>,
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
     communicator: Option<Communicator>,
-    registry: Option<Arc<VfsRegistry>>,
+    mounted_vfs: RwLock<HashMap<VfsId, MountedVfsInfo>>,
     next_operation_id: AtomicU64,
 
     window: WebviewWindow,
@@ -770,13 +770,14 @@ impl MainWindowContext {
             global_state.clone(),
         ));
 
-        let (fs, terminal_client, file_reader, operations_client, communicator, registry, initial_dir): (
+        let (fs, shell_service, vfs_manager, terminal_client, file_reader, operations_client, communicator, initial_dir): (
             Arc<dyn Filesystem>,
+            Arc<dyn ShellService>,
+            Arc<dyn VfsManager>,
             Arc<dyn TerminalClient>,
             Arc<dyn FileReader>,
             Arc<dyn OperationsClient>,
             Option<Communicator>,
-            Option<Arc<VfsRegistry>>,
             VfsPath,
         ) = match &connection_target {
             ConnectionTarget::Local => {
@@ -786,6 +787,9 @@ impl MainWindowContext {
                 let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
                 let op_context = Arc::new(OperationContext { registry: registry.clone() });
                 let fs: Arc<dyn Filesystem> = Arc::new(VfsRegistryFs::new(registry.clone()));
+                let shell_service: Arc<dyn ShellService> = Arc::new(LocalShellService);
+                let vfs_manager: Arc<dyn VfsManager> =
+                    Arc::new(VfsRegistryManager::new(registry.clone()));
                 let terminal_client = Arc::new(newt_common::terminal::Local::new());
                 let file_reader: Arc<dyn FileReader> =
                     Arc::new(VfsRegistryFileReader::new(registry.clone()));
@@ -806,11 +810,12 @@ impl MainWindowContext {
 
                 (
                     fs,
+                    shell_service,
+                    vfs_manager,
                     terminal_client,
                     file_reader,
                     operations_client,
                     None,
-                    Some(registry),
                     initial_dir,
                 )
             }
@@ -827,6 +832,10 @@ impl MainWindowContext {
                     Communicator::with_dispatcher(host_dispatcher, stream);
 
                 let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let shell_service: Arc<dyn ShellService> =
+                    Arc::new(ShellRemote::new(communicator.clone()));
+                let vfs_manager: Arc<dyn VfsManager> =
+                    Arc::new(VfsManagerRemote::new(communicator.clone()));
                 let terminal_client =
                     Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
                 let file_reader: Arc<dyn FileReader> =
@@ -840,18 +849,19 @@ impl MainWindowContext {
                 });
 
                 // For remote, resolve home directory
-                let initial_dir = fs
+                let initial_dir = shell_service
                     .shell_expand("~".to_string())
                     .await
                     .unwrap_or_else(|_| VfsPath::root("/"));
 
                 (
                     fs,
+                    shell_service,
+                    vfs_manager,
                     terminal_client,
                     file_reader,
                     operations_client,
                     Some(communicator),
-                    None, // registry lives in the remote agent
                     initial_dir,
                 )
             }
@@ -886,6 +896,10 @@ impl MainWindowContext {
                     Communicator::with_dispatcher(host_dispatcher, stream);
 
                 let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let shell_service: Arc<dyn ShellService> =
+                    Arc::new(ShellRemote::new(communicator.clone()));
+                let vfs_manager: Arc<dyn VfsManager> =
+                    Arc::new(VfsManagerRemote::new(communicator.clone()));
                 let terminal_client =
                     Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
                 let file_reader: Arc<dyn FileReader> =
@@ -898,18 +912,19 @@ impl MainWindowContext {
                     eprintln!("elevated agent exited: {}", ret);
                 });
 
-                let initial_dir = fs
+                let initial_dir = shell_service
                     .shell_expand("~".to_string())
                     .await
                     .unwrap_or_else(|_| VfsPath::root("/"));
 
                 (
                     fs,
+                    shell_service,
+                    vfs_manager,
                     terminal_client,
                     file_reader,
                     operations_client,
                     Some(communicator),
-                    None, // registry lives in the elevated agent
                     initial_dir,
                 )
             }
@@ -936,14 +951,27 @@ impl MainWindowContext {
             });
         }
 
+        // Pre-populate mounted_vfs with the ROOT entry
+        let mut initial_mounted = HashMap::new();
+        initial_mounted.insert(
+            VfsId::ROOT,
+            MountedVfsInfo {
+                vfs_id: VfsId::ROOT,
+                descriptor: &LOCAL_VFS_DESCRIPTOR,
+                mount_meta: Vec::new(),
+            },
+        );
+
         Ok(Self {
             inner: Arc::new(MainWindowContextInner {
                 fs,
+                shell_service,
+                vfs_manager,
                 terminal_client,
                 file_reader,
                 operations_client,
                 communicator,
-                registry,
+                mounted_vfs: RwLock::new(initial_mounted),
                 next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
@@ -955,6 +983,10 @@ impl MainWindowContext {
 
     pub fn fs(&self) -> Arc<dyn Filesystem> {
         self.inner.fs.clone()
+    }
+
+    pub fn shell_service(&self) -> Arc<dyn ShellService> {
+        self.inner.shell_service.clone()
     }
 
     pub fn terminal_client(&self) -> Arc<dyn TerminalClient> {
@@ -1060,13 +1092,6 @@ impl MainWindowContext {
         self.inner.operations_client.clone()
     }
 
-    pub fn communicator(&self) -> &Communicator {
-        self.inner
-            .communicator
-            .as_ref()
-            .expect("communicator only available in remote mode")
-    }
-
     pub fn next_operation_id(&self) -> OperationId {
         self.inner.next_operation_id.fetch_add(1, Ordering::SeqCst)
     }
@@ -1084,42 +1109,40 @@ impl MainWindowContext {
     }
 
     pub async fn mount_archive(&self, host_path: VfsPath) -> Result<MountResponse, Error> {
-        if let Some(registry) = &self.inner.registry {
-            // Local mode: mount directly using the registry
-            let (host_vfs, local_path) = registry.resolve(&host_path)?;
-            let archive_vfs = ArchiveVfs::open(&*host_vfs, &local_path, host_path).await?;
-            let caps = archive_vfs.capabilities();
-            let vfs_id = registry.mount(Arc::new(archive_vfs));
-            Ok(MountResponse {
-                vfs_id,
-                capabilities: caps,
-            })
-        } else {
-            // Remote mode: use RPC
-            let ret: Result<MountResponse, newt_common::Error> = self
-                .communicator()
-                .invoke(
-                    newt_common::api::API_MOUNT_VFS,
-                    &MountRequest::Archive { host_path },
-                )
-                .await?;
-            Ok(ret?)
-        }
+        let request = newt_common::vfs::MountRequest::Archive { host_path };
+        let response = self.inner.vfs_manager.mount(request).await?;
+
+        // Store MountedVfsInfo for client-side capability lookups
+        let descriptor = lookup_descriptor(&response.type_name).ok_or_else(|| {
+            Error::Custom(format!("unknown VFS type: {}", response.type_name))
+        })?;
+        self.inner.mounted_vfs.write().insert(
+            response.vfs_id,
+            MountedVfsInfo {
+                vfs_id: response.vfs_id,
+                descriptor,
+                mount_meta: response.mount_meta.clone(),
+            },
+        );
+
+        Ok(response)
     }
 
     pub async fn unmount_vfs(&self, vfs_id: VfsId) -> Result<(), Error> {
-        if let Some(registry) = &self.inner.registry {
-            registry
-                .unmount(vfs_id)
-                .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)))?;
-            Ok(())
-        } else {
-            let ret: Result<(), newt_common::Error> = self
-                .communicator()
-                .invoke(newt_common::api::API_UNMOUNT_VFS, &vfs_id)
-                .await?;
-            Ok(ret?)
-        }
+        self.inner.vfs_manager.unmount(vfs_id).await?;
+        self.inner.mounted_vfs.write().remove(&vfs_id);
+        Ok(())
+    }
+
+    pub fn vfs_descriptor(
+        &self,
+        vfs_id: VfsId,
+    ) -> Option<&'static dyn newt_common::vfs::VfsDescriptor> {
+        self.inner
+            .mounted_vfs
+            .read()
+            .get(&vfs_id)
+            .map(|info| info.descriptor)
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {

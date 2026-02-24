@@ -3,9 +3,10 @@ use std::sync::Arc;
 use log::info;
 use newt_common::{
     api::{
-        FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, TerminalDispatcher,
-        VfsDispatcher,
+        FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, ShellServiceDispatcher,
+        TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
     },
+    filesystem::LocalShellService,
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
     vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
@@ -49,10 +50,11 @@ async fn main() -> Result<(), Error> {
     let op_context = Arc::new(OperationContext { registry: registry.clone() });
 
     let dispatcher = FilesystemDispatcher::new(VfsRegistryFs::new(registry.clone()))
+        .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
         .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(registry.clone())))
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
-        .chain(VfsDispatcher::new(registry.clone()));
+        .chain(VfsDispatcher::new(VfsRegistryManager::new(registry.clone())));
 
     info!("agent started, entering RPC loop");
 

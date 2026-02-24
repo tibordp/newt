@@ -8,11 +8,11 @@ use std::sync::atomic::AtomicU64;
 
 use crate::{
     file_reader::FileReader,
-    filesystem::{Filesystem, ListFilesOptions},
+    filesystem::{Filesystem, ListFilesOptions, ShellService},
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
-    vfs::{MountRequest, MountResponse, Vfs, VfsCapabilities, VfsId, VfsPath, VfsRegistry},
+    vfs::{MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
     vfs_archive::ArchiveVfs,
     Error,
 };
@@ -42,7 +42,6 @@ pub const API_READ_RANGE: Api = Api(301);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
-pub const API_VFS_CAPABILITIES: Api = Api(402);
 
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
@@ -97,10 +96,36 @@ impl Dispatcher for FilesystemDispatcher {
 
                 bincode::serialize(&ret).unwrap()
             }
-            API_SHELL_EXPAND => {
-                let path: String = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.shell_expand(path).await;
+            _ => return Ok(None),
+        };
 
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+pub struct ShellServiceDispatcher {
+    shell_service: Box<dyn ShellService>,
+}
+
+impl ShellServiceDispatcher {
+    pub fn new<S: ShellService + 'static>(shell_service: S) -> Self {
+        Self {
+            shell_service: Box::new(shell_service),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for ShellServiceDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_SHELL_EXPAND => {
+                let input: String = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.shell_service.shell_expand(input).await;
                 bincode::serialize(&ret).unwrap()
             }
             _ => return Ok(None),
@@ -326,13 +351,56 @@ impl Dispatcher for OperationDispatcher {
     }
 }
 
-pub struct VfsDispatcher {
+// ---------------------------------------------------------------------------
+// VfsRegistryManager — local VfsManager backed by a VfsRegistry
+// ---------------------------------------------------------------------------
+
+pub struct VfsRegistryManager {
     registry: Arc<VfsRegistry>,
 }
 
-impl VfsDispatcher {
+impl VfsRegistryManager {
     pub fn new(registry: Arc<VfsRegistry>) -> Self {
         Self { registry }
+    }
+}
+
+#[async_trait::async_trait]
+impl VfsManager for VfsRegistryManager {
+    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
+        match request {
+            MountRequest::Archive { host_path } => {
+                let (host_vfs, local_path) = self.registry.resolve(&host_path)?;
+                let archive_vfs = ArchiveVfs::open(&*host_vfs, &local_path, host_path).await?;
+                let type_name = archive_vfs.descriptor().type_name().to_string();
+                let mount_meta = archive_vfs.mount_meta();
+                let vfs_id = self.registry.mount(Arc::new(archive_vfs));
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                })
+            }
+        }
+    }
+
+    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
+        self.registry
+            .unmount(vfs_id)
+            .map(|_| ())
+            .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)))
+    }
+}
+
+pub struct VfsDispatcher {
+    vfs_manager: Box<dyn VfsManager>,
+}
+
+impl VfsDispatcher {
+    pub fn new<V: VfsManager + 'static>(vfs_manager: V) -> Self {
+        Self {
+            vfs_manager: Box::new(vfs_manager),
+        }
     }
 }
 
@@ -342,48 +410,12 @@ impl Dispatcher for VfsDispatcher {
         let ret = match api {
             API_MOUNT_VFS => {
                 let request: MountRequest = bincode::deserialize(&req[..]).unwrap();
-                let ret: Result<MountResponse, Error> = match request {
-                    MountRequest::Archive { host_path } => {
-                        let resolve_result = self.registry.resolve(&host_path);
-                        match resolve_result {
-                            Ok((host_vfs, local_path)) => {
-                                match ArchiveVfs::open(&*host_vfs, &local_path, host_path).await {
-                                    Ok(archive_vfs) => {
-                                        let caps = archive_vfs.capabilities();
-                                        let vfs_id = self.registry.mount(Arc::new(archive_vfs));
-                                        Ok(MountResponse {
-                                            vfs_id,
-                                            capabilities: caps,
-                                        })
-                                    }
-                                    Err(e) => Err(e),
-                                }
-                            }
-                            Err(e) => Err(e),
-                        }
-                    }
-                };
-
+                let ret = self.vfs_manager.mount(request).await;
                 bincode::serialize(&ret).unwrap()
             }
             API_UNMOUNT_VFS => {
                 let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
-                let ret: Result<(), Error> = self
-                    .registry
-                    .unmount(vfs_id)
-                    .map(|_| ())
-                    .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)));
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_VFS_CAPABILITIES => {
-                let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
-                let ret: Result<VfsCapabilities, Error> = self
-                    .registry
-                    .get(vfs_id)
-                    .map(|vfs| vfs.capabilities())
-                    .ok_or_else(|| Error::Custom(format!("VFS {} not found", vfs_id)));
-
+                let ret = self.vfs_manager.unmount(vfs_id).await;
                 bincode::serialize(&ret).unwrap()
             }
             _ => return Ok(None),

@@ -91,17 +91,7 @@
   color: var(--dim-fg-color);
 }
 
-// Loading / error states
-.viewer-loading,
-.viewer-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  font-family: monospace;
-  font-size: 14px;
-}
-
-.viewer-error {
-  color: var(--error-color, #f44);
+// Error text in status bar
+.status-error {
+  color: var(--error-color, #cd3131);
 }
