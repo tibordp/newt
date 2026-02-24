@@ -2,14 +2,19 @@ use std::collections::HashMap;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
 use crate::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct StreamId(pub u64);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ListFilesOptions {
@@ -192,6 +197,18 @@ pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error>;
     async fn list_files(&self, path: VfsPath, options: ListFilesOptions)
         -> Result<FileList, Error>;
+
+    /// Like `list_files`, but sends intermediate batches via `batch_tx`.
+    /// The returned `FileList` is always authoritative.
+    async fn list_files_streaming(
+        &self,
+        path: VfsPath,
+        options: ListFilesOptions,
+        _batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
+        self.list_files(path, options).await
+    }
+
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
@@ -219,6 +236,23 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.list_files(path, options).await
     }
+    async fn list_files_streaming(
+        &self,
+        path: VfsPath,
+        options: ListFilesOptions,
+        batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
+        // Get the full listing from the inner filesystem, then drip-feed it
+        // in batches of 100 with 500ms delays to simulate a slow connection.
+        let file_list = self.0.list_files(path, options).await?;
+        for chunk in file_list.files().chunks(100) {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if batch_tx.send(chunk.to_vec()).is_err() {
+                break;
+            }
+        }
+        Ok(file_list)
+    }
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.rename(old_path, new_path).await
@@ -237,13 +271,34 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     }
 }
 
+pub type PendingStreams =
+    Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::UnboundedSender<Vec<File>>>>>;
+
 pub struct Remote {
     communicator: Communicator,
+    pending_streams: PendingStreams,
+    next_stream_id: AtomicU64,
 }
 
 impl Remote {
     pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
+        Self {
+            communicator,
+            pending_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            next_stream_id: AtomicU64::new(1),
+        }
+    }
+
+    pub fn new_with_streams(communicator: Communicator, pending_streams: PendingStreams) -> Self {
+        Self {
+            communicator,
+            pending_streams,
+            next_stream_id: AtomicU64::new(1),
+        }
+    }
+
+    pub fn pending_streams(&self) -> &PendingStreams {
+        &self.pending_streams
     }
 }
 
@@ -265,6 +320,46 @@ impl Filesystem for Remote {
         let ret: Result<FileList, Error> = self
             .communicator
             .invoke(crate::api::API_LIST_FILES, &(path, options))
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn list_files_streaming(
+        &self,
+        path: VfsPath,
+        options: ListFilesOptions,
+        batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
+        let stream_id = StreamId(
+            self.next_stream_id
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        );
+
+        // Register the batch sender so HostDispatcher can route Notify messages to it
+        self.pending_streams.lock().insert(stream_id, batch_tx);
+
+        // RAII guard to ensure cleanup even on cancellation/error
+        struct StreamGuard {
+            stream_id: StreamId,
+            pending_streams: PendingStreams,
+        }
+        impl Drop for StreamGuard {
+            fn drop(&mut self) {
+                self.pending_streams.lock().remove(&self.stream_id);
+            }
+        }
+        let _guard = StreamGuard {
+            stream_id,
+            pending_streams: self.pending_streams.clone(),
+        };
+
+        let ret: Result<FileList, Error> = self
+            .communicator
+            .invoke(
+                crate::api::API_LIST_FILES_STREAMING,
+                &(path, options, stream_id),
+            )
             .await?;
 
         Ok(ret?)

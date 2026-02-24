@@ -1,9 +1,12 @@
 pub mod pane;
 pub mod terminal;
 
-use newt_common::api::{VfsRegistryManager, API_OPERATION_PROGRESS};
+use newt_common::api::{VfsRegistryManager, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
 use newt_common::file_reader::FileReader;
-use newt_common::filesystem::{Filesystem, LocalShellService, ShellRemote, ShellService, UserGroup};
+use newt_common::filesystem::{
+    File, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
+    UserGroup,
+};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::rpc::Communicator;
 
@@ -453,6 +456,7 @@ impl MainWindowState {
 struct HostDispatcher {
     operations: Operations,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
+    pending_streams: PendingStreams,
 }
 
 #[async_trait::async_trait]
@@ -474,6 +478,13 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
             let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
             apply_operation_progress(&self.operations, progress);
             let _ = self.publisher.publish();
+            Ok(true)
+        } else if api == API_LIST_FILES_BATCH {
+            let (stream_id, files): (StreamId, Vec<File>) =
+                bincode::deserialize(&req[..]).unwrap();
+            if let Some(tx) = self.pending_streams.lock().get(&stream_id) {
+                let _ = tx.send(files);
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -855,14 +866,21 @@ impl MainWindowContext {
                 let (child, stream) =
                     create_remote_connection(transport_cmd, &publisher).await?;
 
+                let pending_streams: PendingStreams =
+                    Arc::new(parking_lot::Mutex::new(HashMap::new()));
+
                 let host_dispatcher = HostDispatcher {
                     operations: global_state.operations.clone(),
                     publisher: publisher.clone(),
+                    pending_streams: pending_streams.clone(),
                 };
                 let communicator =
                     Communicator::with_dispatcher(host_dispatcher, stream);
 
-                let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
+                    communicator.clone(),
+                    pending_streams,
+                ));
                 let shell_service: Arc<dyn ShellService> =
                     Arc::new(ShellRemote::new(communicator.clone()));
                 let vfs_manager: Arc<dyn VfsManager> =
@@ -919,14 +937,21 @@ impl MainWindowContext {
                 let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
                 let stream = tokio_duplex::Duplex::new(rx, tx);
 
+                let pending_streams: PendingStreams =
+                    Arc::new(parking_lot::Mutex::new(HashMap::new()));
+
                 let host_dispatcher = HostDispatcher {
                     operations: global_state.operations.clone(),
                     publisher: publisher.clone(),
+                    pending_streams: pending_streams.clone(),
                 };
                 let communicator =
                     Communicator::with_dispatcher(host_dispatcher, stream);
 
-                let fs = Arc::new(newt_common::filesystem::Remote::new(communicator.clone()));
+                let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
+                    communicator.clone(),
+                    pending_streams,
+                ));
                 let shell_service: Arc<dyn ShellService> =
                     Arc::new(ShellRemote::new(communicator.clone()));
                 let vfs_manager: Arc<dyn VfsManager> =

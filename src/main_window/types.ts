@@ -1,3 +1,4 @@
+import { ReactElement } from "react";
 import { VfsPath } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
 import { OperationState } from "./OperationsPanel";
@@ -34,7 +35,7 @@ export type ColumnDef = {
   initialWidth: number;
   subcolumns?: SubcolumnDef[];
   key: string;
-  render: (info: File, ctx: FileRowContext) => JSX.Element;
+  render: (info: File, ctx: FileRowContext) => ReactElement;
 };
 
 export type SubcolumnDef = {
@@ -66,6 +67,7 @@ export type PaneStats = {
 export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
+  loading?: boolean;
   sorting: Sorting;
   files: File[];
   focused?: string;

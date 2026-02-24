@@ -19,11 +19,13 @@ use crate::common::UpdatePublisher;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use super::DisplayOptions;
 use super::DisplayOptionsInner;
@@ -140,25 +142,6 @@ impl Pane {
         self.file_list.read().path().clone()
     }
 
-    async fn cancellable<T, Fut>(&self, f: Fut) -> Result<T, Error>
-    where
-        Fut: Future<Output = Result<T, Error>>,
-    {
-        let token = CancellationToken::new();
-        if let Some(previous) = self.cancellation_token.lock().replace(token.clone()) {
-            previous.cancel();
-        }
-
-        tokio::select! {
-            _ = token.cancelled() => {
-                Err(Error::Cancelled)
-            }
-            ret = f => {
-                ret
-            }
-        }
-    }
-
     async fn navigate_impl(
         &self,
         target: VfsPath,
@@ -187,24 +170,72 @@ impl Pane {
             let _ = self.publisher.publish();
         }
 
-        let fut = {
-            let target = target.clone();
-            async move {
-                Ok(self
-                    .fs
-                    .list_files(target, ListFilesOptions { strict: !silent })
-                    .await?)
+        // Set up cancellation
+        let token = CancellationToken::new();
+        if let Some(previous) = self.cancellation_token.lock().replace(token.clone()) {
+            previous.cancel();
+        }
+
+        // Create batch channel and start streaming
+        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<Vec<File>>();
+        let streaming_fut = self.fs.list_files_streaming(
+            target.clone(),
+            ListFilesOptions { strict: !silent },
+            batch_tx,
+        );
+        tokio::pin!(streaming_fut);
+
+        let mut accumulated = Vec::new();
+        let mut first_batch = true;
+        let mut last_publish = Instant::now();
+        let throttle = Duration::from_millis(100);
+
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    break Err(Error::Cancelled);
+                }
+                result = &mut streaming_fut => {
+                    break result.map_err(Error::from);
+                }
+                Some(files) = batch_rx.recv() => {
+                    accumulated.extend(files);
+                    if !silent {
+                        // On first batch: clear pending_path, set loading=true,
+                        // and reset filter/selection/focus for the new directory
+                        if first_batch {
+                            let mut ws = self.view_state_mut();
+                            ws.pending_path = None;
+                            ws.loading = true;
+                            ws.set_filter(None);
+                            ws.selected.clear();
+                            ws.focused = None;
+                            first_batch = false;
+                        }
+                        // Throttled intermediate publish
+                        if last_publish.elapsed() >= throttle {
+                            let display_options = self.display_options.0.read().clone();
+                            let interim = FileList::new(target.clone(), accumulated.clone(), None);
+                            self.view_state_mut().update(display_options, &interim);
+                            let _ = self.publisher.publish();
+                            last_publish = Instant::now();
+                        }
+                    }
+                }
             }
         };
 
-        let new_file_list = match self.cancellable(fut).await {
+        let new_file_list = match result {
             Ok(ret) => Arc::new(ret),
             Err(e) => {
                 debug!("navigation failed: {}", e);
 
                 // Restore the old navigation state
                 *self.file_list.write() = old_file_list;
-                self.view_state_mut().pending_path = None;
+                let mut ws = self.view_state_mut();
+                ws.pending_path = None;
+                ws.loading = false;
 
                 return match e {
                     Error::Cancelled => Ok(()),
@@ -222,11 +253,15 @@ impl Pane {
         let display_options = self.display_options.0.read().clone();
 
         ws.pending_path = None;
+        ws.loading = false;
         if has_path_changed {
             let _ = changes_sender.send(());
-            ws.set_filter(None);
-            ws.selected.clear();
-            ws.focused = None;
+            // Only clear if we didn't already do it on first batch
+            if first_batch {
+                ws.set_filter(None);
+                ws.selected.clear();
+                ws.focused = None;
+            }
         }
 
         ws.update(display_options, &new_file_list);
@@ -370,6 +405,7 @@ fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
 pub struct PaneViewState {
     pub path: VfsPath,
     pub pending_path: Option<VfsPath>,
+    pub loading: bool,
     pub sorting: Sorting,
     pub files: Vec<File>,
     pub focused: Option<String>,
