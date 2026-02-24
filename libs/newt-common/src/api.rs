@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 
 use crate::{
     file_reader::FileReader,
-    filesystem::{Filesystem, ListFilesOptions, ShellService},
+    filesystem::{File, Filesystem, ListFilesOptions, ShellService, StreamId},
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
@@ -24,6 +24,8 @@ pub const API_CREATE_DIRECTORY: Api = Api(3);
 pub const API_DELETE_ALL: Api = Api(4);
 pub const API_TOUCH: Api = Api(5);
 pub const API_SHELL_EXPAND: Api = Api(6);
+pub const API_LIST_FILES_STREAMING: Api = Api(7);
+pub const API_LIST_FILES_BATCH: Api = Api(8);
 
 pub const API_START_OPERATION: Api = Api(200);
 pub const API_CANCEL_OPERATION: Api = Api(201);
@@ -45,12 +47,17 @@ pub const API_UNMOUNT_VFS: Api = Api(401);
 
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
+    outbox: tokio::sync::mpsc::UnboundedSender<Message>,
 }
 
 impl FilesystemDispatcher {
-    pub fn new<F: Filesystem + 'static>(filesystem: F) -> Self {
+    pub fn new<F: Filesystem + 'static>(
+        filesystem: F,
+        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+    ) -> Self {
         Self {
             filesystem: Box::new(filesystem),
+            outbox,
         }
     }
 }
@@ -68,6 +75,36 @@ impl Dispatcher for FilesystemDispatcher {
             API_LIST_FILES => {
                 let args: (VfsPath, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.list_files(args.0, args.1).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_LIST_FILES_STREAMING => {
+                let (path, opts, stream_id): (VfsPath, ListFilesOptions, StreamId) =
+                    bincode::deserialize(&req[..]).unwrap();
+
+                let (batch_tx, mut batch_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<Vec<File>>();
+
+                // Spawn a forwarder task: batches → Notify messages
+                let outbox = self.outbox.clone();
+                let forwarder = tokio::spawn(async move {
+                    while let Some(files) = batch_rx.recv().await {
+                        let bytes =
+                            bincode::serialize(&(stream_id, files)).unwrap();
+                        let _ = outbox.send(Message::Notify(
+                            API_LIST_FILES_BATCH,
+                            bytes.into(),
+                        ));
+                    }
+                });
+
+                let ret = self
+                    .filesystem
+                    .list_files_streaming(path, opts, batch_tx)
+                    .await;
+
+                // Ensure all batch notifications are sent before returning the response
+                let _ = forwarder.await;
 
                 bincode::serialize(&ret).unwrap()
             }

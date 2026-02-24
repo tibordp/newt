@@ -176,12 +176,15 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     sorting,
     focused,
     pending_path,
+    loading,
     fs_stats,
     stats,
   } = props;
   const focusedIndex = props.focused_index ?? -1;
+  // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
+  const isBusy = !!pending_path && !loading;
   const command = (cmd: string, args: object = {}, also_when_busy = false) => {
-    if (also_when_busy || !pending_path) {
+    if (also_when_busy || !isBusy) {
       safeCommand(cmd, { paneHandle, ...args });
     }
   };
@@ -190,7 +193,8 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
 
   useEffect(() => {
     let timeout = null;
-    if (pending_path) {
+    // Show full spinner only when pending_path is set and no partial results yet
+    if (pending_path && !loading) {
       // 200 ms of grace period before showing the loading screen to
       // appear smoother.
       timeout = setTimeout(() => setShowSpinner(true), 200);
@@ -200,7 +204,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     return () => {
       clearTimeout(timeout);
     };
-  }, [pending_path]);
+  }, [pending_path, loading]);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -876,13 +880,18 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       <div className="dnd-ghost" ref={dndGhostRef} />
       <div className="statusbar">
         {showSpinner && "Loading file list..."}
-        {!showSpinner && selected.length > 0 && (
+        {!showSpinner && loading && (
+          <>
+            Loading... ({(stats.file_count + stats.dir_count).toLocaleString()} items so far)
+          </>
+        )}
+        {!showSpinner && !loading && selected.length > 0 && (
           <>
             {stats.selected_file_count} files, {stats.selected_dir_count} directories selected,{" "}
             {stats.selected_bytes.toLocaleString()} bytes total
           </>
         )}
-        {!showSpinner && selected.length == 0 && (
+        {!showSpinner && !loading && selected.length == 0 && (
           <>
             {stats.file_count} files, {stats.dir_count} directories
           </>

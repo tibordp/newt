@@ -13,6 +13,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
+use tokio::sync::mpsc;
+
 use crate::file_reader::{FileChunk, FileInfo, FileReader};
 use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions, Mode};
 use crate::rpc::Communicator;
@@ -157,6 +159,19 @@ pub trait Vfs: Send + Sync {
     // --- Required (browsing) ---
     fn descriptor(&self) -> &'static dyn VfsDescriptor;
     async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error>;
+
+    /// Like `list_files`, but sends intermediate batches via `batch_tx` as files
+    /// are enumerated. The returned `FileList` is always authoritative. Batches
+    /// are purely for progressive display.
+    async fn list_files_streaming(
+        &self,
+        path: &Path,
+        opts: ListFilesOptions,
+        _batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
+        self.list_files(path, opts).await
+    }
+
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
 
     // --- Mount metadata (opaque blob for client-side use) ---
@@ -323,18 +338,33 @@ impl Vfs for LocalVfs {
     }
 
     async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error> {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        self.list_files_streaming(path, opts, tx).await
+    }
+
+    async fn list_files_streaming(
+        &self,
+        path: &Path,
+        opts: ListFilesOptions,
+        batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
         assert!(path.is_absolute());
         let mut path = path.to_path_buf();
         loop {
             match tokio::task::spawn_blocking({
                 let path = path.clone();
                 let cache = self.fs_cache.clone();
+                let batch_tx = batch_tx.clone();
                 move || -> Result<Vec<File>, Error> {
+                    const BATCH_SIZE: usize = 500;
+
                     let mut ret = Vec::new();
+                    let mut batch = Vec::new();
+
                     if let Some(parent) = path.parent() {
                         let metadata = parent.symlink_metadata()?;
                         let mode = metadata.mode();
-                        ret.push(File {
+                        let file = File {
                             name: "..".to_string(),
                             size: None,
                             is_dir: true,
@@ -346,7 +376,9 @@ impl Vfs for LocalVfs {
                             modified: metadata.modified().map(|t| t.to_unix()).ok(),
                             accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                             created: metadata.created().map(|t| t.to_unix()).ok(),
-                        });
+                        };
+                        batch.push(file.clone());
+                        ret.push(file);
                     }
 
                     for maybe_entry in std::fs::read_dir(&path)? {
@@ -365,7 +397,7 @@ impl Vfs for LocalVfs {
                         }
 
                         let mode = metadata.mode();
-                        ret.push(File {
+                        let file = File {
                             name: name.clone(),
                             size: (!is_dir).then_some(metadata.len()),
                             is_dir,
@@ -377,7 +409,21 @@ impl Vfs for LocalVfs {
                             modified: metadata.modified().map(|t| t.to_unix()).ok(),
                             accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                             created: metadata.created().map(|t| t.to_unix()).ok(),
-                        });
+                        };
+                        batch.push(file.clone());
+                        ret.push(file);
+
+                        if batch.len() >= BATCH_SIZE {
+                            if batch_tx.send(std::mem::take(&mut batch)).is_err() {
+                                // Receiver dropped — cancelled
+                                return Ok(ret);
+                            }
+                        }
+                    }
+
+                    // Send any remaining entries as a final batch
+                    if !batch.is_empty() {
+                        let _ = batch_tx.send(batch);
                     }
 
                     Ok(ret)
@@ -778,6 +824,16 @@ impl Filesystem for VfsRegistryFs {
     ) -> Result<FileList, Error> {
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.list_files(&local_path, options).await
+    }
+
+    async fn list_files_streaming(
+        &self,
+        path: VfsPath,
+        options: ListFilesOptions,
+        batch_tx: mpsc::UnboundedSender<Vec<File>>,
+    ) -> Result<FileList, Error> {
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        vfs.list_files_streaming(&local_path, options, batch_tx).await
     }
 
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
