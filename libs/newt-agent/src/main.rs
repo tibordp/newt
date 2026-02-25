@@ -2,10 +2,15 @@ use std::sync::Arc;
 
 use log::info;
 use newt_common::{
-    Error, api::{
+    api::{
         FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, ShellServiceDispatcher,
         TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
-    }, filesystem::{LocalShellService, Slow}, operation::OperationContext, rpc::{Communicator, DispatcherExt}, vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs}
+    },
+    filesystem::{LocalShellService, Slow},
+    operation::OperationContext,
+    rpc::{Communicator, DispatcherExt},
+    vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
+    Error,
 };
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};
@@ -42,16 +47,22 @@ async fn main() -> Result<(), Error> {
     let (outbox, inbox) = Communicator::create_outbox();
 
     let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
-    let op_context = Arc::new(OperationContext { registry: registry.clone() });
+    let op_context = Arc::new(OperationContext {
+        registry: registry.clone(),
+    });
     let filesystem = VfsRegistryFs::new(registry.clone());
     let filesystem = Slow::new(filesystem);
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
-        .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(registry.clone())))
+        .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(
+            registry.clone(),
+        )))
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
-        .chain(VfsDispatcher::new(VfsRegistryManager::new(registry.clone())));
+        .chain(VfsDispatcher::new(VfsRegistryManager::new(
+            registry.clone(),
+        )));
 
     info!("agent started, entering RPC loop");
 

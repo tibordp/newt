@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use pty_process::{OwnedReadPty, OwnedWritePty};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use log::{debug, info, error};
+use log::{debug, error, info};
 
 use crate::{rpc::Communicator, Error};
 

@@ -10,9 +10,9 @@ use newt_common::filesystem::{
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::rpc::Communicator;
 
+use newt_common::operation::OperationContext;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
-use newt_common::operation::OperationContext;
 use newt_common::vfs::{
     lookup_descriptor, LocalVfs, MountResponse, MountedVfsInfo, VfsId, VfsManager,
     VfsManagerRemote, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
@@ -480,8 +480,7 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
             let _ = self.publisher.publish();
             Ok(true)
         } else if api == API_LIST_FILES_BATCH {
-            let (stream_id, files): (StreamId, Vec<File>) =
-                bincode::deserialize(&req[..]).unwrap();
+            let (stream_id, files): (StreamId, Vec<File>) = bincode::deserialize(&req[..]).unwrap();
             if let Some(tx) = self.pending_streams.lock().get(&stream_id) {
                 let _ = tx.send(files);
             }
@@ -673,9 +672,7 @@ async fn create_remote_connection(
         let size = binary_data.len();
 
         // Write size line then binary data
-        stdin
-            .write_all(format!("{}\n", size).as_bytes())
-            .await?;
+        stdin.write_all(format!("{}\n", size).as_bytes()).await?;
         stdin.write_all(&binary_data).await?;
         stdin.flush().await?;
 
@@ -812,7 +809,16 @@ impl MainWindowContext {
             global_state.clone(),
         ));
 
-        let (fs, shell_service, vfs_manager, terminal_client, file_reader, operations_client, communicator, initial_dir): (
+        let (
+            fs,
+            shell_service,
+            vfs_manager,
+            terminal_client,
+            file_reader,
+            operations_client,
+            communicator,
+            initial_dir,
+        ): (
             Arc<dyn Filesystem>,
             Arc<dyn ShellService>,
             Arc<dyn VfsManager>,
@@ -827,7 +833,9 @@ impl MainWindowContext {
                     tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
 
                 let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
-                let op_context = Arc::new(OperationContext { registry: registry.clone() });
+                let op_context = Arc::new(OperationContext {
+                    registry: registry.clone(),
+                });
                 let fs: Arc<dyn Filesystem> = Arc::new(VfsRegistryFs::new(registry.clone()));
                 let shell_service: Arc<dyn ShellService> = Arc::new(LocalShellService);
                 let vfs_manager: Arc<dyn VfsManager> =
@@ -863,8 +871,7 @@ impl MainWindowContext {
             }
             ConnectionTarget::Remote { transport_cmd } => {
                 send_init_status(init_channel, "Connecting to remote host...");
-                let (child, stream) =
-                    create_remote_connection(transport_cmd, &publisher).await?;
+                let (child, stream) = create_remote_connection(transport_cmd, &publisher).await?;
 
                 let pending_streams: PendingStreams =
                     Arc::new(parking_lot::Mutex::new(HashMap::new()));
@@ -874,8 +881,7 @@ impl MainWindowContext {
                     publisher: publisher.clone(),
                     pending_streams: pending_streams.clone(),
                 };
-                let communicator =
-                    Communicator::with_dispatcher(host_dispatcher, stream);
+                let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
 
                 let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
                     communicator.clone(),
@@ -945,8 +951,7 @@ impl MainWindowContext {
                     publisher: publisher.clone(),
                     pending_streams: pending_streams.clone(),
                 };
-                let communicator =
-                    Communicator::with_dispatcher(host_dispatcher, stream);
+                let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
 
                 let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
                     communicator.clone(),

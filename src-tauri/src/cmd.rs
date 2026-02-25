@@ -1,4 +1,3 @@
-use newt_common::vfs::VfsPath;
 use newt_common::file_reader::FileChunk;
 use newt_common::file_reader::FileInfo;
 use newt_common::operation::{
@@ -6,6 +5,7 @@ use newt_common::operation::{
     StartOperationRequest,
 };
 use newt_common::terminal::TerminalHandle;
+use newt_common::vfs::VfsPath;
 use shell_quote::Quote;
 use tauri::ipc::Invoke;
 use tauri::Manager;
@@ -55,10 +55,7 @@ pub async fn init(
     )
     .await?;
 
-    global_ctx
-        .main_windows
-        .lock()
-        .insert(label, ctx.clone());
+    global_ctx.main_windows.lock().insert(label, ctx.clone());
     ctx.publish_full()?;
     Ok(())
 }
@@ -79,10 +76,7 @@ pub async fn navigate(
     exact: bool,
 ) -> Result<(), Error> {
     if !exact {
-        let expanded = ctx
-            .shell_service()
-            .shell_expand(path.to_string())
-            .await?;
+        let expanded = ctx.shell_service().shell_expand(path.to_string()).await?;
 
         ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
             gs.close_modal();
@@ -313,10 +307,7 @@ async fn read_file_range(
     offset: u64,
     length: u64,
 ) -> Result<FileChunk, Error> {
-    let chunk = ctx
-        .file_reader()
-        .read_range(path, offset, length)
-        .await?;
+    let chunk = ctx.file_reader().read_range(path, offset, length).await?;
     Ok(chunk)
 }
 
@@ -371,7 +362,8 @@ pub async fn paste_from_clipboard(
 
 #[tauri::command]
 pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
-    webview.set_zoom(factor)
+    webview
+        .set_zoom(factor)
         .map_err(|_| Error::Custom("terminal does not exit".into()))?;
 
     Ok(())
@@ -397,10 +389,13 @@ pub async fn send_to_terminal(
         .get_effective_selection()
         .iter()
         .filter_map(|p| {
-            p.path.file_name().map(shell_quote::Bash::quote).map(|mut b: Vec<u8>| {
-                b.push(b' ');
-                b
-            })
+            p.path
+                .file_name()
+                .map(shell_quote::Bash::quote)
+                .map(|mut b: Vec<u8>| {
+                    b.push(b' ');
+                    b
+                })
         })
         .flatten()
         .collect();
@@ -624,11 +619,7 @@ pub async fn start_operation(
             ..
         } => (
             "copy".to_string(),
-            format!(
-                "Copying {} item(s) to {}",
-                sources.len(),
-                destination,
-            ),
+            format!("Copying {} item(s) to {}", sources.len(), destination,),
         ),
         OperationRequest::Move {
             sources,
@@ -636,11 +627,7 @@ pub async fn start_operation(
             ..
         } => (
             "move".to_string(),
-            format!(
-                "Moving {} item(s) to {}",
-                sources.len(),
-                destination,
-            ),
+            format!("Moving {} item(s) to {}", sources.len(), destination,),
         ),
         OperationRequest::Delete { paths } => (
             "delete".to_string(),
@@ -728,10 +715,7 @@ pub async fn resolve_issue(
 }
 
 #[tauri::command]
-pub fn dismiss_operation(
-    ctx: MainWindowContext,
-    operation_id: OperationId,
-) -> Result<(), Error> {
+pub fn dismiss_operation(ctx: MainWindowContext, operation_id: OperationId) -> Result<(), Error> {
     {
         let mut ops = ctx.operations().0.write();
         ops.remove(&operation_id);

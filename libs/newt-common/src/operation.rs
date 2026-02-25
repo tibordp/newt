@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use crate::filesystem::ListFilesOptions;
 use crate::rpc::Communicator;
 use crate::vfs::{Vfs, VfsPath, VfsRegistry};
 
@@ -209,8 +210,16 @@ impl OperationsClient for Local {
         let id = req.id;
 
         tokio::spawn(async move {
-            execute_operation(id, req.request, progress_tx, cancel, issue_resolvers, next_issue_id, context)
-                .await;
+            execute_operation(
+                id,
+                req.request,
+                progress_tx,
+                cancel,
+                issue_resolvers,
+                next_issue_id,
+                context,
+            )
+            .await;
             operations.lock().remove(&id);
         });
 
@@ -478,7 +487,13 @@ pub async fn execute_operation(
     next_issue_id: Arc<AtomicU64>,
     context: Arc<OperationContext>,
 ) {
-    let mut reporter = ProgressReporter::new(id, progress_tx, issue_resolvers, next_issue_id, cancel.clone());
+    let mut reporter = ProgressReporter::new(
+        id,
+        progress_tx,
+        issue_resolvers,
+        next_issue_id,
+        cancel.clone(),
+    );
 
     let result = match request {
         OperationRequest::Delete { paths } => {
@@ -489,14 +504,30 @@ pub async fn execute_operation(
             destination,
             options,
         } => {
-            execute_copy(&mut reporter, &context, sources, destination, options, cancel.clone()).await
+            execute_copy(
+                &mut reporter,
+                &context,
+                sources,
+                destination,
+                options,
+                cancel.clone(),
+            )
+            .await
         }
         OperationRequest::Move {
             sources,
             destination,
             options,
         } => {
-            execute_move(&mut reporter, &context, sources, destination, options, cancel.clone()).await
+            execute_move(
+                &mut reporter,
+                &context,
+                sources,
+                destination,
+                options,
+                cancel.clone(),
+            )
+            .await
         }
     };
 
@@ -543,14 +574,17 @@ async fn plan_copy(
             });
 
             while let Some((src_dir, dst_dir)) = stack.pop() {
-                let dir_entries = src_vfs.read_dir(&src_dir).await?;
-                for dir_entry in dir_entries {
-                    let name = dir_entry.name;
-                    let src_path = src_dir.join(&name);
-                    let dst_path = dst_dir.join(&name);
-                    let metadata = dir_entry.metadata;
+                let file_list = src_vfs
+                    .list_files(&src_dir, ListFilesOptions { strict: true }, None)
+                    .await?;
+                for file in file_list.files() {
+                    if file.name == ".." {
+                        continue;
+                    }
+                    let src_path = src_dir.join(&file.name);
+                    let dst_path = dst_dir.join(&file.name);
 
-                    if metadata.is_symlink {
+                    if file.is_symlink {
                         let target = src_vfs.read_link(&src_path).await?;
                         entries.push(CopyEntry {
                             source: src_path,
@@ -558,7 +592,7 @@ async fn plan_copy(
                             kind: CopyEntryKind::Symlink { target },
                             size: 0,
                         });
-                    } else if metadata.is_dir {
+                    } else if file.is_dir {
                         entries.push(CopyEntry {
                             source: src_path.clone(),
                             dest: dst_path.clone(),
@@ -567,7 +601,7 @@ async fn plan_copy(
                         });
                         stack.push((src_path, dst_path));
                     } else {
-                        let size = metadata.size;
+                        let size = file.size.unwrap_or(0);
                         total_bytes += size;
                         entries.push(CopyEntry {
                             source: src_path,
@@ -640,19 +674,16 @@ async fn copy_single_file(
     items_done: u64,
     options: &CopyOptions,
 ) -> Result<(), crate::Error> {
-    // Strategy cascade for same-VFS: try fast paths first
+    // Try same-VFS fast path first
     if same_vfs {
-        if src_vfs.clone_file(src_path, dst_path).await.is_ok() {
-            return preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await;
-        }
-        if src_vfs.copy_file(src_path, dst_path).await.is_ok() {
+        if src_vfs.copy_within(src_path, dst_path).await.is_ok() {
             return preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await;
         }
     }
 
-    // Fall back to byte copy via open_read/open_write
-    let mut reader = src_vfs.open_read(src_path).await?;
-    let mut writer = dst_vfs.open_write(dst_path).await?;
+    // Fall back to byte copy via open_read_sync/overwrite_sync
+    let mut reader = src_vfs.open_read_sync(src_path).await?;
+    let mut writer = dst_vfs.overwrite_sync(dst_path).await?;
 
     let cancel2 = cancel.clone();
     let mut sender2 = sender.clone();
@@ -728,9 +759,9 @@ async fn execute_copy(
     options: CopyOptions,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
-    let first_source = sources.first().ok_or_else(|| {
-        crate::Error::Custom("no sources provided".into())
-    })?;
+    let first_source = sources
+        .first()
+        .ok_or_else(|| crate::Error::Custom("no sources provided".into()))?;
     let (src_vfs, _) = context.registry.resolve(first_source)?;
     let (dst_vfs, dst_path) = context.registry.resolve(&destination)?;
 
@@ -750,11 +781,7 @@ async fn execute_copy(
         let source = &source_paths[0];
         let file_name = match source.file_name() {
             Some(f) => f.to_owned(),
-            None => {
-                return Err(crate::Error::Custom(
-                    "source has no file name".to_string(),
-                ))
-            }
+            None => return Err(crate::Error::Custom("source has no file name".to_string())),
         };
         let dest = dst_path.join(file_name);
         reporter.send_prepared(0, 1);
@@ -842,10 +869,7 @@ async fn execute_copy(
                                 IssueKind::AlreadyExists,
                                 format!("File already exists: {}", entry.dest.display()),
                                 None,
-                                vec![
-                                    IssueAction::Skip,
-                                    IssueAction::Overwrite,
-                                ],
+                                vec![IssueAction::Skip, IssueAction::Overwrite],
                             )
                             .await
                         {
@@ -854,7 +878,10 @@ async fn execute_copy(
                                 continue;
                             }
                             Ok(IssueAction::Overwrite) => {
-                                dst_vfs.remove(&entry.dest).await.map_err(crate::Error::from)?;
+                                dst_vfs
+                                    .remove(&entry.dest)
+                                    .await
+                                    .map_err(crate::Error::from)?;
                             }
                             Err(e) => return Err(e),
                             _ => unreachable!("not offered"),
@@ -870,9 +897,7 @@ async fn execute_copy(
             retry = false;
 
             let result = match &entry.kind {
-                CopyEntryKind::Directory => {
-                    dst_vfs.create_directory(&entry.dest).await
-                }
+                CopyEntryKind::Directory => dst_vfs.create_directory(&entry.dest).await,
                 CopyEntryKind::Symlink { target } => {
                     dst_vfs.create_symlink(&entry.dest, target).await
                 }
@@ -996,7 +1021,8 @@ async fn execute_move(
     options: CopyOptions,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
-    let src_vfs_id = sources.first()
+    let src_vfs_id = sources
+        .first()
         .ok_or_else(|| crate::Error::Custom("no sources provided".into()))?
         .vfs_id;
     let dst_vfs_id = destination.vfs_id;
@@ -1016,11 +1042,7 @@ async fn execute_move(
 
             let file_name = match source.path.file_name() {
                 Some(f) => f,
-                None => {
-                    return Err(crate::Error::Custom(
-                        "source has no file name".to_string(),
-                    ))
-                }
+                None => return Err(crate::Error::Custom("source has no file name".to_string())),
             };
             let dest_local = dst_path.join(file_name);
 
@@ -1038,7 +1060,11 @@ async fn execute_move(
                         .raise_issue(
                             kind,
                             format!("Error moving {}: {}", source, e),
-                            Some(format!("{} -> {}", source.path.display(), dest_local.display())),
+                            Some(format!(
+                                "{} -> {}",
+                                source.path.display(),
+                                dest_local.display()
+                            )),
                             vec![IssueAction::Skip, IssueAction::Retry],
                         )
                         .await
@@ -1064,7 +1090,15 @@ async fn execute_move(
     }
 
     // Fall back to copy+delete for cross-device/cross-VFS moves
-    execute_copy(reporter, context, needs_copy.clone(), destination, options, cancel).await?;
+    execute_copy(
+        reporter,
+        context,
+        needs_copy.clone(),
+        destination,
+        options,
+        cancel,
+    )
+    .await?;
 
     // Delete originals after successful copy
     for source in &needs_copy {

@@ -49,7 +49,16 @@ impl PartialOrd for UserGroup {
 }
 
 #[derive(
-    Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, Hash,
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    Hash,
 )]
 pub struct Mode(pub u32);
 
@@ -196,20 +205,12 @@ impl UidGidCache {
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error>;
-    async fn list_files(&self, path: VfsPath, options: ListFilesOptions)
-        -> Result<FileList, Error>;
-
-    /// Like `list_files`, but sends intermediate batches via `batch_tx`.
-    /// The returned `FileList` is always authoritative.
-    async fn list_files_streaming(
+    async fn list_files(
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        _batch_tx: mpsc::UnboundedSender<Vec<File>>,
-    ) -> Result<FileList, Error> {
-        self.list_files(path, options).await
-    }
-
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+    ) -> Result<FileList, Error>;
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
@@ -233,23 +234,18 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
     ) -> Result<FileList, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.list_files(path, options).await
-    }
-    async fn list_files_streaming(
-        &self,
-        path: VfsPath,
-        options: ListFilesOptions,
-        batch_tx: mpsc::UnboundedSender<Vec<File>>,
-    ) -> Result<FileList, Error> {
         // Get the full listing from the inner filesystem, then drip-feed it
         // in batches of 100 with 500ms delays to simulate a slow connection.
-        let file_list = self.0.list_files(path, options).await?;
-        for chunk in file_list.files().chunks(100) {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            if batch_tx.send(chunk.to_vec()).is_err() {
-                break;
+        let file_list = self.0.list_files(path, options, None).await?;
+        if let Some(batch_tx) = batch_tx {
+            for chunk in file_list.files().chunks(100) {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if batch_tx.send(chunk.to_vec()).is_err() {
+                    break;
+                }
             }
         }
         Ok(file_list)
@@ -317,53 +313,49 @@ impl Filesystem for Remote {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
     ) -> Result<FileList, Error> {
-        let ret: Result<FileList, Error> = self
-            .communicator
-            .invoke(crate::api::API_LIST_FILES, &(path, options))
-            .await?;
+        if let Some(batch_tx) = batch_tx {
+            let stream_id = StreamId(
+                self.next_stream_id
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+            );
 
-        Ok(ret?)
-    }
+            // Register the batch sender so HostDispatcher can route Notify messages to it
+            self.pending_streams.lock().insert(stream_id, batch_tx);
 
-    async fn list_files_streaming(
-        &self,
-        path: VfsPath,
-        options: ListFilesOptions,
-        batch_tx: mpsc::UnboundedSender<Vec<File>>,
-    ) -> Result<FileList, Error> {
-        let stream_id = StreamId(
-            self.next_stream_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
-        );
-
-        // Register the batch sender so HostDispatcher can route Notify messages to it
-        self.pending_streams.lock().insert(stream_id, batch_tx);
-
-        // RAII guard to ensure cleanup even on cancellation/error
-        struct StreamGuard {
-            stream_id: StreamId,
-            pending_streams: PendingStreams,
-        }
-        impl Drop for StreamGuard {
-            fn drop(&mut self) {
-                self.pending_streams.lock().remove(&self.stream_id);
+            // RAII guard to ensure cleanup even on cancellation/error
+            struct StreamGuard {
+                stream_id: StreamId,
+                pending_streams: PendingStreams,
             }
+            impl Drop for StreamGuard {
+                fn drop(&mut self) {
+                    self.pending_streams.lock().remove(&self.stream_id);
+                }
+            }
+            let _guard = StreamGuard {
+                stream_id,
+                pending_streams: self.pending_streams.clone(),
+            };
+
+            let ret: Result<FileList, Error> = self
+                .communicator
+                .invoke(
+                    crate::api::API_LIST_FILES_STREAMING,
+                    &(path, options, stream_id),
+                )
+                .await?;
+
+            Ok(ret?)
+        } else {
+            let ret: Result<FileList, Error> = self
+                .communicator
+                .invoke(crate::api::API_LIST_FILES, &(path, options))
+                .await?;
+
+            Ok(ret?)
         }
-        let _guard = StreamGuard {
-            stream_id,
-            pending_streams: self.pending_streams.clone(),
-        };
-
-        let ret: Result<FileList, Error> = self
-            .communicator
-            .invoke(
-                crate::api::API_LIST_FILES_STREAMING,
-                &(path, options, stream_id),
-            )
-            .await?;
-
-        Ok(ret?)
     }
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
@@ -415,10 +407,9 @@ pub struct LocalShellService;
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
     async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
-        let expanded = tokio::task::spawn_blocking(move || {
-            expanduser::expanduser(input).map_err(Error::Io)
-        })
-        .await??;
+        let expanded =
+            tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::Io))
+                .await??;
         Ok(VfsPath::root(expanded))
     }
 }

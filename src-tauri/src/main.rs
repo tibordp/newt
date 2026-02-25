@@ -90,9 +90,9 @@ fn detect_theme() -> Option<tauri::Theme> {
     {
         use gio::prelude::SettingsExt;
 
-        if let Ok(settings) = std::panic::catch_unwind(|| {
-            gio::Settings::new("org.gnome.desktop.interface")
-        }) {
+        if let Ok(settings) =
+            std::panic::catch_unwind(|| gio::Settings::new("org.gnome.desktop.interface"))
+        {
             // Try freedesktop color-scheme first (GNOME 42+, KDE, etc.)
             let color_scheme = settings.string("color-scheme");
             if color_scheme.contains("prefer-dark") {

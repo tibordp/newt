@@ -179,6 +179,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     focused,
     pending_path,
     loading,
+    partial,
     fs_stats,
     stats,
   } = props;
@@ -898,6 +899,10 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
             {stats.file_count} files, {stats.dir_count} directories
           </>
         )}
+        {
+          !showSpinner && !loading && partial && (
+            <span className={styles.partial}>{" "}(partial)</span>)
+        }
       </div>
     </div>
   );

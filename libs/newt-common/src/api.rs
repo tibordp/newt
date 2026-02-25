@@ -73,7 +73,7 @@ impl Dispatcher for FilesystemDispatcher {
             }
             API_LIST_FILES => {
                 let args: (VfsPath, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.list_files(args.0, args.1).await;
+                let ret = self.filesystem.list_files(args.0, args.1, None).await;
 
                 bincode::serialize(&ret).unwrap()
             }
@@ -81,26 +81,18 @@ impl Dispatcher for FilesystemDispatcher {
                 let (path, opts, stream_id): (VfsPath, ListFilesOptions, StreamId) =
                     bincode::deserialize(&req[..]).unwrap();
 
-                let (batch_tx, mut batch_rx) =
-                    tokio::sync::mpsc::unbounded_channel::<Vec<File>>();
+                let (batch_tx, mut batch_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<File>>();
 
                 // Spawn a forwarder task: batches → Notify messages
                 let outbox = self.outbox.clone();
                 let forwarder = tokio::spawn(async move {
                     while let Some(files) = batch_rx.recv().await {
-                        let bytes =
-                            bincode::serialize(&(stream_id, files)).unwrap();
-                        let _ = outbox.send(Message::Notify(
-                            API_LIST_FILES_BATCH,
-                            bytes.into(),
-                        ));
+                        let bytes = bincode::serialize(&(stream_id, files)).unwrap();
+                        let _ = outbox.send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()));
                     }
                 });
 
-                let ret = self
-                    .filesystem
-                    .list_files_streaming(path, opts, batch_tx)
-                    .await;
+                let ret = self.filesystem.list_files(path, opts, Some(batch_tx)).await;
 
                 // Ensure all batch notifications are sent before returning the response
                 let _ = forwarder.await;
@@ -310,8 +302,7 @@ impl Dispatcher for OperationDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         match api {
             API_START_OPERATION => {
-                let request: StartOperationRequest =
-                    bincode::deserialize(&req[..]).unwrap();
+                let request: StartOperationRequest = bincode::deserialize(&req[..]).unwrap();
                 let handle = OperationHandle {
                     cancel: CancellationToken::new(),
                     issue_resolvers: Arc::new(Mutex::new(HashMap::new())),
@@ -367,8 +358,7 @@ impl Dispatcher for OperationDispatcher {
                 Ok(Some(bincode::serialize(&ret).unwrap().into()))
             }
             API_RESOLVE_ISSUE => {
-                let request: ResolveIssueRequest =
-                    bincode::deserialize(&req[..]).unwrap();
+                let request: ResolveIssueRequest = bincode::deserialize(&req[..]).unwrap();
                 if let Some(handle) = self.operations.lock().get(&request.operation_id) {
                     if let Some(sender) = handle.issue_resolvers.lock().remove(&request.issue_id) {
                         let _ = sender.send(request.response);

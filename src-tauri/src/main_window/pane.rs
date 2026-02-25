@@ -178,16 +178,17 @@ impl Pane {
 
         // Create batch channel and start streaming
         let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<Vec<File>>();
-        let streaming_fut = self.fs.list_files_streaming(
+        let streaming_fut = self.fs.list_files(
             target.clone(),
             ListFilesOptions { strict: !silent },
-            batch_tx,
+            (!silent).then_some(batch_tx),
         );
         tokio::pin!(streaming_fut);
 
         let mut accumulated = Vec::new();
         let mut first_batch = true;
         let mut last_publish = Instant::now();
+        let mut dirty = false;
         let throttle = Duration::from_millis(100);
 
         let result = loop {
@@ -214,12 +215,13 @@ impl Pane {
                             first_batch = false;
                         }
                         // Throttled intermediate publish
-                        if last_publish.elapsed() >= throttle {
+                        if first_batch || last_publish.elapsed() >= throttle {
                             let display_options = self.display_options.0.read().clone();
                             let interim = FileList::new(target.clone(), accumulated.clone(), None);
                             self.view_state_mut().update(display_options, &interim);
                             let _ = self.publisher.publish();
                             last_publish = Instant::now();
+                            dirty = true;
                         }
                     }
                 }
@@ -231,11 +233,16 @@ impl Pane {
             Err(e) => {
                 debug!("navigation failed: {}", e);
 
-                // Restore the old navigation state
-                *self.file_list.write() = old_file_list;
+                if !dirty {
+                    // Restore the old navigation state, but only if we haven't already published a partial update
+                    // The user may have already navigated somewhere else, so we shouldn't override that
+                    *self.file_list.write() = old_file_list;
+                }
+
                 let mut ws = self.view_state_mut();
                 ws.pending_path = None;
                 ws.loading = false;
+                ws.partial = dirty;
 
                 return match e {
                     Error::Cancelled => Ok(()),
@@ -254,6 +261,7 @@ impl Pane {
 
         ws.pending_path = None;
         ws.loading = false;
+        ws.partial = false;
         if has_path_changed {
             let _ = changes_sender.send(());
             // Only clear if we didn't already do it on first batch
@@ -406,6 +414,7 @@ pub struct PaneViewState {
     pub path: VfsPath,
     pub pending_path: Option<VfsPath>,
     pub loading: bool,
+    pub partial: bool,
     pub sorting: Sorting,
     pub files: Vec<File>,
     pub focused: Option<String>,

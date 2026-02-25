@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -13,6 +12,7 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
+use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileInfo, FileReader};
@@ -141,13 +141,24 @@ pub struct VfsEntryMetadata {
 }
 
 // ---------------------------------------------------------------------------
-// VfsDirEntry
+// VfsSpaceInfo
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VfsDirEntry {
-    pub name: OsString,
-    pub metadata: VfsEntryMetadata,
+pub struct VfsSpaceInfo {
+    pub total_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// VfsAsyncWriter
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+pub trait VfsAsyncWriter: Send {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error>;
+    async fn finish(self: Box<Self>) -> Result<(), Error>;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,31 +167,34 @@ pub struct VfsDirEntry {
 
 #[async_trait::async_trait]
 pub trait Vfs: Send + Sync {
-    // --- Required (browsing) ---
+    // --- Descriptor ---
     fn descriptor(&self) -> &'static dyn VfsDescriptor;
-    async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error>;
-
-    /// Like `list_files`, but sends intermediate batches via `batch_tx` as files
-    /// are enumerated. The returned `FileList` is always authoritative. Batches
-    /// are purely for progressive display.
-    async fn list_files_streaming(
-        &self,
-        path: &Path,
-        opts: ListFilesOptions,
-        _batch_tx: mpsc::UnboundedSender<Vec<File>>,
-    ) -> Result<FileList, Error> {
-        self.list_files(path, opts).await
+    fn origin(&self) -> Option<&VfsPath> {
+        None
     }
-
-    async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
-
-    // --- Mount metadata (opaque blob for client-side use) ---
     fn mount_meta(&self) -> Vec<u8> {
         Vec::new()
     }
 
-    // --- Reading (gated by READ) ---
-    async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
+    // --- Browse ---
+    async fn list_files(
+        &self,
+        path: &Path,
+        opts: ListFilesOptions,
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+    ) -> Result<FileList, Error>;
+    async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
+
+    // --- Read ---
+    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
+        let _ = path;
+        Err(Error::NotSupported)
+    }
+
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let _ = path;
         Err(Error::NotSupported)
     }
@@ -190,7 +204,7 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    async fn open_read(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
+    async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
         let _ = path;
         Err(Error::NotSupported)
     }
@@ -205,13 +219,13 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    async fn read_dir(&self, path: &Path) -> Result<Vec<VfsDirEntry>, Error> {
+    // --- Write ---
+    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
         let _ = path;
         Err(Error::NotSupported)
     }
 
-    // --- Writing (gated by WRITE) ---
-    async fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
+    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let _ = path;
         Err(Error::NotSupported)
     }
@@ -231,7 +245,12 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    // --- Deletion (gated by DELETE) ---
+    async fn truncate(&self, path: &Path) -> Result<(), Error> {
+        let _ = path;
+        Err(Error::NotSupported)
+    }
+
+    // --- Delete ---
     async fn remove(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
         Err(Error::NotSupported)
@@ -242,7 +261,7 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    // --- Metadata mutation ---
+    // --- Metadata ---
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let _ = path;
         Err(Error::NotSupported)
@@ -253,25 +272,25 @@ pub trait Vfs: Send + Sync {
         Err(Error::NotSupported)
     }
 
-    // --- Fast-path same-VFS operations ---
+    async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
+        let _ = path;
+        Err(Error::NotSupported)
+    }
+
+    // --- Same-VFS fast paths ---
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
         Err(Error::NotSupported)
     }
 
-    async fn copy_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
         Err(Error::NotSupported)
     }
 
-    async fn clone_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let _ = (from, to);
+    async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
+        let _ = (link, target);
         Err(Error::NotSupported)
-    }
-
-    // --- VFS origin (for sub-VFS like archives) ---
-    fn origin(&self) -> Option<&VfsPath> {
-        None
     }
 }
 
@@ -337,16 +356,11 @@ impl Vfs for LocalVfs {
         &LOCAL_VFS_DESCRIPTOR
     }
 
-    async fn list_files(&self, path: &Path, opts: ListFilesOptions) -> Result<FileList, Error> {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        self.list_files_streaming(path, opts, tx).await
-    }
-
-    async fn list_files_streaming(
+    async fn list_files(
         &self,
         path: &Path,
         opts: ListFilesOptions,
-        batch_tx: mpsc::UnboundedSender<Vec<File>>,
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
     ) -> Result<FileList, Error> {
         assert!(path.is_absolute());
         let mut path = path.to_path_buf();
@@ -354,7 +368,7 @@ impl Vfs for LocalVfs {
             match tokio::task::spawn_blocking({
                 let path = path.clone();
                 let cache = self.fs_cache.clone();
-                let batch_tx = batch_tx.clone();
+                let batch_tx = batch_tx.as_ref().cloned();
                 move || -> Result<Vec<File>, Error> {
                     const BATCH_SIZE: usize = 500;
 
@@ -414,16 +428,22 @@ impl Vfs for LocalVfs {
                         ret.push(file);
 
                         if batch.len() >= BATCH_SIZE {
-                            if batch_tx.send(std::mem::take(&mut batch)).is_err() {
-                                // Receiver dropped — cancelled
-                                return Ok(ret);
+                            if let Some(ref tx) = batch_tx {
+                                if tx.send(std::mem::take(&mut batch)).is_err() {
+                                    // Receiver dropped — cancelled
+                                    return Ok(ret);
+                                }
+                            } else {
+                                batch.clear();
                             }
                         }
                     }
 
                     // Send any remaining entries as a final batch
-                    if !batch.is_empty() {
-                        let _ = batch_tx.send(batch);
+                    if let Some(ref tx) = batch_tx {
+                        if !batch.is_empty() {
+                            let _ = tx.send(batch);
+                        }
                     }
 
                     Ok(ret)
@@ -538,7 +558,7 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn open_read(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
+    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
         let path = path.to_path_buf();
         let file =
             tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::Io))
@@ -565,34 +585,11 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn read_dir(&self, path: &Path) -> Result<Vec<VfsDirEntry>, Error> {
+    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let mut entries = Vec::new();
-            for entry in std::fs::read_dir(&path)? {
-                let entry = entry?;
-                let meta = std::fs::symlink_metadata(&entry.path())?;
-                entries.push(VfsDirEntry {
-                    name: entry.file_name(),
-                    metadata: VfsEntryMetadata {
-                        is_file: meta.is_file(),
-                        is_dir: meta.is_dir(),
-                        is_symlink: meta.is_symlink(),
-                        size: meta.len(),
-                    },
-                });
-            }
-            Ok(entries)
-        })
-        .await?
-    }
-
-    async fn open_write(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
-        let path = path.to_path_buf();
-        let file = tokio::task::spawn_blocking(move || {
-            std::fs::File::create(&path).map_err(Error::Io)
-        })
-        .await??;
+        let file =
+            tokio::task::spawn_blocking(move || std::fs::File::create(&path).map_err(Error::Io))
+                .await??;
         Ok(Box::new(file))
     }
 
@@ -707,49 +704,70 @@ impl Vfs for LocalVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_path_buf();
         let to = to.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::Io))
-            .await?
+        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::Io)).await?
     }
 
-    async fn copy_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn truncate(&self, path: &Path) -> Result<(), Error> {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+            Ok(())
+        })
+        .await?
+    }
+
+    async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let stats = nix::sys::statvfs::statvfs(&path)?;
+            let frag = stats.fragment_size() as u64;
+            Ok(VfsSpaceInfo {
+                total_bytes: Some(stats.blocks() as u64 * frag),
+                used_bytes: Some(
+                    (stats.blocks() as u64).saturating_sub(stats.blocks_free() as u64) * frag,
+                ),
+                available_bytes: Some(stats.blocks_available() as u64 * frag),
+            })
+        })
+        .await?
+    }
+
+    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_path_buf();
         let to = to.to_path_buf();
         tokio::task::spawn_blocking(move || {
+            // Try FICLONE (instant COW clone) first on Linux
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                let src = std::fs::File::open(&from)?;
+                let dst = std::fs::File::create(&to)?;
+                let ret =
+                    unsafe { libc::ioctl(dst.as_raw_fd(), 0x40049409u64 as _, src.as_raw_fd()) };
+                if ret == 0 {
+                    return Ok(());
+                }
+                // FICLONE failed (unsupported FS), clean up and fall through to fs::copy
+                drop(dst);
+                let _ = std::fs::remove_file(&to);
+            }
+
+            // Fall back to kernel-level copy
             std::fs::copy(&from, &to)?;
             Ok(())
         })
         .await?
     }
 
-    async fn clone_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = from.to_path_buf();
-        let to = to.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            #[cfg(target_os = "linux")]
-            {
-                use std::os::unix::io::AsRawFd;
-                let src = std::fs::File::open(&from)?;
-                let dst = std::fs::File::create(&to)?;
-                // FICLONE ioctl
-                let ret =
-                    unsafe { libc::ioctl(dst.as_raw_fd(), 0x40049409u64 as _, src.as_raw_fd()) };
-                if ret < 0 {
-                    // Clean up the created file on failure
-                    drop(dst);
-                    let _ = std::fs::remove_file(&to);
-                    return Err(Error::Io(std::io::Error::last_os_error()));
-                }
-                Ok(())
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                let _ = (&from, &to);
-                Err(Error::NotSupported)
-            }
-        })
-        .await?
+    async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
+        let link = link.to_path_buf();
+        let target = target.to_path_buf();
+        tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::Io))
+            .await?
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -821,19 +839,10 @@ impl Filesystem for VfsRegistryFs {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
+        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
     ) -> Result<FileList, Error> {
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        vfs.list_files(&local_path, options).await
-    }
-
-    async fn list_files_streaming(
-        &self,
-        path: VfsPath,
-        options: ListFilesOptions,
-        batch_tx: mpsc::UnboundedSender<Vec<File>>,
-    ) -> Result<FileList, Error> {
-        let (vfs, local_path) = self.registry.resolve(&path)?;
-        vfs.list_files_streaming(&local_path, options, batch_tx).await
+        vfs.list_files(&local_path, options, batch_tx).await
     }
 
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
@@ -900,9 +909,7 @@ impl FileReader for VfsRegistryFileReader {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MountRequest {
-
-}
+pub enum MountRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MountResponse {

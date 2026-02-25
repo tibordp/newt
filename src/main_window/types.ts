@@ -68,6 +68,7 @@ export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
   loading?: boolean;
+  partial?: boolean;
   sorting: Sorting;
   files: File[];
   focused?: string;

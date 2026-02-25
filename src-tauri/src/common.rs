@@ -40,7 +40,9 @@ impl From<newt_common::Error> for Error {
             newt_common::Error::Cancelled => Error::Cancelled,
             newt_common::Error::Connection => Error::Custom("connection error".to_string()),
             newt_common::Error::Remote(x) => Error::Custom(x),
-            newt_common::Error::NotSupported => Error::Custom("operation not supported".to_string()),
+            newt_common::Error::NotSupported => {
+                Error::Custom("operation not supported".to_string())
+            }
         }
     }
 }
