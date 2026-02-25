@@ -1164,26 +1164,6 @@ impl MainWindowContext {
         self.inner.publisher.publish()
     }
 
-    pub async fn mount_archive(&self, host_path: VfsPath) -> Result<MountResponse, Error> {
-        let request = newt_common::vfs::MountRequest::Archive { host_path };
-        let response = self.inner.vfs_manager.mount(request).await?;
-
-        // Store MountedVfsInfo for client-side capability lookups
-        let descriptor = lookup_descriptor(&response.type_name).ok_or_else(|| {
-            Error::Custom(format!("unknown VFS type: {}", response.type_name))
-        })?;
-        self.inner.mounted_vfs.write().insert(
-            response.vfs_id,
-            MountedVfsInfo {
-                vfs_id: response.vfs_id,
-                descriptor,
-                mount_meta: response.mount_meta.clone(),
-            },
-        );
-
-        Ok(response)
-    }
-
     pub async fn unmount_vfs(&self, vfs_id: VfsId) -> Result<(), Error> {
         self.inner.vfs_manager.unmount(vfs_id).await?;
         self.inner.mounted_vfs.write().remove(&vfs_id);

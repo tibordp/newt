@@ -13,7 +13,6 @@ use crate::{
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
     vfs::{MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
-    vfs_archive::ArchiveVfs,
     Error,
 };
 
@@ -406,18 +405,7 @@ impl VfsRegistryManager {
 impl VfsManager for VfsRegistryManager {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
         match request {
-            MountRequest::Archive { host_path } => {
-                let (host_vfs, local_path) = self.registry.resolve(&host_path)?;
-                let archive_vfs = ArchiveVfs::open(&*host_vfs, &local_path, host_path).await?;
-                let type_name = archive_vfs.descriptor().type_name().to_string();
-                let mount_meta = archive_vfs.mount_meta();
-                let vfs_id = self.registry.mount(Arc::new(archive_vfs));
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                })
-            }
+            // todo
         }
     }
 

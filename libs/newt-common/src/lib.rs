@@ -6,7 +6,6 @@ pub mod rpc;
 pub mod sys;
 pub mod terminal;
 pub mod vfs;
-pub mod vfs_archive;
 
 use std::time::SystemTime;
 

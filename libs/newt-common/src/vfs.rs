@@ -901,7 +901,7 @@ impl FileReader for VfsRegistryFileReader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MountRequest {
-    Archive { host_path: VfsPath },
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
