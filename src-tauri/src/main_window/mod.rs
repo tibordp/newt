@@ -627,7 +627,12 @@ async fn create_remote_connection(
     // and eats the data meant for `read` inside the script).
     let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_hash()?);
     let escaped = script.replace('\'', "'\\''");
-    let sh_cmd = format!("sh -c '{}'", escaped);
+    let sh_cmd = if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        let escaped_val = rust_log.replace('\'', "'\\''");
+        format!("NEWT_RUST_LOG='{}' sh -c '{}'", escaped_val, escaped)
+    } else {
+        format!("sh -c '{}'", escaped)
+    };
 
     let mut child = tokio::process::Command::new(program)
         .args(args)
@@ -931,12 +936,15 @@ impl MainWindowContext {
 
                 send_init_status(init_channel, "Waiting for authorization...");
                 let agent_path = find_local_agent_binary()?;
-                let mut child = tokio::process::Command::new("pkexec")
-                    .arg(&agent_path)
+                let mut cmd = tokio::process::Command::new("pkexec");
+                cmd.arg(&agent_path)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .spawn()?;
+                    .stderr(Stdio::inherit());
+                if let Ok(rust_log) = std::env::var("RUST_LOG") {
+                    cmd.env("RUST_LOG", rust_log);
+                }
+                let mut child = cmd.spawn()?;
 
                 let stdin = child.stdin.take().unwrap();
                 let stdout = child.stdout.take().unwrap();
@@ -1169,6 +1177,25 @@ impl MainWindowContext {
 
     pub fn publish(&self) -> Result<(), Error> {
         self.inner.publisher.publish()
+    }
+
+    pub async fn mount_vfs(
+        &self,
+        request: newt_common::vfs::MountRequest,
+    ) -> Result<newt_common::vfs::MountResponse, Error> {
+        let response = self.inner.vfs_manager.mount(request).await?;
+        let descriptor = lookup_descriptor(&response.type_name).ok_or_else(|| {
+            Error::Custom(format!("unknown VFS type: {}", response.type_name))
+        })?;
+        self.inner.mounted_vfs.write().insert(
+            response.vfs_id,
+            MountedVfsInfo {
+                vfs_id: response.vfs_id,
+                descriptor,
+                mount_meta: response.mount_meta.clone(),
+            },
+        );
+        Ok(response)
     }
 
     pub async fn unmount_vfs(&self, vfs_id: VfsId) -> Result<(), Error> {

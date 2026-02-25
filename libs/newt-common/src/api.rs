@@ -20,7 +20,7 @@ pub const API_POLL_CHANGES: Api = Api(0);
 pub const API_LIST_FILES: Api = Api(1);
 pub const API_RENAME: Api = Api(2);
 pub const API_CREATE_DIRECTORY: Api = Api(3);
-pub const API_DELETE_ALL: Api = Api(4);
+// api 4 missing
 pub const API_TOUCH: Api = Api(5);
 pub const API_SHELL_EXPAND: Api = Api(6);
 pub const API_LIST_FILES_STREAMING: Api = Api(7);
@@ -115,12 +115,6 @@ impl Dispatcher for FilesystemDispatcher {
             API_CREATE_DIRECTORY => {
                 let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.filesystem.create_directory(path).await;
-
-                bincode::serialize(&ret).unwrap()
-            }
-            API_DELETE_ALL => {
-                let paths: Vec<VfsPath> = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.filesystem.delete_all(paths).await;
 
                 bincode::serialize(&ret).unwrap()
             }

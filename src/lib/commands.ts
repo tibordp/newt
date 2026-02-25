@@ -1,7 +1,6 @@
 import { MainWindowState } from "../main_window/types";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { safeCommand } from "./ipc";
-import { joinVfsPath } from "./types";
 
 export const modifiers = (e: React.KeyboardEvent<Element>) => {
   const isMac = navigator.platform.indexOf("Mac") === 0;
@@ -161,23 +160,21 @@ export const commands: Command[] = [
       const paneHandle = state.display_options.active_pane;
       const pane = state.panes[paneHandle];
 
-      const paths = pane.selected.length > 0
-        ? pane.selected.map((name) => joinVfsPath(pane.path, name))
-        : pane.focused ? [joinVfsPath(pane.path, pane.focused)] : [];
+      const names = pane.selected.length > 0
+        ? pane.selected
+        : pane.focused ? [pane.focused] : [];
 
-      if (paths.length === 0) return;
+      if (names.length === 0) return;
 
       let message;
-      if (pane.selected.length > 0) {
-        message = `Delete ${pane.selected.length} selected files?`;
+      if (names.length > 1) {
+        message = `Delete ${names.length} selected files?`;
       } else {
-        message = `Delete ${pane.focused}?`;
+        message = `Delete ${names[0]}?`;
       }
       confirm(message, { title: "Delete" }).then(async (confirmed) => {
         if (confirmed) {
-          await safeCommand("start_operation", {
-            request: { Delete: { paths } },
-          });
+          await safeCommand("delete_selected", { paneHandle });
         }
       });
     },
@@ -257,6 +254,10 @@ export const commands: Command[] = [
     name: "Open Elevated",
     command: "open_elevated",
     noPane: true,
+  },
+  {
+    name: "Mount S3",
+    command: "mount_s3",
   },
   {
     name: "Open Folder in Default File Manager",

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::prelude::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use log::{debug, warn};
+use log::{debug, info, warn};
 use notify::event::RemoveKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::{Mutex, RwLock};
@@ -16,7 +16,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileInfo, FileReader};
-use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions, Mode};
+use crate::filesystem::{
+    File, FileList, Filesystem, FsStats, ListFilesOptions, Mode, VfsFileList,
+};
 use crate::rpc::Communicator;
 use crate::{Error, ToUnix};
 
@@ -174,6 +176,73 @@ pub struct VfsSpaceInfo {
 }
 
 // ---------------------------------------------------------------------------
+// VfsChangeNotifier — reusable self-notification for VFS implementations
+// ---------------------------------------------------------------------------
+
+/// Allows VFS implementations to signal their own panes when they mutate
+/// objects.  Call [`watch`] from `poll_changes` and [`notify`] after any
+/// mutation.  Watchers whose prefix matches the modified path are signalled.
+#[derive(Clone)]
+pub struct VfsChangeNotifier {
+    watchers: Arc<Mutex<Vec<(u64, PathBuf, tokio::sync::oneshot::Sender<()>)>>>,
+    next_id: Arc<AtomicU64>,
+}
+
+impl VfsChangeNotifier {
+    pub fn new() -> Self {
+        Self {
+            watchers: Arc::new(Mutex::new(Vec::new())),
+            next_id: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Register a watcher for `path` and wait until a matching mutation is
+    /// notified.  The watcher is automatically removed if the future is
+    /// dropped (e.g. the pane navigates away).
+    pub async fn watch(&self, path: &Path) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.watchers.lock().push((id, path.to_path_buf(), tx));
+        let _guard = WatcherGuard {
+            id,
+            watchers: self.watchers.clone(),
+        };
+        let _ = rx.await;
+    }
+
+    /// Signal all watchers whose watched prefix is a parent of
+    /// `modified_path`.
+    pub fn notify(&self, modified_path: &Path) {
+        let mut guard = self.watchers.lock();
+        let old = std::mem::take(&mut *guard);
+        for (id, prefix, sender) in old {
+            if modified_path.starts_with(&prefix) {
+                let _ = sender.send(());
+            } else {
+                guard.push((id, prefix, sender));
+            }
+        }
+    }
+}
+
+impl Default for VfsChangeNotifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct WatcherGuard {
+    id: u64,
+    watchers: Arc<Mutex<Vec<(u64, PathBuf, tokio::sync::oneshot::Sender<()>)>>>,
+}
+
+impl Drop for WatcherGuard {
+    fn drop(&mut self) {
+        self.watchers.lock().retain(|(id, _, _)| *id != self.id);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VfsAsyncWriter
 // ---------------------------------------------------------------------------
 
@@ -204,7 +273,7 @@ pub trait Vfs: Send + Sync {
         path: &Path,
         opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<FileList, Error>;
+    ) -> Result<VfsFileList, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
 
     // --- Read ---
@@ -273,7 +342,12 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Delete ---
-    async fn remove(&self, path: &Path) -> Result<(), Error> {
+    async fn remove_file(&self, path: &Path) -> Result<(), Error> {
+        let _ = path;
+        Err(Error::NotSupported)
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
         Err(Error::NotSupported)
     }
@@ -413,7 +487,7 @@ impl Vfs for LocalVfs {
         path: &Path,
         opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<FileList, Error> {
+    ) -> Result<VfsFileList, Error> {
         assert!(path.is_absolute());
         let mut path = path.to_path_buf();
         loop {
@@ -505,7 +579,11 @@ impl Vfs for LocalVfs {
             {
                 Ok(files) => {
                     let stats = nix::sys::statvfs::statvfs(&path).ok().map(FsStats::from);
-                    return Ok(FileList::new(VfsPath::root(&path), files, stats));
+                    return Ok(VfsFileList {
+                        path,
+                        files,
+                        fs_stats: stats,
+                    });
                 }
                 Err(Error::Io(e)) => match (e.kind(), opts.strict) {
                     (std::io::ErrorKind::NotFound, false)
@@ -538,6 +616,7 @@ impl Vfs for LocalVfs {
                                     .paths
                                     .iter()
                                     .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                EventKind::Access(_) => false,
                                 _ => event.paths.iter().any(|p| p.starts_with(&path)),
                             };
 
@@ -676,14 +755,19 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn remove(&self, path: &Path) -> Result<(), Error> {
+    async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            if path.is_dir() {
-                std::fs::remove_dir(&path)?;
-            } else {
-                std::fs::remove_file(&path)?;
-            }
+            std::fs::remove_file(&path)?;
+            Ok(())
+        })
+        .await?
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            std::fs::remove_dir(&path)?;
             Ok(())
         })
         .await?
@@ -692,9 +776,12 @@ impl Vfs for LocalVfs {
     async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            if path.is_dir() {
+            let meta = std::fs::symlink_metadata(&path)?;
+            if meta.is_dir() {
+                // symlink_metadata doesn't follow symlinks, so this is a real directory
                 std::fs::remove_dir_all(&path)?;
             } else {
+                // Files and symlinks (including symlinks to directories)
                 std::fs::remove_file(&path)?;
             }
             Ok(())
@@ -854,6 +941,7 @@ impl VfsRegistry {
 
     pub fn mount(&self, vfs: Arc<dyn Vfs>) -> VfsId {
         let id = VfsId(self.next_id.fetch_add(1, Ordering::SeqCst));
+        info!("vfs: mount id={} type={}", id, vfs.descriptor().type_name());
         self.vfs_map.write().insert(id, vfs);
         id
     }
@@ -862,6 +950,7 @@ impl VfsRegistry {
         if id == VfsId::ROOT {
             return None; // refuse to unmount ROOT
         }
+        info!("vfs: unmount id={}", id);
         self.vfs_map.write().remove(&id)
     }
 }
@@ -893,11 +982,18 @@ impl Filesystem for VfsRegistryFs {
         options: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
     ) -> Result<FileList, Error> {
+        let vfs_id = path.vfs_id;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        vfs.list_files(&local_path, options, batch_tx).await
+        let result = vfs.list_files(&local_path, options, batch_tx).await?;
+        Ok(FileList::new(
+            VfsPath::new(vfs_id, result.path),
+            result.files,
+            result.fs_stats,
+        ))
     }
 
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
+        debug!("vfs_registry_fs: rename {} -> {}", old_path, new_path);
         if old_path.vfs_id != new_path.vfs_id {
             return Err(Error::Custom("cannot rename across VFS boundaries".into()));
         }
@@ -906,21 +1002,15 @@ impl Filesystem for VfsRegistryFs {
     }
 
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {
+        debug!("vfs_registry_fs: touch {}", path);
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.touch(&local_path).await
     }
 
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
+        debug!("vfs_registry_fs: create_directory {}", path);
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.create_directory(&local_path).await
-    }
-
-    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
-        for path in paths {
-            let (vfs, local_path) = self.registry.resolve(&path)?;
-            vfs.remove_tree(&local_path).await?;
-        }
-        Ok(())
     }
 }
 

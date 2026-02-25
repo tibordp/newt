@@ -1,13 +1,14 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileInfo};
-use crate::filesystem::{File, FileList, ListFilesOptions, Mode};
-use crate::vfs::{RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsDescriptor, VfsPath};
+use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
+use crate::vfs::{RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor};
 use crate::{Error, ToUnix};
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -24,7 +25,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         "s3"
     }
     fn can_watch(&self) -> bool {
-        false
+        true
     }
     fn can_read_sync(&self) -> bool {
         false
@@ -45,7 +46,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         false
     }
     fn can_touch(&self) -> bool {
-        false
+        true
     }
     fn can_truncate(&self) -> bool {
         false
@@ -89,6 +90,8 @@ pub struct S3Vfs {
     region_clients: Mutex<HashMap<String, aws_sdk_s3::Client>>,
     /// Cached bucket → region mapping.
     bucket_regions: Mutex<HashMap<String, String>>,
+    /// Change notifier for self-notification on mutations.
+    notifier: VfsChangeNotifier,
 }
 
 impl S3Vfs {
@@ -98,6 +101,7 @@ impl S3Vfs {
             sdk_config: aws_sdk_s3::config::Builder::from(&sdk_config),
             region_clients: Mutex::new(HashMap::new()),
             bucket_regions: Mutex::new(HashMap::new()),
+            notifier: VfsChangeNotifier::new(),
         }
     }
 
@@ -106,6 +110,7 @@ impl S3Vfs {
         // Check cache first
         if let Some(region) = self.bucket_regions.lock().get(bucket).cloned() {
             if let Some(client) = self.region_clients.lock().get(&region).cloned() {
+                debug!("s3: client cache hit for bucket={} region={}", bucket, region);
                 return Ok(client);
             }
         }
@@ -126,12 +131,15 @@ impl S3Vfs {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "us-east-1".to_string());
 
+        info!("s3: discovered region={} for bucket={}", region, bucket);
+
         // Get or create client for this region
         let client = {
             let mut clients = self.region_clients.lock();
             if let Some(c) = clients.get(&region) {
                 c.clone()
             } else {
+                info!("s3: creating new client for region={}", region);
                 let config = self
                     .sdk_config
                     .clone()
@@ -176,13 +184,15 @@ impl S3Vfs {
     async fn list_buckets(
         &self,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<FileList, Error> {
+    ) -> Result<VfsFileList, Error> {
         let resp = self
             .default_client
             .list_buckets()
             .send()
             .await
             .map_err(|e| Error::Custom(e.to_string()))?;
+
+        debug!("s3: list_buckets returned {} buckets", resp.buckets().len());
 
         let mut files = Vec::new();
         for bucket in resp.buckets() {
@@ -216,16 +226,19 @@ impl S3Vfs {
             }
         }
 
-        Ok(FileList::new(VfsPath::root("/"), files, None))
+        Ok(VfsFileList {
+            path: PathBuf::from("/"),
+            files,
+            fs_stats: None,
+        })
     }
 
     async fn list_objects(
         &self,
         bucket: &str,
         prefix: Option<&str>,
-        vfs_id: crate::vfs::VfsId,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<FileList, Error> {
+    ) -> Result<VfsFileList, Error> {
         // S3 requires prefixes to end with '/' to list directory contents
         let prefix = prefix.map(|p| {
             if p.ends_with('/') {
@@ -254,6 +267,8 @@ impl S3Vfs {
         };
         files.push(dotdot);
 
+        debug!("s3: list_objects bucket={} prefix={:?}", bucket, prefix);
+
         let client = self.client_for_bucket(bucket).await?;
 
         let mut request = client
@@ -276,6 +291,12 @@ impl S3Vfs {
                 .send()
                 .await
                 .map_err(|e| Error::Custom(e.to_string()))?;
+
+            debug!(
+                "s3: list_objects page: {} prefixes, {} objects",
+                resp.common_prefixes().len(),
+                resp.contents().len()
+            );
 
             let prefix_len = prefix.map_or(0, |p| p.len());
             let mut batch = Vec::new();
@@ -357,11 +378,11 @@ impl S3Vfs {
             None => format!("/{}", bucket),
         };
 
-        Ok(FileList::new(
-            VfsPath::new(vfs_id, &full_path),
+        Ok(VfsFileList {
+            path: PathBuf::from(&full_path),
             files,
-            None,
-        ))
+            fs_stats: None,
+        })
     }
 }
 
@@ -376,21 +397,17 @@ impl Vfs for S3Vfs {
         path: &Path,
         _opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<FileList, Error> {
+    ) -> Result<VfsFileList, Error> {
         let (bucket, prefix) = Self::parse_path(path);
         match bucket {
             None => self.list_buckets(batch_tx).await,
-            Some(bucket) => {
-                // We need our VfsId but we don't have it here — use ROOT as placeholder.
-                // The VfsRegistryFs wrapper rewrites the path anyway.
-                self.list_objects(&bucket, prefix.as_deref(), crate::vfs::VfsId::ROOT, batch_tx)
-                    .await
-            }
+            Some(bucket) => self.list_objects(&bucket, prefix.as_deref(), batch_tx).await,
         }
     }
 
-    async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
-        Err(Error::NotSupported)
+    async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
+        self.notifier.watch(path).await;
+        Ok(())
     }
 
     async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
@@ -482,6 +499,8 @@ impl Vfs for S3Vfs {
         let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
         let client = self.client_for_bucket(&bucket).await?;
 
+        debug!("s3: initiating multipart upload bucket={} key={}", bucket, key);
+
         let resp = client
             .create_multipart_upload()
             .bucket(&bucket)
@@ -495,6 +514,8 @@ impl Vfs for S3Vfs {
             .ok_or_else(|| Error::Custom("no upload_id returned".into()))?
             .to_string();
 
+        debug!("s3: multipart upload_id={}", upload_id);
+
         Ok(Box::new(S3AsyncWriter {
             client,
             bucket,
@@ -503,14 +524,17 @@ impl Vfs for S3Vfs {
             buffer: Vec::new(),
             part_number: 1,
             completed_parts: Vec::new(),
+            notifier: self.notifier.clone(),
+            path: path.to_path_buf(),
         }))
     }
 
-    async fn remove(&self, path: &Path) -> Result<(), Error> {
+    async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let (bucket, prefix) = Self::parse_path(path);
         let bucket = bucket.ok_or(Error::NotSupported)?;
-        // No key means bucket-level — refuse to delete buckets
         let key = prefix.ok_or(Error::NotSupported)?;
+
+        debug!("s3: remove_file bucket={} key={}", bucket, key);
 
         let client = self.client_for_bucket(&bucket).await?;
         client
@@ -520,6 +544,35 @@ impl Vfs for S3Vfs {
             .send()
             .await
             .map_err(|e| Error::Custom(e.to_string()))?;
+
+        self.notifier.notify(path);
+        Ok(())
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = Self::parse_path(path);
+        let bucket = bucket.ok_or(Error::NotSupported)?;
+        let key = prefix.ok_or(Error::NotSupported)?;
+
+        // S3 directory markers are stored with a trailing slash
+        let dir_key = if key.ends_with('/') {
+            key
+        } else {
+            format!("{}/", key)
+        };
+
+        debug!("s3: remove_dir bucket={} key={}", bucket, dir_key);
+
+        let client = self.client_for_bucket(&bucket).await?;
+        client
+            .delete_object()
+            .bucket(&bucket)
+            .key(&dir_key)
+            .send()
+            .await
+            .map_err(|e| Error::Custom(e.to_string()))?;
+
+        self.notifier.notify(path);
         Ok(())
     }
 
@@ -532,6 +585,11 @@ impl Vfs for S3Vfs {
         let dst_bucket = dst_bucket.ok_or(Error::NotSupported)?;
         let dst_key = dst_key.ok_or_else(|| Error::Custom("no destination key".into()))?;
 
+        debug!(
+            "s3: copy_within {}/{} -> {}/{}",
+            src_bucket, src_key, dst_bucket, dst_key
+        );
+
         let client = self.client_for_bucket(&dst_bucket).await?;
         let copy_source = format!("{}/{}", src_bucket, src_key);
 
@@ -543,7 +601,48 @@ impl Vfs for S3Vfs {
             .send()
             .await
             .map_err(|e| Error::Custom(e.to_string()))?;
+        self.notifier.notify(to);
         Ok(())
+    }
+
+    async fn touch(&self, path: &Path) -> Result<(), Error> {
+        let (bucket, prefix) = Self::parse_path(path);
+        let bucket = bucket.ok_or(Error::NotSupported)?;
+        let key = prefix.ok_or_else(|| Error::Custom("no key specified".into()))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        debug!("s3: touch bucket={} key={}", bucket, key);
+
+        // Conditional put: only create if the object doesn't already exist
+        let result = client
+            .put_object()
+            .bucket(&bucket)
+            .key(&key)
+            .if_none_match("*")
+            .body(aws_sdk_s3::primitives::ByteStream::from_static(b""))
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => {
+                self.notifier.notify(path);
+                Ok(())
+            }
+            Err(e) => {
+                // 412 Precondition Failed means the object already exists — that's fine for touch
+                let is_precondition_failed = e
+                    .raw_response()
+                    .map(|r| r.status().as_u16() == 412)
+                    .unwrap_or(false);
+
+                if is_precondition_failed {
+                    debug!("s3: touch object already exists (412), no-op");
+                    Ok(())
+                } else {
+                    Err(Error::Custom(e.to_string()))
+                }
+            }
+        }
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
@@ -551,6 +650,8 @@ impl Vfs for S3Vfs {
         let bucket = bucket.ok_or(Error::NotSupported)?;
         let key = prefix.ok_or_else(|| Error::Custom("no key specified".into()))?;
         let client = self.client_for_bucket(&bucket).await?;
+
+        debug!("s3: create_directory bucket={} key={}", bucket, key);
 
         // S3 "directories" are zero-byte objects with a trailing /
         let dir_key = if key.ends_with('/') {
@@ -567,6 +668,7 @@ impl Vfs for S3Vfs {
             .send()
             .await
             .map_err(|e| Error::Custom(e.to_string()))?;
+        self.notifier.notify(path);
         Ok(())
     }
 }
@@ -583,6 +685,8 @@ struct S3AsyncWriter {
     buffer: Vec<u8>,
     part_number: i32,
     completed_parts: Vec<aws_sdk_s3::types::CompletedPart>,
+    notifier: VfsChangeNotifier,
+    path: PathBuf,
 }
 
 impl S3AsyncWriter {
@@ -590,7 +694,17 @@ impl S3AsyncWriter {
         if self.buffer.is_empty() {
             return Ok(());
         }
+        self.flush_part_unconditional().await
+    }
 
+    /// Upload the current buffer as a part, even if it's empty.
+    async fn flush_part_unconditional(&mut self) -> Result<(), Error> {
+        debug!(
+            "s3: uploading part {} ({} bytes) for upload_id={}",
+            self.part_number,
+            self.buffer.len(),
+            self.upload_id
+        );
         let data = std::mem::take(&mut self.buffer);
         let body = aws_sdk_s3::primitives::ByteStream::from(data);
 
@@ -618,6 +732,10 @@ impl S3AsyncWriter {
     }
 
     async fn abort(&self) {
+        warn!(
+            "s3: aborting multipart upload upload_id={} bucket={} key={}",
+            self.upload_id, self.bucket, self.key
+        );
         let _ = self
             .client
             .abort_multipart_upload()
@@ -643,10 +761,13 @@ impl VfsAsyncWriter for S3AsyncWriter {
     }
 
     async fn finish(mut self: Box<Self>) -> Result<(), Error> {
-        // Flush remaining data
-        if let Err(e) = self.flush_part().await {
-            self.abort().await;
-            return Err(e);
+        // Always flush remaining data (even if empty) when no parts have been
+        // uploaded yet — CompleteMultipartUpload requires at least one part.
+        if self.completed_parts.is_empty() || !self.buffer.is_empty() {
+            if let Err(e) = self.flush_part_unconditional().await {
+                self.abort().await;
+                return Err(e);
+            }
         }
 
         let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
@@ -661,11 +782,16 @@ impl VfsAsyncWriter for S3AsyncWriter {
             .multipart_upload(completed)
             .send()
             .await
-            .map_err(|e| {
-                // Don't block on abort here, best-effort
-                Error::Custom(e.to_string())
-            })?;
+            .map_err(|e| Error::Custom(e.to_string()))?;
 
+        info!(
+            "s3: completed multipart upload upload_id={} bucket={} key={} ({} parts)",
+            self.upload_id,
+            self.bucket,
+            self.key,
+            self.completed_parts.len()
+        );
+        self.notifier.notify(&self.path);
         Ok(())
     }
 }

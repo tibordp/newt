@@ -123,6 +123,16 @@ impl FileList {
     }
 }
 
+/// Result of `Vfs::list_files` — uses `PathBuf` because the Vfs layer
+/// doesn't know its own `VfsId`. `VfsRegistryFs` wraps this into a full
+/// `FileList` with the correct id.
+#[derive(Debug)]
+pub struct VfsFileList {
+    pub path: PathBuf,
+    pub files: Vec<File>,
+    pub fs_stats: Option<FsStats>,
+}
+
 /// Canonicalize . and .. segments in a path (without following symlinks or
 /// checking whether they exists)
 pub fn resolve(path: &Path) -> PathBuf {
@@ -214,7 +224,6 @@ pub trait Filesystem: Send + Sync {
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
-    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error>;
 }
 
 pub struct Slow<T: Filesystem>(T);
@@ -261,10 +270,6 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.create_directory(path).await
-    }
-    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.delete_all(paths).await
     }
 }
 
@@ -379,14 +384,6 @@ impl Filesystem for Remote {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_CREATE_DIRECTORY, &path)
-            .await?;
-
-        Ok(ret?)
-    }
-    async fn delete_all(&self, paths: Vec<VfsPath>) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(crate::api::API_DELETE_ALL, &paths)
             .await?;
 
         Ok(ret?)

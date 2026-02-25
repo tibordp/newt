@@ -41,17 +41,8 @@ async fn main() -> Result<(), Error> {
     // Create outbox channel first so OperationDispatcher can use it
     let (outbox, inbox) = Communicator::create_outbox();
 
-    let sdk_config = aws_config::from_env()
-        .region(aws_config::Region::new("us-east-1"))
-        .load()
-        .await;
-    let client = aws_sdk_s3::Client::new(&sdk_config);
-    let vfs = Arc::new(S3Vfs::new(client, sdk_config));
-    let root = Arc::new(LocalVfs::new());
-    // well, actually, why shouldn't we just pull a little...
-    let root = vfs;
-
-    let registry = Arc::new(VfsRegistry::with_root(root));
+    let root_vfs = Arc::new(LocalVfs::new());
+    let registry = Arc::new(VfsRegistry::with_root(root_vfs));
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
     });

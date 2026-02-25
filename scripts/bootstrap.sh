@@ -90,5 +90,10 @@ else
     done
 fi
 
+# Forward RUST_LOG from host (passed as NEWT_RUST_LOG to avoid shell conflicts)
+if [ -n "${NEWT_RUST_LOG}" ]; then
+    export RUST_LOG="${NEWT_RUST_LOG}"
+fi
+
 exec "$AGENT_PATH"
 

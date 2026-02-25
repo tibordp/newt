@@ -5,7 +5,7 @@ use newt_common::operation::{
     StartOperationRequest,
 };
 use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::VfsPath;
+use newt_common::vfs::{MountRequest, VfsPath};
 use shell_quote::Quote;
 use tauri::ipc::Invoke;
 use tauri::Manager;
@@ -564,19 +564,15 @@ pub async fn touch_file(
 
 #[tauri::command]
 pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let fs = ctx.fs();
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let paths = pane.get_effective_selection();
+    if paths.is_empty() {
+        return Ok(());
+    }
 
-    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        let selection = pane.get_effective_selection();
-
-        let ret = fs.delete_all(selection).await;
-        pane.refresh(None).await?;
-
-        ret?;
-
-        Ok(())
-    })
-    .await
+    let request = OperationRequest::Delete { paths };
+    start_operation(ctx, request).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -839,6 +835,19 @@ pub async fn execute_dnd(
 }
 
 #[tauri::command]
+pub async fn mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let response = ctx.mount_vfs(MountRequest::S3 { region: None }).await?;
+    let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -888,6 +897,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         background_operation,
         connect_remote,
         open_elevated,
+        mount_s3,
         close_window,
         start_dnd,
         cancel_dnd,
