@@ -26,3 +26,5 @@ filetime = "0.2"
 expanduser = "*"
 inventory = "0.3"
 zip = "2"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"

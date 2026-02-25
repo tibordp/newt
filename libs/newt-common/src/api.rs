@@ -395,7 +395,24 @@ impl VfsRegistryManager {
 impl VfsManager for VfsRegistryManager {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
         match request {
-            // todo
+            MountRequest::S3 { region } => {
+                let sdk_config = aws_config::from_env()
+                    .region(aws_config::Region::new(
+                        region.unwrap_or_else(|| "us-east-1".to_string()),
+                    ))
+                    .load()
+                    .await;
+                let client = aws_sdk_s3::Client::new(&sdk_config);
+                let vfs = Arc::new(crate::vfs_s3::S3Vfs::new(client, sdk_config));
+                let mount_meta = vfs.mount_meta();
+                let type_name = vfs.descriptor().type_name().to_string();
+                let vfs_id = self.registry.mount(vfs);
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                })
+            }
         }
     }
 

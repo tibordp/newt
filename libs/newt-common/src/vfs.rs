@@ -97,12 +97,34 @@ impl std::fmt::Display for VfsPath {
 
 pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn type_name(&self) -> &'static str;
-    fn can_read(&self) -> bool;
-    fn can_write(&self) -> bool;
-    fn can_delete(&self) -> bool;
-    fn can_rename(&self) -> bool;
+
+    // --- Browse ---
     fn can_watch(&self) -> bool;
-    fn can_fast_copy(&self) -> bool;
+
+    // --- Read ---
+    fn can_read_sync(&self) -> bool;
+    fn can_read_async(&self) -> bool;
+
+    // --- Write ---
+    fn can_overwrite_sync(&self) -> bool;
+    fn can_overwrite_async(&self) -> bool;
+    fn can_create_directory(&self) -> bool;
+    fn can_create_symlink(&self) -> bool;
+    fn can_touch(&self) -> bool;
+    fn can_truncate(&self) -> bool;
+    fn can_set_metadata(&self) -> bool;
+
+    // --- Delete ---
+    fn can_remove(&self) -> bool;
+    fn can_remove_tree(&self) -> bool;
+
+    // --- Capabilities ---
+    fn has_symlinks(&self) -> bool;
+
+    // --- Same-VFS fast paths ---
+    fn can_rename(&self) -> bool;
+    fn can_copy_within(&self) -> bool;
+    fn can_hard_link(&self) -> bool;
 }
 
 // Auto-registration via inventory
@@ -305,22 +327,52 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn type_name(&self) -> &'static str {
         "local"
     }
-    fn can_read(&self) -> bool {
+    fn can_watch(&self) -> bool {
         true
     }
-    fn can_write(&self) -> bool {
+    fn can_read_sync(&self) -> bool {
         true
     }
-    fn can_delete(&self) -> bool {
+    fn can_read_async(&self) -> bool {
+        false
+    }
+    fn can_overwrite_sync(&self) -> bool {
+        true
+    }
+    fn can_overwrite_async(&self) -> bool {
+        false
+    }
+    fn can_create_directory(&self) -> bool {
+        true
+    }
+    fn can_create_symlink(&self) -> bool {
+        true
+    }
+    fn can_touch(&self) -> bool {
+        true
+    }
+    fn can_truncate(&self) -> bool {
+        true
+    }
+    fn can_set_metadata(&self) -> bool {
+        true
+    }
+    fn can_remove(&self) -> bool {
+        true
+    }
+    fn can_remove_tree(&self) -> bool {
+        true
+    }
+    fn has_symlinks(&self) -> bool {
         true
     }
     fn can_rename(&self) -> bool {
         true
     }
-    fn can_watch(&self) -> bool {
+    fn can_copy_within(&self) -> bool {
         true
     }
-    fn can_fast_copy(&self) -> bool {
+    fn can_hard_link(&self) -> bool {
         true
     }
 }
@@ -909,7 +961,9 @@ impl FileReader for VfsRegistryFileReader {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MountRequest {}
+pub enum MountRequest {
+    S3 { region: Option<String> },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MountResponse {

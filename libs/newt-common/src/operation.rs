@@ -10,12 +10,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::filesystem::ListFilesOptions;
 use crate::rpc::Communicator;
-use crate::vfs::{Vfs, VfsPath, VfsRegistry};
+use crate::vfs::{Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
 pub type OperationId = u64;
 pub type IssueId = u64;
 
 // --- Issue Resolution Types ---
+
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum IssueKind {
@@ -542,11 +543,13 @@ pub async fn execute_operation(
 
 async fn plan_copy(
     src_vfs: &dyn Vfs,
+    src_descriptor: &dyn VfsDescriptor,
     sources: &[PathBuf],
     destination: &Path,
 ) -> Result<CopyPlan, crate::Error> {
     let mut entries = Vec::new();
     let mut total_bytes = 0u64;
+    let has_symlinks = src_descriptor.has_symlinks();
 
     for source in sources {
         let file_name = source
@@ -554,9 +557,22 @@ async fn plan_copy(
             .ok_or_else(|| crate::Error::Custom("source has no file name".to_string()))?;
         let dest_base = destination.join(file_name);
 
-        let meta = src_vfs.symlink_metadata(source).await?;
+        // Classify the top-level source using list_files on the parent directory
+        let parent = source
+            .parent()
+            .ok_or_else(|| crate::Error::Custom("source has no parent".to_string()))?;
+        let file_list = src_vfs
+            .list_files(parent, ListFilesOptions { strict: true }, None)
+            .await?;
+        let file_entry = file_list
+            .files()
+            .iter()
+            .find(|f| f.name == file_name.to_string_lossy())
+            .ok_or_else(|| {
+                crate::Error::Custom(format!("source not found: {}", source.display()))
+            })?;
 
-        if meta.is_symlink {
+        if has_symlinks && file_entry.is_symlink {
             let target = src_vfs.read_link(source).await?;
             entries.push(CopyEntry {
                 source: source.clone(),
@@ -564,7 +580,7 @@ async fn plan_copy(
                 kind: CopyEntryKind::Symlink { target },
                 size: 0,
             });
-        } else if meta.is_dir {
+        } else if file_entry.is_dir {
             let mut stack = vec![(source.clone(), dest_base.clone())];
             entries.push(CopyEntry {
                 source: source.clone(),
@@ -584,7 +600,7 @@ async fn plan_copy(
                     let src_path = src_dir.join(&file.name);
                     let dst_path = dst_dir.join(&file.name);
 
-                    if file.is_symlink {
+                    if has_symlinks && file.is_symlink {
                         let target = src_vfs.read_link(&src_path).await?;
                         entries.push(CopyEntry {
                             source: src_path,
@@ -613,7 +629,7 @@ async fn plan_copy(
                 }
             }
         } else {
-            let size = meta.size;
+            let size = file_entry.size.unwrap_or(0);
             total_bytes += size;
             entries.push(CopyEntry {
                 source: source.clone(),
@@ -660,56 +676,218 @@ fn copy_bytes_sync(
     Ok(())
 }
 
+// --- Async chunked byte copy ---
+
+async fn copy_bytes_async(
+    reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
+    writer: &mut dyn crate::vfs::VfsAsyncWriter,
+    cancel: &CancellationToken,
+    reporter: &mut ProgressReporter,
+    bytes_done: &mut u64,
+    items_done: u64,
+    display: &str,
+) -> Result<(), crate::Error> {
+    use tokio::io::AsyncReadExt;
+
+    let mut buf = [0u8; 64 * 1024];
+
+    loop {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::Cancelled);
+        }
+
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        writer.write(&buf[..n]).await?;
+        *bytes_done += n as u64;
+        reporter.maybe_send_progress(*bytes_done, items_done, display);
+    }
+
+    Ok(())
+}
+
 // --- Copy a single file through VFS, with strategy cascade ---
 
 async fn copy_single_file(
     src_vfs: &dyn Vfs,
-    src_path: &Path,
     dst_vfs: &dyn Vfs,
-    dst_path: &Path,
+    entry: &CopyEntry,
     same_vfs: bool,
     cancel: &CancellationToken,
-    sender: &mut SyncProgressSender,
+    reporter: &mut ProgressReporter,
     bytes_done: &mut u64,
     items_done: u64,
     options: &CopyOptions,
 ) -> Result<(), crate::Error> {
-    // Try same-VFS fast path first
-    if same_vfs {
-        if src_vfs.copy_within(src_path, dst_path).await.is_ok() {
-            return preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await;
+    let src_descriptor = src_vfs.descriptor();
+    let dst_descriptor = dst_vfs.descriptor();
+
+    // 1. Same-VFS copy_within fast path
+    if same_vfs && dst_descriptor.can_copy_within() {
+        if src_vfs
+            .copy_within(&entry.source, &entry.dest)
+            .await
+            .is_ok()
+        {
+            return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
         }
     }
 
-    // Fall back to byte copy via open_read_sync/overwrite_sync
-    let mut reader = src_vfs.open_read_sync(src_path).await?;
-    let mut writer = dst_vfs.overwrite_sync(dst_path).await?;
+    // 2. Sync read + sync write
+    if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_sync() {
+        let mut reader = src_vfs.open_read_sync(&entry.source).await?;
+        let mut writer = dst_vfs.overwrite_sync(&entry.dest).await?;
 
-    let cancel2 = cancel.clone();
-    let mut sender2 = sender.clone();
-    let bd = *bytes_done;
-    let id = items_done;
-    let display = src_path.display().to_string();
+        let cancel2 = cancel.clone();
+        let mut sender2 = reporter.sync_sender();
+        let bd = *bytes_done;
+        let id = items_done;
+        let display = entry.source.display().to_string();
 
-    let bd_back = tokio::task::spawn_blocking(move || {
-        let mut bd_local = bd;
-        let result = copy_bytes_sync(
+        let bd_back = tokio::task::spawn_blocking(move || {
+            let mut bd_local = bd;
+            let result = copy_bytes_sync(
+                &mut *reader,
+                &mut *writer,
+                &cancel2,
+                &mut sender2,
+                &mut bd_local,
+                id,
+                &display,
+            );
+            (bd_local, result)
+        })
+        .await?;
+
+        *bytes_done = bd_back.0;
+        bd_back.1?;
+
+        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
+    }
+
+    // 3. Async read + async write
+    if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_async() {
+        let mut reader = src_vfs.open_read_async(&entry.source).await?;
+        let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
+
+        let display = entry.source.display().to_string();
+        copy_bytes_async(
             &mut *reader,
             &mut *writer,
-            &cancel2,
-            &mut sender2,
-            &mut bd_local,
-            id,
+            cancel,
+            reporter,
+            bytes_done,
+            items_done,
             &display,
-        );
-        (bd_local, result)
-    })
-    .await?;
+        )
+        .await?;
+        writer.finish().await?;
 
-    *bytes_done = bd_back.0;
-    bd_back.1?;
+        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
+    }
 
-    preserve_metadata(src_vfs, src_path, dst_vfs, dst_path, options).await
+    // 4. Sync read + async write
+    if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_async() {
+        let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
+        let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
+
+        // Bridge sync reader to async via spawn_blocking + channel
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
+        let cancel2 = cancel.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut reader = sync_reader;
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                if cancel2.is_cancelled() {
+                    let _ = tx.blocking_send(Err(crate::Error::Cancelled));
+                    return;
+                }
+                match std::io::Read::read(&mut *reader, &mut buf) {
+                    Ok(0) => return,
+                    Ok(n) => {
+                        if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(e.into()));
+                        return;
+                    }
+                }
+            }
+        });
+
+        let display = entry.source.display().to_string();
+        while let Some(chunk) = rx.recv().await {
+            let data = chunk?;
+            writer.write(&data).await?;
+            *bytes_done += data.len() as u64;
+            reporter.maybe_send_progress(*bytes_done, items_done, &display);
+        }
+        writer.finish().await?;
+
+        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
+    }
+
+    // 5. Async read + sync write
+    if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_sync() {
+        let mut reader = src_vfs.open_read_async(&entry.source).await?;
+        let sync_writer = dst_vfs.overwrite_sync(&entry.dest).await?;
+
+        // Bridge async reader to sync writer via channel + spawn_blocking
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, crate::Error>>(4);
+        let cancel2 = cancel.clone();
+        let mut sender2 = reporter.sync_sender();
+        let bd = *bytes_done;
+        let id = items_done;
+        let display = entry.source.display().to_string();
+
+        let writer_handle = tokio::task::spawn_blocking(move || {
+            let mut writer = sync_writer;
+            let mut bd_local = bd;
+            for chunk in rx {
+                match chunk {
+                    Ok(data) => {
+                        if let Err(e) = std::io::Write::write_all(&mut *writer, &data) {
+                            return (bd_local, Err(e.into()));
+                        }
+                        bd_local += data.len() as u64;
+                        sender2.maybe_send_progress(bd_local, id, &display);
+                    }
+                    Err(e) => return (bd_local, Err(e)),
+                }
+            }
+            (bd_local, Ok(()))
+        });
+
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            if cancel2.is_cancelled() {
+                drop(tx);
+                let _ = writer_handle.await;
+                return Err(crate::Error::Cancelled);
+            }
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            if tx.send(Ok(buf[..n].to_vec())).is_err() {
+                break;
+            }
+        }
+        drop(tx);
+
+        let (bd_back, result) = writer_handle.await?;
+        *bytes_done = bd_back;
+        result?;
+
+        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
+    }
+
+    Err(crate::Error::NotSupported)
 }
 
 // --- Preserve metadata after copy ---
@@ -721,6 +899,11 @@ async fn preserve_metadata(
     dst_path: &Path,
     options: &CopyOptions,
 ) -> Result<(), crate::Error> {
+    // Skip entirely if destination doesn't support metadata
+    if !dst_vfs.descriptor().can_set_metadata() {
+        return Ok(());
+    }
+
     // Always try to preserve permissions; additionally preserve timestamps/owner/group if requested
     let meta = match src_vfs.get_metadata(src_path).await {
         Ok(m) => m,
@@ -769,10 +952,18 @@ async fn execute_copy(
     let dst_vfs_id = destination.vfs_id;
     let same_vfs = src_vfs_id == dst_vfs_id;
 
+    let src_descriptor = src_vfs.descriptor();
+    let dst_descriptor = dst_vfs.descriptor();
+
     let source_paths: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
 
     // Handle create_symlink for single-file copy
     if options.create_symlink {
+        if !dst_descriptor.can_create_symlink() {
+            return Err(crate::Error::Custom(
+                "Destination does not support symlink creation".to_string(),
+            ));
+        }
         if source_paths.len() != 1 {
             return Err(crate::Error::Custom(
                 "Symlink creation only supported for single file".to_string(),
@@ -790,7 +981,7 @@ async fn execute_copy(
     }
 
     let plan = tokio::select! {
-        result = plan_copy(&*src_vfs, &source_paths, &dst_path) => result?,
+        result = plan_copy(&*src_vfs, src_descriptor, &source_paths, &dst_path) => result?,
         _ = cancel.cancelled() => return Err(crate::Error::Cancelled),
     };
 
@@ -809,7 +1000,22 @@ async fn execute_copy(
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
         // Check for destination conflicts
-        let dest_meta = dst_vfs.symlink_metadata(&entry.dest).await;
+        // Use symlink_metadata when available, otherwise probe with file_info.
+        // For VFSes without symlinks (like S3), any error from file_info means
+        // the destination doesn't exist, so we treat all errors as "not found".
+        let dest_meta = if dst_descriptor.has_symlinks() {
+            dst_vfs.symlink_metadata(&entry.dest).await
+        } else {
+            match dst_vfs.file_info(&entry.dest).await {
+                Ok(_) => Ok(crate::vfs::VfsEntryMetadata {
+                    is_file: true,
+                    is_dir: false,
+                    is_symlink: false,
+                    size: 0,
+                }),
+                Err(e) => Err(e),
+            }
+        };
         if let Ok(dest_meta) = dest_meta {
             match &entry.kind {
                 CopyEntryKind::Directory => {
@@ -899,18 +1105,23 @@ async fn execute_copy(
             let result = match &entry.kind {
                 CopyEntryKind::Directory => dst_vfs.create_directory(&entry.dest).await,
                 CopyEntryKind::Symlink { target } => {
-                    dst_vfs.create_symlink(&entry.dest, target).await
+                    if dst_descriptor.can_create_symlink() {
+                        dst_vfs.create_symlink(&entry.dest, target).await
+                    } else {
+                        Err(crate::Error::Custom(format!(
+                            "Cannot create symlink on {}: not supported",
+                            dst_descriptor.type_name()
+                        )))
+                    }
                 }
                 CopyEntryKind::File => {
-                    let mut sender = reporter.sync_sender();
                     copy_single_file(
                         &*src_vfs,
-                        &entry.source,
                         &*dst_vfs,
-                        &entry.dest,
+                        entry,
                         same_vfs,
                         &cancel,
-                        &mut sender,
+                        reporter,
                         &mut bytes_done,
                         items_done,
                         &options,
@@ -951,6 +1162,40 @@ async fn execute_copy(
 
 // --- Execute Delete (async outer loop, uses Vfs) ---
 
+/// Walk a directory tree depth-first and collect all entries for deletion.
+/// Returns entries in deletion order: files first, then directories (deepest first).
+async fn collect_delete_entries(
+    vfs: &dyn Vfs,
+    path: &Path,
+) -> Result<Vec<PathBuf>, crate::Error> {
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let file_list = vfs
+            .list_files(&dir, ListFilesOptions { strict: true }, None)
+            .await?;
+        for file in file_list.files() {
+            if file.name == ".." {
+                continue;
+            }
+            let entry_path = dir.join(&file.name);
+            if file.is_dir {
+                stack.push(entry_path.clone());
+                dirs.push(entry_path);
+            } else {
+                files.push(entry_path);
+            }
+        }
+    }
+
+    // Files first, then directories in reverse order (deepest first)
+    dirs.reverse();
+    files.extend(dirs);
+    Ok(files)
+}
+
 async fn execute_delete(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
@@ -971,12 +1216,31 @@ async fn execute_delete(
         reporter.maybe_send_progress(0, items_done, &display);
 
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
+        let descriptor = vfs.descriptor();
 
         let mut retry = true;
         while retry {
             retry = false;
 
-            let result = vfs.remove_tree(&local_path).await;
+            let result = if descriptor.can_remove_tree() {
+                // Fast path: atomic tree removal
+                vfs.remove_tree(&local_path).await
+            } else {
+                // Walk tree and delete entries individually
+                async {
+                    let entries = collect_delete_entries(&*vfs, &local_path).await?;
+                    for entry in &entries {
+                        if cancel.is_cancelled() {
+                            return Err(crate::Error::Cancelled);
+                        }
+                        reporter.maybe_send_progress(0, items_done, &entry.display().to_string());
+                        vfs.remove(entry).await?;
+                    }
+                    // Delete the root entry itself
+                    vfs.remove(&local_path).await
+                }
+                .await
+            };
 
             if let Err(e) = result {
                 match reporter
@@ -1006,13 +1270,6 @@ async fn execute_delete(
 
 // --- Execute Move (async, uses Vfs) ---
 
-fn is_cross_device(e: &crate::Error) -> bool {
-    match e {
-        crate::Error::Io(io_err) => io_err.raw_os_error() == Some(libc::EXDEV),
-        _ => false,
-    }
-}
-
 async fn execute_move(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
@@ -1030,10 +1287,11 @@ async fn execute_move(
 
     let (src_vfs, _) = context.registry.resolve(&sources[0])?;
     let (_, dst_path) = context.registry.resolve(&destination)?;
+    let src_descriptor = src_vfs.descriptor();
 
     let mut needs_copy = Vec::new();
 
-    if same_vfs {
+    if same_vfs && src_descriptor.can_rename() {
         // Try rename first for each source (instant for same-VFS, same-device)
         for source in &sources {
             if cancel.is_cancelled() {
@@ -1048,39 +1306,15 @@ async fn execute_move(
 
             match src_vfs.rename(&source.path, &dest_local).await {
                 Ok(()) => {}
-                Err(e) if is_cross_device(&e) => {
+                Err(_) => {
+                    // Any rename failure (cross-device, permission, etc.)
+                    // falls through to copy+delete
                     needs_copy.push(source.clone());
-                }
-                Err(e) => {
-                    let kind = match &e {
-                        crate::Error::Io(io_err) => issue_kind_from_io_error(io_err),
-                        _ => IssueKind::Other(format!("{}", e)),
-                    };
-                    match reporter
-                        .raise_issue(
-                            kind,
-                            format!("Error moving {}: {}", source, e),
-                            Some(format!(
-                                "{} -> {}",
-                                source.path.display(),
-                                dest_local.display()
-                            )),
-                            vec![IssueAction::Skip, IssueAction::Retry],
-                        )
-                        .await
-                    {
-                        Ok(IssueAction::Skip) => {}
-                        Err(e) => return Err(e),
-                        Ok(IssueAction::Retry) => {
-                            // TODO: implement retry for rename
-                        }
-                        _ => unreachable!("not offered"),
-                    }
                 }
             }
         }
     } else {
-        // Cross-VFS: all sources need copy+delete
+        // Cross-VFS or VFS doesn't support rename: all sources need copy+delete
         needs_copy = sources.clone();
     }
 
@@ -1096,14 +1330,32 @@ async fn execute_move(
         needs_copy.clone(),
         destination,
         options,
-        cancel,
+        cancel.clone(),
     )
     .await?;
 
     // Delete originals after successful copy
     for source in &needs_copy {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::Cancelled);
+        }
+
         let (vfs, local_path) = context.registry.resolve(source)?;
-        vfs.remove_tree(&local_path).await?;
+        let descriptor = vfs.descriptor();
+
+        if descriptor.can_remove_tree() {
+            vfs.remove_tree(&local_path).await?;
+        } else {
+            // Walk and delete individually
+            let entries = collect_delete_entries(&*vfs, &local_path).await?;
+            for entry in &entries {
+                if cancel.is_cancelled() {
+                    return Err(crate::Error::Cancelled);
+                }
+                vfs.remove(entry).await?;
+            }
+            vfs.remove(&local_path).await?;
+        }
     }
 
     Ok(())

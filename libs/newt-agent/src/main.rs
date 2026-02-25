@@ -2,15 +2,10 @@ use std::sync::Arc;
 
 use log::info;
 use newt_common::{
-    api::{
+    Error, api::{
         FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, ShellServiceDispatcher,
         TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
-    },
-    filesystem::{LocalShellService, Slow},
-    operation::OperationContext,
-    rpc::{Communicator, DispatcherExt},
-    vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
-    Error,
+    }, filesystem::{LocalShellService, Slow}, operation::OperationContext, rpc::{Communicator, DispatcherExt}, vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs}, vfs_s3::S3Vfs
 };
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};
@@ -30,7 +25,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     pretty_env_logger::init();
-
+    log::debug!("4");
     let args = Args::parse();
 
     let mut rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(tokio::io::stdin());
@@ -46,12 +41,21 @@ async fn main() -> Result<(), Error> {
     // Create outbox channel first so OperationDispatcher can use it
     let (outbox, inbox) = Communicator::create_outbox();
 
-    let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+    let sdk_config = aws_config::from_env()
+        .region(aws_config::Region::new("us-east-1"))
+        .load()
+        .await;
+    let client = aws_sdk_s3::Client::new(&sdk_config);
+    let vfs = Arc::new(S3Vfs::new(client, sdk_config));
+    let root = Arc::new(LocalVfs::new());
+    // well, actually, why shouldn't we just pull a little...
+    let root = vfs;
+
+    let registry = Arc::new(VfsRegistry::with_root(root));
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
     });
     let filesystem = VfsRegistryFs::new(registry.clone());
-    let filesystem = Slow::new(filesystem);
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))

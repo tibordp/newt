@@ -71,18 +71,9 @@ else
             ;;
     esac
 
-    # Read binary from stdin using dd
-    FULL_BLOCKS=$((SIZE / 4096))
-    REMAINDER=$((SIZE % 4096))
-
+    # Read exact byte count from stdin (head -c is available on Linux and macOS)
     TMPFILE="${AGENT_PATH}.tmp.$$"
-
-    if [ "$FULL_BLOCKS" -gt 0 ]; then
-        dd bs=4096 count="$FULL_BLOCKS" of="$TMPFILE" 2>/dev/null
-    fi
-    if [ "$REMAINDER" -gt 0 ]; then
-        dd bs="$REMAINDER" count=1 >> "$TMPFILE" 2>/dev/null
-    fi
+    head -c "$SIZE" > "$TMPFILE"
 
     chmod +x "$TMPFILE"
     mv "$TMPFILE" "$AGENT_PATH"

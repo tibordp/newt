@@ -909,6 +909,8 @@ impl MainWindowContext {
                     .await
                     .unwrap_or_else(|_| VfsPath::root("/"));
 
+                let initial_dir = VfsPath::root("/");
+
                 (
                     fs,
                     shell_service,
