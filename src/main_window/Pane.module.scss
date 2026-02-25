@@ -1,0 +1,123 @@
+.pane {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  height: 100%;
+}
+
+.paneBusy {
+  opacity: 0.7;
+
+  &::after {
+    content: "";
+    position: absolute;
+    z-index: 50;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background: url("../assets/spinner.svg") no-repeat center;
+    background-size: 40px;
+    animation: spin 1s linear infinite;
+  }
+}
+
+.header {
+  display: flex;
+  gap: 5px;
+  padding: 0.2em 0.3em 0.2em 0.3em;
+  background: var(--color-chrome);
+  border-bottom: 1px solid var(--color-border);
+  z-index: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.headerPath {
+  flex-basis: 100px;
+  flex-grow: 1;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tableHeader {
+  box-sizing: content-box;
+  flex-shrink: 0;
+  overflow-x: hidden;
+  z-index: 1;
+  background: var(--color-chrome);
+  box-shadow: var(--shadow-header);
+}
+
+.tableHeaderInner {
+  flex-direction: row;
+  display: flex;
+  cursor: default;
+  width: fit-content;
+  padding-right: 20px;
+  font-weight: bold;
+}
+
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  cursor: default;
+  position: relative;
+}
+
+.fileItem {
+  display: flex;
+  width: fit-content;
+  height: 22px;
+  padding-right: 20px;
+
+  &.focused {
+    background: var(--color-selected-bg);
+  }
+
+  &.selected {
+    color: var(--color-accent);
+  }
+}
+
+.dragRect {
+  display: none;
+  position: absolute;
+  background: var(--color-drag-rect-bg);
+  border: 1px solid var(--color-drag-rect-border);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.filterInput {
+  position: absolute;
+  bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.statusbar {
+  padding: 0.2em;
+  background: var(--color-chrome);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pathBreadcrumb {
+  color: var(--color-fg);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--color-fg);
+    text-decoration: underline;
+  }
+}

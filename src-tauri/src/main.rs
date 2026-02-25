@@ -85,6 +85,34 @@ impl GlobalContext {
     }
 }
 
+fn detect_theme() -> Option<tauri::Theme> {
+    #[cfg(target_os = "linux")]
+    {
+        use gio::prelude::SettingsExt;
+
+        if let Ok(settings) = std::panic::catch_unwind(|| {
+            gio::Settings::new("org.gnome.desktop.interface")
+        }) {
+            // Try freedesktop color-scheme first (GNOME 42+, KDE, etc.)
+            let color_scheme = settings.string("color-scheme");
+            if color_scheme.contains("prefer-dark") {
+                return Some(tauri::Theme::Dark);
+            }
+            if color_scheme.contains("prefer-light") || color_scheme.contains("default") {
+                return Some(tauri::Theme::Light);
+            }
+
+            // Fallback: check gtk-theme name for "-dark" suffix
+            let gtk_theme = settings.string("gtk-theme").to_lowercase();
+            if gtk_theme.contains("-dark") {
+                return Some(tauri::Theme::Dark);
+            }
+        }
+    }
+
+    None
+}
+
 fn main() {
     pretty_env_logger::init();
 
@@ -115,6 +143,8 @@ fn main() {
         None => "Newt".to_string(),
     };
 
+    let theme = detect_theme();
+
     let setup_title = window_title.clone();
     let global_ctx = GlobalContext::new(connection_target, window_title);
     tauri::Builder::default()
@@ -122,15 +152,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(global_ctx)
         .setup(move |app| {
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                tauri::WebviewUrl::App("/".into()),
-            )
-            .title(&setup_title)
-            .resizable(true)
-            .inner_size(800.0, 600.0)
-            .build()?;
+            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+                .title(&setup_title)
+                .resizable(true)
+                .inner_size(800.0, 600.0)
+                .theme(theme)
+                .build()?;
             Ok(())
         })
         .on_page_load(|webview, _payload| {
@@ -146,8 +173,7 @@ fn main() {
             // Local mode: init is instant, block to have state ready before JS runs.
             // Remote/Elevated: frontend drives init via the `init` command + Channel.
             if matches!(global_ctx.connection_target, ConnectionTarget::Local) {
-                tauri::async_runtime::block_on(global_ctx.create_main_window(webview))
-                    .unwrap();
+                tauri::async_runtime::block_on(global_ctx.create_main_window(webview)).unwrap();
             }
         })
         .on_window_event(
@@ -161,11 +187,8 @@ fn main() {
                         global_ctx.destroy_window(window.label()).unwrap();
                     }
                     tauri::WindowEvent::Focused(true) => {
-                        if let Some(ctx) = global_ctx
-                            .main_windows
-                            .lock()
-                            .get(window.label())
-                            .cloned()
+                        if let Some(ctx) =
+                            global_ctx.main_windows.lock().get(window.label()).cloned()
                         {
                             tauri::async_runtime::spawn(async move { ctx.refresh().await });
                         }

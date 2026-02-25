@@ -1,0 +1,19 @@
+.copyOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.optionLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95em !important;
+  padding-bottom: 0 !important;
+  cursor: pointer;
+
+  input[type="checkbox"] {
+    margin: 0;
+  }
+}

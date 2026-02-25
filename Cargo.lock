@@ -2491,6 +2491,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "gio",
  "libc",
  "log",
  "newt-common",

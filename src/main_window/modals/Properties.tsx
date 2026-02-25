@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import dialogStyles from "./Dialog.module.scss";
 
 type RenameProps = CommonDialogProps & {
   base_path: string;
@@ -33,7 +34,7 @@ export default function Rename({
   return (
     <>
       <form onSubmit={onSubmit}>
-        <div className="dialog-contents">
+        <div className={dialogStyles.dialogContents}>
           <h2>File properries</h2>
           <label htmlFor="path">
             User
@@ -60,7 +61,7 @@ export default function Rename({
             autoFocus
           />
         </div>
-        <div className="dialog-buttons">
+        <div className={dialogStyles.dialogButtons}>
           <input type="submit" value="Create" disabled={!newName} />
           <input type="button" value="Cancel" onClick={cancel} />
         </div>

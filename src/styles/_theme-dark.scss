@@ -1,0 +1,43 @@
+// Dark theme primitives
+@mixin dark-primitives {
+  --_gray-50: #1e1e1e;
+  --_gray-100: #252525;
+  --_gray-200: #2a2a2a;
+  --_gray-300: #303030;
+  --_gray-400: #3a3a3a;
+  --_gray-500: #4a4a4a;
+  --_gray-600: #888888;
+  --_gray-700: #aaaaaa;
+  --_gray-800: #cccccc;
+  --_gray-900: #eeeeee;
+  --_gray-950: #ffffff;
+
+  --_blue-400: rgba(53, 132, 228, 0.25);
+  --_blue-500: #3584e4;
+  --_blue-600: #4a90e8;
+  --_blue-700: #5e9cec;
+
+  --_green-500: #33d17a;
+  --_red-500: #f66151;
+  --_red-600: #f66151;
+
+  --_border: rgba(255, 255, 255, 0.12);
+  --_border-strong: rgba(255, 255, 255, 0.18);
+  --_input-border: rgba(255, 255, 255, 0.18);
+  --_shadow-dialog: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --_shadow-header: 0 2px 2px -1px rgba(0, 0, 0, 0.3);
+  --_drag-rect-bg: rgba(53, 132, 228, 0.25);
+  --_drag-rect-border: rgba(53, 132, 228, 0.6);
+
+  --_icon-folder: url("../assets/folder-open-dark.svg");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    @include dark-primitives;
+  }
+}
+
+[data-theme="dark"] {
+  @include dark-primitives;
+}

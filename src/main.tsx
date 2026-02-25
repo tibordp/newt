@@ -5,7 +5,7 @@ import Viewer from "./viewer/Viewer";
 
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
-import "./styles.scss";
+import "./styles/globals.scss";
 import { safeCommand } from "./lib/ipc";
 
 // --- Splash screen init (runs before React mounts) ---

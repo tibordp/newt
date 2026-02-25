@@ -3,6 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
+import dialogStyles from "./Dialog.module.scss";
+import styles from "./CopyMove.module.scss";
 
 type CopyMoveProps = CommonDialogProps & {
   kind: string;
@@ -54,11 +56,11 @@ export default function CopyMove({
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="dialog-contents">
-        <Dialog.Title className="dialog-title">
+      <div className={dialogStyles.dialogContents}>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
           {title}
         </Dialog.Title>
-        <p className="dialog-summary">
+        <p className={dialogStyles.dialogSummary}>
           {title} <b>{summary}</b> to:
         </p>
         <input
@@ -68,9 +70,9 @@ export default function CopyMove({
           size={50}
           autoFocus
         />
-        <div className="copy-options">
+        <div className={styles.copyOptions}>
           {isCopy && isSingleFile && (
-            <label className="option-label">
+            <label className={styles.optionLabel}>
               <input
                 type="checkbox"
                 checked={createSymlink}
@@ -79,7 +81,7 @@ export default function CopyMove({
               Create symbolic link
             </label>
           )}
-          <label className="option-label">
+          <label className={styles.optionLabel}>
             <input
               type="checkbox"
               checked={preserveTimestamps}
@@ -88,7 +90,7 @@ export default function CopyMove({
             />
             Preserve timestamps
           </label>
-          <label className="option-label">
+          <label className={styles.optionLabel}>
             <input
               type="checkbox"
               checked={preserveOwner}
@@ -97,7 +99,7 @@ export default function CopyMove({
             />
             Preserve owner
           </label>
-          <label className="option-label">
+          <label className={styles.optionLabel}>
             <input
               type="checkbox"
               checked={preserveGroup}
@@ -108,7 +110,7 @@ export default function CopyMove({
           </label>
         </div>
       </div>
-      <div className="dialog-buttons">
+      <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>
           Cancel
         </button>

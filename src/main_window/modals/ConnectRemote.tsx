@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import dialogStyles from "./Dialog.module.scss";
 
 type ConnectRemoteProps = CommonDialogProps & {
   host: string;
@@ -23,8 +24,8 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="dialog-contents">
-        <Dialog.Title className="dialog-title">Connect to Remote Host</Dialog.Title>
+      <div className={dialogStyles.dialogContents}>
+        <Dialog.Title className={dialogStyles.dialogTitle}>Connect to Remote Host</Dialog.Title>
         <label htmlFor="host">Host (e.g., user@host)</label>
         <input
           ref={inputRef}
@@ -36,7 +37,7 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
           autoFocus
         />
       </div>
-      <div className="dialog-buttons">
+      <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>Cancel</button>
         <button type="submit" className="suggested" disabled={!newHost}>Connect</button>
       </div>

@@ -1,0 +1,46 @@
+.file-icon {
+  position: relative;
+  display: inline-block;
+  font-size: 150%;
+  font-family: "seti";
+  background-size: 22px;
+  background-position: 0;
+  background-repeat: no-repeat;
+  width: 22px;
+  height: 22px;
+  line-height: inherit !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  vertical-align: top;
+
+  &.folder {
+    background-image: var(--icon-folder);
+    background-position: center;
+    background-size: 11px;
+  }
+}
+
+.filename-part {
+  display: inline;
+}
+
+.hidden-file {
+  opacity: 0.7;
+}
+
+.symlink {
+  .file-icon::after {
+    content: "";
+    position: absolute;
+    display: inline-block;
+    left: 0;
+    top: 0;
+    width: 22px;
+    height: 22px;
+    background-repeat: no-repeat;
+    background-size: 15px;
+    background-image: url("../assets/symlink_badge.svg");
+    background-position: center;
+    z-index: 5;
+  }
+}

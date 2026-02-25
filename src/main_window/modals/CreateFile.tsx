@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
+import dialogStyles from "./Dialog.module.scss";
 
 type CreateFileProps = CommonDialogProps & {
   path: VfsPath;
@@ -26,8 +27,8 @@ export default function CreateFile({
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="dialog-contents">
-        <Dialog.Title className="dialog-title">Create New File (Touch)</Dialog.Title>
+      <div className={dialogStyles.dialogContents}>
+        <Dialog.Title className={dialogStyles.dialogTitle}>Create New File (Touch)</Dialog.Title>
         <label htmlFor="path">File Name</label>
         <input
           type="text"
@@ -38,7 +39,7 @@ export default function CreateFile({
           autoFocus
         />
       </div>
-      <div className="dialog-buttons">
+      <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>Cancel</button>
         <button type="submit" className="suggested" disabled={!name}>Create</button>
       </div>

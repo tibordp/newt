@@ -25,6 +25,14 @@
       #splash-error {
         color: #cd3131;
       }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]) body { background: #1e1e1e; }
+        html:not([data-theme="light"]) #splash { background: #303030; color: #eeeeee; }
+        html:not([data-theme="light"]) #splash-error { color: #f66151; }
+      }
+      [data-theme="dark"] body { background: #1e1e1e; }
+      [data-theme="dark"] #splash { background: #303030; color: #eeeeee; }
+      [data-theme="dark"] #splash-error { color: #f66151; }
     </style>
   </head>
 

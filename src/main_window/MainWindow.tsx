@@ -5,8 +5,8 @@ import {
 } from "react";
 
 import { Allotment } from "allotment";
-import "./MainWindow.scss";
 import "allotment/dist/style.css";
+import dialogStyles from "./modals/Dialog.module.scss";
 
 import { Profiler } from "react";
 import { enablePatches } from "immer";
@@ -75,7 +75,7 @@ function App() {
       <TerminalData.Provider value={terminalData}>
         <Dialog.Root open={!!remoteState?.modal} onOpenChange={open => { if (!open) safeCommand("close_modal"); }}>
           <Dialog.Portal>
-            <Dialog.Content className="dialog-content" onCloseAutoFocus={refocusActivePane}>
+            <Dialog.Content className={dialogStyles.dialogContent} onCloseAutoFocus={refocusActivePane}>
               <ModalContent state={remoteState?.modal} />
             </Dialog.Content>
           </Dialog.Portal>

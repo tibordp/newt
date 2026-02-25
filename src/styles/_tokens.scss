@@ -1,0 +1,67 @@
+// Semantic tokens — stable across themes, reference primitives
+:root {
+  // Surface
+  --color-bg: var(--_gray-50);
+  --color-surface: var(--_gray-200);
+  --color-surface-raised: var(--_gray-200);
+
+  // Text
+  --color-fg: var(--_gray-900);
+  --color-fg-muted: var(--_gray-600);
+
+  // Accent
+  --color-accent: var(--_blue-500);
+  --color-accent-fg: #ffffff;
+  --color-accent-hover: var(--_blue-600);
+  --color-accent-active: var(--_blue-700);
+  --color-selected-bg: var(--_blue-400);
+
+  // Chrome (headerbars, statusbars)
+  --color-chrome: var(--_gray-200);
+
+  // Buttons
+  --color-button-bg: var(--_gray-300);
+  --color-button-hover-bg: var(--_gray-400);
+  --color-button-active-bg: var(--_gray-500);
+
+  // Input
+  --color-input-bg: var(--_gray-50);
+  --color-input-border: var(--_input-border);
+
+  // Status
+  --color-success: var(--_green-500);
+  --color-error: var(--_red-500);
+
+  // Focus
+  --focus-ring: 2px solid var(--_blue-500);
+
+  // Borders
+  --color-border: var(--_border);
+  --color-border-strong: var(--_border-strong);
+
+  // Shadows
+  --shadow-dialog: var(--_shadow-dialog);
+  --shadow-header: var(--_shadow-header);
+
+  // Drag rect
+  --color-drag-rect-bg: var(--_drag-rect-bg);
+  --color-drag-rect-border: var(--_drag-rect-border);
+
+  // Assets
+  --icon-folder: var(--_icon-folder);
+
+  // Spacing
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+
+  // Radii
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+}

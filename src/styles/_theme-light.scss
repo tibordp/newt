@@ -1,0 +1,38 @@
+// Light theme primitives (default)
+:root {
+  // Grays
+  --_gray-50: #fafafa;
+  --_gray-100: #f5f5f5;
+  --_gray-200: #eeeeee;
+  --_gray-300: #e0e0e0;
+  --_gray-400: #d6d6d6;
+  --_gray-500: #cccccc;
+  --_gray-600: #929292;
+  --_gray-700: #666666;
+  --_gray-800: #3b3b3b;
+  --_gray-900: #1e1e1e;
+  --_gray-950: #000000;
+
+  // Blues
+  --_blue-400: #d5e4f7;
+  --_blue-500: #3584e4;
+  --_blue-600: #2a76d6;
+  --_blue-700: #1f68c8;
+
+  // Status
+  --_green-500: #00BC00;
+  --_red-500: #cd3131;
+  --_red-600: #a1260d;
+
+  // Borders & shadows
+  --_border: rgba(0, 0, 0, 0.15);
+  --_border-strong: rgba(0, 0, 0, 0.18);
+  --_input-border: rgba(0, 0, 0, 0.18);
+  --_shadow-dialog: 0 4px 24px rgba(0, 0, 0, 0.15);
+  --_shadow-header: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+  --_drag-rect-bg: rgba(0, 120, 215, 0.15);
+  --_drag-rect-border: rgba(0, 120, 215, 0.6);
+
+  // Folder icon
+  --_icon-folder: url("../assets/folder-open-light.svg");
+}

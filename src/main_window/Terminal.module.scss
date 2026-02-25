@@ -1,0 +1,24 @@
+.container {
+  padding: 0 0 0.5em 0.5em;
+  height: 100%;
+  width: 100%;
+}
+
+.terminal {
+  padding-top: 0.2em;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+
+  &::before {
+    content: "";
+    flex-grow: 1;
+  }
+}
+
+:global(.xterm) {
+  :global(.xterm-viewport) {
+    background-color: transparent !important;
+  }
+}

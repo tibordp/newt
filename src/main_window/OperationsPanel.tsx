@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
 import { safeCommand } from "../lib/ipc";
 import * as Dialog from "@radix-ui/react-dialog";
+import styles from "./OperationsPanel.module.scss";
+import modalStyles from "./OperationProgressModal.module.scss";
 
 export type IssueAction = "skip" | "overwrite" | "retry";
 
@@ -64,8 +66,14 @@ export const ACTION_LABELS: Record<IssueAction, string> = {
 
 function IssueResolution({
   op,
+  classNameOverrides,
 }: {
   op: OperationState;
+  classNameOverrides?: {
+    issueResolution?: string;
+    issueMessage?: string;
+    issueActions?: string;
+  };
 }) {
   const [applyToAll, setApplyToAll] = useState(false);
   const issue = op.issue!;
@@ -83,15 +91,15 @@ function IssueResolution({
   );
 
   return (
-    <div className="issue-resolution">
-      <span className="issue-message">{issue.message}</span>
-      <div className="issue-actions">
+    <div className={classNameOverrides?.issueResolution ?? styles.issueResolution}>
+      <span className={classNameOverrides?.issueMessage ?? styles.issueMessage}>{issue.message}</span>
+      <div className={classNameOverrides?.issueActions ?? styles.issueActions}>
         {issue.actions.map((action, i) => (
           <button key={action} autoFocus={i === 0} onClick={() => resolve(action)}>
             {ACTION_LABELS[action] || action}
           </button>
         ))}
-        <label className="apply-to-all">
+        <label className={styles.applyToAll}>
           <input
             type="checkbox"
             checked={applyToAll}
@@ -112,42 +120,42 @@ function OperationRow({ op }: { op: OperationState }) {
   const isWaiting = op.status === "waiting_for_input" && op.issue;
 
   return (
-    <div className="operation-row">
-      <div className="operation-info">
-        <span className="operation-kind">{op.kind}</span>
-        <span className="operation-description">{op.description}</span>
+    <div className={styles.operationRow}>
+      <div className={styles.operationInfo}>
+        <span className={styles.operationKind}>{op.kind}</span>
+        <span className={styles.operationDescription}>{op.description}</span>
       </div>
 
       {isWaiting ? (
         <IssueResolution op={op} />
       ) : (
-        <div className="operation-progress">
+        <div className={styles.operationProgress}>
           {(op.status === "scanning" || op.status === "running") && (
             <>
-              <div className="progress-bar">
+              <div className={styles.progressBar}>
                 <div
-                  className="progress-fill"
+                  className={styles.progressFill}
                   style={{ width: `${progressFraction(op) * 100}%` }}
                 />
               </div>
-              <span className="progress-text">{formatProgress(op)}</span>
+              <span className={styles.progressText}>{formatProgress(op)}</span>
             </>
           )}
           {op.status === "completed" && (
-            <span className="operation-status-done">Completed</span>
+            <span className={styles.statusDone}>Completed</span>
           )}
           {op.status === "failed" && (
-            <span className="operation-status-failed">
+            <span className={styles.statusFailed}>
               Failed{op.error ? `: ${op.error}` : ""}
             </span>
           )}
           {op.status === "cancelled" && (
-            <span className="operation-status-cancelled">Cancelled</span>
+            <span className={styles.statusCancelled}>Cancelled</span>
           )}
         </div>
       )}
 
-      <div className="operation-actions">
+      <div className={styles.operationActions}>
         {isActive && (
           <button
             onClick={() =>
@@ -193,31 +201,38 @@ export function OperationProgressModal({
     <Dialog.Root open onOpenChange={(open) => { if (!open) backgroundOp(); }}>
       <Dialog.Portal>
         <Dialog.Content
-          className="operation-modal-content"
+          className={modalStyles.content}
           onCloseAutoFocus={onCloseAutoFocus}
         >
-          <Dialog.Title className="operation-modal-header">
-            <span className="operation-modal-kind">{op.kind}</span>
-            <span className="operation-modal-description">{op.description}</span>
+          <Dialog.Title className={modalStyles.header}>
+            <span className={modalStyles.kind}>{op.kind}</span>
+            <span className={modalStyles.description}>{op.description}</span>
           </Dialog.Title>
 
-          <div className="operation-modal-body">
+          <div className={modalStyles.body}>
             {isWaiting ? (
-              <IssueResolution op={op} />
+              <IssueResolution
+                op={op}
+                classNameOverrides={{
+                  issueResolution: `${styles.issueResolution} ${modalStyles.bodyIssueResolution}`,
+                  issueMessage: `${styles.issueMessage} ${modalStyles.bodyIssueMessage}`,
+                  issueActions: `${styles.issueActions} ${modalStyles.bodyIssueActions}`,
+                }}
+              />
             ) : (
               <>
                 {(op.status === "scanning" || op.status === "running") && (
                   <>
-                    <div className="operation-modal-progress-bar">
+                    <div className={modalStyles.progressBar}>
                       <div
-                        className="operation-modal-progress-fill"
+                        className={modalStyles.progressFill}
                         style={{ width: `${fraction * 100}%` }}
                       />
                     </div>
-                    <div className="operation-modal-progress-info">
-                      <span className="operation-modal-progress-text">{progress}</span>
+                    <div className={modalStyles.progressInfo}>
+                      <span className={modalStyles.progressText}>{progress}</span>
                       {op.current_item && (
-                        <span className="operation-modal-current-item" title={op.current_item}>
+                        <span className={modalStyles.currentItem} title={op.current_item}>
                           {op.current_item}
                         </span>
                       )}
@@ -225,17 +240,17 @@ export function OperationProgressModal({
                   </>
                 )}
                 {op.status === "completed" && (
-                  <div className="operation-modal-status operation-modal-status-done">
+                  <div className={`${modalStyles.status} ${modalStyles.statusDone}`}>
                     Completed
                   </div>
                 )}
                 {op.status === "failed" && (
-                  <div className="operation-modal-status operation-modal-status-failed">
+                  <div className={`${modalStyles.status} ${modalStyles.statusFailed}`}>
                     Failed{op.error ? `: ${op.error}` : ""}
                   </div>
                 )}
                 {op.status === "cancelled" && (
-                  <div className="operation-modal-status operation-modal-status-cancelled">
+                  <div className={`${modalStyles.status} ${modalStyles.statusCancelled}`}>
                     Cancelled
                   </div>
                 )}
@@ -243,7 +258,7 @@ export function OperationProgressModal({
             )}
           </div>
 
-          <div className="operation-modal-footer">
+          <div className={modalStyles.footer}>
             {isActive && (
               <>
                 <button
@@ -285,7 +300,7 @@ export default function OperationsPanel({
   if (ops.length === 0) return null;
 
   return (
-    <div className="operations-panel">
+    <div className={styles.operationsPanel}>
       {ops.map((op) => (
         <OperationRow key={op.id} op={op} />
       ))}

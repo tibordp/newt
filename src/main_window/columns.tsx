@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import iconMapping from "../assets/mapping.json";
 import { File, ColumnDef, Sorting } from "./types";
 import { modeString } from "./utils";
+import styles from "./Columns.module.scss";
 
 function FileName({ focused, filter, info }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
@@ -19,8 +20,8 @@ function FileName({ focused, filter, info }) {
       {(!focused || filter === null) && <>{name}</>}
       {focused && filter !== null && (
         <>
-          <span className="filter-head">{name.substr(0, filter.length)}</span>
-          <span className="filter-tail">{name.substr(filter.length)}</span>
+          <span className={styles.filterHead}>{name.substr(0, filter.length)}</span>
+          <span>{name.substr(filter.length)}</span>
         </>
       )}
     </>
@@ -36,7 +37,7 @@ function FileName({ focused, filter, info }) {
 
   return (
     <div
-      className={`filename ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
+      className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
         }`}
     >
       {iconElement}
@@ -223,7 +224,7 @@ export function ColumnHeader({
     <>
       <div
         ref={ref}
-        className={`column`}
+        className={styles.column}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
           textAlign: column.align,
@@ -233,7 +234,7 @@ export function ColumnHeader({
           <div
             key={i}
             ref={ref}
-            className={`subcolumn ${subcol.sortKey ? "sortable" : ""}`}
+            className={`${styles.subcolumn} ${subcol.sortKey ? styles.sortable : ""}`}
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               if (subcol.sortKey) {
@@ -248,10 +249,10 @@ export function ColumnHeader({
             {column.align == "right" && (
               <>
                 {sorting.key == subcol.sortKey && sorting.asc && (
-                  <span className="sorting-indicator">▲ </span>
+                  <span className={styles.sortingIndicator}>▲ </span>
                 )}
                 {sorting.key == subcol.sortKey && !sorting.asc && (
-                  <span className="sorting-indicator">▼ </span>
+                  <span className={styles.sortingIndicator}>▼ </span>
                 )}
               </>
             )}
@@ -259,17 +260,17 @@ export function ColumnHeader({
             {column.align == "left" && (
               <>
                 {sorting.key == subcol.sortKey && sorting.asc && (
-                  <span className="sorting-indicator"> ▲</span>
+                  <span className={styles.sortingIndicator}> ▲</span>
                 )}
                 {sorting.key == subcol.sortKey && !sorting.asc && (
-                  <span className="sorting-indicator"> ▼</span>
+                  <span className={styles.sortingIndicator}> ▼</span>
                 )}
               </>
             )}
           </div>
         ))}
       </div>
-      <div className="column-grip" onMouseDown={onmousedown}></div>
+      <div className={styles.columnGrip} onMouseDown={onmousedown}></div>
     </>
   );
 }

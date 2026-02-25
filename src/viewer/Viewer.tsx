@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import "./Viewer.scss";
+import styles from "./Viewer.module.scss";
 import { safeCommand } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
@@ -292,15 +292,15 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
   const gutterWidth = `${lineNumWidth + 1}ch`;
 
   return (
-    <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
       <div
-        className="viewer-content"
+        className={styles.viewerContent}
         ref={containerRef}
         onScroll={handleScroll}
       >
         <div style={{ height: totalHeight, position: "relative" }}>
           <div
-            className="viewer-gutter"
+            className={styles.viewerGutter}
             style={{
               position: "absolute",
               top: startIdx * lineHeight,
@@ -311,14 +311,14 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
             {visibleLines.map((_, i) => {
               const lineNum = startIdx + i + 1;
               return (
-                <div key={startIdx + i} className="gutter-line">
+                <div key={startIdx + i} className={styles.gutterLine}>
                   {String(lineNum).padStart(lineNumWidth, " ")}
                 </div>
               );
             })}
           </div>
           <pre
-            className="viewer-text"
+            className={styles.viewerText}
             style={{
               position: "absolute",
               top: startIdx * lineHeight,
@@ -327,7 +327,7 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
             }}
           >
             {visibleLines.map((line, i) => (
-              <div key={startIdx + i} className="viewer-line">
+              <div key={startIdx + i} className={styles.viewerLine}>
                 {line}
                 {"\n"}
               </div>
@@ -335,19 +335,19 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
           </pre>
         </div>
       </div>
-      <div className="viewer-status">
+      <div className={styles.viewerStatus}>
         <span>{filePath}</span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>Text</span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>
           Line {currentLine} / {lines.length}{loading ? "+" : ""}
         </span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>{formatSize(fileSize)}</span>
         {loading && (
           <>
-            <span className="status-separator">|</span>
+            <span className={styles.statusSeparator}>|</span>
             <span>Loading {Math.round((bytesLoaded / fileSize) * 100)}%</span>
           </>
         )}
@@ -533,15 +533,15 @@ function HexViewer({
   const currentOffset = Math.floor(scrollTop / rowHeight) * HEX_BYTES_PER_ROW;
 
   return (
-    <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
       <div
-        className="viewer-content"
+        className={styles.viewerContent}
         ref={containerRef}
         onScroll={handleScroll}
       >
         <div style={{ height: totalHeight, position: "relative" }}>
           <div
-            className="viewer-gutter hex-gutter"
+            className={`${styles.viewerGutter} ${styles.hexGutter}`}
             style={{
               position: "absolute",
               top: startRow * rowHeight,
@@ -549,13 +549,13 @@ function HexViewer({
             }}
           >
             {rowData.map((row, i) => (
-              <div key={startRow + i} className="gutter-line">
+              <div key={startRow + i} className={styles.gutterLine}>
                 {row.gutter}
               </div>
             ))}
           </div>
           <pre
-            className="viewer-text"
+            className={styles.viewerText}
             style={{
               position: "absolute",
               top: startRow * rowHeight,
@@ -564,7 +564,7 @@ function HexViewer({
             }}
           >
             {rowData.map((row, i) => (
-              <div key={startRow + i} className="viewer-line hex-ascii">
+              <div key={startRow + i} className={`${styles.viewerLine} ${styles.hexAscii}`}>
                 {row.ascii}
                 {"\n"}
               </div>
@@ -572,15 +572,15 @@ function HexViewer({
           </pre>
         </div>
       </div>
-      <div className="viewer-status">
+      <div className={styles.viewerStatus}>
         <span>{filePath}</span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>Hex</span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>
           Offset {formatHexOffset(currentOffset)} / {formatHexOffset(fileSize)}
         </span>
-        <span className="status-separator">|</span>
+        <span className={styles.statusSeparator}>|</span>
         <span>{formatSize(fileSize)}</span>
       </div>
     </div>
@@ -667,10 +667,10 @@ function Viewer() {
 
   if (error) {
     return (
-      <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="viewer-content" />
-        <div className="viewer-status">
-          <span className="status-error">{error}</span>
+      <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
+        <div className={styles.viewerContent} />
+        <div className={styles.viewerStatus}>
+          <span className={styles.statusError}>{error}</span>
         </div>
       </div>
     );
@@ -678,9 +678,9 @@ function Viewer() {
 
   if (!info) {
     return (
-      <div className="viewer" ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="viewer-content" />
-        <div className="viewer-status">
+      <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
+        <div className={styles.viewerContent} />
+        <div className={styles.viewerStatus}>
           <span>Loading...</span>
         </div>
       </div>

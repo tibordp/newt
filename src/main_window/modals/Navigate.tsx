@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
+import dialogStyles from "./Dialog.module.scss";
 
 type NavigateProps = CommonDialogProps & {
   path: VfsPath;
@@ -27,8 +28,8 @@ export default function Navigate({ path, cancel, context }: NavigateProps) {
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="dialog-contents">
-        <Dialog.Title className="dialog-title">Navigate to</Dialog.Title>
+      <div className={dialogStyles.dialogContents}>
+        <Dialog.Title className={dialogStyles.dialogTitle}>Navigate to</Dialog.Title>
         <label htmlFor="path">Path</label>
         <input
           ref={inputRef}
@@ -40,7 +41,7 @@ export default function Navigate({ path, cancel, context }: NavigateProps) {
           autoFocus
         />
       </div>
-      <div className="dialog-buttons">
+      <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>Cancel</button>
         <button type="submit" className="suggested" disabled={!newPath}>Navigate</button>
       </div>

@@ -8,6 +8,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { Command as CommandType, commands, executeCommand } from "../../lib/commands";
 import { MainWindowState } from "../types";
+import styles from "./CommandPalette.module.scss";
 
 type CommandPaletteProps = {
   open: boolean;
@@ -28,7 +29,7 @@ function Highlight(props: {
   while (a < filter.length && b < name.length) {
     if (filter[a].toLowerCase() === name[b].toLowerCase()) {
       parts.push(
-        <span key={key++} className="highlight">
+        <span key={key++} className={styles.highlight}>
           {name[b]}
         </span>
       );
@@ -104,10 +105,10 @@ export default function CommandPalette({
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Content className="command-palette-content" onCloseAutoFocus={onCloseAutoFocus}>
+        <Dialog.Content className={styles.content} onCloseAutoFocus={onCloseAutoFocus}>
           <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
           <Command shouldFilter={false}>
-            <div className="command-palette-header">
+            <div className={styles.header}>
               <Command.Input
                 value={filter}
                 onValueChange={setFilter}
@@ -124,7 +125,7 @@ export default function CommandPalette({
                 >
                   <Highlight name={command.name} filter={filter} />
                   {command.shortcut && (
-                    <div className="shortcut">
+                    <div className={styles.shortcut}>
                       {command.shortcut.render().map((e, i) => (
                         <Fragment key={i}>
                           {i !== 0 ? " + " : ""}

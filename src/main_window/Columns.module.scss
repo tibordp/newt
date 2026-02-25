@@ -1,0 +1,66 @@
+.datum,
+.column {
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 22px;
+  padding-left: 0.2em;
+  padding-right: 0.2em;
+  text-overflow: ellipsis;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.column {
+  display: flex;
+  gap: 1em;
+  position: relative;
+  border-right: 1px solid var(--color-border);
+}
+
+.sortingIndicator {
+  color: var(--color-fg-muted);
+}
+
+.subcolumn {
+  padding-left: 0.4em;
+  padding-right: 0.4em;
+}
+
+.columnGrip {
+  width: 8px;
+  height: 20px;
+  margin-left: -4px;
+  margin-right: -4px;
+  z-index: 10;
+  cursor: col-resize;
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.sortable:hover {
+  background: var(--color-button-bg);
+  cursor: pointer;
+}
+
+.filename {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.filterHead::after {
+  content: "";
+  width: 0px;
+  margin-left: -0.75px;
+  margin-right: -0.75px;
+  height: 22px;
+  border-left: 1.5px solid var(--color-fg);
+  left: 0;
+  animation: blink step-end 1s infinite;
+}
+
+@keyframes blink {
+  50% {
+    border-left: 1.5px solid transparent;
+  }
+}

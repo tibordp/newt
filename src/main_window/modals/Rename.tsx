@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
+import dialogStyles from "./Dialog.module.scss";
 
 type RenameProps = CommonDialogProps & {
   base_path: VfsPath;
@@ -34,8 +35,8 @@ export default function Rename({
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="dialog-contents">
-        <Dialog.Title className="dialog-title">Rename file</Dialog.Title>
+      <div className={dialogStyles.dialogContents}>
+        <Dialog.Title className={dialogStyles.dialogTitle}>Rename file</Dialog.Title>
         <label htmlFor="path">
           New name for <b>{name}</b>
         </label>
@@ -49,7 +50,7 @@ export default function Rename({
           autoFocus
         />
       </div>
-      <div className="dialog-buttons">
+      <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>Cancel</button>
         <button type="submit" className="suggested" disabled={!newName}>Rename</button>
       </div>

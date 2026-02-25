@@ -1,0 +1,72 @@
+@font-face {
+  font-family: "seti";
+  font-weight: normal;
+  src: url("../assets/seti.woff") format("woff");
+  font-style: normal;
+  font-size: 150%;
+}
+
+button,
+input[type="submit"] {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-fg);
+  background: var(--color-button-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-6);
+  cursor: default;
+
+  &:hover {
+    background: var(--color-button-hover-bg);
+  }
+
+  &:active {
+    background: var(--color-button-active-bg);
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+
+  &.suggested {
+    background: var(--color-accent);
+    color: var(--color-accent-fg);
+    border-color: transparent;
+
+    &:hover {
+      background: var(--color-accent-hover);
+    }
+
+    &:active {
+      background: var(--color-accent-active);
+    }
+  }
+}
+
+input[type="text"] {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-fg);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  width: 100%;
+
+  &:focus {
+    outline: var(--focus-ring);
+    outline-offset: -1px;
+  }
+}
+
+label {
+  font-size: 1.1em;
+  margin: 0;
+  padding-bottom: 0.2em;
+}

@@ -7,6 +7,62 @@ import {
   safeCommandSilent,
 } from "../lib/ipc";
 import "@xterm/xterm/css/xterm.css";
+import styles from "./Terminal.module.scss";
+
+import type { ITheme } from "@xterm/xterm";
+
+const lightTheme: ITheme = {
+  background: "#ffffff",
+  foreground: "#3b3b3b",
+  cursor: "#3b3b3b",
+  selectionBackground: "#ADD6FF",
+  black: "#000000",
+  red: "#a1260d",
+  green: "#107c41",
+  yellow: "#82660b",
+  blue: "#0050a4",
+  magenta: "#9e1c72",
+  cyan: "#007185",
+  white: "#5b5b5b",
+  brightBlack: "#666666",
+  brightRed: "#cd3131",
+  brightGreen: "#14ce14",
+  brightYellow: "#b5ba00",
+  brightBlue: "#0451a5",
+  brightMagenta: "#bc05bc",
+  brightCyan: "#0598bc",
+  brightWhite: "#a5a5a5",
+};
+
+const darkTheme: ITheme = {
+  background: "#1e1e1e",
+  foreground: "#cccccc",
+  cursor: "#cccccc",
+  selectionBackground: "#264f78",
+  black: "#1e1e1e",
+  red: "#f44747",
+  green: "#6a9955",
+  yellow: "#d7ba7d",
+  blue: "#569cd6",
+  magenta: "#c586c0",
+  cyan: "#4ec9b0",
+  white: "#d4d4d4",
+  brightBlack: "#808080",
+  brightRed: "#f44747",
+  brightGreen: "#6a9955",
+  brightYellow: "#d7ba7d",
+  brightBlue: "#569cd6",
+  brightMagenta: "#c586c0",
+  brightCyan: "#4ec9b0",
+  brightWhite: "#e8e8e8",
+};
+
+function getPreferredTheme(): ITheme {
+  const dataTheme = document.documentElement.dataset.theme;
+  if (dataTheme === "dark") return darkTheme;
+  if (dataTheme === "light") return lightTheme;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? darkTheme : lightTheme;
+}
 
 export default function Terminal({ handle, active }: { handle: number; active: boolean }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
@@ -16,44 +72,17 @@ export default function Terminal({ handle, active }: { handle: number; active: b
   useEffect(() => {
     const term = new XTermJSTerminal({
       scrollback: 1000,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace', // Default Mac VS Code fonts
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       fontSize: 12,
       lineHeight: 1.2,
       fontWeight: "normal",
       fontWeightBold: "bold",
-      cursorStyle: "bar",     // VS Code uses a vertical bar by default
-      cursorBlink: true,      // Makes the terminal feel active
+      cursorStyle: "bar",
+      cursorBlink: true,
       cursorWidth: 2,
       allowTransparency: true,
       allowProposedApi: true,
-
-      theme: {
-          background: "#ffffff",
-          foreground: "#3b3b3b",       // Slightly softer than harsh black
-          cursor: "#3b3b3b",
-          selectionBackground: "#ADD6FF",
-
-          // Standard Colors
-          black: "#000000",
-          red: "#a1260d",              // Deeper, more readable red
-          green: "#107c41",            // Microsoft's modern, accessible green
-          yellow: "#82660b",           // Muted yellow for better white-background contrast
-          blue: "#0050a4",
-          magenta: "#9e1c72",
-          cyan: "#007185",
-          white: "#5b5b5b",
-
-          // Bright Colors (Often used for bold text in the terminal)
-          brightBlack: "#666666",
-          brightRed: "#cd3131",
-          brightGreen: "#14ce14",
-          brightYellow: "#b5ba00",
-          brightBlue: "#0451a5",
-          brightMagenta: "#bc05bc",
-          brightCyan: "#0598bc",
-          brightWhite: "#a5a5a5",
-      },
-
+      theme: getPreferredTheme(),
     });
     term.open(ref.current!);
     terminalRef.current = term;
@@ -90,10 +119,17 @@ export default function Terminal({ handle, active }: { handle: number; active: b
     });
     resizeObserver.observe(ref.current!);
 
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const onThemeChange = () => {
+      term.options.theme = getPreferredTheme();
+    };
+    mediaQuery.addEventListener("change", onThemeChange);
+
     return () => {
       terminalRef.current = null;
       unregister();
       term.dispose();
+      mediaQuery.removeEventListener("change", onThemeChange);
       if (ref.current) {
         resizeObserver.disconnect();
       }
@@ -109,8 +145,8 @@ export default function Terminal({ handle, active }: { handle: number; active: b
   }, [active, handle]);
 
   return (
-    <div className="terminal-container" >
-      <div className="terminal" ref={ref} tabIndex={-1} onFocus={() => safeCommandSilent("terminal_focus", { handle })} />
+    <div className={styles.container} >
+      <div className={styles.terminal} ref={ref} tabIndex={-1} onFocus={() => safeCommandSilent("terminal_focus", { handle })} />
     </div>
   );
 }

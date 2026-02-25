@@ -20,6 +20,8 @@ import { VfsPath } from "../lib/types";
 import { File, PaneState, DndFileInfo, FileRowContext } from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
+import styles from "./Pane.module.scss";
+import columnStyles from "./Columns.module.scss";
 
 function PathBreadcrumbs(props: { path: VfsPath; paneHandle: number }) {
   let { path: vfsPath, paneHandle } = props;
@@ -41,7 +43,7 @@ function PathBreadcrumbs(props: { path: VfsPath; paneHandle: number }) {
       {joined.map(([segment, path], i) => (
         <Fragment key={i}>
           <a
-            className="path-breadcrumb"
+            className={styles.pathBreadcrumb}
             href="#"
             onClick={(e) => {
               e.preventDefault();
@@ -143,7 +145,7 @@ const FileRow = memo(function FileRow({
     <li
       data-name={row.name}
       data-is-dir={row.is_dir ? "true" : undefined}
-      className={`file-item ${isFocused ? "focused" : ""} ${isSelected ? "selected" : ""}`}
+      className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
       onClick={onClick}
       onMouseDown={onMouseDown}
       onDoubleClick={() => onOpen(row)}
@@ -155,7 +157,7 @@ const FileRow = memo(function FileRow({
             textAlign: column.align,
             width: `var(--${widthPrefix}-${column.key})`,
           }}
-          className="datum"
+          className={columnStyles.datum}
         >
           {column.render(row, ctx)}
         </div>
@@ -579,11 +581,11 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
       if (!elementUnder) return;
 
-      const targetPane = elementUnder.closest(".pane[data-pane-handle]") as HTMLElement | null;
+      const targetPane = elementUnder.closest("[data-pane-handle]") as HTMLElement | null;
       if (targetPane) {
         const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
         const isSamePane = targetPaneHandle === paneHandle;
-        const targetLi = elementUnder.closest("li.file-item[data-is-dir='true']") as HTMLElement | null;
+        const targetLi = elementUnder.closest("li[data-is-dir='true']") as HTMLElement | null;
 
         if (!isSamePane) {
           targetPane.classList.add("dnd-drop-target");
@@ -625,7 +627,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         return;
       }
 
-      const targetPane = elementUnder.closest(".pane[data-pane-handle]") as HTMLElement | null;
+      const targetPane = elementUnder.closest("[data-pane-handle]") as HTMLElement | null;
       if (!targetPane) {
         safeCommandSilent("cancel_dnd");
         return;
@@ -635,7 +637,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       const isSamePane = targetPaneHandle === paneHandle;
 
       let subdirectory: string | null = null;
-      const targetLi = elementUnder.closest("li.file-item[data-is-dir='true']") as HTMLElement | null;
+      const targetLi = elementUnder.closest("li[data-is-dir='true']") as HTMLElement | null;
       if (targetLi) {
         const targetName = targetLi.dataset.name || null;
         if (isSamePane) {
@@ -796,12 +798,12 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
 
   return (
     <div
-      className={`pane ${showSpinner ? "pane-busy" : ""}`}
+      className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
       data-pane-handle={paneHandle}
       onClick={() => command("focus")}
     >
       <input
-        className="filter-input"
+        className={styles.filterInput}
         type="text"
         value={filter || ""}
         onChange={(e) => command("set_filter", { filter: e.target.value })}
@@ -810,21 +812,21 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         onFocus={() => command("set_filter", { filter: filter || "" })}
         tabIndex={-1}
       />
-      <div className="header">
-        <div className="header-path">
+      <div className={styles.header}>
+        <div className={styles.headerPath}>
           <PathBreadcrumbs
             path={pending_path ?? path}
             paneHandle={paneHandle}
           />
         </div>
         {fs_stats?.available_bytes !== undefined && (
-          <div className="header-stats">
+          <div>
             {getSiPrefixedNumber(fs_stats.available_bytes)}B free
           </div>
         )}
       </div>
-      <div className="table-header" ref={tableHeaderRef}>
-        <div className="table-header-inner">
+      <div className={styles.tableHeader} ref={tableHeaderRef}>
+        <div className={styles.tableHeaderInner}>
           {columns.map((column) => (
             <ColumnHeader
               key={column.key}
@@ -842,7 +844,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       </div>
       {files && (
         <ul
-          className="files"
+          className={styles.files}
           ref={containerRef}
           onKeyDown={onkeydown}
           onMouseDown={onMouseDown}
@@ -874,11 +876,11 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
               );
             }}
           </ViewportList>
-          <div className="drag-rect" ref={dragRectRef} />
+          <div className={styles.dragRect} ref={dragRectRef} />
         </ul>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
-      <div className="statusbar">
+      <div className={styles.statusbar}>
         {showSpinner && "Loading file list..."}
         {!showSpinner && loading && (
           <>
