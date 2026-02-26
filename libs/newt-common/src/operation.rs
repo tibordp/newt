@@ -489,12 +489,7 @@ pub async fn execute_operation(
     next_issue_id: Arc<AtomicU64>,
     context: Arc<OperationContext>,
 ) {
-    let op_type = match &request {
-        OperationRequest::Copy { .. } => "copy",
-        OperationRequest::Move { .. } => "move",
-        OperationRequest::Delete { .. } => "delete",
-    };
-    info!("operation {}: starting {}", id, op_type);
+    info!("operation {}: starting [{:?}]", id, request);
 
     let mut reporter = ProgressReporter::new(
         id,

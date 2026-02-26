@@ -73,7 +73,7 @@ function App() {
 
   return (
       <TerminalData.Provider value={terminalData}>
-        <Dialog.Root open={!!remoteState?.modal} onOpenChange={open => { if (!open) safeCommand("close_modal"); }}>
+        <Dialog.Root open={!!remoteState?.modal && remoteState.modal.type !== "select_vfs"} onOpenChange={open => { if (!open) safeCommand("close_modal"); }}>
           <Dialog.Portal>
             <Dialog.Content className={dialogStyles.dialogContent} onCloseAutoFocus={refocusActivePane}>
               <ModalContent state={remoteState?.modal} />
@@ -99,6 +99,7 @@ function App() {
                       key={i}
                       paneHandle={i}
                       {...props}
+                      modal={remoteState.modal}
                       focusGeneration={focusGeneration}
                       active={
                         remoteState.display_options.panes_focused &&

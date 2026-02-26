@@ -1,11 +1,11 @@
 use newt_common::file_reader::FileChunk;
 use newt_common::file_reader::FileDetails;
 use newt_common::operation::{
-    IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
+    CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
     StartOperationRequest,
 };
 use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::{MountRequest, VfsPath};
+use newt_common::vfs::{lookup_descriptor, MountRequest, VfsId, VfsPath};
 use shell_quote::Quote;
 use tauri::ipc::Invoke;
 use tauri::Manager;
@@ -76,11 +76,17 @@ pub async fn navigate(
     exact: bool,
 ) -> Result<(), Error> {
     if !exact {
-        let expanded = ctx.shell_service().shell_expand(path.to_string()).await?;
+        // First try resolving as a VFS display path (handles s3://, etc.)
+        let target = if let Some(vfs_path) = ctx.resolve_display_path(path) {
+            vfs_path
+        } else {
+            // Fall back to shell expansion (handles local paths, ~, relative paths)
+            ctx.shell_service().shell_expand(path.to_string()).await?
+        };
 
         ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
             gs.close_modal();
-            pane.navigate_to(expanded).await?;
+            pane.navigate_to(target).await?;
             Ok(())
         })
         .await
@@ -233,7 +239,7 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
             .insert(viewer_label.clone(), ctx.clone());
     }
 
-    let path_display = full_path.to_string();
+    let path_display = ctx.format_vfs_path(&full_path);
     let vfs_path_json = serde_json::to_string(&full_path).unwrap();
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("path", &path_display)
@@ -335,7 +341,7 @@ pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
 
     let mut text = String::new();
     for line in pane.get_effective_selection() {
-        text.push_str(&line.to_string());
+        text.push_str(&ctx.format_vfs_path(&line));
         text.push_str(LINE_ENDING);
     }
 
@@ -352,9 +358,17 @@ pub async fn paste_from_clipboard(
 ) -> Result<(), Error> {
     let mut clipboard = arboard::Clipboard::new()?;
     let text = clipboard.get_text()?;
+    let text = text.trim();
+
+    // Same resolution chain as the navigate command with exact: false
+    let target = if let Some(vfs_path) = ctx.resolve_display_path(text) {
+        vfs_path
+    } else {
+        ctx.shell_service().shell_expand(text.to_string()).await?
+    };
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        pane.navigate(text.trim()).await?;
+        pane.navigate_to(target).await?;
         Ok(())
     })
     .await
@@ -466,9 +480,12 @@ pub fn dialog(
         let mut modal_state = gs.modal.0.write();
         *modal_state = Some(ModalData {
             kind: match &dialog[..] {
-                "navigate" => ModalDataKind::Navigate {
-                    path: pane.unwrap().path(),
-                },
+                "navigate" => {
+                    let pane = pane.unwrap();
+                    let path = pane.path();
+                    let display_path = ctx.format_vfs_path(&path);
+                    ModalDataKind::Navigate { path, display_path }
+                }
                 "create_directory" => ModalDataKind::CreateDirectory {
                     path: pane.unwrap().path(),
                 },
@@ -496,14 +513,29 @@ pub fn dialog(
                         return Ok(());
                     }
                     let other_pane = gs.other_pane(pane_handle.unwrap());
+                    let destination = other_pane.path();
+                    let display_destination = ctx.format_vfs_path(&destination);
+                    let summary = if sources.len() == 1 {
+                        sources[0]
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    } else {
+                        format!("{} items", sources.len())
+                    };
                     ModalDataKind::CopyMove {
                         kind: dialog.clone(),
                         sources,
-                        destination: other_pane.path(),
+                        destination,
+                        display_destination,
+                        summary,
                     }
                 }
                 "connect_remote" => ModalDataKind::ConnectRemote {
                     host: String::new(),
+                },
+                "select_vfs" => ModalDataKind::SelectVfs {
+                    targets: ctx.compute_vfs_targets(),
                 },
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
@@ -615,7 +647,11 @@ pub async fn start_operation(
             ..
         } => (
             "copy".to_string(),
-            format!("Copying {} item(s) to {}", sources.len(), destination,),
+            format!(
+                "Copying {} item(s) to {}",
+                sources.len(),
+                ctx.format_vfs_path(destination),
+            ),
         ),
         OperationRequest::Move {
             sources,
@@ -623,7 +659,11 @@ pub async fn start_operation(
             ..
         } => (
             "move".to_string(),
-            format!("Moving {} item(s) to {}", sources.len(), destination,),
+            format!(
+                "Moving {} item(s) to {}",
+                sources.len(),
+                ctx.format_vfs_path(destination),
+            ),
         ),
         OperationRequest::Delete { paths } => (
             "delete".to_string(),
@@ -835,9 +875,78 @@ pub async fn execute_dnd(
 }
 
 #[tauri::command]
+pub async fn start_copy_move(
+    ctx: MainWindowContext,
+    kind: String,
+    sources: Vec<VfsPath>,
+    initial_destination: VfsPath,
+    destination_input: String,
+    options: CopyOptions,
+) -> Result<OperationId, Error> {
+    // Resolve the user-typed destination string
+    let destination = if let Some(vfs_path) = ctx.resolve_display_path(&destination_input) {
+        vfs_path
+    } else {
+        // No VFS claimed it — treat as a path within the same VFS as the initial destination
+        VfsPath::new(initial_destination.vfs_id, destination_input)
+    };
+
+    let request = match kind.as_str() {
+        "copy" => OperationRequest::Copy {
+            sources,
+            destination,
+            options,
+        },
+        "move" => OperationRequest::Move {
+            sources,
+            destination,
+            options,
+        },
+        _ => return Err(Error::Custom(format!("unknown copy/move kind: {}", kind))),
+    };
+
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })?;
+
+    start_operation(ctx, request).await
+}
+
+#[tauri::command]
 pub async fn mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let response = ctx.mount_vfs(MountRequest::S3 { region: None }).await?;
     let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn switch_vfs(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    vfs_id: Option<VfsId>,
+    type_name: String,
+) -> Result<(), Error> {
+    let vfs_path = if let Some(id) = vfs_id {
+        VfsPath::new(id, "/")
+    } else {
+        let descriptor = lookup_descriptor(&type_name)
+            .ok_or_else(|| Error::Custom(format!("unknown VFS type: {}", type_name)))?;
+        let request = descriptor.auto_mount_request().ok_or_else(|| {
+            Error::Custom(format!(
+                "VFS type {} does not support auto-mount",
+                type_name
+            ))
+        })?;
+        let response = ctx.mount_vfs(request).await?;
+        VfsPath::new(response.vfs_id, "/")
+    };
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
@@ -891,6 +1000,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         delete_selected,
         rename,
         start_operation,
+        start_copy_move,
         cancel_operation,
         resolve_issue,
         dismiss_operation,
@@ -898,6 +1008,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         connect_remote,
         open_elevated,
         mount_s3,
+        switch_vfs,
         close_window,
         start_dnd,
         cancel_dnd,

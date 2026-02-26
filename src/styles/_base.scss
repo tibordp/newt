@@ -6,6 +6,13 @@
   font-size: 150%;
 }
 
+@font-face {
+  font-family: "nerd-symbols";
+  font-weight: normal;
+  src: url("../assets/nerd-symbols.woff2") format("woff2");
+  font-style: normal;
+}
+
 button,
 input[type="submit"] {
   font-family: inherit;

@@ -9,6 +9,7 @@ import {
   memo,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import * as Popover from "@radix-ui/react-popover";
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
 import {
@@ -16,45 +17,35 @@ import {
   safeCommandSilent,
 } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
-import { VfsPath } from "../lib/types";
+import { Breadcrumb, VfsTarget } from "../lib/types";
+import { ModalState } from "./modals/ModalContent";
 import { File, PaneState, DndFileInfo, FileRowContext } from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
 import styles from "./Pane.module.scss";
 import columnStyles from "./Columns.module.scss";
 
-function PathBreadcrumbs(props: { path: VfsPath; paneHandle: number }) {
-  let { path: vfsPath, paneHandle } = props;
-  let pathStr = vfsPath.path;
-
-  let segments = ["/", ...pathStr.split("/").filter((s) => s)];
-  let joined = segments.map((segment, i) => {
-    if (i == 0) {
-      return ["/", "/"];
-    } else if (i === segments.length - 1) {
-      return [segment, segments.slice(0, i + 1).join("/")];
-    } else {
-      return [`${segment}/`, segments.slice(0, i + 1).join("/")];
-    }
-  });
+function PathBreadcrumbs(props: { breadcrumbs: Breadcrumb[]; paneHandle: number }) {
+  const { breadcrumbs, paneHandle } = props;
 
   return (
     <>
-      {joined.map(([segment, path], i) => (
+      {breadcrumbs.map((crumb, i) => (
         <Fragment key={i}>
           <a
             className={styles.pathBreadcrumb}
             href="#"
+            tabIndex={-1}
             onClick={(e) => {
               e.preventDefault();
-              if (i === segments.length - 1) {
+              if (i === breadcrumbs.length - 1) {
                 safeCommand("dialog", { paneHandle, dialog: "navigate" });
               } else {
-                safeCommand("navigate", { paneHandle, path, exact: true });
+                safeCommand("navigate", { paneHandle, path: crumb.nav_path, exact: true });
               }
             }}
           >
-            {segment}
+            {crumb.label}
           </a>
         </Fragment>
       ))}
@@ -166,7 +157,128 @@ const FileRow = memo(function FileRow({
   );
 });
 
-function PaneInner(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number }) {
+const VFS_ICONS: Record<string, string> = {
+  local: "\uDB80\uDECA",  // nf-md-harddisk (U+F02CA)
+  s3: "\uDB80\uDD63",     // nf-md-cloud_outline (U+F0163)
+};
+
+function VfsSelector({
+  vfsDisplayName,
+  vfsTargets,
+  paneHandle,
+  activeVfsId,
+  open,
+  onRestoreFocus,
+}: {
+  vfsDisplayName: string;
+  vfsTargets: VfsTarget[];
+  paneHandle: number;
+  activeVfsId: number;
+  open: boolean;
+  onRestoreFocus: () => void;
+}) {
+  const [focusedIdx, setFocusedIdx] = useState(0);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useEffect(() => {
+    if (open) setFocusedIdx(0);
+  }, [open]);
+
+  const focusItem = useCallback((idx: number) => {
+    const el = itemRefs.current[idx];
+    if (el) {
+      el.focus();
+    } else {
+      // Portal may not have committed refs yet — retry next frame
+      requestAnimationFrame(() => itemRefs.current[idx]?.focus());
+    }
+  }, []);
+
+  // Focus the active item whenever it changes
+  useEffect(() => {
+    if (open) {
+      focusItem(focusedIdx);
+    }
+  }, [open, focusedIdx, focusItem]);
+
+  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedIdx((i) => (i < vfsTargets.length - 1 ? i + 1 : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedIdx((i) => (i > 0 ? i - 1 : vfsTargets.length - 1));
+    }
+  }, [vfsTargets.length]);
+
+  return (
+    <Popover.Root open={open} onOpenChange={(v) => { if (!v) safeCommand("close_modal"); }}>
+      <Popover.Trigger asChild>
+        <button
+          className={styles.vfsSelector}
+          type="button"
+          tabIndex={-1}
+          onClick={(e) => {
+            e.stopPropagation();
+            safeCommand("dialog", { paneHandle, dialog: "select_vfs" });
+          }}
+          onMouseDown={(e) => {
+            // Activate this pane without letting the .pane onClick steal focus later
+            e.stopPropagation();
+            safeCommandSilent("focus", { paneHandle });
+          }}
+        >
+          {vfsDisplayName} &#x25BE;
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          className={styles.vfsDropdown}
+          align="start"
+          sideOffset={4}
+          onKeyDown={onKeyDown}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            focusItem(focusedIdx);
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            onRestoreFocus();
+          }}
+        >
+          {vfsTargets.map((target, i) => {
+            const isActive = target.vfs_id != null && target.vfs_id === activeVfsId;
+            const icon = VFS_ICONS[target.type_name];
+            return (
+              <button
+                key={target.type_name}
+                ref={(el) => { itemRefs.current[i] = el; }}
+                className={styles.vfsDropdownItem}
+                type="button"
+                onClick={() => {
+                  safeCommand("switch_vfs", {
+                    paneHandle,
+                    vfsId: target.vfs_id,
+                    typeName: target.type_name,
+                  });
+                }}
+              >
+                {icon && <span className={styles.vfsDropdownIcon}>{icon}</span>}
+                <span className={styles.vfsDropdownLabel}>
+                  {target.display_name}
+                  {target.vfs_id == null && " (connect...)"}
+                </span>
+                {isActive && <span className={styles.vfsDropdownCheck}>{"\u2713"}</span>}
+              </button>
+            );
+          })}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+function PaneInner(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number; modal?: ModalState }) {
   const {
     paneHandle,
     active,
@@ -182,7 +294,13 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     partial,
     fs_stats,
     stats,
+    breadcrumbs,
+    vfs_display_name,
+    modal,
   } = props;
+
+  const isVfsSelectorOpen = modal?.type === "select_vfs" && modal?.context?.pane_handle === paneHandle;
+  const vfsTargets: VfsTarget[] = (isVfsSelectorOpen && modal?.data?.targets) || [];
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
@@ -262,16 +380,18 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
 
   useEffect(() => {
     if (active) {
-      if (filter === null) {
-        containerRef.current?.focus();
-      } else {
-        inputRef.current?.focus();
+      if (!isVfsSelectorOpen) {
+        if (filter === null) {
+          containerRef.current?.focus();
+        } else {
+          inputRef.current?.focus();
+        }
       }
     } else {
       inputRef.current?.blur();
       containerRef.current?.blur();
     }
-  }, [active, path, filter, focusGeneration]);
+  }, [active, path, filter, focusGeneration, isVfsSelectorOpen]);
 
   // --- Drag-to-select logic ---
 
@@ -814,9 +934,17 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         tabIndex={-1}
       />
       <div className={styles.header}>
+        <VfsSelector
+          vfsDisplayName={vfs_display_name}
+          vfsTargets={vfsTargets}
+          paneHandle={paneHandle}
+          activeVfsId={path.vfs_id}
+          open={isVfsSelectorOpen}
+          onRestoreFocus={() => containerRef.current?.focus()}
+        />
         <div className={styles.headerPath}>
           <PathBreadcrumbs
-            path={pending_path ?? path}
+            breadcrumbs={breadcrumbs}
             paneHandle={paneHandle}
           />
         </div>

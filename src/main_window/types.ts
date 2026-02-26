@@ -1,5 +1,5 @@
 import { ReactElement } from "react";
-import { VfsPath } from "../lib/types";
+import { Breadcrumb, VfsPath } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
 import { OperationState } from "./OperationsPanel";
 
@@ -79,6 +79,9 @@ export type PaneState = {
   fs_stats?: FsStats;
   stats: PaneStats;
   focused_index?: number;
+  display_path: string;
+  vfs_display_name: string;
+  breadcrumbs: Breadcrumb[];
 };
 
 export type DisplayOptions = {

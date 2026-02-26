@@ -11,6 +11,7 @@ import Rename from "./Rename";
 export type ModalState = {
   type: string;
   data: any;
+  context: Context;
 };
 
 export type Context = {

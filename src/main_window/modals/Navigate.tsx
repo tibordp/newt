@@ -7,10 +7,11 @@ import dialogStyles from "./Dialog.module.scss";
 
 type NavigateProps = CommonDialogProps & {
   path: VfsPath;
+  display_path: string;
 };
 
-export default function Navigate({ path, cancel, context }: NavigateProps) {
-  const [newPath, setNewPath] = useState(path.path);
+export default function Navigate({ path, display_path, cancel, context }: NavigateProps) {
+  const [newPath, setNewPath] = useState(display_path);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

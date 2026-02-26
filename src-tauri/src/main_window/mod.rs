@@ -14,12 +14,13 @@ use newt_common::operation::OperationContext;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{
-    lookup_descriptor, LocalVfs, MountedVfsInfo, VfsId, VfsManager,
+    all_descriptors, lookup_descriptor, LocalVfs, MountedVfsInfo, VfsId, VfsManager,
     VfsManagerRemote, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
 };
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
+use std::cmp::PartialOrd;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncRead;
@@ -291,6 +292,7 @@ pub enum ModalDataKind {
     },
     Navigate {
         path: VfsPath,
+        display_path: String,
     },
     Rename {
         base_path: VfsPath,
@@ -300,9 +302,14 @@ pub enum ModalDataKind {
         kind: String,
         sources: Vec<VfsPath>,
         destination: VfsPath,
+        display_destination: String,
+        summary: String,
     },
     ConnectRemote {
         host: String,
+    },
+    SelectVfs {
+        targets: Vec<VfsTarget>,
     },
 }
 
@@ -364,6 +371,13 @@ impl serde::Serialize for DndState {
     {
         self.0.read().serialize(serializer)
     }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct VfsTarget {
+    pub vfs_id: Option<VfsId>,
+    pub type_name: String,
+    pub display_name: String,
 }
 
 #[derive(Clone)]
@@ -703,12 +717,12 @@ struct MainWindowContextInner {
     terminal_client: Arc<dyn TerminalClient>,
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
-    mounted_vfs: RwLock<HashMap<VfsId, MountedVfsInfo>>,
+    mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
     next_operation_id: AtomicU64,
 
     window: WebviewWindow,
     main_window_state: MainWindowState,
-    publisher: Arc<UpdatePublisher<MainWindowState>>
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
 
 #[derive(Clone)]
@@ -999,27 +1013,6 @@ impl MainWindowContext {
             }
         };
 
-        global_state.panes.add(Pane::new(
-            fs.clone(),
-            initial_dir.clone(),
-            global_state.display_options.clone(),
-            publisher.clone(),
-        ));
-        global_state.panes.add(Pane::new(
-            fs.clone(),
-            initial_dir,
-            global_state.display_options.clone(),
-            publisher.clone(),
-        ));
-        send_init_status(init_channel, "Loading...");
-        global_state.refresh().await?;
-
-        for pane in global_state.panes.all() {
-            tauri::async_runtime::spawn(async move {
-                pane.watch_changes().await;
-            });
-        }
-
         // Pre-populate mounted_vfs with the ROOT entry
         let mut initial_mounted = HashMap::new();
         initial_mounted.insert(
@@ -1030,8 +1023,37 @@ impl MainWindowContext {
                 mount_meta: Vec::new(),
             },
         );
+        let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
-        Ok(Self {
+        // Build descriptor lookup shared by all panes
+        let lookup_ref = mounted_vfs.clone();
+        let descriptor_lookup: pane::DescriptorLookup =
+            Arc::new(move |vfs_id| lookup_ref.read().get(&vfs_id).map(|info| info.descriptor));
+
+        global_state.panes.add(Pane::new(
+            fs.clone(),
+            initial_dir.clone(),
+            global_state.display_options.clone(),
+            publisher.clone(),
+            descriptor_lookup.clone(),
+        ));
+        global_state.panes.add(Pane::new(
+            fs.clone(),
+            initial_dir,
+            global_state.display_options.clone(),
+            publisher.clone(),
+            descriptor_lookup,
+        ));
+        send_init_status(init_channel, "Loading...");
+        global_state.refresh().await?;
+
+        for pane in global_state.panes.all() {
+            tauri::async_runtime::spawn(async move {
+                pane.watch_changes().await;
+            });
+        }
+
+        let ctx = Self {
             inner: Arc::new(MainWindowContextInner {
                 fs,
                 shell_service,
@@ -1039,13 +1061,14 @@ impl MainWindowContext {
                 terminal_client,
                 file_reader,
                 operations_client,
-                mounted_vfs: RwLock::new(initial_mounted),
+                mounted_vfs,
                 next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
                 main_window_state: global_state,
             }),
-        })
+        };
+        Ok(ctx)
     }
 
     pub fn fs(&self) -> Arc<dyn Filesystem> {
@@ -1175,6 +1198,47 @@ impl MainWindowContext {
         self.inner.publisher.publish()
     }
 
+    pub fn compute_vfs_targets(&self) -> Vec<VfsTarget> {
+        let mounted = self.inner.mounted_vfs.read();
+        let mut targets = Vec::new();
+
+        // Add one entry per mounted VFS
+        for (vfs_id, info) in mounted.iter() {
+            targets.push(VfsTarget {
+                vfs_id: Some(*vfs_id),
+                type_name: info.descriptor.type_name().to_string(),
+                display_name: info.descriptor.display_name().to_string(),
+            });
+        }
+
+        // Collect type_names already represented
+        let mounted_types: std::collections::HashSet<&str> = mounted
+            .values()
+            .map(|info| info.descriptor.type_name())
+            .collect();
+
+        // Add unmounted descriptors that support auto-mount
+        for desc in all_descriptors() {
+            if !mounted_types.contains(desc.type_name()) && desc.auto_mount_request().is_some() {
+                targets.push(VfsTarget {
+                    vfs_id: None,
+                    type_name: desc.type_name().to_string(),
+                    display_name: desc.display_name().to_string(),
+                });
+            }
+        }
+
+        // By id, with Nones at the bottom
+        targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
+            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.type_name.cmp(&b.type_name),
+        });
+
+        targets
+    }
+
     pub async fn mount_vfs(
         &self,
         request: newt_common::vfs::MountRequest,
@@ -1208,6 +1272,21 @@ impl MainWindowContext {
             .read()
             .get(&vfs_id)
             .map(|info| info.descriptor)
+    }
+
+    pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
+        for (vfs_id, info) in self.inner.mounted_vfs.read().iter() {
+            if let Some(internal_path) = info.descriptor.try_parse_display_path(input) {
+                return Some(VfsPath::new(*vfs_id, internal_path));
+            }
+        }
+        None
+    }
+
+    pub fn format_vfs_path(&self, vfs_path: &VfsPath) -> String {
+        self.vfs_descriptor(vfs_path.vfs_id)
+            .map(|d| d.format_path(&vfs_path.path))
+            .unwrap_or_else(|| vfs_path.to_string())
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {

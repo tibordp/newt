@@ -10,7 +10,9 @@ use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
 use crate::{Error, ToUnix};
 
-use super::{RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor};
+use super::{
+    Breadcrumb, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor,
+};
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -24,6 +26,12 @@ pub struct S3VfsDescriptor;
 impl VfsDescriptor for S3VfsDescriptor {
     fn type_name(&self) -> &'static str {
         "s3"
+    }
+    fn display_name(&self) -> &'static str {
+        "S3"
+    }
+    fn auto_mount_request(&self) -> Option<super::MountRequest> {
+        Some(super::MountRequest::S3 { region: None })
     }
     fn can_watch(&self) -> bool {
         true
@@ -72,6 +80,53 @@ impl VfsDescriptor for S3VfsDescriptor {
     }
     fn can_hard_link(&self) -> bool {
         false
+    }
+
+    fn format_path(&self, path: &Path) -> String {
+        let s = path.to_string_lossy();
+        let s = s.trim_start_matches('/');
+        if s.is_empty() {
+            "s3://".to_string()
+        } else {
+            format!("s3://{}", s)
+        }
+    }
+
+    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb> {
+        let mut crumbs = Vec::new();
+        let s = path.to_string_lossy();
+        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
+
+        crumbs.push(Breadcrumb {
+            label: "s3://".to_string(),
+            nav_path: "/".to_string(),
+        });
+
+        let mut accumulated = String::new();
+        for (i, seg) in segments.iter().enumerate() {
+            accumulated.push('/');
+            accumulated.push_str(seg);
+            let is_last = i == segments.len() - 1;
+            crumbs.push(Breadcrumb {
+                label: if is_last {
+                    seg.to_string()
+                } else {
+                    format!("{}/", seg)
+                },
+                nav_path: accumulated.clone(),
+            });
+        }
+
+        crumbs
+    }
+
+    fn try_parse_display_path(&self, input: &str) -> Option<PathBuf> {
+        let rest = input.strip_prefix("s3://")?;
+        if rest.is_empty() {
+            Some(PathBuf::from("/"))
+        } else {
+            Some(PathBuf::from(format!("/{}", rest)))
+        }
     }
 }
 

@@ -10,15 +10,19 @@ type CopyMoveProps = CommonDialogProps & {
   kind: string;
   sources: VfsPath[];
   destination: VfsPath;
+  display_destination: string;
+  summary: string;
 };
 
 export default function CopyMove({
   kind,
   sources,
   destination: initialDestination,
+  display_destination,
+  summary: itemSummary,
   cancel,
 }: CopyMoveProps) {
-  const [destinationPath, setDestinationPath] = useState(initialDestination.path);
+  const [destinationPath, setDestinationPath] = useState(display_destination);
   const [preserveTimestamps, setPreserveTimestamps] = useState(false);
   const [preserveOwner, setPreserveOwner] = useState(false);
   const [preserveGroup, setPreserveGroup] = useState(false);
@@ -31,28 +35,19 @@ export default function CopyMove({
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    const options = {
-      preserve_timestamps: preserveTimestamps,
-      preserve_owner: preserveOwner,
-      preserve_group: preserveGroup,
-      create_symlink: createSymlink,
-    };
-
-    const destination = { vfs_id: initialDestination.vfs_id, path: destinationPath };
-
-    const request = isCopy
-      ? { Copy: { sources, destination, options } }
-      : { Move: { sources, destination, options } };
-
-    safeCommand("start_operation", { request });
-    safeCommand("close_modal");
+    safeCommand("start_copy_move", {
+      kind,
+      sources,
+      initialDestination,
+      destinationInput: destinationPath,
+      options: {
+        preserve_timestamps: preserveTimestamps,
+        preserve_owner: preserveOwner,
+        preserve_group: preserveGroup,
+        create_symlink: createSymlink,
+      },
+    });
   }
-
-  const itemCount = sources.length;
-  const summary =
-    itemCount === 1
-      ? sources[0].path.split("/").pop()
-      : `${itemCount} items`;
 
   return (
     <form onSubmit={onSubmit}>
@@ -61,7 +56,7 @@ export default function CopyMove({
           {title}
         </Dialog.Title>
         <p className={dialogStyles.dialogSummary}>
-          {title} <b>{summary}</b> to:
+          {title} <b>{itemSummary}</b> to:
         </p>
         <input
           type="text"

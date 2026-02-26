@@ -2,7 +2,7 @@ pub mod local;
 pub mod s3;
 
 pub use local::{LocalVfs, LocalVfsDescriptor, LOCAL_VFS_DESCRIPTOR};
-pub use s3::S3Vfs;
+pub use s3::{S3Vfs, S3VfsDescriptor};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -27,7 +27,9 @@ use crate::Error;
 // VfsId
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct VfsId(pub u32);
 
 impl VfsId {
@@ -95,11 +97,23 @@ impl std::fmt::Display for VfsPath {
 }
 
 // ---------------------------------------------------------------------------
+// Breadcrumb — a segment in a display path
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Breadcrumb {
+    pub label: String,
+    pub nav_path: String,
+}
+
+// ---------------------------------------------------------------------------
 // VfsDescriptor — type-level metadata for a VFS implementation
 // ---------------------------------------------------------------------------
 
 pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn type_name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
+    fn auto_mount_request(&self) -> Option<MountRequest>;
 
     // --- Browse ---
     fn can_watch(&self) -> bool;
@@ -128,6 +142,15 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_rename(&self) -> bool;
     fn can_copy_within(&self) -> bool;
     fn can_hard_link(&self) -> bool;
+
+    // --- Display ---
+    fn format_path(&self, path: &Path) -> String;
+    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb>;
+
+    /// Try to parse a user-entered display path. Returns the VFS-internal path
+    /// if this VFS recognizes the input (e.g., S3 recognizes "s3://...").
+    /// Returns None if this VFS doesn't claim the input.
+    fn try_parse_display_path(&self, input: &str) -> Option<PathBuf>;
 }
 
 // Auto-registration via inventory
@@ -138,6 +161,10 @@ pub fn lookup_descriptor(type_name: &str) -> Option<&'static dyn VfsDescriptor> 
     inventory::iter::<RegisteredDescriptor>()
         .find(|r| r.0.type_name() == type_name)
         .map(|r| r.0)
+}
+
+pub fn all_descriptors() -> impl Iterator<Item = &'static dyn VfsDescriptor> {
+    inventory::iter::<RegisteredDescriptor>().map(|r| r.0)
 }
 
 // ---------------------------------------------------------------------------

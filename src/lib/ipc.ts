@@ -102,7 +102,7 @@ export const useRemoteState = <T>(
         setState((s) => {
           let ret;
           if (event.payload.patch) {
-            if (event.payload.version === version.current + 1) {
+            if (version.current !== null &&event.payload.version === version.current + 1) {
               version.current = event.payload.version;
               ret = applyPatches(s, event.payload.patch);
             } else if (version.current !== null) {

@@ -14,7 +14,9 @@ use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
 use crate::{Error, ToUnix};
 
-use super::{RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata, VfsSpaceInfo};
+use std::path::PathBuf;
+
+use super::{Breadcrumb, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata, VfsSpaceInfo};
 
 // ---------------------------------------------------------------------------
 // LocalVfsDescriptor
@@ -26,6 +28,12 @@ pub struct LocalVfsDescriptor;
 impl VfsDescriptor for LocalVfsDescriptor {
     fn type_name(&self) -> &'static str {
         "local"
+    }
+    fn display_name(&self) -> &'static str {
+        "Local"
+    }
+    fn auto_mount_request(&self) -> Option<super::MountRequest> {
+        None
     }
     fn can_watch(&self) -> bool {
         true
@@ -74,6 +82,42 @@ impl VfsDescriptor for LocalVfsDescriptor {
     }
     fn can_hard_link(&self) -> bool {
         true
+    }
+
+    fn format_path(&self, path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
+    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb> {
+        let mut crumbs = Vec::new();
+        let s = path.to_string_lossy();
+        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
+
+        crumbs.push(Breadcrumb {
+            label: "/".to_string(),
+            nav_path: "/".to_string(),
+        });
+
+        let mut accumulated = String::new();
+        for (i, seg) in segments.iter().enumerate() {
+            accumulated.push('/');
+            accumulated.push_str(seg);
+            let is_last = i == segments.len() - 1;
+            crumbs.push(Breadcrumb {
+                label: if is_last {
+                    seg.to_string()
+                } else {
+                    format!("{}/", seg)
+                },
+                nav_path: accumulated.clone(),
+            });
+        }
+
+        crumbs
+    }
+
+    fn try_parse_display_path(&self, _input: &str) -> Option<PathBuf> {
+        None
     }
 }
 
@@ -539,8 +583,7 @@ impl Vfs for LocalVfs {
                 use std::os::unix::io::AsRawFd;
                 let src = std::fs::File::open(&from)?;
                 let dst = std::fs::File::create(&to)?;
-                let ret =
-                    unsafe { libc::ioctl(dst.as_raw_fd(), libc::FICLONE, src.as_raw_fd()) };
+                let ret = unsafe { libc::ioctl(dst.as_raw_fd(), libc::FICLONE, src.as_raw_fd()) };
                 if ret == 0 {
                     return Ok(());
                 }

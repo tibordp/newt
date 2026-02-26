@@ -3,6 +3,10 @@
   flex-grow: 1;
   flex-direction: column;
   height: 100%;
+
+  &, &:focus, &:focus-visible {
+    outline: none;
+  }
 }
 
 .paneBusy {
@@ -24,9 +28,10 @@
 
 .header {
   display: flex;
+  align-items: baseline;
   gap: 5px;
   padding: 0.2em 0.3em 0.2em 0.3em;
-  background: var(--color-chrome);
+  background: var(--color-chrome-light);
   border-bottom: 1px solid var(--color-border);
   z-index: 0;
   white-space: nowrap;
@@ -72,6 +77,10 @@
   overflow-x: auto;
   cursor: default;
   position: relative;
+
+  &, &:focus, &:focus-visible {
+    outline: none;
+  }
 }
 
 .fileItem {
@@ -103,6 +112,11 @@
   bottom: 0;
   opacity: 0;
   pointer-events: none;
+
+  &, &:focus {
+    outline: none;
+    border: none;
+  }
 }
 
 .statusbar {
@@ -125,4 +139,61 @@
 
 .partial {
   color: var(--_red-500);
+}
+
+.vfsSelector {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-fg-muted);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  font: inherit;
+  &:hover {
+    background: var(--color-button-bg);
+    border-color: var(--color-border);
+  }
+}
+
+.vfsDropdown {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
+  padding: var(--space-2) 0;
+  z-index: 100;
+  min-width: 140px;
+}
+
+.vfsDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-fg);
+  cursor: pointer;
+  font: inherit;
+  &:hover {
+    background: var(--color-button-hover-bg);
+  }
+}
+
+.vfsDropdownIcon {
+  font-family: "nerd-symbols";
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.vfsDropdownLabel {
+  flex: 1;
+}
+
+.vfsDropdownCheck {
+  flex-shrink: 0;
+  color: var(--color-accent);
 }

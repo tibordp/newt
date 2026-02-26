@@ -256,6 +256,12 @@ export const commands: Command[] = [
     noPane: true,
   },
   {
+    name: "Select Filesystem",
+    command: "dialog",
+    args: { dialog: "select_vfs" },
+    shortcut: new Shortcut().cmd().shift().char("l"),
+  },
+  {
     name: "Mount S3",
     command: "mount_s3",
   },

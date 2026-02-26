@@ -7,7 +7,7 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::VfsPath;
+use newt_common::vfs::{Breadcrumb, VfsDescriptor, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -71,6 +71,8 @@ pub struct PaneStats {
     pub selected_bytes: u64,
 }
 
+pub type DescriptorLookup = Arc<dyn Fn(VfsId) -> Option<&'static dyn VfsDescriptor> + Send + Sync>;
+
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
@@ -81,6 +83,7 @@ pub struct Pane {
     display_options: DisplayOptions,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     cancellation_token: Mutex<Option<CancellationToken>>,
+    descriptor_lookup: DescriptorLookup,
 }
 
 impl Pane {
@@ -89,6 +92,7 @@ impl Pane {
         path: VfsPath,
         display_options: DisplayOptions,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
+        descriptor_lookup: DescriptorLookup,
     ) -> Self {
         let (tx, rx) = tokio::sync::watch::channel(());
 
@@ -102,6 +106,7 @@ impl Pane {
             display_options,
             publisher,
             cancellation_token: Mutex::new(None),
+            descriptor_lookup,
         }
     }
 
@@ -160,7 +165,9 @@ impl Pane {
             );
 
             if !silent {
-                self.view_state_mut().pending_path = Some(target.clone());
+                let mut ws = self.view_state_mut();
+                ws.pending_path = Some(target.clone());
+                self.update_display(&mut ws);
             }
 
             old_file_list
@@ -212,6 +219,7 @@ impl Pane {
                             ws.set_filter(None);
                             ws.selected.clear();
                             ws.focused = None;
+                            self.update_display(&mut ws);
                             first_batch = false;
                         }
                         // Throttled intermediate publish
@@ -243,6 +251,7 @@ impl Pane {
                 ws.pending_path = None;
                 ws.loading = false;
                 ws.partial = dirty;
+                self.update_display(&mut ws);
 
                 return match e {
                     Error::Cancelled => Ok(()),
@@ -273,6 +282,7 @@ impl Pane {
         }
 
         ws.update(display_options, &new_file_list);
+        self.update_display(&mut ws);
 
         if has_path_changed {
             if target == *new_file_list.path() {
@@ -308,6 +318,21 @@ impl Pane {
         > = self.view_state.write();
 
         view_state.update(display_options, &file_list);
+        self.update_display(&mut view_state);
+    }
+
+    fn update_display(&self, ws: &mut PaneViewState) {
+        if let Some(desc) = (self.descriptor_lookup)(ws.path.vfs_id) {
+            ws.display_path = desc.format_path(&ws.path.path);
+            ws.vfs_display_name = desc.display_name().to_string();
+        } else {
+            ws.display_path = ws.path.to_string();
+            ws.vfs_display_name = String::new();
+        }
+        let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
+        if let Some(shown_desc) = (self.descriptor_lookup)(shown_path.vfs_id) {
+            ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path);
+        }
     }
 
     pub async fn refresh(&self, expected_path: Option<VfsPath>) -> Result<(), Error> {
@@ -423,6 +448,9 @@ pub struct PaneViewState {
     pub fs_stats: Option<FsStats>,
     pub stats: PaneStats,
     pub focused_index: Option<usize>,
+    pub display_path: String,
+    pub vfs_display_name: String,
+    pub breadcrumbs: Vec<Breadcrumb>,
 
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
