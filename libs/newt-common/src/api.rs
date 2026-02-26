@@ -38,7 +38,7 @@ pub const API_TERMINAL_INPUT: Api = Api(103);
 pub const API_TERMINAL_READ: Api = Api(104);
 pub const API_TERMINAL_WAIT: Api = Api(105);
 
-pub const API_FILE_INFO: Api = Api(300);
+pub const API_FILE_DETAILS: Api = Api(300);
 pub const API_READ_RANGE: Api = Api(301);
 
 pub const API_MOUNT_VFS: Api = Api(400);
@@ -246,9 +246,9 @@ impl FileReaderDispatcher {
 impl Dispatcher for FileReaderDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
-            API_FILE_INFO => {
+            API_FILE_DETAILS => {
                 let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
-                let ret = self.file_reader.file_info(path).await;
+                let ret = self.file_reader.file_details(path).await;
 
                 bincode::serialize(&ret).unwrap()
             }
@@ -397,7 +397,7 @@ impl VfsManager for VfsRegistryManager {
                     .load()
                     .await;
                 let client = aws_sdk_s3::Client::new(&sdk_config);
-                let vfs = Arc::new(crate::vfs_s3::S3Vfs::new(client, sdk_config));
+                let vfs = Arc::new(crate::vfs::S3Vfs::new(client, sdk_config));
                 let mount_meta = vfs.mount_meta();
                 let type_name = vfs.descriptor().type_name().to_string();
                 let vfs_id = self.registry.mount(vfs);

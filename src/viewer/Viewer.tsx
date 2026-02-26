@@ -608,7 +608,7 @@ function Viewer() {
 
     (async () => {
       try {
-        const fi: FileInfo = await invoke("file_info", { path: filePath });
+        const fi: FileInfo = await invoke("file_details", { path: filePath });
         setInfo(fi);
 
         if (fi.is_binary) {

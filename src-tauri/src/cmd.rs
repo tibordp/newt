@@ -1,5 +1,5 @@
 use newt_common::file_reader::FileChunk;
-use newt_common::file_reader::FileInfo;
+use newt_common::file_reader::FileDetails;
 use newt_common::operation::{
     IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
     StartOperationRequest,
@@ -295,8 +295,8 @@ async fn open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<
 }
 
 #[tauri::command]
-async fn file_info(ctx: MainWindowContext, path: VfsPath) -> Result<FileInfo, Error> {
-    let info = ctx.file_reader().file_info(path).await?;
+async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
+    let info = ctx.file_reader().file_details(path).await?;
     Ok(info)
 }
 
@@ -872,7 +872,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         copy_pane,
         new_window,
         toggle_hidden,
-        file_info,
+        file_details,
         read_file_range,
         open,
         open_folder,

@@ -6,10 +6,11 @@ use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
-use crate::file_reader::{FileChunk, FileInfo};
+use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
-use crate::vfs::{RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor};
 use crate::{Error, ToUnix};
+
+use super::{RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor};
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -110,7 +111,10 @@ impl S3Vfs {
         // Check cache first
         if let Some(region) = self.bucket_regions.lock().get(bucket).cloned() {
             if let Some(client) = self.region_clients.lock().get(&region).cloned() {
-                debug!("s3: client cache hit for bucket={} region={}", bucket, region);
+                debug!(
+                    "s3: client cache hit for bucket={} region={}",
+                    bucket, region
+                );
                 return Ok(client);
             }
         }
@@ -211,6 +215,7 @@ impl S3Vfs {
                 is_dir: true,
                 is_hidden: false,
                 is_symlink: false,
+                symlink_target: None,
                 user: None,
                 group: None,
                 mode: Mode(0),
@@ -258,6 +263,7 @@ impl S3Vfs {
             is_dir: true,
             is_hidden: false,
             is_symlink: false,
+            symlink_target: None,
             user: None,
             group: None,
             mode: Mode(0),
@@ -271,10 +277,7 @@ impl S3Vfs {
 
         let client = self.client_for_bucket(bucket).await?;
 
-        let mut request = client
-            .list_objects_v2()
-            .bucket(bucket)
-            .delimiter("/");
+        let mut request = client.list_objects_v2().bucket(bucket).delimiter("/");
 
         if let Some(p) = prefix {
             request = request.prefix(p);
@@ -287,10 +290,7 @@ impl S3Vfs {
                 req = req.continuation_token(token);
             }
 
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| Error::Custom(e.to_string()))?;
+            let resp = req.send().await.map_err(|e| Error::Custom(e.to_string()))?;
 
             debug!(
                 "s3: list_objects page: {} prefixes, {} objects",
@@ -313,6 +313,7 @@ impl S3Vfs {
                             is_dir: true,
                             is_hidden: false,
                             is_symlink: false,
+                            symlink_target: None,
                             user: None,
                             group: None,
                             mode: Mode(0),
@@ -346,6 +347,7 @@ impl S3Vfs {
                         is_dir: false,
                         is_hidden: false,
                         is_symlink: false,
+                        symlink_target: None,
                         user: obj
                             .owner()
                             .and_then(|o| o.display_name())
@@ -401,7 +403,10 @@ impl Vfs for S3Vfs {
         let (bucket, prefix) = Self::parse_path(path);
         match bucket {
             None => self.list_buckets(batch_tx).await,
-            Some(bucket) => self.list_objects(&bucket, prefix.as_deref(), batch_tx).await,
+            Some(bucket) => {
+                self.list_objects(&bucket, prefix.as_deref(), batch_tx)
+                    .await
+            }
         }
     }
 
@@ -410,7 +415,51 @@ impl Vfs for S3Vfs {
         Ok(())
     }
 
-    async fn file_info(&self, path: &Path) -> Result<FileInfo, Error> {
+    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+        let (bucket, prefix) = Self::parse_path(path);
+        let bucket = bucket.ok_or(Error::NotSupported)?;
+        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let client = self.client_for_bucket(&bucket).await?;
+
+        let resp = client
+            .head_object()
+            .bucket(&bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| Error::Custom(e.to_string()))?;
+
+        let size = resp.content_length().unwrap_or(0) as u64;
+        let modified = resp.last_modified().and_then(|d| {
+            let secs = d.secs();
+            let nanos = d.subsec_nanos();
+            std::time::SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(secs as u64, nanos))
+                .map(|t| t.to_unix())
+        });
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        Ok(File {
+            name,
+            size: Some(size),
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            symlink_target: None,
+            user: None,
+            group: None,
+            mode: Mode(0),
+            modified,
+            accessed: None,
+            created: None,
+        })
+    }
+
+    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let (bucket, prefix) = Self::parse_path(path);
         let bucket = bucket.ok_or(Error::NotSupported)?;
         let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
@@ -430,7 +479,7 @@ impl Vfs for S3Vfs {
             && content_type != "application/json"
             && content_type != "application/xml";
 
-        Ok(FileInfo { size, is_binary })
+        Ok(FileDetails { size, is_binary })
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
@@ -499,7 +548,10 @@ impl Vfs for S3Vfs {
         let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
         let client = self.client_for_bucket(&bucket).await?;
 
-        debug!("s3: initiating multipart upload bucket={} key={}", bucket, key);
+        debug!(
+            "s3: initiating multipart upload bucket={} key={}",
+            bucket, key
+        );
 
         let resp = client
             .create_multipart_upload()

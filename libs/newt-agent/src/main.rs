@@ -2,10 +2,15 @@ use std::sync::Arc;
 
 use log::info;
 use newt_common::{
-    Error, api::{
+    api::{
         FileReaderDispatcher, FilesystemDispatcher, OperationDispatcher, ShellServiceDispatcher,
         TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
-    }, filesystem::{LocalShellService, Slow}, operation::OperationContext, rpc::{Communicator, DispatcherExt}, vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs}, vfs_s3::S3Vfs
+    },
+    filesystem::LocalShellService,
+    operation::OperationContext,
+    rpc::{Communicator, DispatcherExt},
+    vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
+    Error,
 };
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};

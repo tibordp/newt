@@ -69,6 +69,7 @@ pub struct File {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
+    pub symlink_target: Option<PathBuf>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Mode,
@@ -85,6 +86,7 @@ pub struct FsStats {
 }
 
 impl From<nix::sys::statvfs::Statvfs> for FsStats {
+    #[allow(clippy::unnecessary_cast)]
     fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
         Self {
             free_bytes: ((stats.blocks_available() as u64) * (stats.fragment_size() as u64)),

@@ -3,7 +3,7 @@ use crate::vfs::VfsPath;
 use crate::Error;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FileInfo {
+pub struct FileDetails {
     pub size: u64,
     pub is_binary: bool,
 }
@@ -17,7 +17,7 @@ pub struct FileChunk {
 
 #[async_trait::async_trait]
 pub trait FileReader: Send + Sync {
-    async fn file_info(&self, path: VfsPath) -> Result<FileInfo, Error>;
+    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
     async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
         -> Result<FileChunk, Error>;
 }
@@ -34,10 +34,10 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl FileReader for Remote {
-    async fn file_info(&self, path: VfsPath) -> Result<FileInfo, Error> {
-        let ret: Result<FileInfo, Error> = self
+    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
+        let ret: Result<FileDetails, Error> = self
             .communicator
-            .invoke(crate::api::API_FILE_INFO, &path)
+            .invoke(crate::api::API_FILE_DETAILS, &path)
             .await?;
 
         Ok(ret?)

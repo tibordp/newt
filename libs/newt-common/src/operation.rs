@@ -18,7 +18,6 @@ pub type IssueId = u64;
 
 // --- Issue Resolution Types ---
 
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum IssueKind {
     AlreadyExists,
@@ -137,7 +136,7 @@ struct CopyEntry {
     source: PathBuf,
     dest: PathBuf,
     kind: CopyEntryKind,
-    size: u64,
+    size_bytes: u64,
 }
 
 struct CopyPlan {
@@ -521,6 +520,7 @@ pub async fn execute_operation(
                 destination,
                 options,
                 cancel.clone(),
+                false,
             )
             .await
         }
@@ -588,12 +588,13 @@ async fn plan_copy(
             })?;
 
         if has_symlinks && file_entry.is_symlink {
-            let target = src_vfs.read_link(source).await?;
             entries.push(CopyEntry {
                 source: source.clone(),
                 dest: dest_base,
-                kind: CopyEntryKind::Symlink { target },
-                size: 0,
+                kind: CopyEntryKind::Symlink {
+                    target: file_entry.symlink_target.clone().unwrap(),
+                },
+                size_bytes: 0,
             });
         } else if file_entry.is_dir {
             let mut stack = vec![(source.clone(), dest_base.clone())];
@@ -601,7 +602,7 @@ async fn plan_copy(
                 source: source.clone(),
                 dest: dest_base,
                 kind: CopyEntryKind::Directory,
-                size: 0,
+                size_bytes: 0,
             });
 
             while let Some((src_dir, dst_dir)) = stack.pop() {
@@ -616,19 +617,20 @@ async fn plan_copy(
                     let dst_path = dst_dir.join(&file.name);
 
                     if has_symlinks && file.is_symlink {
-                        let target = src_vfs.read_link(&src_path).await?;
                         entries.push(CopyEntry {
                             source: src_path,
                             dest: dst_path,
-                            kind: CopyEntryKind::Symlink { target },
-                            size: 0,
+                            kind: CopyEntryKind::Symlink {
+                                target: file.symlink_target.clone().unwrap(),
+                            },
+                            size_bytes: 0,
                         });
                     } else if file.is_dir {
                         entries.push(CopyEntry {
                             source: src_path.clone(),
                             dest: dst_path.clone(),
                             kind: CopyEntryKind::Directory,
-                            size: 0,
+                            size_bytes: 0,
                         });
                         stack.push((src_path, dst_path));
                     } else {
@@ -638,7 +640,7 @@ async fn plan_copy(
                             source: src_path,
                             dest: dst_path,
                             kind: CopyEntryKind::File,
-                            size,
+                            size_bytes: size,
                         });
                     }
                 }
@@ -650,7 +652,7 @@ async fn plan_copy(
                 source: source.clone(),
                 dest: dest_base,
                 kind: CopyEntryKind::File,
-                size,
+                size_bytes: size,
             });
         }
     }
@@ -747,7 +749,10 @@ async fn copy_single_file(
 
     // 1. Same-VFS copy_within fast path
     if same_vfs && dst_descriptor.can_copy_within() {
-        debug!("copy_single_file: trying copy_within for {}", entry.source.display());
+        debug!(
+            "copy_single_file: trying copy_within for {}",
+            entry.source.display()
+        );
         if src_vfs
             .copy_within(&entry.source, &entry.dest)
             .await
@@ -759,7 +764,10 @@ async fn copy_single_file(
 
     // 2. Sync read + sync write
     if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_sync() {
-        debug!("copy_single_file: sync-read + sync-write for {}", entry.source.display());
+        debug!(
+            "copy_single_file: sync-read + sync-write for {}",
+            entry.source.display()
+        );
         let mut reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_sync(&entry.dest).await?;
 
@@ -792,7 +800,10 @@ async fn copy_single_file(
 
     // 3. Async read + async write
     if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_async() {
-        debug!("copy_single_file: async-read + async-write for {}", entry.source.display());
+        debug!(
+            "copy_single_file: async-read + async-write for {}",
+            entry.source.display()
+        );
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
 
@@ -814,7 +825,10 @@ async fn copy_single_file(
 
     // 4. Sync read + async write
     if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_async() {
-        debug!("copy_single_file: sync-read + async-write for {}", entry.source.display());
+        debug!(
+            "copy_single_file: sync-read + async-write for {}",
+            entry.source.display()
+        );
         let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
 
@@ -858,7 +872,10 @@ async fn copy_single_file(
 
     // 5. Async read + sync write
     if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_sync() {
-        debug!("copy_single_file: async-read + sync-write for {}", entry.source.display());
+        debug!(
+            "copy_single_file: async-read + sync-write for {}",
+            entry.source.display()
+        );
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let sync_writer = dst_vfs.overwrite_sync(&entry.dest).await?;
 
@@ -967,6 +984,7 @@ async fn execute_copy(
     destination: VfsPath,
     options: CopyOptions,
     cancel: CancellationToken,
+    is_move: bool,
 ) -> Result<(), crate::Error> {
     let first_source = sources
         .first()
@@ -1036,26 +1054,11 @@ async fn execute_copy(
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
         // Check for destination conflicts
-        // Use symlink_metadata when available, otherwise probe with file_info.
-        // For VFSes without symlinks (like S3), any error from file_info means
-        // the destination doesn't exist, so we treat all errors as "not found".
-        let dest_meta = if dst_descriptor.has_symlinks() {
-            dst_vfs.symlink_metadata(&entry.dest).await
-        } else {
-            match dst_vfs.file_info(&entry.dest).await {
-                Ok(_) => Ok(crate::vfs::VfsEntryMetadata {
-                    is_file: true,
-                    is_dir: false,
-                    is_symlink: false,
-                    size: 0,
-                }),
-                Err(e) => Err(e),
-            }
-        };
-        if let Ok(dest_meta) = dest_meta {
+        let dest_file = dst_vfs.file_info(&entry.dest).await;
+        if let Ok(dest_file) = dest_file {
             match &entry.kind {
                 CopyEntryKind::Directory => {
-                    if dest_meta.is_dir {
+                    if dest_file.is_dir {
                         // Merge: directory already exists, skip mkdir
                         items_done += 1;
                         continue;
@@ -1083,7 +1086,7 @@ async fn execute_copy(
                     }
                 }
                 CopyEntryKind::File | CopyEntryKind::Symlink { .. } => {
-                    if dest_meta.is_dir {
+                    if dest_file.is_dir {
                         // Type mismatch
                         match reporter
                             .raise_issue(
@@ -1134,9 +1137,12 @@ async fn execute_copy(
         }
 
         // Perform the operation
+        let bytes_before = bytes_done;
         let mut retry = true;
+        let mut succeeded = false;
         while retry {
             retry = false;
+            bytes_done = bytes_before; // Reset progress on retry to avoid double-counting
 
             let result = match &entry.kind {
                 CopyEntryKind::Directory => dst_vfs.create_directory(&entry.dest).await,
@@ -1166,26 +1172,42 @@ async fn execute_copy(
                 }
             };
 
-            if let Err(e) = result {
-                match reporter
-                    .handle_io_error(
-                        e,
-                        "Error",
-                        Some(format!(
-                            "{} -> {}",
-                            entry.source.display(),
-                            entry.dest.display()
-                        )),
-                        &cancel,
-                        true,
-                    )
-                    .await?
-                {
-                    IssueOutcome::Skip => {}
-                    IssueOutcome::Retry => {
-                        retry = true;
+            match result {
+                Ok(()) => {
+                    succeeded = true;
+                }
+                Err(e) => {
+                    match reporter
+                        .handle_io_error(
+                            e,
+                            "Error",
+                            Some(format!(
+                                "{} -> {}",
+                                entry.source.display(),
+                                entry.dest.display()
+                            )),
+                            &cancel,
+                            true,
+                        )
+                        .await?
+                    {
+                        IssueOutcome::Skip => {}
+                        IssueOutcome::Retry => {
+                            retry = true;
+                        }
                     }
                 }
+            }
+        }
+
+        // For move: delete source file/symlink immediately after successful copy.
+        // Directories are cleaned up in a separate reverse pass below.
+        if is_move && succeeded {
+            if matches!(
+                &entry.kind,
+                CopyEntryKind::File | CopyEntryKind::Symlink { .. }
+            ) {
+                let _ = src_vfs.remove_file(&entry.source).await;
             }
         }
 
@@ -1193,22 +1215,33 @@ async fn execute_copy(
     }
 
     reporter.maybe_send_progress(bytes_done, items_done, "");
+
+    // For move: reverse pass to clean up empty source directories (deepest first).
+    // If a directory still contains files (because some were skipped), remove_dir
+    // will fail and we silently ignore it, leaving the directory intact.
+    if is_move {
+        for entry in plan.entries.iter().rev() {
+            if cancel.is_cancelled() {
+                return Err(crate::Error::Cancelled);
+            }
+            if let CopyEntryKind::Directory = &entry.kind {
+                let _ = src_vfs.remove_dir(&entry.source).await;
+            }
+        }
+    }
+
     Ok(())
 }
 
 // --- Execute Delete (async outer loop, uses Vfs) ---
 
-/// Determine whether a path is a directory. Tries symlink_metadata first,
-/// falls back to listing the parent directory (for VFSes like S3 that don't
-/// support metadata).
+/// Determine whether a path is a directory.
 async fn probe_is_dir(vfs: &dyn Vfs, path: &Path) -> Result<bool, crate::Error> {
-    match vfs.symlink_metadata(path).await {
-        Ok(meta) => Ok(meta.is_dir),
+    match vfs.file_info(path).await {
+        Ok(file) => Ok(file.is_dir),
         Err(_) => {
             let parent = path.parent().unwrap_or(Path::new("/"));
-            let file_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string());
+            let file_name = path.file_name().map(|n| n.to_string_lossy().to_string());
             match file_name {
                 Some(name) => {
                     let listing = vfs
@@ -1252,9 +1285,15 @@ async fn collect_delete_entries(
             let entry_path = dir.join(&file.name);
             if file.is_dir && !file.is_symlink {
                 stack.push(entry_path.clone());
-                dirs.push(DeleteEntry { path: entry_path, is_dir: true });
+                dirs.push(DeleteEntry {
+                    path: entry_path,
+                    is_dir: true,
+                });
             } else {
-                files.push(DeleteEntry { path: entry_path, is_dir: false });
+                files.push(DeleteEntry {
+                    path: entry_path,
+                    is_dir: false,
+                });
             }
         }
     }
@@ -1302,14 +1341,21 @@ async fn execute_delete(
                 let is_dir = probe_is_dir(&*vfs, &local_path).await?;
 
                 if is_dir {
-                    debug!("execute_delete: tree walk for directory {}", local_path.display());
+                    debug!(
+                        "execute_delete: tree walk for directory {}",
+                        local_path.display()
+                    );
                     async {
                         let entries = collect_delete_entries(&*vfs, &local_path).await?;
                         for entry in &entries {
                             if cancel.is_cancelled() {
                                 return Err(crate::Error::Cancelled);
                             }
-                            reporter.maybe_send_progress(0, items_done, &entry.path.display().to_string());
+                            reporter.maybe_send_progress(
+                                0,
+                                items_done,
+                                &entry.path.display().to_string(),
+                            );
                             if entry.is_dir {
                                 vfs.remove_dir(&entry.path).await?;
                             } else {
@@ -1375,7 +1421,10 @@ async fn execute_move(
     let mut needs_copy = Vec::new();
 
     if same_vfs && src_descriptor.can_rename() {
-        debug!("execute_move: trying rename for {} sources (same VFS)", sources.len());
+        debug!(
+            "execute_move: trying rename for {} sources (same VFS)",
+            sources.len()
+        );
         // Try rename first for each source (instant for same-VFS, same-device)
         for source in &sources {
             if cancel.is_cancelled() {
@@ -1390,10 +1439,17 @@ async fn execute_move(
 
             match src_vfs.rename(&source.path, &dest_local).await {
                 Ok(()) => {
-                    debug!("execute_move: renamed {} -> {}", source.path.display(), dest_local.display());
+                    debug!(
+                        "execute_move: renamed {} -> {}",
+                        source.path.display(),
+                        dest_local.display()
+                    );
                 }
                 Err(_) => {
-                    debug!("execute_move: rename failed for {}, falling back to copy+delete", source.path.display());
+                    debug!(
+                        "execute_move: rename failed for {}, falling back to copy+delete",
+                        source.path.display()
+                    );
                     // Any rename failure (cross-device, permission, etc.)
                     // falls through to copy+delete
                     needs_copy.push(source.clone());
@@ -1410,48 +1466,17 @@ async fn execute_move(
         return Ok(());
     }
 
-    // Fall back to copy+delete for cross-device/cross-VFS moves
+    // Fall back to copy-then-delete-per-file for cross-device/cross-VFS moves.
+    // execute_copy with is_move=true deletes each source file immediately after
+    // a successful copy, then cleans up empty source directories in reverse order.
     execute_copy(
         reporter,
         context,
-        needs_copy.clone(),
+        needs_copy,
         destination,
         options,
-        cancel.clone(),
+        cancel,
+        true,
     )
-    .await?;
-
-    // Delete originals after successful copy
-    for source in &needs_copy {
-        if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
-        }
-
-        let (vfs, local_path) = context.registry.resolve(source)?;
-        let descriptor = vfs.descriptor();
-
-        if descriptor.can_remove_tree() {
-            vfs.remove_tree(&local_path).await?;
-        } else {
-            let is_dir = probe_is_dir(&*vfs, &local_path).await?;
-            if is_dir {
-                let entries = collect_delete_entries(&*vfs, &local_path).await?;
-                for entry in &entries {
-                    if cancel.is_cancelled() {
-                        return Err(crate::Error::Cancelled);
-                    }
-                    if entry.is_dir {
-                        vfs.remove_dir(&entry.path).await?;
-                    } else {
-                        vfs.remove_file(&entry.path).await?;
-                    }
-                }
-                vfs.remove_dir(&local_path).await?;
-            } else {
-                vfs.remove_file(&local_path).await?;
-            }
-        }
-    }
-
-    Ok(())
+    .await
 }

@@ -14,7 +14,7 @@ use newt_common::operation::OperationContext;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{
-    lookup_descriptor, LocalVfs, MountResponse, MountedVfsInfo, VfsId, VfsManager,
+    lookup_descriptor, LocalVfs, MountedVfsInfo, VfsId, VfsManager,
     VfsManagerRemote, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
 };
 use parking_lot::RwLock;
@@ -703,14 +703,12 @@ struct MainWindowContextInner {
     terminal_client: Arc<dyn TerminalClient>,
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
-    communicator: Option<Communicator>,
     mounted_vfs: RwLock<HashMap<VfsId, MountedVfsInfo>>,
     next_operation_id: AtomicU64,
 
     window: WebviewWindow,
     main_window_state: MainWindowState,
-    publisher: Arc<UpdatePublisher<MainWindowState>>,
-    connection_target: ConnectionTarget,
+    publisher: Arc<UpdatePublisher<MainWindowState>>
 }
 
 #[derive(Clone)]
@@ -909,7 +907,7 @@ impl MainWindowContext {
                 });
 
                 // For remote, resolve home directory
-                let initial_dir = shell_service
+                let _initial_dir = shell_service
                     .shell_expand("~".to_string())
                     .await
                     .unwrap_or_else(|_| VfsPath::root("/"));
@@ -1041,13 +1039,11 @@ impl MainWindowContext {
                 terminal_client,
                 file_reader,
                 operations_client,
-                communicator,
                 mounted_vfs: RwLock::new(initial_mounted),
                 next_operation_id: AtomicU64::new(1),
                 window,
                 publisher,
                 main_window_state: global_state,
-                connection_target,
             }),
         })
     }
@@ -1184,9 +1180,8 @@ impl MainWindowContext {
         request: newt_common::vfs::MountRequest,
     ) -> Result<newt_common::vfs::MountResponse, Error> {
         let response = self.inner.vfs_manager.mount(request).await?;
-        let descriptor = lookup_descriptor(&response.type_name).ok_or_else(|| {
-            Error::Custom(format!("unknown VFS type: {}", response.type_name))
-        })?;
+        let descriptor = lookup_descriptor(&response.type_name)
+            .ok_or_else(|| Error::Custom(format!("unknown VFS type: {}", response.type_name)))?;
         self.inner.mounted_vfs.write().insert(
             response.vfs_id,
             MountedVfsInfo {

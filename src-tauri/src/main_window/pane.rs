@@ -384,7 +384,7 @@ impl Pane {
             .files
             .iter()
             .find(|f| f.name == *focused)
-            .map_or(false, |f| f.is_dir)
+            .is_some_and(|f| f.is_dir)
     }
 }
 
