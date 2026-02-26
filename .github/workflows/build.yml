@@ -26,11 +26,13 @@ jobs:
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build agent
-        run: make dist/agents/x86_64-unknown-linux-musl/newt-agent
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: make agents/x86_64-unknown-linux-musl/newt-agent
       - uses: actions/upload-artifact@v4
         with:
           name: agent-x86_64-unknown-linux-musl
-          path: dist/agents/x86_64-unknown-linux-musl/
+          path: agents/x86_64-unknown-linux-musl/
           retention-days: 7
 
   agent-aarch64-linux:
@@ -44,18 +46,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: agent-aarch64-linux
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build agent
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
-        run: make dist/agents/aarch64-unknown-linux-musl/newt-agent
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: |
+          cross build --release --target aarch64-unknown-linux-musl -p newt-agent
+          mkdir -p agents/aarch64-unknown-linux-musl
+          cp target/aarch64-unknown-linux-musl/release/newt-agent agents/aarch64-unknown-linux-musl/
       - uses: actions/upload-artifact@v4
         with:
           name: agent-aarch64-unknown-linux-musl
-          path: dist/agents/aarch64-unknown-linux-musl/
+          path: agents/aarch64-unknown-linux-musl/
           retention-days: 7
 
   agent-aarch64-darwin:
@@ -70,11 +73,34 @@ jobs:
         with:
           key: agent-aarch64-darwin
       - name: Build agent
-        run: make dist/agents/aarch64-apple-darwin/newt-agent
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: make agents/aarch64-apple-darwin/newt-agent
       - uses: actions/upload-artifact@v4
         with:
           name: agent-aarch64-apple-darwin
-          path: dist/agents/aarch64-apple-darwin/
+          path: agents/aarch64-apple-darwin/
+          retention-days: 7
+
+  agent-x86_64-darwin:
+    name: Agent (x86_64-apple-darwin)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-x86_64-darwin
+      - name: Build agent
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: make agents/x86_64-apple-darwin/newt-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-x86_64-apple-darwin
+          path: agents/x86_64-apple-darwin/
           retention-days: 7
 
   # ─── Stage 2: Build Tauri apps (depend on all agent jobs) ───
@@ -82,7 +108,7 @@ jobs:
   app-linux:
     name: App (Linux x86_64)
     runs-on: ubuntu-latest
-    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin]
+    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin, agent-x86_64-darwin]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -101,12 +127,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: agent-*
-          path: dist/agents/
+          path: agents/
           merge-multiple: false
       - name: Arrange agent artifacts
         run: |
           # download-artifact creates agent-<name>/ dirs; move contents into place
-          cd dist/agents
+          cd agents
           for dir in agent-*/; do
             triple="${dir#agent-}"
             triple="${triple%/}"
@@ -124,14 +150,15 @@ jobs:
         with:
           name: app-linux-x86_64
           path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
           retention-days: 7
 
   app-macos:
     name: App (macOS aarch64)
     runs-on: macos-latest
-    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin]
+    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin, agent-x86_64-darwin]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -146,11 +173,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: agent-*
-          path: dist/agents/
+          path: agents/
           merge-multiple: false
       - name: Arrange agent artifacts
         run: |
-          cd dist/agents
+          cd agents
           for dir in agent-*/; do
             triple="${dir#agent-}"
             triple="${triple%/}"
@@ -168,5 +195,6 @@ jobs:
         with:
           name: app-macos-aarch64
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
           retention-days: 7

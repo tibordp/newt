@@ -16,9 +16,10 @@
     ],
     "targets": "all",
     "resources": {
-      "../dist/agents/x86_64-unknown-linux-musl/newt-agent": "agents/x86_64-unknown-linux-musl/newt-agent",
-      "../dist/agents/aarch64-unknown-linux-musl/newt-agent": "agents/aarch64-unknown-linux-musl/newt-agent",
-      "../dist/agents/aarch64-apple-darwin/newt-agent": "agents/aarch64-apple-darwin/newt-agent"
+      "../agents/x86_64-unknown-linux-musl/newt-agent": "agents/x86_64-unknown-linux-musl/newt-agent",
+      "../agents/aarch64-unknown-linux-musl/newt-agent": "agents/aarch64-unknown-linux-musl/newt-agent",
+      "../agents/aarch64-apple-darwin/newt-agent": "agents/aarch64-apple-darwin/newt-agent",
+      "../agents/x86_64-apple-darwin/newt-agent": "agents/x86_64-apple-darwin/newt-agent"
     }
   },
   "productName": "Newt",

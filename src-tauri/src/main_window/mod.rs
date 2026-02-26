@@ -522,7 +522,7 @@ const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 /// Resolves agent binary locations. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (dev override)
 /// 2. Tauri resource dir (`agents/` inside the bundled app)
-/// 3. `dist/agents/` relative fallback (legacy/dev)
+/// 3. `agents/` relative fallback (legacy/dev)
 pub struct AgentResolver {
     dirs: Vec<PathBuf>,
 }
@@ -539,7 +539,7 @@ impl AgentResolver {
             dirs.push(resource_dir.join("agents"));
         }
 
-        dirs.push(PathBuf::from("dist/agents"));
+        dirs.push(PathBuf::from("agents"));
 
         Self { dirs }
     }

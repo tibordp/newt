@@ -6,9 +6,10 @@ fn main() {
         "x86_64-unknown-linux-musl",
         "aarch64-unknown-linux-musl",
         "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
     ];
     for target in &agent_targets {
-        let dir = std::path::PathBuf::from(format!("../dist/agents/{}", target));
+        let dir = std::path::PathBuf::from(format!("../agents/{}", target));
         std::fs::create_dir_all(&dir).ok();
         let path = dir.join("newt-agent");
         if !path.exists() {
