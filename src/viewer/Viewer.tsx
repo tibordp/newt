@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { message } from "@tauri-apps/plugin-dialog";
 import {
@@ -67,9 +67,26 @@ function isImageMime(mime: string | null): boolean {
   return mime.startsWith("image/");
 }
 
-type ViewerMode = "text" | "hex" | "image";
+function isAudioMime(mime: string | null): boolean {
+  if (!mime) return false;
+  return mime.startsWith("audio/");
+}
+
+function isVideoMime(mime: string | null): boolean {
+  if (!mime) return false;
+  return mime.startsWith("video/");
+}
+
+function isPdfMime(mime: string | null): boolean {
+  return mime === "application/pdf";
+}
+
+type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf";
 
 function detectAutoMode(mime: string | null): ViewerMode {
+  if (isVideoMime(mime)) return "video";
+  if (isAudioMime(mime)) return "audio";
+  if (isPdfMime(mime)) return "pdf";
   if (isImageMime(mime)) return "image";
   if (isTextMime(mime)) return "text";
   return "hex";
@@ -648,7 +665,7 @@ function HexViewer({
 
 interface ImageViewerProps {
   filePath: string;
-  vfsPath: VfsPath;
+  fileUrl: string;
   fileSize: number;
 }
 
@@ -669,7 +686,7 @@ function clampView(
   };
 }
 
-function ImageViewer({ filePath, vfsPath, fileSize }: ImageViewerProps) {
+function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -829,11 +846,6 @@ function ImageViewer({ filePath, vfsPath, fileSize }: ImageViewerProps) {
     };
   }, []);
 
-  const imgSrc = convertFileSrc(
-    `${vfsPath.vfs_id}${vfsPath.path}`,
-    "newt-file"
-  );
-
   const zoomPercent = Math.round(zoom * 100);
 
   return (
@@ -847,7 +859,7 @@ function ImageViewer({ filePath, vfsPath, fileSize }: ImageViewerProps) {
           <img
             ref={imgRef}
             className={styles.imagePreview}
-            src={imgSrc}
+            src={fileUrl}
             alt={filePath}
             onLoad={handleLoad}
             onError={() => setImageError(true)}
@@ -882,6 +894,128 @@ function ImageViewer({ filePath, vfsPath, fileSize }: ImageViewerProps) {
   );
 }
 
+// --- Media mode rendering (audio + video) ---
+
+interface MediaViewerProps {
+  tag: "audio" | "video";
+  filePath: string;
+  fileUrl: string;
+  fileSize: number;
+}
+
+function MediaViewer({ tag, filePath, fileUrl, fileSize }: MediaViewerProps) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    viewerRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      safeCommand("close_window");
+      e.preventDefault();
+    }
+  }, []);
+
+  const modeName = tag === "audio" ? "Audio" : "Video";
+
+  return (
+    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+      <div className={styles.mediaContent}>
+        {mediaError ? (
+          <div className={styles.imageErrorMessage}>
+            Unable to play {modeName.toLowerCase()} preview: {mediaError}
+          </div>
+        ) : tag === "audio" ? (
+          <audio
+            className={styles.audioPlayer}
+            controls
+            src={fileUrl}
+            onError={(e) => {
+              const el = e.currentTarget;
+              const err = el.error;
+              const detail = err ? `${err.message} (code ${err.code})` : "unknown error";
+              console.error(`${modeName} error:`, detail, "src:", fileUrl, "networkState:", el.networkState, "readyState:", el.readyState);
+              setMediaError(detail);
+            }}
+          />
+        ) : (
+          <video
+            className={styles.videoPlayer}
+            controls
+            src={fileUrl}
+            onError={(e) => {
+              const el = e.currentTarget;
+              const err = el.error;
+              const detail = err ? `${err.message} (code ${err.code})` : "unknown error";
+              console.error(`${modeName} error:`, detail, "src:", fileUrl, "networkState:", el.networkState, "readyState:", el.readyState);
+              setMediaError(detail);
+            }}
+          />
+        )}
+      </div>
+      <div className={styles.viewerStatus}>
+        <span>{filePath}</span>
+        <span className={styles.statusSeparator}>|</span>
+        <span>{modeName}</span>
+        <span className={styles.statusSeparator}>|</span>
+        <span>{formatSize(fileSize)}</span>
+      </div>
+    </div>
+  );
+}
+
+// --- PDF mode rendering ---
+
+interface PdfViewerProps {
+  filePath: string;
+  fileUrl: string;
+  fileSize: number;
+}
+
+function PdfViewer({ filePath, fileUrl, fileSize }: PdfViewerProps) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const [pdfError, setPdfError] = useState(false);
+
+  useEffect(() => {
+    viewerRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      safeCommand("close_window");
+      e.preventDefault();
+    }
+  }, []);
+
+  return (
+    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+      {pdfError ? (
+        <div className={styles.mediaContent}>
+          <div className={styles.imageErrorMessage}>
+            PDF preview not available
+          </div>
+        </div>
+      ) : (
+        <embed
+          className={styles.pdfEmbed}
+          type="application/pdf"
+          src={fileUrl}
+          onError={() => setPdfError(true)}
+        />
+      )}
+      <div className={styles.viewerStatus}>
+        <span>{filePath}</span>
+        <span className={styles.statusSeparator}>|</span>
+        <span>PDF</span>
+        <span className={styles.statusSeparator}>|</span>
+        <span>{formatSize(fileSize)}</span>
+      </div>
+    </div>
+  );
+}
+
 // --- Main Viewer component ---
 
 function Viewer() {
@@ -890,6 +1024,8 @@ function Viewer() {
   const filePath: VfsPath = JSON.parse(
     searchParams.get("vfs_path") || `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`
   );
+  const fileServerBase = searchParams.get("file_server_base") || "";
+  const fileUrl = `${fileServerBase}/${filePath.vfs_id}${filePath.path}`;
 
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1020,7 +1156,28 @@ function Viewer() {
     return (
       <ImageViewer
         filePath={displayPath}
-        vfsPath={filePath}
+        fileUrl={fileUrl}
+        fileSize={info.size}
+      />
+    );
+  }
+
+  if (currentMode === "audio" || currentMode === "video") {
+    return (
+      <MediaViewer
+        tag={currentMode}
+        filePath={displayPath}
+        fileUrl={fileUrl}
+        fileSize={info.size}
+      />
+    );
+  }
+
+  if (currentMode === "pdf") {
+    return (
+      <PdfViewer
+        filePath={displayPath}
+        fileUrl={fileUrl}
         fileSize={info.size}
       />
     );

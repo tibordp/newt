@@ -31,6 +31,7 @@ pty-process = { path = "../libs/pty-process" }
 tokio = { version = "1", features = ["full"] }
 libc = "*"
 shell-quote = "0.7"
+tokio-stream = "0.1"
 tokio-util = "0.7"
 async-trait = "0.1"
 bytes = "1"
@@ -39,6 +40,7 @@ log = "0.4"
 pretty_env_logger = "0.5"
 tokio-duplex = "1.0.1"
 clap = { version = "4", features = ["derive"] }
+axum = "0.8"
 async-compression = { version = "0.4.4", features = ["zstd", "tokio"] }
 blake3 = "1"
 nix = { version = "0.31", features = ["fs"] }

@@ -7,6 +7,7 @@ extern crate objc; // v0.2.7
 
 pub mod cmd;
 pub mod common;
+pub mod file_server;
 pub mod main_window;
 pub mod viewer;
 
@@ -14,11 +15,12 @@ use clap::Parser;
 use common::Error;
 use log::debug;
 use log::info;
+use main_window::AgentResolver;
 use main_window::ConnectionTarget;
 use main_window::MainWindowContext;
-use newt_common::vfs::{VfsId, VfsPath};
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use tauri::ipc::Invoke;
 use tauri::Manager;
 use tauri::State;
@@ -45,6 +47,7 @@ pub struct GlobalContext {
     main_windows: Mutex<HashMap<String, MainWindowContext>>,
     connection_target: ConnectionTarget,
     window_title: String,
+    agent_resolver: OnceLock<AgentResolver>,
 }
 
 impl GlobalContext {
@@ -53,7 +56,20 @@ impl GlobalContext {
             main_windows: Mutex::new(HashMap::new()),
             connection_target,
             window_title,
+            agent_resolver: OnceLock::new(),
         }
+    }
+
+    pub fn init_agent_resolver(&self, app_handle: &tauri::AppHandle) {
+        self.agent_resolver
+            .set(AgentResolver::new(app_handle))
+            .ok();
+    }
+
+    pub fn agent_resolver(&self) -> &AgentResolver {
+        self.agent_resolver
+            .get()
+            .expect("AgentResolver not initialized")
     }
 
     pub async fn create_main_window(&self, webview: &Webview) -> Result<(), Error> {
@@ -68,6 +84,7 @@ impl GlobalContext {
             self.connection_target.clone(),
             self.window_title.clone(),
             None,
+            self.agent_resolver(),
         )
         .await?;
         self.main_windows.lock().insert(label, window_context);
@@ -153,6 +170,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(global_ctx)
         .setup(move |app| {
+            let global_ctx: State<GlobalContext> = app.state();
+            global_ctx.init_agent_resolver(app.handle());
+
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                 .title(&setup_title)
                 .resizable(true)
@@ -198,64 +218,6 @@ fn main() {
                 }
             },
         )
-        .register_asynchronous_uri_scheme_protocol("newt-file", |ctx, request, responder| {
-            let app_handle = ctx.app_handle().clone();
-            let label = ctx.webview_label().to_string();
-            tauri::async_runtime::spawn(async move {
-                let uri = request.uri().to_string();
-                info!("newt-file request: uri={} webview={}", uri, label);
-
-                let result: Result<tauri::http::Response<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> = async {
-                    let global_ctx = app_handle.state::<GlobalContext>();
-                    let mwc = global_ctx.main_windows.lock().get(&label).cloned()
-                        .ok_or_else(|| format!("window context not found for label '{}'", label))?;
-
-                    let raw_path = request.uri().path();
-                    debug!("newt-file: raw path='{}'", raw_path);
-                    let decoded_path = percent_encoding::percent_decode_str(raw_path)
-                        .decode_utf8()?;
-                    let decoded_path = decoded_path.strip_prefix('/').unwrap_or(&decoded_path);
-                    let (vfs_id_str, file_path) = decoded_path.split_once('/')
-                        .ok_or_else(|| format!("invalid path format: '{}'", decoded_path))?;
-                    let vfs_id = VfsId(vfs_id_str.parse::<u32>()?);
-                    let vfs_path = VfsPath::new(vfs_id, format!("/{}", file_path));
-                    info!("newt-file: resolved vfs_path={}", vfs_path);
-
-                    let details = mwc.file_reader().file_details(vfs_path.clone()).await?;
-                    let mime = details.mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
-                    info!("newt-file: mime={} size={}", mime, details.size);
-
-                    let mut body = Vec::with_capacity(details.size as usize);
-                    let mut offset = 0u64;
-                    let chunk_size = 1024 * 1024; // 1MB
-                    while offset < details.size {
-                        let len = std::cmp::min(chunk_size, details.size - offset);
-                        let chunk = mwc.file_reader().read_range(vfs_path.clone(), offset, len).await?;
-                        if chunk.data.is_empty() {
-                            break;
-                        }
-                        offset += chunk.data.len() as u64;
-                        body.extend_from_slice(&chunk.data);
-                    }
-                    info!("newt-file: serving {} bytes", body.len());
-
-                    Ok(tauri::http::Response::builder()
-                        .status(200)
-                        .header("Content-Type", &mime)
-                        .body(body)
-                        .unwrap())
-                }.await;
-
-                let response = result.unwrap_or_else(|e| {
-                    log::error!("newt-file error: {}", e);
-                    tauri::http::Response::builder()
-                        .status(500)
-                        .body(format!("Error: {}", e).into_bytes())
-                        .unwrap()
-                });
-                responder.respond(response);
-            });
-        })
         .invoke_handler(handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

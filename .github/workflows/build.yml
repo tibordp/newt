@@ -1,0 +1,172 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ─── Stage 1: Build agent binaries (3 parallel jobs) ───
+
+  agent-x86_64-linux:
+    name: Agent (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-x86_64-linux
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build agent
+        run: make dist/agents/x86_64-unknown-linux-musl/newt-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-x86_64-unknown-linux-musl
+          path: dist/agents/x86_64-unknown-linux-musl/
+          retention-days: 7
+
+  agent-aarch64-linux:
+    name: Agent (aarch64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-aarch64-linux
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build agent
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        run: make dist/agents/aarch64-unknown-linux-musl/newt-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-aarch64-unknown-linux-musl
+          path: dist/agents/aarch64-unknown-linux-musl/
+          retention-days: 7
+
+  agent-aarch64-darwin:
+    name: Agent (aarch64-apple-darwin)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agent-aarch64-darwin
+      - name: Build agent
+        run: make dist/agents/aarch64-apple-darwin/newt-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-aarch64-apple-darwin
+          path: dist/agents/aarch64-apple-darwin/
+          retention-days: 7
+
+  # ─── Stage 2: Build Tauri apps (depend on all agent jobs) ───
+
+  app-linux:
+    name: App (Linux x86_64)
+    runs-on: ubuntu-latest
+    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-linux
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Download agent artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: dist/agents/
+          merge-multiple: false
+      - name: Arrange agent artifacts
+        run: |
+          # download-artifact creates agent-<name>/ dirs; move contents into place
+          cd dist/agents
+          for dir in agent-*/; do
+            triple="${dir#agent-}"
+            triple="${triple%/}"
+            mkdir -p "$triple"
+            cp -r "$dir"* "$triple/"
+            rm -rf "$dir"
+          done
+          find . -type f | head -20
+          chmod +x */newt-agent
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+      - name: Build Tauri app
+        run: yarn tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-linux-x86_64
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          retention-days: 7
+
+  app-macos:
+    name: App (macOS aarch64)
+    runs-on: macos-latest
+    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-macos
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+      - name: Download agent artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: dist/agents/
+          merge-multiple: false
+      - name: Arrange agent artifacts
+        run: |
+          cd dist/agents
+          for dir in agent-*/; do
+            triple="${dir#agent-}"
+            triple="${triple%/}"
+            mkdir -p "$triple"
+            cp -r "$dir"* "$triple/"
+            rm -rf "$dir"
+          done
+          find . -type f | head -20
+          chmod +x */newt-agent
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+      - name: Build Tauri app
+        run: yarn tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-macos-aarch64
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 7

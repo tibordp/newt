@@ -14,7 +14,12 @@
       "icons/32x32.png",
       "icons/icon.ico"
     ],
-    "targets": "all"
+    "targets": "all",
+    "resources": {
+      "../dist/agents/x86_64-unknown-linux-musl/newt-agent": "agents/x86_64-unknown-linux-musl/newt-agent",
+      "../dist/agents/aarch64-unknown-linux-musl/newt-agent": "agents/aarch64-unknown-linux-musl/newt-agent",
+      "../dist/agents/aarch64-apple-darwin/newt-agent": "agents/aarch64-apple-darwin/newt-agent"
+    }
   },
   "productName": "Newt",
   "version": "0.0.0",

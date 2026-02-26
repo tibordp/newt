@@ -519,110 +519,119 @@ impl ChildWaitHandle {
 
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
-/// Compute a hash that changes whenever any agent binary changes.
-/// We hash all agent binaries we can find so the remote cache is invalidated
-/// when any agent is rebuilt, regardless of which triple the remote needs.
-fn agent_hash() -> Result<String, Error> {
-    let mut hasher = blake3::Hasher::new();
-    let mut found = false;
+/// Resolves agent binary locations. Searches directories in priority order:
+/// 1. `NEWT_AGENT_DIR` env var (dev override)
+/// 2. Tauri resource dir (`agents/` inside the bundled app)
+/// 3. `dist/agents/` relative fallback (legacy/dev)
+pub struct AgentResolver {
+    dirs: Vec<PathBuf>,
+}
 
-    // Collect paths from NEWT_AGENT_DIR and dist/agents/
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-        dirs.push(PathBuf::from(dir));
+impl AgentResolver {
+    pub fn new(app_handle: &tauri::AppHandle) -> Self {
+        let mut dirs = Vec::new();
+
+        if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
+            dirs.push(PathBuf::from(dir));
+        }
+
+        if let Ok(resource_dir) = app_handle.path().resource_dir() {
+            dirs.push(resource_dir.join("agents"));
+        }
+
+        dirs.push(PathBuf::from("dist/agents"));
+
+        Self { dirs }
     }
-    dirs.push(PathBuf::from("dist/agents"));
 
-    for dir in &dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path().join("newt-agent");
-                if path.is_file() {
-                    hasher.update(&std::fs::read(&path)?);
-                    found = true;
-                }
-                // Also check flat layout (NEWT_AGENT_DIR/newt-agent)
-                let flat = entry.path();
-                if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
-                    hasher.update(&std::fs::read(&flat)?);
-                    found = true;
+    /// Compute a hash that changes whenever any agent binary changes.
+    pub fn agent_hash(&self) -> Result<String, Error> {
+        let mut hasher = blake3::Hasher::new();
+        let mut found = false;
+
+        for dir in &self.dirs {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path().join("newt-agent");
+                    if path.is_file() {
+                        hasher.update(&std::fs::read(&path)?);
+                        found = true;
+                    }
+                    // Also check flat layout (dir/newt-agent)
+                    let flat = entry.path();
+                    if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
+                        hasher.update(&std::fs::read(&flat)?);
+                        found = true;
+                    }
                 }
             }
+            // Flat layout: dir/newt-agent directly
+            let flat = dir.join("newt-agent");
+            if flat.is_file() {
+                hasher.update(&std::fs::read(&flat)?);
+                found = true;
+            }
         }
-        // Flat layout: dir/newt-agent directly
-        let flat = dir.join("newt-agent");
-        if flat.is_file() {
-            hasher.update(&std::fs::read(&flat)?);
-            found = true;
+
+        if !found {
+            return Err(Error::Custom(
+                "no agent binaries found to compute hash".into(),
+            ));
         }
+
+        Ok(hasher.finalize().to_hex()[..16].to_string())
     }
 
-    if !found {
-        return Err(Error::Custom(
-            "no agent binaries found to compute hash".into(),
-        ));
-    }
-
-    Ok(hasher.finalize().to_hex()[..16].to_string())
-}
-
-/// Look up the agent binary for a given target triple.
-/// Checks `NEWT_AGENT_DIR` env var first (for development), then `dist/agents/`.
-fn find_agent_binary(triple: &str) -> Result<PathBuf, Error> {
-    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-        let dir = PathBuf::from(dir);
-        // Try triple-based layout: $NEWT_AGENT_DIR/<triple>/newt-agent
-        let path = dir.join(triple).join("newt-agent");
-        if path.exists() {
-            return Ok(path);
-        }
-        // Try flat layout: $NEWT_AGENT_DIR/newt-agent (dev — e.g. target/debug/)
-        let path = dir.join("newt-agent");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    // Bundled agents
-    let path = PathBuf::from("dist/agents").join(triple).join("newt-agent");
-    if path.exists() {
-        return Ok(path);
-    }
-
-    Err(Error::Custom(format!(
-        "agent binary not found for triple: {}. Set NEWT_AGENT_DIR to the directory containing the agent binary.",
-        triple
-    )))
-}
-
-/// Find the agent binary on the local machine (for elevated mode).
-fn find_local_agent_binary() -> Result<PathBuf, Error> {
-    // Dev: NEWT_AGENT_DIR with flat layout
-    if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-        let path = PathBuf::from(dir).join("newt-agent");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    // Next to the current executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
+    /// Look up the agent binary for a given target triple.
+    pub fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, Error> {
+        for dir in &self.dirs {
+            // Try triple-based layout: <dir>/<triple>/newt-agent
+            let path = dir.join(triple).join("newt-agent");
+            if path.exists() {
+                return Ok(path);
+            }
+            // Try flat layout: <dir>/newt-agent (dev — e.g. target/debug/)
             let path = dir.join("newt-agent");
             if path.exists() {
                 return Ok(path);
             }
         }
+
+        Err(Error::Custom(format!(
+            "agent binary not found for triple: {}. Set NEWT_AGENT_DIR to the directory containing the agent binary.",
+            triple
+        )))
     }
 
-    Err(Error::Custom(
-        "local agent binary not found. Set NEWT_AGENT_DIR to the directory containing the agent binary.".into(),
-    ))
+    /// Find the agent binary on the local machine (for elevated mode).
+    pub fn find_local_agent_binary(&self) -> Result<PathBuf, Error> {
+        for dir in &self.dirs {
+            let path = dir.join("newt-agent");
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        // Next to the current executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let path = dir.join("newt-agent");
+                if path.exists() {
+                    return Ok(path);
+                }
+            }
+        }
+
+        Err(Error::Custom(
+            "local agent binary not found. Set NEWT_AGENT_DIR to the directory containing the agent binary.".into(),
+        ))
+    }
 }
 
 async fn create_remote_connection(
     transport_cmd: &[String],
     _publisher: &Arc<UpdatePublisher<MainWindowState>>,
+    agent_resolver: &AgentResolver,
 ) -> Result<
     (
         ChildWaitHandle,
@@ -639,7 +648,7 @@ async fn create_remote_connection(
     // Pass the bootstrap script as a `sh -c` argument so that stdin remains
     // free for the binary upload protocol (otherwise the shell buffers ahead
     // and eats the data meant for `read` inside the script).
-    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_hash()?);
+    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
     let escaped = script.replace('\'', "'\\''");
     let sh_cmd = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         let escaped_val = rust_log.replace('\'', "'\\''");
@@ -686,7 +695,7 @@ async fn create_remote_connection(
         Ok((ChildWaitHandle { child }, stream))
     } else if let Some(triple) = status_line.strip_prefix("NEWT:NEED:") {
         // Need to upload the binary
-        let binary_path = find_agent_binary(triple)?;
+        let binary_path = agent_resolver.find_agent_binary(triple)?;
         let binary_data = tokio::fs::read(&binary_path).await?;
         let size = binary_data.len();
 
@@ -723,6 +732,16 @@ struct MainWindowContextInner {
     window: WebviewWindow,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
+
+    file_server_port: u16,
+    file_server_token: String,
+    _file_server_handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for MainWindowContextInner {
+    fn drop(&mut self) {
+        self._file_server_handle.abort();
+    }
 }
 
 #[derive(Clone)]
@@ -816,6 +835,7 @@ impl MainWindowContext {
         connection_target: ConnectionTarget,
         window_title: String,
         init_channel: Option<&Channel<InitEvent>>,
+        agent_resolver: &AgentResolver,
     ) -> Result<Self, Error> {
         // Create state and publisher first
         let mut global_state = MainWindowState::new();
@@ -888,7 +908,8 @@ impl MainWindowContext {
             }
             ConnectionTarget::Remote { transport_cmd } => {
                 send_init_status(init_channel, "Connecting to remote host...");
-                let (child, stream) = create_remote_connection(transport_cmd, &publisher).await?;
+                let (child, stream) =
+                    create_remote_connection(transport_cmd, &publisher, agent_resolver).await?;
 
                 let pending_streams: PendingStreams =
                     Arc::new(parking_lot::Mutex::new(HashMap::new()));
@@ -947,7 +968,7 @@ impl MainWindowContext {
                 }
 
                 send_init_status(init_channel, "Waiting for authorization...");
-                let agent_path = find_local_agent_binary()?;
+                let agent_path = agent_resolver.find_local_agent_binary()?;
                 let mut cmd = tokio::process::Command::new("pkexec");
                 cmd.arg(&agent_path)
                     .stdin(Stdio::piped())
@@ -1053,6 +1074,10 @@ impl MainWindowContext {
             });
         }
 
+        let file_server_token = uuid::Uuid::new_v4().to_string();
+        let (file_server_port, file_server_handle) =
+            crate::file_server::start(file_reader.clone(), file_server_token.clone());
+
         let ctx = Self {
             inner: Arc::new(MainWindowContextInner {
                 fs,
@@ -1066,6 +1091,9 @@ impl MainWindowContext {
                 window,
                 publisher,
                 main_window_state: global_state,
+                file_server_port,
+                file_server_token,
+                _file_server_handle: file_server_handle,
             }),
         };
         Ok(ctx)
@@ -1085,6 +1113,13 @@ impl MainWindowContext {
 
     pub fn file_reader(&self) -> Arc<dyn FileReader> {
         self.inner.file_reader.clone()
+    }
+
+    pub fn file_server_base_url(&self) -> String {
+        format!(
+            "http://[::1]:{}/{}",
+            self.inner.file_server_port, self.inner.file_server_token
+        )
     }
 
     pub fn window(&self) -> WebviewWindow {

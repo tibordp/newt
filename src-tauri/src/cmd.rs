@@ -53,6 +53,7 @@ pub async fn init(
         global_ctx.connection_target.clone(),
         global_ctx.window_title.clone(),
         Some(&on_event),
+        global_ctx.agent_resolver(),
     )
     .await?;
 
@@ -245,6 +246,7 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("path", &path_display)
         .append_pair("vfs_path", &vfs_path_json)
+        .append_pair("file_server_base", &ctx.file_server_base_url())
         .finish();
     let url_path = format!("/viewer?{}", query);
 
@@ -267,7 +269,10 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
         let text_item = MenuItem::with_id(app_handle, "viewer_mode_text", "Text", true, None::<&str>)?;
         let hex_item = MenuItem::with_id(app_handle, "viewer_mode_hex", "Hex", true, None::<&str>)?;
         let image_item = MenuItem::with_id(app_handle, "viewer_mode_image", "Image", true, None::<&str>)?;
-        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&text_item, &hex_item, &image_item])?;
+        let audio_item = MenuItem::with_id(app_handle, "viewer_mode_audio", "Audio", true, None::<&str>)?;
+        let video_item = MenuItem::with_id(app_handle, "viewer_mode_video", "Video", true, None::<&str>)?;
+        let pdf_item = MenuItem::with_id(app_handle, "viewer_mode_pdf", "PDF", true, None::<&str>)?;
+        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&text_item, &hex_item, &image_item, &audio_item, &video_item, &pdf_item])?;
         Ok(Menu::with_items(app_handle, &[&view_submenu])?)
     })() {
         let _ = viewer_window.set_menu(menu);
@@ -276,6 +281,9 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
                 "viewer_mode_text" => "text",
                 "viewer_mode_hex" => "hex",
                 "viewer_mode_image" => "image",
+                "viewer_mode_audio" => "audio",
+                "viewer_mode_video" => "video",
+                "viewer_mode_pdf" => "pdf",
                 _ => return,
             };
             let _ = window.emit("viewer-mode-change", mode);

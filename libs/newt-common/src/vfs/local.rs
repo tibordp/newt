@@ -287,18 +287,18 @@ impl Vfs for LocalVfs {
                 move |res: Result<Event, notify::Error>| {
                     match res {
                         Ok(event) => {
-                            debug!("{:?} (while watching {})", event, path.display());
                             let should_notify = match event.kind {
                                 EventKind::Remove(RemoveKind::Folder) => event
-                                    .paths
-                                    .iter()
-                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                .paths
+                                .iter()
+                                .any(|p| path.starts_with(p) || p.starts_with(&path)),
                                 EventKind::Access(_) => false,
                                 _ => event.paths.iter().any(|p| p.starts_with(&path)),
                             };
 
                             if should_notify {
                                 if let Some(s) = tx.lock().take() {
+                                    debug!("{:?} (while watching {})", event, path.display());
                                     let _ = s.send(());
                                 }
                             }
@@ -306,7 +306,7 @@ impl Vfs for LocalVfs {
                         Err(e) => warn!("watch error: {:?}", e),
                     };
                 },
-                Config::default(),
+                Config::default().with_follow_symlinks(false),
             )?
         };
 
