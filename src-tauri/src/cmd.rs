@@ -8,6 +8,7 @@ use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{lookup_descriptor, MountRequest, VfsId, VfsPath};
 use shell_quote::Quote;
 use tauri::ipc::Invoke;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::WebviewWindow;
 use tauri::Window;
@@ -247,8 +248,9 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
         .finish();
     let url_path = format!("/viewer?{}", query);
 
-    tauri::WebviewWindowBuilder::new(
-        window.app_handle(),
+    let app_handle = window.app_handle();
+    let viewer_window = tauri::WebviewWindowBuilder::new(
+        app_handle,
         &viewer_label,
         tauri::WebviewUrl::App(url_path.into()),
     )
@@ -258,6 +260,27 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
     .inner_size(800.0, 600.0)
     .build()
     .unwrap();
+
+    // Add a "View" menu to switch between Text, Hex, and Image modes
+    if let Ok(menu) = (|| -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+        use tauri::menu::{Menu, MenuItem, Submenu};
+        let text_item = MenuItem::with_id(app_handle, "viewer_mode_text", "Text", true, None::<&str>)?;
+        let hex_item = MenuItem::with_id(app_handle, "viewer_mode_hex", "Hex", true, None::<&str>)?;
+        let image_item = MenuItem::with_id(app_handle, "viewer_mode_image", "Image", true, None::<&str>)?;
+        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&text_item, &hex_item, &image_item])?;
+        Ok(Menu::with_items(app_handle, &[&view_submenu])?)
+    })() {
+        let _ = viewer_window.set_menu(menu);
+        viewer_window.on_menu_event(move |window, event| {
+            let mode = match event.id().as_ref() {
+                "viewer_mode_text" => "text",
+                "viewer_mode_hex" => "hex",
+                "viewer_mode_image" => "image",
+                _ => return,
+            };
+            let _ = window.emit("viewer-mode-change", mode);
+        });
+    }
 }
 
 #[tauri::command]

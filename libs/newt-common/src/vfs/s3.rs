@@ -529,12 +529,30 @@ impl Vfs for S3Vfs {
             .map_err(|e| Error::Custom(e.to_string()))?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
-        let content_type = resp.content_type().unwrap_or("");
-        let is_binary = !content_type.starts_with("text/")
-            && content_type != "application/json"
-            && content_type != "application/xml";
+        let mime_type = resp.content_type().map(|s| s.to_string());
+        let is_dir = key.ends_with('/') && size == 0;
 
-        Ok(FileDetails { size, is_binary })
+        let modified = resp.last_modified().and_then(|d| {
+            let secs = d.secs();
+            let nanos = d.subsec_nanos();
+            std::time::SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::new(secs as u64, nanos))
+                .map(|t| t.to_unix())
+        });
+
+        Ok(FileDetails {
+            size,
+            mime_type,
+            is_dir,
+            is_symlink: false,
+            symlink_target: None,
+            user: None,
+            group: None,
+            mode: None,
+            modified,
+            accessed: None,
+            created: None,
+        })
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {

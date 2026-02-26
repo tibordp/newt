@@ -102,13 +102,14 @@ export const useRemoteState = <T>(
         setState((s) => {
           let ret;
           if (event.payload.patch) {
-            if (version.current !== null &&event.payload.version === version.current + 1) {
+            if (version.current !== null && event.payload.version === version.current + 1) {
               version.current = event.payload.version;
               ret = applyPatches(s, event.payload.patch);
             } else if (version.current !== null) {
               // this should never happen, but just in case
               console.warn("version mismatch, requesting full state...");
               invoke("ping", {}).catch(() => {});
+              ret = s;
             }
           } else {
             version.current = event.payload.version;

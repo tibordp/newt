@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use crate::filesystem::{Mode, UserGroup};
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
 use crate::Error;
@@ -5,7 +8,16 @@ use crate::Error;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileDetails {
     pub size: u64,
-    pub is_binary: bool,
+    pub mime_type: Option<String>,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub symlink_target: Option<PathBuf>,
+    pub user: Option<UserGroup>,
+    pub group: Option<UserGroup>,
+    pub mode: Option<Mode>,
+    pub modified: Option<i128>,
+    pub accessed: Option<i128>,
+    pub created: Option<i128>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

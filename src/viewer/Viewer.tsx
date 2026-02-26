@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { message } from "@tauri-apps/plugin-dialog";
 import {
   useCallback,
@@ -15,7 +16,63 @@ import type { VfsPath } from "../lib/types";
 
 interface FileInfo {
   size: number;
-  is_binary: boolean;
+  mime_type: string | null;
+  is_dir: boolean;
+  is_symlink: boolean;
+  symlink_target: string | null;
+  user: unknown;
+  group: unknown;
+  mode: unknown;
+  modified: number | null;
+  accessed: number | null;
+  created: number | null;
+}
+
+const TEXT_MIME_PREFIXES = ["text/"];
+const TEXT_MIME_TYPES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/typescript",
+  "application/xhtml+xml",
+  "application/x-sh",
+  "application/x-csh",
+  "application/x-httpd-php",
+  "application/graphql",
+  "application/sql",
+  "application/x-yaml",
+  "application/toml",
+  "application/x-perl",
+  "application/x-ruby",
+  "application/x-python",
+  "application/x-lua",
+  "application/wasm",
+  "application/ld+json",
+  "application/manifest+json",
+  "application/schema+json",
+  "image/svg+xml",
+]);
+
+function isTextMime(mime: string | null): boolean {
+  if (!mime) return false;
+  if (TEXT_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;
+  if (TEXT_MIME_TYPES.has(mime)) return true;
+  // Catch-all for +xml, +json suffixes
+  if (mime.endsWith("+xml") || mime.endsWith("+json")) return true;
+  return false;
+}
+
+function isImageMime(mime: string | null): boolean {
+  if (!mime) return false;
+  return mime.startsWith("image/");
+}
+
+type ViewerMode = "text" | "hex" | "image";
+
+function detectAutoMode(mime: string | null): ViewerMode {
+  if (isImageMime(mime)) return "image";
+  if (isTextMime(mime)) return "text";
+  return "hex";
 }
 
 interface FileChunk {
@@ -587,6 +644,244 @@ function HexViewer({
   );
 }
 
+// --- Image mode rendering ---
+
+interface ImageViewerProps {
+  filePath: string;
+  vfsPath: VfsPath;
+  fileSize: number;
+}
+
+function clampView(
+  z: number, px: number, py: number,
+  ns: { w: number; h: number }, cw: number, ch: number
+) {
+  const minZoom = Math.min(cw / ns.w, ch / ns.h, 1);
+  const zoom = Math.max(z, minZoom);
+  const imgW = ns.w * zoom;
+  const imgH = ns.h * zoom;
+  return {
+    zoom,
+    pan: {
+      x: imgW <= cw ? (cw - imgW) / 2 : Math.min(0, Math.max(cw - imgW, px)),
+      y: imgH <= ch ? (ch - imgH) / 2 : Math.min(0, Math.max(ch - imgH, py)),
+    },
+  };
+}
+
+function ImageViewer({ filePath, vfsPath, fileSize }: ImageViewerProps) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [imageError, setImageError] = useState(false);
+  const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+
+  // Keep a ref to latest state so native event listeners can read it
+  const stateRef = useRef({ zoom, pan, naturalSize });
+  stateRef.current = { zoom, pan, naturalSize };
+
+  useEffect(() => {
+    viewerRef.current?.focus();
+  }, []);
+
+  const applyView = useCallback((z: number, px: number, py: number) => {
+    const container = containerRef.current;
+    const ns = stateRef.current.naturalSize;
+    if (!ns || !container) return;
+    const v = clampView(z, px, py, ns, container.clientWidth, container.clientHeight);
+    setZoom(v.zoom);
+    setPan(v.pan);
+  }, []);
+
+  // Re-clamp on container resize (e.g. window resize while at min zoom)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const { zoom: z, pan: p, naturalSize: ns } = stateRef.current;
+      if (!ns) return;
+      const v = clampView(z, p.x, p.y, ns, container.clientWidth, container.clientHeight);
+      setZoom(v.zoom);
+      setPan(v.pan);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const resetView = useCallback(() => {
+    const container = containerRef.current;
+    const ns = stateRef.current.naturalSize;
+    if (!ns || !container) return;
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const z = Math.min(cw / ns.w, ch / ns.h, 1);
+    applyView(z, (cw - ns.w * z) / 2, (ch - ns.h * z) / 2);
+  }, [applyView]);
+
+  const handleLoad = useCallback(() => {
+    const img = imgRef.current;
+    const container = containerRef.current;
+    if (!img || !container) return;
+    const ns = { w: img.naturalWidth, h: img.naturalHeight };
+    setNaturalSize(ns);
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const z = Math.min(cw / ns.w, ch / ns.h, 1);
+    setZoom(z);
+    setPan({ x: (cw - ns.w * z) / 2, y: (ch - ns.h * z) / 2 });
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case "Escape":
+        safeCommand("close_window");
+        e.preventDefault();
+        break;
+      case "0":
+        resetView();
+        e.preventDefault();
+        break;
+    }
+  }, [resetView]);
+
+  // Non-passive wheel listener so we can preventDefault (React wheel events are passive)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handler = (e: WheelEvent) => {
+      const { zoom: curZoom, pan: curPan, naturalSize: ns } = stateRef.current;
+      if (!ns) return;
+
+      const rect = container.getBoundingClientRect();
+      const minZoom = Math.min(rect.width / ns.w, rect.height / ns.h, 1);
+      const maxZoom = 50;
+
+      // If already at the limit in the scroll direction, let the event pass through
+      const zoomingOut = e.deltaY > 0;
+      if ((zoomingOut && curZoom <= minZoom) || (!zoomingOut && curZoom >= maxZoom)) return;
+
+      e.preventDefault();
+
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const factor = zoomingOut ? 0.9 : 1 / 0.9;
+      const rawZoom = Math.min(curZoom * factor, maxZoom);
+
+      // Image-space point under cursor
+      const imgX = (mouseX - curPan.x) / curZoom;
+      const imgY = (mouseY - curPan.y) / curZoom;
+
+      // Pan that keeps the same image point under cursor
+      const rawPanX = mouseX - imgX * rawZoom;
+      const rawPanY = mouseY - imgY * rawZoom;
+
+      const v = clampView(rawZoom, rawPanX, rawPanY, ns, rect.width, rect.height);
+      setZoom(v.zoom);
+      setPan(v.pan);
+    };
+
+    container.addEventListener("wheel", handler, { passive: false });
+    return () => container.removeEventListener("wheel", handler);
+  }, []);
+
+  // Drag-to-pan: mousedown on container, mousemove/mouseup on window
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 0 || e.button === 1) {
+      const container = containerRef.current;
+      const { zoom: z, pan: curPan, naturalSize: ns } = stateRef.current;
+      if (!ns || !container) return;
+      // Don't start drag if image fits entirely within container
+      if (ns.w * z <= container.clientWidth && ns.h * z <= container.clientHeight) return;
+      e.preventDefault();
+      dragStart.current = { x: e.clientX, y: e.clientY, panX: curPan.x, panY: curPan.y };
+    }
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragStart.current || !container) return;
+      const ns = stateRef.current.naturalSize;
+      if (!ns) return;
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      const v = clampView(
+        stateRef.current.zoom,
+        dragStart.current.panX + dx,
+        dragStart.current.panY + dy,
+        ns, container.clientWidth, container.clientHeight
+      );
+      setPan(v.pan);
+    };
+    const handleMouseUp = () => {
+      dragStart.current = null;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  const imgSrc = convertFileSrc(
+    `${vfsPath.vfs_id}${vfsPath.path}`,
+    "newt-file"
+  );
+
+  const zoomPercent = Math.round(zoom * 100);
+
+  return (
+    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+      <div className={styles.imageContent} ref={containerRef} onMouseDown={handleMouseDown}>
+        {imageError ? (
+          <div className={styles.imageErrorMessage}>
+            Unable to display image preview
+          </div>
+        ) : (
+          <img
+            ref={imgRef}
+            className={styles.imagePreview}
+            src={imgSrc}
+            alt={filePath}
+            onLoad={handleLoad}
+            onError={() => setImageError(true)}
+            draggable={false}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: "0 0",
+            }}
+          />
+        )}
+      </div>
+      <div className={styles.viewerStatus}>
+        <span>{filePath}</span>
+        <span className={styles.statusSeparator}>|</span>
+        <span>Image</span>
+        {naturalSize && (
+          <>
+            <span className={styles.statusSeparator}>|</span>
+            <span>{naturalSize.w} x {naturalSize.h}</span>
+          </>
+        )}
+        {!imageError && (
+          <>
+            <span className={styles.statusSeparator}>|</span>
+            <span>{zoomPercent}%</span>
+          </>
+        )}
+        <span className={styles.statusSeparator}>|</span>
+        <span>{formatSize(fileSize)}</span>
+      </div>
+    </div>
+  );
+}
+
 // --- Main Viewer component ---
 
 function Viewer() {
@@ -598,10 +893,19 @@ function Viewer() {
 
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeMode, setActiveMode] = useState<ViewerMode | null>(null);
 
   const chunkCache = useRef(new Map<number, Uint8Array>());
 
-  // Fetch file info (and first binary chunk) on mount
+  // Listen for menu-driven mode changes
+  useEffect(() => {
+    const unlisten = getCurrentWebviewWindow().listen<string>("viewer-mode-change", (event) => {
+      setActiveMode(event.payload as ViewerMode);
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  // Fetch file info on mount
   useEffect(() => {
     if (!displayPath) return;
     document.title = displayPath;
@@ -610,16 +914,6 @@ function Viewer() {
       try {
         const fi: FileInfo = await invoke("file_details", { path: filePath });
         setInfo(fi);
-
-        if (fi.is_binary) {
-          // Binary file: load first chunk into cache
-          const chunk: FileChunk = await invoke("read_file_range", {
-            path: filePath,
-            offset: 0,
-            length: CHUNK_SIZE,
-          });
-          chunkCache.current.set(0, new Uint8Array(chunk.data));
-        }
       } catch (e: any) {
         setError(e.toString());
         await message(e.toString(), { kind: "error", title: "Error" });
@@ -627,11 +921,34 @@ function Viewer() {
     })();
   }, [displayPath]);
 
-  // Chunked text loading — enabled once we know it's a text file
+  const autoMode = info ? detectAutoMode(info.mime_type) : null;
+  const currentMode = activeMode ?? autoMode;
+
+  // Preload first hex chunk when switching to hex mode (or when auto-detected as hex)
+  useEffect(() => {
+    if (!info || currentMode !== "hex") return;
+    if (chunkCache.current.has(0)) return;
+
+    (async () => {
+      try {
+        const chunk: FileChunk = await invoke("read_file_range", {
+          path: filePath,
+          offset: 0,
+          length: CHUNK_SIZE,
+        });
+        chunkCache.current.set(0, new Uint8Array(chunk.data));
+      } catch (e: any) {
+        console.error("Failed to preload first chunk", e);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMode, info]);
+
+  // Chunked text loading — enabled only in text mode
   const textState = useChunkedTextLoader(
     filePath,
     info?.size ?? 0,
-    info !== null && !info.is_binary
+    info !== null && currentMode === "text"
   );
 
   const loadChunk = useCallback(
@@ -676,7 +993,7 @@ function Viewer() {
     );
   }
 
-  if (!info) {
+  if (!info || !currentMode) {
     return (
       <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
         <div className={styles.viewerContent} />
@@ -687,7 +1004,7 @@ function Viewer() {
     );
   }
 
-  if (!info.is_binary) {
+  if (currentMode === "text") {
     return (
       <TextViewer
         lines={textState.lines}
@@ -695,6 +1012,16 @@ function Viewer() {
         fileSize={info.size}
         bytesLoaded={textState.bytesLoaded}
         loading={!textState.done}
+      />
+    );
+  }
+
+  if (currentMode === "image") {
+    return (
+      <ImageViewer
+        filePath={displayPath}
+        vfsPath={filePath}
+        fileSize={info.size}
       />
     );
   }

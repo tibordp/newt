@@ -28,3 +28,4 @@ inventory = "0.3"
 zip = "2"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
+mimetype-detector = "0"

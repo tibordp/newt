@@ -324,16 +324,64 @@ impl Vfs for LocalVfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let path = path.to_path_buf();
+        let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
-            let file = std::fs::File::open(&path)?;
-            let metadata = file.metadata()?;
-            let size = metadata.len();
-            let mut buf = vec![0u8; 8192.min(size as usize)];
-            let mut reader = std::io::BufReader::new(file);
-            let n = reader.read(&mut buf)?;
-            let is_binary = buf[..n].contains(&0);
-            Ok(FileDetails { size, is_binary })
+
+            let symlink_meta = std::fs::symlink_metadata(&path)?;
+            let is_symlink = symlink_meta.is_symlink();
+            let symlink_target = if is_symlink {
+                std::fs::read_link(&path).ok()
+            } else {
+                None
+            };
+
+            let meta = if is_symlink {
+                std::fs::metadata(&path).unwrap_or(symlink_meta)
+            } else {
+                symlink_meta
+            };
+
+            let is_dir = meta.is_dir();
+            let size = meta.len();
+            let mode = meta.mode();
+
+            // MIME detection for files
+            let mime_type = if is_dir {
+                None
+            } else {
+                let file = std::fs::File::open(&path)?;
+                let mut buf = vec![0u8; 8192.min(size as usize)];
+                let mut reader = std::io::BufReader::new(file);
+                let n = reader.read(&mut buf)?;
+                let header = &buf[..n];
+
+                let detected = mimetype_detector::detect(header);
+                if detected.is("application/octet-stream") {
+                    // No specific match — fall back to null-byte heuristic
+                    if !header.contains(&0) {
+                        Some("text/plain".to_string())
+                    } else {
+                        Some("application/octet-stream".to_string())
+                    }
+                } else {
+                    Some(detected.mime().to_string())
+                }
+            };
+
+            Ok(FileDetails {
+                size,
+                mime_type,
+                is_dir,
+                is_symlink,
+                symlink_target,
+                user: cache.user_name(meta.uid()).ok(),
+                group: cache.group_name(meta.gid()).ok(),
+                mode: Some(Mode(mode)),
+                modified: meta.modified().map(|t| t.to_unix()).ok(),
+                accessed: meta.accessed().map(|t| t.to_unix()).ok(),
+                created: meta.created().map(|t| t.to_unix()).ok(),
+            })
         })
         .await?
     }

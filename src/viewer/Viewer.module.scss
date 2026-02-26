@@ -11,7 +11,7 @@
   margin: 0;
   padding: 0;
 
-  background: var(--color-surface);
+  background: var(--color-bg);
   color: var(--color-fg);
 
   cursor: initial;
@@ -87,4 +87,30 @@
 
 .statusError {
   color: var(--color-error);
+}
+
+.imageContent {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+  background: #525252;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.imagePreview {
+  image-rendering: pixelated;
+  display: block;
+}
+
+.imageErrorMessage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-fg-muted);
 }

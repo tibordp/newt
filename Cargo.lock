@@ -3174,6 +3174,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mimetype-detector"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0115ede3c58574c9face0f9da4ca1affcfb8ce8370ab51bc964d7b1ac32a96b"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3284,6 +3290,7 @@ dependencies = [
  "once_cell",
  "opener",
  "parking_lot",
+ "percent-encoding",
  "pretty_env_logger",
  "pty-process",
  "regex",
@@ -3335,6 +3342,7 @@ dependencies = [
  "inventory",
  "libc",
  "log",
+ "mimetype-detector",
  "nix 0.31.1",
  "notify",
  "parking_lot",
