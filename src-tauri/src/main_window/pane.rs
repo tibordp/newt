@@ -183,16 +183,21 @@ impl Pane {
             previous.cancel();
         }
 
-        // Create batch channel and start streaming
-        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<Vec<File>>();
+        // Create batch channel and start streaming.
+        // Skip batches when refreshing the same path — keep the current view
+        // intact and swap in the final result atomically.
+        let same_path = *old_file_list.path() == target;
+        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<FileList>();
         let streaming_fut = self.fs.list_files(
             target.clone(),
             ListFilesOptions { strict: !silent },
-            (!silent).then_some(batch_tx),
+            (!silent && !same_path).then_some(batch_tx),
         );
         tokio::pin!(streaming_fut);
 
         let mut accumulated = Vec::new();
+        let mut batch_path: Option<VfsPath> = None;
+        let mut batch_fs_stats: Option<FsStats> = None;
         let mut first_batch = true;
         let mut last_publish = Instant::now();
         let mut dirty = false;
@@ -207,14 +212,20 @@ impl Pane {
                 result = &mut streaming_fut => {
                     break result.map_err(Error::from);
                 }
-                Some(files) = batch_rx.recv() => {
-                    accumulated.extend(files);
+                Some(file_list) = batch_rx.recv() => {
+                    let incoming_path = file_list.path().clone();
+                    if batch_path.as_ref() != Some(&incoming_path) {
+                        accumulated.clear();
+                        batch_path = Some(incoming_path);
+                    }
+                    batch_fs_stats = file_list.fs_stats().cloned();
+                    accumulated.extend(file_list.files().iter().cloned());
                     if !silent {
                         // On first batch: clear pending_path, set loading=true,
                         // and reset filter/selection/focus for the new directory
                         if first_batch {
                             let mut ws = self.view_state_mut();
-                            ws.pending_path = None;
+                            ws.pending_path = batch_path.clone();
                             ws.loading = true;
                             ws.set_filter(None);
                             ws.selected.clear();
@@ -225,7 +236,11 @@ impl Pane {
                         // Throttled intermediate publish
                         if first_batch || last_publish.elapsed() >= throttle {
                             let display_options = self.display_options.0.read().clone();
-                            let interim = FileList::new(target.clone(), accumulated.clone(), None);
+                            let interim = FileList::new(
+                                batch_path.clone().unwrap_or_else(|| target.clone()),
+                                accumulated.clone(),
+                                batch_fs_stats.clone(),
+                            );
                             self.view_state_mut().update(display_options, &interim);
                             let _ = self.publisher.publish();
                             last_publish = Instant::now();

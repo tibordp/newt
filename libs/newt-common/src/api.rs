@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 
 use crate::{
     file_reader::FileReader,
-    filesystem::{File, Filesystem, ListFilesOptions, ShellService, StreamId},
+    filesystem::{FileList, Filesystem, ListFilesOptions, ShellService, StreamId},
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
@@ -81,13 +81,14 @@ impl Dispatcher for FilesystemDispatcher {
                 let (path, opts, stream_id): (VfsPath, ListFilesOptions, StreamId) =
                     bincode::deserialize(&req[..]).unwrap();
 
-                let (batch_tx, mut batch_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<File>>();
+                let (batch_tx, mut batch_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<FileList>();
 
                 // Spawn a forwarder task: batches → Notify messages
                 let outbox = self.outbox.clone();
                 let forwarder = tokio::spawn(async move {
-                    while let Some(files) = batch_rx.recv().await {
-                        let bytes = bincode::serialize(&(stream_id, files)).unwrap();
+                    while let Some(file_list) = batch_rx.recv().await {
+                        let bytes = bincode::serialize(&(stream_id, file_list)).unwrap();
                         let _ = outbox.send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()));
                     }
                 });

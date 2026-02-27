@@ -4,7 +4,7 @@ pub mod terminal;
 use newt_common::api::{VfsRegistryManager, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{
-    File, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
+    FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
     UserGroup,
 };
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
@@ -494,9 +494,10 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
             let _ = self.publisher.publish();
             Ok(true)
         } else if api == API_LIST_FILES_BATCH {
-            let (stream_id, files): (StreamId, Vec<File>) = bincode::deserialize(&req[..]).unwrap();
+            let (stream_id, file_list): (StreamId, FileList) =
+                bincode::deserialize(&req[..]).unwrap();
             if let Some(tx) = self.pending_streams.lock().get(&stream_id) {
-                let _ = tx.send(files);
+                let _ = tx.send(file_list);
             }
             Ok(true)
         } else {

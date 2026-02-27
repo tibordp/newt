@@ -19,7 +19,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails, FileReader};
-use crate::filesystem::{File, FileList, Filesystem, ListFilesOptions, VfsFileList};
+use crate::filesystem::{File, FileList, FsStats, Filesystem, ListFilesOptions};
 use crate::rpc::Communicator;
 use crate::Error;
 
@@ -137,6 +137,7 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
 
     // --- Capabilities ---
     fn has_symlinks(&self) -> bool;
+    fn can_fs_stats(&self) -> bool;
 
     // --- Same-VFS fast paths ---
     fn can_rename(&self) -> bool;
@@ -287,10 +288,10 @@ pub trait Vfs: Send + Sync {
     async fn list_files(
         &self,
         path: &Path,
-        opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<VfsFileList, Error>;
+    ) -> Result<Vec<File>, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
+    async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error>;
 
     // --- Read ---
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
@@ -472,16 +473,68 @@ impl Filesystem for VfsRegistryFs {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
     ) -> Result<FileList, Error> {
         let vfs_id = path.vfs_id;
-        let (vfs, local_path) = self.registry.resolve(&path)?;
-        let result = vfs.list_files(&local_path, options, batch_tx).await?;
-        Ok(FileList::new(
-            VfsPath::new(vfs_id, result.path),
-            result.files,
-            result.fs_stats,
-        ))
+        let (vfs, mut local_path) = self.registry.resolve(&path)?;
+        loop {
+            let fs_stats = if vfs.descriptor().can_fs_stats() {
+                vfs.fs_stats(&local_path).await.unwrap_or(None)
+            } else {
+                None
+            };
+
+            let (inner_tx, forwarder) = if let Some(ref outer_tx) = batch_tx {
+                let (tx, mut rx) = mpsc::unbounded_channel::<Vec<File>>();
+                let outer_tx = outer_tx.clone();
+                let vfs_path = VfsPath::new(vfs_id, local_path.clone());
+                let fs_stats = fs_stats.clone();
+                let handle = tokio::spawn(async move {
+                    while let Some(files) = rx.recv().await {
+                        let batch = FileList::new(vfs_path.clone(), files, fs_stats.clone());
+                        if outer_tx.send(batch).is_err() {
+                            break;
+                        }
+                    }
+                });
+                (Some(tx), Some(handle))
+            } else {
+                (None, None)
+            };
+
+            match vfs.list_files(&local_path, inner_tx).await {
+                Ok(files) => {
+                    if let Some(h) = forwarder {
+                        let _ = h.await;
+                    }
+                    return Ok(FileList::new(
+                        VfsPath::new(vfs_id, local_path),
+                        files,
+                        fs_stats,
+                    ));
+                }
+                Err(Error::Io(e))
+                    if matches!(
+                        (e.kind(), options.strict),
+                        (std::io::ErrorKind::NotFound, false)
+                            | (std::io::ErrorKind::NotADirectory, _)
+                    ) =>
+                {
+                    if let Some(h) = forwarder {
+                        let _ = h.await;
+                    }
+                    if !local_path.pop() {
+                        return Err(e.into());
+                    }
+                }
+                Err(e) => {
+                    if let Some(h) = forwarder {
+                        let _ = h.await;
+                    }
+                    return Err(e);
+                }
+            }
+        }
     }
 
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {

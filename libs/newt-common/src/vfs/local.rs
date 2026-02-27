@@ -11,7 +11,7 @@ use std::os::unix::prelude::MetadataExt;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
+use crate::filesystem::{File, FsStats, Mode};
 use crate::{Error, ToUnix};
 
 use std::path::PathBuf;
@@ -72,6 +72,9 @@ impl VfsDescriptor for LocalVfsDescriptor {
         true
     }
     fn has_symlinks(&self) -> bool {
+        true
+    }
+    fn can_fs_stats(&self) -> bool {
         true
     }
     fn can_rename(&self) -> bool {
@@ -155,125 +158,106 @@ impl Vfs for LocalVfs {
     async fn list_files(
         &self,
         path: &Path,
-        opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<VfsFileList, Error> {
+    ) -> Result<Vec<File>, Error> {
         assert!(path.is_absolute());
-        let mut path = path.to_path_buf();
-        loop {
-            match tokio::task::spawn_blocking({
-                let path = path.clone();
-                let cache = self.fs_cache.clone();
-                let batch_tx = batch_tx.as_ref().cloned();
-                move || -> Result<Vec<File>, Error> {
-                    const BATCH_SIZE: usize = 500;
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking({
+            let cache = self.fs_cache.clone();
+            move || -> Result<Vec<File>, Error> {
+                const BATCH_SIZE: usize = 500;
 
-                    let mut ret = Vec::new();
-                    let mut batch = Vec::new();
+                let mut ret = Vec::new();
+                let mut batch = Vec::new();
 
-                    if let Some(parent) = path.parent() {
-                        let metadata = parent.symlink_metadata()?;
-                        let mode = metadata.mode();
-                        let file = File {
-                            name: "..".to_string(),
-                            size: None,
-                            is_dir: true,
-                            is_symlink: metadata.is_symlink(),
-                            symlink_target: None,
-                            is_hidden: false,
-                            user: cache.user_name(metadata.uid()).ok(),
-                            group: cache.group_name(metadata.gid()).ok(),
-                            mode: Mode(mode),
-                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                            created: metadata.created().map(|t| t.to_unix()).ok(),
-                        };
-                        batch.push(file.clone());
-                        ret.push(file);
-                    }
+                if let Some(parent) = path.parent() {
+                    let metadata = parent.symlink_metadata()?;
+                    let mode = metadata.mode();
+                    let file = File {
+                        name: "..".to_string(),
+                        size: None,
+                        is_dir: true,
+                        is_symlink: metadata.is_symlink(),
+                        symlink_target: None,
+                        is_hidden: false,
+                        user: cache.user_name(metadata.uid()).ok(),
+                        group: cache.group_name(metadata.gid()).ok(),
+                        mode: Mode(mode),
+                        modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                        accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                        created: metadata.created().map(|t| t.to_unix()).ok(),
+                    };
+                    batch.push(file.clone());
+                    ret.push(file);
+                }
 
-                    for maybe_entry in std::fs::read_dir(&path)? {
-                        let entry = maybe_entry?;
-                        let metadata = entry.metadata()?;
-                        let file_type = metadata.file_type();
+                for maybe_entry in std::fs::read_dir(&path)? {
+                    let entry = maybe_entry?;
+                    let metadata = entry.metadata()?;
+                    let file_type = metadata.file_type();
 
-                        let name = entry.file_name().into_string().unwrap();
-                        let mut is_dir = file_type.is_dir();
+                    let name = entry.file_name().into_string().unwrap();
+                    let mut is_dir = file_type.is_dir();
 
-                        let symlink_target = if file_type.is_symlink() {
-                            let target_metadata = std::fs::metadata(entry.path());
-                            if let Ok(target_metadata) = target_metadata {
-                                is_dir = target_metadata.is_dir();
+                    let symlink_target = if file_type.is_symlink() {
+                        let target_metadata = std::fs::metadata(entry.path());
+                        if let Ok(target_metadata) = target_metadata {
+                            is_dir = target_metadata.is_dir();
+                        }
+                        std::fs::read_link(entry.path()).ok()
+                    } else {
+                        None
+                    };
+
+                    let mode = metadata.mode();
+                    let file = File {
+                        name: name.clone(),
+                        size: (!is_dir).then_some(metadata.len()),
+                        is_dir,
+                        is_symlink: file_type.is_symlink(),
+                        symlink_target,
+                        is_hidden: name.starts_with('.'),
+                        user: cache.user_name(metadata.uid()).ok(),
+                        group: cache.group_name(metadata.gid()).ok(),
+                        mode: Mode(mode),
+                        modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                        accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                        created: metadata.created().map(|t| t.to_unix()).ok(),
+                    };
+                    batch.push(file.clone());
+                    ret.push(file);
+
+                    if batch.len() >= BATCH_SIZE {
+                        if let Some(ref tx) = batch_tx {
+                            if tx.send(std::mem::take(&mut batch)).is_err() {
+                                // Receiver dropped — cancelled
+                                return Ok(ret);
                             }
-                            std::fs::read_link(entry.path()).ok()
                         } else {
-                            None
-                        };
-
-                        let mode = metadata.mode();
-                        let file = File {
-                            name: name.clone(),
-                            size: (!is_dir).then_some(metadata.len()),
-                            is_dir,
-                            is_symlink: file_type.is_symlink(),
-                            symlink_target,
-                            is_hidden: name.starts_with('.'),
-                            user: cache.user_name(metadata.uid()).ok(),
-                            group: cache.group_name(metadata.gid()).ok(),
-                            mode: Mode(mode),
-                            modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                            accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                            created: metadata.created().map(|t| t.to_unix()).ok(),
-                        };
-                        batch.push(file.clone());
-                        ret.push(file);
-
-                        if batch.len() >= BATCH_SIZE {
-                            if let Some(ref tx) = batch_tx {
-                                if tx.send(std::mem::take(&mut batch)).is_err() {
-                                    // Receiver dropped — cancelled
-                                    return Ok(ret);
-                                }
-                            } else {
-                                batch.clear();
-                            }
+                            batch.clear();
                         }
                     }
-
-                    // Send any remaining entries as a final batch
-                    if let Some(ref tx) = batch_tx {
-                        if !batch.is_empty() {
-                            let _ = tx.send(batch);
-                        }
-                    }
-
-                    Ok(ret)
                 }
-            })
-            .await?
-            {
-                Ok(files) => {
-                    let stats = nix::sys::statvfs::statvfs(&path)
-                        .ok()
-                        .map(crate::filesystem::FsStats::from);
-                    return Ok(VfsFileList {
-                        path,
-                        files,
-                        fs_stats: stats,
-                    });
-                }
-                Err(Error::Io(e)) => match (e.kind(), opts.strict) {
-                    (std::io::ErrorKind::NotFound, false)
-                    | (std::io::ErrorKind::NotADirectory, _) => {
-                        if !path.pop() {
-                            return Err(e.into());
-                        }
+
+                // Send any remaining entries as a final batch
+                if let Some(ref tx) = batch_tx {
+                    if !batch.is_empty() {
+                        let _ = tx.send(batch);
                     }
-                    _ => return Err(e.into()),
-                },
-                Err(e) => return Err(e),
+                }
+
+                Ok(ret)
             }
-        }
+        })
+        .await?
+    }
+
+    async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error> {
+        let path = path.to_path_buf();
+        Ok(tokio::task::spawn_blocking(move || {
+            nix::sys::statvfs::statvfs(&path).ok().map(FsStats::from)
+        })
+        .await?)
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {

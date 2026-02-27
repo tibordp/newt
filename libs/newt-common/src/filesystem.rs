@@ -125,16 +125,6 @@ impl FileList {
     }
 }
 
-/// Result of `Vfs::list_files` — uses `PathBuf` because the Vfs layer
-/// doesn't know its own `VfsId`. `VfsRegistryFs` wraps this into a full
-/// `FileList` with the correct id.
-#[derive(Debug)]
-pub struct VfsFileList {
-    pub path: PathBuf,
-    pub files: Vec<File>,
-    pub fs_stats: Option<FsStats>,
-}
-
 /// Canonicalize . and .. segments in a path (without following symlinks or
 /// checking whether they exists)
 pub fn resolve(path: &Path) -> PathBuf {
@@ -221,7 +211,7 @@ pub trait Filesystem: Send + Sync {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
     ) -> Result<FileList, Error>;
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
@@ -245,7 +235,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
     ) -> Result<FileList, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         // Get the full listing from the inner filesystem, then drip-feed it
@@ -254,7 +244,12 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         if let Some(batch_tx) = batch_tx {
             for chunk in file_list.files().chunks(100) {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                if batch_tx.send(chunk.to_vec()).is_err() {
+                let batch = FileList::new(
+                    file_list.path().clone(),
+                    chunk.to_vec(),
+                    file_list.fs_stats().cloned(),
+                );
+                if batch_tx.send(batch).is_err() {
                     break;
                 }
             }
@@ -276,7 +271,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
 }
 
 pub type PendingStreams =
-    Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::UnboundedSender<Vec<File>>>>>;
+    Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::UnboundedSender<FileList>>>>;
 
 pub struct Remote {
     communicator: Communicator,
@@ -320,7 +315,7 @@ impl Filesystem for Remote {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
     ) -> Result<FileList, Error> {
         if let Some(batch_tx) = batch_tx {
             let stream_id = StreamId(

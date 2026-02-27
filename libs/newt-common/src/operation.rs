@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::filesystem::ListFilesOptions;
 use crate::rpc::Communicator;
 use crate::vfs::{Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
@@ -571,11 +570,8 @@ async fn plan_copy(
         let parent = source
             .parent()
             .ok_or_else(|| crate::Error::Custom("source has no parent".to_string()))?;
-        let file_list = src_vfs
-            .list_files(parent, ListFilesOptions { strict: true }, None)
-            .await?;
+        let file_list = src_vfs.list_files(parent, None).await?;
         let file_entry = file_list
-            .files
             .iter()
             .find(|f| f.name == file_name.to_string_lossy())
             .ok_or_else(|| {
@@ -601,10 +597,8 @@ async fn plan_copy(
             });
 
             while let Some((src_dir, dst_dir)) = stack.pop() {
-                let file_list = src_vfs
-                    .list_files(&src_dir, ListFilesOptions { strict: true }, None)
-                    .await?;
-                for file in &file_list.files {
+                let file_list = src_vfs.list_files(&src_dir, None).await?;
+                for file in &file_list {
                     if file.name == ".." {
                         continue;
                     }
@@ -1239,11 +1233,8 @@ async fn probe_is_dir(vfs: &dyn Vfs, path: &Path) -> Result<bool, crate::Error> 
             let file_name = path.file_name().map(|n| n.to_string_lossy().to_string());
             match file_name {
                 Some(name) => {
-                    let listing = vfs
-                        .list_files(parent, ListFilesOptions { strict: true }, None)
-                        .await?;
+                    let listing = vfs.list_files(parent, None).await?;
                     Ok(listing
-                        .files
                         .iter()
                         .find(|f| f.name == name)
                         .map_or(false, |f| f.is_dir && !f.is_symlink))
@@ -1270,10 +1261,8 @@ async fn collect_delete_entries(
     let mut stack = vec![path.to_path_buf()];
 
     while let Some(dir) = stack.pop() {
-        let file_list = vfs
-            .list_files(&dir, ListFilesOptions { strict: true }, None)
-            .await?;
-        for file in &file_list.files {
+        let file_list = vfs.list_files(&dir, None).await?;
+        for file in &file_list {
             if file.name == ".." {
                 continue;
             }

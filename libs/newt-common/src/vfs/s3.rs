@@ -7,7 +7,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, ListFilesOptions, Mode, VfsFileList};
+use crate::filesystem::{File, FsStats, Mode};
 use crate::{Error, ToUnix};
 
 use super::{
@@ -70,6 +70,9 @@ impl VfsDescriptor for S3VfsDescriptor {
         false
     }
     fn has_symlinks(&self) -> bool {
+        false
+    }
+    fn can_fs_stats(&self) -> bool {
         false
     }
     fn can_rename(&self) -> bool {
@@ -243,7 +246,7 @@ impl S3Vfs {
     async fn list_buckets(
         &self,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<VfsFileList, Error> {
+    ) -> Result<Vec<File>, Error> {
         let resp = self
             .default_client
             .list_buckets()
@@ -286,11 +289,7 @@ impl S3Vfs {
             }
         }
 
-        Ok(VfsFileList {
-            path: PathBuf::from("/"),
-            files,
-            fs_stats: None,
-        })
+        Ok(files)
     }
 
     async fn list_objects(
@@ -298,7 +297,7 @@ impl S3Vfs {
         bucket: &str,
         prefix: Option<&str>,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<VfsFileList, Error> {
+    ) -> Result<Vec<File>, Error> {
         // S3 requires prefixes to end with '/' to list directory contents
         let prefix = prefix.map(|p| {
             if p.ends_with('/') {
@@ -430,16 +429,7 @@ impl S3Vfs {
             }
         }
 
-        let full_path = match prefix {
-            Some(p) => format!("/{}/{}", bucket, p),
-            None => format!("/{}", bucket),
-        };
-
-        Ok(VfsFileList {
-            path: PathBuf::from(&full_path),
-            files,
-            fs_stats: None,
-        })
+        Ok(files)
     }
 }
 
@@ -452,9 +442,8 @@ impl Vfs for S3Vfs {
     async fn list_files(
         &self,
         path: &Path,
-        _opts: ListFilesOptions,
         batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
-    ) -> Result<VfsFileList, Error> {
+    ) -> Result<Vec<File>, Error> {
         let (bucket, prefix) = Self::parse_path(path);
         match bucket {
             None => self.list_buckets(batch_tx).await,
@@ -463,6 +452,10 @@ impl Vfs for S3Vfs {
                     .await
             }
         }
+    }
+
+    async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {
+        Ok(None)
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
