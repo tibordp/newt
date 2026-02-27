@@ -119,21 +119,14 @@ impl Command {
     /// [`tokio::process::Command::spawn`]), or if we fail to make the child a
     /// session leader or set its controlling terminal.
     pub fn spawn(&mut self, pts: &crate::Pts) -> crate::Result<tokio::process::Child> {
-        let (stdin, stdout, stderr) = pts.0.setup_subprocess()?;
+        let mut session_leader =
+            pts.0
+                .session_leader([!self.stdin, !self.stdout, !self.stderr]);
 
-        if !self.stdin {
-            self.inner.stdin(stdin);
-        }
-        if !self.stdout {
-            self.inner.stdout(stdout);
-        }
-        if !self.stderr {
-            self.inner.stderr(stderr);
-        }
-
-        let mut session_leader = pts.0.session_leader();
-        // Safety: setsid() is an async-signal-safe function and ioctl() is a
-        // raw syscall (which is inherently async-signal-safe).
+        // Safety: the closure only uses async-signal-safe syscalls (setsid,
+        // open, ioctl, dup2, close). The CString allocation for the slave
+        // path happens in session_leader() above, before the closure is
+        // returned, so nothing allocates between fork and exec.
         if let Some(mut custom) = self.pre_exec.take() {
             unsafe {
                 self.inner.pre_exec(move || {

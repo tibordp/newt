@@ -1,4 +1,5 @@
 use std::os::fd::{AsRawFd as _, FromRawFd as _};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Pty(pub nix::pty::PtyMaster);
@@ -55,11 +56,7 @@ impl Pty {
     }
 
     pub fn pts(&self) -> crate::Result<Pts> {
-        Ok(Pts(std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.get_slave_name()?)?
-            .into()))
+        Ok(Pts(self.get_slave_name()?))
     }
 
     #[cfg(target_os = "macos")]
@@ -133,68 +130,53 @@ impl std::os::fd::AsRawFd for Pty {
     }
 }
 
-pub struct Pts(std::os::fd::OwnedFd);
+pub struct Pts(PathBuf);
 
 impl Pts {
-    pub fn setup_subprocess(
-        &self,
-    ) -> std::io::Result<(
-        std::process::Stdio,
-        std::process::Stdio,
-        std::process::Stdio,
-    )> {
-        Ok((
-            self.0.try_clone()?.into(),
-            self.0.try_clone()?.into(),
-            self.0.try_clone()?.into(),
-        ))
-    }
+    /// Returns a closure suitable for `pre_exec` that sets up the child as a
+    /// session leader with the slave PTY as its controlling terminal.
+    ///
+    /// `dup_fds` controls which of stdin(0)/stdout(1)/stderr(2) get dup2'd to
+    /// the slave fd. Pass `false` for any fd that was overridden by the caller
+    /// (e.g. via `Command::stdin()`).
+    ///
+    /// The closure only uses async-signal-safe syscalls (`setsid`, `open`,
+    /// `ioctl`, `dup2`, `close`). The `CString` allocation for the path is
+    /// done here, before the closure is returned, so nothing allocates between
+    /// fork and exec.
+    pub fn session_leader(&self, dup_fds: [bool; 3]) -> impl FnMut() -> std::io::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(self.0.as_os_str().as_bytes().to_vec())
+            .expect("slave path contains null");
 
-    pub fn session_leader(&self) -> impl FnMut() -> std::io::Result<()> {
-        let fd = self.0.as_raw_fd();
         move || {
             nix::unistd::setsid()?;
-//            return Ok(());
-            // Use fd 0 (stdin) for TIOCSCTTY — by this point stdin has been
-            // dup2'd to the PTS slave. We can't use the original PTS fd because
-            // std::process closes all O_CLOEXEC fds before running pre_exec.
-            //
-            // Call libc::ioctl directly instead of using the nix ioctl_write_ptr_bad!
-            // macro, because TIOCSCTTY expects an integer argument (0 = don't steal),
-            // not a pointer. The nix macro passes a *const c_int which may not be
-            // equivalent to integer 0 with musl's variadic argument handling.
-            let ret = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as _, 0 as libc::c_int) };
-            if ret != 0 {
-                //return Err(std::io::Error::last_os_error());
+
+            let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
             }
 
+            // Required on BSDs, redundant but harmless on Linux
+            let ret = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as _, 0 as libc::c_int) };
+            if ret != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            for (target, should_dup) in dup_fds.iter().enumerate() {
+                if *should_dup {
+                    if unsafe { libc::dup2(fd, target as libc::c_int) } < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+            }
+
+            if fd > 2 {
+                unsafe { libc::close(fd) };
+            }
             Ok(())
         }
     }
 }
 
-impl From<Pts> for std::os::fd::OwnedFd {
-    fn from(pts: Pts) -> Self {
-        pts.0
-    }
-}
-
-impl std::os::fd::AsFd for Pts {
-    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        self.0.as_fd()
-    }
-}
-
-impl std::os::fd::AsRawFd for Pts {
-    fn as_raw_fd(&self) -> std::os::fd::RawFd {
-        self.0.as_raw_fd()
-    }
-}
-
 nix::ioctl_write_ptr_bad!(set_term_size_unsafe, libc::TIOCSWINSZ, nix::pty::Winsize);
-
-nix::ioctl_write_ptr_bad!(
-    set_controlling_terminal_unsafe,
-    libc::TIOCSCTTY,
-    libc::c_int
-);

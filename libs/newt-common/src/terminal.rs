@@ -122,18 +122,13 @@ impl TerminalClient for Local {
                 cmd.envs(env);
             }
             debug!("spawning child process");
-            eprintln!("h1");
             let child = cmd.spawn(&pty_slave);
-            eprintln!("h2");
             match &child {
                 Ok(_) => info!("child process spawned successfully for handle {:?}", handle),
                 Err(e) => error!("failed to spawn child process: {}", e),
             }
-            eprintln!("h3");
             let child = child?;
-            eprintln!("h4");
             let (read, write) = pty_master.into_split();
-            eprintln!("h5");
             inner.terminals.lock().insert(
                 handle,
                 Arc::new(LocalTerminal {
