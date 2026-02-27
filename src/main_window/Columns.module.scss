@@ -14,7 +14,15 @@
   display: flex;
   gap: 1em;
   position: relative;
-  border-right: 1px solid var(--color-border);
+
+  &::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 20%;
+    height: 60%;
+    border-right: 1px solid var(--color-border);
+  }
 }
 
 .sortingIndicator {

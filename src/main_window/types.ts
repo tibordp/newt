@@ -89,6 +89,7 @@ export type DisplayOptions = {
   active_pane: number;
   panes_focused: boolean;
   active_terminal?: number;
+  terminal_panel_visible: boolean;
 };
 
 export type Terminal = {

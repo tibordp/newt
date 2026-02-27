@@ -72,9 +72,13 @@ impl Terminal {
 
                 context.with_update(|c| {
                     c.terminals.remove(handle);
-                    c.display_options.0.write().active_terminal = None;
+                    let mut opts = c.display_options.0.write();
+                    if opts.active_terminal == Some(handle) {
+                        opts.active_terminal = c.terminals.first_handle();
+                    }
                     if c.terminals.len() == 0 {
-                        c.display_options.0.write().panes_focused = true;
+                        opts.terminal_panel_visible = false;
+                        opts.panes_focused = true;
                     }
                     Ok(())
                 })?;

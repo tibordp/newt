@@ -73,6 +73,7 @@ pub struct DisplayOptionsInner {
     pub active_pane: PaneHandle,
     pub active_terminal: Option<TerminalHandle>,
     pub panes_focused: bool,
+    pub terminal_panel_visible: bool,
 }
 
 #[derive(Default, Clone)]
@@ -85,6 +86,7 @@ impl Default for DisplayOptionsInner {
             active_pane: PaneHandle(0),
             active_terminal: None,
             panes_focused: true,
+            terminal_panel_visible: false,
         }
     }
 }
@@ -186,6 +188,16 @@ impl Terminals {
 
     pub fn remove(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
         self.0.write().remove(&handle)
+    }
+
+    pub fn first_handle(&self) -> Option<TerminalHandle> {
+        self.0.read().keys().copied().min_by_key(|h| h.0)
+    }
+
+    pub fn handles_sorted(&self) -> Vec<TerminalHandle> {
+        let mut handles: Vec<_> = self.0.read().keys().copied().collect();
+        handles.sort_by_key(|h| h.0);
+        handles
     }
 }
 
@@ -1210,6 +1222,7 @@ impl MainWindowContext {
             let mut opts = s.display_options.0.write();
             opts.active_terminal = Some(terminal.handle);
             opts.panes_focused = false;
+            opts.terminal_panel_visible = true;
             Ok(terminal)
         })
     }

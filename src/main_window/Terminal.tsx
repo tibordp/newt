@@ -64,8 +64,11 @@ function getPreferredTheme(): ITheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? darkTheme : lightTheme;
 }
 
-export default function Terminal({ handle, active }: { handle: number; active: boolean }) {
+export default function Terminal({ handle, active, visible }: { handle: number; active: boolean; visible: boolean }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
+  const fitAddonRef = useRef<FitAddon>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
 
@@ -86,6 +89,17 @@ export default function Terminal({ handle, active }: { handle: number; active: b
     });
     term.open(ref.current!);
     terminalRef.current = term;
+
+    // Let panel-level shortcuts bubble through xterm
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Ctrl+` — toggle terminal panel
+      if (e.ctrlKey && e.key === "`") return false;
+      // Ctrl+Shift+` — new terminal (Shift+` produces ~)
+      if (e.ctrlKey && e.shiftKey && e.key === "~") return false;
+      // Ctrl+PageDown / Ctrl+PageUp — cycle tabs
+      if (e.ctrlKey && (e.key === "PageDown" || e.key === "PageUp")) return false;
+      return true;
+    });
 
     const unregister = registerTerminalDataHandler(
       termDataContext,
@@ -113,9 +127,12 @@ export default function Terminal({ handle, active }: { handle: number; active: b
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    fitAddonRef.current = fitAddon;
     fitAddon.fit();
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      if (visibleRef.current) {
+        fitAddon.fit();
+      }
     });
     resizeObserver.observe(ref.current!);
 
@@ -127,6 +144,7 @@ export default function Terminal({ handle, active }: { handle: number; active: b
 
     return () => {
       terminalRef.current = null;
+      fitAddonRef.current = null;
       unregister();
       term.dispose();
       mediaQuery.removeEventListener("change", onThemeChange);
@@ -135,6 +153,16 @@ export default function Terminal({ handle, active }: { handle: number; active: b
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (visible) {
+      // Defer fit() so the browser has reflowed the now-visible container
+      const raf = requestAnimationFrame(() => {
+        fitAddonRef.current?.fit();
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [visible]);
 
   useEffect(() => {
     if (active) {

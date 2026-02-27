@@ -422,7 +422,9 @@ pub async fn send_to_terminal(
     let pane = ctx.panes().get(pane_handle).unwrap();
     let terminal = if let Some(terminal) = ctx.active_terminal() {
         ctx.with_update(|c| {
-            c.display_options.0.write().panes_focused = false;
+            let mut opts = c.display_options.0.write();
+            opts.panes_focused = false;
+            opts.terminal_panel_visible = true;
             Ok(())
         })?;
         terminal
@@ -988,6 +990,111 @@ pub async fn switch_vfs(
 }
 
 #[tauri::command]
+pub async fn create_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+    let cwd = ctx.active_pane().map(|p| p.path().path);
+    ctx.create_terminal(cwd.as_deref()).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        c.terminals.remove(handle);
+        let mut opts = c.display_options.0.write();
+        if opts.active_terminal == Some(handle) {
+            opts.active_terminal = c.terminals.first_handle();
+        }
+        if c.terminals.len() == 0 {
+            opts.terminal_panel_visible = false;
+            opts.panes_focused = true;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn toggle_terminal_panel(ctx: MainWindowContext) -> Result<(), Error> {
+    let visible = ctx
+        .terminals()
+        .len() > 0
+        && ctx
+            .with_update(|c| Ok(c.display_options.0.read().terminal_panel_visible))?;
+
+    if visible {
+        // Hide the panel, focus panes
+        ctx.with_update(|c| {
+            let mut opts = c.display_options.0.write();
+            opts.terminal_panel_visible = false;
+            opts.panes_focused = true;
+            Ok(())
+        })
+    } else {
+        // Show the panel — auto-create a terminal if none exist
+        if ctx.terminals().len() == 0 {
+            let cwd = ctx.active_pane().map(|p| p.path().path);
+            ctx.create_terminal(cwd.as_deref()).await?;
+        } else {
+            ctx.with_update(|c| {
+                let mut opts = c.display_options.0.write();
+                opts.terminal_panel_visible = true;
+                opts.panes_focused = false;
+                if opts.active_terminal.is_none() {
+                    opts.active_terminal = c.terminals.first_handle();
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        let mut opts = c.display_options.0.write();
+        opts.active_terminal = Some(handle);
+        opts.panes_focused = false;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn next_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        let handles = c.terminals.handles_sorted();
+        if handles.is_empty() {
+            return Ok(());
+        }
+        let mut opts = c.display_options.0.write();
+        let current = opts.active_terminal;
+        let idx = current
+            .and_then(|h| handles.iter().position(|&x| x == h))
+            .map(|i| (i + 1) % handles.len())
+            .unwrap_or(0);
+        opts.active_terminal = Some(handles[idx]);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn prev_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        let handles = c.terminals.handles_sorted();
+        if handles.is_empty() {
+            return Ok(());
+        }
+        let mut opts = c.display_options.0.write();
+        let current = opts.active_terminal;
+        let idx = current
+            .and_then(|h| handles.iter().position(|&x| x == h))
+            .map(|i| (i + handles.len() - 1) % handles.len())
+            .unwrap_or(0);
+        opts.active_terminal = Some(handles[idx]);
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
 
@@ -1024,6 +1131,12 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         terminal_resize,
         terminal_focus,
         send_to_terminal,
+        create_terminal,
+        close_terminal,
+        toggle_terminal_panel,
+        activate_terminal,
+        next_terminal,
+        prev_terminal,
         close_modal,
         dialog,
         create_directory,

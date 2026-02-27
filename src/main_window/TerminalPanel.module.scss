@@ -1,0 +1,109 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  min-height: 28px;
+  background: var(--color-chrome-light);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  height: 22px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9em;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--color-button-bg);
+  }
+
+  &.active {
+    background: var(--color-chrome);
+    color: var(--color-fg);
+  }
+}
+
+.tabClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1;
+  opacity: 0;
+
+  .tab:hover &,
+  .tab.active & {
+    opacity: 1;
+  }
+
+  &:hover {
+    background: var(--color-button-hover-bg);
+    color: var(--color-fg);
+  }
+}
+
+.addButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0;
+  flex-shrink: 0;
+
+  &:hover {
+    background: var(--color-button-bg);
+    color: var(--color-fg);
+  }
+}
+
+.content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminalWrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  &.hidden {
+    display: none;
+  }
+}

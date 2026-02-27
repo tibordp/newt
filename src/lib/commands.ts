@@ -270,6 +270,30 @@ export const commands: Command[] = [
     command: "open_folder",
     shortcut: new Shortcut().shift().key("F3"),
   },
+  {
+    name: "Toggle Terminal",
+    command: "toggle_terminal_panel",
+    noPane: true,
+    shortcut: new Shortcut().ctrl().key("`"),
+  },
+  {
+    name: "New Terminal",
+    command: "create_terminal",
+    noPane: true,
+    shortcut: new Shortcut().ctrl().shift().key("~"),
+  },
+  {
+    name: "Next Terminal",
+    command: "next_terminal",
+    noPane: true,
+    shortcut: new Shortcut().ctrl().key("PageDown"),
+  },
+  {
+    name: "Previous Terminal",
+    command: "prev_terminal",
+    noPane: true,
+    shortcut: new Shortcut().ctrl().key("PageUp"),
+  },
 ];
 
 export const executeCommand = (

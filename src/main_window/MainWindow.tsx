@@ -4,7 +4,7 @@ import {
   useCallback,
 } from "react";
 
-import { Allotment } from "allotment";
+import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
 import dialogStyles from "./modals/Dialog.module.scss";
 
@@ -26,7 +26,7 @@ import CommandPalette from "./modals/CommandPalette";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
 import { MainWindowState } from "./types";
 import Pane from "./Pane";
-import Terminal from "./Terminal";
+import TerminalPanel from "./TerminalPanel";
 
 enablePatches();
 
@@ -92,33 +92,36 @@ function App() {
         <div className="container">
           {remoteState && (
             <>
-              <Allotment vertical separator>
-                <Allotment minSize={200}>
-                  {remoteState.panes.map((props, i) => (
-                    <Pane
-                      key={i}
-                      paneHandle={i}
-                      {...props}
-                      modal={remoteState.modal}
-                      focusGeneration={focusGeneration}
-                      active={
-                        remoteState.display_options.panes_focused &&
-                        remoteState.display_options.active_pane === i
-                      }
-                    />
-                  ))}
-                </Allotment>
-                {Object.values(remoteState.terminals).map((term) => (
-                  <Allotment.Pane preferredSize="20%" key={term.handle}>
-                    <Terminal
-                      handle={term.handle}
-                      active={
-                        !remoteState.display_options.panes_focused &&
-                        remoteState.display_options.active_terminal === term.handle
-                      }
-                    />
-                  </Allotment.Pane>
-                ))}
+              <Allotment vertical separator proportionalLayout={false}>
+                <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
+                  <Allotment>
+                    {remoteState.panes.map((props, i) => (
+                      <Pane
+                        key={i}
+                        paneHandle={i}
+                        {...props}
+                        modal={remoteState.modal}
+                        focusGeneration={focusGeneration}
+                        active={
+                          remoteState.display_options.panes_focused &&
+                          remoteState.display_options.active_pane === i
+                        }
+                      />
+                    ))}
+                  </Allotment>
+                </Allotment.Pane>
+                <Allotment.Pane
+                  preferredSize={300}
+                  minSize={100}
+                  priority={LayoutPriority.Low}
+                  visible={remoteState.display_options.terminal_panel_visible}
+                >
+                  <TerminalPanel
+                    terminals={Object.values(remoteState.terminals)}
+                    activeTerminal={remoteState.display_options.active_terminal}
+                    panesFocused={remoteState.display_options.panes_focused}
+                  />
+                </Allotment.Pane>
               </Allotment>
               {Object.keys(remoteState.operations).length > 0 && (
                 <OperationsPanel

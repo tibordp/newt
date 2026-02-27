@@ -27,3 +27,7 @@ Be intentional about where state is kept:
 - **React (local state)**: Purely local/ephemeral state — form inputs, hover states, UI-only toggles that don't affect anything outside the component.
 - **Rust (MainWindowState)**: Any state with app-wide consequences. This is the primary source of truth, pushed to the frontend via the update/patch system.
 - **Agent**: Some state can live in the agent process if it makes sense (e.g. per-operation progress tracking), but the bar is higher — prefer Rust unless the agent is the natural owner.
+
+## Git Commits
+
+Do not add `Co-Authored-By` lines to commit messages.
