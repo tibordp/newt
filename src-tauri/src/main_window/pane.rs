@@ -727,9 +727,10 @@ impl PaneViewState {
             if i < 0 || i >= (self.files.len() as i32) || offset == 0 {
                 break;
             }
-            if self.files[i as usize]
-                .name
-                .starts_with(self.filter.as_deref().unwrap_or(""))
+            if self
+                .filter_regex
+                .as_ref()
+                .map_or(true, |re| re.is_match(&self.files[i as usize].name))
             {
                 new_index = i;
                 offset -= direction;
