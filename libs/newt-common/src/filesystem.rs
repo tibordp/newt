@@ -402,7 +402,7 @@ pub struct LocalShellService;
 impl ShellService for LocalShellService {
     async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
         let expanded =
-            tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::Io))
+            tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
         Ok(VfsPath::root(expanded))
     }

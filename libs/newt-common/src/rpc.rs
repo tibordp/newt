@@ -117,7 +117,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
 
                 Ok(Some(Message::Notify(Api(api), slice)))
             }
-            _ => Err(Error::Custom("invalid message kind".to_string())),
+            _ => Err(Error::custom("invalid message kind")),
         }
     }
 }
@@ -400,9 +400,9 @@ impl Communicator {
         let guard = CancelGuard(&self.0, id);
 
         let message = Message::InvokeRequest(api, id, bytes.into());
-        self.0.outbox.send(message).map_err(|_| Error::Connection)?;
+        self.0.outbox.send(message).map_err(|_| Error::connection())?;
 
-        let resp = rx.await.map_err(|_| Error::Connection)?;
+        let resp = rx.await.map_err(|_| Error::connection())?;
 
         std::mem::forget(guard);
         Ok(bincode::deserialize(&resp[..]).unwrap())
@@ -415,7 +415,7 @@ impl Communicator {
         let bytes = bincode::serialize(req).unwrap();
 
         let message = Message::Notify(api, bytes.into());
-        self.0.outbox.send(message).map_err(|_| Error::Connection)?;
+        self.0.outbox.send(message).map_err(|_| Error::connection())?;
 
         Ok(())
     }

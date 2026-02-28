@@ -184,7 +184,7 @@ impl S3Vfs {
             .bucket(bucket)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         // GetBucketLocation returns None/empty for us-east-1
         let region = resp
@@ -252,7 +252,7 @@ impl S3Vfs {
             .list_buckets()
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         debug!("s3: list_buckets returned {} buckets", resp.buckets().len());
 
@@ -344,7 +344,7 @@ impl S3Vfs {
                 req = req.continuation_token(token);
             }
 
-            let resp = req.send().await.map_err(|e| Error::Custom(e.to_string()))?;
+            let resp = req.send().await.map_err(|e| Error::custom(e.to_string()))?;
 
             debug!(
                 "s3: list_objects page: {} prefixes, {} objects",
@@ -465,8 +465,8 @@ impl Vfs for S3Vfs {
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         let resp = client
@@ -475,7 +475,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
         let modified = resp.last_modified().and_then(|d| {
@@ -509,8 +509,8 @@ impl Vfs for S3Vfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         let resp = client
@@ -519,7 +519,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
         let mime_type = resp.content_type().map(|s| s.to_string());
@@ -550,8 +550,8 @@ impl Vfs for S3Vfs {
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         let end = offset + length - 1;
@@ -564,7 +564,7 @@ impl Vfs for S3Vfs {
             .range(range)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         // Parse total size from content_range header (e.g. "bytes 0-99/12345")
         let total_size = resp
@@ -577,7 +577,7 @@ impl Vfs for S3Vfs {
             .body
             .collect()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?
+            .map_err(|e| Error::custom(e.to_string()))?
             .into_bytes()
             .to_vec();
 
@@ -593,8 +593,8 @@ impl Vfs for S3Vfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         let resp = client
@@ -603,15 +603,15 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         Ok(Box::new(resp.body.into_async_read()))
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no object key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         debug!(
@@ -625,11 +625,11 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         let upload_id = resp
             .upload_id()
-            .ok_or_else(|| Error::Custom("no upload_id returned".into()))?
+            .ok_or_else(|| Error::custom("no upload_id returned"))?
             .to_string();
 
         debug!("s3: multipart upload_id={}", upload_id);
@@ -649,8 +649,8 @@ impl Vfs for S3Vfs {
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or(Error::NotSupported)?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or(Error::not_supported())?;
 
         debug!("s3: remove_file bucket={} key={}", bucket, key);
 
@@ -661,7 +661,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         self.notifier.notify(path);
         Ok(())
@@ -669,8 +669,8 @@ impl Vfs for S3Vfs {
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or(Error::NotSupported)?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or(Error::not_supported())?;
 
         // S3 directory markers are stored with a trailing slash
         let dir_key = if key.ends_with('/') {
@@ -688,7 +688,7 @@ impl Vfs for S3Vfs {
             .key(&dir_key)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         self.notifier.notify(path);
         Ok(())
@@ -696,12 +696,12 @@ impl Vfs for S3Vfs {
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let (src_bucket, src_key) = Self::parse_path(from);
-        let src_bucket = src_bucket.ok_or(Error::NotSupported)?;
-        let src_key = src_key.ok_or_else(|| Error::Custom("no source key".into()))?;
+        let src_bucket = src_bucket.ok_or(Error::not_supported())?;
+        let src_key = src_key.ok_or_else(|| Error::custom("no source key"))?;
 
         let (dst_bucket, dst_key) = Self::parse_path(to);
-        let dst_bucket = dst_bucket.ok_or(Error::NotSupported)?;
-        let dst_key = dst_key.ok_or_else(|| Error::Custom("no destination key".into()))?;
+        let dst_bucket = dst_bucket.ok_or(Error::not_supported())?;
+        let dst_key = dst_key.ok_or_else(|| Error::custom("no destination key"))?;
 
         debug!(
             "s3: copy_within {}/{} -> {}/{}",
@@ -718,15 +718,15 @@ impl Vfs for S3Vfs {
             .copy_source(&copy_source)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
         self.notifier.notify(to);
         Ok(())
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         debug!("s3: touch bucket={} key={}", bucket, key);
@@ -757,7 +757,7 @@ impl Vfs for S3Vfs {
                     debug!("s3: touch object already exists (412), no-op");
                     Ok(())
                 } else {
-                    Err(Error::Custom(e.to_string()))
+                    Err(Error::custom(e.to_string()))
                 }
             }
         }
@@ -765,8 +765,8 @@ impl Vfs for S3Vfs {
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         let (bucket, prefix) = Self::parse_path(path);
-        let bucket = bucket.ok_or(Error::NotSupported)?;
-        let key = prefix.ok_or_else(|| Error::Custom("no key specified".into()))?;
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
         debug!("s3: create_directory bucket={} key={}", bucket, key);
@@ -785,7 +785,7 @@ impl Vfs for S3Vfs {
             .body(aws_sdk_s3::primitives::ByteStream::from_static(b""))
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
         self.notifier.notify(path);
         Ok(())
     }
@@ -836,7 +836,7 @@ impl S3AsyncWriter {
             .body(body)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         self.completed_parts.push(
             aws_sdk_s3::types::CompletedPart::builder()
@@ -900,7 +900,7 @@ impl VfsAsyncWriter for S3AsyncWriter {
             .multipart_upload(completed)
             .send()
             .await
-            .map_err(|e| Error::Custom(e.to_string()))?;
+            .map_err(|e| Error::custom(e.to_string()))?;
 
         info!(
             "s3: completed multipart upload upload_id={} bucket={} key={} ({} parts)",

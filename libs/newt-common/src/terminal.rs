@@ -156,7 +156,7 @@ impl TerminalClient for Local {
             .terminals
             .lock()
             .remove(&handle)
-            .ok_or_else(|| Error::Custom("terminal not found".to_string()))?;
+            .ok_or_else(|| Error::custom("terminal not found"))?;
 
         Ok(())
     }
@@ -169,7 +169,7 @@ impl TerminalClient for Local {
             .lock()
             .get(&handle)
             .cloned()
-            .ok_or_else(|| Error::Custom("terminal not found".to_string()))?;
+            .ok_or_else(|| Error::custom("terminal not found"))?;
 
         terminal
             .pty_write
@@ -187,7 +187,7 @@ impl TerminalClient for Local {
             .lock()
             .get(&handle)
             .cloned()
-            .ok_or_else(|| Error::Custom("terminal not found".to_string()))?;
+            .ok_or_else(|| Error::custom("terminal not found"))?;
 
         terminal.pty_write.lock().await.write_all(&data).await?;
 
@@ -201,7 +201,7 @@ impl TerminalClient for Local {
             .lock()
             .get(&handle)
             .cloned()
-            .ok_or_else(|| Error::Custom("terminal not found".to_string()))?;
+            .ok_or_else(|| Error::custom("terminal not found"))?;
 
         let mut buf = [0u8; 1024];
         let len = terminal.pty_read.lock().await.read(&mut buf).await?;
@@ -220,7 +220,7 @@ impl TerminalClient for Local {
             .lock()
             .get(&handle)
             .cloned()
-            .ok_or_else(|| Error::Custom("terminal not found".to_string()))?;
+            .ok_or_else(|| Error::custom("terminal not found"))?;
 
         let status = terminal.child.lock().await.wait().await?;
 
@@ -326,11 +326,11 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>, Error> {
     let entry = unsafe { entry.assume_init() };
 
     if status < 0 {
-        return Err(Error::Custom("getpwuid_r failed".to_string()));
+        return Err(Error::custom("getpwuid_r failed"));
     }
 
     if res.is_null() {
-        return Err(Error::Custom("pw not found".to_string()));
+        return Err(Error::custom("pw not found"));
     }
 
     // Sanity check.

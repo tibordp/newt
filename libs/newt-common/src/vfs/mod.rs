@@ -296,7 +296,7 @@ pub trait Vfs: Send + Sync {
     // --- Read ---
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn open_read_async(
@@ -304,101 +304,101 @@ pub trait Vfs: Send + Sync {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let _ = (path, offset, length);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     // --- Write ---
     async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), Error> {
         let _ = (link, target);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     // --- Delete ---
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     // --- Metadata ---
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
         let _ = (path, meta);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let _ = path;
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     // --- Same-VFS fast paths ---
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
         let _ = (link, target);
-        Err(Error::NotSupported)
+        Err(Error::not_supported())
     }
 }
 
@@ -428,7 +428,7 @@ impl VfsRegistry {
     pub fn resolve(&self, vfs_path: &VfsPath) -> Result<(Arc<dyn Vfs>, PathBuf), Error> {
         let vfs = self
             .get(vfs_path.vfs_id)
-            .ok_or_else(|| Error::Custom(format!("VFS {} not found", vfs_path.vfs_id)))?;
+            .ok_or_else(|| Error::custom(format!("VFS {} not found", vfs_path.vfs_id)))?;
         Ok((vfs, vfs_path.path.clone()))
     }
 
@@ -513,18 +513,18 @@ impl Filesystem for VfsRegistryFs {
                         fs_stats,
                     ));
                 }
-                Err(Error::Io(e))
+                Err(e)
                     if matches!(
-                        (e.kind(), options.strict),
-                        (std::io::ErrorKind::NotFound, false)
-                            | (std::io::ErrorKind::NotADirectory, _)
+                        (e.kind, options.strict),
+                        (crate::ErrorKind::NotFound, false)
+                            | (crate::ErrorKind::NotADirectory, _)
                     ) =>
                 {
                     if let Some(h) = forwarder {
                         let _ = h.await;
                     }
                     if !local_path.pop() {
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
                 Err(e) => {
@@ -540,13 +540,13 @@ impl Filesystem for VfsRegistryFs {
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         debug!("vfs_registry_fs: rename {} -> {}", old_path, new_path);
         if old_path.vfs_id != new_path.vfs_id {
-            return Err(Error::Custom("cannot rename across VFS boundaries".into()));
+            return Err(Error::custom("cannot rename across VFS boundaries"));
         }
         let (vfs, old_local) = self.registry.resolve(&old_path)?;
         if vfs.descriptor().can_rename() {
             vfs.rename(&old_local, &new_path.path).await
         } else {
-            Err(Error::NotSupported)
+            Err(Error::not_supported())
         }
     }
 

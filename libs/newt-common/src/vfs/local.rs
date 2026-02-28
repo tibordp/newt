@@ -401,7 +401,7 @@ impl Vfs for LocalVfs {
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
         let path = path.to_path_buf();
         let file =
-            tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::Io))
+            tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::from))
                 .await??;
         Ok(Box::new(file))
     }
@@ -449,14 +449,14 @@ impl Vfs for LocalVfs {
     async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
         let path = path.to_path_buf();
         let file =
-            tokio::task::spawn_blocking(move || std::fs::File::create(&path).map_err(Error::Io))
+            tokio::task::spawn_blocking(move || std::fs::File::create(&path).map_err(Error::from))
                 .await??;
         Ok(Box::new(file))
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path).map_err(Error::Io))
+        tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path).map_err(Error::from))
             .await?
     }
 
@@ -467,7 +467,7 @@ impl Vfs for LocalVfs {
             #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &link)?;
             #[cfg(not(unix))]
-            return Err(Error::NotSupported);
+            return Err(Error::not_supported());
             Ok(())
         })
         .await?
@@ -574,7 +574,7 @@ impl Vfs for LocalVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_path_buf();
         let to = to.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::Io)).await?
+        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from)).await?
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
@@ -634,7 +634,7 @@ impl Vfs for LocalVfs {
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
         let link = link.to_path_buf();
         let target = target.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::Io))
+        tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
     }
 }

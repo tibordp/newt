@@ -11,17 +11,9 @@ pub enum Error {
     #[error("{0}")]
     Tauri(#[from] tauri::Error),
     #[error("{0}")]
-    Tokio(#[from] tokio::task::JoinError),
-    #[error("{0}")]
     Open(#[from] opener::OpenError),
     #[error("{0}")]
     Arboard(#[from] arboard::Error),
-    #[error("{0}")]
-    Nix(#[from] nix::Error),
-    #[error("{0}")]
-    PtyProcess(#[from] pty_process::Error),
-    #[error("{0}")]
-    Notify(#[from] notify::Error),
     #[error("{0}")]
     Custom(String),
     #[error("operation cancelled")]
@@ -30,19 +22,9 @@ pub enum Error {
 
 impl From<newt_common::Error> for Error {
     fn from(value: newt_common::Error) -> Self {
-        match value {
-            newt_common::Error::Io(x) => Error::Io(x),
-            newt_common::Error::Tokio(x) => Error::Tokio(x),
-            newt_common::Error::Notify(x) => Error::Notify(x),
-            newt_common::Error::PtyProcess(x) => Error::PtyProcess(x),
-            newt_common::Error::Nix(x) => Error::Nix(x),
-            newt_common::Error::Custom(x) => Error::Custom(x),
-            newt_common::Error::Cancelled => Error::Cancelled,
-            newt_common::Error::Connection => Error::Custom("connection error".to_string()),
-            newt_common::Error::Remote(x) => Error::Custom(x),
-            newt_common::Error::NotSupported => {
-                Error::Custom("operation not supported".to_string())
-            }
+        match value.kind {
+            newt_common::ErrorKind::Cancelled => Error::Cancelled,
+            _ => Error::Custom(value.message),
         }
     }
 }

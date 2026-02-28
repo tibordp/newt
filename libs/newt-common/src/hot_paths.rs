@@ -42,7 +42,7 @@ impl HotPathsProvider for Local {
     async fn system_hot_paths(&self) -> Result<Vec<HotPathEntry>, Error> {
         tokio::task::spawn_blocking(collect_system_paths)
             .await
-            .map_err(Error::Tokio)
+            .map_err(Error::from)
     }
 }
 

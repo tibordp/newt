@@ -433,11 +433,11 @@ impl ProgressReporter {
                         }
                         Ok(response.action)
                     }
-                    Err(_) => Err(crate::Error::Cancelled),
+                    Err(_) => Err(crate::Error::cancelled()),
                 }
             }
             _ = self.cancel.cancelled() => {
-                Err(crate::Error::Cancelled)
+                Err(crate::Error::cancelled())
             }
         }
     }
@@ -451,12 +451,13 @@ impl ProgressReporter {
         allow_retry: bool,
     ) -> Result<IssueOutcome, crate::Error> {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
         warn!("operation {}: {} — {}", self.id(), context, error);
-        let kind = match &error {
-            crate::Error::Io(io_err) => issue_kind_from_io_error(io_err),
-            _ => IssueKind::Other(format!("{}", error)),
+        let kind = match error.kind {
+            crate::ErrorKind::PermissionDenied => IssueKind::PermissionDenied,
+            crate::ErrorKind::AlreadyExists => IssueKind::AlreadyExists,
+            _ => IssueKind::Other(error.message.clone()),
         };
         let mut actions = vec![IssueAction::Skip];
         if allow_retry {
@@ -474,13 +475,7 @@ impl ProgressReporter {
     }
 }
 
-fn issue_kind_from_io_error(e: &std::io::Error) -> IssueKind {
-    match e.kind() {
-        std::io::ErrorKind::PermissionDenied => IssueKind::PermissionDenied,
-        std::io::ErrorKind::AlreadyExists => IssueKind::AlreadyExists,
-        other => IssueKind::Other(format!("{:?}", other)),
-    }
-}
+
 
 // --- Entry point ---
 
@@ -576,19 +571,19 @@ async fn plan_copy(
     for source in sources {
         let file_name = source
             .file_name()
-            .ok_or_else(|| crate::Error::Custom("source has no file name".to_string()))?;
+            .ok_or_else(|| crate::Error::custom("source has no file name".to_string()))?;
         let dest_base = destination.join(file_name);
 
         // Classify the top-level source using list_files on the parent directory
         let parent = source
             .parent()
-            .ok_or_else(|| crate::Error::Custom("source has no parent".to_string()))?;
+            .ok_or_else(|| crate::Error::custom("source has no parent".to_string()))?;
         let file_list = src_vfs.list_files(parent, None).await?;
         let file_entry = file_list
             .iter()
             .find(|f| f.name == file_name.to_string_lossy())
             .ok_or_else(|| {
-                crate::Error::Custom(format!("source not found: {}", source.display()))
+                crate::Error::custom(format!("source not found: {}", source.display()))
             })?;
 
         if has_symlinks && file_entry.is_symlink {
@@ -686,7 +681,7 @@ fn copy_bytes_sync(
 
     loop {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
 
         let n = reader.read(&mut buf)?;
@@ -718,7 +713,7 @@ async fn copy_bytes_async(
 
     loop {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
 
         let n = reader.read(&mut buf).await?;
@@ -842,7 +837,7 @@ async fn copy_single_file(
             let mut buf = vec![0u8; 64 * 1024];
             loop {
                 if cancel2.is_cancelled() {
-                    let _ = tx.blocking_send(Err(crate::Error::Cancelled));
+                    let _ = tx.blocking_send(Err(crate::Error::cancelled()));
                     return;
                 }
                 match std::io::Read::read(&mut *reader, &mut buf) {
@@ -913,7 +908,7 @@ async fn copy_single_file(
             if cancel2.is_cancelled() {
                 drop(tx);
                 let _ = writer_handle.await;
-                return Err(crate::Error::Cancelled);
+                return Err(crate::Error::cancelled());
             }
             let n = reader.read(&mut buf).await?;
             if n == 0 {
@@ -932,7 +927,7 @@ async fn copy_single_file(
         return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
     }
 
-    Err(crate::Error::NotSupported)
+    Err(crate::Error::not_supported())
 }
 
 // --- Preserve metadata after copy ---
@@ -990,7 +985,7 @@ async fn execute_copy(
 ) -> Result<(), crate::Error> {
     let first_source = sources
         .first()
-        .ok_or_else(|| crate::Error::Custom("no sources provided".into()))?;
+        .ok_or_else(|| crate::Error::custom("no sources provided"))?;
     let (src_vfs, _) = context.registry.resolve(first_source)?;
     let (dst_vfs, dst_path) = context.registry.resolve(&destination)?;
 
@@ -1016,19 +1011,19 @@ async fn execute_copy(
     // Handle create_symlink for single-file copy
     if options.create_symlink {
         if !dst_descriptor.can_create_symlink() {
-            return Err(crate::Error::Custom(
+            return Err(crate::Error::custom(
                 "Destination does not support symlink creation".to_string(),
             ));
         }
         if source_paths.len() != 1 {
-            return Err(crate::Error::Custom(
+            return Err(crate::Error::custom(
                 "Symlink creation only supported for single file".to_string(),
             ));
         }
         let source = &source_paths[0];
         let file_name = match source.file_name() {
             Some(f) => f.to_owned(),
-            None => return Err(crate::Error::Custom("source has no file name".to_string())),
+            None => return Err(crate::Error::custom("source has no file name".to_string())),
         };
         let dest = dst_path.join(file_name);
         reporter.send_prepared(0, 1);
@@ -1038,7 +1033,7 @@ async fn execute_copy(
 
     let plan = tokio::select! {
         result = plan_copy(&*src_vfs, src_descriptor, &source_paths, &dst_path) => result?,
-        _ = cancel.cancelled() => return Err(crate::Error::Cancelled),
+        _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
     };
 
     let total_items = plan.entries.len() as u64;
@@ -1049,7 +1044,7 @@ async fn execute_copy(
 
     for entry in &plan.entries {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
 
         let display = entry.source.display().to_string();
@@ -1152,7 +1147,7 @@ async fn execute_copy(
                     if dst_descriptor.can_create_symlink() {
                         dst_vfs.create_symlink(&entry.dest, target).await
                     } else {
-                        Err(crate::Error::Custom(format!(
+                        Err(crate::Error::custom(format!(
                             "Cannot create symlink on {}: not supported",
                             dst_descriptor.type_name()
                         )))
@@ -1224,7 +1219,7 @@ async fn execute_copy(
     if is_move {
         for entry in plan.entries.iter().rev() {
             if cancel.is_cancelled() {
-                return Err(crate::Error::Cancelled);
+                return Err(crate::Error::cancelled());
             }
             if let CopyEntryKind::Directory = &entry.kind {
                 let _ = src_vfs.remove_dir(&entry.source).await;
@@ -1374,7 +1369,7 @@ async fn execute_set_permissions(
 
     for (vfs, local_path, display) in &all_entries {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
 
         reporter.maybe_send_progress(0, items_done, display);
@@ -1423,7 +1418,7 @@ async fn execute_delete(
 
     for vfs_path in &paths {
         if cancel.is_cancelled() {
-            return Err(crate::Error::Cancelled);
+            return Err(crate::Error::cancelled());
         }
 
         let display = vfs_path.to_string();
@@ -1453,7 +1448,7 @@ async fn execute_delete(
                         let entries = collect_delete_entries(&*vfs, &local_path).await?;
                         for entry in &entries {
                             if cancel.is_cancelled() {
-                                return Err(crate::Error::Cancelled);
+                                return Err(crate::Error::cancelled());
                             }
                             reporter.maybe_send_progress(
                                 0,
@@ -1513,7 +1508,7 @@ async fn execute_move(
 ) -> Result<(), crate::Error> {
     let src_vfs_id = sources
         .first()
-        .ok_or_else(|| crate::Error::Custom("no sources provided".into()))?
+        .ok_or_else(|| crate::Error::custom("no sources provided"))?
         .vfs_id;
     let dst_vfs_id = destination.vfs_id;
     let same_vfs = src_vfs_id == dst_vfs_id;
@@ -1532,12 +1527,12 @@ async fn execute_move(
         // Try rename first for each source (instant for same-VFS, same-device)
         for source in &sources {
             if cancel.is_cancelled() {
-                return Err(crate::Error::Cancelled);
+                return Err(crate::Error::cancelled());
             }
 
             let file_name = match source.path.file_name() {
                 Some(f) => f,
-                None => return Err(crate::Error::Custom("source has no file name".to_string())),
+                None => return Err(crate::Error::custom("source has no file name".to_string())),
             };
             let dest_local = dst_path.join(file_name);
 

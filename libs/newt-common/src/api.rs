@@ -417,7 +417,7 @@ impl VfsManager for VfsRegistryManager {
         self.registry
             .unmount(vfs_id)
             .map(|_| ())
-            .ok_or_else(|| Error::Custom(format!("cannot unmount VFS {}", vfs_id)))
+            .ok_or_else(|| Error::custom(format!("cannot unmount VFS {}", vfs_id)))
     }
 }
 
