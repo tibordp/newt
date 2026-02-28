@@ -71,10 +71,10 @@ impl Pty {
         // the buffer size on OSX is 128, defined by sys/ttycom.h
         //
         //
-        let buf: [c_char; 128] = [0; 128];
+        let mut buf: [c_char; 128] = [0; 128];
 
         unsafe {
-            match libc::ioctl(self.0.as_raw_fd(), u64::from(libc::TIOCPTYGNAME), &buf) {
+            match libc::ioctl(self.0.as_raw_fd(), u64::from(libc::TIOCPTYGNAME), buf.as_mut_ptr()) {
                 0 => Ok(PathBuf::from(OsStr::from_bytes(
                     CStr::from_ptr(buf.as_ptr()).to_bytes(),
                 ))),
