@@ -31,6 +31,12 @@ pub trait HotPathsProvider: Send + Sync {
 
 pub struct Local;
 
+impl Default for Local {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl Local {
     pub fn new() -> Self {
         Self

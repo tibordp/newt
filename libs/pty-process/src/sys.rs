@@ -74,7 +74,11 @@ impl Pty {
         let mut buf: [c_char; 128] = [0; 128];
 
         unsafe {
-            match libc::ioctl(self.0.as_raw_fd(), u64::from(libc::TIOCPTYGNAME), buf.as_mut_ptr()) {
+            match libc::ioctl(
+                self.0.as_raw_fd(),
+                u64::from(libc::TIOCPTYGNAME),
+                buf.as_mut_ptr(),
+            ) {
                 0 => Ok(PathBuf::from(OsStr::from_bytes(
                     CStr::from_ptr(buf.as_ptr()).to_bytes(),
                 ))),
@@ -164,10 +168,8 @@ impl Pts {
             }
 
             for (target, should_dup) in dup_fds.iter().enumerate() {
-                if *should_dup {
-                    if unsafe { libc::dup2(fd, target as libc::c_int) } < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
+                if *should_dup && unsafe { libc::dup2(fd, target as libc::c_int) } < 0 {
+                    return Err(std::io::Error::last_os_error());
                 }
             }
 

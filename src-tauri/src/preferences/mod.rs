@@ -233,33 +233,28 @@ impl PreferencesManager {
 
         // Spawn debounce thread
         std::thread::spawn(move || {
-            loop {
-                match rx.recv() {
-                    Ok(()) => {
-                        // Drain any queued events within 200ms
-                        let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_millis(200);
-                        while let Ok(()) = rx.recv_timeout(
-                            deadline.saturating_duration_since(std::time::Instant::now()),
-                        ) {}
-
-                        info!("Config file changed, reloading preferences");
-                        let new_resolved = Self::load_and_resolve(&config_dir_owned);
-                        {
-                            let mut guard = resolved.write();
-                            if guard.settings != new_resolved.settings
-                                || guard.bindings.len() != new_resolved.bindings.len()
-                                || guard.bookmarks.len() != new_resolved.bookmarks.len()
-                            {
-                                *guard = new_resolved.clone();
-                            } else {
-                                continue;
-                            }
-                        }
-                        let _ = app_handle.emit("update:preferences", &new_resolved);
-                    }
-                    Err(_) => break,
+            while let Ok(()) = rx.recv() {
+                // Drain any queued events within 200ms
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+                while let Ok(()) =
+                    rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                {
                 }
+
+                info!("Config file changed, reloading preferences");
+                let new_resolved = Self::load_and_resolve(&config_dir_owned);
+                {
+                    let mut guard = resolved.write();
+                    if guard.settings != new_resolved.settings
+                        || guard.bindings.len() != new_resolved.bindings.len()
+                        || guard.bookmarks.len() != new_resolved.bookmarks.len()
+                    {
+                        *guard = new_resolved.clone();
+                    } else {
+                        continue;
+                    }
+                }
+                let _ = app_handle.emit("update:preferences", &new_resolved);
             }
         });
 

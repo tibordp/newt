@@ -76,7 +76,7 @@ impl Terminal {
                     if opts.active_terminal == Some(handle) {
                         opts.active_terminal = c.terminals.first_handle();
                     }
-                    if c.terminals.len() == 0 {
+                    if c.terminals.is_empty() {
                         opts.terminal_panel_visible = false;
                         opts.panes_focused = true;
                     }

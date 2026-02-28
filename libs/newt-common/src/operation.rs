@@ -140,6 +140,7 @@ struct CopyEntry {
     source: PathBuf,
     dest: PathBuf,
     kind: CopyEntryKind,
+    #[allow(dead_code)]
     size_bytes: u64,
 }
 
@@ -475,8 +476,6 @@ impl ProgressReporter {
     }
 }
 
-
-
 // --- Entry point ---
 
 pub async fn execute_operation(
@@ -538,8 +537,15 @@ pub async fn execute_operation(
             mode,
             recursive,
         } => {
-            execute_set_permissions(&mut reporter, &context, paths, mode, recursive, cancel.clone())
-                .await
+            execute_set_permissions(
+                &mut reporter,
+                &context,
+                paths,
+                mode,
+                recursive,
+                cancel.clone(),
+            )
+            .await
         }
     };
 
@@ -730,6 +736,7 @@ async fn copy_bytes_async(
 
 // --- Copy a single file through VFS, with strategy cascade ---
 
+#[allow(clippy::too_many_arguments)]
 async fn copy_single_file(
     src_vfs: &dyn Vfs,
     dst_vfs: &dyn Vfs,
@@ -1120,10 +1127,7 @@ async fn execute_copy(
                                 continue;
                             }
                             Ok(IssueAction::Overwrite) => {
-                                dst_vfs
-                                    .remove_file(&entry.dest)
-                                    .await
-                                    .map_err(crate::Error::from)?;
+                                dst_vfs.remove_file(&entry.dest).await?;
                             }
                             Err(e) => return Err(e),
                             _ => unreachable!("not offered"),
@@ -1199,13 +1203,14 @@ async fn execute_copy(
 
         // For move: delete source file/symlink immediately after successful copy.
         // Directories are cleaned up in a separate reverse pass below.
-        if is_move && succeeded {
-            if matches!(
+        if is_move
+            && succeeded
+            && matches!(
                 &entry.kind,
                 CopyEntryKind::File | CopyEntryKind::Symlink { .. }
-            ) {
-                let _ = src_vfs.remove_file(&entry.source).await;
-            }
+            )
+        {
+            let _ = src_vfs.remove_file(&entry.source).await;
         }
 
         items_done += 1;
@@ -1245,7 +1250,7 @@ async fn probe_is_dir(vfs: &dyn Vfs, path: &Path) -> Result<bool, crate::Error> 
                     Ok(listing
                         .iter()
                         .find(|f| f.name == name)
-                        .map_or(false, |f| f.is_dir && !f.is_symlink))
+                        .is_some_and(|f| f.is_dir && !f.is_symlink))
                 }
                 None => Ok(true), // root-level path, treat as directory
             }
@@ -1296,10 +1301,7 @@ async fn collect_delete_entries(
     Ok(files)
 }
 
-async fn collect_chmod_entries(
-    vfs: &dyn Vfs,
-    path: &Path,
-) -> Result<Vec<PathBuf>, crate::Error> {
+async fn collect_chmod_entries(vfs: &dyn Vfs, path: &Path) -> Result<Vec<PathBuf>, crate::Error> {
     let mut entries = vec![path.to_path_buf()];
     let mut stack = vec![path.to_path_buf()];
 

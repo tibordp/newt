@@ -574,7 +574,8 @@ impl Vfs for LocalVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_path_buf();
         let to = to.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from)).await?
+        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from))
+            .await?
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {

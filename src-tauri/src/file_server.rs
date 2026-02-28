@@ -37,7 +37,7 @@ fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
 fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64, end: u64) -> Body {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(2);
 
-    tokio::spawn(async move {
+    let _task = tokio::spawn(async move {
         let chunk_size: u64 = 1024 * 1024;
         let mut offset = start;
         while offset <= end {
@@ -53,7 +53,7 @@ fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64,
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(Err(std::io::Error::other(e.to_string())));
+                    let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
                     break;
                 }
             }

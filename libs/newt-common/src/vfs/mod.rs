@@ -196,12 +196,14 @@ pub struct VfsSpaceInfo {
 // VfsChangeNotifier — reusable self-notification for VFS implementations
 // ---------------------------------------------------------------------------
 
+type WatcherList = Vec<(u64, PathBuf, tokio::sync::oneshot::Sender<()>)>;
+
 /// Allows VFS implementations to signal their own panes when they mutate
 /// objects.  Call [`watch`] from `poll_changes` and [`notify`] after any
 /// mutation.  Watchers whose prefix matches the modified path are signalled.
 #[derive(Clone)]
 pub struct VfsChangeNotifier {
-    watchers: Arc<Mutex<Vec<(u64, PathBuf, tokio::sync::oneshot::Sender<()>)>>>,
+    watchers: Arc<Mutex<WatcherList>>,
     next_id: Arc<AtomicU64>,
 }
 
@@ -250,7 +252,7 @@ impl Default for VfsChangeNotifier {
 
 struct WatcherGuard {
     id: u64,
-    watchers: Arc<Mutex<Vec<(u64, PathBuf, tokio::sync::oneshot::Sender<()>)>>>,
+    watchers: Arc<Mutex<WatcherList>>,
 }
 
 impl Drop for WatcherGuard {
@@ -516,8 +518,7 @@ impl Filesystem for VfsRegistryFs {
                 Err(e)
                     if matches!(
                         (e.kind, options.strict),
-                        (crate::ErrorKind::NotFound, false)
-                            | (crate::ErrorKind::NotADirectory, _)
+                        (crate::ErrorKind::NotFound, false) | (crate::ErrorKind::NotADirectory, _)
                     ) =>
                 {
                     if let Some(h) = forwarder {

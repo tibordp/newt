@@ -175,6 +175,10 @@ impl Terminals {
         self.0.read().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.read().is_empty()
+    }
+
     pub fn get(&self, handle: TerminalHandle) -> Option<Arc<Terminal>> {
         self.0.read().get(&handle).cloned()
     }
@@ -883,6 +887,7 @@ impl MainWindowContext {
             global_state.clone(),
         ));
 
+        #[allow(clippy::type_complexity)]
         let (
             fs,
             shell_service,
@@ -891,7 +896,7 @@ impl MainWindowContext {
             file_reader,
             operations_client,
             hot_paths_provider,
-            communicator,
+            _communicator,
             initial_dir,
         ): (
             Arc<dyn Filesystem>,

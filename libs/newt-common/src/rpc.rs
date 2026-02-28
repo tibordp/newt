@@ -400,7 +400,10 @@ impl Communicator {
         let guard = CancelGuard(&self.0, id);
 
         let message = Message::InvokeRequest(api, id, bytes.into());
-        self.0.outbox.send(message).map_err(|_| Error::connection())?;
+        self.0
+            .outbox
+            .send(message)
+            .map_err(|_| Error::connection())?;
 
         let resp = rx.await.map_err(|_| Error::connection())?;
 
@@ -415,7 +418,10 @@ impl Communicator {
         let bytes = bincode::serialize(req).unwrap();
 
         let message = Message::Notify(api, bytes.into());
-        self.0.outbox.send(message).map_err(|_| Error::connection())?;
+        self.0
+            .outbox
+            .send(message)
+            .map_err(|_| Error::connection())?;
 
         Ok(())
     }

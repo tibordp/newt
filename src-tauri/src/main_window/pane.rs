@@ -201,7 +201,7 @@ impl Pane {
 
         let mut accumulated = Vec::new();
         let mut batch_path: Option<VfsPath> = None;
-        let mut batch_fs_stats: Option<FsStats> = None;
+        let mut batch_fs_stats: Option<FsStats>;
         let mut first_batch = true;
         let mut last_publish = Instant::now();
         let mut dirty = false;
@@ -749,7 +749,7 @@ impl PaneViewState {
             if self
                 .filter_regex
                 .as_ref()
-                .map_or(true, |re| re.is_match(&self.files[i as usize].name))
+                .is_none_or(|re| re.is_match(&self.files[i as usize].name))
             {
                 new_index = i;
                 offset -= direction;

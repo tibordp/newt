@@ -155,12 +155,18 @@ pub struct UidGidCache {
     local_groups: RwLock<HashMap<u32, UserGroup>>,
 }
 
-impl UidGidCache {
-    pub fn new() -> Self {
+impl Default for UidGidCache {
+    fn default() -> Self {
         Self {
             local_users: RwLock::new(HashMap::new()),
             local_groups: RwLock::new(HashMap::new()),
         }
+    }
+}
+
+impl UidGidCache {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {

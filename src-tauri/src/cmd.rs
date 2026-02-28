@@ -573,7 +573,10 @@ pub fn dialog(
                     let is_dir = files.len() == 1 && files[0].is_dir;
                     let is_symlink = files.len() == 1 && files[0].is_symlink;
                     let symlink_target = if files.len() == 1 {
-                        files[0].symlink_target.as_ref().map(|p| p.to_string_lossy().to_string())
+                        files[0]
+                            .symlink_target
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().to_string())
                     } else {
                         None
                     };
@@ -1174,7 +1177,7 @@ pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<
         if opts.active_terminal == Some(handle) {
             opts.active_terminal = c.terminals.first_handle();
         }
-        if c.terminals.len() == 0 {
+        if c.terminals.is_empty() {
             opts.terminal_panel_visible = false;
             opts.panes_focused = true;
         }
@@ -1187,7 +1190,7 @@ pub async fn cmd_toggle_terminal_panel(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    let visible = ctx.terminals().len() > 0
+    let visible = !ctx.terminals().is_empty()
         && ctx.with_update(|c| Ok(c.display_options.0.read().terminal_panel_visible))?;
 
     if visible {
@@ -1200,7 +1203,7 @@ pub async fn cmd_toggle_terminal_panel(
         })
     } else {
         // Show the panel — auto-create a terminal if none exist
-        if ctx.terminals().len() == 0 {
+        if ctx.terminals().is_empty() {
             let cwd = ctx.active_pane().map(|p| p.path().path);
             ctx.create_terminal(cwd.as_deref()).await?;
         } else {

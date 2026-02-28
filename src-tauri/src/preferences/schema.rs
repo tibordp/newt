@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Serde defaults ensure every field has a compiled-in default. The JSON Schema
 /// is derived via `schemars` so the frontend settings editor can be generated
 /// automatically.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct AppPreferences {
     #[serde(default)]
@@ -17,28 +17,12 @@ pub struct AppPreferences {
     pub hot_paths: HotPathsPreferences,
 }
 
-impl Default for AppPreferences {
-    fn default() -> Self {
-        Self {
-            appearance: AppearancePreferences::default(),
-            behavior: BehaviorPreferences::default(),
-            hot_paths: HotPathsPreferences::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct AppearancePreferences {
     /// Show hidden files by default when opening a new window.
     #[schemars(title = "Show Hidden Files")]
     pub show_hidden: bool,
-}
-
-impl Default for AppearancePreferences {
-    fn default() -> Self {
-        Self { show_hidden: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
