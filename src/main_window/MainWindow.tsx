@@ -28,6 +28,7 @@ import {
   executeCommandById,
 } from "../lib/commands";
 import CommandPalette from "./modals/CommandPalette";
+import HotPaths from "./modals/HotPaths";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
 import { MainWindowState } from "./types";
 import Pane from "./Pane";
@@ -38,7 +39,7 @@ import SettingsEditor from "./modals/SettingsEditor";
 enablePatches();
 
 // Modal types that use their own rendering (not the generic Dialog.Root)
-const CUSTOM_MODAL_TYPES = ["select_vfs", "command_palette", "settings"];
+const CUSTOM_MODAL_TYPES = ["select_vfs", "command_palette", "hot_paths", "settings"];
 
 function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
@@ -124,6 +125,12 @@ function App() {
         <CommandPalette
           open={modalType === "command_palette"}
           preferences={preferences}
+          state={remoteState}
+          onClose={closeModal}
+          onCloseAutoFocus={refocusActivePane}
+        />
+        <HotPaths
+          open={modalType === "hot_paths"}
           state={remoteState}
           onClose={closeModal}
           onCloseAutoFocus={refocusActivePane}

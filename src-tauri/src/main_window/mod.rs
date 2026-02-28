@@ -330,6 +330,7 @@ pub enum ModalDataKind {
         targets: Vec<VfsTarget>,
     },
     CommandPalette,
+    HotPaths,
     Settings,
     Confirm {
         message: String,
@@ -751,6 +752,7 @@ struct MainWindowContextInner {
     terminal_client: Arc<dyn TerminalClient>,
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
+    hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
     mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
     next_operation_id: AtomicU64,
 
@@ -881,6 +883,7 @@ impl MainWindowContext {
             terminal_client,
             file_reader,
             operations_client,
+            hot_paths_provider,
             communicator,
             initial_dir,
         ): (
@@ -890,6 +893,7 @@ impl MainWindowContext {
             Arc<dyn TerminalClient>,
             Arc<dyn FileReader>,
             Arc<dyn OperationsClient>,
+            Arc<dyn newt_common::hot_paths::HotPathsProvider>,
             Option<Communicator>,
             VfsPath,
         ) = match &connection_target {
@@ -921,6 +925,9 @@ impl MainWindowContext {
                     }
                 });
 
+                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
+                    Arc::new(newt_common::hot_paths::Local::new());
+
                 let initial_dir = VfsPath::root(std::env::current_dir().unwrap());
 
                 (
@@ -930,6 +937,7 @@ impl MainWindowContext {
                     terminal_client,
                     file_reader,
                     operations_client,
+                    hot_paths_provider,
                     None,
                     initial_dir,
                 )
@@ -963,6 +971,8 @@ impl MainWindowContext {
                     Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
                 let operations_client: Arc<dyn OperationsClient> =
                     Arc::new(newt_common::operation::Remote::new(communicator.clone()));
+                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
+                    Arc::new(newt_common::hot_paths::Remote::new(communicator.clone()));
 
                 tokio::spawn(async move {
                     let ret = child.wait().await.unwrap();
@@ -984,6 +994,7 @@ impl MainWindowContext {
                     terminal_client,
                     file_reader,
                     operations_client,
+                    hot_paths_provider,
                     Some(communicator),
                     initial_dir,
                 )
@@ -1038,6 +1049,8 @@ impl MainWindowContext {
                     Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
                 let operations_client: Arc<dyn OperationsClient> =
                     Arc::new(newt_common::operation::Remote::new(communicator.clone()));
+                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
+                    Arc::new(newt_common::hot_paths::Remote::new(communicator.clone()));
 
                 tokio::spawn(async move {
                     let ret = child.wait().await.unwrap();
@@ -1056,6 +1069,7 @@ impl MainWindowContext {
                     terminal_client,
                     file_reader,
                     operations_client,
+                    hot_paths_provider,
                     Some(communicator),
                     initial_dir,
                 )
@@ -1114,6 +1128,7 @@ impl MainWindowContext {
                 terminal_client,
                 file_reader,
                 operations_client,
+                hot_paths_provider,
                 mounted_vfs,
                 next_operation_id: AtomicU64::new(1),
                 window,
@@ -1141,6 +1156,10 @@ impl MainWindowContext {
 
     pub fn file_reader(&self) -> Arc<dyn FileReader> {
         self.inner.file_reader.clone()
+    }
+
+    pub fn hot_paths_provider(&self) -> Arc<dyn newt_common::hot_paths::HotPathsProvider> {
+        self.inner.hot_paths_provider.clone()
     }
 
     pub fn file_server_base_url(&self) -> String {

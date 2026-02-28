@@ -3,7 +3,7 @@ pub mod schema;
 use log::{info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use schema::{AppPreferences, SettingsFile};
+use schema::{AppPreferences, BookmarkEntry, SettingsFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -15,6 +15,7 @@ pub struct ResolvedPreferences {
     pub schema: serde_json::Value,
     pub bindings: Vec<ResolvedBinding>,
     pub commands: Vec<CommandInfo>,
+    pub bookmarks: Vec<BookmarkEntry>,
 }
 
 /// A resolved keybinding after `mod+` expansion and cascading.
@@ -117,6 +118,76 @@ impl PreferencesManager {
         Ok(())
     }
 
+    /// Add a bookmark entry to settings.toml. Preserves existing content.
+    pub fn add_bookmark(&self, path: &str, name: Option<&str>) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        // Build the [[bookmark]] array-of-tables entry
+        let mut entry = toml_edit::Table::new();
+        entry.insert("path", toml_edit::value(path));
+        if let Some(n) = name {
+            entry.insert("name", toml_edit::value(n));
+        }
+        entry.set_implicit(true);
+
+        // Get or create the [[bookmark]] array
+        if !doc.contains_key("bookmark") {
+            doc.insert(
+                "bookmark",
+                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+            );
+        }
+
+        if let Some(arr) = doc["bookmark"].as_array_of_tables_mut() {
+            arr.push(entry);
+        } else {
+            return Err("'bookmark' key exists but is not an array of tables".into());
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Remove a bookmark entry from settings.toml by path.
+    pub fn remove_bookmark(&self, path: &str) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        if let Some(arr) = doc["bookmark"].as_array_of_tables_mut() {
+            // Find and remove the entry with matching path
+            let mut idx_to_remove = None;
+            for (i, table) in arr.iter().enumerate() {
+                if let Some(p) = table.get("path").and_then(|v| v.as_str()) {
+                    if p == path {
+                        idx_to_remove = Some(i);
+                        break;
+                    }
+                }
+            }
+            if let Some(idx) = idx_to_remove {
+                arr.remove(idx);
+            }
+            // If the array is now empty, remove the key entirely
+            if arr.is_empty() {
+                doc.remove("bookmark");
+            }
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
     fn setup_watcher(
         app_handle: &tauri::AppHandle,
         config_dir: &Path,
@@ -178,6 +249,7 @@ impl PreferencesManager {
                             let mut guard = resolved.write();
                             if guard.settings != new_resolved.settings
                                 || guard.bindings.len() != new_resolved.bindings.len()
+                                || guard.bookmarks.len() != new_resolved.bookmarks.len()
                             {
                                 *guard = new_resolved.clone();
                             } else {
@@ -284,6 +356,12 @@ impl PreferencesManager {
             })
             .collect();
 
+        // Cascade bookmarks: user + profile
+        let mut bookmarks = user_file.bookmarks.clone();
+        if let Some(pf) = &profile_file {
+            bookmarks.extend(pf.bookmarks.iter().cloned());
+        }
+
         let schema = schemars::schema_for!(AppPreferences);
         let schema_json = serde_json::to_value(schema).unwrap_or_default();
 
@@ -292,6 +370,7 @@ impl PreferencesManager {
             schema: schema_json,
             bindings: resolved_bindings,
             commands,
+            bookmarks,
         }
     }
 
@@ -300,20 +379,39 @@ impl PreferencesManager {
     /// Serializes `base` to a TOML table, deep-merges only the keys present in
     /// `file` (so unset keys keep the base value), then deserializes back.
     fn merge_preferences(base: &AppPreferences, file: &SettingsFile) -> AppPreferences {
-        let mut base_table = toml::Value::try_from(base).unwrap_or(toml::Value::Table(Default::default()));
+        let mut base_table =
+            toml::Value::try_from(base).unwrap_or(toml::Value::Table(Default::default()));
 
         // Merge each category's raw TOML table on top of the serialized base
         if let toml::Value::Table(ref mut root) = base_table {
             if let toml::Value::Table(ref t) = file.appearance {
-                deep_merge_table(root.entry("appearance").or_insert(toml::Value::Table(Default::default())), &toml::Value::Table(t.clone()));
+                deep_merge_table(
+                    root.entry("appearance")
+                        .or_insert(toml::Value::Table(Default::default())),
+                    &toml::Value::Table(t.clone()),
+                );
             }
             if let toml::Value::Table(ref t) = file.behavior {
-                deep_merge_table(root.entry("behavior").or_insert(toml::Value::Table(Default::default())), &toml::Value::Table(t.clone()));
+                deep_merge_table(
+                    root.entry("behavior")
+                        .or_insert(toml::Value::Table(Default::default())),
+                    &toml::Value::Table(t.clone()),
+                );
+            }
+            if let toml::Value::Table(ref t) = file.hot_paths {
+                deep_merge_table(
+                    root.entry("hot_paths")
+                        .or_insert(toml::Value::Table(Default::default())),
+                    &toml::Value::Table(t.clone()),
+                );
             }
         }
 
         base_table.try_into().unwrap_or_else(|e| {
-            warn!("Failed to deserialize merged preferences: {}. Using base.", e);
+            warn!(
+                "Failed to deserialize merged preferences: {}. Using base.",
+                e
+            );
             base.clone()
         })
     }
@@ -701,9 +799,25 @@ pub fn default_commands() -> Vec<CommandDef> {
             id: "command_palette".into(),
             name: "Command Palette".into(),
             category: "View".into(),
+            default_key: Some("mod+shift+p".into()),
+            default_when: None,
+            needs_pane: false,
+        },
+        CommandDef {
+            id: "hot_paths".into(),
+            name: "Hot Paths".into(),
+            category: "Navigation".into(),
             default_key: Some("mod+p".into()),
             default_when: None,
             needs_pane: false,
+        },
+        CommandDef {
+            id: "add_bookmark".into(),
+            name: "Add Current Path to Bookmarks".into(),
+            category: "Navigation".into(),
+            default_key: Some("mod+b".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
         },
     ]
 }

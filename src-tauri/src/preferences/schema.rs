@@ -13,6 +13,8 @@ pub struct AppPreferences {
     pub appearance: AppearancePreferences,
     #[serde(default)]
     pub behavior: BehaviorPreferences,
+    #[serde(default)]
+    pub hot_paths: HotPathsPreferences,
 }
 
 impl Default for AppPreferences {
@@ -20,6 +22,7 @@ impl Default for AppPreferences {
         Self {
             appearance: AppearancePreferences::default(),
             behavior: BehaviorPreferences::default(),
+            hot_paths: HotPathsPreferences::default(),
         }
     }
 }
@@ -54,6 +57,34 @@ impl Default for BehaviorPreferences {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default)]
+pub struct HotPathsPreferences {
+    /// Show standard folders (Home, Downloads, Documents, etc.)
+    #[schemars(title = "Standard Folders")]
+    pub standard_folders: bool,
+    /// Show system bookmarks (GTK bookmarks on Linux)
+    #[schemars(title = "System Bookmarks")]
+    pub system_bookmarks: bool,
+    /// Show mounted volumes and removable media
+    #[schemars(title = "Mounted Volumes")]
+    pub mounts: bool,
+    /// Show recently visited folders
+    #[schemars(title = "Recent Folders")]
+    pub recent_folders: bool,
+}
+
+impl Default for HotPathsPreferences {
+    fn default() -> Self {
+        Self {
+            standard_folders: true,
+            system_bookmarks: true,
+            mounts: true,
+            recent_folders: true,
+        }
+    }
+}
+
 fn default_toml_table() -> toml::Value {
     toml::Value::Table(toml::map::Map::new())
 }
@@ -70,10 +101,16 @@ pub struct SettingsFile {
     pub appearance: toml::Value,
     #[serde(default = "default_toml_table")]
     pub behavior: toml::Value,
+    #[serde(default = "default_toml_table")]
+    pub hot_paths: toml::Value,
 
     /// Keybinding override entries.
     #[serde(default, rename = "bind")]
     pub bindings: Vec<KeybindingEntry>,
+
+    /// User-defined bookmark entries.
+    #[serde(default, rename = "bookmark")]
+    pub bookmarks: Vec<BookmarkEntry>,
 }
 
 impl Default for SettingsFile {
@@ -82,7 +119,9 @@ impl Default for SettingsFile {
             profile: None,
             appearance: default_toml_table(),
             behavior: default_toml_table(),
+            hot_paths: default_toml_table(),
             bindings: Vec::new(),
+            bookmarks: Vec::new(),
         }
     }
 }
@@ -94,4 +133,12 @@ pub struct KeybindingEntry {
     pub command: String,
     #[serde(default)]
     pub when: Option<String>,
+}
+
+/// A single `[[bookmark]]` entry in the TOML file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookmarkEntry {
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }

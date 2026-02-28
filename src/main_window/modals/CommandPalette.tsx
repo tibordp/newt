@@ -95,6 +95,7 @@ export default function CommandPalette({
         matches &&
         // Hide internal commands from palette
         command.id !== "command_palette" &&
+        command.id !== "hot_paths" &&
         (!command.needs_pane || !!paneHandle || paneHandle === 0)
     );
     ret.sort((a, b) => a.score - b.score);

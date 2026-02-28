@@ -1,6 +1,7 @@
 pub mod api;
 pub mod file_reader;
 pub mod filesystem;
+pub mod hot_paths;
 pub mod operation;
 pub mod rpc;
 pub mod sys;

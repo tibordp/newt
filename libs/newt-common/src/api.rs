@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicU64;
 use crate::{
     file_reader::FileReader,
     filesystem::{FileList, Filesystem, ListFilesOptions, ShellService, StreamId},
+    hot_paths::HotPathsProvider,
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
@@ -43,6 +44,8 @@ pub const API_READ_RANGE: Api = Api(301);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
+
+pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
@@ -442,6 +445,38 @@ impl Dispatcher for VfsDispatcher {
             API_UNMOUNT_VFS => {
                 let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.vfs_manager.unmount(vfs_id).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+pub struct HotPathsDispatcher {
+    provider: Box<dyn HotPathsProvider>,
+}
+
+impl HotPathsDispatcher {
+    pub fn new<P: HotPathsProvider + 'static>(provider: P) -> Self {
+        Self {
+            provider: Box::new(provider),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for HotPathsDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_SYSTEM_HOT_PATHS => {
+                let _: () = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.provider.system_hot_paths().await;
                 bincode::serialize(&ret).unwrap()
             }
             _ => return Ok(None),

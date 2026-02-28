@@ -584,6 +584,7 @@ pub fn dialog(
                     targets: ctx.compute_vfs_targets(),
                 },
                 "command_palette" => ModalDataKind::CommandPalette,
+                "hot_paths" => ModalDataKind::HotPaths,
                 "settings" => ModalDataKind::Settings,
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
@@ -1036,7 +1037,10 @@ pub async fn switch_vfs(
 }
 
 #[tauri::command]
-pub async fn cmd_create_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_create_terminal(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
     let cwd = ctx.active_pane().map(|p| p.path().path);
     ctx.create_terminal(cwd.as_deref()).await?;
     Ok(())
@@ -1140,7 +1144,6 @@ pub fn cmd_prev_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Re
     })
 }
 
-
 #[tauri::command]
 pub async fn confirm_action(ctx: MainWindowContext) -> Result<(), Error> {
     let action = ctx.with_update(|gs| {
@@ -1211,6 +1214,89 @@ pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(
     Ok(())
 }
 
+// --- Hot paths commands ---
+
+#[tauri::command]
+pub async fn get_hot_paths(
+    ctx: MainWindowContext,
+    global_ctx: tauri::State<'_, GlobalContext>,
+) -> Result<Vec<newt_common::hot_paths::HotPathEntry>, Error> {
+    use newt_common::hot_paths::{HotPathCategory, HotPathEntry};
+    use newt_common::vfs::{VfsId, VfsPath};
+
+    let prefs = global_ctx.preferences().resolved();
+    let hp_settings = &prefs.settings.hot_paths;
+
+    // Fetch system-provided paths from the provider (runs on agent in remote mode)
+    let mut entries = ctx.hot_paths_provider().system_hot_paths().await?;
+
+    // Filter by enabled categories
+    entries.retain(|e| match e.category {
+        HotPathCategory::UserBookmark => true, // always shown
+        HotPathCategory::StandardFolder => hp_settings.standard_folders,
+        HotPathCategory::Bookmark => hp_settings.system_bookmarks,
+        HotPathCategory::Mount => hp_settings.mounts,
+        HotPathCategory::RecentFolder => hp_settings.recent_folders,
+    });
+
+    // Add user-defined bookmarks from preferences (always included)
+    for bm in &prefs.bookmarks {
+        entries.push(HotPathEntry {
+            path: VfsPath {
+                vfs_id: VfsId::ROOT,
+                path: bm.path.clone().into(),
+            },
+            name: bm.name.clone(),
+            category: HotPathCategory::UserBookmark,
+        });
+    }
+
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn add_bookmark(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    path: String,
+    name: Option<String>,
+) -> Result<(), Error> {
+    global_ctx
+        .preferences()
+        .add_bookmark(&path, name.as_deref())
+        .map_err(Error::Custom)
+}
+
+#[tauri::command]
+pub fn remove_bookmark(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    path: String,
+) -> Result<(), Error> {
+    global_ctx
+        .preferences()
+        .remove_bookmark(&path)
+        .map_err(Error::Custom)
+}
+
+#[tauri::command]
+pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let path = pane.path();
+
+    let path_str = ctx.format_vfs_path(&path);
+    let name = path
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string());
+
+    global_ctx
+        .preferences()
+        .add_bookmark(&path_str, name.as_deref())
+        .map_err(Error::Custom)
+}
+
 // --- cmd_* commands ---
 // These are commands triggerable from the command palette and keyboard shortcuts.
 // The `cmd_` prefix is intercepted by the middleware in `create_handler` which
@@ -1220,10 +1306,7 @@ pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(
 macro_rules! cmd_dialog {
     ($name:ident, $dialog:expr) => {
         #[tauri::command]
-        pub fn $name(
-            ctx: MainWindowContext,
-            pane_handle: PaneHandle,
-        ) -> Result<(), Error> {
+        pub fn $name(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
             dialog(ctx, $dialog.to_string(), Some(pane_handle))
         }
     };
@@ -1239,6 +1322,7 @@ cmd_dialog!(cmd_move, "move");
 cmd_dialog!(cmd_connect_remote, "connect_remote");
 cmd_dialog!(cmd_select_vfs, "select_vfs");
 cmd_dialog!(cmd_command_palette, "command_palette");
+cmd_dialog!(cmd_hot_paths, "hot_paths");
 cmd_dialog!(cmd_open_settings, "settings");
 
 #[tauri::command]
@@ -1248,10 +1332,7 @@ pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Res
 }
 
 #[tauri::command]
-pub fn cmd_open_config_file(
-    ctx: MainWindowContext,
-    _pane_handle: PaneHandle,
-) -> Result<(), Error> {
+pub fn cmd_open_config_file(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();
     open_config_file(global_ctx)
@@ -1313,6 +1394,10 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         update_preference,
         get_preferences_schema,
         open_config_file,
+        // Hot paths
+        get_hot_paths,
+        add_bookmark,
+        remove_bookmark,
         // cmd_* commands (palette / keyboard shortcut entry points)
         cmd_rename,
         cmd_properties,
@@ -1343,6 +1428,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_prev_terminal,
         cmd_open_elevated,
         cmd_mount_s3,
+        cmd_hot_paths,
+        cmd_add_bookmark,
         cmd_open_config_file,
         cmd_reload_window,
         cmd_delete_selected,

@@ -25,6 +25,17 @@ export type AppPreferences = {
   behavior: {
     confirm_delete: boolean;
   };
+  hot_paths: {
+    standard_folders: boolean;
+    system_bookmarks: boolean;
+    mounts: boolean;
+    recent_folders: boolean;
+  };
+};
+
+export type BookmarkEntry = {
+  path: string;
+  name?: string;
 };
 
 export type PreferencesState = {
@@ -32,6 +43,7 @@ export type PreferencesState = {
   schema: any;
   bindings: ResolvedBinding[];
   commands: CommandInfo[];
+  bookmarks: BookmarkEntry[];
 };
 
 export const usePreferences = (): PreferencesState | null => {
