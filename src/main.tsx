@@ -45,7 +45,7 @@ const router = createBrowserRouter([
   },
 ]);
 
-function App({ children }) {
+function App({ children }: { children: React.ReactNode }) {
   const [zoom, setZoom] = useState(1.0);
   const onkeydown = (e: KeyboardEvent) => {
     if (e.key == "=" && e.ctrlKey) {

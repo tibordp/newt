@@ -110,7 +110,7 @@ export default function Terminal({ handle, active, visible }: { handle: number; 
       }
     );
 
-    const onUserInput = (data) => {
+    const onUserInput = (data: string) => {
       const binaryData = new TextEncoder().encode(data);
       safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
     };

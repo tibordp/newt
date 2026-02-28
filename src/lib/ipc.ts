@@ -12,7 +12,7 @@ export const safeCommand = async (
   try {
     await invoke(command, { ...args });
   } catch (e) {
-    await message(e.toString(), {
+    await message(String(e), {
       kind: "error",
       title: "Error",
     });
@@ -70,7 +70,7 @@ function deepUpdate(original: any, received: any): any {
   } else if (typeof original === "object") {
     const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
 
-    const result = {};
+    const result: Record<string, any> = {};
     for (const key of keys) {
       result[key] = deepUpdate(original[key], received[key]);
       isChanged = isChanged || result[key] !== original[key];
@@ -87,8 +87,8 @@ export const useRemoteState = <T>(
   event_name: string,
   deps: any[] = []
 ): T | null => {
-  const version = useRef(null);
-  const [state, setState] = useState<T>(null);
+  const version = useRef<number | null>(null);
+  const [state, setState] = useState<T | null>(null);
 
   useEffect(() => {
     const appWindow = getCurrentWebviewWindow();
@@ -100,11 +100,11 @@ export const useRemoteState = <T>(
         // the reference to the state object, which would cause a re-render of
         // the entire component tree.
         setState((s) => {
-          let ret;
+          let ret: T | null = s;
           if (event.payload.patch) {
             if (version.current !== null && event.payload.version === version.current + 1) {
               version.current = event.payload.version;
-              ret = applyPatches(s, event.payload.patch);
+              ret = applyPatches(s as any, event.payload.patch) as T;
             } else if (version.current !== null) {
               // this should never happen, but just in case
               console.warn("version mismatch, requesting full state...");
@@ -156,7 +156,7 @@ export const useTerminalData = (deps: any[] = []): any => {
         if (!(event.payload.handle in state.current)) {
           state.current[event.payload.handle] = {
             messages: [],
-            listener: null,
+            listener: undefined,
           };
         }
         const cur = state.current[event.payload.handle];
@@ -190,7 +190,7 @@ export const registerTerminalDataHandler = (
     }
     context[handle].listener = listener;
     while (context[handle].messages.length > 0) {
-      listener(context[handle].messages.shift());
+      listener(context[handle].messages.shift()!);
     }
   }
   return () => {

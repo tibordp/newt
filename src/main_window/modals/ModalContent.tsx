@@ -24,7 +24,7 @@ export type CommonDialogProps = {
   context?: Context;
 };
 
-export function ModalContent({ state }) {
+export function ModalContent({ state }: { state: ModalState | null }) {
   const commonProps = {
     cancel: () => {
       safeCommand("close_modal");

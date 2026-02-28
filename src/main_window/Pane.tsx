@@ -103,13 +103,17 @@ type LocalDndState = {
   files: DndFileInfo[];
 };
 
+const fileNames = iconMapping.light.fileNames as Record<string, string>;
+const fileExtensions = iconMapping.light.fileExtensions as Record<string, string>;
+const iconDefs = iconMapping.iconDefinitions as unknown as Record<string, { fontCharacter: string; fontColor: string }>;
+
 function getFileIconChar(name: string, isDir: boolean): { ch: string; color: string } {
   if (isDir) return { ch: "\uE5FF", color: "" }; // folder icon fallback
   const icon =
-    iconMapping.light.fileNames[name] ||
-    iconMapping.light.fileExtensions[name.substr(name.indexOf(".") + 1)] ||
+    fileNames[name] ||
+    fileExtensions[name.substr(name.indexOf(".") + 1)] ||
     iconMapping.light.file;
-  const { fontCharacter, fontColor } = iconMapping.iconDefinitions[icon];
+  const { fontCharacter, fontColor } = iconDefs[icon];
   return { ch: String.fromCodePoint(parseInt(fontCharacter, 16)), color: fontColor };
 }
 
@@ -276,7 +280,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
   const [showSpinner, setShowSpinner] = useState(false);
 
   useEffect(() => {
-    let timeout = null;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     // Show full spinner only when pending_path is set and no partial results yet
     if (pending_path && !loading) {
       // 200 ms of grace period before showing the loading screen to
@@ -286,7 +290,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       setShowSpinner(false);
     }
     return () => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
     };
   }, [pending_path, loading]);
 
@@ -840,7 +844,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
-      inputRef.current.focus();
+      inputRef.current?.focus();
       return;
     }
 
@@ -853,13 +857,13 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "ArrowLeft" && noModifiers) {
-      if (filter.length > 0) {
+      if (filter && filter.length > 0) {
         command("set_filter", {
-          filter: focused.substring(0, filter.length - 1),
+          filter: focused!.substring(0, filter.length - 1),
         });
       }
     } else if (e.key == "ArrowRight" && noModifiers) {
-      if (filter.length < focused.length) {
+      if (filter && focused && filter.length < focused.length) {
         command("set_filter", {
           filter: focused.substring(0, filter.length + 1),
         });
@@ -913,7 +917,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
   }, [paneHandle]);
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
-    tableHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    tableHeaderRef.current!.scrollLeft = e.currentTarget.scrollLeft;
   };
 
   const widthPrefix = `pane-${paneHandle}-column-`;

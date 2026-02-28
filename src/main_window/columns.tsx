@@ -4,21 +4,25 @@ import { File, ColumnDef, Sorting } from "./types";
 import { modeString } from "./utils";
 import styles from "./Columns.module.scss";
 
-function FileName({ focused, filter, info }) {
+const fileNames = iconMapping.light.fileNames as Record<string, string>;
+const fileExtensions = iconMapping.light.fileExtensions as Record<string, string>;
+const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<string, { fontCharacter: string; fontColor: string }>;
+
+function FileName({ focused, filter, info }: { focused: boolean; filter?: string; info: File }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
 
   const icon =
-    iconMapping.light.fileNames[name] ||
-    iconMapping.light.fileExtensions[name.substr(name.indexOf(".") + 1)] ||
+    fileNames[name] ||
+    fileExtensions[name.substr(name.indexOf(".") + 1)] ||
     iconMapping.light.file;
 
-  const { fontCharacter, fontColor } = iconMapping.iconDefinitions[icon];
+  const { fontCharacter, fontColor } = iconDefinitions[icon];
   const ch = String.fromCodePoint(parseInt(fontCharacter, 16));
 
   const nameElement = (
     <>
-      {(!focused || filter === null) && <>{name}</>}
-      {focused && filter !== null && (
+      {(!focused || filter == null) && <>{name}</>}
+      {focused && filter != null && (
         <>
           <span className={styles.filterHead}>{name.substr(0, filter.length)}</span>
           <span>{name.substr(filter.length)}</span>
@@ -86,7 +90,7 @@ export const columns: ColumnDef[] = [
     ],
     render: (info) => (
       <>
-        {info.size !== null
+        {info.size != null
           ? info.size.toLocaleString()
           : info.is_dir
             ? "DIR"
@@ -170,25 +174,24 @@ export function ColumnHeader({
   onSort,
 }: ColumnHeaderProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [startOffset, setStartOffset] = useState(null);
+  const [startOffset, setStartOffset] = useState<number | null>(null);
 
-  const onmousedown = (e) => {
+  const onmousedown = (e: React.MouseEvent) => {
     e.preventDefault();
-    setStartOffset(ref.current.offsetWidth - e.clientX);
+    setStartOffset(ref.current!.offsetWidth - e.clientX);
   };
 
-  const onmouseup = (e) => {
+  const onmouseup = (e: MouseEvent) => {
     if (startOffset !== null) {
       e.preventDefault();
       setStartOffset(null);
     }
   };
 
-  const onmousemove = (e) => {
+  const onmousemove = (e: MouseEvent) => {
     if (startOffset !== null && startOffset + e.clientX > 10) {
       e.preventDefault();
-      const root = document.querySelector(":root");
-      // @ts-ignore
+      const root = document.querySelector(":root") as HTMLElement;
       root.style.setProperty(
         `--${widthPrefix}-${column.key}`,
         `${startOffset + e.clientX}px`
@@ -207,8 +210,7 @@ export function ColumnHeader({
   }, [startOffset]);
 
   useEffect(() => {
-    const root = document.querySelector(":root");
-    // @ts-ignore
+    const root = document.querySelector(":root") as HTMLElement;
     root.style.setProperty(
       `--${widthPrefix}-${column.key}`,
       `${column.initialWidth}px`
@@ -230,7 +232,7 @@ export function ColumnHeader({
           textAlign: column.align,
         }}
       >
-        {column.subcolumns.map((subcol, i) => (
+        {column.subcolumns?.map((subcol, i) => (
           <div
             key={i}
             ref={ref}

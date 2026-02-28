@@ -115,7 +115,7 @@ function App() {
         >
           <Dialog.Portal>
             <Dialog.Content className={dialogStyles.dialogContent} onCloseAutoFocus={refocusActivePane}>
-              <ModalContent state={remoteState?.modal} />
+              <ModalContent state={remoteState?.modal ?? null} />
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
