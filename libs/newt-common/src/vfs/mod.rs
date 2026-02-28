@@ -19,7 +19,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails, FileReader};
-use crate::filesystem::{File, FileList, FsStats, Filesystem, ListFilesOptions};
+use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
 use crate::rpc::Communicator;
 use crate::Error;
 

@@ -237,8 +237,7 @@ function VfsSelector({
           align="start"
           sideOffset={4}
           onKeyDown={onKeyDown}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault();
+          onOpenAutoFocus={() => {
             focusItem(focusedIdx);
           }}
           onCloseAutoFocus={(e) => {
@@ -263,7 +262,7 @@ function VfsSelector({
                   });
                 }}
               >
-                {icon && <span className={styles.vfsDropdownIcon}>{icon}</span>}
+                <span className={styles.vfsDropdownIcon}>{icon}</span>
                 <span className={styles.vfsDropdownLabel}>
                   {target.display_name}
                   {target.vfs_id == null && " (connect...)"}

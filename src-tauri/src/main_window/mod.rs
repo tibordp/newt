@@ -287,6 +287,12 @@ impl serde::Serialize for Operations {
 }
 
 #[derive(Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConfirmAction {
+    DeleteSelected { paths: Vec<VfsPath> },
+}
+
+#[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory {
@@ -322,6 +328,12 @@ pub enum ModalDataKind {
     },
     SelectVfs {
         targets: Vec<VfsTarget>,
+    },
+    CommandPalette,
+    Settings,
+    Confirm {
+        message: String,
+        action: ConfirmAction,
     },
 }
 
@@ -849,10 +861,13 @@ impl MainWindowContext {
         window_title: String,
         init_channel: Option<&Channel<InitEvent>>,
         agent_resolver: &AgentResolver,
+        preferences: &crate::preferences::schema::AppPreferences,
     ) -> Result<Self, Error> {
         // Create state and publisher first
         let mut global_state = MainWindowState::new();
         global_state.window_title = window_title;
+        // Apply initial show_hidden from preferences
+        global_state.display_options.0.write().show_hidden = preferences.appearance.show_hidden;
         let publisher = Arc::new(UpdatePublisher::new(
             window.clone(),
             "main_window",

@@ -119,9 +119,9 @@ impl Command {
     /// [`tokio::process::Command::spawn`]), or if we fail to make the child a
     /// session leader or set its controlling terminal.
     pub fn spawn(&mut self, pts: &crate::Pts) -> crate::Result<tokio::process::Child> {
-        let mut session_leader =
-            pts.0
-                .session_leader([!self.stdin, !self.stdout, !self.stderr]);
+        let mut session_leader = pts
+            .0
+            .session_leader([!self.stdin, !self.stdout, !self.stderr]);
 
         // Safety: the closure only uses async-signal-safe syscalls (setsid,
         // open, ioctl, dup2, close). The CString allocation for the slave

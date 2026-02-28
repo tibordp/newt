@@ -10,7 +10,6 @@ use shell_quote::Quote;
 use tauri::ipc::Invoke;
 use tauri::Emitter;
 use tauri::Manager;
-use tauri::WebviewWindow;
 use tauri::Window;
 use tauri::Wry;
 
@@ -20,6 +19,7 @@ use crate::main_window::pane::Sorting;
 use crate::main_window::OperationState;
 use crate::main_window::OperationStatus;
 
+use crate::main_window::ConfirmAction;
 use crate::main_window::DndData;
 use crate::main_window::DndFile;
 use crate::main_window::InitEvent;
@@ -48,12 +48,14 @@ pub async fn init(
         .get_webview_window(&label)
         .expect("webview window not found");
 
+    let prefs = global_ctx.preferences().settings();
     let ctx = MainWindowContext::create(
         webview_window,
         global_ctx.connection_target.clone(),
         global_ctx.window_title.clone(),
         Some(&on_event),
         global_ctx.agent_resolver(),
+        &prefs,
     )
     .await?;
 
@@ -157,7 +159,7 @@ pub fn select_range(
 }
 
 #[tauri::command]
-pub fn select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub fn cmd_select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().select_all();
         Ok(())
@@ -165,7 +167,7 @@ pub fn select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(),
 }
 
 #[tauri::command]
-pub fn deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().deselect_all();
         Ok(())
@@ -212,23 +214,25 @@ pub fn set_filter(
 }
 
 #[tauri::command]
-pub async fn copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update_async(|gs| async move { gs.copy_pane(pane_handle).await })
         .await
 }
 
 #[tauri::command]
-async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHandle) {
+pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     if pane.is_focused_dir() {
-        return;
+        return Ok(());
     }
     let full_path = match pane.get_focused_file() {
         Some(s) => s,
-        None => return,
+        None => return Ok(()),
     };
 
     let viewer_label = uuid::Uuid::new_v4().to_string();
+
+    let window = ctx.window().clone();
 
     // Pre-register the parent's MainWindowContext for the viewer window label
     // so that on_page_load sees it and doesn't spawn a new agent.
@@ -266,13 +270,29 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
     // Add a "View" menu to switch between Text, Hex, and Image modes
     if let Ok(menu) = (|| -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
         use tauri::menu::{Menu, MenuItem, Submenu};
-        let text_item = MenuItem::with_id(app_handle, "viewer_mode_text", "Text", true, None::<&str>)?;
+        let text_item =
+            MenuItem::with_id(app_handle, "viewer_mode_text", "Text", true, None::<&str>)?;
         let hex_item = MenuItem::with_id(app_handle, "viewer_mode_hex", "Hex", true, None::<&str>)?;
-        let image_item = MenuItem::with_id(app_handle, "viewer_mode_image", "Image", true, None::<&str>)?;
-        let audio_item = MenuItem::with_id(app_handle, "viewer_mode_audio", "Audio", true, None::<&str>)?;
-        let video_item = MenuItem::with_id(app_handle, "viewer_mode_video", "Video", true, None::<&str>)?;
+        let image_item =
+            MenuItem::with_id(app_handle, "viewer_mode_image", "Image", true, None::<&str>)?;
+        let audio_item =
+            MenuItem::with_id(app_handle, "viewer_mode_audio", "Audio", true, None::<&str>)?;
+        let video_item =
+            MenuItem::with_id(app_handle, "viewer_mode_video", "Video", true, None::<&str>)?;
         let pdf_item = MenuItem::with_id(app_handle, "viewer_mode_pdf", "PDF", true, None::<&str>)?;
-        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&text_item, &hex_item, &image_item, &audio_item, &video_item, &pdf_item])?;
+        let view_submenu = Submenu::with_items(
+            app_handle,
+            "View",
+            true,
+            &[
+                &text_item,
+                &hex_item,
+                &image_item,
+                &audio_item,
+                &video_item,
+                &pdf_item,
+            ],
+        )?;
         Ok(Menu::with_items(app_handle, &[&view_submenu])?)
     })() {
         let _ = viewer_window.set_menu(menu);
@@ -289,30 +309,23 @@ async fn view(window: WebviewWindow, ctx: MainWindowContext, pane_handle: PaneHa
             let _ = window.emit("viewer-mode-change", mode);
         });
     }
+
+    Ok(())
 }
 
 #[tauri::command]
-async fn new_window() -> Result<(), Error> {
+pub async fn cmd_new_window(_pane_handle: PaneHandle) -> Result<(), Error> {
     let exe = std::env::current_exe()?;
     tokio::process::Command::new(exe).spawn()?;
     Ok(())
 }
 
 #[tauri::command]
-async fn open(
-    ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-    filename: Option<String>,
-) -> Result<(), Error> {
+pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-
-    let full_path = if let Some(filename) = filename {
-        pane.path().join(filename)
-    } else {
-        match pane.get_focused_file() {
-            Some(s) => s,
-            None => return Ok(()),
-        }
+    let full_path = match pane.get_focused_file() {
+        Some(s) => s,
+        None => return Ok(()),
     };
 
     // open only works for local paths
@@ -322,7 +335,7 @@ async fn open(
 }
 
 #[tauri::command]
-async fn open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
 
@@ -354,7 +367,7 @@ pub fn ping(ctx: MainWindowContext) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub fn toggle_hidden(ctx: MainWindowContext) -> Result<(), Error> {
+pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         c.toggle_hidden();
         Ok(())
@@ -362,7 +375,7 @@ pub fn toggle_hidden(ctx: MainWindowContext) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
 
     #[cfg(windows)]
@@ -383,7 +396,7 @@ pub fn copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
 }
 
 #[tauri::command]
-pub async fn paste_from_clipboard(
+pub async fn cmd_paste_from_clipboard(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
@@ -415,7 +428,7 @@ pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn send_to_terminal(
+pub async fn cmd_send_to_terminal(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
@@ -570,6 +583,8 @@ pub fn dialog(
                 "select_vfs" => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets(),
                 },
+                "command_palette" => ModalDataKind::CommandPalette,
+                "settings" => ModalDataKind::Settings,
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext { pane_handle },
@@ -628,16 +643,47 @@ pub async fn touch_file(
 }
 
 #[tauri::command]
-pub async fn delete_selected(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_delete_selected(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let paths = pane.get_effective_selection();
     if paths.is_empty() {
         return Ok(());
     }
 
-    let request = OperationRequest::Delete { paths };
-    start_operation(ctx, request).await?;
-    Ok(())
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+    let prefs = global_ctx.preferences().settings();
+
+    if prefs.behavior.confirm_delete {
+        let message = if paths.len() > 1 {
+            format!("Delete {} selected files?", paths.len())
+        } else {
+            let name = paths[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("Delete {}?", name)
+        };
+        ctx.with_update(|gs| {
+            *gs.modal.0.write() = Some(ModalData {
+                kind: ModalDataKind::Confirm {
+                    message,
+                    action: ConfirmAction::DeleteSelected { paths },
+                },
+                context: ModalContext {
+                    pane_handle: Some(pane_handle),
+                },
+            });
+            Ok(())
+        })
+    } else {
+        let request = OperationRequest::Delete { paths };
+        start_operation(ctx, request).await?;
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -821,7 +867,7 @@ pub async fn connect_remote(host: String) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn open_elevated() -> Result<(), Error> {
+pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
     let exe = std::env::current_exe()?;
     tokio::process::Command::new(exe)
         .arg("--elevated")
@@ -947,7 +993,7 @@ pub async fn start_copy_move(
 }
 
 #[tauri::command]
-pub async fn mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let response = ctx.mount_vfs(MountRequest::S3 { region: None }).await?;
     let vfs_path = VfsPath::new(response.vfs_id, "/");
 
@@ -990,7 +1036,7 @@ pub async fn switch_vfs(
 }
 
 #[tauri::command]
-pub async fn create_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+pub async fn cmd_create_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     let cwd = ctx.active_pane().map(|p| p.path().path);
     ctx.create_terminal(cwd.as_deref()).await?;
     Ok(())
@@ -1013,12 +1059,12 @@ pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<
 }
 
 #[tauri::command]
-pub async fn toggle_terminal_panel(ctx: MainWindowContext) -> Result<(), Error> {
-    let visible = ctx
-        .terminals()
-        .len() > 0
-        && ctx
-            .with_update(|c| Ok(c.display_options.0.read().terminal_panel_visible))?;
+pub async fn cmd_toggle_terminal_panel(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let visible = ctx.terminals().len() > 0
+        && ctx.with_update(|c| Ok(c.display_options.0.read().terminal_panel_visible))?;
 
     if visible {
         // Hide the panel, focus panes
@@ -1059,7 +1105,7 @@ pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Resu
 }
 
 #[tauri::command]
-pub fn next_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+pub fn cmd_next_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let handles = c.terminals.handles_sorted();
         if handles.is_empty() {
@@ -1077,7 +1123,7 @@ pub fn next_terminal(ctx: MainWindowContext) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub fn prev_terminal(ctx: MainWindowContext) -> Result<(), Error> {
+pub fn cmd_prev_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let handles = c.terminals.handles_sorted();
         if handles.is_empty() {
@@ -1094,6 +1140,33 @@ pub fn prev_terminal(ctx: MainWindowContext) -> Result<(), Error> {
     })
 }
 
+
+#[tauri::command]
+pub async fn confirm_action(ctx: MainWindowContext) -> Result<(), Error> {
+    let action = ctx.with_update(|gs| {
+        let modal = gs.modal.0.read().clone();
+        let modal = modal.ok_or_else(|| Error::Custom("no modal open".into()))?;
+        let action = match modal {
+            ModalData {
+                kind: ModalDataKind::Confirm { action, .. },
+                ..
+            } => action,
+            _ => return Err(Error::Custom("modal is not a confirm dialog".into())),
+        };
+        gs.close_modal();
+        Ok(action)
+    })?;
+
+    match action {
+        ConfirmAction::DeleteSelected { paths } => {
+            let request = OperationRequest::Delete { paths };
+            start_operation(ctx, request).await?;
+        }
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
@@ -1101,47 +1174,118 @@ pub fn close_window(window: Window) -> Result<(), Error> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn get_preferences(
+    global_ctx: tauri::State<'_, GlobalContext>,
+) -> Result<crate::preferences::ResolvedPreferences, Error> {
+    Ok(global_ctx.preferences().resolved())
+}
+
+#[tauri::command]
+pub fn update_preference(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), Error> {
+    global_ctx
+        .preferences()
+        .update_preference(&key, value)
+        .map_err(Error::Custom)
+}
+
+#[tauri::command]
+pub fn get_preferences_schema(
+    global_ctx: tauri::State<'_, GlobalContext>,
+) -> Result<serde_json::Value, Error> {
+    Ok(global_ctx.preferences().resolved().schema)
+}
+
+#[tauri::command]
+pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(), Error> {
+    let path = global_ctx.preferences().settings_file_path();
+    // Create the file with defaults if it doesn't exist
+    if !path.exists() {
+        std::fs::write(&path, "# Newt settings\n# See documentation for available options.\n\n[appearance]\n\n[behavior]\n")?;
+    }
+    opener::open(&path)?;
+    Ok(())
+}
+
+// --- cmd_* commands ---
+// These are commands triggerable from the command palette and keyboard shortcuts.
+// The `cmd_` prefix is intercepted by the middleware in `create_handler` which
+// closes the current modal before forwarding to the actual handler.
+
+// Dialog-opening commands — each calls `dialog()` which sets the modal.
+macro_rules! cmd_dialog {
+    ($name:ident, $dialog:expr) => {
+        #[tauri::command]
+        pub fn $name(
+            ctx: MainWindowContext,
+            pane_handle: PaneHandle,
+        ) -> Result<(), Error> {
+            dialog(ctx, $dialog.to_string(), Some(pane_handle))
+        }
+    };
+}
+
+cmd_dialog!(cmd_rename, "rename");
+cmd_dialog!(cmd_properties, "properties");
+cmd_dialog!(cmd_create_directory, "create_directory");
+cmd_dialog!(cmd_create_file, "create_file");
+cmd_dialog!(cmd_navigate, "navigate");
+cmd_dialog!(cmd_copy, "copy");
+cmd_dialog!(cmd_move, "move");
+cmd_dialog!(cmd_connect_remote, "connect_remote");
+cmd_dialog!(cmd_select_vfs, "select_vfs");
+cmd_dialog!(cmd_command_palette, "command_palette");
+cmd_dialog!(cmd_open_settings, "settings");
+
+#[tauri::command]
+pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.window().close()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_open_config_file(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+    open_config_file(global_ctx)
+}
+
+#[tauri::command]
+pub fn cmd_reload_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    let _ = ctx.window().eval("window.location.reload()");
+    Ok(())
+}
+
 pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'static> {
-    Box::new(tauri::generate_handler![
+    let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
+        // Core / lifecycle
         init,
+        ping,
+        close_modal,
+        confirm_action,
+        dialog,
+        close_window,
+        zoom,
+        // Pane interaction (called directly by frontend components)
         cancel,
         navigate,
-        ping,
         focus,
         set_sorting,
         toggle_selected,
         select_range,
-        select_all,
-        deselect_all,
         set_selection,
         relative_jump,
         set_filter,
-        copy_pane,
-        new_window,
-        toggle_hidden,
-        file_details,
-        read_file_range,
-        open,
-        open_folder,
-        view,
-        copy_to_clipboard,
-        paste_from_clipboard,
-        zoom,
-        terminal_write,
-        terminal_resize,
-        terminal_focus,
-        send_to_terminal,
-        create_terminal,
-        close_terminal,
-        toggle_terminal_panel,
-        activate_terminal,
-        next_terminal,
-        prev_terminal,
-        close_modal,
-        dialog,
+        // File operations (called from dialog submissions)
         create_directory,
         touch_file,
-        delete_selected,
         rename,
         start_operation,
         start_copy_move,
@@ -1149,13 +1293,74 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         resolve_issue,
         dismiss_operation,
         background_operation,
+        // File viewing/opening
+        file_details,
+        read_file_range,
         connect_remote,
-        open_elevated,
-        mount_s3,
         switch_vfs,
-        close_window,
+        // Terminal
+        terminal_write,
+        terminal_resize,
+        terminal_focus,
+        close_terminal,
+        activate_terminal,
+        // Drag & drop
         start_dnd,
         cancel_dnd,
-        execute_dnd
-    ])
+        execute_dnd,
+        // Preferences
+        get_preferences,
+        update_preference,
+        get_preferences_schema,
+        open_config_file,
+        // cmd_* commands (palette / keyboard shortcut entry points)
+        cmd_rename,
+        cmd_properties,
+        cmd_create_directory,
+        cmd_create_file,
+        cmd_navigate,
+        cmd_copy,
+        cmd_move,
+        cmd_connect_remote,
+        cmd_select_vfs,
+        cmd_command_palette,
+        cmd_open_settings,
+        cmd_new_window,
+        cmd_toggle_hidden,
+        cmd_close_window,
+        cmd_view,
+        cmd_open,
+        cmd_open_folder,
+        cmd_copy_pane,
+        cmd_select_all,
+        cmd_deselect_all,
+        cmd_copy_to_clipboard,
+        cmd_paste_from_clipboard,
+        cmd_send_to_terminal,
+        cmd_toggle_terminal_panel,
+        cmd_create_terminal,
+        cmd_next_terminal,
+        cmd_prev_terminal,
+        cmd_open_elevated,
+        cmd_mount_s3,
+        cmd_open_config_file,
+        cmd_reload_window,
+        cmd_delete_selected,
+    ]);
+
+    // Middleware: close the current modal before any cmd_* command runs.
+    Box::new(move |invoke: Invoke<Wry>| {
+        if invoke.message.command().starts_with("cmd_") {
+            let webview = invoke.message.webview();
+            let app_handle = webview.app_handle().clone();
+            let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+            if let Some(mwc) = global_ctx.main_window(&webview) {
+                let _ = mwc.with_update(|gs| {
+                    gs.close_modal();
+                    Ok(())
+                });
+            }
+        }
+        inner(invoke)
+    })
 }

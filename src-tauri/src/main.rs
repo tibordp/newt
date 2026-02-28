@@ -9,6 +9,7 @@ pub mod cmd;
 pub mod common;
 pub mod file_server;
 pub mod main_window;
+pub mod preferences;
 pub mod viewer;
 
 use clap::Parser;
@@ -48,6 +49,7 @@ pub struct GlobalContext {
     connection_target: ConnectionTarget,
     window_title: String,
     agent_resolver: OnceLock<AgentResolver>,
+    preferences: OnceLock<preferences::PreferencesManager>,
 }
 
 impl GlobalContext {
@@ -57,19 +59,30 @@ impl GlobalContext {
             connection_target,
             window_title,
             agent_resolver: OnceLock::new(),
+            preferences: OnceLock::new(),
         }
     }
 
     pub fn init_agent_resolver(&self, app_handle: &tauri::AppHandle) {
-        self.agent_resolver
-            .set(AgentResolver::new(app_handle))
-            .ok();
+        self.agent_resolver.set(AgentResolver::new(app_handle)).ok();
     }
 
     pub fn agent_resolver(&self) -> &AgentResolver {
         self.agent_resolver
             .get()
             .expect("AgentResolver not initialized")
+    }
+
+    pub fn init_preferences(&self, app_handle: &tauri::AppHandle) {
+        self.preferences
+            .set(preferences::PreferencesManager::new(app_handle))
+            .ok();
+    }
+
+    pub fn preferences(&self) -> &preferences::PreferencesManager {
+        self.preferences
+            .get()
+            .expect("PreferencesManager not initialized")
     }
 
     pub async fn create_main_window(&self, webview: &Webview) -> Result<(), Error> {
@@ -79,12 +92,14 @@ impl GlobalContext {
             .app_handle()
             .get_webview_window(&label)
             .expect("webview window not found");
+        let prefs = self.preferences().settings();
         let window_context = MainWindowContext::create(
             webview_window,
             self.connection_target.clone(),
             self.window_title.clone(),
             None,
             self.agent_resolver(),
+            &prefs,
         )
         .await?;
         self.main_windows.lock().insert(label, window_context);
@@ -172,6 +187,7 @@ fn main() {
         .setup(move |app| {
             let global_ctx: State<GlobalContext> = app.state();
             global_ctx.init_agent_resolver(app.handle());
+            global_ctx.init_preferences(app.handle());
 
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                 .title(&setup_title)

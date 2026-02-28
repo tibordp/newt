@@ -273,9 +273,9 @@ impl Vfs for LocalVfs {
                         Ok(event) => {
                             let should_notify = match event.kind {
                                 EventKind::Remove(RemoveKind::Folder) => event
-                                .paths
-                                .iter()
-                                .any(|p| path.starts_with(p) || p.starts_with(&path)),
+                                    .paths
+                                    .iter()
+                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
                                 EventKind::Access(_) => false,
                                 _ => event.paths.iter().any(|p| p.starts_with(&path)),
                             };

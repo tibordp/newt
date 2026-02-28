@@ -34,12 +34,7 @@ fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
 
 /// Stream file bytes from `start` to `end` (inclusive) in 1 MB chunks,
 /// without buffering the entire range in memory.
-fn chunk_stream(
-    file_reader: Arc<dyn FileReader>,
-    vfs_path: VfsPath,
-    start: u64,
-    end: u64,
-) -> Body {
+fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64, end: u64) -> Body {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(2);
 
     tokio::spawn(async move {

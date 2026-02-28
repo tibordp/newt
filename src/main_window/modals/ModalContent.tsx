@@ -1,5 +1,6 @@
 import { safeCommand } from "../../lib/ipc";
 
+import Confirm from "./Confirm";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
@@ -44,6 +45,8 @@ export function ModalContent({ state }) {
       return <CopyMove {...state.data} {...commonProps} />;
     case "connect_remote":
       return <ConnectRemote {...state.data} {...commonProps} />;
+    case "confirm":
+      return <Confirm {...state.data} {...commonProps} />;
     default:
       return null;
   }

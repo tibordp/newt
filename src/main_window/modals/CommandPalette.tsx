@@ -6,12 +6,14 @@ import {
 } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { Command as CommandType, commands, executeCommand } from "../../lib/commands";
+import { safeCommand } from "../../lib/ipc";
+import { PreferencesState } from "../../lib/preferences";
 import { MainWindowState } from "../types";
 import styles from "./CommandPalette.module.scss";
 
 type CommandPaletteProps = {
   open: boolean;
+  preferences: PreferencesState | null;
   state: MainWindowState | null;
   onClose: () => void;
   onCloseAutoFocus: (e: Event) => void;
@@ -50,6 +52,7 @@ function Highlight(props: {
 
 export default function CommandPalette({
   open,
+  preferences,
   state,
   onClose,
   onCloseAutoFocus,
@@ -59,8 +62,10 @@ export default function CommandPalette({
   const paneHandle =
     state?.display_options.panes_focused && state?.display_options.active_pane;
 
+  const allCommands = preferences?.commands ?? [];
+
   const filteredCommands = useMemo(() => {
-    let ret = commands.map((command) => {
+    let ret = allCommands.map((command) => {
       let a = 0;
       let b = 0;
       let consecutive = 0;
@@ -87,19 +92,23 @@ export default function CommandPalette({
 
     ret = ret.filter(
       ({ matches, command }) =>
-        matches && (command.noPane || !!paneHandle || paneHandle === 0)
+        matches &&
+        // Hide internal commands from palette
+        command.id !== "command_palette" &&
+        (!command.needs_pane || !!paneHandle || paneHandle === 0)
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);
-  }, [filter, paneHandle]);
+  }, [filter, paneHandle, allCommands]);
 
   const onSelect = (value: string) => {
     const index = parseInt(value, 10);
     const command = filteredCommands[index];
-    if (command && state) {
-      executeCommand(command, state);
-    }
-    onClose();
+    if (!command) return;
+
+    safeCommand("cmd_" + command.id, {
+      paneHandle: paneHandle || 0,
+    });
   };
 
   return (
@@ -119,14 +128,14 @@ export default function CommandPalette({
               <Command.Empty>No commands found</Command.Empty>
               {filteredCommands.map((command, i) => (
                 <Command.Item
-                  key={`${command.name}-${i}`}
+                  key={`${command.id}-${i}`}
                   value={String(i)}
                   onSelect={onSelect}
                 >
                   <Highlight name={command.name} filter={filter} />
-                  {command.shortcut && (
+                  {command.shortcut_display.length > 0 && (
                     <div className={styles.shortcut}>
-                      {command.shortcut.render().map((e, i) => (
+                      {command.shortcut_display.map((e, i) => (
                         <Fragment key={i}>
                           {i !== 0 ? " + " : ""}
                           <kbd>{e}</kbd>
