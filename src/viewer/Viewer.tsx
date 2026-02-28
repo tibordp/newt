@@ -439,6 +439,8 @@ interface HexViewerProps {
   loadChunk: (chunkIndex: number) => Promise<void>;
 }
 
+const MAX_SCROLL_HEIGHT = 16_000_000; // stay under browser element height limit
+
 function HexViewer({
   filePath,
   fileSize,
@@ -447,17 +449,30 @@ function HexViewer({
 }: HexViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
+  const [topRow, setTopRow] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [, forceUpdate] = useState(0);
   const rowHeight = 18;
+
+  // Ref to detect programmatic scrollTop changes and avoid feedback loops
+  const programmaticScrollRef = useRef<number | null>(null);
+  // Accumulator for pixel-based wheel deltas
+  const wheelAccumulatorRef = useRef(0);
 
   useEffect(() => {
     viewerRef.current?.focus();
   }, []);
 
   const totalRows = Math.ceil(fileSize / HEX_BYTES_PER_ROW);
-  const totalHeight = totalRows * rowHeight;
+  const visibleRows = Math.floor(containerHeight / rowHeight);
+  const maxRow = Math.max(0, totalRows - visibleRows);
+  const scrollableHeight = Math.min(totalRows * rowHeight, MAX_SCROLL_HEIGHT);
+
+  // Clamp topRow if maxRow changes (e.g. on resize)
+  const clampedTopRow = Math.max(0, Math.min(topRow, maxRow));
+  if (clampedTopRow !== topRow) {
+    setTopRow(clampedTopRow);
+  }
 
   useLayoutEffect(() => {
     if (containerRef.current) {
@@ -475,12 +490,20 @@ function HexViewer({
     return () => observer.disconnect();
   }, []);
 
-  // Calculate visible rows
-  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - 5);
-  const endRow = Math.min(
-    totalRows,
-    Math.ceil((scrollTop + containerHeight) / rowHeight) + 5
-  );
+  // Sync scrollbar position when topRow changes
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const maxScrollTop = scrollableHeight - containerHeight;
+    if (maxScrollTop <= 0) return;
+    const newScrollTop = maxRow > 0 ? (clampedTopRow / maxRow) * maxScrollTop : 0;
+    programmaticScrollRef.current = newScrollTop;
+    el.scrollTop = newScrollTop;
+  }, [clampedTopRow, maxRow, scrollableHeight, containerHeight]);
+
+  // Calculate visible rows with overscan
+  const startRow = Math.max(0, clampedTopRow - 5);
+  const endRow = Math.min(totalRows, clampedTopRow + visibleRows + 5);
 
   // Determine which chunks we need
   const startByte = startRow * HEX_BYTES_PER_ROW;
@@ -555,56 +578,98 @@ function HexViewer({
     rowData.push(renderRow(r));
   }
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop);
-  }, []);
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const scrollTop = e.currentTarget.scrollTop;
+      // If this scroll event was triggered by our programmatic update, ignore it
+      if (
+        programmaticScrollRef.current !== null &&
+        Math.abs(scrollTop - programmaticScrollRef.current) <= 1
+      ) {
+        programmaticScrollRef.current = null;
+        return;
+      }
+      programmaticScrollRef.current = null;
+
+      // User-initiated scrollbar drag — reverse-map to topRow
+      const maxScrollTop = scrollableHeight - containerHeight;
+      if (maxScrollTop > 0) {
+        const newTopRow = Math.round((scrollTop / maxScrollTop) * maxRow);
+        setTopRow(Math.max(0, Math.min(newTopRow, maxRow)));
+      }
+    },
+    [scrollableHeight, containerHeight, maxRow]
+  );
+
+  // Register wheel handler as non-passive so preventDefault() works
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      let rowDelta: number;
+      if (e.deltaMode === 1) {
+        // Line mode — deltaY is already in lines
+        rowDelta = e.deltaY;
+      } else {
+        // Pixel mode — accumulate until we cross a row boundary
+        wheelAccumulatorRef.current += e.deltaY;
+        rowDelta = Math.trunc(wheelAccumulatorRef.current / rowHeight);
+        wheelAccumulatorRef.current -= rowDelta * rowHeight;
+      }
+      if (rowDelta !== 0) {
+        setTopRow((prev) => Math.max(0, Math.min(prev + rowDelta, maxRow)));
+      }
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [maxRow, rowHeight]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      const el = containerRef.current;
-      if (!el) return;
-
       if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         return;
       }
 
-      const pageSize = Math.floor(containerHeight / rowHeight);
       switch (e.key) {
         case "Escape":
           safeCommand("close_window");
           e.preventDefault();
           break;
         case "ArrowUp":
-          el.scrollTop -= rowHeight;
+          setTopRow((prev) => Math.max(0, prev - 1));
           e.preventDefault();
           break;
         case "ArrowDown":
-          el.scrollTop += rowHeight;
+          setTopRow((prev) => Math.min(maxRow, prev + 1));
           e.preventDefault();
           break;
         case "PageUp":
-          el.scrollTop -= pageSize * rowHeight;
+          setTopRow((prev) => Math.max(0, prev - visibleRows));
           e.preventDefault();
           break;
         case "PageDown":
-          el.scrollTop += pageSize * rowHeight;
+          setTopRow((prev) => Math.min(maxRow, prev + visibleRows));
           e.preventDefault();
           break;
         case "Home":
-          el.scrollTop = 0;
+          setTopRow(0);
           e.preventDefault();
           break;
         case "End":
-          el.scrollTop = totalHeight;
+          setTopRow(maxRow);
           e.preventDefault();
           break;
       }
     },
-    [containerHeight, totalHeight]
+    [maxRow, visibleRows]
   );
 
-  const currentOffset = Math.floor(scrollTop / rowHeight) * HEX_BYTES_PER_ROW;
+  const currentOffset = clampedTopRow * HEX_BYTES_PER_ROW;
+
+  // Read current scrollTop for row positioning
+  const currentScrollTop = containerRef.current?.scrollTop ?? 0;
 
   return (
     <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
@@ -613,12 +678,12 @@ function HexViewer({
         ref={containerRef}
         onScroll={handleScroll}
       >
-        <div style={{ height: totalHeight, position: "relative" }}>
+        <div style={{ height: scrollableHeight, position: "relative" }}>
           <div
             className={`${styles.viewerGutter} ${styles.hexGutter}`}
             style={{
               position: "absolute",
-              top: startRow * rowHeight,
+              top: currentScrollTop,
               left: 0,
             }}
           >
@@ -632,7 +697,7 @@ function HexViewer({
             className={styles.viewerText}
             style={{
               position: "absolute",
-              top: startRow * rowHeight,
+              top: currentScrollTop,
               left: "61ch",
               right: 0,
             }}

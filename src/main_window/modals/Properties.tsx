@@ -48,9 +48,9 @@ function formatTimestamp(ms: number | null): string {
 
 // Permission bit positions
 const PERM_BITS = [
-  { label: "Read",    row: 0, bits: [0o400, 0o040, 0o004] },
-  { label: "Write",   row: 1, bits: [0o200, 0o020, 0o002] },
-  { label: "Execute", row: 2, bits: [0o100, 0o010, 0o001] },
+  { label: "Read",    bits: [0o400, 0o040, 0o004] },
+  { label: "Write",   bits: [0o200, 0o020, 0o002] },
+  { label: "Execute", bits: [0o100, 0o010, 0o001] },
 ];
 
 const SPECIAL_BITS = [
@@ -100,6 +100,15 @@ function PermissionEditor({ mode, onChange }: { mode: number; onChange: (m: numb
   );
 }
 
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className={styles.infoRow}>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
 export default function Properties({
   paths,
   name,
@@ -137,6 +146,8 @@ export default function Properties({
     });
   }
 
+  const typeLabel = is_symlink ? "Symbolic link" : is_dir ? "Directory" : "File";
+
   return (
     <div>
       <div className={dialogStyles.dialogContents}>
@@ -144,75 +155,49 @@ export default function Properties({
           {isSingle ? "Properties" : `Properties — ${name}`}
         </Dialog.Title>
 
-        <table className={styles.propsTable}>
-          <tbody>
-            {isSingle && (
-              <tr>
-                <td className={styles.propLabel}>Name</td>
-                <td>{name}</td>
-              </tr>
-            )}
-            {isSingle && (
-              <tr>
-                <td className={styles.propLabel}>Type</td>
-                <td>
-                  {is_symlink ? "Symbolic link" : is_dir ? "Directory" : "File"}
-                  {symlink_target && ` → ${symlink_target}`}
-                </td>
-              </tr>
-            )}
-            <tr>
-              <td className={styles.propLabel}>Size</td>
-              <td>{formatSize(size)}</td>
-            </tr>
-            {isSingle && modified != null && (
-              <tr>
-                <td className={styles.propLabel}>Modified</td>
-                <td>{formatTimestamp(modified)}</td>
-              </tr>
-            )}
-            {isSingle && accessed != null && (
-              <tr>
-                <td className={styles.propLabel}>Accessed</td>
-                <td>{formatTimestamp(accessed)}</td>
-              </tr>
-            )}
-            {isSingle && created != null && (
-              <tr>
-                <td className={styles.propLabel}>Created</td>
-                <td>{formatTimestamp(created)}</td>
-              </tr>
-            )}
-            <tr>
-              <td className={styles.propLabel}>Owner</td>
-              <td>{formatUserGroup(owner)}</td>
-            </tr>
-            <tr>
-              <td className={styles.propLabel}>Group</td>
-              <td>{formatUserGroup(group)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        {hasMode && (
-          <>
-            <h3 className={styles.sectionTitle}>Permissions</h3>
-            <PermissionEditor mode={mode} onChange={setMode} />
-            <div className={styles.octalDisplay}>
-              Octal: <code>{octalMode}</code>
-            </div>
-            {hasDirs && (
-              <label className={styles.recursiveLabel}>
-                <input
-                  type="checkbox"
-                  checked={recursive}
-                  onChange={(e) => setRecursive(e.target.checked)}
+        <div className={hasMode ? styles.columns : undefined}>
+          <div className={styles.infoSection}>
+            <dl className={styles.infoList}>
+              {isSingle && <InfoRow label="Name" value={name} />}
+              {isSingle && (
+                <InfoRow
+                  label="Type"
+                  value={<>{typeLabel}{symlink_target && <span className={styles.symlinkTarget}> → {symlink_target}</span>}</>}
                 />
-                Apply recursively to directories
-              </label>
+              )}
+              <InfoRow label="Size" value={formatSize(size)} />
+              <InfoRow label="Owner" value={formatUserGroup(owner)} />
+              <InfoRow label="Group" value={formatUserGroup(group)} />
+            </dl>
+            {isSingle && (modified != null || accessed != null || created != null) && (
+              <dl className={styles.infoList}>
+                {modified != null && <InfoRow label="Modified" value={formatTimestamp(modified)} />}
+                {accessed != null && <InfoRow label="Accessed" value={formatTimestamp(accessed)} />}
+                {created != null && <InfoRow label="Created" value={formatTimestamp(created)} />}
+              </dl>
             )}
-          </>
-        )}
+          </div>
+
+          {hasMode && (
+            <div className={styles.permSection}>
+              <div className={styles.permSectionHeader}>Permissions</div>
+              <PermissionEditor mode={mode} onChange={setMode} />
+              <div className={styles.octalDisplay}>
+                <code>{octalMode}</code>
+              </div>
+              {hasDirs && (
+                <label className={styles.recursiveLabel}>
+                  <input
+                    type="checkbox"
+                    checked={recursive}
+                    onChange={(e) => setRecursive(e.target.checked)}
+                  />
+                  Apply recursively
+                </label>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>
