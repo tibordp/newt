@@ -83,6 +83,11 @@ pub enum OperationRequest {
     Delete {
         paths: Vec<VfsPath>,
     },
+    SetPermissions {
+        paths: Vec<VfsPath>,
+        mode: u32,
+        recursive: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -532,6 +537,14 @@ pub async fn execute_operation(
                 cancel.clone(),
             )
             .await
+        }
+        OperationRequest::SetPermissions {
+            paths,
+            mode,
+            recursive,
+        } => {
+            execute_set_permissions(&mut reporter, &context, paths, mode, recursive, cancel.clone())
+                .await
         }
     };
 
@@ -1286,6 +1299,113 @@ async fn collect_delete_entries(
     dirs.reverse();
     files.extend(dirs);
     Ok(files)
+}
+
+async fn collect_chmod_entries(
+    vfs: &dyn Vfs,
+    path: &Path,
+) -> Result<Vec<PathBuf>, crate::Error> {
+    let mut entries = vec![path.to_path_buf()];
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let file_list = vfs.list_files(&dir, None).await?;
+        for file in &file_list {
+            if file.name == ".." {
+                continue;
+            }
+            let entry_path = dir.join(&file.name);
+            if file.is_dir && !file.is_symlink {
+                stack.push(entry_path.clone());
+            }
+            entries.push(entry_path);
+        }
+    }
+
+    Ok(entries)
+}
+
+async fn execute_set_permissions(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    paths: Vec<VfsPath>,
+    mode: u32,
+    recursive: bool,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    debug!(
+        "execute_set_permissions: {} paths, mode={:o}, recursive={}",
+        paths.len(),
+        mode,
+        recursive
+    );
+
+    // Collect all entries to process
+    let mut all_entries: Vec<(Arc<dyn Vfs>, PathBuf, String)> = Vec::new();
+
+    for vfs_path in &paths {
+        let (vfs, local_path) = context.registry.resolve(vfs_path)?;
+
+        if recursive {
+            let is_dir = probe_is_dir(&*vfs, &local_path).await?;
+            if is_dir {
+                let entries = collect_chmod_entries(&*vfs, &local_path).await?;
+                for entry in entries {
+                    let display = format!("{}:{}", vfs_path.vfs_id, entry.display());
+                    all_entries.push((vfs.clone(), entry, display));
+                }
+                continue;
+            }
+        }
+
+        let display = vfs_path.to_string();
+        all_entries.push((vfs, local_path, display));
+    }
+
+    let total_items = all_entries.len() as u64;
+    reporter.send_prepared(0, total_items);
+
+    let meta = crate::vfs::VfsMetadata {
+        permissions: Some(mode),
+        ..Default::default()
+    };
+
+    let mut items_done = 0u64;
+
+    for (vfs, local_path, display) in &all_entries {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::Cancelled);
+        }
+
+        reporter.maybe_send_progress(0, items_done, display);
+
+        let mut retry = true;
+        while retry {
+            retry = false;
+            if let Err(e) = vfs.set_metadata(local_path, &meta).await {
+                match reporter
+                    .handle_io_error(
+                        e,
+                        &format!("Error setting permissions on {}", display),
+                        None,
+                        &cancel,
+                        true,
+                    )
+                    .await?
+                {
+                    IssueOutcome::Skip => {}
+                    IssueOutcome::Retry => {
+                        retry = true;
+                    }
+                }
+            }
+        }
+
+        items_done += 1;
+    }
+
+    reporter.maybe_send_progress(0, items_done, "");
+    Ok(())
 }
 
 async fn execute_delete(

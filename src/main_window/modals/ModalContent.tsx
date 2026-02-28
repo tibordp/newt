@@ -6,7 +6,7 @@ import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
 import Navigate from "./Navigate";
-
+import Properties from "./Properties";
 import Rename from "./Rename";
 
 export type ModalState = {
@@ -47,6 +47,8 @@ export function ModalContent({ state }) {
       return <ConnectRemote {...state.data} {...commonProps} />;
     case "confirm":
       return <Confirm {...state.data} {...commonProps} />;
+    case "properties":
+      return <Properties {...state.data} {...commonProps} />;
     default:
       return null;
   }

@@ -147,6 +147,10 @@ impl Pane {
         self.file_list.read().path().clone()
     }
 
+    pub fn file_list(&self) -> Arc<FileList> {
+        self.file_list.read().clone()
+    }
+
     async fn navigate_impl(
         &self,
         target: VfsPath,

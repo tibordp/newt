@@ -303,10 +303,17 @@ pub enum ModalDataKind {
     },
     Properties {
         paths: Vec<VfsPath>,
-
+        name: String,
+        size: Option<u64>,
+        is_dir: bool,
+        is_symlink: bool,
+        symlink_target: Option<String>,
         mode: Option<u32>,
         owner: Option<UserGroup>,
         group: Option<UserGroup>,
+        modified: Option<i128>,
+        accessed: Option<i128>,
+        created: Option<i128>,
     },
     Navigate {
         path: VfsPath,

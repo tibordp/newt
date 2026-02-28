@@ -1,0 +1,83 @@
+.propsTable {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: var(--space-4);
+
+  td {
+    padding: var(--space-1) var(--space-3);
+    vertical-align: top;
+  }
+}
+
+.propLabel {
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+  width: 1%;
+  text-align: right;
+  padding-right: var(--space-4) !important;
+}
+
+.sectionTitle {
+  font-weight: bold;
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: 1em;
+}
+
+.permGrid {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr;
+  gap: var(--space-1) var(--space-4);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.permHeader {
+  text-align: center;
+  font-weight: bold;
+  font-size: 0.9em;
+  color: var(--color-fg-muted);
+}
+
+.permRow {
+  display: contents;
+}
+
+.permLabel {
+  text-align: right;
+  color: var(--color-fg-muted);
+  font-size: 0.9em;
+}
+
+.permCell {
+  text-align: center;
+}
+
+.specialBits {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--space-5);
+  margin-top: var(--space-2);
+}
+
+.specialBitLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9em;
+  color: var(--color-fg-muted);
+}
+
+.octalDisplay {
+  margin-bottom: var(--space-3);
+
+  code {
+    font-weight: bold;
+  }
+}
+
+.recursiveLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}

@@ -9,7 +9,8 @@ import {
   memo,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import * as Popover from "@radix-ui/react-popover";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
 import {
@@ -22,7 +23,9 @@ import { ModalState } from "./modals/ModalContent";
 import { File, PaneState, DndFileInfo, FileRowContext } from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
+import { FileContextMenuContent } from "./ContextMenu";
 import styles from "./Pane.module.scss";
+import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
 
 function PathBreadcrumbs(props: { breadcrumbs: Breadcrumb[]; paneHandle: number }) {
@@ -177,43 +180,9 @@ function VfsSelector({
   open: boolean;
   onRestoreFocus: () => void;
 }) {
-  const [focusedIdx, setFocusedIdx] = useState(0);
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
-
-  useEffect(() => {
-    if (open) setFocusedIdx(0);
-  }, [open]);
-
-  const focusItem = useCallback((idx: number) => {
-    const el = itemRefs.current[idx];
-    if (el) {
-      el.focus();
-    } else {
-      // Portal may not have committed refs yet — retry next frame
-      requestAnimationFrame(() => itemRefs.current[idx]?.focus());
-    }
-  }, []);
-
-  // Focus the active item whenever it changes
-  useEffect(() => {
-    if (open) {
-      focusItem(focusedIdx);
-    }
-  }, [open, focusedIdx, focusItem]);
-
-  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setFocusedIdx((i) => (i < vfsTargets.length - 1 ? i + 1 : 0));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setFocusedIdx((i) => (i > 0 ? i - 1 : vfsTargets.length - 1));
-    }
-  }, [vfsTargets.length]);
-
   return (
-    <Popover.Root open={open} onOpenChange={(v) => { if (!v) safeCommand("close_modal"); }}>
-      <Popover.Trigger asChild>
+    <DropdownMenu.Root open={open} onOpenChange={(v) => { if (!v) safeCommand("close_modal"); }}>
+      <DropdownMenu.Trigger asChild>
         <button
           className={styles.vfsSelector}
           type="button"
@@ -230,31 +199,26 @@ function VfsSelector({
         >
           {vfsDisplayName} &#x25BE;
         </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          className={styles.vfsDropdown}
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className={menuStyles.content}
           align="start"
           sideOffset={4}
-          onKeyDown={onKeyDown}
-          onOpenAutoFocus={() => {
-            focusItem(focusedIdx);
-          }}
+          loop
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             onRestoreFocus();
           }}
         >
-          {vfsTargets.map((target, i) => {
+          {vfsTargets.map((target) => {
             const isActive = target.vfs_id != null && target.vfs_id === activeVfsId;
             const icon = VFS_ICONS[target.type_name];
             return (
-              <button
+              <DropdownMenu.Item
                 key={target.type_name}
-                ref={(el) => { itemRefs.current[i] = el; }}
-                className={styles.vfsDropdownItem}
-                type="button"
-                onClick={() => {
+                className={menuStyles.item}
+                onSelect={() => {
                   safeCommand("switch_vfs", {
                     paneHandle,
                     vfsId: target.vfs_id,
@@ -262,18 +226,18 @@ function VfsSelector({
                   });
                 }}
               >
-                <span className={styles.vfsDropdownIcon}>{icon}</span>
-                <span className={styles.vfsDropdownLabel}>
+                <span className={menuStyles.itemIcon}>{icon}</span>
+                <span className={menuStyles.itemLabel}>
                   {target.display_name}
                   {target.vfs_id == null && " (connect...)"}
                 </span>
-                {isActive && <span className={styles.vfsDropdownCheck}>{"\u2713"}</span>}
-              </button>
+                {isActive && <span className={menuStyles.itemCheck}>{"\u2713"}</span>}
+              </DropdownMenu.Item>
             );
           })}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
@@ -809,7 +773,7 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     if (file.is_dir) {
       safeCommand("navigate", { paneHandle, path: file.name, exact: true });
     } else {
-      safeCommand("open", { paneHandle, filename: file.name });
+      safeCommand("cmd_open", { paneHandle, filename: file.name });
     }
   }, [paneHandle]);
 
@@ -850,11 +814,27 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     return true;
   };
 
+  const openContextMenu = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !focused) return;
+    const li = container.querySelector(`li[data-name="${CSS.escape(focused)}"]`);
+    if (!li) return;
+    const rect = li.getBoundingClientRect();
+    setContextMenuIsParentDir(focused === "..");
+    li.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      clientX: rect.left,
+      clientY: rect.bottom,
+    }));
+  }, [focused]);
+
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
     const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
+    } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      openContextMenu();
     } else if (e.key == "Backspace" && noModifiers) {
       command("navigate", { path: "..", exact: true }, true);
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
@@ -907,6 +887,28 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       safeCommand("select_range", { paneHandle, filename: e.currentTarget.dataset.name });
     } else {
       safeCommand("focus", { paneHandle, filename: e.currentTarget.dataset.name });
+    }
+  }, [paneHandle]);
+
+  const contextMenuFileRef = useRef<string | null>(null);
+  const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
+
+  const onContextMenu = useCallback((e: React.MouseEvent<HTMLUListElement>) => {
+    // Find which file row was right-clicked
+    const target = e.target as HTMLElement;
+    const li = target.closest("li[data-name]") as HTMLElement | null;
+    if (!li) {
+      e.preventDefault();
+      return;
+    }
+
+    const fileName = li.dataset.name!;
+    contextMenuFileRef.current = fileName;
+    setContextMenuIsParentDir(fileName === "..");
+
+    // If right-clicked file is not in the selection, focus it (clearing selection)
+    if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
+      safeCommandSilent("focus", { paneHandle, filename: fileName });
     }
   }, [paneHandle]);
 
@@ -971,41 +973,47 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         </div>
       </div>
       {files && (
-        <ul
-          className={styles.files}
-          ref={containerRef}
-          onKeyDown={onkeydown}
-          onMouseDown={onMouseDown}
-          tabIndex={-1}
-          onScroll={onScroll}
-        >
-          <ViewportList
-            overscan={0}
-            initialIndex={focusedIndex}
-            ref={viewPortRef}
-            viewportRef={containerRef}
-            items={files}
-            itemSize={22}
-          >
-            {(row: File) => {
-              const isFocused = active && row.name === focused;
-              return (
-                <FileRow
-                  key={row.name}
-                  row={row}
-                  isFocused={isFocused}
-                  isSelected={selectedLookup.has(row.name)}
-                  filter={isFocused ? filter : undefined}
-                  widthPrefix={widthPrefix}
-                  onClick={onClick}
-                  onMouseDown={onDndMouseDown}
-                  onOpen={onOpen}
-                />
-              );
-            }}
-          </ViewportList>
-          <div className={styles.dragRect} ref={dragRectRef} />
-        </ul>
+        <ContextMenu.Root>
+          <ContextMenu.Trigger asChild>
+            <ul
+              className={styles.files}
+              ref={containerRef}
+              onKeyDown={onkeydown}
+              onMouseDown={onMouseDown}
+              onContextMenu={onContextMenu}
+              tabIndex={-1}
+              onScroll={onScroll}
+            >
+              <ViewportList
+                overscan={0}
+                initialIndex={focusedIndex}
+                ref={viewPortRef}
+                viewportRef={containerRef}
+                items={files}
+                itemSize={22}
+              >
+                {(row: File) => {
+                  const isFocused = active && row.name === focused;
+                  return (
+                    <FileRow
+                      key={row.name}
+                      row={row}
+                      isFocused={isFocused}
+                      isSelected={selectedLookup.has(row.name)}
+                      filter={isFocused ? filter : undefined}
+                      widthPrefix={widthPrefix}
+                      onClick={onClick}
+                      onMouseDown={onDndMouseDown}
+                      onOpen={onOpen}
+                    />
+                  );
+                }}
+              </ViewportList>
+              <div className={styles.dragRect} ref={dragRectRef} />
+            </ul>
+          </ContextMenu.Trigger>
+          <FileContextMenuContent paneHandle={paneHandle} isParentDir={contextMenuIsParentDir} />
+        </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
       <div className={styles.statusbar}>

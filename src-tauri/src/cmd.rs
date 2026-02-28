@@ -539,7 +539,97 @@ pub fn dialog(
                     path: pane.unwrap().path(),
                 },
                 "properties" => {
-                    todo!()
+                    let pane = pane.unwrap();
+                    let paths = pane.get_effective_selection();
+                    if paths.is_empty() {
+                        return Ok(());
+                    }
+
+                    let file_list = pane.file_list();
+                    let files: Vec<&newt_common::filesystem::File> = paths
+                        .iter()
+                        .filter_map(|p| {
+                            let name = p.file_name()?.to_string_lossy().to_string();
+                            file_list.files().iter().find(|f| f.name == name)
+                        })
+                        .collect();
+
+                    if files.is_empty() {
+                        return Ok(());
+                    }
+
+                    let name = if files.len() == 1 {
+                        files[0].name.clone()
+                    } else {
+                        format!("{} items", files.len())
+                    };
+
+                    let size = if files.iter().all(|f| f.size.is_some()) {
+                        Some(files.iter().map(|f| f.size.unwrap_or(0)).sum())
+                    } else {
+                        None
+                    };
+
+                    let is_dir = files.len() == 1 && files[0].is_dir;
+                    let is_symlink = files.len() == 1 && files[0].is_symlink;
+                    let symlink_target = if files.len() == 1 {
+                        files[0].symlink_target.as_ref().map(|p| p.to_string_lossy().to_string())
+                    } else {
+                        None
+                    };
+
+                    // For mode: if single file, use its mode; if multiple, bitwise AND of all modes
+                    let mode = if files.len() == 1 {
+                        Some(files[0].mode.0)
+                    } else if files.iter().all(|f| f.mode.0 != 0) {
+                        Some(files.iter().fold(0o7777, |acc, f| acc & f.mode.0))
+                    } else {
+                        None
+                    };
+
+                    // Owner: show only if identical across all files
+                    let owner = if let Some(first) = files[0].user.as_ref() {
+                        if files.iter().all(|f| f.user.as_ref() == Some(first)) {
+                            Some(first.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Group: show only if identical across all files
+                    let group = if let Some(first) = files[0].group.as_ref() {
+                        if files.iter().all(|f| f.group.as_ref() == Some(first)) {
+                            Some(first.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Timestamps: only for single file
+                    let (modified, accessed, created) = if files.len() == 1 {
+                        (files[0].modified, files[0].accessed, files[0].created)
+                    } else {
+                        (None, None, None)
+                    };
+
+                    ModalDataKind::Properties {
+                        paths,
+                        name,
+                        size,
+                        is_dir,
+                        is_symlink,
+                        symlink_target,
+                        mode,
+                        owner,
+                        group,
+                        modified,
+                        accessed,
+                        created,
+                    }
                 }
                 "rename" => {
                     let pane = pane.unwrap();
@@ -714,6 +804,32 @@ pub async fn rename(
 }
 
 #[tauri::command]
+pub async fn set_permissions(
+    ctx: MainWindowContext,
+    pane_handle: Option<PaneHandle>,
+    paths: Vec<VfsPath>,
+    mode: u32,
+    recursive: bool,
+) -> Result<(), Error> {
+    let request = OperationRequest::SetPermissions {
+        paths,
+        mode,
+        recursive,
+    };
+    start_operation(ctx.clone(), request).await?;
+
+    ctx.with_update_async(|gs| async move {
+        gs.close_modal();
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh(None).await?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn start_operation(
     ctx: MainWindowContext,
     request: OperationRequest,
@@ -748,6 +864,10 @@ pub async fn start_operation(
         OperationRequest::Delete { paths } => (
             "delete".to_string(),
             format!("Deleting {} item(s)", paths.len()),
+        ),
+        OperationRequest::SetPermissions { paths, mode, .. } => (
+            "chmod".to_string(),
+            format!("Setting permissions {:o} on {} item(s)", mode, paths.len()),
         ),
     };
 
@@ -1368,6 +1488,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         create_directory,
         touch_file,
         rename,
+        set_permissions,
         start_operation,
         start_copy_move,
         cancel_operation,

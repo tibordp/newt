@@ -1,0 +1,61 @@
+.content {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dialog);
+  padding: 4px;
+  z-index: 300;
+  min-width: 180px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 28px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--color-fg);
+  cursor: default;
+  user-select: none;
+
+  &[data-highlighted] {
+    background: var(--color-selected-bg);
+    outline: none;
+  }
+
+  &[data-disabled] {
+    color: var(--color-fg-muted);
+    pointer-events: none;
+  }
+}
+
+.shortcut {
+  margin-left: auto;
+  color: var(--color-fg-muted);
+  font-size: 0.85em;
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border);
+}
+
+.itemIcon {
+  font-family: "nerd-symbols";
+  flex-shrink: 0;
+  opacity: 0.7;
+  width: 1.2em;
+  text-align: center;
+}
+
+.itemLabel {
+  flex: 1;
+}
+
+.itemCheck {
+  flex-shrink: 0;
+  color: var(--color-accent);
+}
