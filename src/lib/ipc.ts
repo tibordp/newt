@@ -7,7 +7,7 @@ import { enablePatches, applyPatches, Patch } from "immer";
 
 export const safeCommand = async (
   command: string,
-  args: object = {}
+  args: object = {},
 ): Promise<void> => {
   try {
     await invoke(command, { ...args });
@@ -21,7 +21,7 @@ export const safeCommand = async (
 
 export const safeCommandSilent = async (
   command: string,
-  args: object = {}
+  args: object = {},
 ): Promise<void> => {
   try {
     await invoke(command, { ...args });
@@ -85,14 +85,14 @@ function deepUpdate(original: any, received: any): any {
 
 export const useRemoteState = <T>(
   event_name: string,
-  deps: any[] = []
+  deps: any[] = [],
 ): T | null => {
   const version = useRef<number | null>(null);
   const [state, setState] = useState<T | null>(null);
 
   useEffect(() => {
     const appWindow = getCurrentWebviewWindow();
-    let listenPromise = appWindow.listen(
+    const listenPromise = appWindow.listen(
       `update:${event_name}`,
       (event: Event<ChangePayload<T>>) => {
         // State is serialized, so we perform a "deep" update (diff), updating
@@ -102,7 +102,10 @@ export const useRemoteState = <T>(
         setState((s) => {
           let ret: T | null = s;
           if (event.payload.patch) {
-            if (version.current !== null && event.payload.version === version.current + 1) {
+            if (
+              version.current !== null &&
+              event.payload.version === version.current + 1
+            ) {
               version.current = event.payload.version;
               ret = applyPatches(s as any, event.payload.patch) as T;
             } else if (version.current !== null) {
@@ -117,7 +120,7 @@ export const useRemoteState = <T>(
           }
           return ret;
         });
-      }
+      },
     );
     listenPromise.then(() => invoke("ping", {}).catch(() => {}));
     return () => {
@@ -125,9 +128,9 @@ export const useRemoteState = <T>(
     };
   }, deps);
 
-  // @ts-ignore
+  // @ts-expect-error debug helper
   window.__NEWT_STATE = window.__NEWT_STATE ?? {};
-  // @ts-ignore
+  // @ts-expect-error debug helper
   window.__NEWT_STATE[event_name] = state;
 
   return state;
@@ -150,7 +153,7 @@ export const useTerminalData = (deps: any[] = []): any => {
 
   useEffect(() => {
     const appWindow = getCurrentWebviewWindow();
-    let listenPromise = appWindow.listen(
+    const listenPromise = appWindow.listen(
       "terminal_data",
       (event: Event<TerminalData>) => {
         if (!(event.payload.handle in state.current)) {
@@ -167,7 +170,7 @@ export const useTerminalData = (deps: any[] = []): any => {
             cur.messages.push(event.payload.data);
           }
         }
-      }
+      },
     );
     return () => {
       listenPromise.then((unlisten) => unlisten());
@@ -180,7 +183,7 @@ export const useTerminalData = (deps: any[] = []): any => {
 export const registerTerminalDataHandler = (
   context: TerminalDataState,
   handle: number,
-  listener: DataCallback
+  listener: DataCallback,
 ): (() => void) => {
   if (!(handle in context)) {
     context[handle] = { messages: [], listener: listener };

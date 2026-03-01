@@ -87,15 +87,23 @@ function IssueResolution({
         applyToAll,
       });
     },
-    [op.id, issue.issue_id, applyToAll]
+    [op.id, issue.issue_id, applyToAll],
   );
 
   return (
-    <div className={classNameOverrides?.issueResolution ?? styles.issueResolution}>
-      <span className={classNameOverrides?.issueMessage ?? styles.issueMessage}>{issue.message}</span>
+    <div
+      className={classNameOverrides?.issueResolution ?? styles.issueResolution}
+    >
+      <span className={classNameOverrides?.issueMessage ?? styles.issueMessage}>
+        {issue.message}
+      </span>
       <div className={classNameOverrides?.issueActions ?? styles.issueActions}>
         {issue.actions.map((action, i) => (
-          <button key={action} autoFocus={i === 0} onClick={() => resolve(action)}>
+          <button
+            key={action}
+            autoFocus={i === 0}
+            onClick={() => resolve(action)}
+          >
             {ACTION_LABELS[action] || action}
           </button>
         ))}
@@ -198,7 +206,12 @@ export function OperationProgressModal({
   const progress = formatProgress(op);
 
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) backgroundOp(); }}>
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) backgroundOp();
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Content
           className={modalStyles.content}
@@ -230,9 +243,14 @@ export function OperationProgressModal({
                       />
                     </div>
                     <div className={modalStyles.progressInfo}>
-                      <span className={modalStyles.progressText}>{progress}</span>
+                      <span className={modalStyles.progressText}>
+                        {progress}
+                      </span>
                       {op.current_item && (
-                        <span className={modalStyles.currentItem} title={op.current_item}>
+                        <span
+                          className={modalStyles.currentItem}
+                          title={op.current_item}
+                        >
                           {op.current_item}
                         </span>
                       )}
@@ -240,17 +258,23 @@ export function OperationProgressModal({
                   </>
                 )}
                 {op.status === "completed" && (
-                  <div className={`${modalStyles.status} ${modalStyles.statusDone}`}>
+                  <div
+                    className={`${modalStyles.status} ${modalStyles.statusDone}`}
+                  >
                     Completed
                   </div>
                 )}
                 {op.status === "failed" && (
-                  <div className={`${modalStyles.status} ${modalStyles.statusFailed}`}>
+                  <div
+                    className={`${modalStyles.status} ${modalStyles.statusFailed}`}
+                  >
                     Failed{op.error ? `: ${op.error}` : ""}
                   </div>
                 )}
                 {op.status === "cancelled" && (
-                  <div className={`${modalStyles.status} ${modalStyles.statusCancelled}`}>
+                  <div
+                    className={`${modalStyles.status} ${modalStyles.statusCancelled}`}
+                  >
                     Cancelled
                   </div>
                 )}
@@ -262,7 +286,9 @@ export function OperationProgressModal({
             {isActive && (
               <>
                 <button
-                  onClick={() => safeCommand("cancel_operation", { operationId: op.id })}
+                  onClick={() =>
+                    safeCommand("cancel_operation", { operationId: op.id })
+                  }
                 >
                   Cancel
                 </button>
@@ -274,7 +300,9 @@ export function OperationProgressModal({
             {op.status === "failed" && (
               <button
                 autoFocus
-                onClick={() => safeCommand("dismiss_operation", { operationId: op.id })}
+                onClick={() =>
+                  safeCommand("dismiss_operation", { operationId: op.id })
+                }
               >
                 Close
               </button>
@@ -294,7 +322,7 @@ export default function OperationsPanel({
   foregroundOperationId?: number;
 }) {
   const ops = Object.values(operations).filter(
-    (op) => op.id !== foregroundOperationId
+    (op) => op.id !== foregroundOperationId,
   );
 
   if (ops.length === 0) return null;

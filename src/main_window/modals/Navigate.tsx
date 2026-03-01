@@ -10,7 +10,12 @@ type NavigateProps = CommonDialogProps & {
   display_path: string;
 };
 
-export default function Navigate({ path, display_path, cancel, context }: NavigateProps) {
+export default function Navigate({
+  path,
+  display_path,
+  cancel,
+  context,
+}: NavigateProps) {
   const [newPath, setNewPath] = useState(display_path);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -19,7 +24,7 @@ export default function Navigate({ path, display_path, cancel, context }: Naviga
     safeCommand("navigate", {
       paneHandle: context?.pane_handle,
       path: newPath,
-      exact: false
+      exact: false,
     });
   }
 
@@ -30,7 +35,9 @@ export default function Navigate({ path, display_path, cancel, context }: Naviga
   return (
     <form onSubmit={onSubmit}>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Navigate to</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Navigate to
+        </Dialog.Title>
         <label htmlFor="path">Path</label>
         <input
           ref={inputRef}
@@ -43,8 +50,12 @@ export default function Navigate({ path, display_path, cancel, context }: Naviga
         />
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="submit" className="suggested" disabled={!newPath}>Navigate</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button type="submit" className="suggested" disabled={!newPath}>
+          Navigate
+        </button>
       </div>
     </form>
   );

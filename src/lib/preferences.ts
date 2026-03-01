@@ -51,7 +51,9 @@ export const usePreferences = (): PreferencesState | null => {
 
   useEffect(() => {
     // Fetch initial state
-    invoke<PreferencesState>("get_preferences").then(setState).catch(console.error);
+    invoke<PreferencesState>("get_preferences")
+      .then(setState)
+      .catch(console.error);
 
     // Listen for updates from file watcher
     const appWindow = getCurrentWebviewWindow();
@@ -59,7 +61,7 @@ export const usePreferences = (): PreferencesState | null => {
       "update:preferences",
       (event: Event<PreferencesState>) => {
         setState(event.payload);
-      }
+      },
     );
 
     return () => {

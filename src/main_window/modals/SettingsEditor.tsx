@@ -42,9 +42,7 @@ function resolveSchema(root: any, node: any): any {
   return node;
 }
 
-function extractSettings(
-  preferences: PreferencesState,
-): SettingDef[] {
+function extractSettings(preferences: PreferencesState): SettingDef[] {
   const settings: SettingDef[] = [];
   const schema = preferences.schema;
   const values = preferences.settings;
@@ -52,17 +50,26 @@ function extractSettings(
   if (!schema?.properties) return settings;
 
   // Walk the schema properties (top-level = categories)
-  for (const [category, rawCatSchema] of Object.entries(schema.properties) as [string, any][]) {
+  for (const [category, rawCatSchema] of Object.entries(schema.properties) as [
+    string,
+    any,
+  ][]) {
     const catSchema = resolveSchema(schema, rawCatSchema);
     if (catSchema?.type !== "object" || !catSchema.properties) continue;
 
-    for (const [prop, propSchema] of Object.entries(catSchema.properties) as [string, any][]) {
+    for (const [prop, propSchema] of Object.entries(catSchema.properties) as [
+      string,
+      any,
+    ][]) {
       const key = `${category}.${prop}`;
       const title = propSchema.title || prop.replace(/_/g, " ");
       const description = propSchema.description || "";
-      const type = propSchema.type === "boolean" ? "boolean"
-        : propSchema.type === "integer" || propSchema.type === "number" ? "number"
-        : "string";
+      const type =
+        propSchema.type === "boolean"
+          ? "boolean"
+          : propSchema.type === "integer" || propSchema.type === "number"
+            ? "number"
+            : "string";
 
       const value = (values as any)?.[category]?.[prop];
 
@@ -181,9 +188,17 @@ export default function SettingsEditor({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
       <Dialog.Portal>
-        <Dialog.Content className={styles.content} onCloseAutoFocus={onCloseAutoFocus}>
+        <Dialog.Content
+          className={styles.content}
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <Dialog.Title className="sr-only">Settings</Dialog.Title>
           <div className={styles.header}>
             <input
@@ -197,13 +212,17 @@ export default function SettingsEditor({
           </div>
           <div className={styles.tabBar}>
             <button
-              className={activeTab === "settings" ? styles.tabActive : styles.tab}
+              className={
+                activeTab === "settings" ? styles.tabActive : styles.tab
+              }
               onClick={() => setActiveTab("settings")}
             >
               Preferences
             </button>
             <button
-              className={activeTab === "keybindings" ? styles.tabActive : styles.tab}
+              className={
+                activeTab === "keybindings" ? styles.tabActive : styles.tab
+              }
               onClick={() => setActiveTab("keybindings")}
             >
               Keybindings
@@ -214,7 +233,11 @@ export default function SettingsEditor({
               <>
                 <div className={styles.sidebar}>
                   <div
-                    className={activeCategory === null ? styles.sidebarItemActive : styles.sidebarItem}
+                    className={
+                      activeCategory === null
+                        ? styles.sidebarItemActive
+                        : styles.sidebarItem
+                    }
                     onClick={() => setActiveCategory(null)}
                   >
                     All
@@ -222,7 +245,11 @@ export default function SettingsEditor({
                   {categories.map((cat) => (
                     <div
                       key={cat}
-                      className={activeCategory === cat ? styles.sidebarItemActive : styles.sidebarItem}
+                      className={
+                        activeCategory === cat
+                          ? styles.sidebarItemActive
+                          : styles.sidebarItem
+                      }
                       onClick={() => setActiveCategory(cat)}
                     >
                       {cat}
@@ -231,16 +258,25 @@ export default function SettingsEditor({
                 </div>
                 <div className={styles.settingsList}>
                   {filteredSettings.length === 0 && (
-                    <div style={{ color: "var(--color-fg-muted)", padding: "var(--space-4)" }}>
+                    <div
+                      style={{
+                        color: "var(--color-fg-muted)",
+                        padding: "var(--space-4)",
+                      }}
+                    >
                       No settings found
                     </div>
                   )}
                   {filteredSettings.map((setting) => (
                     <div key={setting.key} className={styles.settingRow}>
                       <div className={styles.settingInfo}>
-                        <div className={styles.settingLabel}>{setting.title}</div>
+                        <div className={styles.settingLabel}>
+                          {setting.title}
+                        </div>
                         {setting.description && (
-                          <div className={styles.settingDescription}>{setting.description}</div>
+                          <div className={styles.settingDescription}>
+                            {setting.description}
+                          </div>
                         )}
                       </div>
                       <div className={styles.settingControl}>
@@ -286,7 +322,11 @@ export default function SettingsEditor({
                           </td>
                           <td>
                             <span className={styles.whenLabel}>
-                              {when ? when.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "Global"}
+                              {when
+                                ? when
+                                    .replace(/_/g, " ")
+                                    .replace(/\b\w/g, (c) => c.toUpperCase())
+                                : "Global"}
                             </span>
                           </td>
                         </tr>

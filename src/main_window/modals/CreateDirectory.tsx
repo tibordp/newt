@@ -28,7 +28,9 @@ export default function CreateDirectory({
   return (
     <form onSubmit={onSubmit}>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Create Directory</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Create Directory
+        </Dialog.Title>
         <label htmlFor="path">Directory name</label>
         <input
           type="text"
@@ -40,8 +42,12 @@ export default function CreateDirectory({
         />
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="submit" className="suggested" disabled={!name}>Create</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button type="submit" className="suggested" disabled={!name}>
+          Create
+        </button>
       </div>
     </form>
   );

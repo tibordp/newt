@@ -5,10 +5,24 @@ import { modeString } from "./utils";
 import styles from "./Columns.module.scss";
 
 const fileNames = iconMapping.light.fileNames as Record<string, string>;
-const fileExtensions = iconMapping.light.fileExtensions as Record<string, string>;
-const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<string, { fontCharacter: string; fontColor: string }>;
+const fileExtensions = iconMapping.light.fileExtensions as Record<
+  string,
+  string
+>;
+const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<
+  string,
+  { fontCharacter: string; fontColor: string }
+>;
 
-function FileName({ focused, filter, info }: { focused: boolean; filter?: string; info: File }) {
+function FileName({
+  focused,
+  filter,
+  info,
+}: {
+  focused: boolean;
+  filter?: string;
+  info: File;
+}) {
   const { name, is_dir, is_symlink, is_hidden } = info;
 
   const icon =
@@ -24,7 +38,9 @@ function FileName({ focused, filter, info }: { focused: boolean; filter?: string
       {(!focused || filter == null) && <>{name}</>}
       {focused && filter != null && (
         <>
-          <span className={styles.filterHead}>{name.substr(0, filter.length)}</span>
+          <span className={styles.filterHead}>
+            {name.substr(0, filter.length)}
+          </span>
           <span>{name.substr(filter.length)}</span>
         </>
       )}
@@ -41,8 +57,9 @@ function FileName({ focused, filter, info }: { focused: boolean; filter?: string
 
   return (
     <div
-      className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${is_symlink ? "symlink" : ""
-        }`}
+      className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${
+        is_symlink ? "symlink" : ""
+      }`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
@@ -70,11 +87,7 @@ export const columns: ColumnDef[] = [
       },
     ],
     render: (info, { isFocused, filter }) => (
-      <FileName
-        filter={filter}
-        focused={isFocused}
-        info={info}
-      />
+      <FileName filter={filter} focused={isFocused} info={info} />
     ),
     initialWidth: 250,
   },
@@ -194,7 +207,7 @@ export function ColumnHeader({
       const root = document.querySelector(":root") as HTMLElement;
       root.style.setProperty(
         `--${widthPrefix}-${column.key}`,
-        `${startOffset + e.clientX}px`
+        `${startOffset + e.clientX}px`,
       );
     }
   };
@@ -213,7 +226,7 @@ export function ColumnHeader({
     const root = document.querySelector(":root") as HTMLElement;
     root.style.setProperty(
       `--${widthPrefix}-${column.key}`,
-      `${column.initialWidth}px`
+      `${column.initialWidth}px`,
     );
   }, []);
 
@@ -242,7 +255,7 @@ export function ColumnHeader({
               if (subcol.sortKey) {
                 onSort(
                   subcol.sortKey,
-                  sorting.key != subcol.sortKey || !sorting.asc
+                  sorting.key != subcol.sortKey || !sorting.asc,
                 );
               }
             }}

@@ -15,12 +15,23 @@ export default function Confirm({ message, cancel }: ConfirmProps) {
   return (
     <div>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Confirm</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Confirm
+        </Dialog.Title>
         <p className={dialogStyles.dialogSummary}>{message}</p>
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="button" className="suggested" onClick={onConfirm} autoFocus>OK</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="suggested"
+          onClick={onConfirm}
+          autoFocus
+        >
+          OK
+        </button>
       </div>
     </div>
   );

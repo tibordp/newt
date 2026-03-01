@@ -36,12 +36,7 @@ export function normalizeKeyEvent(e: KeyboardEvent): string {
   let key = e.key;
 
   // Don't include standalone modifier presses
-  if (
-    key === "Control" ||
-    key === "Shift" ||
-    key === "Alt" ||
-    key === "Meta"
-  ) {
+  if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") {
     return "";
   }
 
@@ -90,7 +85,9 @@ export function buildBindingMap(
 }
 
 /// Determine the current "when" context from state.
-export function getCurrentContext(state: MainWindowState | null): string | null {
+export function getCurrentContext(
+  state: MainWindowState | null,
+): string | null {
   if (!state) return null;
   if (state.display_options.panes_focused) return "pane_focused";
   if (state.display_options.active_terminal != null) return "terminal_focused";

@@ -13,10 +13,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { ViewportList, ViewportListRef } from "../lib/viewPortList";
-import {
-  safeCommand,
-  safeCommandSilent,
-} from "../lib/ipc";
+import { safeCommand, safeCommandSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
@@ -28,7 +25,10 @@ import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
 
-function PathBreadcrumbs(props: { breadcrumbs: Breadcrumb[]; paneHandle: number }) {
+function PathBreadcrumbs(props: {
+  breadcrumbs: Breadcrumb[];
+  paneHandle: number;
+}) {
   const { breadcrumbs, paneHandle } = props;
 
   return (
@@ -44,7 +44,11 @@ function PathBreadcrumbs(props: { breadcrumbs: Breadcrumb[]; paneHandle: number 
               if (i === breadcrumbs.length - 1) {
                 safeCommand("dialog", { paneHandle, dialog: "navigate" });
               } else {
-                safeCommand("navigate", { paneHandle, path: crumb.nav_path, exact: true });
+                safeCommand("navigate", {
+                  paneHandle,
+                  path: crumb.nav_path,
+                  exact: true,
+                });
               }
             }}
           >
@@ -104,17 +108,29 @@ type LocalDndState = {
 };
 
 const fileNames = iconMapping.light.fileNames as Record<string, string>;
-const fileExtensions = iconMapping.light.fileExtensions as Record<string, string>;
-const iconDefs = iconMapping.iconDefinitions as unknown as Record<string, { fontCharacter: string; fontColor: string }>;
+const fileExtensions = iconMapping.light.fileExtensions as Record<
+  string,
+  string
+>;
+const iconDefs = iconMapping.iconDefinitions as unknown as Record<
+  string,
+  { fontCharacter: string; fontColor: string }
+>;
 
-function getFileIconChar(name: string, isDir: boolean): { ch: string; color: string } {
+function getFileIconChar(
+  name: string,
+  isDir: boolean,
+): { ch: string; color: string } {
   if (isDir) return { ch: "\uE5FF", color: "" }; // folder icon fallback
   const icon =
     fileNames[name] ||
     fileExtensions[name.substr(name.indexOf(".") + 1)] ||
     iconMapping.light.file;
   const { fontCharacter, fontColor } = iconDefs[icon];
-  return { ch: String.fromCodePoint(parseInt(fontCharacter, 16)), color: fontColor };
+  return {
+    ch: String.fromCodePoint(parseInt(fontCharacter, 16)),
+    color: fontColor,
+  };
 }
 
 type FileRowProps = {
@@ -165,8 +181,8 @@ const FileRow = memo(function FileRow({
 });
 
 const VFS_ICONS: Record<string, string> = {
-  local: "\uDB80\uDECA",  // nf-md-harddisk (U+F02CA)
-  s3: "\uDB80\uDD63",     // nf-md-cloud_outline (U+F0163)
+  local: "\uDB80\uDECA", // nf-md-harddisk (U+F02CA)
+  s3: "\uDB80\uDD63", // nf-md-cloud_outline (U+F0163)
 };
 
 function VfsSelector({
@@ -185,7 +201,12 @@ function VfsSelector({
   onRestoreFocus: () => void;
 }) {
   return (
-    <DropdownMenu.Root open={open} onOpenChange={(v) => { if (!v) safeCommand("close_modal"); }}>
+    <DropdownMenu.Root
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) safeCommand("close_modal");
+      }}
+    >
       <DropdownMenu.Trigger asChild>
         <button
           className={styles.vfsSelector}
@@ -216,7 +237,8 @@ function VfsSelector({
           }}
         >
           {vfsTargets.map((target) => {
-            const isActive = target.vfs_id != null && target.vfs_id === activeVfsId;
+            const isActive =
+              target.vfs_id != null && target.vfs_id === activeVfsId;
             const icon = VFS_ICONS[target.type_name];
             return (
               <DropdownMenu.Item
@@ -235,7 +257,9 @@ function VfsSelector({
                   {target.display_name}
                   {target.vfs_id == null && " (connect...)"}
                 </span>
-                {isActive && <span className={menuStyles.itemCheck}>{"\u2713"}</span>}
+                {isActive && (
+                  <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                )}
               </DropdownMenu.Item>
             );
           })}
@@ -245,7 +269,14 @@ function VfsSelector({
   );
 }
 
-function PaneInner(props: PaneState & { paneHandle: number; active: boolean; focusGeneration: number; modal?: ModalState }) {
+function PaneInner(
+  props: PaneState & {
+    paneHandle: number;
+    active: boolean;
+    focusGeneration: number;
+    modal?: ModalState;
+  },
+) {
   const {
     paneHandle,
     active,
@@ -266,8 +297,10 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     modal,
   } = props;
 
-  const isVfsSelectorOpen = modal?.type === "select_vfs" && modal?.context?.pane_handle === paneHandle;
-  const vfsTargets: VfsTarget[] = (isVfsSelectorOpen && modal?.data?.targets) || [];
+  const isVfsSelectorOpen =
+    modal?.type === "select_vfs" && modal?.context?.pane_handle === paneHandle;
+  const vfsTargets: VfsTarget[] =
+    (isVfsSelectorOpen && modal?.data?.targets) || [];
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
@@ -299,7 +332,6 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
   const selectedLookup = useMemo(() => {
     return new Set(selected);
   }, [selected]);
-
 
   const containerRef = useRef<HTMLUListElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -370,94 +402,112 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     return Math.max(0, Math.min(filesRef.current.length - 1, index));
   }, []);
 
-  const sendDragSelection = useCallback((drag: DragState, startIdx: number, endIdx: number) => {
-    const currentFiles = filesRef.current;
-    if (!currentFiles.length) return;
-    const base = drag.mode === "ctrl" ? drag.baseSelection : null;
-    const sel = computeDragSelection(startIdx, endIdx, currentFiles, base);
-    safeCommandSilent("set_selection", {
-      paneHandle,
-      selected: sel,
-      focused: null,
-    });
-  }, [paneHandle]);
+  const sendDragSelection = useCallback(
+    (drag: DragState, startIdx: number, endIdx: number) => {
+      const currentFiles = filesRef.current;
+      if (!currentFiles.length) return;
+      const base = drag.mode === "ctrl" ? drag.baseSelection : null;
+      const sel = computeDragSelection(startIdx, endIdx, currentFiles, base);
+      safeCommandSilent("set_selection", {
+        paneHandle,
+        selected: sel,
+        focused: null,
+      });
+    },
+    [paneHandle],
+  );
 
-  const updateDragRect = useCallback((drag: DragState, curScrollX: number, curScrollY: number) => {
-    const el = dragRectRef.current;
-    if (!el) return;
-    el.style.display = "block";
-    el.style.left = Math.min(drag.startScrollX, curScrollX) + "px";
-    el.style.top = Math.min(drag.startScrollY, curScrollY) + "px";
-    el.style.width = Math.abs(curScrollX - drag.startScrollX) + "px";
-    el.style.height = Math.abs(curScrollY - drag.startScrollY) + "px";
-  }, []);
+  const updateDragRect = useCallback(
+    (drag: DragState, curScrollX: number, curScrollY: number) => {
+      const el = dragRectRef.current;
+      if (!el) return;
+      el.style.display = "block";
+      el.style.left = Math.min(drag.startScrollX, curScrollX) + "px";
+      el.style.top = Math.min(drag.startScrollY, curScrollY) + "px";
+      el.style.width = Math.abs(curScrollX - drag.startScrollX) + "px";
+      el.style.height = Math.abs(curScrollY - drag.startScrollY) + "px";
+    },
+    [],
+  );
 
   const hideDragRect = useCallback(() => {
     const el = dragRectRef.current;
     if (el) el.style.display = "none";
   }, []);
 
-  const updateDragSelection = useCallback((drag: DragState, curScrollY: number) => {
-    const currentFiles = filesRef.current;
-    if (!currentFiles.length) return;
+  const updateDragSelection = useCallback(
+    (drag: DragState, curScrollY: number) => {
+      const currentFiles = filesRef.current;
+      if (!currentFiles.length) return;
 
-    const rectTop = Math.min(drag.startScrollY, curScrollY);
-    const rectBottom = Math.max(drag.startScrollY, curScrollY);
-    const startIdx = Math.max(0, Math.floor(rectTop / 22));
-    const endIdx = Math.min(currentFiles.length - 1, Math.ceil(rectBottom / 22) - 1);
+      const rectTop = Math.min(drag.startScrollY, curScrollY);
+      const rectBottom = Math.max(drag.startScrollY, curScrollY);
+      const startIdx = Math.max(0, Math.floor(rectTop / 22));
+      const endIdx = Math.min(
+        currentFiles.length - 1,
+        Math.ceil(rectBottom / 22) - 1,
+      );
 
-    if (startIdx !== drag.lastSentStartIdx || endIdx !== drag.lastSentEndIdx) {
-      drag.lastSentStartIdx = startIdx;
-      drag.lastSentEndIdx = endIdx;
-      sendDragSelection(drag, startIdx, endIdx);
-    }
-  }, [sendDragSelection]);
-
-  const updateAutoScroll = useCallback((clientY: number) => {
-    const drag = dragRef.current;
-    if (!drag || !drag.active) return;
-
-    const container = containerRef.current;
-    if (!container) return;
-
-    const rect = container.getBoundingClientRect();
-    const edgeZone = 44; // 2 rows
-    const topEdge = clientY - rect.top;
-    const bottomEdge = rect.bottom - clientY;
-
-    if (topEdge < edgeZone && topEdge >= 0) {
-      const speed = Math.max(1, Math.round((1 - topEdge / edgeZone) * 10));
-      if (drag.scrollIntervalId === null) {
-        drag.scrollIntervalId = window.setInterval(() => {
-          const d = dragRef.current;
-          if (!d || !d.active) return;
-          container.scrollTop = Math.max(0, container.scrollTop - speed);
-          const r = container.getBoundingClientRect();
-          const curScrollY = d.lastClientY - r.top + container.scrollTop;
-          updateDragRect(d, d.lastCurScrollX, curScrollY);
-          updateDragSelection(d, curScrollY);
-        }, 16);
+      if (
+        startIdx !== drag.lastSentStartIdx ||
+        endIdx !== drag.lastSentEndIdx
+      ) {
+        drag.lastSentStartIdx = startIdx;
+        drag.lastSentEndIdx = endIdx;
+        sendDragSelection(drag, startIdx, endIdx);
       }
-    } else if (bottomEdge < edgeZone && bottomEdge >= 0) {
-      const speed = Math.max(1, Math.round((1 - bottomEdge / edgeZone) * 10));
-      if (drag.scrollIntervalId === null) {
-        drag.scrollIntervalId = window.setInterval(() => {
-          const d = dragRef.current;
-          if (!d || !d.active) return;
-          container.scrollTop += speed;
-          const r = container.getBoundingClientRect();
-          const curScrollY = d.lastClientY - r.top + container.scrollTop;
-          updateDragRect(d, d.lastCurScrollX, curScrollY);
-          updateDragSelection(d, curScrollY);
-        }, 16);
+    },
+    [sendDragSelection],
+  );
+
+  const updateAutoScroll = useCallback(
+    (clientY: number) => {
+      const drag = dragRef.current;
+      if (!drag || !drag.active) return;
+
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const edgeZone = 44; // 2 rows
+      const topEdge = clientY - rect.top;
+      const bottomEdge = rect.bottom - clientY;
+
+      if (topEdge < edgeZone && topEdge >= 0) {
+        const speed = Math.max(1, Math.round((1 - topEdge / edgeZone) * 10));
+        if (drag.scrollIntervalId === null) {
+          drag.scrollIntervalId = window.setInterval(() => {
+            const d = dragRef.current;
+            if (!d || !d.active) return;
+            container.scrollTop = Math.max(0, container.scrollTop - speed);
+            const r = container.getBoundingClientRect();
+            const curScrollY = d.lastClientY - r.top + container.scrollTop;
+            updateDragRect(d, d.lastCurScrollX, curScrollY);
+            updateDragSelection(d, curScrollY);
+          }, 16);
+        }
+      } else if (bottomEdge < edgeZone && bottomEdge >= 0) {
+        const speed = Math.max(1, Math.round((1 - bottomEdge / edgeZone) * 10));
+        if (drag.scrollIntervalId === null) {
+          drag.scrollIntervalId = window.setInterval(() => {
+            const d = dragRef.current;
+            if (!d || !d.active) return;
+            container.scrollTop += speed;
+            const r = container.getBoundingClientRect();
+            const curScrollY = d.lastClientY - r.top + container.scrollTop;
+            updateDragRect(d, d.lastCurScrollX, curScrollY);
+            updateDragSelection(d, curScrollY);
+          }, 16);
+        }
+      } else {
+        if (drag.scrollIntervalId !== null) {
+          clearInterval(drag.scrollIntervalId);
+          drag.scrollIntervalId = null;
+        }
       }
-    } else {
-      if (drag.scrollIntervalId !== null) {
-        clearInterval(drag.scrollIntervalId);
-        drag.scrollIntervalId = null;
-      }
-    }
-  }, [updateDragRect, updateDragSelection]);
+    },
+    [updateDragRect, updateDragSelection],
+  );
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -469,7 +519,8 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
 
       // Detect mouseup that happened outside the window
       if (e.buttons === 0) {
-        if (drag.scrollIntervalId !== null) clearInterval(drag.scrollIntervalId);
+        if (drag.scrollIntervalId !== null)
+          clearInterval(drag.scrollIntervalId);
         if (drag.active) suppressClickRef.current = true;
         hideDragRect();
         dragRef.current = null;
@@ -510,7 +561,14 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
-  }, [getFileIndexAtY, sendDragSelection, updateAutoScroll, updateDragRect, updateDragSelection, hideDragRect]);
+  }, [
+    getFileIndexAtY,
+    sendDragSelection,
+    updateAutoScroll,
+    updateDragRect,
+    updateDragSelection,
+    hideDragRect,
+  ]);
 
   // Cancel drag when files change (e.g. directory navigation)
   useEffect(() => {
@@ -522,59 +580,66 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     }
   }, [files]);
 
-  const onMouseDown = useCallback((e: React.MouseEvent<HTMLUListElement>) => {
-    if (e.button !== 0) return;
-    // Only start drag from empty space — not on file icon or filename text
-    const target = e.target as HTMLElement;
-    if (target.closest(".file-icon") || target.closest(".filename-part")) return;
-    e.preventDefault(); // block text selection
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLUListElement>) => {
+      if (e.button !== 0) return;
+      // Only start drag from empty space — not on file icon or filename text
+      const target = e.target as HTMLElement;
+      if (target.closest(".file-icon") || target.closest(".filename-part"))
+        return;
+      e.preventDefault(); // block text selection
 
-    const container = containerRef.current;
-    if (!container) return;
-    const currentFiles = filesRef.current;
-    if (!currentFiles.length) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const currentFiles = filesRef.current;
+      if (!currentFiles.length) return;
 
-    // Focus the pane and the file under cursor (if any)
-    const rect = container.getBoundingClientRect();
-    const clickScrollY = e.clientY - rect.top + container.scrollTop;
-    const clickIdx = Math.floor(clickScrollY / 22);
-    if (clickIdx >= 0 && clickIdx < currentFiles.length) {
-      safeCommandSilent("focus", { paneHandle, filename: currentFiles[clickIdx].name });
-    } else if (!active) {
-      safeCommandSilent("focus", { paneHandle });
-    }
+      // Focus the pane and the file under cursor (if any)
+      const rect = container.getBoundingClientRect();
+      const clickScrollY = e.clientY - rect.top + container.scrollTop;
+      const clickIdx = Math.floor(clickScrollY / 22);
+      if (clickIdx >= 0 && clickIdx < currentFiles.length) {
+        safeCommandSilent("focus", {
+          paneHandle,
+          filename: currentFiles[clickIdx].name,
+        });
+      } else if (!active) {
+        safeCommandSilent("focus", { paneHandle });
+      }
 
-    let startScrollX = e.clientX - rect.left + container.scrollLeft;
-    let startScrollY = e.clientY - rect.top + container.scrollTop;
+      const startScrollX = e.clientX - rect.left + container.scrollLeft;
+      let startScrollY = e.clientY - rect.top + container.scrollTop;
 
-    let mode: DragMode = "normal";
-    let baseSelection = new Set<string>();
+      let mode: DragMode = "normal";
+      let baseSelection = new Set<string>();
 
-    if (e.ctrlKey) {
-      mode = "ctrl";
-      baseSelection = new Set(selected);
-    } else if (e.shiftKey) {
-      mode = "shift";
-      // Start rect from focused file's top edge
-      const fi = currentFiles.findIndex((f) => f.name === focused);
-      if (fi >= 0) startScrollY = fi * 22;
-    }
+      if (e.ctrlKey) {
+        mode = "ctrl";
+        baseSelection = new Set(selected);
+      } else if (e.shiftKey) {
+        mode = "shift";
+        // Start rect from focused file's top edge
+        const fi = currentFiles.findIndex((f) => f.name === focused);
+        if (fi >= 0) startScrollY = fi * 22;
+      }
 
-    dragRef.current = {
-      active: false,
-      startX: e.clientX,
-      startY: e.clientY,
-      startScrollX,
-      startScrollY,
-      mode,
-      baseSelection,
-      lastSentStartIdx: -1,
-      lastSentEndIdx: -1,
-      lastClientY: e.clientY,
-      lastCurScrollX: startScrollX,
-      scrollIntervalId: null,
-    };
-  }, [active, paneHandle, selected, focused]);
+      dragRef.current = {
+        active: false,
+        startX: e.clientX,
+        startY: e.clientY,
+        startScrollX,
+        startScrollY,
+        mode,
+        baseSelection,
+        lastSentStartIdx: -1,
+        lastSentEndIdx: -1,
+        lastClientY: e.clientY,
+        lastCurScrollX: startScrollX,
+        scrollIntervalId: null,
+      };
+    },
+    [active, paneHandle, selected, focused],
+  );
 
   // --- End drag-to-select logic ---
 
@@ -583,7 +648,8 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
   const onDndMouseDown = useCallback((e: React.MouseEvent<HTMLLIElement>) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (!target.closest(".file-icon") && !target.closest(".filename-part")) return;
+    if (!target.closest(".file-icon") && !target.closest(".filename-part"))
+      return;
     const fileName = e.currentTarget.dataset.name;
     if (!fileName || fileName === "..") return;
 
@@ -593,23 +659,27 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     const currentFiles = filesRef.current;
     const currentSelected = selectedLookupRef.current;
     const filesToDrag = currentSelected.has(fileName)
-      ? currentFiles.filter(f => currentSelected.has(f.name) && f.name !== "..")
-      : [currentFiles.find(f => f.name === fileName)!];
+      ? currentFiles.filter(
+          (f) => currentSelected.has(f.name) && f.name !== "..",
+        )
+      : [currentFiles.find((f) => f.name === fileName)!];
 
     dndRef.current = {
       active: false,
       startX: e.clientX,
       startY: e.clientY,
-      files: filesToDrag.map(f => ({ name: f.name, is_dir: f.is_dir })),
+      files: filesToDrag.map((f) => ({ name: f.name, is_dir: f.is_dir })),
     };
   }, []);
 
   const cleanupDnd = useCallback(() => {
     const ghost = dndGhostRef.current;
     if (ghost) ghost.style.display = "none";
-    document.querySelectorAll(".dnd-drop-target, .dnd-drop-hover").forEach(el => {
-      el.classList.remove("dnd-drop-target", "dnd-drop-hover");
-    });
+    document
+      .querySelectorAll(".dnd-drop-target, .dnd-drop-hover")
+      .forEach((el) => {
+        el.classList.remove("dnd-drop-target", "dnd-drop-hover");
+      });
   }, []);
 
   useEffect(() => {
@@ -662,18 +732,24 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       }
 
       // Highlight drop targets
-      document.querySelectorAll(".dnd-drop-target, .dnd-drop-hover").forEach(el => {
-        el.classList.remove("dnd-drop-target", "dnd-drop-hover");
-      });
+      document
+        .querySelectorAll(".dnd-drop-target, .dnd-drop-hover")
+        .forEach((el) => {
+          el.classList.remove("dnd-drop-target", "dnd-drop-hover");
+        });
 
       const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
       if (!elementUnder) return;
 
-      const targetPane = elementUnder.closest("[data-pane-handle]") as HTMLElement | null;
+      const targetPane = elementUnder.closest(
+        "[data-pane-handle]",
+      ) as HTMLElement | null;
       if (targetPane) {
         const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
         const isSamePane = targetPaneHandle === paneHandle;
-        const targetLi = elementUnder.closest("li[data-is-dir='true']") as HTMLElement | null;
+        const targetLi = elementUnder.closest(
+          "li[data-is-dir='true']",
+        ) as HTMLElement | null;
 
         if (!isSamePane) {
           targetPane.classList.add("dnd-drop-target");
@@ -684,7 +760,9 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
           // In same pane: don't highlight ".." or dirs being dragged (can't drop into yourself)
           if (isSamePane) {
             const dnd = dndRef.current;
-            const draggedNames = dnd ? new Set(dnd.files.map(f => f.name)) : new Set<string>();
+            const draggedNames = dnd
+              ? new Set(dnd.files.map((f) => f.name))
+              : new Set<string>();
             if (targetName !== ".." && !draggedNames.has(targetName)) {
               targetLi.classList.add("dnd-drop-hover");
             }
@@ -715,7 +793,9 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         return;
       }
 
-      const targetPane = elementUnder.closest("[data-pane-handle]") as HTMLElement | null;
+      const targetPane = elementUnder.closest(
+        "[data-pane-handle]",
+      ) as HTMLElement | null;
       if (!targetPane) {
         safeCommandSilent("cancel_dnd");
         return;
@@ -725,13 +805,19 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
       const isSamePane = targetPaneHandle === paneHandle;
 
       let subdirectory: string | null = null;
-      const targetLi = elementUnder.closest("li[data-is-dir='true']") as HTMLElement | null;
+      const targetLi = elementUnder.closest(
+        "li[data-is-dir='true']",
+      ) as HTMLElement | null;
       if (targetLi) {
         const targetName = targetLi.dataset.name || null;
         if (isSamePane) {
           // Same pane: don't drop onto ".." or a dir being dragged
-          const draggedNames = new Set(dnd.files.map(f => f.name));
-          if (targetName && targetName !== ".." && !draggedNames.has(targetName)) {
+          const draggedNames = new Set(dnd.files.map((f) => f.name));
+          if (
+            targetName &&
+            targetName !== ".." &&
+            !draggedNames.has(targetName)
+          ) {
             subdirectory = targetName;
           }
         } else if (targetName) {
@@ -772,14 +858,17 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
 
   // --- End DnD logic ---
 
-  const onOpen = useCallback((file: File) => {
-    if (!file || pendingPathRef.current) return;
-    if (file.is_dir) {
-      safeCommand("navigate", { paneHandle, path: file.name, exact: true });
-    } else {
-      safeCommand("cmd_open", { paneHandle, filename: file.name });
-    }
-  }, [paneHandle]);
+  const onOpen = useCallback(
+    (file: File) => {
+      if (!file || pendingPathRef.current) return;
+      if (file.is_dir) {
+        safeCommand("navigate", { paneHandle, path: file.name, exact: true });
+      } else {
+        safeCommand("cmd_open", { paneHandle, filename: file.name });
+      }
+    },
+    [paneHandle],
+  );
 
   const relativeJump = (delta: number, withSelection?: boolean) => {
     command("relative_jump", { offset: delta, withSelection: !!withSelection });
@@ -821,15 +910,19 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
   const openContextMenu = useCallback(() => {
     const container = containerRef.current;
     if (!container || !focused) return;
-    const li = container.querySelector(`li[data-name="${CSS.escape(focused)}"]`);
+    const li = container.querySelector(
+      `li[data-name="${CSS.escape(focused)}"]`,
+    );
     if (!li) return;
     const rect = li.getBoundingClientRect();
     setContextMenuIsParentDir(focused === "..");
-    li.dispatchEvent(new MouseEvent("contextmenu", {
-      bubbles: true,
-      clientX: rect.left,
-      clientY: rect.bottom,
-    }));
+    li.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        clientX: rect.left,
+        clientY: rect.bottom,
+      }),
+    );
   }, [focused]);
 
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
@@ -875,46 +968,58 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
     e.preventDefault();
   };
 
-  const onClick = useCallback((e: React.MouseEvent<HTMLLIElement>) => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
-    if (pendingPathRef.current) return;
-    if (e.ctrlKey) {
-      safeCommand("toggle_selected", {
-        paneHandle,
-        filename: e.currentTarget.dataset.name,
-        focusNext: false,
-      });
-    } else if (e.shiftKey) {
-      safeCommand("select_range", { paneHandle, filename: e.currentTarget.dataset.name });
-    } else {
-      safeCommand("focus", { paneHandle, filename: e.currentTarget.dataset.name });
-    }
-  }, [paneHandle]);
+  const onClick = useCallback(
+    (e: React.MouseEvent<HTMLLIElement>) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
+      if (pendingPathRef.current) return;
+      if (e.ctrlKey) {
+        safeCommand("toggle_selected", {
+          paneHandle,
+          filename: e.currentTarget.dataset.name,
+          focusNext: false,
+        });
+      } else if (e.shiftKey) {
+        safeCommand("select_range", {
+          paneHandle,
+          filename: e.currentTarget.dataset.name,
+        });
+      } else {
+        safeCommand("focus", {
+          paneHandle,
+          filename: e.currentTarget.dataset.name,
+        });
+      }
+    },
+    [paneHandle],
+  );
 
   const contextMenuFileRef = useRef<string | null>(null);
   const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
 
-  const onContextMenu = useCallback((e: React.MouseEvent<HTMLUListElement>) => {
-    // Find which file row was right-clicked
-    const target = e.target as HTMLElement;
-    const li = target.closest("li[data-name]") as HTMLElement | null;
-    if (!li) {
-      e.preventDefault();
-      return;
-    }
+  const onContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLUListElement>) => {
+      // Find which file row was right-clicked
+      const target = e.target as HTMLElement;
+      const li = target.closest("li[data-name]") as HTMLElement | null;
+      if (!li) {
+        e.preventDefault();
+        return;
+      }
 
-    const fileName = li.dataset.name!;
-    contextMenuFileRef.current = fileName;
-    setContextMenuIsParentDir(fileName === "..");
+      const fileName = li.dataset.name!;
+      contextMenuFileRef.current = fileName;
+      setContextMenuIsParentDir(fileName === "..");
 
-    // If right-clicked file is not in the selection, focus it (clearing selection)
-    if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
-      safeCommandSilent("focus", { paneHandle, filename: fileName });
-    }
-  }, [paneHandle]);
+      // If right-clicked file is not in the selection, focus it (clearing selection)
+      if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
+        safeCommandSilent("focus", { paneHandle, filename: fileName });
+      }
+    },
+    [paneHandle],
+  );
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
     tableHeaderRef.current!.scrollLeft = e.currentTarget.scrollLeft;
@@ -948,15 +1053,10 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
           onRestoreFocus={() => containerRef.current?.focus()}
         />
         <div className={styles.headerPath}>
-          <PathBreadcrumbs
-            breadcrumbs={breadcrumbs}
-            paneHandle={paneHandle}
-          />
+          <PathBreadcrumbs breadcrumbs={breadcrumbs} paneHandle={paneHandle} />
         </div>
         {fs_stats?.available_bytes !== undefined && (
-          <div>
-            {getSiPrefixedNumber(fs_stats.available_bytes)}B free
-          </div>
+          <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
         )}
       </div>
       <div className={styles.tableHeader} ref={tableHeaderRef}>
@@ -1016,7 +1116,10 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
               <div className={styles.dragRect} ref={dragRectRef} />
             </ul>
           </ContextMenu.Trigger>
-          <FileContextMenuContent paneHandle={paneHandle} isParentDir={contextMenuIsParentDir} />
+          <FileContextMenuContent
+            paneHandle={paneHandle}
+            isParentDir={contextMenuIsParentDir}
+          />
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
@@ -1024,13 +1127,15 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
         {showSpinner && "Loading file list..."}
         {!showSpinner && loading && (
           <>
-            Loading... ({(stats.file_count + stats.dir_count).toLocaleString()} items so far)
+            Loading... ({(stats.file_count + stats.dir_count).toLocaleString()}{" "}
+            items so far)
           </>
         )}
         {!showSpinner && !loading && selected.length > 0 && (
           <>
-            {stats.selected_file_count} files, {stats.selected_dir_count} directories selected,{" "}
-            {stats.selected_bytes.toLocaleString()} bytes total
+            {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
+            directories selected, {stats.selected_bytes.toLocaleString()} bytes
+            total
           </>
         )}
         {!showSpinner && !loading && selected.length == 0 && (
@@ -1038,10 +1143,9 @@ function PaneInner(props: PaneState & { paneHandle: number; active: boolean; foc
             {stats.file_count} files, {stats.dir_count} directories
           </>
         )}
-        {
-          !showSpinner && !loading && partial && (
-            <span className={styles.partial}>{" "}(partial)</span>)
-        }
+        {!showSpinner && !loading && partial && (
+          <span className={styles.partial}> (partial)</span>
+        )}
       </div>
     </div>
   );

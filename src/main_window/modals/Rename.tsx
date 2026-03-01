@@ -36,7 +36,9 @@ export default function Rename({
   return (
     <form onSubmit={onSubmit}>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Rename file</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Rename file
+        </Dialog.Title>
         <label htmlFor="path">
           New name for <b>{name}</b>
         </label>
@@ -51,8 +53,12 @@ export default function Rename({
         />
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="submit" className="suggested" disabled={!newName}>Rename</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button type="submit" className="suggested" disabled={!newName}>
+          Rename
+        </button>
       </div>
     </form>
   );

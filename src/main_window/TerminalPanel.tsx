@@ -9,7 +9,11 @@ type Props = {
   panesFocused: boolean;
 };
 
-export default function TerminalPanel({ terminals, activeTerminal, panesFocused }: Props) {
+export default function TerminalPanel({
+  terminals,
+  activeTerminal,
+  panesFocused,
+}: Props) {
   return (
     <div className={styles.panel}>
       <div className={styles.tabBar}>
@@ -17,7 +21,9 @@ export default function TerminalPanel({ terminals, activeTerminal, panesFocused 
           <button
             key={term.handle}
             className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""}`}
-            onClick={() => safeCommandSilent("activate_terminal", { handle: term.handle })}
+            onClick={() =>
+              safeCommandSilent("activate_terminal", { handle: term.handle })
+            }
           >
             <span>Terminal {i + 1}</span>
             <span

@@ -38,7 +38,7 @@ export const getSiPrefixedNumber = (number: number): string => {
   // This outcome is then rounded two decimals and parsed as float to make sure those
   // decimals only appear when they're actually requird (10.0 -> 10, 10.90 -> 19.9, 10.01 -> 10.01)
   const baseNumber = parseFloat(
-    (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2)
+    (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2),
   );
   return `${baseNumber} ${prefix}`;
 };
@@ -47,7 +47,7 @@ export const modeString = (mode: number) => {
   const TYPE_CHARS = "?pc?d?b?-?l?s???";
   const MODE_CHARS = "rwxSTst";
 
-  let ret = Array(10).fill("-");
+  const ret = Array(10).fill("-");
   let idx = 0;
 
   ret[idx] = TYPE_CHARS[(mode >> 12) & 0xf];
@@ -73,7 +73,7 @@ export const modeString = (mode: number) => {
     i += 1;
 
     if ((mode & (0o10000 >> i)) != 0) {
-      ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) ? 1 : 0)];
+      ret[idx] = MODE_CHARS[3 + (k & 2) + (i == 3 ? 1 : 0)];
     }
     if (i >= 3) {
       break;

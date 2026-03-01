@@ -164,7 +164,7 @@ interface TextLoadingState {
 function useChunkedTextLoader(
   filePath: VfsPath,
   fileSize: number,
-  enabled: boolean
+  enabled: boolean,
 ): TextLoadingState {
   const [state, setState] = useState<TextLoadingState>({
     lines: [],
@@ -259,7 +259,7 @@ function useChunkedTextLoader(
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(filePath), fileSize, enabled]);
 
   return state;
@@ -275,7 +275,13 @@ interface TextViewerProps {
   loading: boolean;
 }
 
-function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextViewerProps) {
+function TextViewer({
+  lines,
+  filePath,
+  fileSize,
+  bytesLoaded,
+  loading,
+}: TextViewerProps) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -306,7 +312,7 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
   const startIdx = Math.max(0, Math.floor(scrollTop / lineHeight) - 5);
   const endIdx = Math.min(
     lines.length,
-    Math.ceil((scrollTop + containerHeight) / lineHeight) + 5
+    Math.ceil((scrollTop + containerHeight) / lineHeight) + 5,
   );
   const visibleLines = lines.slice(startIdx, endIdx);
 
@@ -358,7 +364,7 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
           break;
       }
     },
-    [containerHeight, totalHeight]
+    [containerHeight, totalHeight],
   );
 
   const currentLine = Math.floor(scrollTop / lineHeight) + 1;
@@ -366,7 +372,12 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
   const gutterWidth = `${lineNumWidth + 1}ch`;
 
   return (
-    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div
+      className={styles.viewer}
+      ref={viewerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       <div
         className={styles.viewerContent}
         ref={containerRef}
@@ -415,7 +426,8 @@ function TextViewer({ lines, filePath, fileSize, bytesLoaded, loading }: TextVie
         <span>Text</span>
         <span className={styles.statusSeparator}>|</span>
         <span>
-          Line {currentLine} / {lines.length}{loading ? "+" : ""}
+          Line {currentLine} / {lines.length}
+          {loading ? "+" : ""}
         </span>
         <span className={styles.statusSeparator}>|</span>
         <span>{formatSize(fileSize)}</span>
@@ -496,7 +508,8 @@ function HexViewer({
     if (!el) return;
     const maxScrollTop = scrollableHeight - containerHeight;
     if (maxScrollTop <= 0) return;
-    const newScrollTop = maxRow > 0 ? (clampedTopRow / maxRow) * maxScrollTop : 0;
+    const newScrollTop =
+      maxRow > 0 ? (clampedTopRow / maxRow) * maxScrollTop : 0;
     programmaticScrollRef.current = newScrollTop;
     el.scrollTop = newScrollTop;
   }, [clampedTopRow, maxRow, scrollableHeight, containerHeight]);
@@ -540,7 +553,7 @@ function HexViewer({
       if (localOffset >= chunk.length) return undefined;
       return chunk[localOffset];
     },
-    [fileSize]
+    [fileSize],
   );
 
   const renderRow = useCallback(
@@ -570,7 +583,7 @@ function HexViewer({
         ascii: asciiParts.join(""),
       };
     },
-    [getByteAt]
+    [getByteAt],
   );
 
   const rowData: { gutter: string; ascii: string }[] = [];
@@ -598,7 +611,7 @@ function HexViewer({
         setTopRow(Math.max(0, Math.min(newTopRow, maxRow)));
       }
     },
-    [scrollableHeight, containerHeight, maxRow]
+    [scrollableHeight, containerHeight, maxRow],
   );
 
   // Register wheel handler as non-passive so preventDefault() works
@@ -663,7 +676,7 @@ function HexViewer({
           break;
       }
     },
-    [maxRow, visibleRows]
+    [maxRow, visibleRows],
   );
 
   const currentOffset = clampedTopRow * HEX_BYTES_PER_ROW;
@@ -672,7 +685,12 @@ function HexViewer({
   const currentScrollTop = containerRef.current?.scrollTop ?? 0;
 
   return (
-    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div
+      className={styles.viewer}
+      ref={viewerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       <div
         className={styles.viewerContent}
         ref={containerRef}
@@ -703,7 +721,10 @@ function HexViewer({
             }}
           >
             {rowData.map((row, i) => (
-              <div key={startRow + i} className={`${styles.viewerLine} ${styles.hexAscii}`}>
+              <div
+                key={startRow + i}
+                className={`${styles.viewerLine} ${styles.hexAscii}`}
+              >
                 {row.ascii}
                 {"\n"}
               </div>
@@ -735,8 +756,12 @@ interface ImageViewerProps {
 }
 
 function clampView(
-  z: number, px: number, py: number,
-  ns: { w: number; h: number }, cw: number, ch: number
+  z: number,
+  px: number,
+  py: number,
+  ns: { w: number; h: number },
+  cw: number,
+  ch: number,
 ) {
   const minZoom = Math.min(cw / ns.w, ch / ns.h, 1);
   const zoom = Math.max(z, minZoom);
@@ -757,9 +782,17 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
   const [imageError, setImageError] = useState(false);
-  const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const dragStart = useRef<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
 
   // Keep a ref to latest state so native event listeners can read it
   const stateRef = useRef({ zoom, pan, naturalSize });
@@ -773,7 +806,14 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
     const container = containerRef.current;
     const ns = stateRef.current.naturalSize;
     if (!ns || !container) return;
-    const v = clampView(z, px, py, ns, container.clientWidth, container.clientHeight);
+    const v = clampView(
+      z,
+      px,
+      py,
+      ns,
+      container.clientWidth,
+      container.clientHeight,
+    );
     setZoom(v.zoom);
     setPan(v.pan);
   }, []);
@@ -785,7 +825,14 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
     const observer = new ResizeObserver(() => {
       const { zoom: z, pan: p, naturalSize: ns } = stateRef.current;
       if (!ns) return;
-      const v = clampView(z, p.x, p.y, ns, container.clientWidth, container.clientHeight);
+      const v = clampView(
+        z,
+        p.x,
+        p.y,
+        ns,
+        container.clientWidth,
+        container.clientHeight,
+      );
       setZoom(v.zoom);
       setPan(v.pan);
     });
@@ -816,18 +863,21 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
     setPan({ x: (cw - ns.w * z) / 2, y: (ch - ns.h * z) / 2 });
   }, []);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case "Escape":
-        safeCommand("close_window");
-        e.preventDefault();
-        break;
-      case "0":
-        resetView();
-        e.preventDefault();
-        break;
-    }
-  }, [resetView]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      switch (e.key) {
+        case "Escape":
+          safeCommand("close_window");
+          e.preventDefault();
+          break;
+        case "0":
+          resetView();
+          e.preventDefault();
+          break;
+      }
+    },
+    [resetView],
+  );
 
   // Non-passive wheel listener so we can preventDefault (React wheel events are passive)
   useEffect(() => {
@@ -844,7 +894,11 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
 
       // If already at the limit in the scroll direction, let the event pass through
       const zoomingOut = e.deltaY > 0;
-      if ((zoomingOut && curZoom <= minZoom) || (!zoomingOut && curZoom >= maxZoom)) return;
+      if (
+        (zoomingOut && curZoom <= minZoom) ||
+        (!zoomingOut && curZoom >= maxZoom)
+      )
+        return;
 
       e.preventDefault();
 
@@ -862,7 +916,14 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
       const rawPanX = mouseX - imgX * rawZoom;
       const rawPanY = mouseY - imgY * rawZoom;
 
-      const v = clampView(rawZoom, rawPanX, rawPanY, ns, rect.width, rect.height);
+      const v = clampView(
+        rawZoom,
+        rawPanX,
+        rawPanY,
+        ns,
+        rect.width,
+        rect.height,
+      );
       setZoom(v.zoom);
       setPan(v.pan);
     };
@@ -878,9 +939,18 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
       const { zoom: z, pan: curPan, naturalSize: ns } = stateRef.current;
       if (!ns || !container) return;
       // Don't start drag if image fits entirely within container
-      if (ns.w * z <= container.clientWidth && ns.h * z <= container.clientHeight) return;
+      if (
+        ns.w * z <= container.clientWidth &&
+        ns.h * z <= container.clientHeight
+      )
+        return;
       e.preventDefault();
-      dragStart.current = { x: e.clientX, y: e.clientY, panX: curPan.x, panY: curPan.y };
+      dragStart.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX: curPan.x,
+        panY: curPan.y,
+      };
     }
   }, []);
 
@@ -896,7 +966,9 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
         stateRef.current.zoom,
         dragStart.current.panX + dx,
         dragStart.current.panY + dy,
-        ns, container.clientWidth, container.clientHeight
+        ns,
+        container.clientWidth,
+        container.clientHeight,
       );
       setPan(v.pan);
     };
@@ -914,8 +986,17 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
   const zoomPercent = Math.round(zoom * 100);
 
   return (
-    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
-      <div className={styles.imageContent} ref={containerRef} onMouseDown={handleMouseDown}>
+    <div
+      className={styles.viewer}
+      ref={viewerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        className={styles.imageContent}
+        ref={containerRef}
+        onMouseDown={handleMouseDown}
+      >
         {imageError ? (
           <div className={styles.imageErrorMessage}>
             Unable to display image preview
@@ -943,7 +1024,9 @@ function ImageViewer({ filePath, fileUrl, fileSize }: ImageViewerProps) {
         {naturalSize && (
           <>
             <span className={styles.statusSeparator}>|</span>
-            <span>{naturalSize.w} x {naturalSize.h}</span>
+            <span>
+              {naturalSize.w} x {naturalSize.h}
+            </span>
           </>
         )}
         {!imageError && (
@@ -986,7 +1069,12 @@ function MediaViewer({ tag, filePath, fileUrl, fileSize }: MediaViewerProps) {
   const modeName = tag === "audio" ? "Audio" : "Video";
 
   return (
-    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div
+      className={styles.viewer}
+      ref={viewerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       <div className={styles.mediaContent}>
         {mediaError ? (
           <div className={styles.imageErrorMessage}>
@@ -1000,8 +1088,19 @@ function MediaViewer({ tag, filePath, fileUrl, fileSize }: MediaViewerProps) {
             onError={(e) => {
               const el = e.currentTarget;
               const err = el.error;
-              const detail = err ? `${err.message} (code ${err.code})` : "unknown error";
-              console.error(`${modeName} error:`, detail, "src:", fileUrl, "networkState:", el.networkState, "readyState:", el.readyState);
+              const detail = err
+                ? `${err.message} (code ${err.code})`
+                : "unknown error";
+              console.error(
+                `${modeName} error:`,
+                detail,
+                "src:",
+                fileUrl,
+                "networkState:",
+                el.networkState,
+                "readyState:",
+                el.readyState,
+              );
               setMediaError(detail);
             }}
           />
@@ -1013,8 +1112,19 @@ function MediaViewer({ tag, filePath, fileUrl, fileSize }: MediaViewerProps) {
             onError={(e) => {
               const el = e.currentTarget;
               const err = el.error;
-              const detail = err ? `${err.message} (code ${err.code})` : "unknown error";
-              console.error(`${modeName} error:`, detail, "src:", fileUrl, "networkState:", el.networkState, "readyState:", el.readyState);
+              const detail = err
+                ? `${err.message} (code ${err.code})`
+                : "unknown error";
+              console.error(
+                `${modeName} error:`,
+                detail,
+                "src:",
+                fileUrl,
+                "networkState:",
+                el.networkState,
+                "readyState:",
+                el.readyState,
+              );
               setMediaError(detail);
             }}
           />
@@ -1055,7 +1165,12 @@ function PdfViewer({ filePath, fileUrl, fileSize }: PdfViewerProps) {
   }, []);
 
   return (
-    <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div
+      className={styles.viewer}
+      ref={viewerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       {pdfError ? (
         <div className={styles.mediaContent}>
           <div className={styles.imageErrorMessage}>
@@ -1087,7 +1202,8 @@ function Viewer() {
   const [searchParams] = useSearchParams();
   const displayPath = searchParams.get("path") || "";
   const filePath: VfsPath = JSON.parse(
-    searchParams.get("vfs_path") || `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`
+    searchParams.get("vfs_path") ||
+      `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`,
   );
   const fileServerBase = searchParams.get("file_server_base") || "";
   const fileUrl = `${fileServerBase}/${filePath.vfs_id}${filePath.path}`;
@@ -1100,10 +1216,15 @@ function Viewer() {
 
   // Listen for menu-driven mode changes
   useEffect(() => {
-    const unlisten = getCurrentWebviewWindow().listen<string>("viewer-mode-change", (event) => {
-      setActiveMode(event.payload as ViewerMode);
-    });
-    return () => { unlisten.then((fn) => fn()); };
+    const unlisten = getCurrentWebviewWindow().listen<string>(
+      "viewer-mode-change",
+      (event) => {
+        setActiveMode(event.payload as ViewerMode);
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   // Fetch file info on mount
@@ -1142,14 +1263,14 @@ function Viewer() {
         console.error("Failed to preload first chunk", e);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMode, info]);
 
   // Chunked text loading — enabled only in text mode
   const textState = useChunkedTextLoader(
     filePath,
     info?.size ?? 0,
-    info !== null && currentMode === "text"
+    info !== null && currentMode === "text",
   );
 
   const loadChunk = useCallback(
@@ -1167,7 +1288,7 @@ function Viewer() {
         console.error("Failed to load chunk", chunkIndex, e);
       }
     },
-    [displayPath]
+    [displayPath],
   );
 
   // Focus the viewer on mount
@@ -1185,7 +1306,12 @@ function Viewer() {
 
   if (error) {
     return (
-      <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
+      <div
+        className={styles.viewer}
+        ref={viewerRef}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <div className={styles.viewerContent} />
         <div className={styles.viewerStatus}>
           <span className={styles.statusError}>{error}</span>
@@ -1196,7 +1322,12 @@ function Viewer() {
 
   if (!info || !currentMode) {
     return (
-      <div className={styles.viewer} ref={viewerRef} tabIndex={-1} onKeyDown={onKeyDown}>
+      <div
+        className={styles.viewer}
+        ref={viewerRef}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <div className={styles.viewerContent} />
         <div className={styles.viewerStatus}>
           <span>Loading...</span>

@@ -54,7 +54,7 @@ function Highlight({ text, filter }: { text: string; filter: string }) {
       parts.push(
         <span key={key++} className={styles.highlight}>
           {text[b]}
-        </span>
+        </span>,
       );
       a++;
       b++;
@@ -65,7 +65,7 @@ function Highlight({ text, filter }: { text: string; filter: string }) {
   }
 
   if (b < text.length) {
-    parts.push(<span key={key++}>{text.slice(b)}</span>);
+    parts.push(<span key={key}>{text.slice(b)}</span>);
   }
 
   return <span>{parts}</span>;
@@ -83,7 +83,7 @@ function searchableText(entry: HotPathEntry): string {
 
 function fuzzyMatch(
   filter: string,
-  text: string
+  text: string,
 ): { matches: boolean; score: number } {
   let a = 0;
   let b = 0;
@@ -193,9 +193,8 @@ export default function HotPaths({
       .then(() => {
         setEntries((prev) =>
           prev.filter(
-            (e) =>
-              !(e.path.path === path && e.category === "UserBookmark")
-          )
+            (e) => !(e.path.path === path && e.category === "UserBookmark"),
+          ),
         );
         setPendingDelete(null);
       })
@@ -208,7 +207,7 @@ export default function HotPaths({
 
   const getSelectedBookmarkEntry = (): HotPathEntry | null => {
     const selected = document.querySelector(
-      '[cmdk-item][data-selected="true"]'
+      '[cmdk-item][data-selected="true"]',
     );
     if (!selected) return null;
     const value = selected.getAttribute("data-value");
@@ -276,9 +275,7 @@ export default function HotPaths({
               />
             </div>
             <Command.List>
-              {loading && (
-                <Command.Loading>Loading...</Command.Loading>
-              )}
+              {loading && <Command.Loading>Loading...</Command.Loading>}
               <Command.Empty>No paths found</Command.Empty>
               {grouped.map(({ category, items }) => (
                 <Command.Group

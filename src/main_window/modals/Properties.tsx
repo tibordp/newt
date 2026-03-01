@@ -48,18 +48,24 @@ function formatTimestamp(ms: number | null): string {
 
 // Permission bit positions
 const PERM_BITS = [
-  { label: "Read",    bits: [0o400, 0o040, 0o004] },
-  { label: "Write",   bits: [0o200, 0o020, 0o002] },
+  { label: "Read", bits: [0o400, 0o040, 0o004] },
+  { label: "Write", bits: [0o200, 0o020, 0o002] },
   { label: "Execute", bits: [0o100, 0o010, 0o001] },
 ];
 
 const SPECIAL_BITS = [
   { label: "Set UID", bit: 0o4000 },
   { label: "Set GID", bit: 0o2000 },
-  { label: "Sticky",  bit: 0o1000 },
+  { label: "Sticky", bit: 0o1000 },
 ];
 
-function PermissionEditor({ mode, onChange }: { mode: number; onChange: (m: number) => void }) {
+function PermissionEditor({
+  mode,
+  onChange,
+}: {
+  mode: number;
+  onChange: (m: number) => void;
+}) {
   const toggle = (bit: number) => {
     onChange(mode ^ bit);
   };
@@ -146,7 +152,11 @@ export default function Properties({
     });
   }
 
-  const typeLabel = is_symlink ? "Symbolic link" : is_dir ? "Directory" : "File";
+  const typeLabel = is_symlink
+    ? "Symbolic link"
+    : is_dir
+      ? "Directory"
+      : "File";
 
   return (
     <div>
@@ -162,20 +172,43 @@ export default function Properties({
               {isSingle && (
                 <InfoRow
                   label="Type"
-                  value={<>{typeLabel}{symlink_target && <span className={styles.symlinkTarget}> → {symlink_target}</span>}</>}
+                  value={
+                    <>
+                      {typeLabel}
+                      {symlink_target && (
+                        <span className={styles.symlinkTarget}>
+                          {" "}
+                          → {symlink_target}
+                        </span>
+                      )}
+                    </>
+                  }
                 />
               )}
               <InfoRow label="Size" value={formatSize(size)} />
               <InfoRow label="Owner" value={formatUserGroup(owner)} />
               <InfoRow label="Group" value={formatUserGroup(group)} />
             </dl>
-            {isSingle && (modified != null || accessed != null || created != null) && (
-              <dl className={styles.infoList}>
-                {modified != null && <InfoRow label="Modified" value={formatTimestamp(modified)} />}
-                {accessed != null && <InfoRow label="Accessed" value={formatTimestamp(accessed)} />}
-                {created != null && <InfoRow label="Created" value={formatTimestamp(created)} />}
-              </dl>
-            )}
+            {isSingle &&
+              (modified != null || accessed != null || created != null) && (
+                <dl className={styles.infoList}>
+                  {modified != null && (
+                    <InfoRow
+                      label="Modified"
+                      value={formatTimestamp(modified)}
+                    />
+                  )}
+                  {accessed != null && (
+                    <InfoRow
+                      label="Accessed"
+                      value={formatTimestamp(accessed)}
+                    />
+                  )}
+                  {created != null && (
+                    <InfoRow label="Created" value={formatTimestamp(created)} />
+                  )}
+                </dl>
+              )}
           </div>
 
           {hasMode && (

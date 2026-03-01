@@ -13,13 +13,13 @@ export type File = {
   symlink_target: string | null;
   is_hidden: boolean;
   user: {
-    name?: string,
-    id?: number
-  },
+    name?: string;
+    id?: number;
+  };
   group: {
-    name?: string,
-    id?: number
-  },
+    name?: string;
+    id?: number;
+  };
   mode: number;
   modified: number;
   accessed: number;

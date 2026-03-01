@@ -9,11 +9,7 @@ type CreateFileProps = CommonDialogProps & {
   path: VfsPath;
 };
 
-export default function CreateFile({
-  path,
-  cancel,
-  context,
-}: CreateFileProps) {
+export default function CreateFile({ path, cancel, context }: CreateFileProps) {
   const [name, setName] = useState("");
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -28,7 +24,9 @@ export default function CreateFile({
   return (
     <form onSubmit={onSubmit}>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Create New File (Touch)</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Create New File (Touch)
+        </Dialog.Title>
         <label htmlFor="path">File Name</label>
         <input
           type="text"
@@ -40,8 +38,12 @@ export default function CreateFile({
         />
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="submit" className="suggested" disabled={!name}>Create</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button type="submit" className="suggested" disabled={!name}>
+          Create
+        </button>
       </div>
     </form>
   );

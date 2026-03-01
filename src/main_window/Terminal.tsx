@@ -61,10 +61,20 @@ function getPreferredTheme(): ITheme {
   const dataTheme = document.documentElement.dataset.theme;
   if (dataTheme === "dark") return darkTheme;
   if (dataTheme === "light") return lightTheme;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? darkTheme : lightTheme;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? darkTheme
+    : lightTheme;
 }
 
-export default function Terminal({ handle, active, visible }: { handle: number; active: boolean; visible: boolean }) {
+export default function Terminal({
+  handle,
+  active,
+  visible,
+}: {
+  handle: number;
+  active: boolean;
+  visible: boolean;
+}) {
   const terminalRef = useRef<XTermJSTerminal>(null);
   const fitAddonRef = useRef<FitAddon>(null);
   const visibleRef = useRef(visible);
@@ -97,7 +107,8 @@ export default function Terminal({ handle, active, visible }: { handle: number; 
       // Ctrl+Shift+` — new terminal (Shift+` produces ~)
       if (e.ctrlKey && e.shiftKey && e.key === "~") return false;
       // Ctrl+PageDown / Ctrl+PageUp — cycle tabs
-      if (e.ctrlKey && (e.key === "PageDown" || e.key === "PageUp")) return false;
+      if (e.ctrlKey && (e.key === "PageDown" || e.key === "PageUp"))
+        return false;
       return true;
     });
 
@@ -105,9 +116,9 @@ export default function Terminal({ handle, active, visible }: { handle: number; 
       termDataContext,
       handle,
       (data) => {
-        // @ts-ignore
+        // @ts-expect-error data is number[] but xterm accepts it
         term.write(data);
-      }
+      },
     );
 
     const onUserInput = (data: string) => {
@@ -173,8 +184,13 @@ export default function Terminal({ handle, active, visible }: { handle: number; 
   }, [active, handle]);
 
   return (
-    <div className={styles.container} >
-      <div className={styles.terminal} ref={ref} tabIndex={-1} onFocus={() => safeCommandSilent("terminal_focus", { handle })} />
+    <div className={styles.container}>
+      <div
+        className={styles.terminal}
+        ref={ref}
+        tabIndex={-1}
+        onFocus={() => safeCommandSilent("terminal_focus", { handle })}
+      />
     </div>
   );
 }

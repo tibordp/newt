@@ -25,7 +25,9 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
   return (
     <form onSubmit={onSubmit}>
       <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>Connect to Remote Host</Dialog.Title>
+        <Dialog.Title className={dialogStyles.dialogTitle}>
+          Connect to Remote Host
+        </Dialog.Title>
         <label htmlFor="host">Host (e.g., user@host)</label>
         <input
           ref={inputRef}
@@ -38,8 +40,12 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
         />
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>Cancel</button>
-        <button type="submit" className="suggested" disabled={!newHost}>Connect</button>
+        <button type="button" onClick={cancel}>
+          Cancel
+        </button>
+        <button type="submit" className="suggested" disabled={!newHost}>
+          Connect
+        </button>
       </div>
     </form>
   );

@@ -4,7 +4,9 @@
   flex-direction: column;
   height: 100%;
 
-  &, &:focus, &:focus-visible {
+  &,
+  &:focus,
+  &:focus-visible {
     outline: none;
   }
 }
@@ -78,7 +80,9 @@
   cursor: default;
   position: relative;
 
-  &, &:focus, &:focus-visible {
+  &,
+  &:focus,
+  &:focus-visible {
     outline: none;
   }
 }
@@ -113,7 +117,8 @@
   opacity: 0;
   pointer-events: none;
 
-  &, &:focus {
+  &,
+  &:focus {
     outline: none;
     border: none;
   }
@@ -136,7 +141,6 @@
   }
 }
 
-
 .partial {
   color: var(--_red-500);
 }
@@ -155,4 +159,3 @@
     border-color: var(--color-border);
   }
 }
-

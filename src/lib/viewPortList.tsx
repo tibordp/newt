@@ -74,7 +74,7 @@ const useIsomorphicLayoutEffect = IS_SSR ? useEffect : useLayoutEffect;
 const generateArray = <T,>(
   from: number,
   to: number,
-  generate: (index: number) => T
+  generate: (index: number) => T,
 ): T[] => {
   const array = [];
 
@@ -122,7 +122,7 @@ const SCROLLABLE_REGEXP = /auto|scroll/gi;
 
 const findNearestScrollableElement = (
   propName: typeof PROP_NAME_FOR_Y_AXIS | typeof PROP_NAME_FOR_X_AXIS,
-  node: Element | null
+  node: Element | null,
 ): Element | null => {
   if (!node || node === document.body || node === document.documentElement) {
     return document.documentElement;
@@ -139,14 +139,14 @@ const findNearestScrollableElement = (
 
   return findNearestScrollableElement(
     propName,
-    node.parentNode as Element | null
+    node.parentNode as Element | null,
   );
 };
 
 const getStyle = (
   propName: typeof PROP_NAME_FOR_Y_AXIS | typeof PROP_NAME_FOR_X_AXIS,
   size: number,
-  marginTop = 0
+  marginTop = 0,
 ) =>
   ({
     padding: 0,
@@ -158,7 +158,7 @@ const getStyle = (
     [propName.height]: size,
     [propName.maxHeight]: size,
     [propName.marginTop]: marginTop,
-  } as const);
+  }) as const;
 
 export interface ScrollToIndexOptions {
   index?: number;
@@ -247,7 +247,7 @@ const ViewportListInner = <T,>(
     count?: number;
     children: (...args: any) => any;
   },
-  ref: ForwardedRef<ViewportListRef>
+  ref: ForwardedRef<ViewportListRef>,
 ) => {
   const propName = axis === "y" ? PROP_NAME_FOR_Y_AXIS : PROP_NAME_FOR_X_AXIS;
   const withCount = typeof count === "number";
@@ -259,11 +259,11 @@ const ViewportListInner = <T,>(
     ]);
   const itemHeightWithMargin = normalizeValue(
     0,
-    estimatedItemHeight + estimatedItemMargin
+    estimatedItemHeight + estimatedItemMargin,
   );
   const overscanSize = normalizeValue(
     0,
-    Math.ceil(overscan * itemHeightWithMargin)
+    Math.ceil(overscan * itemHeightWithMargin),
   );
   const [indexes, setIndexes] = useState([
     initialIndex - initialPrerender,
@@ -285,7 +285,7 @@ const ViewportListInner = <T,>(
           delay: initialDelay,
           prerender: initialPrerender,
         }
-      : null
+      : null,
   );
   const scrollToIndexTimeoutIdRef = useRef<any>(null);
   const marginTopRef = useRef(0);
@@ -320,11 +320,17 @@ const ViewportListInner = <T,>(
           .slice(0, startIndex)
           .reduce(
             (sum, next) => sum + (next - estimatedItemHeight),
-            startIndex * itemHeightWithMargin
+            startIndex * itemHeightWithMargin,
           ),
-        marginTopRef.current
+        marginTopRef.current,
       ),
-    [propName, withCache, startIndex, itemHeightWithMargin, estimatedItemHeight]
+    [
+      propName,
+      withCache,
+      startIndex,
+      itemHeightWithMargin,
+      estimatedItemHeight,
+    ],
   );
   const bottomSpacerStyle = useMemo(
     () =>
@@ -334,8 +340,8 @@ const ViewportListInner = <T,>(
           .slice(endIndex + 1, maxIndex + 1)
           .reduce(
             (sum, next) => sum + (next - estimatedItemHeight),
-            itemHeightWithMargin * (maxIndex - endIndex)
-          )
+            itemHeightWithMargin * (maxIndex - endIndex),
+          ),
       ),
     [
       propName,
@@ -344,7 +350,7 @@ const ViewportListInner = <T,>(
       maxIndex,
       itemHeightWithMargin,
       estimatedItemHeight,
-    ]
+    ],
   );
   const getViewport = useMemo(() => {
     let autoViewport: any = null;
@@ -370,7 +376,7 @@ const ViewportListInner = <T,>(
 
       autoViewport = findNearestScrollableElement(
         propName,
-        topSpacer.parentNode
+        topSpacer.parentNode,
       );
 
       return autoViewport;
@@ -457,7 +463,7 @@ const ViewportListInner = <T,>(
                 (bottomSpacerRect[propName.top] -
                   topSpacerRect[propName.bottom] -
                   itemsHeightSum) /
-                  renderedItemsCount
+                  renderedItemsCount,
               )
             : estimatedItemMargin;
 
@@ -474,7 +480,7 @@ const ViewportListInner = <T,>(
         const targetIndex = normalizeValue(
           0,
           scrollToIndexOptionsRef.current.index,
-          maxIndex
+          maxIndex,
         );
 
         if (targetIndex < startIndex || targetIndex > endIndex) {
@@ -525,7 +531,7 @@ const ViewportListInner = <T,>(
         if (scrollToElementDelay > 0) {
           scrollToIndexTimeoutIdRef.current = setTimeout(
             scrollToElement,
-            scrollToElementDelay
+            scrollToElementDelay,
           );
 
           return;
@@ -558,7 +564,7 @@ const ViewportListInner = <T,>(
           : (bottomElement.previousSibling as Element);
       const averageSize = Math.ceil(
         (bottomSpacerRect[propName.top] - topSpacerRect[propName.bottom]) /
-          (endIndex + 1 - startIndex)
+          (endIndex + 1 - startIndex),
       );
       const isAllAboveTop =
         topSpacerRect[propName.bottom] >
@@ -595,12 +601,12 @@ const ViewportListInner = <T,>(
         nextStartIndex -= getDiff(
           topSpacerRect[propName.bottom],
           limitsWithOverscanSize[propName.top],
-          averageSize
+          averageSize,
         );
         nextEndIndex -= getDiff(
           bottomSpacerRect[propName.top],
           limitsWithOverscanSize[propName.bottom],
-          averageSize
+          averageSize,
         );
       }
 
@@ -608,12 +614,12 @@ const ViewportListInner = <T,>(
         nextEndIndex += getDiff(
           bottomSpacerRect[propName.top],
           limitsWithOverscanSize[propName.bottom],
-          averageSize
+          averageSize,
         );
         nextStartIndex += getDiff(
           topSpacerRect[propName.bottom],
           limitsWithOverscanSize[propName.top],
-          averageSize
+          averageSize,
         );
       }
 
@@ -621,7 +627,7 @@ const ViewportListInner = <T,>(
         nextStartIndex -= getDiff(
           topSpacerRect[propName.bottom],
           limitsWithOverscanSize[propName.top],
-          averageSize
+          averageSize,
         );
       }
 
@@ -629,7 +635,7 @@ const ViewportListInner = <T,>(
         nextEndIndex += getDiff(
           bottomSpacerRect[propName.top],
           limitsWithOverscanSize[propName.bottom],
-          averageSize
+          averageSize,
         );
       }
 
@@ -844,7 +850,7 @@ const ViewportListInner = <T,>(
             .slice(0, anchorIndex)
             .reduce(
               (sum, next) => sum + (next - estimatedItemHeight),
-              anchorIndex * itemHeightWithMargin
+              anchorIndex * itemHeightWithMargin,
             );
       } else if (anchorIndex <= maxIndex) {
         top =
@@ -853,7 +859,7 @@ const ViewportListInner = <T,>(
             .slice(endIndex + 1, anchorIndex)
             .reduce(
               (sum, next) => sum + (next - estimatedItemHeight),
-              itemHeightWithMargin * (anchorIndex - 1 - endIndex)
+              itemHeightWithMargin * (anchorIndex - 1 - endIndex),
             );
       }
     }
@@ -920,7 +926,7 @@ const ViewportListInner = <T,>(
       },
       getScrollPosition: () => getScrollPositionRef.current(),
     }),
-    []
+    [],
   );
 
   return (
@@ -930,7 +936,9 @@ const ViewportListInner = <T,>(
         generateArray(
           startIndex,
           endIndex + 1,
-          withCount ? children : (index) => children(items[index], index, items)
+          withCount
+            ? children
+            : (index) => children(items[index], index, items),
         )}
       {renderSpacer({
         ref: bottomSpacerRef,
@@ -945,10 +953,10 @@ export interface ViewportList {
   <T>(
     props: ViewportListPropsWithItems<T> & {
       ref?: ForwardedRef<ViewportListRef>;
-    }
+    },
   ): ReturnType<typeof ViewportListInner>;
   (
-    props: ViewportListPropsWithCount & { ref?: ForwardedRef<ViewportListRef> }
+    props: ViewportListPropsWithCount & { ref?: ForwardedRef<ViewportListRef> },
   ): ReturnType<typeof ViewportListInner>;
 }
 

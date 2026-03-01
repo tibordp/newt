@@ -1,9 +1,4 @@
-import {
-  Fragment,
-  useMemo,
-  useState,
-  ReactElement
-} from "react";
+import { Fragment, useMemo, useState, ReactElement } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { safeCommand } from "../../lib/ipc";
@@ -19,10 +14,7 @@ type CommandPaletteProps = {
   onCloseAutoFocus: (e: Event) => void;
 };
 
-function Highlight(props: {
-  name: string;
-  filter: string;
-}) {
+function Highlight(props: { name: string; filter: string }) {
   const { name, filter } = props;
   let key = 0;
   let a = 0;
@@ -33,7 +25,7 @@ function Highlight(props: {
       parts.push(
         <span key={key++} className={styles.highlight}>
           {name[b]}
-        </span>
+        </span>,
       );
       a++;
       b++;
@@ -44,7 +36,7 @@ function Highlight(props: {
   }
 
   if (b < name.length) {
-    parts.push(<span key={key++}>{name.slice(b)}</span>);
+    parts.push(<span key={key}>{name.slice(b)}</span>);
   }
 
   return <span>{parts}</span>;
@@ -96,7 +88,7 @@ export default function CommandPalette({
         // Hide internal commands from palette
         command.id !== "command_palette" &&
         command.id !== "hot_paths" &&
-        (!command.needs_pane || !!paneHandle || paneHandle === 0)
+        (!command.needs_pane || !!paneHandle || paneHandle === 0),
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);
@@ -113,9 +105,17 @@ export default function CommandPalette({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
       <Dialog.Portal>
-        <Dialog.Content className={styles.content} onCloseAutoFocus={onCloseAutoFocus}>
+        <Dialog.Content
+          className={styles.content}
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
           <Command shouldFilter={false}>
             <div className={styles.header}>
