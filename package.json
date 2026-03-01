@@ -11,7 +11,8 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx,css,scss,json}'",
-    "format:check": "prettier --check 'src/**/*.{ts,tsx,css,scss,json}'"
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,css,scss,json}'",
+    "prepare": "husky"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",
@@ -43,10 +44,21 @@
     "eslint": "^10.0.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.0",
     "prettier": "^3.8.1",
     "sass": "^1.97.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.3.1"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "src/**/*.{css,scss,json}": [
+      "prettier --write"
+    ]
   }
 }
