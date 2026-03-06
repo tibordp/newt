@@ -7,6 +7,7 @@ extern crate objc; // v0.2.7
 
 pub mod cmd;
 pub mod common;
+pub mod editor;
 pub mod file_server;
 pub mod main_window;
 pub mod preferences;
@@ -46,20 +47,28 @@ struct Args {
 
 pub struct GlobalContext {
     main_windows: Mutex<HashMap<String, MainWindowContext>>,
+    viewer_windows: Mutex<HashMap<String, viewer::ViewerWindowContext>>,
+    editor_windows: Mutex<HashMap<String, editor::EditorWindowContext>>,
     connection_target: ConnectionTarget,
     window_title: String,
     agent_resolver: OnceLock<AgentResolver>,
     preferences: OnceLock<preferences::PreferencesManager>,
+    #[cfg(target_os = "macos")]
+    window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
 }
 
 impl GlobalContext {
     pub fn new(connection_target: ConnectionTarget, window_title: String) -> Self {
         Self {
             main_windows: Mutex::new(HashMap::new()),
+            viewer_windows: Mutex::new(HashMap::new()),
+            editor_windows: Mutex::new(HashMap::new()),
             connection_target,
             window_title,
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
+            #[cfg(target_os = "macos")]
+            window_menus: Mutex::new(HashMap::new()),
         }
     }
 
@@ -111,10 +120,40 @@ impl GlobalContext {
         self.main_windows.lock().get(webview.label()).cloned()
     }
 
+    pub fn register_viewer_window(&self, label: &str, ctx: viewer::ViewerWindowContext) {
+        self.viewer_windows.lock().insert(label.to_string(), ctx);
+    }
+
+    pub fn viewer_window(&self, label: &str) -> Option<viewer::ViewerWindowContext> {
+        self.viewer_windows.lock().get(label).cloned()
+    }
+
+    pub fn register_editor_window(&self, label: &str, ctx: editor::EditorWindowContext) {
+        self.editor_windows.lock().insert(label.to_string(), ctx);
+    }
+
+    pub fn editor_window(&self, label: &str) -> Option<editor::EditorWindowContext> {
+        self.editor_windows.lock().get(label).cloned()
+    }
+
     pub fn destroy_window(&self, label: &str) -> Result<(), Error> {
         info!("destroying window {}", label);
         self.main_windows.lock().remove(label);
+        self.viewer_windows.lock().remove(label);
+        self.editor_windows.lock().remove(label);
+        #[cfg(target_os = "macos")]
+        self.window_menus.lock().remove(label);
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_window_menu(&self, label: &str, menu: tauri::menu::Menu<tauri::Wry>) {
+        self.window_menus.lock().insert(label.to_string(), menu);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn get_window_menu(&self, label: &str) -> Option<tauri::menu::Menu<tauri::Wry>> {
+        self.window_menus.lock().get(label).cloned()
     }
 }
 
@@ -224,6 +263,16 @@ fn main() {
                         global_ctx.destroy_window(window.label()).unwrap();
                     }
                     tauri::WindowEvent::Focused(true) => {
+                        // On macOS, swap the app-wide menu to match the focused window
+                        #[cfg(target_os = "macos")]
+                        {
+                            if let Some(menu) = global_ctx.get_window_menu(window.label()) {
+                                let _ = app_handle.set_menu(menu);
+                            } else {
+                                let _ = app_handle.remove_menu();
+                            }
+                        }
+
                         if let Some(ctx) =
                             global_ctx.main_windows.lock().get(window.label()).cloned()
                         {

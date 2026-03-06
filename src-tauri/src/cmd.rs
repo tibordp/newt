@@ -8,7 +8,6 @@ use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{lookup_descriptor, MountRequest, VfsId, VfsPath};
 use shell_quote::Quote;
 use tauri::ipc::Invoke;
-use tauri::Emitter;
 use tauri::Manager;
 use tauri::Window;
 use tauri::Wry;
@@ -267,47 +266,11 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     .build()
     .unwrap();
 
-    // Add a "View" menu to switch between Text, Hex, and Image modes
-    if let Ok(menu) = (|| -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-        use tauri::menu::{Menu, MenuItem, Submenu};
-        let text_item =
-            MenuItem::with_id(app_handle, "viewer_mode_text", "Text", true, None::<&str>)?;
-        let hex_item = MenuItem::with_id(app_handle, "viewer_mode_hex", "Hex", true, None::<&str>)?;
-        let image_item =
-            MenuItem::with_id(app_handle, "viewer_mode_image", "Image", true, None::<&str>)?;
-        let audio_item =
-            MenuItem::with_id(app_handle, "viewer_mode_audio", "Audio", true, None::<&str>)?;
-        let video_item =
-            MenuItem::with_id(app_handle, "viewer_mode_video", "Video", true, None::<&str>)?;
-        let pdf_item = MenuItem::with_id(app_handle, "viewer_mode_pdf", "PDF", true, None::<&str>)?;
-        let view_submenu = Submenu::with_items(
-            app_handle,
-            "View",
-            true,
-            &[
-                &text_item,
-                &hex_item,
-                &image_item,
-                &audio_item,
-                &video_item,
-                &pdf_item,
-            ],
-        )?;
-        Ok(Menu::with_items(app_handle, &[&view_submenu])?)
-    })() {
-        let _ = viewer_window.set_menu(menu);
-        viewer_window.on_menu_event(move |window, event| {
-            let mode = match event.id().as_ref() {
-                "viewer_mode_text" => "text",
-                "viewer_mode_hex" => "hex",
-                "viewer_mode_image" => "image",
-                "viewer_mode_audio" => "audio",
-                "viewer_mode_video" => "video",
-                "viewer_mode_pdf" => "pdf",
-                _ => return,
-            };
-            let _ = window.emit("viewer-mode-change", mode);
-        });
+    let viewer = crate::viewer::create_viewer_window(app_handle, &viewer_label, &viewer_window)?;
+    {
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx
+            .register_viewer_window(&viewer_label, crate::viewer::ViewerWindowContext(viewer));
     }
 
     Ok(())
@@ -350,115 +313,14 @@ fn open_editor_window(ctx: &MainWindowContext, full_path: &VfsPath) -> Result<()
     .build()
     .unwrap();
 
-    // Build menus
-    if let Ok(menu) = (|| -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-        use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-
-        // File menu
-        let save_item =
-            MenuItem::with_id(app_handle, "editor_save", "Save", true, Some("CmdOrCtrl+S"))?;
-        let close_item = MenuItem::with_id(
-            app_handle,
-            "editor_close",
-            "Close",
-            true,
-            Some("CmdOrCtrl+W"),
-        )?;
-        let file_submenu = Submenu::with_items(
-            app_handle,
-            "File",
-            true,
-            &[
-                &save_item,
-                &PredefinedMenuItem::separator(app_handle)?,
-                &close_item,
-            ],
-        )?;
-
-        // View menu
-        let wrap_off =
-            MenuItem::with_id(app_handle, "editor_wrap_off", "No Wrap", true, None::<&str>)?;
-        let wrap_on = MenuItem::with_id(
-            app_handle,
-            "editor_wrap_on",
-            "Word Wrap",
-            true,
-            None::<&str>,
-        )?;
-        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&wrap_off, &wrap_on])?;
-
-        // Language menu
-        let languages: &[(&str, &str)] = &[
-            ("plaintext", "Plain Text"),
-            ("c", "C"),
-            ("cpp", "C++"),
-            ("csharp", "C#"),
-            ("css", "CSS"),
-            ("dockerfile", "Dockerfile"),
-            ("go", "Go"),
-            ("html", "HTML"),
-            ("ini", "INI / TOML"),
-            ("java", "Java"),
-            ("javascript", "JavaScript"),
-            ("json", "JSON"),
-            ("kotlin", "Kotlin"),
-            ("lua", "Lua"),
-            ("markdown", "Markdown"),
-            ("perl", "Perl"),
-            ("php", "PHP"),
-            ("python", "Python"),
-            ("ruby", "Ruby"),
-            ("rust", "Rust"),
-            ("scss", "SCSS"),
-            ("shell", "Shell"),
-            ("sql", "SQL"),
-            ("swift", "Swift"),
-            ("typescript", "TypeScript"),
-            ("xml", "XML"),
-            ("yaml", "YAML"),
-        ];
-
-        let lang_items: Vec<MenuItem<tauri::Wry>> = languages
-            .iter()
-            .map(|(id, label)| {
-                MenuItem::with_id(
-                    app_handle,
-                    format!("editor_lang_{}", id),
-                    *label,
-                    true,
-                    None::<&str>,
-                )
-                .unwrap()
-            })
-            .collect();
-
-        let lang_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = lang_items
-            .iter()
-            .map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
-            .collect();
-
-        let lang_submenu = Submenu::with_items(app_handle, "Language", true, &lang_refs)?;
-
-        Ok(Menu::with_items(
-            app_handle,
-            &[&file_submenu, &view_submenu, &lang_submenu],
-        )?)
-    })() {
-        let _ = editor_window.set_menu(menu);
-        editor_window.on_menu_event(move |window, event| {
-            let id = event.id().0.as_str();
-            if id == "editor_save" {
-                let _ = window.emit("editor-action", "save");
-            } else if id == "editor_close" {
-                let _ = window.close();
-            } else if id == "editor_wrap_off" {
-                let _ = window.emit("editor-word-wrap", "off");
-            } else if id == "editor_wrap_on" {
-                let _ = window.emit("editor-word-wrap", "on");
-            } else if let Some(lang) = id.strip_prefix("editor_lang_") {
-                let _ = window.emit("editor-language", lang);
-            }
-        });
+    let editor_ctx =
+        crate::editor::create_editor_window(app_handle, &editor_label, &editor_window)?;
+    {
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx.register_editor_window(
+            &editor_label,
+            crate::editor::EditorWindowContext(editor_ctx),
+        );
     }
 
     Ok(())
@@ -539,8 +401,30 @@ async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Res
 }
 
 #[tauri::command]
-pub fn ping(ctx: MainWindowContext) -> Result<(), Error> {
-    ctx.publish_full()
+pub fn ping(
+    webview: tauri::Webview,
+    global_ctx: tauri::State<'_, GlobalContext>,
+    name: String,
+) -> Result<(), Error> {
+    let label = webview.label();
+    match name.as_str() {
+        "viewer" => {
+            if let Some(ctx) = global_ctx.viewer_window(label) {
+                ctx.0.publish_full();
+            }
+        }
+        "editor" => {
+            if let Some(ctx) = global_ctx.editor_window(label) {
+                ctx.0.publish_full();
+            }
+        }
+        _ => {
+            if let Some(ctx) = global_ctx.main_window(&webview) {
+                ctx.publish_full()?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1496,6 +1380,7 @@ pub fn destroy_window(window: Window) -> Result<(), Error> {
     Ok(())
 }
 
+/// Update check/radio menu items. If `prefix` is non-empty, acts as a radio
 #[tauri::command]
 pub fn set_window_title(webview_window: tauri::WebviewWindow, title: String) -> Result<(), Error> {
     // NOTE: set_title doesn't visually update on Wayland (upstream Tauri/GTK bug).
@@ -1711,6 +1596,12 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         read_file_range,
         read_file,
         write_file,
+        // Viewer / Editor
+        crate::viewer::set_viewer_mode,
+        crate::viewer::ping_viewer,
+        crate::editor::set_editor_language,
+        crate::editor::set_editor_wrap,
+        crate::editor::ping_editor,
         connect_remote,
         switch_vfs,
         // Terminal

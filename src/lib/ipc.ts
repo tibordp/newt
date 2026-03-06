@@ -111,7 +111,7 @@ export const useRemoteState = <T>(
             } else if (version.current !== null) {
               // this should never happen, but just in case
               console.warn("version mismatch, requesting full state...");
-              invoke("ping", {}).catch(() => {});
+              invoke("ping", { name: event_name }).catch(() => {});
               ret = s;
             }
           } else {
@@ -122,7 +122,9 @@ export const useRemoteState = <T>(
         });
       },
     );
-    listenPromise.then(() => invoke("ping", {}).catch(() => {}));
+    listenPromise.then(() =>
+      invoke("ping", { name: event_name }).catch(() => {}),
+    );
     return () => {
       listenPromise.then((unlisten) => unlisten());
     };

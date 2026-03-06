@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { message } from "@tauri-apps/plugin-dialog";
 import {
   useCallback,
@@ -11,7 +10,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 
 import styles from "./Viewer.module.scss";
-import { safeCommand } from "../lib/ipc";
+import { safeCommand, useRemoteState } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
 interface FileInfo {
@@ -1208,26 +1207,14 @@ function Viewer() {
   const fileServerBase = searchParams.get("file_server_base") || "";
   const fileUrl = `${fileServerBase}/${filePath.vfs_id}${filePath.path}`;
 
+  const viewerState = useRemoteState<{ mode: string }>("viewer");
+
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeMode, setActiveMode] = useState<ViewerMode | null>(null);
 
   const chunkCache = useRef(new Map<number, Uint8Array>());
 
-  // Listen for menu-driven mode changes
-  useEffect(() => {
-    const unlisten = getCurrentWebviewWindow().listen<string>(
-      "viewer-mode-change",
-      (event) => {
-        setActiveMode(event.payload as ViewerMode);
-      },
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // Fetch file info on mount
+  // Fetch file info on mount and push auto-detected mode to Rust
   useEffect(() => {
     if (!displayPath) return;
     document.title = displayPath;
@@ -1236,6 +1223,8 @@ function Viewer() {
       try {
         const fi: FileInfo = await invoke("file_details", { path: filePath });
         setInfo(fi);
+        const mode = detectAutoMode(fi.mime_type);
+        invoke("set_viewer_mode", { mode }).catch(() => {});
       } catch (e: any) {
         setError(e.toString());
         await message(e.toString(), { kind: "error", title: "Error" });
@@ -1243,8 +1232,7 @@ function Viewer() {
     })();
   }, [displayPath]);
 
-  const autoMode = info ? detectAutoMode(info.mime_type) : null;
-  const currentMode = activeMode ?? autoMode;
+  const currentMode = (viewerState?.mode as ViewerMode) ?? null;
 
   // Preload first hex chunk when switching to hex mode (or when auto-detected as hex)
   useEffect(() => {

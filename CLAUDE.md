@@ -70,6 +70,10 @@ When adding state that affects the UI beyond a single component (e.g. a new pane
 3. Modify it via `with_update` / `with_update_async` in a command handler.
 4. Read it from `remoteState` on the frontend — do not duplicate it into `useState`.
 
+## Communication
+
+When a task or direction is unclear — especially around architecture or design intent — stop and ask rather than guessing. The user likely has a specific vision; don't fill in the blanks with assumptions.
+
 ## Git Commits
 
 Do not add `Co-Authored-By` lines to commit messages.

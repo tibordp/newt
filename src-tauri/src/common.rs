@@ -208,6 +208,10 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
         }
     }
 
+    pub fn state(&self) -> &T {
+        &self.state
+    }
+
     pub fn publish(&self) -> Result<(), Error> {
         let serialized = serde_json::to_value(&self.state).unwrap();
 

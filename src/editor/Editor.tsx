@@ -7,7 +7,7 @@ import MonacoEditor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 
 import styles from "./Editor.module.scss";
-import { safeCommand } from "../lib/ipc";
+import { safeCommand, useRemoteState } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -134,10 +134,12 @@ function Editor() {
       `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`,
   );
 
+  const editorState = useRemoteState<{ language: string; word_wrap: boolean }>(
+    "editor",
+  );
+
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [language, setLanguage] = useState("plaintext");
-  const [wordWrap, setWordWrap] = useState<"off" | "on">("off");
   const [fileSize, setFileSize] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -147,6 +149,9 @@ function Editor() {
   const monacoRef = useRef<Monaco | null>(null);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
+
+  const language = editorState?.language ?? "plaintext";
+  const wordWrap = editorState?.word_wrap ? "on" : "off";
 
   // Detect dark mode
   const [isDark, setIsDark] = useState(
@@ -158,6 +163,19 @@ function Editor() {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  // Apply language changes from Rust state to Monaco
+  useEffect(() => {
+    const model = editorRef.current?.getModel();
+    if (model && monacoRef.current) {
+      monacoRef.current.editor.setModelLanguage(model, language);
+    }
+  }, [language]);
+
+  // Apply word wrap changes from Rust state to Monaco
+  useEffect(() => {
+    editorRef.current?.updateOptions({ wordWrap });
+  }, [wordWrap]);
 
   // Update window title with dirty indicator
   useEffect(() => {
@@ -177,7 +195,10 @@ function Editor() {
           path: filePath,
         });
         setFileSize(info.size);
-        setLanguage(detectLanguage(displayPath, info.mime_type));
+        const detectedLang = detectLanguage(displayPath, info.mime_type);
+        invoke("set_editor_language", { language: detectedLang }).catch(
+          () => {},
+        );
 
         // Read the entire file (with size limit enforced server-side)
         const data: number[] = await invoke("read_file", {
@@ -236,32 +257,18 @@ function Editor() {
     };
   }, []);
 
-  // Listen for menu events
+  // Listen for menu action events (save)
   const saveRef = useRef(save);
   saveRef.current = save;
   useEffect(() => {
     const currentWindow = getCurrentWebviewWindow();
-    const listeners = [
-      currentWindow.listen<string>("editor-action", (event) => {
-        if (event.payload === "save") {
-          saveRef.current();
-        }
-      }),
-      currentWindow.listen<string>("editor-word-wrap", (event) => {
-        const value = event.payload as "off" | "on";
-        setWordWrap(value);
-        editorRef.current?.updateOptions({ wordWrap: value });
-      }),
-      currentWindow.listen<string>("editor-language", (event) => {
-        setLanguage(event.payload);
-        const model = editorRef.current?.getModel();
-        if (model && monacoRef.current) {
-          monacoRef.current.editor.setModelLanguage(model, event.payload);
-        }
-      }),
-    ];
+    const unlisten = currentWindow.listen<string>("editor-action", (event) => {
+      if (event.payload === "save") {
+        saveRef.current();
+      }
+    });
     return () => {
-      listeners.forEach((p) => p.then((fn) => fn()));
+      unlisten.then((fn) => fn());
     };
   }, []);
 
