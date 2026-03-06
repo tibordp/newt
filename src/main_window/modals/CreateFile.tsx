@@ -7,9 +7,15 @@ import dialogStyles from "./Dialog.module.scss";
 
 type CreateFileProps = CommonDialogProps & {
   path: VfsPath;
+  open_editor: boolean;
 };
 
-export default function CreateFile({ path, cancel, context }: CreateFileProps) {
+export default function CreateFile({
+  path,
+  open_editor,
+  cancel,
+  context,
+}: CreateFileProps) {
   const [name, setName] = useState("");
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -18,6 +24,7 @@ export default function CreateFile({ path, cancel, context }: CreateFileProps) {
       paneHandle: context?.pane_handle,
       path,
       name,
+      openEditor: open_editor,
     });
   }
 

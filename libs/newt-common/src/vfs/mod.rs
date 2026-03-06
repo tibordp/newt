@@ -594,6 +594,28 @@ impl FileReader for VfsRegistryFileReader {
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.read_range(&local_path, offset, length).await
     }
+
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        let details = vfs.file_details(&local_path).await?;
+        if details.size > max_size {
+            return Err(Error::custom(format!(
+                "File is too large to edit ({} bytes, limit is {} bytes)",
+                details.size, max_size
+            )));
+        }
+        let mut reader = vfs.open_read_sync(&local_path).await?;
+        let mut data = Vec::with_capacity(details.size as usize);
+        std::io::Read::read_to_end(&mut reader, &mut data)?;
+        Ok(data)
+    }
+
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        let mut writer = vfs.overwrite_sync(&local_path).await?;
+        std::io::Write::write_all(&mut writer, &data)?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

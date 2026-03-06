@@ -1,0 +1,53 @@
+.editor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  margin: 0;
+  padding: 0;
+
+  background: var(--color-bg);
+  color: var(--color-fg);
+
+  outline: none;
+}
+
+.editorContent {
+  flex: 1;
+  overflow: hidden;
+}
+
+.editorStatus {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-chrome);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.statusSeparator {
+  margin: 0 0.5em;
+  color: var(--color-fg-muted);
+}
+
+.statusError {
+  color: var(--color-error);
+}
+
+.loadingContent {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-fg-muted);
+}

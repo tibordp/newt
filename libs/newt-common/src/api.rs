@@ -41,6 +41,8 @@ pub const API_TERMINAL_WAIT: Api = Api(105);
 
 pub const API_FILE_DETAILS: Api = Api(300);
 pub const API_READ_RANGE: Api = Api(301);
+pub const API_READ_FILE: Api = Api(302);
+pub const API_WRITE_FILE: Api = Api(303);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
@@ -259,6 +261,18 @@ impl Dispatcher for FileReaderDispatcher {
                 let (path, offset, length): (VfsPath, u64, u64) =
                     bincode::deserialize(&req[..]).unwrap();
                 let ret = self.file_reader.read_range(path, offset, length).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_READ_FILE => {
+                let (path, max_size): (VfsPath, u64) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.file_reader.read_file(path, max_size).await;
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_WRITE_FILE => {
+                let (path, data): (VfsPath, Vec<u8>) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.file_reader.write_file(path, data).await;
 
                 bincode::serialize(&ret).unwrap()
             }

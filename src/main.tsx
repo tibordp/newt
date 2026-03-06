@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import MainWindow from "./main_window/MainWindow";
 import Viewer from "./viewer/Viewer";
+
+const Editor = React.lazy(() => import("./editor/Editor"));
 
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
@@ -42,6 +44,14 @@ const router = createBrowserRouter([
   {
     path: "/viewer",
     element: <Viewer />,
+  },
+  {
+    path: "/editor",
+    element: (
+      <Suspense>
+        <Editor />
+      </Suspense>
+    ),
   },
 ]);
 

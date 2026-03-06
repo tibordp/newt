@@ -313,6 +313,171 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     Ok(())
 }
 
+fn open_editor_window(ctx: &MainWindowContext, full_path: &VfsPath) -> Result<(), Error> {
+    let editor_label = uuid::Uuid::new_v4().to_string();
+
+    let window = ctx.window().clone();
+
+    // Pre-register the parent's MainWindowContext for the editor window label
+    // so that on_page_load sees it and doesn't spawn a new agent.
+    {
+        let app_handle = window.app_handle();
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx
+            .main_windows
+            .lock()
+            .insert(editor_label.clone(), ctx.clone());
+    }
+
+    let path_display = ctx.format_vfs_path(full_path);
+    let vfs_path_json = serde_json::to_string(full_path).unwrap();
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("path", &path_display)
+        .append_pair("vfs_path", &vfs_path_json)
+        .finish();
+    let url_path = format!("/editor?{}", query);
+
+    let app_handle = window.app_handle();
+    let editor_window = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        &editor_label,
+        tauri::WebviewUrl::App(url_path.into()),
+    )
+    .title(format!("{} - Editor", path_display))
+    .center()
+    .focused(true)
+    .inner_size(900.0, 700.0)
+    .build()
+    .unwrap();
+
+    // Build menus
+    if let Ok(menu) = (|| -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+        use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+        // File menu
+        let save_item =
+            MenuItem::with_id(app_handle, "editor_save", "Save", true, Some("CmdOrCtrl+S"))?;
+        let close_item = MenuItem::with_id(
+            app_handle,
+            "editor_close",
+            "Close",
+            true,
+            Some("CmdOrCtrl+W"),
+        )?;
+        let file_submenu = Submenu::with_items(
+            app_handle,
+            "File",
+            true,
+            &[
+                &save_item,
+                &PredefinedMenuItem::separator(app_handle)?,
+                &close_item,
+            ],
+        )?;
+
+        // View menu
+        let wrap_off =
+            MenuItem::with_id(app_handle, "editor_wrap_off", "No Wrap", true, None::<&str>)?;
+        let wrap_on = MenuItem::with_id(
+            app_handle,
+            "editor_wrap_on",
+            "Word Wrap",
+            true,
+            None::<&str>,
+        )?;
+        let view_submenu = Submenu::with_items(app_handle, "View", true, &[&wrap_off, &wrap_on])?;
+
+        // Language menu
+        let languages: &[(&str, &str)] = &[
+            ("plaintext", "Plain Text"),
+            ("c", "C"),
+            ("cpp", "C++"),
+            ("csharp", "C#"),
+            ("css", "CSS"),
+            ("dockerfile", "Dockerfile"),
+            ("go", "Go"),
+            ("html", "HTML"),
+            ("ini", "INI / TOML"),
+            ("java", "Java"),
+            ("javascript", "JavaScript"),
+            ("json", "JSON"),
+            ("kotlin", "Kotlin"),
+            ("lua", "Lua"),
+            ("markdown", "Markdown"),
+            ("perl", "Perl"),
+            ("php", "PHP"),
+            ("python", "Python"),
+            ("ruby", "Ruby"),
+            ("rust", "Rust"),
+            ("scss", "SCSS"),
+            ("shell", "Shell"),
+            ("sql", "SQL"),
+            ("swift", "Swift"),
+            ("typescript", "TypeScript"),
+            ("xml", "XML"),
+            ("yaml", "YAML"),
+        ];
+
+        let lang_items: Vec<MenuItem<tauri::Wry>> = languages
+            .iter()
+            .map(|(id, label)| {
+                MenuItem::with_id(
+                    app_handle,
+                    format!("editor_lang_{}", id),
+                    *label,
+                    true,
+                    None::<&str>,
+                )
+                .unwrap()
+            })
+            .collect();
+
+        let lang_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = lang_items
+            .iter()
+            .map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+            .collect();
+
+        let lang_submenu = Submenu::with_items(app_handle, "Language", true, &lang_refs)?;
+
+        Ok(Menu::with_items(
+            app_handle,
+            &[&file_submenu, &view_submenu, &lang_submenu],
+        )?)
+    })() {
+        let _ = editor_window.set_menu(menu);
+        editor_window.on_menu_event(move |window, event| {
+            let id = event.id().0.as_str();
+            if id == "editor_save" {
+                let _ = window.emit("editor-action", "save");
+            } else if id == "editor_close" {
+                let _ = window.close();
+            } else if id == "editor_wrap_off" {
+                let _ = window.emit("editor-word-wrap", "off");
+            } else if id == "editor_wrap_on" {
+                let _ = window.emit("editor-word-wrap", "on");
+            } else if let Some(lang) = id.strip_prefix("editor_lang_") {
+                let _ = window.emit("editor-language", lang);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    if pane.is_focused_dir() {
+        return Ok(());
+    }
+    let full_path = match pane.get_focused_file() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    open_editor_window(&ctx, &full_path)
+}
+
 #[tauri::command]
 pub async fn cmd_new_window(_pane_handle: PaneHandle) -> Result<(), Error> {
     let exe = std::env::current_exe()?;
@@ -359,6 +524,18 @@ async fn read_file_range(
 ) -> Result<FileChunk, Error> {
     let chunk = ctx.file_reader().read_range(path, offset, length).await?;
     Ok(chunk)
+}
+
+#[tauri::command]
+async fn read_file(ctx: MainWindowContext, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+    let data = ctx.file_reader().read_file(path, max_size).await?;
+    Ok(data)
+}
+
+#[tauri::command]
+async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+    ctx.file_reader().write_file(path, data).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -537,6 +714,11 @@ pub fn dialog(
                 },
                 "create_file" => ModalDataKind::CreateFile {
                     path: pane.unwrap().path(),
+                    open_editor: false,
+                },
+                "create_and_edit" => ModalDataKind::CreateFile {
+                    path: pane.unwrap().path(),
+                    open_editor: true,
                 },
                 "properties" => {
                     let pane = pane.unwrap();
@@ -718,10 +900,11 @@ pub async fn touch_file(
     pane_handle: Option<PaneHandle>,
     path: VfsPath,
     name: String,
+    open_editor: Option<bool>,
 ) -> Result<(), Error> {
     let file_path = path.join(&name);
 
-    ctx.fs().touch(file_path).await?;
+    ctx.fs().touch(file_path.clone()).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -733,7 +916,13 @@ pub async fn touch_file(
 
         Ok(())
     })
-    .await
+    .await?;
+
+    if open_editor.unwrap_or(false) {
+        open_editor_window(&ctx, &file_path)?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1301,6 +1490,22 @@ pub fn close_window(window: Window) -> Result<(), Error> {
 }
 
 #[tauri::command]
+pub fn destroy_window(window: Window) -> Result<(), Error> {
+    window.destroy()?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_window_title(webview_window: tauri::WebviewWindow, title: String) -> Result<(), Error> {
+    // NOTE: set_title doesn't visually update on Wayland (upstream Tauri/GTK bug).
+    // Works on X11 and macOS. Keeping it so it works where it can.
+    webview_window.set_title(&title)?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_preferences(
     global_ctx: tauri::State<'_, GlobalContext>,
 ) -> Result<crate::preferences::ResolvedPreferences, Error> {
@@ -1439,6 +1644,7 @@ cmd_dialog!(cmd_rename, "rename");
 cmd_dialog!(cmd_properties, "properties");
 cmd_dialog!(cmd_create_directory, "create_directory");
 cmd_dialog!(cmd_create_file, "create_file");
+cmd_dialog!(cmd_create_and_edit, "create_and_edit");
 cmd_dialog!(cmd_navigate, "navigate");
 cmd_dialog!(cmd_copy, "copy");
 cmd_dialog!(cmd_move, "move");
@@ -1476,6 +1682,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         confirm_action,
         dialog,
         close_window,
+        destroy_window,
+        set_window_title,
         zoom,
         // Pane interaction (called directly by frontend components)
         cancel,
@@ -1498,9 +1706,11 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         resolve_issue,
         dismiss_operation,
         background_operation,
-        // File viewing/opening
+        // File viewing/opening/editing
         file_details,
         read_file_range,
+        read_file,
+        write_file,
         connect_remote,
         switch_vfs,
         // Terminal
@@ -1527,6 +1737,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_properties,
         cmd_create_directory,
         cmd_create_file,
+        cmd_create_and_edit,
         cmd_navigate,
         cmd_copy,
         cmd_move,
@@ -1538,6 +1749,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_toggle_hidden,
         cmd_close_window,
         cmd_view,
+        cmd_edit,
         cmd_open,
         cmd_open_folder,
         cmd_copy_pane,

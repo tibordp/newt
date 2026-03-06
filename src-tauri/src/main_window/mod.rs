@@ -304,6 +304,7 @@ pub enum ModalDataKind {
     },
     CreateFile {
         path: VfsPath,
+        open_editor: bool,
     },
     Properties {
         paths: Vec<VfsPath>,

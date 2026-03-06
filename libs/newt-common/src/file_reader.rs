@@ -32,6 +32,8 @@ pub trait FileReader: Send + Sync {
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
     async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
         -> Result<FileChunk, Error>;
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
 }
 
 pub struct Remote {
@@ -64,6 +66,24 @@ impl FileReader for Remote {
         let ret: Result<FileChunk, Error> = self
             .communicator
             .invoke(crate::api::API_READ_RANGE, &(path, offset, length))
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+        let ret: Result<Vec<u8>, Error> = self
+            .communicator
+            .invoke(crate::api::API_READ_FILE, &(path, max_size))
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_WRITE_FILE, &(path, data))
             .await?;
 
         Ok(ret?)

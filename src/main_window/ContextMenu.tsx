@@ -34,6 +34,13 @@ export function FileContextMenuContent({
         </CM.Item>
         <CM.Item
           className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => cmd("cmd_edit")}
+        >
+          Edit<span className={styles.shortcut}>F4</span>
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
           onSelect={() => cmd("cmd_copy_to_clipboard")}
         >
           Copy Path

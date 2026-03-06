@@ -591,6 +591,14 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "edit".into(),
+            name: "Edit".into(),
+            category: "File".into(),
+            default_key: Some("f4".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "rename".into(),
             name: "Rename...".into(),
             category: "File".into(),
@@ -625,6 +633,14 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "create_file".into(),
             name: "Create File...".into(),
+            category: "File".into(),
+            default_key: None,
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "create_and_edit".into(),
+            name: "Create and Edit File...".into(),
             category: "File".into(),
             default_key: Some("shift+f4".into()),
             default_when: Some("pane_focused".into()),
