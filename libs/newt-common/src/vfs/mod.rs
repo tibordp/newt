@@ -604,17 +604,38 @@ impl FileReader for VfsRegistryFileReader {
                 details.size, max_size
             )));
         }
-        let mut reader = vfs.open_read_sync(&local_path).await?;
-        let mut data = Vec::with_capacity(details.size as usize);
-        std::io::Read::read_to_end(&mut reader, &mut data)?;
-        Ok(data)
+        let descriptor = vfs.descriptor();
+        if descriptor.can_read_sync() {
+            let mut reader = vfs.open_read_sync(&local_path).await?;
+            let mut data = Vec::with_capacity(details.size as usize);
+            std::io::Read::read_to_end(&mut reader, &mut data)?;
+            Ok(data)
+        } else if descriptor.can_read_async() {
+            use tokio::io::AsyncReadExt;
+            let mut reader = vfs.open_read_async(&local_path).await?;
+            let mut data = Vec::with_capacity(details.size as usize);
+            reader.read_to_end(&mut data).await?;
+            Ok(data)
+        } else {
+            Err(Error::not_supported())
+        }
     }
 
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        let mut writer = vfs.overwrite_sync(&local_path).await?;
-        std::io::Write::write_all(&mut writer, &data)?;
-        Ok(())
+        let descriptor = vfs.descriptor();
+        if descriptor.can_overwrite_sync() {
+            let mut writer = vfs.overwrite_sync(&local_path).await?;
+            std::io::Write::write_all(&mut writer, &data)?;
+            Ok(())
+        } else if descriptor.can_overwrite_async() {
+            let mut writer = vfs.overwrite_async(&local_path).await?;
+            writer.write(&data).await?;
+            writer.finish().await?;
+            Ok(())
+        } else {
+            Err(Error::not_supported())
+        }
     }
 }
 
