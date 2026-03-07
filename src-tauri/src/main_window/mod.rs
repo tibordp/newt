@@ -304,6 +304,9 @@ pub enum ModalDataKind {
     ConnectRemote {
         host: String,
     },
+    MountSftp {
+        host: String,
+    },
     SelectVfs {
         targets: Vec<VfsTarget>,
     },
@@ -381,6 +384,11 @@ pub struct VfsTarget {
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
     pub display_name: String,
+    /// Human-readable label for a mounted instance (e.g. hostname for SFTP).
+    pub label: Option<String>,
+    /// Dialog to open when user selects this unmounted VFS type.
+    /// If None and vfs_id is None, the type supports auto-mount.
+    pub mount_dialog: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -855,6 +863,14 @@ impl MainWindowContext {
     }
 
     pub fn compute_vfs_targets(&self) -> Result<Vec<VfsTarget>, Error> {
+        /// Maps VFS type_name → dialog name for types that need user input to mount.
+        fn mount_dialog_for(type_name: &str) -> Option<&'static str> {
+            match type_name {
+                "sftp" => Some("mount_sftp"),
+                _ => None,
+            }
+        }
+
         let mounted_vfs = self.with_session(|s| s.mounted_vfs.clone())?;
         let mounted = mounted_vfs.read();
         let mut targets = Vec::new();
@@ -864,6 +880,8 @@ impl MainWindowContext {
                 vfs_id: Some(*vfs_id),
                 type_name: info.descriptor.type_name().to_string(),
                 display_name: info.descriptor.display_name().to_string(),
+                label: info.descriptor.mount_label(&info.mount_meta),
+                mount_dialog: None,
             });
         }
 
@@ -873,11 +891,17 @@ impl MainWindowContext {
             .collect();
 
         for desc in all_descriptors() {
-            if !mounted_types.contains(desc.type_name()) && desc.auto_mount_request().is_some() {
+            if mounted_types.contains(desc.type_name()) {
+                continue;
+            }
+            let mount_dialog = mount_dialog_for(desc.type_name()).map(|s| s.to_string());
+            if desc.auto_mount_request().is_some() || mount_dialog.is_some() {
                 targets.push(VfsTarget {
                     vfs_id: None,
                     type_name: desc.type_name().to_string(),
                     display_name: desc.display_name().to_string(),
+                    label: None,
+                    mount_dialog,
                 });
             }
         }
@@ -939,7 +963,10 @@ impl MainWindowContext {
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
         self.with_session(|s| {
             for (vfs_id, info) in s.mounted_vfs.read().iter() {
-                if let Some(internal_path) = info.descriptor.try_parse_display_path(input) {
+                if let Some(internal_path) = info
+                    .descriptor
+                    .try_parse_display_path(input, &info.mount_meta)
+                {
                     return Some(VfsPath::new(*vfs_id, internal_path));
                 }
             }
@@ -950,9 +977,15 @@ impl MainWindowContext {
     }
 
     pub fn format_vfs_path(&self, vfs_path: &VfsPath) -> String {
-        self.vfs_descriptor(vfs_path.vfs_id)
-            .map(|d| d.format_path(&vfs_path.path))
-            .unwrap_or_else(|| vfs_path.to_string())
+        self.with_session(|s| {
+            s.mounted_vfs.read().get(&vfs_path.vfs_id).map(|info| {
+                info.descriptor
+                    .format_path(&vfs_path.path, &info.mount_meta)
+            })
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| vfs_path.to_string())
     }
 
     pub async fn refresh(&self) -> Result<(), Error> {

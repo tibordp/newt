@@ -12,4 +12,6 @@ export type VfsTarget = {
   vfs_id: number | null;
   type_name: string;
   display_name: string;
+  label: string | null;
+  mount_dialog: string | null;
 };

@@ -5,6 +5,7 @@ import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
+import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
@@ -45,6 +46,8 @@ export function ModalContent({ state }: { state: ModalState | null }) {
       return <CopyMove {...state.data} {...commonProps} />;
     case "connect_remote":
       return <ConnectRemote {...state.data} {...commonProps} />;
+    case "mount_sftp":
+      return <MountSftp {...state.data} {...commonProps} />;
     case "confirm":
       return <Confirm {...state.data} {...commonProps} />;
     case "properties":

@@ -424,6 +424,19 @@ impl VfsManager for VfsRegistryManager {
                     mount_meta,
                 })
             }
+            MountRequest::Sftp { host } => {
+                log::info!("mounting SFTP VFS for host={}", host);
+                let vfs = Arc::new(crate::vfs::SftpVfs::connect(&host).await?);
+                let mount_meta = vfs.mount_meta();
+                let type_name = vfs.descriptor().type_name().to_string();
+                let vfs_id = self.registry.mount(vfs);
+                log::info!("mounted SFTP VFS for host={} as vfs_id={:?}", host, vfs_id);
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                })
+            }
         }
     }
 

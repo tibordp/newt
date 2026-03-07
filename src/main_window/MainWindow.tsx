@@ -222,19 +222,17 @@ function App() {
               )}
             </>
           )}
+        {remoteState && remoteState.askpass && (
+          <AskpassDialog
+            prompt={remoteState.askpass.prompt}
+            isSecret={remoteState.askpass.is_secret}
+          />
+        )}
         {remoteState &&
           remoteState.connection_status.status === "connecting" && (
-            <>
-              {remoteState.askpass && (
-                <AskpassDialog
-                  prompt={remoteState.askpass.prompt}
-                  isSecret={remoteState.askpass.is_secret}
-                />
-              )}
-              <div className="connection-status">
-                {remoteState.connection_status.message}
-              </div>
-            </>
+            <div className="connection-status">
+              {remoteState.connection_status.message}
+            </div>
           )}
         {remoteState && remoteState.connection_status.status === "failed" && (
           <div className="connection-status connection-error">

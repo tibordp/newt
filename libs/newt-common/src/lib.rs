@@ -118,6 +118,30 @@ impl From<notify::Error> for Error {
     }
 }
 
+impl From<openssh_sftp_client::Error> for Error {
+    fn from(e: openssh_sftp_client::Error) -> Self {
+        use openssh_sftp_client::Error as SftpErr;
+        use openssh_sftp_protocol_error::ErrorCode;
+
+        let kind = match &e {
+            SftpErr::SftpError(ErrorCode::NoSuchFile, _) => ErrorKind::NotFound,
+            SftpErr::SftpError(ErrorCode::PermDenied, _) => ErrorKind::PermissionDenied,
+            SftpErr::IOError(io_err) if io_err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                ErrorKind::Connection
+            }
+            SftpErr::IOError(_) | SftpErr::AwaitableError(_) | SftpErr::TaskJoinError(_) => {
+                ErrorKind::Connection
+            }
+            _ => ErrorKind::Other,
+        };
+
+        Self {
+            kind,
+            message: e.to_string(),
+        }
+    }
+}
+
 impl From<pty_process::Error> for Error {
     fn from(e: pty_process::Error) -> Self {
         Self {

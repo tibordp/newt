@@ -706,8 +706,12 @@ pub(super) async fn connect(
     let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
     let lookup_ref = mounted_vfs.clone();
-    let descriptor_lookup: super::pane::DescriptorLookup =
-        Arc::new(move |vfs_id| lookup_ref.read().get(&vfs_id).map(|info| info.descriptor));
+    let descriptor_lookup: super::pane::DescriptorLookup = Arc::new(move |vfs_id| {
+        lookup_ref
+            .read()
+            .get(&vfs_id)
+            .map(|info| (info.descriptor, info.mount_meta.clone()))
+    });
 
     state.panes.add(super::pane::Pane::new(
         services.fs.clone(),

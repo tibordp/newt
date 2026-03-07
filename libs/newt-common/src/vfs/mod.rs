@@ -1,8 +1,10 @@
 pub mod local;
 pub mod s3;
+pub mod sftp;
 
 pub use local::{LocalVfs, LocalVfsDescriptor, LOCAL_VFS_DESCRIPTOR};
 pub use s3::{S3Vfs, S3VfsDescriptor};
+pub use sftp::SftpVfs;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -145,13 +147,20 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_hard_link(&self) -> bool;
 
     // --- Display ---
-    fn format_path(&self, path: &Path) -> String;
-    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb>;
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb>;
 
     /// Try to parse a user-entered display path. Returns the VFS-internal path
     /// if this VFS recognizes the input (e.g., S3 recognizes "s3://...").
     /// Returns None if this VFS doesn't claim the input.
-    fn try_parse_display_path(&self, input: &str) -> Option<PathBuf>;
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<PathBuf>;
+
+    /// Human-readable label for a mounted instance, derived from mount_meta.
+    /// E.g. for SFTP this returns the hostname. Shown in the VFS selector
+    /// next to the VFS display name.
+    fn mount_label(&self, _mount_meta: &[u8]) -> Option<String> {
+        None
+    }
 }
 
 // Auto-registration via inventory
@@ -646,6 +655,7 @@ impl FileReader for VfsRegistryFileReader {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MountRequest {
     S3 { region: Option<String> },
+    Sftp { host: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -181,8 +181,9 @@ const FileRow = memo(function FileRow({
 });
 
 const VFS_ICONS: Record<string, string> = {
-  local: "\uDB80\uDECA", // nf-md-harddisk (U+F02CA)
-  s3: "\uDB80\uDD63", // nf-md-cloud_outline (U+F0163)
+  local: "\u{f02ca}",
+  s3: "\u{f0e0f}",
+  sftp: "\u{eb3a}",
 };
 
 function VfsSelector({
@@ -236,25 +237,37 @@ function VfsSelector({
             onRestoreFocus();
           }}
         >
-          {vfsTargets.map((target) => {
+          {vfsTargets.map((target, i) => {
             const isActive =
               target.vfs_id != null && target.vfs_id === activeVfsId;
             const icon = VFS_ICONS[target.type_name];
             return (
               <DropdownMenu.Item
-                key={target.type_name}
+                key={`${target.type_name}-${target.vfs_id ?? i}`}
                 className={menuStyles.item}
-                onSelect={() => {
-                  safeCommand("switch_vfs", {
-                    paneHandle,
-                    vfsId: target.vfs_id,
-                    typeName: target.type_name,
-                  });
+                onSelect={(e) => {
+                  // Prevent Radix from auto-closing the dropdown — the
+                  // command handlers replace/close the modal on the Rust
+                  // side, which updates `open` via props.
+                  e.preventDefault();
+                  if (target.vfs_id == null && target.mount_dialog) {
+                    safeCommand("dialog", {
+                      paneHandle,
+                      dialog: target.mount_dialog,
+                    });
+                  } else {
+                    safeCommand("switch_vfs", {
+                      paneHandle,
+                      vfsId: target.vfs_id,
+                      typeName: target.type_name,
+                    });
+                  }
                 }}
               >
                 <span className={menuStyles.itemIcon}>{icon}</span>
                 <span className={menuStyles.itemLabel}>
                   {target.display_name}
+                  {target.label && ` (${target.label})`}
                   {target.vfs_id == null && " (connect...)"}
                 </span>
                 {isActive && (

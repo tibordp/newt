@@ -87,11 +87,11 @@ impl VfsDescriptor for LocalVfsDescriptor {
         true
     }
 
-    fn format_path(&self, path: &Path) -> String {
+    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
         path.to_string_lossy().to_string()
     }
 
-    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb> {
+    fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
         let mut crumbs = Vec::new();
         let s = path.to_string_lossy();
         let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
@@ -119,7 +119,7 @@ impl VfsDescriptor for LocalVfsDescriptor {
         crumbs
     }
 
-    fn try_parse_display_path(&self, _input: &str) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
         None
     }
 }

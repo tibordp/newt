@@ -759,6 +759,14 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "mount_sftp".into(),
+            name: "Mount SFTP...".into(),
+            category: "Navigation".into(),
+            default_key: None,
+            default_when: None,
+            needs_pane: true,
+        },
+        CommandDef {
             id: "open_folder".into(),
             name: "Open Folder in Default File Manager".into(),
             category: "File".into(),

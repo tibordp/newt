@@ -31,6 +31,8 @@ aws-sdk-s3 = "1"
 mimetype-detector = "0"
 dirs = "6"
 url = "2"
+openssh-sftp-client = "0.15"
+openssh-sftp-protocol-error = "0.1.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 quick-xml = "0.37"

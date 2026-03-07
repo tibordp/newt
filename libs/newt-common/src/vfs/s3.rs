@@ -85,7 +85,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         false
     }
 
-    fn format_path(&self, path: &Path) -> String {
+    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
         let s = path.to_string_lossy();
         let s = s.trim_start_matches('/');
         if s.is_empty() {
@@ -95,7 +95,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         }
     }
 
-    fn breadcrumbs(&self, path: &Path) -> Vec<Breadcrumb> {
+    fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
         let mut crumbs = Vec::new();
         let s = path.to_string_lossy();
         let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
@@ -123,7 +123,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         crumbs
     }
 
-    fn try_parse_display_path(&self, input: &str) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
         let rest = input.strip_prefix("s3://")?;
         if rest.is_empty() {
             Some(PathBuf::from("/"))

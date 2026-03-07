@@ -732,6 +732,9 @@ pub fn dialog(
                 "connect_remote" => ModalDataKind::ConnectRemote {
                     host: String::new(),
                 },
+                "mount_sftp" => ModalDataKind::MountSftp {
+                    host: String::new(),
+                },
                 "select_vfs" => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
@@ -1196,6 +1199,31 @@ pub async fn cmd_mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Re
 }
 
 #[tauri::command]
+pub async fn mount_sftp(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    host: String,
+) -> Result<(), Error> {
+    log::info!("cmd: mount_sftp host={} pane={:?}", host, pane_handle);
+    let response = ctx
+        .mount_vfs(MountRequest::Sftp { host: host.clone() })
+        .await
+        .map_err(|e| {
+            log::error!("cmd: mount_sftp failed for host={}: {}", host, e);
+            e
+        })?;
+    log::info!("cmd: mount_sftp succeeded, vfs_id={:?}", response.vfs_id);
+    let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn switch_vfs(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -1528,6 +1556,7 @@ cmd_dialog!(cmd_copy, "copy");
 cmd_dialog!(cmd_move, "move");
 cmd_dialog!(cmd_connect_remote, "connect_remote");
 cmd_dialog!(cmd_select_vfs, "select_vfs");
+cmd_dialog!(cmd_mount_sftp, "mount_sftp");
 cmd_dialog!(cmd_command_palette, "command_palette");
 cmd_dialog!(cmd_hot_paths, "hot_paths");
 cmd_dialog!(cmd_open_settings, "settings");
@@ -1649,6 +1678,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_prev_terminal,
         cmd_open_elevated,
         cmd_mount_s3,
+        cmd_mount_sftp,
+        mount_sftp,
         cmd_hot_paths,
         cmd_add_bookmark,
         cmd_open_config_file,

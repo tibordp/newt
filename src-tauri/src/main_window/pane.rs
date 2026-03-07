@@ -71,7 +71,8 @@ pub struct PaneStats {
     pub selected_bytes: u64,
 }
 
-pub type DescriptorLookup = Arc<dyn Fn(VfsId) -> Option<&'static dyn VfsDescriptor> + Send + Sync>;
+pub type DescriptorLookup =
+    Arc<dyn Fn(VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)> + Send + Sync>;
 
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
@@ -341,16 +342,16 @@ impl Pane {
     }
 
     fn update_display(&self, ws: &mut PaneViewState) {
-        if let Some(desc) = (self.descriptor_lookup)(ws.path.vfs_id) {
-            ws.display_path = desc.format_path(&ws.path.path);
+        if let Some((desc, meta)) = (self.descriptor_lookup)(ws.path.vfs_id) {
+            ws.display_path = desc.format_path(&ws.path.path, &meta);
             ws.vfs_display_name = desc.display_name().to_string();
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();
         }
         let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
-        if let Some(shown_desc) = (self.descriptor_lookup)(shown_path.vfs_id) {
-            ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path);
+        if let Some((shown_desc, shown_meta)) = (self.descriptor_lookup)(shown_path.vfs_id) {
+            ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path, &shown_meta);
         }
     }
 
