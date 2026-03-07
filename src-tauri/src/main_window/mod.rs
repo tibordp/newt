@@ -590,6 +590,7 @@ struct MainWindowContextInner {
     window: WebviewWindow,
     main_window_state: MainWindowState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
+    preferences: crate::preferences::PreferencesHandle,
     connection_target: ConnectionTarget,
     window_title: String,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
@@ -619,11 +620,12 @@ impl MainWindowContext {
         window: WebviewWindow,
         connection_target: ConnectionTarget,
         window_title: String,
-        preferences: &crate::preferences::schema::AppPreferences,
+        preferences: crate::preferences::PreferencesHandle,
     ) -> Self {
         let mut global_state = MainWindowState::new();
         global_state.window_title = window_title.clone();
-        global_state.display_options.0.write().show_hidden = preferences.appearance.show_hidden;
+        global_state.display_options.0.write().show_hidden =
+            preferences.load().appearance.show_hidden;
         let publisher = Arc::new(UpdatePublisher::new(
             window.clone(),
             "main_window",
@@ -635,6 +637,7 @@ impl MainWindowContext {
                 window,
                 main_window_state: global_state,
                 publisher,
+                preferences,
                 connection_target,
                 window_title,
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
@@ -681,6 +684,7 @@ impl MainWindowContext {
             agent_resolver,
             state,
             publisher,
+            self.inner.preferences.clone(),
             session_slot,
             |msg| {
                 state.connection_status.set_connecting(msg);
@@ -752,6 +756,10 @@ impl MainWindowContext {
 
     pub fn window(&self) -> WebviewWindow {
         self.inner.window.clone()
+    }
+
+    pub fn preferences(&self) -> &crate::preferences::PreferencesHandle {
+        &self.inner.preferences
     }
 
     pub fn with_update<T>(

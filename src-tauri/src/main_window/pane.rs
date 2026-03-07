@@ -19,7 +19,7 @@ use crate::common::UpdatePublisher;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -74,6 +74,17 @@ pub struct PaneStats {
 pub type DescriptorLookup =
     Arc<dyn Fn(VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)> + Send + Sync>;
 
+struct HistoryEntry {
+    path: VfsPath,
+    focused: Option<String>,
+}
+
+#[derive(Default)]
+struct NavigationHistory {
+    back: Vec<HistoryEntry>,
+    forward: Vec<HistoryEntry>,
+}
+
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
@@ -82,9 +93,11 @@ pub struct Pane {
     file_list: RwLock<Arc<FileList>>,
     view_state: RwLock<PaneViewState>,
     display_options: DisplayOptions,
+    preferences: crate::preferences::PreferencesHandle,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     cancellation_token: Mutex<Option<CancellationToken>>,
     descriptor_lookup: DescriptorLookup,
+    history: Mutex<NavigationHistory>,
 }
 
 impl Pane {
@@ -92,6 +105,7 @@ impl Pane {
         fs: Arc<dyn Filesystem>,
         path: VfsPath,
         display_options: DisplayOptions,
+        preferences: crate::preferences::PreferencesHandle,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
         descriptor_lookup: DescriptorLookup,
     ) -> Self {
@@ -105,14 +119,17 @@ impl Pane {
             view_state: RwLock::new(PaneViewState::default()),
             nav_changes_rx: rx,
             display_options,
+            preferences,
             publisher,
             cancellation_token: Mutex::new(None),
             descriptor_lookup,
+            history: Mutex::new(NavigationHistory::default()),
         }
     }
 
     pub async fn watch_changes(self: Arc<Self>) {
         let mut rx = self.nav_changes_rx.clone();
+        let mut prefs_rx = self.preferences.subscribe();
         loop {
             let vfs_path = self.path();
             tokio::select! {
@@ -130,6 +147,11 @@ impl Pane {
                     }
                 }
                 _ = rx.changed() =>  {
+                    continue;
+                }
+                _ = prefs_rx.changed() => {
+                    self.update_view_state();
+                    let _ = self.publisher.publish();
                     continue;
                 }
             };
@@ -156,8 +178,19 @@ impl Pane {
         &self,
         target: VfsPath,
         silent: bool,
+        skip_history: bool,
         changes_sender: &mut tokio::sync::watch::Sender<()>,
     ) -> Result<(), Error> {
+        if !skip_history {
+            let entry = self.snapshot();
+            if !entry.path.path.as_os_str().is_empty() && entry.path != target {
+                let mut history = self.history.lock();
+                history.back.push(entry);
+                history.forward.clear();
+            }
+        }
+
+        let prefs = self.preferences.load();
         let old_file_list = {
             // Temporarily push the new navigation state. This is mostly so people can backspace out of
             // a directory that is taking a long time to load (and not just Esc) - but eventually this
@@ -246,7 +279,7 @@ impl Pane {
                                 accumulated.clone(),
                                 batch_fs_stats.clone(),
                             );
-                            self.view_state_mut().update(display_options, &interim);
+                            self.view_state_mut().update(display_options, &prefs, &interim);
                             let _ = self.publisher.publish();
                             last_publish = Instant::now();
                             dirty = true;
@@ -301,7 +334,7 @@ impl Pane {
             }
         }
 
-        ws.update(display_options, &new_file_list);
+        ws.update(display_options, &prefs, &new_file_list);
         self.update_display(&mut ws);
 
         if has_path_changed {
@@ -331,13 +364,14 @@ impl Pane {
 
     pub fn update_view_state(&self) {
         let display_options = self.display_options.0.read().clone();
+        let prefs = self.preferences.load();
         let file_list = self.file_list.read();
         let mut view_state: parking_lot::lock_api::RwLockWriteGuard<
             parking_lot::RawRwLock,
             PaneViewState,
         > = self.view_state.write();
 
-        view_state.update(display_options, &file_list);
+        view_state.update(display_options, &prefs, &file_list);
         self.update_display(&mut view_state);
     }
 
@@ -364,11 +398,19 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         if self.refresh_queue.fetch_sub(1, Ordering::SeqCst) == 1 && self.path() == expected_path {
-            self.navigate_impl(expected_path, true, &mut changes_sender)
+            self.navigate_impl(expected_path, true, true, &mut changes_sender)
                 .await?;
         }
 
         Ok(())
+    }
+
+    fn snapshot(&self) -> HistoryEntry {
+        let view_state = self.view_state.read();
+        HistoryEntry {
+            path: view_state.path.clone(),
+            focused: view_state.focused.clone(),
+        }
     }
 
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
@@ -379,7 +421,8 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, &mut changes_sender).await
+        self.navigate_impl(target, false, false, &mut changes_sender)
+            .await
     }
 
     pub async fn navigate_to(&self, target: VfsPath) -> Result<(), Error> {
@@ -387,7 +430,52 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, &mut changes_sender).await
+        self.navigate_impl(target, false, false, &mut changes_sender)
+            .await
+    }
+
+    pub async fn navigate_back(&self) -> Result<(), Error> {
+        let target = {
+            let mut history = self.history.lock();
+            let entry = match history.back.pop() {
+                Some(e) => e,
+                None => return Ok(()),
+            };
+            history.forward.push(self.snapshot());
+            entry
+        };
+        let focused = target.focused.clone();
+
+        self.cancel();
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        self.navigate_impl(target.path, false, true, &mut changes_sender)
+            .await?;
+        if let Some(name) = focused {
+            self.view_state_mut().focus(name);
+        }
+        Ok(())
+    }
+
+    pub async fn navigate_forward(&self) -> Result<(), Error> {
+        let target = {
+            let mut history = self.history.lock();
+            let entry = match history.forward.pop() {
+                Some(e) => e,
+                None => return Ok(()),
+            };
+            history.back.push(self.snapshot());
+            entry
+        };
+        let focused = target.focused.clone();
+
+        self.cancel();
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        self.navigate_impl(target.path, false, true, &mut changes_sender)
+            .await?;
+        if let Some(name) = focused {
+            self.view_state_mut().focus(name);
+        }
+        Ok(())
     }
 
     /// If the selection is empty, returns the focused file.
@@ -415,6 +503,16 @@ impl Pane {
         let view_state = self.view_state.read();
 
         view_state.focused.as_ref().map(|s| view_state.path.join(s))
+    }
+
+    pub fn get_focused_symlink_target(&self) -> Option<PathBuf> {
+        let view_state = self.view_state.read();
+        let focused = view_state.focused.as_ref()?;
+        view_state
+            .files
+            .iter()
+            .find(|f| f.name == *focused)
+            .and_then(|f| f.symlink_target.clone())
     }
 
     /// Returns true if the focused item is known to be a directory.
@@ -504,19 +602,20 @@ impl PaneViewState {
             .and_then(|name| self.file_lookup.get(name).copied());
     }
 
-    fn sort(&mut self) {
+    fn sort(&mut self, folders_first: bool) {
         self.files.sort_by(|a, b| {
-            // Directories first
             if a.name == ".." {
                 return std::cmp::Ordering::Less;
             } else if b.name == ".." {
                 return std::cmp::Ordering::Greater;
             }
 
-            if a.is_dir && !b.is_dir {
-                return std::cmp::Ordering::Less;
-            } else if !a.is_dir && b.is_dir {
-                return std::cmp::Ordering::Greater;
+            if folders_first {
+                if a.is_dir && !b.is_dir {
+                    return std::cmp::Ordering::Less;
+                } else if !a.is_dir && b.is_dir {
+                    return std::cmp::Ordering::Greater;
+                }
             }
 
             let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
@@ -569,7 +668,12 @@ impl PaneViewState {
     }
 
     // Public API
-    pub fn update(&mut self, display_options: DisplayOptionsInner, file_list: &FileList) {
+    pub fn update(
+        &mut self,
+        display_options: DisplayOptionsInner,
+        preferences: &crate::preferences::schema::AppPreferences,
+        file_list: &FileList,
+    ) {
         // the path is expected to be canonical by now
 
         self.path = file_list.path().clone();
@@ -581,7 +685,7 @@ impl PaneViewState {
             .cloned()
             .collect();
 
-        self.sort();
+        self.sort(preferences.appearance.folders_first);
         self.update_focus();
         self.recompute_stats();
     }
@@ -603,9 +707,9 @@ impl PaneViewState {
         }
     }
 
-    pub fn set_sorting(&mut self, sorting: Sorting) {
+    pub fn set_sorting(&mut self, sorting: Sorting, folders_first: bool) {
         self.sorting = sorting;
-        self.sort();
+        self.sort(folders_first);
         self.recompute_stats();
     }
 

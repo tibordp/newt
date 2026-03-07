@@ -213,8 +213,8 @@ fn main() {
                     .theme(theme)
                     .build()?;
 
-            let prefs = global_ctx.preferences().settings();
-            let ctx = MainWindowContext::new(window, ct.clone(), wt.clone(), &prefs);
+            let prefs_handle = global_ctx.preferences().handle();
+            let ctx = MainWindowContext::new(window, ct.clone(), wt.clone(), prefs_handle);
             global_ctx
                 .main_windows
                 .lock()

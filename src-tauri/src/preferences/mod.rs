@@ -37,9 +37,31 @@ pub struct CommandInfo {
     pub needs_pane: bool,
 }
 
+/// A cheaply-cloneable handle for reading the current `AppPreferences`.
+///
+/// Reads are wait-free (`ArcSwap::load`). Subscribe to the watch channel
+/// to be notified when preferences change.
+#[derive(Clone)]
+pub struct PreferencesHandle {
+    settings: Arc<arc_swap::ArcSwap<AppPreferences>>,
+    notify: tokio::sync::watch::Receiver<()>,
+}
+
+impl PreferencesHandle {
+    pub fn load(&self) -> arc_swap::Guard<Arc<AppPreferences>> {
+        self.settings.load()
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.notify.clone()
+    }
+}
+
 pub struct PreferencesManager {
     config_dir: PathBuf,
     resolved: Arc<RwLock<ResolvedPreferences>>,
+    handle: PreferencesHandle,
+    _notify_tx: tokio::sync::watch::Sender<()>,
     _watcher: Option<RecommendedWatcher>,
 }
 
@@ -55,14 +77,30 @@ impl PreferencesManager {
             warn!("Failed to create config dir {:?}: {}", config_dir, e);
         }
 
-        let resolved = Arc::new(RwLock::new(Self::load_and_resolve(&config_dir)));
+        let initial = Self::load_and_resolve(&config_dir);
+        let settings = Arc::new(arc_swap::ArcSwap::from_pointee(initial.settings.clone()));
+        let (notify_tx, notify_rx) = tokio::sync::watch::channel(());
+        let resolved = Arc::new(RwLock::new(initial));
+
+        let handle = PreferencesHandle {
+            settings: settings.clone(),
+            notify: notify_rx,
+        };
 
         // Set up file watcher
-        let watcher = Self::setup_watcher(app_handle, &config_dir, resolved.clone());
+        let watcher = Self::setup_watcher(
+            app_handle,
+            &config_dir,
+            resolved.clone(),
+            settings,
+            notify_tx.clone(),
+        );
 
         Self {
             config_dir,
             resolved,
+            handle,
+            _notify_tx: notify_tx,
             _watcher: watcher,
         }
     }
@@ -73,6 +111,10 @@ impl PreferencesManager {
 
     pub fn settings(&self) -> AppPreferences {
         self.resolved.read().settings.clone()
+    }
+
+    pub fn handle(&self) -> PreferencesHandle {
+        self.handle.clone()
     }
 
     pub fn config_dir(&self) -> &Path {
@@ -192,6 +234,8 @@ impl PreferencesManager {
         app_handle: &tauri::AppHandle,
         config_dir: &Path,
         resolved: Arc<RwLock<ResolvedPreferences>>,
+        settings: Arc<arc_swap::ArcSwap<AppPreferences>>,
+        notify_tx: tokio::sync::watch::Sender<()>,
     ) -> Option<RecommendedWatcher> {
         let config_dir_owned = config_dir.to_owned();
         let app_handle = app_handle.clone();
@@ -254,6 +298,8 @@ impl PreferencesManager {
                         continue;
                     }
                 }
+                settings.store(Arc::new(new_resolved.settings.clone()));
+                let _ = notify_tx.send(());
                 let _ = app_handle.emit("update:preferences", &new_resolved);
             }
         });
@@ -659,6 +705,30 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Open in Default App".into(),
             category: "File".into(),
             default_key: None,
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "follow_symlink".into(),
+            name: "Follow Symlink".into(),
+            category: "Navigation".into(),
+            default_key: Some("shift+enter".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "navigate_back".into(),
+            name: "Navigate Back".into(),
+            category: "Navigation".into(),
+            default_key: Some("alt+left".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "navigate_forward".into(),
+            name: "Navigate Forward".into(),
+            category: "Navigation".into(),
+            default_key: Some("alt+right".into()),
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },

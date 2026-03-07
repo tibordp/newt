@@ -647,11 +647,13 @@ fn spawn_child_watcher(
 /// Establish a session according to the connection target. On success, stores
 /// the session and sets status to `Connected`. On child-process exit, sets
 /// status to `Disconnected` and clears the session.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn connect(
     connection_target: &ConnectionTarget,
     agent_resolver: &AgentResolver,
     state: &MainWindowState,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
+    preferences: crate::preferences::PreferencesHandle,
     session_slot: &Arc<arc_swap::ArcSwap<Option<Session>>>,
     set_status: impl Fn(&str),
     askpass_callback: impl Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
@@ -717,6 +719,7 @@ pub(super) async fn connect(
         services.fs.clone(),
         initial_dir.clone(),
         state.display_options.clone(),
+        preferences.clone(),
         publisher.clone(),
         descriptor_lookup.clone(),
     ));
@@ -724,6 +727,7 @@ pub(super) async fn connect(
         services.fs.clone(),
         initial_dir,
         state.display_options.clone(),
+        preferences,
         publisher.clone(),
         descriptor_lookup,
     ));

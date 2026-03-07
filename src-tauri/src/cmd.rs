@@ -119,8 +119,9 @@ pub fn set_sorting(
     pane_handle: PaneHandle,
     sorting: Sorting,
 ) -> Result<(), Error> {
+    let folders_first = ctx.preferences().load().appearance.folders_first;
     ctx.with_pane_update(pane_handle, |_, pane| {
-        pane.view_state_mut().set_sorting(sorting);
+        pane.view_state_mut().set_sorting(sorting, folders_first);
         Ok(())
     })
 }
@@ -355,6 +356,36 @@ pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 }
 
 #[tauri::command]
+pub async fn cmd_follow_symlink(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let target = match pane.get_focused_symlink_target() {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        let resolved = if target.is_absolute() {
+            target
+        } else {
+            pane.path().path.join(&target)
+        };
+        let parent = resolved.parent().unwrap_or(&resolved).to_path_buf();
+        let filename = resolved
+            .file_name()
+            .map(|n: &std::ffi::OsStr| n.to_string_lossy().to_string());
+        pane.navigate(&parent).await?;
+        if let Some(name) = filename {
+            pane.view_state_mut().focus(name);
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
@@ -362,6 +393,29 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     opener::open(&full_path.path)?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_navigate_back(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    ctx.with_pane_update_async(
+        pane_handle,
+        |_, pane| async move { pane.navigate_back().await },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn cmd_navigate_forward(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        pane.navigate_forward().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1666,6 +1720,9 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_edit,
         cmd_open,
         cmd_open_folder,
+        cmd_follow_symlink,
+        cmd_navigate_back,
+        cmd_navigate_forward,
         cmd_copy_pane,
         cmd_select_all,
         cmd_deselect_all,
