@@ -29,6 +29,12 @@ use crate::main_window::PaneHandle;
 use crate::GlobalContext;
 
 #[tauri::command]
+pub fn askpass_respond(ctx: MainWindowContext, response: Option<String>) -> Result<(), Error> {
+    ctx.askpass_respond(response);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn init(
     webview: tauri::Webview,
     global_ctx: tauri::State<'_, GlobalContext>,
@@ -1549,6 +1555,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
     let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
         // Core / lifecycle
         init,
+        askpass_respond,
         ping,
         close_modal,
         confirm_action,

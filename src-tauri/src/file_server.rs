@@ -29,6 +29,7 @@ fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
     if start > end || start >= file_size {
         return None;
     }
+
     Some((start, end.min(file_size - 1)))
 }
 

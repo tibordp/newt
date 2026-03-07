@@ -1,4 +1,5 @@
 pub mod api;
+pub mod askpass;
 pub mod file_reader;
 pub mod filesystem;
 pub mod hot_paths;

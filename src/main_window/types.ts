@@ -112,8 +112,14 @@ export type ConnectionStatus =
   | { status: "disconnected"; log: string[]; error: string }
   | { status: "failed"; log: string[]; error: string };
 
+export type AskpassPrompt = {
+  prompt: string;
+  is_secret: boolean;
+};
+
 export type MainWindowState = {
   connection_status: ConnectionStatus;
+  askpass?: AskpassPrompt;
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;

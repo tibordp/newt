@@ -383,9 +383,38 @@ pub struct VfsTarget {
     pub display_name: String,
 }
 
+// ---------------------------------------------------------------------------
+// Askpass — SSH password / host-key prompts via SSH_ASKPASS
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, serde::Serialize)]
+pub struct AskpassPrompt {
+    pub prompt: String,
+    pub is_secret: bool,
+}
+
+#[derive(Clone)]
+pub struct AskpassState(pub Arc<RwLock<Option<AskpassPrompt>>>);
+
+impl Default for AskpassState {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(None)))
+    }
+}
+
+impl serde::Serialize for AskpassState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.0.read().serialize(serializer)
+    }
+}
+
 #[derive(Clone)]
 pub struct MainWindowState {
     pub connection_status: ConnectionState,
+    pub askpass: AskpassState,
     pub panes: Panes,
     pub terminals: Terminals,
     pub modal: ModalState,
@@ -402,8 +431,9 @@ impl serde::Serialize for MainWindowState {
     {
         use serde::ser::SerializeStruct;
         let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 9)?;
+        let mut s = serializer.serialize_struct("MainWindowState", 10)?;
         s.serialize_field("connection_status", &self.connection_status)?;
+        s.serialize_field("askpass", &self.askpass)?;
         s.serialize_field("panes", &self.panes)?;
         s.serialize_field("terminals", &self.terminals)?;
         s.serialize_field("modal", &self.modal)?;
@@ -422,6 +452,7 @@ impl MainWindowState {
 
         Self {
             connection_status: ConnectionState::default(),
+            askpass: AskpassState::default(),
             panes: Panes::new(),
             terminals: Terminals::new(),
             modal: ModalState::default(),
@@ -554,6 +585,7 @@ struct MainWindowContextInner {
     connection_target: ConnectionTarget,
     window_title: String,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
+    askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
 }
 
 #[derive(Clone)]
@@ -598,6 +630,7 @@ impl MainWindowContext {
                 connection_target,
                 window_title,
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
+                askpass_response: Arc::new(parking_lot::Mutex::new(None)),
             }),
         }
     }
@@ -606,6 +639,34 @@ impl MainWindowContext {
         let state = &self.inner.main_window_state;
         let publisher = &self.inner.publisher;
         let session_slot = &self.inner.session;
+        let askpass_state = &state.askpass;
+        let askpass_response_slot = &self.inner.askpass_response;
+
+        let askpass_callback = {
+            let askpass_state = askpass_state.clone();
+            let askpass_response_slot = askpass_response_slot.clone();
+            let publisher = publisher.clone();
+            move |prompt: String, is_secret: bool| {
+                let askpass_state = askpass_state.clone();
+                let askpass_response_slot = askpass_response_slot.clone();
+                let publisher = publisher.clone();
+                Box::pin(async move {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    *askpass_state.0.write() = Some(AskpassPrompt { prompt, is_secret });
+                    *askpass_response_slot.lock() = Some(tx);
+                    let _ = publisher.publish();
+
+                    let result = rx.await.unwrap_or(None);
+
+                    *askpass_state.0.write() = None;
+                    *askpass_response_slot.lock() = None;
+                    let _ = publisher.publish();
+
+                    result
+                })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
+            }
+        };
 
         session::connect(
             &self.inner.connection_target,
@@ -617,8 +678,15 @@ impl MainWindowContext {
                 state.connection_status.set_connecting(msg);
                 let _ = publisher.publish();
             },
+            askpass_callback,
         )
         .await
+    }
+
+    pub fn askpass_respond(&self, response: Option<String>) {
+        if let Some(tx) = self.inner.askpass_response.lock().take() {
+            let _ = tx.send(response);
+        }
     }
 
     fn with_session<T>(&self, f: impl FnOnce(&Session) -> T) -> Result<T, Error> {

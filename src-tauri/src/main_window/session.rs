@@ -12,7 +12,9 @@ use newt_common::vfs::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -21,6 +23,16 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use crate::common::{Error, UpdatePublisher};
 
 use super::{apply_operation_progress, MainWindowState, Operations};
+
+/// Callback invoked when SSH needs user input (password, passphrase, host key
+/// confirmation). Returns `Some(response)` on success, `None` if the user
+/// cancelled.
+pub type AskpassCallback = Box<
+    dyn Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 // ---------------------------------------------------------------------------
 // ConnectionTarget
@@ -407,10 +419,64 @@ fn make_stream(
     tokio_duplex::Duplex::new(rx, tx)
 }
 
+/// Spawn an askpass listener on a temporary Unix domain socket. Each askpass
+/// invocation by SSH connects, sends two lines (prompt type + prompt text),
+/// and reads one line (response). Returns the socket path for the env var.
+fn spawn_askpass_listener(askpass_callback: Arc<AskpassCallback>) -> Result<PathBuf, Error> {
+    let sock_path = std::env::temp_dir().join(format!("newt-askpass-{}.sock", std::process::id()));
+
+    // Clean up any stale socket
+    let _ = std::fs::remove_file(&sock_path);
+
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::UnixListener::from_std(listener)?;
+
+    let cleanup_path = sock_path.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(_) => break,
+            };
+
+            let askpass_callback = askpass_callback.clone();
+            tokio::spawn(async move {
+                use newt_common::askpass::{self, AskpassResponse, PromptType};
+
+                let (mut reader, mut writer) = stream.into_split();
+
+                let request: askpass::AskpassRequest =
+                    match askpass::tokio::read_msg(&mut reader).await {
+                        Ok(r) => r,
+                        Err(_) => return,
+                    };
+
+                // When SSH_ASKPASS_PROMPT is unset (mapped to Secret), fall
+                // back to prompt text heuristics for host-key confirmations.
+                // OpenSSH doesn't set SSH_ASKPASS_PROMPT for host key prompts.
+                let is_secret = match request.prompt_type {
+                    PromptType::Confirm | PromptType::Info => false,
+                    PromptType::Secret => !request.prompt.contains("(yes/no/[fingerprint])"),
+                };
+
+                let response = askpass_callback(request.prompt, is_secret).await;
+                let _ = askpass::tokio::write_msg(&mut writer, &AskpassResponse(response)).await;
+                // If None (cancelled), just drop the connection — askpass gets EOF
+            });
+        }
+
+        let _ = std::fs::remove_file(&cleanup_path);
+    });
+
+    Ok(sock_path)
+}
+
 /// Spawn SSH + bootstrap script, negotiate agent upload if needed.
 async fn spawn_remote(
     transport_cmd: &[String],
     agent_resolver: &AgentResolver,
+    askpass_callback: Arc<AskpassCallback>,
 ) -> Result<ChildConnection, Error> {
     let (program, args) = transport_cmd
         .split_first()
@@ -425,12 +491,19 @@ async fn spawn_remote(
         format!("sh -c '{}'", escaped)
     };
 
+    // Set up askpass via a named Unix domain socket
+    let askpass_binary = agent_resolver.find_local_agent_binary()?;
+    let askpass_sock = spawn_askpass_listener(askpass_callback)?;
+
     let mut child = tokio::process::Command::new(program)
         .args(args)
         .arg(&sh_cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("SSH_ASKPASS", &askpass_binary)
+        .env("SSH_ASKPASS_REQUIRE", "force")
+        .env("NEWT_ASKPASS_SOCK", &askpass_sock)
         .spawn()?;
 
     let mut stdin = child.stdin.take().unwrap();
@@ -581,7 +654,12 @@ pub(super) async fn connect(
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     session_slot: &Arc<arc_swap::ArcSwap<Option<Session>>>,
     set_status: impl Fn(&str),
+    askpass_callback: impl Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
+        + Send
+        + Sync
+        + 'static,
 ) -> Result<(), Error> {
+    let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
     let (services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
             let services = create_local_services(&state.operations, publisher);
@@ -589,7 +667,8 @@ pub(super) async fn connect(
         }
         ConnectionTarget::Remote { transport_cmd } => {
             set_status("Connecting to remote host...");
-            let conn = spawn_remote(transport_cmd, agent_resolver).await?;
+            let conn =
+                spawn_remote(transport_cmd, agent_resolver, askpass_callback.clone()).await?;
             let (services, _) = create_rpc_services(conn.stream, &state.operations, publisher);
             let stderr_log = StderrLog::default();
             (services, stderr_log, Some((conn.child, conn.stderr)))

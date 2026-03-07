@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type FormEvent,
+} from "react";
 
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
@@ -42,6 +49,76 @@ const CUSTOM_MODAL_TYPES = [
   "settings",
 ];
 
+const ASKPASS_DIALOG_STYLE = {
+  top: 40,
+  inset: "auto" as const,
+  left: 0,
+  right: 0,
+  marginInline: "auto",
+  width: 500,
+  maxWidth: "80%",
+};
+
+function respond(response: string | null) {
+  invoke("askpass_respond", { response }).catch(console.error);
+}
+
+function AskpassDialog({
+  prompt,
+  isSecret,
+}: {
+  prompt: string;
+  isSecret: boolean;
+}) {
+  const [value, setValue] = useState("");
+  const isConfirm = !isSecret && prompt.includes("(yes/no/[fingerprint])");
+
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      respond(value || (isConfirm ? "yes" : value));
+    },
+    [value, isConfirm],
+  );
+
+  return (
+    <div className={dialogStyles.dialogContent} style={ASKPASS_DIALOG_STYLE}>
+      <form onSubmit={handleSubmit}>
+        <div className={dialogStyles.dialogContents}>
+          <h2 className={dialogStyles.dialogTitle}>
+            {isConfirm
+              ? "Host Key Verification"
+              : isSecret
+                ? "Authentication"
+                : "SSH"}
+          </h2>
+          <label style={{ whiteSpace: "pre-wrap", marginBottom: "0.5em" }}>
+            {prompt}
+          </label>
+          <input
+            type={isSecret ? "password" : "text"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoFocus
+            size={40}
+          />
+        </div>
+        <div className={dialogStyles.dialogButtons}>
+          <button
+            type="button"
+            onClick={() => respond(isConfirm ? "no" : null)}
+          >
+            {isConfirm ? "No" : "Cancel"}
+          </button>
+          <button type="submit" className="suggested">
+            {isConfirm ? "Yes" : "OK"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
   const terminalData = useTerminalData([]);
@@ -63,9 +140,13 @@ function App() {
       ? remoteState.operations[remoteState.foreground_operation_id]
       : null;
 
+  const modalType = remoteState?.modal?.type;
+
   const refocusActivePane = useCallback((e?: Event) => {
     e?.preventDefault();
-    setFocusGeneration((g) => g + 1);
+    if (!modalType) {
+      setFocusGeneration((g) => g + 1);
+    }
   }, []);
 
   const closeModal = useCallback(() => safeCommand("close_modal"), []);
@@ -75,8 +156,6 @@ function App() {
     () => (preferences ? buildBindingMap(preferences.bindings) : new Map()),
     [preferences?.bindings],
   );
-
-  const modalType = remoteState?.modal?.type;
 
   const onkeydown = useCallback(
     (e: KeyboardEvent) => {
@@ -210,9 +289,17 @@ function App() {
           )}
         {remoteState &&
           remoteState.connection_status.status === "connecting" && (
-            <div className="connection-status">
-              {remoteState.connection_status.message}
-            </div>
+            <>
+              {remoteState.askpass && (
+                <AskpassDialog
+                  prompt={remoteState.askpass.prompt}
+                  isSecret={remoteState.askpass.is_secret}
+                />
+              )}
+              <div className="connection-status">
+                {remoteState.connection_status.message}
+              </div>
+            </>
           )}
         {remoteState && remoteState.connection_status.status === "failed" && (
           <div className="connection-status connection-error">

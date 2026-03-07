@@ -1,3 +1,9 @@
 npx lint-staged
-cargo fmt --all -- --check
+cargo fmt --all
+git diff --name-only -- '*.rs' | if read -r; then
+  echo "cargo fmt modified files — please review and re-stage:"
+  echo "  $REPLY"
+  while read -r f; do echo "  $f"; done
+  exit 1
+fi
 cargo clippy --workspace -- -D warnings
