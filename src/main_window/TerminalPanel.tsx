@@ -7,12 +7,14 @@ type Props = {
   terminals: TerminalType[];
   activeTerminal?: number;
   panesFocused: boolean;
+  modalOpen: boolean;
 };
 
 export default function TerminalPanel({
   terminals,
   activeTerminal,
   panesFocused,
+  modalOpen,
 }: Props) {
   return (
     <div className={styles.panel}>
@@ -55,6 +57,7 @@ export default function TerminalPanel({
               handle={term.handle}
               active={!panesFocused && term.handle === activeTerminal}
               visible={term.handle === activeTerminal}
+              modalOpen={modalOpen}
             />
           </div>
         ))}

@@ -185,13 +185,9 @@ function OperationRow({ op }: { op: OperationState }) {
   );
 }
 
-export function OperationProgressModal({
-  op,
-  onCloseAutoFocus,
-}: {
-  op: OperationState;
-  onCloseAutoFocus?: (e: Event) => void;
-}) {
+const preventAutoFocus = (e: Event) => e.preventDefault();
+
+export function OperationProgressModal({ op }: { op: OperationState }) {
   const isActive =
     op.status === "scanning" ||
     op.status === "running" ||
@@ -215,7 +211,7 @@ export function OperationProgressModal({
       <Dialog.Portal>
         <Dialog.Content
           className={modalStyles.content}
-          onCloseAutoFocus={onCloseAutoFocus}
+          onCloseAutoFocus={preventAutoFocus}
         >
           <Dialog.Title className={modalStyles.header}>
             <span className={modalStyles.kind}>{op.kind}</span>

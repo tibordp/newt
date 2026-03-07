@@ -273,14 +273,14 @@ function PaneInner(
   props: PaneState & {
     paneHandle: number;
     active: boolean;
-    focusGeneration: number;
+    modalOpen: boolean;
     modal?: ModalState;
   },
 ) {
   const {
     paneHandle,
     active,
-    focusGeneration,
+    modalOpen,
     filter,
     path,
     files,
@@ -378,7 +378,7 @@ function PaneInner(
   }, [active, files, focusedIndex]);
 
   useEffect(() => {
-    if (active) {
+    if (active && !modalOpen) {
       if (!isVfsSelectorOpen) {
         if (filter === null) {
           containerRef.current?.focus();
@@ -386,11 +386,11 @@ function PaneInner(
           inputRef.current?.focus();
         }
       }
-    } else {
+    } else if (!active) {
       inputRef.current?.blur();
       containerRef.current?.blur();
     }
-  }, [active, path, filter, focusGeneration, isVfsSelectorOpen]);
+  }, [active, path, filter, modalOpen, isVfsSelectorOpen]);
 
   // --- Drag-to-select logic ---
 

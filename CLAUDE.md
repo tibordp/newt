@@ -76,4 +76,6 @@ When a task or direction is unclear — especially around architecture or design
 
 ## Git Commits
 
+Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any and fix the issues surface.
+
 Do not add `Co-Authored-By` lines to commit messages.

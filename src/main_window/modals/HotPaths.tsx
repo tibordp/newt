@@ -20,13 +20,6 @@ type HotPathEntry = {
   category: HotPathCategory;
 };
 
-type HotPathsProps = {
-  open: boolean;
-  state: MainWindowState | null;
-  onClose: () => void;
-  onCloseAutoFocus: (e: Event) => void;
-};
-
 const CATEGORY_LABELS: Record<HotPathCategory, string> = {
   UserBookmark: "Bookmarks",
   StandardFolder: "Standard Folders",
@@ -42,6 +35,8 @@ const CATEGORY_ORDER: HotPathCategory[] = [
   "Mount",
   "RecentFolder",
 ];
+
+const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function Highlight({ text, filter }: { text: string; filter: string }) {
   let a = 0;
@@ -108,36 +103,23 @@ function fuzzyMatch(
   };
 }
 
-export default function HotPaths({
-  open,
-  state,
-  onClose,
-  onCloseAutoFocus,
-}: HotPathsProps) {
+export default function HotPaths({ state }: { state: MainWindowState | null }) {
   const [filter, setFilter] = useState("");
   const [entries, setEntries] = useState<HotPathEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   // Path string of the bookmark pending deletion confirmation, or null
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const paneHandle =
     state?.display_options.panes_focused && state?.display_options.active_pane;
 
-  // Fetch hot paths when the dialog opens
+  // Fetch hot paths on mount
   useEffect(() => {
-    if (!open) {
-      setFilter("");
-      setEntries([]);
-      setPendingDelete(null);
-      return;
-    }
-
-    setLoading(true);
     invoke<HotPathEntry[]>("get_hot_paths")
       .then(setEntries)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [open]);
+  }, []);
 
   // Filter and group entries
   const grouped = useMemo(() => {
@@ -248,125 +230,110 @@ export default function HotPaths({
   };
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) onClose();
+    <Dialog.Content
+      className={styles.content}
+      onCloseAutoFocus={preventAutoFocus}
+      onEscapeKeyDown={(e) => {
+        if (pendingDelete !== null) {
+          e.preventDefault();
+          cancelDelete();
+        }
       }}
     >
-      <Dialog.Portal>
-        <Dialog.Content
-          className={styles.content}
-          onCloseAutoFocus={onCloseAutoFocus}
-          onEscapeKeyDown={(e) => {
-            if (pendingDelete !== null) {
-              e.preventDefault();
-              cancelDelete();
-            }
-          }}
-        >
-          <Dialog.Title className="sr-only">Hot Paths</Dialog.Title>
-          <Command shouldFilter={false} onKeyDown={onKeyDown}>
-            <div className={styles.header}>
-              <Command.Input
-                value={filter}
-                onValueChange={setFilter}
-                placeholder="Search paths..."
-              />
-            </div>
-            <Command.List>
-              {loading && <Command.Loading>Loading...</Command.Loading>}
-              <Command.Empty>No paths found</Command.Empty>
-              {grouped.map(({ category, items }) => (
-                <Command.Group
-                  key={category}
-                  heading={CATEGORY_LABELS[category]}
-                >
-                  {items.map((entry, i) => {
-                    const isConfirming =
-                      pendingDelete === entry.path.path &&
-                      entry.category === "UserBookmark";
+      <Dialog.Title className="sr-only">Hot Paths</Dialog.Title>
+      <Command shouldFilter={false} onKeyDown={onKeyDown}>
+        <div className={styles.header}>
+          <Command.Input
+            value={filter}
+            onValueChange={setFilter}
+            placeholder="Search paths..."
+          />
+        </div>
+        <Command.List>
+          {loading && <Command.Loading>Loading...</Command.Loading>}
+          <Command.Empty>No paths found</Command.Empty>
+          {grouped.map(({ category, items }) => (
+            <Command.Group key={category} heading={CATEGORY_LABELS[category]}>
+              {items.map((entry, i) => {
+                const isConfirming =
+                  pendingDelete === entry.path.path &&
+                  entry.category === "UserBookmark";
 
-                    return (
-                      <Command.Item
-                        key={`${category}-${i}`}
-                        value={`${category}:${i}`}
-                        onSelect={onSelect}
-                      >
-                        {isConfirming ? (
-                          <div className={styles.confirmRow}>
-                            <span>Remove bookmark?</span>
-                            <span className={styles.confirmActions}>
-                              <button
-                                className={styles.confirmYes}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  confirmDelete(entry.path.path);
-                                }}
-                                tabIndex={-1}
-                              >
-                                Yes
-                              </button>
-                              <button
-                                className={styles.confirmNo}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  cancelDelete();
-                                }}
-                                tabIndex={-1}
-                              >
-                                No
-                              </button>
+                return (
+                  <Command.Item
+                    key={`${category}-${i}`}
+                    value={`${category}:${i}`}
+                    onSelect={onSelect}
+                  >
+                    {isConfirming ? (
+                      <div className={styles.confirmRow}>
+                        <span>Remove bookmark?</span>
+                        <span className={styles.confirmActions}>
+                          <button
+                            className={styles.confirmYes}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              confirmDelete(entry.path.path);
+                            }}
+                            tabIndex={-1}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            className={styles.confirmNo}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              cancelDelete();
+                            }}
+                            tabIndex={-1}
+                          >
+                            No
+                          </button>
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className={styles.itemContent}>
+                          {entry.name ? (
+                            <>
+                              <span className={styles.name}>
+                                <Highlight text={entry.name} filter={filter} />
+                              </span>
+                              <span className={styles.path}>
+                                <Highlight
+                                  text={displayPath(entry)}
+                                  filter={filter}
+                                />
+                              </span>
+                            </>
+                          ) : (
+                            <span className={styles.name}>
+                              <Highlight
+                                text={displayPath(entry)}
+                                filter={filter}
+                              />
                             </span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className={styles.itemContent}>
-                              {entry.name ? (
-                                <>
-                                  <span className={styles.name}>
-                                    <Highlight
-                                      text={entry.name}
-                                      filter={filter}
-                                    />
-                                  </span>
-                                  <span className={styles.path}>
-                                    <Highlight
-                                      text={displayPath(entry)}
-                                      filter={filter}
-                                    />
-                                  </span>
-                                </>
-                              ) : (
-                                <span className={styles.name}>
-                                  <Highlight
-                                    text={displayPath(entry)}
-                                    filter={filter}
-                                  />
-                                </span>
-                              )}
-                            </div>
-                            {entry.category === "UserBookmark" && (
-                              <button
-                                className={styles.deleteBtn}
-                                onClick={(e) => requestDelete(entry, e)}
-                                title="Remove bookmark"
-                                tabIndex={-1}
-                              >
-                                &times;
-                              </button>
-                            )}
-                          </>
+                          )}
+                        </div>
+                        {entry.category === "UserBookmark" && (
+                          <button
+                            className={styles.deleteBtn}
+                            onClick={(e) => requestDelete(entry, e)}
+                            title="Remove bookmark"
+                            tabIndex={-1}
+                          >
+                            &times;
+                          </button>
                         )}
-                      </Command.Item>
-                    );
-                  })}
-                </Command.Group>
-              ))}
-            </Command.List>
-          </Command>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+                      </>
+                    )}
+                  </Command.Item>
+                );
+              })}
+            </Command.Group>
+          ))}
+        </Command.List>
+      </Command>
+    </Dialog.Content>
   );
 }

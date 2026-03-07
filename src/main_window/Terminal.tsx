@@ -70,10 +70,12 @@ export default function Terminal({
   handle,
   active,
   visible,
+  modalOpen,
 }: {
   handle: number;
   active: boolean;
   visible: boolean;
+  modalOpen: boolean;
 }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
   const fitAddonRef = useRef<FitAddon>(null);
@@ -176,12 +178,12 @@ export default function Terminal({
   }, [visible]);
 
   useEffect(() => {
-    if (active) {
+    if (active && !modalOpen) {
       terminalRef.current?.focus();
-    } else {
+    } else if (!active) {
       terminalRef.current?.blur();
     }
-  }, [active, handle]);
+  }, [active, handle, modalOpen]);
 
   return (
     <div className={styles.container}>

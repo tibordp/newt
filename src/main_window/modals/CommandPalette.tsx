@@ -6,13 +6,7 @@ import { PreferencesState } from "../../lib/preferences";
 import { MainWindowState } from "../types";
 import styles from "./CommandPalette.module.scss";
 
-type CommandPaletteProps = {
-  open: boolean;
-  preferences: PreferencesState | null;
-  state: MainWindowState | null;
-  onClose: () => void;
-  onCloseAutoFocus: (e: Event) => void;
-};
+const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function Highlight(props: { name: string; filter: string }) {
   const { name, filter } = props;
@@ -43,12 +37,12 @@ function Highlight(props: { name: string; filter: string }) {
 }
 
 export default function CommandPalette({
-  open,
   preferences,
   state,
-  onClose,
-  onCloseAutoFocus,
-}: CommandPaletteProps) {
+}: {
+  preferences: PreferencesState | null;
+  state: MainWindowState | null;
+}) {
   const [filter, setFilter] = useState("");
 
   const paneHandle =
@@ -105,51 +99,42 @@ export default function CommandPalette({
   };
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
+    <Dialog.Content
+      className={styles.content}
+      onCloseAutoFocus={preventAutoFocus}
     >
-      <Dialog.Portal>
-        <Dialog.Content
-          className={styles.content}
-          onCloseAutoFocus={onCloseAutoFocus}
-        >
-          <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
-          <Command shouldFilter={false}>
-            <div className={styles.header}>
-              <Command.Input
-                value={filter}
-                onValueChange={setFilter}
-                placeholder="Start typing to filter commands"
-              />
-            </div>
-            <Command.List>
-              <Command.Empty>No commands found</Command.Empty>
-              {filteredCommands.map((command, i) => (
-                <Command.Item
-                  key={`${command.id}-${i}`}
-                  value={String(i)}
-                  onSelect={onSelect}
-                >
-                  <Highlight name={command.name} filter={filter} />
-                  {command.shortcut_display.length > 0 && (
-                    <div className={styles.shortcut}>
-                      {command.shortcut_display.map((e, i) => (
-                        <Fragment key={i}>
-                          {i !== 0 ? " + " : ""}
-                          <kbd>{e}</kbd>
-                        </Fragment>
-                      ))}
-                    </div>
-                  )}
-                </Command.Item>
-              ))}
-            </Command.List>
-          </Command>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
+      <Command shouldFilter={false}>
+        <div className={styles.header}>
+          <Command.Input
+            value={filter}
+            onValueChange={setFilter}
+            placeholder="Start typing to filter commands"
+          />
+        </div>
+        <Command.List>
+          <Command.Empty>No commands found</Command.Empty>
+          {filteredCommands.map((command, i) => (
+            <Command.Item
+              key={`${command.id}-${i}`}
+              value={String(i)}
+              onSelect={onSelect}
+            >
+              <Highlight name={command.name} filter={filter} />
+              {command.shortcut_display.length > 0 && (
+                <div className={styles.shortcut}>
+                  {command.shortcut_display.map((e, i) => (
+                    <Fragment key={i}>
+                      {i !== 0 ? " + " : ""}
+                      <kbd>{e}</kbd>
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </Command.Item>
+          ))}
+        </Command.List>
+      </Command>
+    </Dialog.Content>
   );
 }

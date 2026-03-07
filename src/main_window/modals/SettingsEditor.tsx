@@ -5,13 +5,6 @@ import { PreferencesState } from "../../lib/preferences";
 import styles from "./SettingsEditor.module.scss";
 import { invoke } from "@tauri-apps/api/core";
 
-type SettingsEditorProps = {
-  open: boolean;
-  preferences: PreferencesState | null;
-  onClose: () => void;
-  onCloseAutoFocus: (e: Event) => void;
-};
-
 type SettingDef = {
   key: string;
   title: string;
@@ -128,12 +121,13 @@ function SettingControl({
 
 type Tab = "settings" | "keybindings";
 
+const preventAutoFocus = (e: Event) => e.preventDefault();
+
 export default function SettingsEditor({
-  open,
   preferences,
-  onClose,
-  onCloseAutoFocus,
-}: SettingsEditorProps) {
+}: {
+  preferences: PreferencesState | null;
+}) {
   const [filter, setFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("settings");
@@ -188,163 +182,150 @@ export default function SettingsEditor({
   };
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
+    <Dialog.Content
+      className={styles.content}
+      onCloseAutoFocus={preventAutoFocus}
     >
-      <Dialog.Portal>
-        <Dialog.Content
-          className={styles.content}
-          onCloseAutoFocus={onCloseAutoFocus}
+      <Dialog.Title className="sr-only">Settings</Dialog.Title>
+      <div className={styles.header}>
+        <input
+          className={styles.searchBox}
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search settings..."
+          autoFocus
+        />
+      </div>
+      <div className={styles.tabBar}>
+        <button
+          className={activeTab === "settings" ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab("settings")}
         >
-          <Dialog.Title className="sr-only">Settings</Dialog.Title>
-          <div className={styles.header}>
-            <input
-              className={styles.searchBox}
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Search settings..."
-              autoFocus
-            />
-          </div>
-          <div className={styles.tabBar}>
-            <button
-              className={
-                activeTab === "settings" ? styles.tabActive : styles.tab
-              }
-              onClick={() => setActiveTab("settings")}
-            >
-              Preferences
-            </button>
-            <button
-              className={
-                activeTab === "keybindings" ? styles.tabActive : styles.tab
-              }
-              onClick={() => setActiveTab("keybindings")}
-            >
-              Keybindings
-            </button>
-          </div>
-          <div className={styles.body}>
-            {activeTab === "settings" && (
-              <>
-                <div className={styles.sidebar}>
-                  <div
-                    className={
-                      activeCategory === null
-                        ? styles.sidebarItemActive
-                        : styles.sidebarItem
-                    }
-                    onClick={() => setActiveCategory(null)}
-                  >
-                    All
-                  </div>
-                  {categories.map((cat) => (
-                    <div
-                      key={cat}
-                      className={
-                        activeCategory === cat
-                          ? styles.sidebarItemActive
-                          : styles.sidebarItem
-                      }
-                      onClick={() => setActiveCategory(cat)}
-                    >
-                      {cat}
-                    </div>
-                  ))}
-                </div>
-                <div className={styles.settingsList}>
-                  {filteredSettings.length === 0 && (
-                    <div
-                      style={{
-                        color: "var(--color-fg-muted)",
-                        padding: "var(--space-4)",
-                      }}
-                    >
-                      No settings found
-                    </div>
-                  )}
-                  {filteredSettings.map((setting) => (
-                    <div key={setting.key} className={styles.settingRow}>
-                      <div className={styles.settingInfo}>
-                        <div className={styles.settingLabel}>
-                          {setting.title}
-                        </div>
-                        {setting.description && (
-                          <div className={styles.settingDescription}>
-                            {setting.description}
-                          </div>
-                        )}
-                      </div>
-                      <div className={styles.settingControl}>
-                        <SettingControl setting={setting} onUpdate={onUpdate} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-            {activeTab === "keybindings" && (
-              <div className={styles.settingsList}>
-                <table className={styles.keybindingsTable}>
-                  <thead>
-                    <tr>
-                      <th>Command</th>
-                      <th>Shortcut</th>
-                      <th>When</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredBindings.map((cmd) => {
-                      const binding = preferences?.bindings.find(
-                        (b) => b.command === cmd.id,
-                      );
-                      const when = binding?.when;
-                      return (
-                        <tr key={cmd.id}>
-                          <td>{cmd.name}</td>
-                          <td>
-                            {cmd.shortcut_display.length > 0 ? (
-                              <span className={styles.shortcutKbd}>
-                                {cmd.shortcut_display.map((part, i) => (
-                                  <Fragment key={i}>
-                                    {i !== 0 ? " + " : ""}
-                                    <kbd>{part}</kbd>
-                                  </Fragment>
-                                ))}
-                              </span>
-                            ) : (
-                              <span className={styles.noShortcut}>&mdash;</span>
-                            )}
-                          </td>
-                          <td>
-                            <span className={styles.whenLabel}>
-                              {when
-                                ? when
-                                    .replace(/_/g, " ")
-                                    .replace(/\b\w/g, (c) => c.toUpperCase())
-                                : "Global"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+          Preferences
+        </button>
+        <button
+          className={
+            activeTab === "keybindings" ? styles.tabActive : styles.tab
+          }
+          onClick={() => setActiveTab("keybindings")}
+        >
+          Keybindings
+        </button>
+      </div>
+      <div className={styles.body}>
+        {activeTab === "settings" && (
+          <>
+            <div className={styles.sidebar}>
+              <div
+                className={
+                  activeCategory === null
+                    ? styles.sidebarItemActive
+                    : styles.sidebarItem
+                }
+                onClick={() => setActiveCategory(null)}
+              >
+                All
               </div>
-            )}
+              {categories.map((cat) => (
+                <div
+                  key={cat}
+                  className={
+                    activeCategory === cat
+                      ? styles.sidebarItemActive
+                      : styles.sidebarItem
+                  }
+                  onClick={() => setActiveCategory(cat)}
+                >
+                  {cat}
+                </div>
+              ))}
+            </div>
+            <div className={styles.settingsList}>
+              {filteredSettings.length === 0 && (
+                <div
+                  style={{
+                    color: "var(--color-fg-muted)",
+                    padding: "var(--space-4)",
+                  }}
+                >
+                  No settings found
+                </div>
+              )}
+              {filteredSettings.map((setting) => (
+                <div key={setting.key} className={styles.settingRow}>
+                  <div className={styles.settingInfo}>
+                    <div className={styles.settingLabel}>{setting.title}</div>
+                    {setting.description && (
+                      <div className={styles.settingDescription}>
+                        {setting.description}
+                      </div>
+                    )}
+                  </div>
+                  <div className={styles.settingControl}>
+                    <SettingControl setting={setting} onUpdate={onUpdate} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {activeTab === "keybindings" && (
+          <div className={styles.settingsList}>
+            <table className={styles.keybindingsTable}>
+              <thead>
+                <tr>
+                  <th>Command</th>
+                  <th>Shortcut</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredBindings.map((cmd) => {
+                  const binding = preferences?.bindings.find(
+                    (b) => b.command === cmd.id,
+                  );
+                  const when = binding?.when;
+                  return (
+                    <tr key={cmd.id}>
+                      <td>{cmd.name}</td>
+                      <td>
+                        {cmd.shortcut_display.length > 0 ? (
+                          <span className={styles.shortcutKbd}>
+                            {cmd.shortcut_display.map((part, i) => (
+                              <Fragment key={i}>
+                                {i !== 0 ? " + " : ""}
+                                <kbd>{part}</kbd>
+                              </Fragment>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className={styles.noShortcut}>&mdash;</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={styles.whenLabel}>
+                          {when
+                            ? when
+                                .replace(/_/g, " ")
+                                .replace(/\b\w/g, (c) => c.toUpperCase())
+                            : "Global"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div className={styles.footer}>
-            <button onClick={() => safeCommand("open_config_file")}>
-              Open Settings File
-            </button>
-            <button onClick={onClose}>Close</button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+      </div>
+      <div className={styles.footer}>
+        <button onClick={() => safeCommand("open_config_file")}>
+          Open Settings File
+        </button>
+        <button onClick={() => safeCommand("close_modal")}>Close</button>
+      </div>
+    </Dialog.Content>
   );
 }

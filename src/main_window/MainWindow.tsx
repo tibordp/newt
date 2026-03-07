@@ -1,9 +1,9 @@
 import {
-  useState,
   useEffect,
   useCallback,
   useMemo,
   useRef,
+  useState,
   type FormEvent,
 } from "react";
 
@@ -14,40 +14,22 @@ import dialogStyles from "./modals/Dialog.module.scss";
 import { enablePatches } from "immer";
 
 import { invoke } from "@tauri-apps/api/core";
-import {
-  TerminalData,
-  safeCommand,
-  useRemoteState,
-  useTerminalData,
-} from "../lib/ipc";
+import { TerminalData, useRemoteState, useTerminalData } from "../lib/ipc";
 
-import * as Dialog from "@radix-ui/react-dialog";
-
-import { ModalContent } from "./modals/ModalContent";
 import {
   normalizeKeyEvent,
   buildBindingMap,
   getCurrentContext,
   executeCommandById,
 } from "../lib/commands";
-import CommandPalette from "./modals/CommandPalette";
-import HotPaths from "./modals/HotPaths";
+import ModalRouter from "./modals/ModalRouter";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
 import { MainWindowState } from "./types";
 import Pane from "./Pane";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
-import SettingsEditor from "./modals/SettingsEditor";
 
 enablePatches();
-
-// Modal types that use their own rendering (not the generic Dialog.Root)
-const CUSTOM_MODAL_TYPES = [
-  "select_vfs",
-  "command_palette",
-  "hot_paths",
-  "settings",
-];
 
 const ASKPASS_DIALOG_STYLE = {
   top: 40,
@@ -124,8 +106,6 @@ function App() {
   const terminalData = useTerminalData([]);
   const preferences = usePreferences();
 
-  const [focusGeneration, setFocusGeneration] = useState(0);
-
   // Trigger connect for remote/elevated; no-op for local (already connected).
   const initCalled = useRef(false);
   useEffect(() => {
@@ -141,15 +121,7 @@ function App() {
       : null;
 
   const modalType = remoteState?.modal?.type;
-
-  const refocusActivePane = useCallback((e?: Event) => {
-    e?.preventDefault();
-    if (!modalType) {
-      setFocusGeneration((g) => g + 1);
-    }
-  }, []);
-
-  const closeModal = useCallback(() => safeCommand("close_modal"), []);
+  const modalOpen = !!modalType || !!foregroundOp;
 
   // Build the binding lookup map from resolved preferences
   const bindingMap = useMemo(
@@ -204,46 +176,8 @@ function App() {
 
   return (
     <TerminalData.Provider value={terminalData}>
-      <Dialog.Root
-        open={!!modalType && !CUSTOM_MODAL_TYPES.includes(modalType)}
-        onOpenChange={(open) => {
-          if (!open) closeModal();
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Content
-            className={dialogStyles.dialogContent}
-            onCloseAutoFocus={refocusActivePane}
-          >
-            <ModalContent state={remoteState?.modal ?? null} />
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      {foregroundOp && (
-        <OperationProgressModal
-          op={foregroundOp}
-          onCloseAutoFocus={refocusActivePane}
-        />
-      )}
-      <CommandPalette
-        open={modalType === "command_palette"}
-        preferences={preferences}
-        state={remoteState}
-        onClose={closeModal}
-        onCloseAutoFocus={refocusActivePane}
-      />
-      <HotPaths
-        open={modalType === "hot_paths"}
-        state={remoteState}
-        onClose={closeModal}
-        onCloseAutoFocus={refocusActivePane}
-      />
-      <SettingsEditor
-        open={modalType === "settings"}
-        preferences={preferences}
-        onClose={closeModal}
-        onCloseAutoFocus={refocusActivePane}
-      />
+      <ModalRouter state={remoteState} preferences={preferences} />
+      {foregroundOp && <OperationProgressModal op={foregroundOp} />}
       <div className="container">
         {remoteState &&
           remoteState.connection_status.status === "connected" && (
@@ -257,7 +191,7 @@ function App() {
                         paneHandle={i}
                         {...props}
                         modal={remoteState.modal}
-                        focusGeneration={focusGeneration}
+                        modalOpen={modalOpen}
                         active={
                           remoteState.display_options.panes_focused &&
                           remoteState.display_options.active_pane === i
@@ -276,6 +210,7 @@ function App() {
                     terminals={Object.values(remoteState.terminals)}
                     activeTerminal={remoteState.display_options.active_terminal}
                     panesFocused={remoteState.display_options.panes_focused}
+                    modalOpen={modalOpen}
                   />
                 </Allotment.Pane>
               </Allotment>
