@@ -1,39 +1,23 @@
 pub mod pane;
+pub mod session;
 pub mod terminal;
 
-use newt_common::api::{VfsRegistryManager, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
 use newt_common::file_reader::FileReader;
-use newt_common::filesystem::{
-    FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
-    UserGroup,
-};
+use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
-use newt_common::rpc::Communicator;
-
-use newt_common::operation::OperationContext;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::{
-    all_descriptors, lookup_descriptor, LocalVfs, MountedVfsInfo, VfsId, VfsManager,
-    VfsManagerRemote, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
-};
+use newt_common::vfs::{all_descriptors, lookup_descriptor, MountedVfsInfo, VfsId, VfsPath};
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::cmp::PartialOrd;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
+use std::sync::atomic::Ordering;
 
-use newt_common::vfs::VfsPath;
 use std::future::Future;
 use std::path::Path;
-use std::path::PathBuf;
-
-use std::process::Stdio;
 use std::sync::Arc;
-use tauri::ipc::Channel;
 use tauri::Manager;
 use tauri::State;
 use tauri::WebviewWindow;
@@ -44,28 +28,10 @@ use crate::common::UpdatePublisher;
 use crate::GlobalContext;
 
 use self::pane::Pane;
+use self::session::Session;
 use self::terminal::Terminal;
 
-#[derive(Clone, Debug)]
-pub enum ConnectionTarget {
-    Local,
-    Remote { transport_cmd: Vec<String> },
-    Elevated,
-}
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase", tag = "event", content = "data")]
-pub enum InitEvent {
-    Status { message: String },
-}
-
-fn send_init_status(channel: Option<&Channel<InitEvent>>, message: &str) {
-    if let Some(ch) = channel {
-        let _ = ch.send(InitEvent::Status {
-            message: message.to_string(),
-        });
-    }
-}
+pub use self::session::{AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayOptionsInner {
@@ -419,6 +385,7 @@ pub struct VfsTarget {
 
 #[derive(Clone)]
 pub struct MainWindowState {
+    pub connection_status: ConnectionState,
     pub panes: Panes,
     pub terminals: Terminals,
     pub modal: ModalState,
@@ -435,7 +402,8 @@ impl serde::Serialize for MainWindowState {
     {
         use serde::ser::SerializeStruct;
         let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 8)?;
+        let mut s = serializer.serialize_struct("MainWindowState", 9)?;
+        s.serialize_field("connection_status", &self.connection_status)?;
         s.serialize_field("panes", &self.panes)?;
         s.serialize_field("terminals", &self.terminals)?;
         s.serialize_field("modal", &self.modal)?;
@@ -453,6 +421,7 @@ impl MainWindowState {
         let display_options = DisplayOptions::default();
 
         Self {
+            connection_status: ConnectionState::default(),
             panes: Panes::new(),
             terminals: Terminals::new(),
             modal: ModalState::default(),
@@ -504,305 +473,10 @@ impl MainWindowState {
         }
     }
 }
-struct HostDispatcher {
-    operations: Operations,
-    publisher: Arc<UpdatePublisher<MainWindowState>>,
-    pending_streams: PendingStreams,
-}
 
-#[async_trait::async_trait]
-impl newt_common::rpc::Dispatcher for HostDispatcher {
-    async fn invoke(
-        &self,
-        _api: newt_common::rpc::Api,
-        _req: bytes::Bytes,
-    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
-        Ok(None)
-    }
-
-    async fn notify(
-        &self,
-        api: newt_common::rpc::Api,
-        req: bytes::Bytes,
-    ) -> Result<bool, newt_common::Error> {
-        if api == API_OPERATION_PROGRESS {
-            let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
-            apply_operation_progress(&self.operations, progress);
-            let _ = self.publisher.publish();
-            Ok(true)
-        } else if api == API_LIST_FILES_BATCH {
-            let (stream_id, file_list): (StreamId, FileList) =
-                bincode::deserialize(&req[..]).unwrap();
-            if let Some(tx) = self.pending_streams.lock().get(&stream_id) {
-                let _ = tx.send(file_list);
-            }
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-/// A child process handle that can be awaited for exit.
-/// Wraps `tokio::process::Child` but only exposes the wait handle.
-struct ChildWaitHandle {
-    child: tokio::process::Child,
-}
-
-impl ChildWaitHandle {
-    async fn wait(mut self) -> Result<std::process::ExitStatus, std::io::Error> {
-        self.child.wait().await
-    }
-}
-
-const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
-
-/// Resolves agent binary locations. Searches directories in priority order:
-/// 1. `NEWT_AGENT_DIR` env var (dev override)
-/// 2. Tauri resource dir (`agents/` inside the bundled app)
-/// 3. `agents/` relative fallback (legacy/dev)
-pub struct AgentResolver {
-    dirs: Vec<PathBuf>,
-}
-
-impl AgentResolver {
-    pub fn new(app_handle: &tauri::AppHandle) -> Self {
-        let mut dirs = Vec::new();
-
-        if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
-        }
-
-        if let Ok(resource_dir) = app_handle.path().resource_dir() {
-            dirs.push(resource_dir.join("agents"));
-        }
-
-        dirs.push(PathBuf::from("agents"));
-
-        Self { dirs }
-    }
-
-    /// Compute a hash that changes whenever any agent binary changes.
-    pub fn agent_hash(&self) -> Result<String, Error> {
-        let mut hasher = blake3::Hasher::new();
-        let mut found = false;
-
-        for dir in &self.dirs {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path().join("newt-agent");
-                    if path.is_file() {
-                        hasher.update(&std::fs::read(&path)?);
-                        found = true;
-                    }
-                    // Also check flat layout (dir/newt-agent)
-                    let flat = entry.path();
-                    if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
-                        hasher.update(&std::fs::read(&flat)?);
-                        found = true;
-                    }
-                }
-            }
-            // Flat layout: dir/newt-agent directly
-            let flat = dir.join("newt-agent");
-            if flat.is_file() {
-                hasher.update(&std::fs::read(&flat)?);
-                found = true;
-            }
-        }
-
-        if !found {
-            return Err(Error::Custom(
-                "no agent binaries found to compute hash".into(),
-            ));
-        }
-
-        Ok(hasher.finalize().to_hex()[..16].to_string())
-    }
-
-    /// Look up the agent binary for a given target triple.
-    pub fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, Error> {
-        for dir in &self.dirs {
-            // Try triple-based layout: <dir>/<triple>/newt-agent
-            let path = dir.join(triple).join("newt-agent");
-            if path.exists() {
-                return Ok(path);
-            }
-            // Try flat layout: <dir>/newt-agent (dev — e.g. target/debug/)
-            let path = dir.join("newt-agent");
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        Err(Error::Custom(format!(
-            "agent binary not found for triple: {}. Set NEWT_AGENT_DIR to the directory containing the agent binary.",
-            triple
-        )))
-    }
-
-    /// Find the agent binary on the local machine (for elevated mode).
-    pub fn find_local_agent_binary(&self) -> Result<PathBuf, Error> {
-        for dir in &self.dirs {
-            let path = dir.join("newt-agent");
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Next to the current executable
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                let path = dir.join("newt-agent");
-                if path.exists() {
-                    return Ok(path);
-                }
-            }
-        }
-
-        Err(Error::Custom(
-            "local agent binary not found. Set NEWT_AGENT_DIR to the directory containing the agent binary.".into(),
-        ))
-    }
-}
-
-async fn create_remote_connection(
-    transport_cmd: &[String],
-    _publisher: &Arc<UpdatePublisher<MainWindowState>>,
-    agent_resolver: &AgentResolver,
-) -> Result<
-    (
-        ChildWaitHandle,
-        impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
-    ),
-    Error,
-> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-    let (program, args) = transport_cmd
-        .split_first()
-        .ok_or_else(|| Error::Custom("empty transport command".into()))?;
-
-    // Pass the bootstrap script as a `sh -c` argument so that stdin remains
-    // free for the binary upload protocol (otherwise the shell buffers ahead
-    // and eats the data meant for `read` inside the script).
-    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
-    let escaped = script.replace('\'', "'\\''");
-    let sh_cmd = if let Ok(rust_log) = std::env::var("RUST_LOG") {
-        let escaped_val = rust_log.replace('\'', "'\\''");
-        format!("NEWT_RUST_LOG='{}' sh -c '{}'", escaped_val, escaped)
-    } else {
-        format!("sh -c '{}'", escaped)
-    };
-
-    let mut child = tokio::process::Command::new(program)
-        .args(args)
-        .arg(&sh_cmd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
-
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
-
-    // Read status line, skipping any noise from .bashrc etc.
-    let mut reader = BufReader::new(stdout);
-    let status_line = loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            return Err(Error::Custom(
-                "remote connection closed before bootstrap completed".into(),
-            ));
-        }
-        let trimmed = line.trim();
-        if trimmed.starts_with("NEWT:") {
-            break trimmed.to_string();
-        }
-        // Skip non-protocol lines (shell init noise)
-        log::debug!("bootstrap noise: {}", trimmed);
-    };
-    let status_line = status_line.as_str();
-
-    if status_line == "NEWT:READY" {
-        // Agent is cached and valid, stdout is now the RPC stream
-        let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(reader);
-        let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
-        let stream = tokio_duplex::Duplex::new(rx, tx);
-        Ok((ChildWaitHandle { child }, stream))
-    } else if let Some(triple) = status_line.strip_prefix("NEWT:NEED:") {
-        // Need to upload the binary
-        let binary_path = agent_resolver.find_agent_binary(triple)?;
-        let binary_data = tokio::fs::read(&binary_path).await?;
-        let size = binary_data.len();
-
-        // Write size line then binary data
-        stdin.write_all(format!("{}\n", size).as_bytes()).await?;
-        stdin.write_all(&binary_data).await?;
-        stdin.flush().await?;
-
-        // After upload, the script execs the agent — stdout becomes RPC stream
-        let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(reader);
-        let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
-        let stream = tokio_duplex::Duplex::new(rx, tx);
-        Ok((ChildWaitHandle { child }, stream))
-    } else if let Some(error) = status_line.strip_prefix("NEWT:ERROR:") {
-        Err(Error::Custom(format!("remote bootstrap error: {}", error)))
-    } else {
-        Err(Error::Custom(format!(
-            "unexpected bootstrap response: {}",
-            status_line
-        )))
-    }
-}
-
-struct MainWindowContextInner {
-    fs: Arc<dyn Filesystem>,
-    shell_service: Arc<dyn ShellService>,
-    vfs_manager: Arc<dyn VfsManager>,
-    terminal_client: Arc<dyn TerminalClient>,
-    file_reader: Arc<dyn FileReader>,
-    operations_client: Arc<dyn OperationsClient>,
-    hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
-    mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
-    next_operation_id: AtomicU64,
-
-    window: WebviewWindow,
-    main_window_state: MainWindowState,
-    publisher: Arc<UpdatePublisher<MainWindowState>>,
-
-    file_server_port: u16,
-    file_server_token: String,
-    _file_server_handle: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for MainWindowContextInner {
-    fn drop(&mut self) {
-        self._file_server_handle.abort();
-    }
-}
-
-#[derive(Clone)]
-pub struct MainWindowContext {
-    inner: Arc<MainWindowContextInner>,
-}
-
-impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
-    fn from_command(
-        command: tauri::ipc::CommandItem<'de, Wry>,
-    ) -> Result<Self, tauri::ipc::InvokeError> {
-        let window = command.message.webview();
-        let app_handle = window.app_handle();
-        let s: State<GlobalContext> = app_handle.state();
-
-        s.main_window(&window)
-            .ok_or_else(|| tauri::ipc::InvokeError::from("window not yet initialized"))
-    }
-}
-
-/// Apply an `OperationProgress` update to the operations state map
-fn apply_operation_progress(operations: &Operations, progress: OperationProgress) {
+/// Apply an `OperationProgress` update to the operations state map.
+/// Used by both local progress forwarding and remote RPC notifications.
+pub(crate) fn apply_operation_progress(operations: &Operations, progress: OperationProgress) {
     let mut ops = operations.0.write();
     match progress {
         OperationProgress::Prepared {
@@ -868,19 +542,47 @@ fn apply_operation_progress(operations: &Operations, progress: OperationProgress
     }
 }
 
+// ---------------------------------------------------------------------------
+// MainWindowContext
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+struct MainWindowContextInner {
+    window: WebviewWindow,
+    main_window_state: MainWindowState,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
+    connection_target: ConnectionTarget,
+    window_title: String,
+    session: Arc<arc_swap::ArcSwap<Option<Session>>>,
+}
+
+#[derive(Clone)]
+pub struct MainWindowContext {
+    inner: Arc<MainWindowContextInner>,
+}
+
+impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, Wry>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        let window = command.message.webview();
+        let app_handle = window.app_handle();
+        let s: State<GlobalContext> = app_handle.state();
+
+        s.main_window(&window)
+            .ok_or_else(|| tauri::ipc::InvokeError::from("window not yet initialized"))
+    }
+}
+
 impl MainWindowContext {
-    pub async fn create(
+    pub fn new(
         window: WebviewWindow,
         connection_target: ConnectionTarget,
         window_title: String,
-        init_channel: Option<&Channel<InitEvent>>,
-        agent_resolver: &AgentResolver,
         preferences: &crate::preferences::schema::AppPreferences,
-    ) -> Result<Self, Error> {
-        // Create state and publisher first
+    ) -> Self {
         let mut global_state = MainWindowState::new();
-        global_state.window_title = window_title;
-        // Apply initial show_hidden from preferences
+        global_state.window_title = window_title.clone();
         global_state.display_options.0.write().show_hidden = preferences.appearance.show_hidden;
         let publisher = Arc::new(UpdatePublisher::new(
             window.clone(),
@@ -888,298 +590,88 @@ impl MainWindowContext {
             global_state.clone(),
         ));
 
-        #[allow(clippy::type_complexity)]
-        let (
-            fs,
-            shell_service,
-            vfs_manager,
-            terminal_client,
-            file_reader,
-            operations_client,
-            hot_paths_provider,
-            _communicator,
-            initial_dir,
-        ): (
-            Arc<dyn Filesystem>,
-            Arc<dyn ShellService>,
-            Arc<dyn VfsManager>,
-            Arc<dyn TerminalClient>,
-            Arc<dyn FileReader>,
-            Arc<dyn OperationsClient>,
-            Arc<dyn newt_common::hot_paths::HotPathsProvider>,
-            Option<Communicator>,
-            VfsPath,
-        ) = match &connection_target {
-            ConnectionTarget::Local => {
-                let (progress_tx, mut progress_rx) =
-                    tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
-
-                let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
-                let op_context = Arc::new(OperationContext {
-                    registry: registry.clone(),
-                });
-                let fs: Arc<dyn Filesystem> = Arc::new(VfsRegistryFs::new(registry.clone()));
-                let shell_service: Arc<dyn ShellService> = Arc::new(LocalShellService);
-                let vfs_manager: Arc<dyn VfsManager> =
-                    Arc::new(VfsRegistryManager::new(registry.clone()));
-                let terminal_client = Arc::new(newt_common::terminal::Local::new());
-                let file_reader: Arc<dyn FileReader> =
-                    Arc::new(VfsRegistryFileReader::new(registry.clone()));
-                let operations_client: Arc<dyn OperationsClient> =
-                    Arc::new(newt_common::operation::Local::new(progress_tx, op_context));
-
-                // Spawn a task to forward local progress updates to the UI state
-                let operations = global_state.operations.clone();
-                let publisher_clone = publisher.clone();
-                tokio::spawn(async move {
-                    while let Some(progress) = progress_rx.recv().await {
-                        apply_operation_progress(&operations, progress);
-                        let _ = publisher_clone.publish();
-                    }
-                });
-
-                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
-                    Arc::new(newt_common::hot_paths::Local::new());
-
-                let initial_dir = VfsPath::root(std::env::current_dir().unwrap());
-
-                (
-                    fs,
-                    shell_service,
-                    vfs_manager,
-                    terminal_client,
-                    file_reader,
-                    operations_client,
-                    hot_paths_provider,
-                    None,
-                    initial_dir,
-                )
-            }
-            ConnectionTarget::Remote { transport_cmd } => {
-                send_init_status(init_channel, "Connecting to remote host...");
-                let (child, stream) =
-                    create_remote_connection(transport_cmd, &publisher, agent_resolver).await?;
-
-                let pending_streams: PendingStreams =
-                    Arc::new(parking_lot::Mutex::new(HashMap::new()));
-
-                let host_dispatcher = HostDispatcher {
-                    operations: global_state.operations.clone(),
-                    publisher: publisher.clone(),
-                    pending_streams: pending_streams.clone(),
-                };
-                let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
-
-                let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
-                    communicator.clone(),
-                    pending_streams,
-                ));
-                let shell_service: Arc<dyn ShellService> =
-                    Arc::new(ShellRemote::new(communicator.clone()));
-                let vfs_manager: Arc<dyn VfsManager> =
-                    Arc::new(VfsManagerRemote::new(communicator.clone()));
-                let terminal_client =
-                    Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
-                let file_reader: Arc<dyn FileReader> =
-                    Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
-                let operations_client: Arc<dyn OperationsClient> =
-                    Arc::new(newt_common::operation::Remote::new(communicator.clone()));
-                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
-                    Arc::new(newt_common::hot_paths::Remote::new(communicator.clone()));
-
-                tokio::spawn(async move {
-                    let ret = child.wait().await.unwrap();
-                    eprintln!("child exited: {}", ret);
-                });
-
-                // For remote, resolve home directory
-                let _initial_dir = shell_service
-                    .shell_expand("~".to_string())
-                    .await
-                    .unwrap_or_else(|_| VfsPath::root("/"));
-
-                let initial_dir = VfsPath::root("/");
-
-                (
-                    fs,
-                    shell_service,
-                    vfs_manager,
-                    terminal_client,
-                    file_reader,
-                    operations_client,
-                    hot_paths_provider,
-                    Some(communicator),
-                    initial_dir,
-                )
-            }
-            ConnectionTarget::Elevated => {
-                if cfg!(not(target_os = "linux")) {
-                    return Err(Error::Custom(
-                        "elevated mode is not supported on this platform".into(),
-                    ));
-                }
-
-                send_init_status(init_channel, "Waiting for authorization...");
-                let agent_path = agent_resolver.find_local_agent_binary()?;
-                let mut cmd = tokio::process::Command::new("pkexec");
-                cmd.arg(&agent_path)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit());
-                if let Ok(rust_log) = std::env::var("RUST_LOG") {
-                    cmd.env("RUST_LOG", rust_log);
-                }
-                let mut child = cmd.spawn()?;
-
-                let stdin = child.stdin.take().unwrap();
-                let stdout = child.stdout.take().unwrap();
-
-                let rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(stdout);
-                let tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(stdin);
-                let stream = tokio_duplex::Duplex::new(rx, tx);
-
-                let pending_streams: PendingStreams =
-                    Arc::new(parking_lot::Mutex::new(HashMap::new()));
-
-                let host_dispatcher = HostDispatcher {
-                    operations: global_state.operations.clone(),
-                    publisher: publisher.clone(),
-                    pending_streams: pending_streams.clone(),
-                };
-                let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
-
-                let fs = Arc::new(newt_common::filesystem::Remote::new_with_streams(
-                    communicator.clone(),
-                    pending_streams,
-                ));
-                let shell_service: Arc<dyn ShellService> =
-                    Arc::new(ShellRemote::new(communicator.clone()));
-                let vfs_manager: Arc<dyn VfsManager> =
-                    Arc::new(VfsManagerRemote::new(communicator.clone()));
-                let terminal_client =
-                    Arc::new(newt_common::terminal::Remote::new(communicator.clone()));
-                let file_reader: Arc<dyn FileReader> =
-                    Arc::new(newt_common::file_reader::Remote::new(communicator.clone()));
-                let operations_client: Arc<dyn OperationsClient> =
-                    Arc::new(newt_common::operation::Remote::new(communicator.clone()));
-                let hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider> =
-                    Arc::new(newt_common::hot_paths::Remote::new(communicator.clone()));
-
-                tokio::spawn(async move {
-                    let ret = child.wait().await.unwrap();
-                    eprintln!("elevated agent exited: {}", ret);
-                });
-
-                let initial_dir = shell_service
-                    .shell_expand("~".to_string())
-                    .await
-                    .unwrap_or_else(|_| VfsPath::root("/"));
-
-                (
-                    fs,
-                    shell_service,
-                    vfs_manager,
-                    terminal_client,
-                    file_reader,
-                    operations_client,
-                    hot_paths_provider,
-                    Some(communicator),
-                    initial_dir,
-                )
-            }
-        };
-
-        // Pre-populate mounted_vfs with the ROOT entry
-        let mut initial_mounted = HashMap::new();
-        initial_mounted.insert(
-            VfsId::ROOT,
-            MountedVfsInfo {
-                vfs_id: VfsId::ROOT,
-                descriptor: &LOCAL_VFS_DESCRIPTOR,
-                mount_meta: Vec::new(),
-            },
-        );
-        let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
-
-        // Build descriptor lookup shared by all panes
-        let lookup_ref = mounted_vfs.clone();
-        let descriptor_lookup: pane::DescriptorLookup =
-            Arc::new(move |vfs_id| lookup_ref.read().get(&vfs_id).map(|info| info.descriptor));
-
-        global_state.panes.add(Pane::new(
-            fs.clone(),
-            initial_dir.clone(),
-            global_state.display_options.clone(),
-            publisher.clone(),
-            descriptor_lookup.clone(),
-        ));
-        global_state.panes.add(Pane::new(
-            fs.clone(),
-            initial_dir,
-            global_state.display_options.clone(),
-            publisher.clone(),
-            descriptor_lookup,
-        ));
-        send_init_status(init_channel, "Loading...");
-        global_state.refresh().await?;
-
-        for pane in global_state.panes.all() {
-            tauri::async_runtime::spawn(async move {
-                pane.watch_changes().await;
-            });
-        }
-
-        let file_server_token = uuid::Uuid::new_v4().to_string();
-        let (file_server_port, file_server_handle) =
-            crate::file_server::start(file_reader.clone(), file_server_token.clone());
-
-        let ctx = Self {
+        Self {
             inner: Arc::new(MainWindowContextInner {
-                fs,
-                shell_service,
-                vfs_manager,
-                terminal_client,
-                file_reader,
-                operations_client,
-                hot_paths_provider,
-                mounted_vfs,
-                next_operation_id: AtomicU64::new(1),
                 window,
-                publisher,
                 main_window_state: global_state,
-                file_server_port,
-                file_server_token,
-                _file_server_handle: file_server_handle,
+                publisher,
+                connection_target,
+                window_title,
+                session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
             }),
-        };
-        Ok(ctx)
+        }
     }
 
-    pub fn fs(&self) -> Arc<dyn Filesystem> {
-        self.inner.fs.clone()
-    }
+    pub async fn connect(&self, agent_resolver: &AgentResolver) -> Result<(), Error> {
+        let state = &self.inner.main_window_state;
+        let publisher = &self.inner.publisher;
+        let session_slot = &self.inner.session;
 
-    pub fn shell_service(&self) -> Arc<dyn ShellService> {
-        self.inner.shell_service.clone()
-    }
-
-    pub fn terminal_client(&self) -> Arc<dyn TerminalClient> {
-        self.inner.terminal_client.clone()
-    }
-
-    pub fn file_reader(&self) -> Arc<dyn FileReader> {
-        self.inner.file_reader.clone()
-    }
-
-    pub fn hot_paths_provider(&self) -> Arc<dyn newt_common::hot_paths::HotPathsProvider> {
-        self.inner.hot_paths_provider.clone()
-    }
-
-    pub fn file_server_base_url(&self) -> String {
-        format!(
-            "http://[::1]:{}/{}",
-            self.inner.file_server_port, self.inner.file_server_token
+        session::connect(
+            &self.inner.connection_target,
+            agent_resolver,
+            state,
+            publisher,
+            session_slot,
+            |msg| {
+                state.connection_status.set_connecting(msg);
+                let _ = publisher.publish();
+            },
         )
+        .await
+    }
+
+    fn with_session<T>(&self, f: impl FnOnce(&Session) -> T) -> Result<T, Error> {
+        let guard = self.inner.session.load();
+        let opt: &Option<Session> = &guard;
+        opt.as_ref()
+            .ok_or_else(|| Error::Custom("not connected".into()))
+            .map(f)
+    }
+
+    pub fn is_connected(&self) -> bool {
+        let guard = self.inner.session.load();
+        let opt: &Option<Session> = &guard;
+        opt.is_some()
+    }
+
+    pub fn set_connection_failed(&self, error: String) {
+        self.inner
+            .main_window_state
+            .connection_status
+            .set_failed(error);
+        let _ = self.inner.publisher.publish();
+    }
+
+    pub fn fs(&self) -> Result<Arc<dyn Filesystem>, Error> {
+        self.with_session(|s| s.fs.clone())
+    }
+
+    pub fn shell_service(&self) -> Result<Arc<dyn ShellService>, Error> {
+        self.with_session(|s| s.shell_service.clone())
+    }
+
+    pub fn terminal_client(&self) -> Result<Arc<dyn TerminalClient>, Error> {
+        self.with_session(|s| s.terminal_client.clone())
+    }
+
+    pub fn file_reader(&self) -> Result<Arc<dyn FileReader>, Error> {
+        self.with_session(|s| s.file_reader.clone())
+    }
+
+    pub fn hot_paths_provider(
+        &self,
+    ) -> Result<Arc<dyn newt_common::hot_paths::HotPathsProvider>, Error> {
+        self.with_session(|s| s.hot_paths_provider.clone())
+    }
+
+    pub fn file_server_base_url(&self) -> Result<String, Error> {
+        self.with_session(|s| {
+            format!(
+                "http://localhost:{}/{}",
+                s.file_server_port, s.file_server_token
+            )
+        })
     }
 
     pub fn window(&self) -> WebviewWindow {
@@ -1274,12 +766,12 @@ impl MainWindowContext {
         })
     }
 
-    pub fn operations_client(&self) -> Arc<dyn OperationsClient> {
-        self.inner.operations_client.clone()
+    pub fn operations_client(&self) -> Result<Arc<dyn OperationsClient>, Error> {
+        self.with_session(|s| s.operations_client.clone())
     }
 
-    pub fn next_operation_id(&self) -> OperationId {
-        self.inner.next_operation_id.fetch_add(1, Ordering::SeqCst)
+    pub fn next_operation_id(&self) -> Result<OperationId, Error> {
+        self.with_session(|s| s.next_operation_id.fetch_add(1, Ordering::SeqCst))
     }
 
     pub fn operations(&self) -> &Operations {
@@ -1294,11 +786,11 @@ impl MainWindowContext {
         self.inner.publisher.publish()
     }
 
-    pub fn compute_vfs_targets(&self) -> Vec<VfsTarget> {
-        let mounted = self.inner.mounted_vfs.read();
+    pub fn compute_vfs_targets(&self) -> Result<Vec<VfsTarget>, Error> {
+        let mounted_vfs = self.with_session(|s| s.mounted_vfs.clone())?;
+        let mounted = mounted_vfs.read();
         let mut targets = Vec::new();
 
-        // Add one entry per mounted VFS
         for (vfs_id, info) in mounted.iter() {
             targets.push(VfsTarget {
                 vfs_id: Some(*vfs_id),
@@ -1307,13 +799,11 @@ impl MainWindowContext {
             });
         }
 
-        // Collect type_names already represented
         let mounted_types: std::collections::HashSet<&str> = mounted
             .values()
             .map(|info| info.descriptor.type_name())
             .collect();
 
-        // Add unmounted descriptors that support auto-mount
         for desc in all_descriptors() {
             if !mounted_types.contains(desc.type_name()) && desc.auto_mount_request().is_some() {
                 targets.push(VfsTarget {
@@ -1324,7 +814,6 @@ impl MainWindowContext {
             }
         }
 
-        // By id, with Nones at the bottom
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
             (Some(id_a), Some(id_b)) => id_a.cmp(&id_b),
             (Some(_), None) => std::cmp::Ordering::Less,
@@ -1332,30 +821,36 @@ impl MainWindowContext {
             (None, None) => a.type_name.cmp(&b.type_name),
         });
 
-        targets
+        Ok(targets)
     }
 
     pub async fn mount_vfs(
         &self,
         request: newt_common::vfs::MountRequest,
     ) -> Result<newt_common::vfs::MountResponse, Error> {
-        let response = self.inner.vfs_manager.mount(request).await?;
+        let vfs_manager = self.with_session(|s| s.vfs_manager.clone())?;
+        let response = vfs_manager.mount(request).await?;
         let descriptor = lookup_descriptor(&response.type_name)
             .ok_or_else(|| Error::Custom(format!("unknown VFS type: {}", response.type_name)))?;
-        self.inner.mounted_vfs.write().insert(
-            response.vfs_id,
-            MountedVfsInfo {
-                vfs_id: response.vfs_id,
-                descriptor,
-                mount_meta: response.mount_meta.clone(),
-            },
-        );
+        self.with_session(|s| {
+            s.mounted_vfs.write().insert(
+                response.vfs_id,
+                MountedVfsInfo {
+                    vfs_id: response.vfs_id,
+                    descriptor,
+                    mount_meta: response.mount_meta.clone(),
+                },
+            );
+        })?;
         Ok(response)
     }
 
     pub async fn unmount_vfs(&self, vfs_id: VfsId) -> Result<(), Error> {
-        self.inner.vfs_manager.unmount(vfs_id).await?;
-        self.inner.mounted_vfs.write().remove(&vfs_id);
+        let vfs_manager = self.with_session(|s| s.vfs_manager.clone())?;
+        vfs_manager.unmount(vfs_id).await?;
+        self.with_session(|s| {
+            s.mounted_vfs.write().remove(&vfs_id);
+        })?;
         Ok(())
     }
 
@@ -1363,20 +858,27 @@ impl MainWindowContext {
         &self,
         vfs_id: VfsId,
     ) -> Option<&'static dyn newt_common::vfs::VfsDescriptor> {
-        self.inner
-            .mounted_vfs
-            .read()
-            .get(&vfs_id)
-            .map(|info| info.descriptor)
+        self.with_session(|s| {
+            s.mounted_vfs
+                .read()
+                .get(&vfs_id)
+                .map(|info| info.descriptor)
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
-        for (vfs_id, info) in self.inner.mounted_vfs.read().iter() {
-            if let Some(internal_path) = info.descriptor.try_parse_display_path(input) {
-                return Some(VfsPath::new(*vfs_id, internal_path));
+        self.with_session(|s| {
+            for (vfs_id, info) in s.mounted_vfs.read().iter() {
+                if let Some(internal_path) = info.descriptor.try_parse_display_path(input) {
+                    return Some(VfsPath::new(*vfs_id, internal_path));
+                }
             }
-        }
-        None
+            None
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn format_vfs_path(&self, vfs_path: &VfsPath) -> String {

@@ -106,7 +106,14 @@ export type DndState = {
   files: DndFileInfo[];
 };
 
+export type ConnectionStatus =
+  | { status: "connecting"; message: string }
+  | { status: "connected"; log: string[] }
+  | { status: "disconnected"; log: string[]; error: string }
+  | { status: "failed"; log: string[]; error: string };
+
 export type MainWindowState = {
+  connection_status: ConnectionStatus;
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;

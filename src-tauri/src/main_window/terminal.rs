@@ -39,7 +39,7 @@ impl Terminal {
         window: WebviewWindow,
         working_dir: Option<&Path>,
     ) -> Result<Self, Error> {
-        let terminal_client = context.terminal_client();
+        let terminal_client = context.terminal_client()?;
         let handle = terminal_client
             .create(TerminalOptions {
                 working_dir: working_dir.map(|p| p.to_path_buf()),

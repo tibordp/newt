@@ -78,38 +78,17 @@ impl EditorWindow {
 
     fn update_language_checks(&self, active_lang: &str) {
         let active_id = format!("editor_lang_{}", active_lang);
-        if let Ok(items) = self.menu.items() {
-            for item in &items {
-                if let Some(submenu) = item.as_submenu() {
-                    if let Ok(sub_items) = submenu.items() {
-                        for sub_item in &sub_items {
-                            if let Some(check) = sub_item.as_check_menuitem() {
-                                if check.id().as_ref().starts_with("editor_lang_") {
-                                    let _ = check
-                                        .set_checked(check.id().as_ref() == active_id.as_str());
-                                }
-                            }
-                        }
-                    }
-                }
+        for check in check_menu_items(&self.menu) {
+            if check.id().as_ref().starts_with("editor_lang_") {
+                let _ = check.set_checked(check.id().as_ref() == active_id.as_str());
             }
         }
     }
 
     fn update_wrap_check(&self, wrap: bool) {
-        if let Ok(items) = self.menu.items() {
-            for item in &items {
-                if let Some(submenu) = item.as_submenu() {
-                    if let Ok(sub_items) = submenu.items() {
-                        for sub_item in &sub_items {
-                            if let Some(check) = sub_item.as_check_menuitem() {
-                                if check.id().as_ref() == "editor_wrap" {
-                                    let _ = check.set_checked(wrap);
-                                }
-                            }
-                        }
-                    }
-                }
+        for check in check_menu_items(&self.menu) {
+            if check.id().as_ref() == "editor_wrap" {
+                let _ = check.set_checked(wrap);
             }
         }
     }
@@ -175,20 +154,9 @@ pub fn create_editor_window(
             let _ = editor.window.close();
         } else if id == "editor_wrap" {
             // CheckMenuItem auto-toggles; read the new checked state
-            let checked = editor.menu.items().ok().and_then(|items| {
-                items.iter().find_map(|item| {
-                    item.as_submenu().and_then(|sub| {
-                        sub.items().ok().and_then(|sub_items| {
-                            sub_items.iter().find_map(|sub_item| {
-                                sub_item.as_check_menuitem().and_then(|check| {
-                                    (check.id().as_ref() == "editor_wrap")
-                                        .then(|| check.is_checked().unwrap_or(false))
-                                })
-                            })
-                        })
-                    })
-                })
-            });
+            let checked = check_menu_items(&editor.menu)
+                .find(|c| c.id().as_ref() == "editor_wrap")
+                .and_then(|c| c.is_checked().ok());
             if let Some(checked) = checked {
                 *editor.publisher.state().word_wrap.write() = checked;
                 let _ = editor.publisher.publish_full();
@@ -199,6 +167,16 @@ pub fn create_editor_window(
     });
 
     Ok(editor)
+}
+
+/// Iterate all `CheckMenuItem`s across all submenus of a menu.
+fn check_menu_items(menu: &Menu<Wry>) -> impl Iterator<Item = CheckMenuItem<Wry>> {
+    menu.items()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| item.as_submenu().map(|s| s.items().unwrap_or_default()))
+        .flatten()
+        .filter_map(|item| item.as_check_menuitem().cloned())
 }
 
 fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {

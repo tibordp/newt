@@ -1,9 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import monacoEditorPlugin from "vite-plugin-monaco-editor";
+
+// vite-plugin-monaco-editor has a broken default export
+const monacoPlugin =
+  typeof monacoEditorPlugin === "function"
+    ? monacoEditorPlugin
+    : (monacoEditorPlugin as any).default;
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [
+    react(),
+    monacoPlugin({
+      languageWorkers: ["editorWorkerService", "typescript", "json", "css", "html"],
+    }),
+  ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors

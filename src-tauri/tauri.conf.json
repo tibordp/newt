@@ -30,7 +30,8 @@
     "withGlobalTauri": false,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://localhost:* data: blob:; connect-src ipc: http://ipc.localhost 'self' http://localhost:* ws://localhost:*; worker-src 'self' blob:; media-src 'self' http://localhost:* blob:",
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   }
 }

@@ -69,7 +69,7 @@ pub fn start(file_reader: Arc<dyn FileReader>, token: String) -> (u16, JoinHandl
         .route("/{token}/{vfs_id}/{*path}", get(serve_file))
         .with_state(state);
 
-    let listener = std::net::TcpListener::bind("[::1]:0").unwrap();
+    let listener = std::net::TcpListener::bind("localhost:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     listener.set_nonblocking(true).unwrap();
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();

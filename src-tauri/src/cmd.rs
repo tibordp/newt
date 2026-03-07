@@ -21,7 +21,6 @@ use crate::main_window::OperationStatus;
 use crate::main_window::ConfirmAction;
 use crate::main_window::DndData;
 use crate::main_window::DndFile;
-use crate::main_window::InitEvent;
 use crate::main_window::MainWindowContext;
 use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
@@ -33,33 +32,21 @@ use crate::GlobalContext;
 pub async fn init(
     webview: tauri::Webview,
     global_ctx: tauri::State<'_, GlobalContext>,
-    on_event: tauri::ipc::Channel<InitEvent>,
 ) -> Result<(), Error> {
-    // Already initialized (e.g. local mode via on_page_load) — just publish state.
-    if let Some(ctx) = global_ctx.main_window(&webview) {
-        ctx.publish_full()?;
+    let ctx = global_ctx
+        .main_window(&webview)
+        .ok_or_else(|| Error::Custom("window not initialized".into()))?;
+
+    // Already connected (e.g. local mode via on_page_load).
+    if ctx.is_connected() {
         return Ok(());
     }
 
-    let label = webview.label().to_string();
-    let webview_window = webview
-        .app_handle()
-        .get_webview_window(&label)
-        .expect("webview window not found");
-
-    let prefs = global_ctx.preferences().settings();
-    let ctx = MainWindowContext::create(
-        webview_window,
-        global_ctx.connection_target.clone(),
-        global_ctx.window_title.clone(),
-        Some(&on_event),
-        global_ctx.agent_resolver(),
-        &prefs,
-    )
-    .await?;
-
-    global_ctx.main_windows.lock().insert(label, ctx.clone());
-    ctx.publish_full()?;
+    let agent_resolver = global_ctx.agent_resolver();
+    if let Err(e) = ctx.connect(agent_resolver).await {
+        ctx.set_connection_failed(e.to_string());
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -84,7 +71,7 @@ pub async fn navigate(
             vfs_path
         } else {
             // Fall back to shell expansion (handles local paths, ~, relative paths)
-            ctx.shell_service().shell_expand(path.to_string()).await?
+            ctx.shell_service()?.shell_expand(path.to_string()).await?
         };
 
         ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
@@ -249,7 +236,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     let query: String = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("path", &path_display)
         .append_pair("vfs_path", &vfs_path_json)
-        .append_pair("file_server_base", &ctx.file_server_base_url())
+        .append_pair("file_server_base", &ctx.file_server_base_url()?)
         .finish();
     let url_path = format!("/viewer?{}", query);
 
@@ -373,7 +360,7 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 
 #[tauri::command]
 async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
-    let info = ctx.file_reader().file_details(path).await?;
+    let info = ctx.file_reader()?.file_details(path).await?;
     Ok(info)
 }
 
@@ -384,19 +371,19 @@ async fn read_file_range(
     offset: u64,
     length: u64,
 ) -> Result<FileChunk, Error> {
-    let chunk = ctx.file_reader().read_range(path, offset, length).await?;
+    let chunk = ctx.file_reader()?.read_range(path, offset, length).await?;
     Ok(chunk)
 }
 
 #[tauri::command]
 async fn read_file(ctx: MainWindowContext, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
-    let data = ctx.file_reader().read_file(path, max_size).await?;
+    let data = ctx.file_reader()?.read_file(path, max_size).await?;
     Ok(data)
 }
 
 #[tauri::command]
 async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-    ctx.file_reader().write_file(path, data).await?;
+    ctx.file_reader()?.write_file(path, data).await?;
     Ok(())
 }
 
@@ -469,7 +456,7 @@ pub async fn cmd_paste_from_clipboard(
     let target = if let Some(vfs_path) = ctx.resolve_display_path(text) {
         vfs_path
     } else {
-        ctx.shell_service().shell_expand(text.to_string()).await?
+        ctx.shell_service()?.shell_expand(text.to_string()).await?
     };
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
@@ -740,7 +727,7 @@ pub fn dialog(
                     host: String::new(),
                 },
                 "select_vfs" => ModalDataKind::SelectVfs {
-                    targets: ctx.compute_vfs_targets(),
+                    targets: ctx.compute_vfs_targets()?,
                 },
                 "command_palette" => ModalDataKind::CommandPalette,
                 "hot_paths" => ModalDataKind::HotPaths,
@@ -763,7 +750,7 @@ pub async fn create_directory(
 ) -> Result<(), Error> {
     let dir_path = path.join(&name);
 
-    ctx.fs().create_directory(dir_path).await?;
+    ctx.fs()?.create_directory(dir_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -788,7 +775,7 @@ pub async fn touch_file(
 ) -> Result<(), Error> {
     let file_path = path.join(&name);
 
-    ctx.fs().touch(file_path.clone()).await?;
+    ctx.fs()?.touch(file_path.clone()).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -864,7 +851,7 @@ pub async fn rename(
     let old_path = base_path.join(&old_name);
     let new_path = base_path.join(&new_name);
 
-    ctx.fs().rename(old_path, new_path).await?;
+    ctx.fs()?.rename(old_path, new_path).await?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -910,7 +897,7 @@ pub async fn start_operation(
     ctx: MainWindowContext,
     request: OperationRequest,
 ) -> Result<OperationId, Error> {
-    let id = ctx.next_operation_id();
+    let id = ctx.next_operation_id()?;
 
     let (kind, description) = match &request {
         OperationRequest::Copy {
@@ -972,7 +959,7 @@ pub async fn start_operation(
 
     // Send to operations client
     let req = StartOperationRequest { id, request };
-    if let Err(e) = ctx.operations_client().start_operation(req).await {
+    if let Err(e) = ctx.operations_client()?.start_operation(req).await {
         // Operation failed to start — mark as failed so it doesn't get stuck
         let mut ops = ctx.operations().0.write();
         if let Some(op) = ops.get_mut(&id) {
@@ -991,7 +978,7 @@ pub async fn cancel_operation(
     ctx: MainWindowContext,
     operation_id: OperationId,
 ) -> Result<(), Error> {
-    ctx.operations_client()
+    ctx.operations_client()?
         .cancel_operation(operation_id)
         .await?;
     Ok(())
@@ -1022,7 +1009,7 @@ pub async fn resolve_issue(
         },
     };
 
-    ctx.operations_client().resolve_issue(req).await?;
+    ctx.operations_client()?.resolve_issue(req).await?;
     Ok(())
 }
 
@@ -1441,7 +1428,7 @@ pub async fn get_hot_paths(
     let hp_settings = &prefs.settings.hot_paths;
 
     // Fetch system-provided paths from the provider (runs on agent in remote mode)
-    let mut entries = ctx.hot_paths_provider().system_hot_paths().await?;
+    let mut entries = ctx.hot_paths_provider()?.system_hot_paths().await?;
 
     // Filter by enabled categories
     entries.retain(|e| match e.category {

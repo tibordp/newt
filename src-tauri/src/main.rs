@@ -49,29 +49,27 @@ pub struct GlobalContext {
     main_windows: Mutex<HashMap<String, MainWindowContext>>,
     viewer_windows: Mutex<HashMap<String, viewer::ViewerWindowContext>>,
     editor_windows: Mutex<HashMap<String, editor::EditorWindowContext>>,
-    connection_target: ConnectionTarget,
-    window_title: String,
     agent_resolver: OnceLock<AgentResolver>,
     preferences: OnceLock<preferences::PreferencesManager>,
     #[cfg(target_os = "macos")]
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
 }
 
-impl GlobalContext {
-    pub fn new(connection_target: ConnectionTarget, window_title: String) -> Self {
+impl Default for GlobalContext {
+    fn default() -> Self {
         Self {
             main_windows: Mutex::new(HashMap::new()),
             viewer_windows: Mutex::new(HashMap::new()),
             editor_windows: Mutex::new(HashMap::new()),
-            connection_target,
-            window_title,
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
             #[cfg(target_os = "macos")]
             window_menus: Mutex::new(HashMap::new()),
         }
     }
+}
 
+impl GlobalContext {
     pub fn init_agent_resolver(&self, app_handle: &tauri::AppHandle) {
         self.agent_resolver.set(AgentResolver::new(app_handle)).ok();
     }
@@ -92,28 +90,6 @@ impl GlobalContext {
         self.preferences
             .get()
             .expect("PreferencesManager not initialized")
-    }
-
-    pub async fn create_main_window(&self, webview: &Webview) -> Result<(), Error> {
-        let label = webview.label().to_string();
-        info!("creating window {}", label);
-        let webview_window = webview
-            .app_handle()
-            .get_webview_window(&label)
-            .expect("webview window not found");
-        let prefs = self.preferences().settings();
-        let window_context = MainWindowContext::create(
-            webview_window,
-            self.connection_target.clone(),
-            self.window_title.clone(),
-            None,
-            self.agent_resolver(),
-            &prefs,
-        )
-        .await?;
-        self.main_windows.lock().insert(label, window_context);
-
-        Ok(())
     }
 
     pub fn main_window(&self, webview: &Webview) -> Option<MainWindowContext> {
@@ -217,8 +193,9 @@ fn main() {
 
     let theme = detect_theme();
 
-    let setup_title = window_title.clone();
-    let global_ctx = GlobalContext::new(connection_target, window_title);
+    let ct = connection_target.clone();
+    let wt = window_title.clone();
+    let global_ctx = GlobalContext::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -228,29 +205,29 @@ fn main() {
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle());
 
-            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                .title(&setup_title)
-                .resizable(true)
-                .inner_size(800.0, 600.0)
-                .theme(theme)
-                .build()?;
+            let window =
+                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+                    .title(&wt)
+                    .resizable(true)
+                    .inner_size(800.0, 600.0)
+                    .theme(theme)
+                    .build()?;
+
+            let prefs = global_ctx.preferences().settings();
+            let ctx = MainWindowContext::new(window, ct.clone(), wt.clone(), &prefs);
+            global_ctx
+                .main_windows
+                .lock()
+                .insert("main".to_string(), ctx.clone());
+
+            // Local mode: connect synchronously so state is ready before JS runs.
+            // Remote/Elevated: `init` command triggers connect asynchronously.
+            if matches!(ct, ConnectionTarget::Local) {
+                let agent_resolver = global_ctx.agent_resolver();
+                tauri::async_runtime::block_on(ctx.connect(agent_resolver)).unwrap();
+            }
+
             Ok(())
-        })
-        .on_page_load(|webview, _payload| {
-            let app_handle = webview.app_handle();
-            let global_ctx: State<GlobalContext> = app_handle.state();
-
-            // If the label already exists (e.g. viewer windows pre-registered by the
-            // `view` command), skip creating a new agent/context.
-            if global_ctx.main_window(webview).is_some() {
-                return;
-            }
-
-            // Local mode: init is instant, block to have state ready before JS runs.
-            // Remote/Elevated: frontend drives init via the `init` command + Channel.
-            if matches!(global_ctx.connection_target, ConnectionTarget::Local) {
-                tauri::async_runtime::block_on(global_ctx.create_main_window(webview)).unwrap();
-            }
         })
         .on_window_event(
             #[allow(clippy::single_match)]

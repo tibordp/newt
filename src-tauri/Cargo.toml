@@ -49,6 +49,7 @@ blake3 = "1"
 nix = { version = "0.31", features = ["fs"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+arc-swap = "1.8.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"

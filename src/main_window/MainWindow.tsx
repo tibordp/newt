@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
@@ -6,6 +6,7 @@ import dialogStyles from "./modals/Dialog.module.scss";
 
 import { enablePatches } from "immer";
 
+import { invoke } from "@tauri-apps/api/core";
 import {
   TerminalData,
   safeCommand,
@@ -47,6 +48,15 @@ function App() {
   const preferences = usePreferences();
 
   const [focusGeneration, setFocusGeneration] = useState(0);
+
+  // Trigger connect for remote/elevated; no-op for local (already connected).
+  const initCalled = useRef(false);
+  useEffect(() => {
+    if (!initCalled.current) {
+      initCalled.current = true;
+      invoke("init").catch(console.error);
+    }
+  }, []);
 
   const foregroundOp =
     remoteState?.foreground_operation_id != null
@@ -156,47 +166,65 @@ function App() {
         onCloseAutoFocus={refocusActivePane}
       />
       <div className="container">
-        {remoteState && (
-          <>
-            <Allotment vertical separator proportionalLayout={false}>
-              <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
-                <Allotment>
-                  {remoteState.panes.map((props, i) => (
-                    <Pane
-                      key={i}
-                      paneHandle={i}
-                      {...props}
-                      modal={remoteState.modal}
-                      focusGeneration={focusGeneration}
-                      active={
-                        remoteState.display_options.panes_focused &&
-                        remoteState.display_options.active_pane === i
-                      }
-                    />
-                  ))}
-                </Allotment>
-              </Allotment.Pane>
-              <Allotment.Pane
-                preferredSize={300}
-                minSize={100}
-                priority={LayoutPriority.Low}
-                visible={remoteState.display_options.terminal_panel_visible}
-              >
-                <TerminalPanel
-                  terminals={Object.values(remoteState.terminals)}
-                  activeTerminal={remoteState.display_options.active_terminal}
-                  panesFocused={remoteState.display_options.panes_focused}
+        {remoteState &&
+          remoteState.connection_status.status === "connected" && (
+            <>
+              <Allotment vertical separator proportionalLayout={false}>
+                <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
+                  <Allotment>
+                    {remoteState.panes.map((props, i) => (
+                      <Pane
+                        key={i}
+                        paneHandle={i}
+                        {...props}
+                        modal={remoteState.modal}
+                        focusGeneration={focusGeneration}
+                        active={
+                          remoteState.display_options.panes_focused &&
+                          remoteState.display_options.active_pane === i
+                        }
+                      />
+                    ))}
+                  </Allotment>
+                </Allotment.Pane>
+                <Allotment.Pane
+                  preferredSize={300}
+                  minSize={100}
+                  priority={LayoutPriority.Low}
+                  visible={remoteState.display_options.terminal_panel_visible}
+                >
+                  <TerminalPanel
+                    terminals={Object.values(remoteState.terminals)}
+                    activeTerminal={remoteState.display_options.active_terminal}
+                    panesFocused={remoteState.display_options.panes_focused}
+                  />
+                </Allotment.Pane>
+              </Allotment>
+              {Object.keys(remoteState.operations).length > 0 && (
+                <OperationsPanel
+                  operations={remoteState.operations}
+                  foregroundOperationId={foregroundOp?.id}
                 />
-              </Allotment.Pane>
-            </Allotment>
-            {Object.keys(remoteState.operations).length > 0 && (
-              <OperationsPanel
-                operations={remoteState.operations}
-                foregroundOperationId={foregroundOp?.id}
-              />
-            )}
-          </>
+              )}
+            </>
+          )}
+        {remoteState &&
+          remoteState.connection_status.status === "connecting" && (
+            <div className="connection-status">
+              {remoteState.connection_status.message}
+            </div>
+          )}
+        {remoteState && remoteState.connection_status.status === "failed" && (
+          <div className="connection-status connection-error">
+            {remoteState.connection_status.error}
+          </div>
         )}
+        {remoteState &&
+          remoteState.connection_status.status === "disconnected" && (
+            <div className="connection-status connection-error">
+              {remoteState.connection_status.error}
+            </div>
+          )}
       </div>
     </TerminalData.Provider>
   );

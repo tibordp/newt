@@ -51,3 +51,18 @@ body {
     min-height: 0;
   }
 }
+
+.connection-status {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--foreground, #1e1e1e);
+  background: var(--background, #ebebeb);
+}
+
+.connection-error {
+  color: var(--error-foreground, #cd3131);
+}

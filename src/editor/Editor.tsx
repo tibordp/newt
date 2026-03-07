@@ -3,8 +3,15 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import MonacoEditor, { type OnMount, type Monaco } from "@monaco-editor/react";
+import MonacoEditor, {
+  type OnMount,
+  type Monaco,
+  loader,
+} from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import * as monaco from "monaco-editor";
+
+loader.config({ monaco });
 
 import styles from "./Editor.module.scss";
 import { safeCommand, useRemoteState } from "../lib/ipc";

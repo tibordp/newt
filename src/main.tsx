@@ -1,49 +1,32 @@
 import React, { Suspense, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import MainWindow from "./main_window/MainWindow";
-import Viewer from "./viewer/Viewer";
 
+const MainWindow = React.lazy(() => import("./main_window/MainWindow"));
+const Viewer = React.lazy(() => import("./viewer/Viewer"));
 const Editor = React.lazy(() => import("./editor/Editor"));
 
-import { invoke, Channel } from "@tauri-apps/api/core";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles/globals.scss";
 import { safeCommand } from "./lib/ipc";
-
-// --- Splash screen init (runs before React mounts) ---
-
-type InitEvent = { event: "status"; data: { message: string } };
-
-const splashEl = document.getElementById("splash")!;
-const splashStatus = document.getElementById("splash-status")!;
-const splashError = document.getElementById("splash-error")!;
-
-const onEvent = new Channel<InitEvent>();
-onEvent.onmessage = (message) => {
-  if (message.event === "status") {
-    splashStatus.textContent = message.data.message;
-  }
-};
-
-invoke("init", { onEvent })
-  .then(() => {
-    splashEl.style.display = "none";
-  })
-  .catch((err) => {
-    splashStatus.style.display = "none";
-    splashError.textContent = String(err);
-  });
 
 // --- React app ---
 
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <MainWindow />,
+    element: (
+      <Suspense>
+        <MainWindow />
+      </Suspense>
+    ),
   },
   {
     path: "/viewer",
-    element: <Viewer />,
+    element: (
+      <Suspense>
+        <Viewer />
+      </Suspense>
+    ),
   },
   {
     path: "/editor",

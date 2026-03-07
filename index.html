@@ -7,40 +7,14 @@
     <script type="module" src="/src/main.tsx"></script>
     <title>Newt</title>
     <style>
-      #splash {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 9999;
-        padding: 4px 8px;
-        background: #ebebeb;
-        font-family: system-ui, -apple-system, sans-serif;
-        font-size: 13px;
-        color: #1e1e1e;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        overflow: hidden;
-      }
-      #splash-error {
-        color: #cd3131;
-      }
       @media (prefers-color-scheme: dark) {
         html:not([data-theme="light"]) body { background: #1e1e1e; }
-        html:not([data-theme="light"]) #splash { background: #303030; color: #eeeeee; }
-        html:not([data-theme="light"]) #splash-error { color: #f66151; }
       }
       [data-theme="dark"] body { background: #1e1e1e; }
-      [data-theme="dark"] #splash { background: #303030; color: #eeeeee; }
-      [data-theme="dark"] #splash-error { color: #f66151; }
     </style>
   </head>
 
   <body>
-    <div id="splash">
-      <span id="splash-status">Loading...</span>
-      <span id="splash-error"></span>
-    </div>
     <div id="root"></div>
   </body>
 </html>

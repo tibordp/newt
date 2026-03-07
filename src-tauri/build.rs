@@ -17,5 +17,12 @@ fn main() {
         }
     }
 
+    // Expose the target triple so find_local_agent_binary can locate
+    // the correct agent binary under agents/<triple>/newt-agent.
+    println!(
+        "cargo:rustc-env=NEWT_TARGET_TRIPLE={}",
+        std::env::var("TARGET").unwrap()
+    );
+
     tauri_build::build()
 }
