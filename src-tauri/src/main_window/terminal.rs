@@ -34,6 +34,22 @@ pub struct Terminal {
 }
 
 impl Terminal {
+    /// Create a Terminal wrapper from an already-created handle.
+    /// Spawns the reader/waiter task just like `create`.
+    pub fn from_handle(
+        context: MainWindowContext,
+        window: WebviewWindow,
+        handle: TerminalHandle,
+    ) -> Self {
+        let terminal_client = context.terminal_client().expect("terminal_client required");
+        Self::spawn_reader(context, window, handle, terminal_client.clone());
+        Self {
+            handle,
+            terminal_client,
+            defunct: false,
+        }
+    }
+
     pub async fn create(
         context: MainWindowContext,
         window: WebviewWindow,
@@ -47,6 +63,21 @@ impl Terminal {
             })
             .await?;
 
+        Self::spawn_reader(context, window, handle, terminal_client.clone());
+
+        Ok(Self {
+            handle,
+            terminal_client,
+            defunct: false,
+        })
+    }
+
+    fn spawn_reader(
+        context: MainWindowContext,
+        window: WebviewWindow,
+        handle: TerminalHandle,
+        terminal_client: Arc<dyn TerminalClient>,
+    ) {
         tauri::async_runtime::spawn({
             let terminal_client = terminal_client.clone();
             async move {
@@ -86,12 +117,6 @@ impl Terminal {
                 Ok::<_, Error>(())
             }
         });
-
-        Ok(Self {
-            handle,
-            terminal_client,
-            defunct: false,
-        })
     }
 
     pub async fn resize(&self, rows: u16, cols: u16) -> Result<(), Error> {

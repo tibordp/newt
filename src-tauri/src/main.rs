@@ -11,6 +11,7 @@ pub mod editor;
 pub mod file_server;
 pub mod main_window;
 pub mod preferences;
+pub mod user_commands;
 pub mod viewer;
 
 use clap::Parser;

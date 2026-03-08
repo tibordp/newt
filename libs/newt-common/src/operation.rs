@@ -88,6 +88,10 @@ pub enum OperationRequest {
         mode: u32,
         recursive: bool,
     },
+    RunCommand {
+        command: String,
+        working_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -476,6 +480,53 @@ impl ProgressReporter {
     }
 }
 
+// --- Run command ---
+
+async fn execute_run_command(
+    reporter: &mut ProgressReporter,
+    command: &str,
+    working_dir: Option<&Path>,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    reporter.send_prepared(0, 0);
+    reporter.maybe_send_progress(0, 0, command);
+
+    let mut child = {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.args(["-c", command]);
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
+        }
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        cmd.spawn()
+            .map_err(|e| crate::Error::custom(format!("failed to spawn command: {}", e)))?
+    };
+
+    let status = tokio::select! {
+        status = child.wait() => {
+            status.map_err(|e| crate::Error::custom(format!("failed to wait for command: {}", e)))?
+        }
+        _ = cancel.cancelled() => {
+            let _ = child.kill().await;
+            return Err(crate::Error::custom("cancelled".to_string()));
+        }
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        let code = status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        Err(crate::Error::custom(format!(
+            "command exited with code {}",
+            code
+        )))
+    }
+}
+
 // --- Entry point ---
 
 pub async fn execute_operation(
@@ -543,6 +594,18 @@ pub async fn execute_operation(
                 paths,
                 mode,
                 recursive,
+                cancel.clone(),
+            )
+            .await
+        }
+        OperationRequest::RunCommand {
+            command,
+            working_dir,
+        } => {
+            execute_run_command(
+                &mut reporter,
+                &command,
+                working_dir.as_deref(),
                 cancel.clone(),
             )
             .await

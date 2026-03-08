@@ -3,7 +3,7 @@ pub mod schema;
 use log::{info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use schema::{AppPreferences, BookmarkEntry, SettingsFile};
+use schema::{AppPreferences, BookmarkEntry, SettingsFile, UserCommandEntry};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -16,6 +16,7 @@ pub struct ResolvedPreferences {
     pub bindings: Vec<ResolvedBinding>,
     pub commands: Vec<CommandInfo>,
     pub bookmarks: Vec<BookmarkEntry>,
+    pub user_commands: Vec<UserCommandEntry>,
 }
 
 /// A resolved keybinding after `mod+` expansion and cascading.
@@ -35,6 +36,8 @@ pub struct CommandInfo {
     pub shortcut: Option<String>,
     pub shortcut_display: Vec<String>,
     pub needs_pane: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
 }
 
 /// A cheaply-cloneable handle for reading the current `AppPreferences`.
@@ -230,6 +233,139 @@ impl PreferencesManager {
         Ok(())
     }
 
+    /// Add a user command entry to settings.toml.
+    pub fn add_user_command(&self, entry: &UserCommandEntry) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        let mut table = toml_edit::Table::new();
+        table.insert("title", toml_edit::value(&entry.title));
+        table.insert("run", toml_edit::value(&entry.run));
+        if let Some(ref key) = entry.key {
+            table.insert("key", toml_edit::value(key.as_str()));
+        }
+        if entry.terminal {
+            table.insert("terminal", toml_edit::value(true));
+        }
+        if let Some(ref when) = entry.when {
+            table.insert("when", toml_edit::value(when.as_str()));
+        }
+        table.set_implicit(true);
+
+        if !doc.contains_key("command") {
+            doc.insert(
+                "command",
+                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+            );
+        }
+
+        if let Some(arr) = doc["command"].as_array_of_tables_mut() {
+            arr.push(table);
+        } else {
+            return Err("'command' key exists but is not an array of tables".into());
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Remove a user command entry from settings.toml by index.
+    pub fn remove_user_command(&self, index: usize) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        if let Some(arr) = doc["command"].as_array_of_tables_mut() {
+            if index < arr.len() {
+                arr.remove(index);
+            }
+            if arr.is_empty() {
+                doc.remove("command");
+            }
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update a user command entry in settings.toml by index.
+    pub fn update_user_command(
+        &self,
+        index: usize,
+        entry: &UserCommandEntry,
+    ) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        let arr = doc["command"]
+            .as_array_of_tables_mut()
+            .ok_or_else(|| "No [[command]] array in settings.toml".to_string())?;
+
+        if index >= arr.len() {
+            return Err(format!("Command index {} out of range", index));
+        }
+
+        // Remove old entry and build replacement
+        arr.remove(index);
+
+        let mut table = toml_edit::Table::new();
+        table.insert("title", toml_edit::value(&entry.title));
+        table.insert("run", toml_edit::value(&entry.run));
+        if let Some(ref key) = entry.key {
+            if !key.is_empty() {
+                table.insert("key", toml_edit::value(key.as_str()));
+            }
+        }
+        if entry.terminal {
+            table.insert("terminal", toml_edit::value(true));
+        }
+        if let Some(ref when) = entry.when {
+            if !when.is_empty() && when != "any" {
+                table.insert("when", toml_edit::value(when.as_str()));
+            }
+        }
+        table.set_implicit(true);
+
+        // Re-insert at the same position by pushing and then rotating
+        arr.push(table);
+        // Rotate the last element into position: repeatedly swap adjacent elements
+        let len = arr.len();
+        // toml_edit ArrayOfTables doesn't have swap/insert-at, so rebuild if needed
+        if index < len - 1 {
+            // Rebuild the array with the new entry at the correct position
+            let mut tables: Vec<toml_edit::Table> = Vec::new();
+            // Drain all entries
+            while !arr.is_empty() {
+                let t = arr.get(0).unwrap().clone();
+                arr.remove(0);
+                tables.push(t);
+            }
+            // The new entry is at the end of `tables`, move it to `index`
+            let new_entry = tables.pop().unwrap();
+            tables.insert(index, new_entry);
+            for t in tables {
+                arr.push(t);
+            }
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
     fn setup_watcher(
         app_handle: &tauri::AppHandle,
         config_dir: &Path,
@@ -292,6 +428,8 @@ impl PreferencesManager {
                     if guard.settings != new_resolved.settings
                         || guard.bindings.len() != new_resolved.bindings.len()
                         || guard.bookmarks.len() != new_resolved.bookmarks.len()
+                        || guard.user_commands != new_resolved.user_commands
+                        || guard.commands.len() != new_resolved.commands.len()
                     {
                         *guard = new_resolved.clone();
                     } else {
@@ -370,12 +508,29 @@ impl PreferencesManager {
             }
         }
 
+        // Merge user commands from user + profile
+        let mut user_commands = user_file.commands.clone();
+        if let Some(pf) = &profile_file {
+            user_commands.extend(pf.commands.iter().cloned());
+        }
+
+        // Add user command keybindings before resolution
+        for (i, uc) in user_commands.iter().enumerate() {
+            if let Some(ref key) = uc.key {
+                bindings.push((
+                    key.clone(),
+                    format!("user_command_{}", i),
+                    Some("pane_focused".to_string()),
+                ));
+            }
+        }
+
         // Resolve: later entries override earlier ones for same key+when.
         // command = "-" removes the binding.
         let resolved_bindings = resolve_bindings(bindings);
 
         // Build command info with resolved shortcuts
-        let commands: Vec<CommandInfo> = command_defs
+        let mut commands: Vec<CommandInfo> = command_defs
             .iter()
             .map(|def| {
                 let shortcut = resolved_bindings
@@ -393,9 +548,33 @@ impl PreferencesManager {
                     shortcut,
                     shortcut_display,
                     needs_pane: def.needs_pane,
+                    when: None,
                 }
             })
             .collect();
+
+        // Add user commands as CommandInfo entries
+        for (i, uc) in user_commands.iter().enumerate() {
+            let cmd_id = format!("user_command_{}", i);
+            let shortcut = resolved_bindings
+                .iter()
+                .find(|b| b.command == cmd_id)
+                .map(|b| b.key.clone());
+            let shortcut_display = shortcut
+                .as_ref()
+                .map(|k| render_shortcut(k))
+                .unwrap_or_default();
+
+            commands.push(CommandInfo {
+                id: cmd_id,
+                name: uc.title.clone(),
+                category: "User".to_string(),
+                shortcut,
+                shortcut_display,
+                needs_pane: true,
+                when: uc.when.clone(),
+            });
+        }
 
         // Cascade bookmarks: user + profile
         let mut bookmarks = user_file.bookmarks.clone();
@@ -412,6 +591,7 @@ impl PreferencesManager {
             bindings: resolved_bindings,
             commands,
             bookmarks,
+            user_commands,
         }
     }
 
@@ -899,6 +1079,14 @@ pub fn default_commands() -> Vec<CommandDef> {
             default_key: Some("mod+p".into()),
             default_when: None,
             needs_pane: false,
+        },
+        CommandDef {
+            id: "user_commands".into(),
+            name: "User Commands".into(),
+            category: "View".into(),
+            default_key: Some("f9".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
         },
         CommandDef {
             id: "add_bookmark".into(),

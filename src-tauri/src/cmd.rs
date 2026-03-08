@@ -792,7 +792,12 @@ pub fn dialog(
                 "select_vfs" => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
-                "command_palette" => ModalDataKind::CommandPalette,
+                "command_palette" => ModalDataKind::CommandPalette {
+                    category_filter: None,
+                },
+                "user_commands" => ModalDataKind::CommandPalette {
+                    category_filter: Some("User".to_string()),
+                },
                 "hot_paths" => ModalDataKind::HotPaths,
                 "settings" => ModalDataKind::Settings,
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
@@ -995,6 +1000,9 @@ pub async fn start_operation(
             "chmod".to_string(),
             format!("Setting permissions {:o} on {} item(s)", mode, paths.len()),
         ),
+        OperationRequest::RunCommand { ref command, .. } => {
+            ("command".to_string(), format!("Running: {}", command))
+        }
     };
 
     // Insert initial operation state
@@ -1612,6 +1620,7 @@ cmd_dialog!(cmd_connect_remote, "connect_remote");
 cmd_dialog!(cmd_select_vfs, "select_vfs");
 cmd_dialog!(cmd_mount_sftp, "mount_sftp");
 cmd_dialog!(cmd_command_palette, "command_palette");
+cmd_dialog!(cmd_user_commands, "user_commands");
 cmd_dialog!(cmd_hot_paths, "hot_paths");
 cmd_dialog!(cmd_open_settings, "settings");
 
@@ -1700,6 +1709,12 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         get_hot_paths,
         add_bookmark,
         remove_bookmark,
+        // User commands
+        crate::user_commands::run_user_command,
+        crate::user_commands::execute_user_command,
+        crate::user_commands::add_user_command_entry,
+        crate::user_commands::remove_user_command_entry,
+        crate::user_commands::update_user_command_entry,
         // cmd_* commands (palette / keyboard shortcut entry points)
         cmd_rename,
         cmd_properties,
@@ -1712,6 +1727,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_connect_remote,
         cmd_select_vfs,
         cmd_command_palette,
+        cmd_user_commands,
         cmd_open_settings,
         cmd_new_window,
         cmd_toggle_hidden,

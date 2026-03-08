@@ -30,7 +30,11 @@ export default function ModalRouter({
     switch (modalType) {
       case "command_palette":
         return (
-          <CommandPaletteContent preferences={preferences} state={state} />
+          <CommandPaletteContent
+            preferences={preferences}
+            state={state}
+            categoryFilter={state?.modal?.data?.category_filter}
+          />
         );
       case "hot_paths":
         return <HotPathsContent state={state} />;

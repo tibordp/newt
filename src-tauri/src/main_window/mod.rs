@@ -310,13 +310,28 @@ pub enum ModalDataKind {
     SelectVfs {
         targets: Vec<VfsTarget>,
     },
-    CommandPalette,
+    CommandPalette {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        category_filter: Option<String>,
+    },
     HotPaths,
     Settings,
     Confirm {
         message: String,
         action: ConfirmAction,
     },
+    UserCommandInput {
+        command_index: usize,
+        command_title: String,
+        prompts: Vec<UserCommandPrompt>,
+        confirms: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct UserCommandPrompt {
+    pub label: String,
+    pub default: String,
 }
 
 #[derive(Clone, serde::Serialize)]

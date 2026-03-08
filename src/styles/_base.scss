@@ -56,7 +56,9 @@ input[type="submit"] {
   }
 }
 
-input[type="text"] {
+input[type="text"],
+select,
+textarea {
   font-family: inherit;
   font-size: inherit;
   color: var(--color-fg);
@@ -65,11 +67,32 @@ input[type="text"] {
   border-radius: var(--radius-md);
   padding: var(--space-4);
   width: 100%;
+  box-sizing: border-box;
 
   &:focus {
     outline: var(--focus-ring);
     outline-offset: -1px;
   }
+}
+
+select {
+  width: auto;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 label {

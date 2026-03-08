@@ -36,12 +36,40 @@ function Highlight(props: { name: string; filter: string }) {
   return <span>{parts}</span>;
 }
 
+function matchesWhenCondition(
+  command: { when?: string },
+  state: MainWindowState | null,
+): boolean {
+  if (!command.when || command.when === "any") return true;
+  if (!state || !state.panes) return true;
+
+  const pane = state.panes[state.display_options.active_pane];
+  if (!pane) return true;
+
+  const focused = pane.focused
+    ? pane.files.find((f) => f.name === pane.focused)
+    : undefined;
+
+  switch (command.when) {
+    case "file":
+      return !!focused && !focused.is_dir;
+    case "directory":
+      return !!focused && focused.is_dir;
+    case "selection":
+      return pane.selected.length > 0 || (!!focused && focused.name !== "..");
+    default:
+      return true;
+  }
+}
+
 export default function CommandPalette({
   preferences,
   state,
+  categoryFilter,
 }: {
   preferences: PreferencesState | null;
   state: MainWindowState | null;
+  categoryFilter?: string;
 }) {
   const [filter, setFilter] = useState("");
 
@@ -82,20 +110,33 @@ export default function CommandPalette({
         // Hide internal commands from palette
         command.id !== "command_palette" &&
         command.id !== "hot_paths" &&
-        (!command.needs_pane || !!paneHandle || paneHandle === 0),
+        command.id !== "user_commands" &&
+        (!command.needs_pane || !!paneHandle || paneHandle === 0) &&
+        // Category filter (e.g. F9 → "User" only)
+        (!categoryFilter || command.category === categoryFilter) &&
+        // When condition filtering for user commands
+        matchesWhenCondition(command, state),
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);
-  }, [filter, paneHandle, allCommands]);
+  }, [filter, paneHandle, allCommands, categoryFilter, state]);
 
   const onSelect = (value: string) => {
     const index = parseInt(value, 10);
     const command = filteredCommands[index];
     if (!command) return;
 
-    safeCommand("cmd_" + command.id, {
-      paneHandle: paneHandle || 0,
-    });
+    if (command.id.startsWith("user_command_")) {
+      const cmdIndex = parseInt(command.id.replace("user_command_", ""), 10);
+      safeCommand("run_user_command", {
+        paneHandle: paneHandle || 0,
+        index: cmdIndex,
+      });
+    } else {
+      safeCommand("cmd_" + command.id, {
+        paneHandle: paneHandle || 0,
+      });
+    }
   };
 
   return (
@@ -120,7 +161,12 @@ export default function CommandPalette({
               value={String(i)}
               onSelect={onSelect}
             >
-              <Highlight name={command.name} filter={filter} />
+              <span>
+                <Highlight name={command.name} filter={filter} />
+                {!categoryFilter && command.category === "User" && (
+                  <span className={styles.badge}>User</span>
+                )}
+              </span>
               {command.shortcut_display.length > 0 && (
                 <div className={styles.shortcut}>
                   {command.shortcut_display.map((e, i) => (

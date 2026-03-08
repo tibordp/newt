@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
-import { PreferencesState } from "../../lib/preferences";
+import { PreferencesState, UserCommandEntry } from "../../lib/preferences";
 import styles from "./SettingsEditor.module.scss";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -119,7 +119,359 @@ function SettingControl({
   }
 }
 
-type Tab = "settings" | "keybindings";
+type Tab = "settings" | "keybindings" | "commands";
+
+function emptyCommand(): UserCommandEntry {
+  return { title: "", run: "", terminal: false };
+}
+
+function CommandsEditor({ commands }: { commands: UserCommandEntry[] }) {
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<UserCommandEntry>(emptyCommand());
+  const [isAdding, setIsAdding] = useState(false);
+
+  const startEdit = (index: number) => {
+    setEditingIndex(index);
+    setEditForm({ ...commands[index] });
+    setIsAdding(false);
+  };
+
+  const startAdd = () => {
+    setEditingIndex(null);
+    setEditForm(emptyCommand());
+    setIsAdding(true);
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setIsAdding(false);
+  };
+
+  const saveEdit = async () => {
+    try {
+      if (isAdding) {
+        await invoke("add_user_command_entry", { entry: editForm });
+      } else if (editingIndex !== null) {
+        await invoke("update_user_command_entry", {
+          index: editingIndex,
+          entry: editForm,
+        });
+      }
+      setEditingIndex(null);
+      setIsAdding(false);
+    } catch (e) {
+      console.error("Failed to save command:", e);
+    }
+  };
+
+  const removeCommand = async (index: number) => {
+    try {
+      await invoke("remove_user_command_entry", { index });
+      if (editingIndex === index) {
+        setEditingIndex(null);
+      }
+    } catch (e) {
+      console.error("Failed to remove command:", e);
+    }
+  };
+
+  const renderForm = () => (
+    <div className={styles.commandForm}>
+      <label>
+        Title
+        <input
+          type="text"
+          value={editForm.title}
+          onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+          autoFocus
+        />
+      </label>
+      <label>
+        Run
+        <textarea
+          value={editForm.run}
+          onChange={(e) => setEditForm({ ...editForm, run: e.target.value })}
+          rows={3}
+          style={{ fontFamily: "monospace" }}
+        />
+      </label>
+      <div className={styles.commandFormRow}>
+        <label>
+          Key
+          <input
+            type="text"
+            value={editForm.key ?? ""}
+            onChange={(e) =>
+              setEditForm({
+                ...editForm,
+                key: e.target.value || undefined,
+              })
+            }
+            placeholder="e.g. alt+z"
+            style={{ width: "120px" }}
+          />
+        </label>
+        <label>
+          When
+          <select
+            value={editForm.when ?? "any"}
+            onChange={(e) =>
+              setEditForm({
+                ...editForm,
+                when: e.target.value === "any" ? undefined : e.target.value,
+              })
+            }
+          >
+            <option value="any">Any</option>
+            <option value="file">File</option>
+            <option value="directory">Directory</option>
+            <option value="selection">Selection</option>
+          </select>
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={editForm.terminal}
+            onChange={(e) =>
+              setEditForm({ ...editForm, terminal: e.target.checked })
+            }
+          />
+          Terminal
+        </label>
+      </div>
+      <div className={styles.commandFormActions}>
+        <button onClick={saveEdit}>Save</button>
+        <button onClick={cancelEdit}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={styles.settingsList}>
+      {commands.length === 0 && !isAdding && (
+        <div
+          style={{ color: "var(--color-fg-muted)", padding: "var(--space-4)" }}
+        >
+          No user commands configured
+        </div>
+      )}
+      {commands.map((cmd, i) => (
+        <div key={i}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <div className={styles.settingLabel}>
+                {cmd.title || "(untitled)"}
+              </div>
+              <div className={styles.settingDescription}>
+                <code>{cmd.run}</code>
+                {cmd.key && <> &middot; {cmd.key}</>}
+                {cmd.when && <> &middot; when: {cmd.when}</>}
+                {cmd.terminal && <> &middot; terminal</>}
+              </div>
+            </div>
+            <div className={styles.settingControl}>
+              <button onClick={() => startEdit(i)}>Edit</button>
+              <button onClick={() => removeCommand(i)}>Delete</button>
+            </div>
+          </div>
+          {editingIndex === i && renderForm()}
+        </div>
+      ))}
+      {isAdding && renderForm()}
+      {!isAdding && editingIndex === null && (
+        <div style={{ padding: "var(--space-4) 0" }}>
+          <button onClick={startAdd}>Add Command</button>
+        </div>
+      )}
+      <div className={styles.templateHelp}>
+        <div className={styles.templateHelpTitle}>Template Reference</div>
+        <details>
+          <summary>Details</summary>
+          <div className={styles.templateHelpBody}>
+            <p>
+              The <b>Run</b> field uses{" "}
+              <a
+                href="https://docs.rs/minijinja"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Jinja2
+              </a>{" "}
+              templates.
+            </p>
+
+            <h4>Variables</h4>
+            <table>
+              <tbody>
+                <tr>
+                  <td>
+                    <code>{"{{ dir }}"}</code>
+                  </td>
+                  <td>Current pane directory</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ other_dir }}"}</code>
+                  </td>
+                  <td>Other pane directory</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ hostname }}"}</code>
+                  </td>
+                  <td>Machine hostname</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ env.HOME }}"}</code>
+                  </td>
+                  <td>Environment variable (any name)</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.name }}"}</code>
+                  </td>
+                  <td>Focused file name</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.path }}"}</code>
+                  </td>
+                  <td>Focused file full path</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.stem }}"}</code>
+                  </td>
+                  <td>Filename without extension</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.ext }}"}</code>
+                  </td>
+                  <td>File extension</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.size }}"}</code>
+                  </td>
+                  <td>File size in bytes</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.modified }}"}</code>
+                  </td>
+                  <td>Last modified (Unix timestamp)</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ file.is_dir }}"}</code>
+                  </td>
+                  <td>Whether focused item is a directory</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"{{ files }}"}</code>
+                  </td>
+                  <td>Selected files (or focused file)</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h4>Filters</h4>
+            <table>
+              <tbody>
+                <tr>
+                  <td>
+                    <code>{"shell_quote"}</code>
+                  </td>
+                  <td>Shell-escape a string</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"basename"}</code>
+                  </td>
+                  <td>Extract filename from path</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"dirname"}</code>
+                  </td>
+                  <td>Extract directory from path</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"stem"}</code>
+                  </td>
+                  <td>Filename without extension</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"ext"}</code>
+                  </td>
+                  <td>Extract extension from path</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"regex_replace(pattern, replacement)"}</code>
+                  </td>
+                  <td>Regex substitution</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{"join_path"}</code>
+                  </td>
+                  <td>Join path segments</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h4>Functions</h4>
+            <table>
+              <tbody>
+                <tr>
+                  <td>
+                    <code>{'prompt("Label", default="")'}</code>
+                  </td>
+                  <td>Show input dialog before running</td>
+                </tr>
+                <tr>
+                  <td>
+                    <code>{'confirm("Are you sure?")'}</code>
+                  </td>
+                  <td>Show confirmation — aborts if declined</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <h4>Examples</h4>
+            <p>
+              <code>
+                {
+                  "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') | shell_quote | join(' ') }}"
+                }
+              </code>
+            </p>
+            <p>
+              <code>
+                {
+                  'mv {{ file.name | shell_quote }} {{ prompt("New name", file.name) | shell_quote }}'
+                }
+              </code>
+            </p>
+            <p>
+              <code>
+                {
+                  '{{ confirm("Delete " ~ files | length ~ " files?") }}rm -f {{ files | map(attribute="name") | shell_quote | join(" ") }}'
+                }
+              </code>
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+  );
+}
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
@@ -211,6 +563,12 @@ export default function SettingsEditor({
           onClick={() => setActiveTab("keybindings")}
         >
           Keybindings
+        </button>
+        <button
+          className={activeTab === "commands" ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab("commands")}
+        >
+          Commands
         </button>
       </div>
       <div className={styles.body}>
@@ -318,6 +676,9 @@ export default function SettingsEditor({
               </tbody>
             </table>
           </div>
+        )}
+        {activeTab === "commands" && (
+          <CommandsEditor commands={preferences?.user_commands ?? []} />
         )}
       </div>
       <div className={styles.footer}>

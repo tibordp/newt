@@ -107,6 +107,10 @@ pub struct SettingsFile {
     /// User-defined bookmark entries.
     #[serde(default, rename = "bookmark")]
     pub bookmarks: Vec<BookmarkEntry>,
+
+    /// User-defined command entries.
+    #[serde(default, rename = "command")]
+    pub commands: Vec<UserCommandEntry>,
 }
 
 impl Default for SettingsFile {
@@ -118,6 +122,7 @@ impl Default for SettingsFile {
             hot_paths: default_toml_table(),
             bindings: Vec::new(),
             bookmarks: Vec::new(),
+            commands: Vec::new(),
         }
     }
 }
@@ -127,6 +132,19 @@ impl Default for SettingsFile {
 pub struct KeybindingEntry {
     pub key: String,
     pub command: String,
+    #[serde(default)]
+    pub when: Option<String>,
+}
+
+/// A single `[[command]]` entry in the TOML file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserCommandEntry {
+    pub title: String,
+    pub run: String,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub terminal: bool,
     #[serde(default)]
     pub when: Option<String>,
 }

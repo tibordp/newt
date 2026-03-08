@@ -16,6 +16,7 @@ export type CommandInfo = {
   shortcut?: string;
   shortcut_display: string[];
   needs_pane: boolean;
+  when?: string;
 };
 
 export type AppPreferences = {
@@ -38,12 +39,21 @@ export type BookmarkEntry = {
   name?: string;
 };
 
+export type UserCommandEntry = {
+  title: string;
+  run: string;
+  key?: string;
+  terminal: boolean;
+  when?: string;
+};
+
 export type PreferencesState = {
   settings: AppPreferences;
   schema: any;
   bindings: ResolvedBinding[];
   commands: CommandInfo[];
   bookmarks: BookmarkEntry[];
+  user_commands: UserCommandEntry[];
 };
 
 export const usePreferences = (): PreferencesState | null => {

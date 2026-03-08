@@ -18,6 +18,12 @@ export const executeCommandById = (
     return null;
   }
 
+  // User commands dispatch to run_user_command instead of cmd_<id>
+  if (commandId.startsWith("user_command_")) {
+    const index = parseInt(commandId.replace("user_command_", ""), 10);
+    return safeCommand("run_user_command", { paneHandle, index });
+  }
+
   return safeCommand("cmd_" + commandId, { paneHandle });
 };
 
