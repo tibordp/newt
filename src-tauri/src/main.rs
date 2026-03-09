@@ -210,7 +210,7 @@ fn main() {
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title(&wt)
                     .resizable(true)
-                    .inner_size(800.0, 600.0)
+                    .inner_size(1100.0, 800.0)
                     .theme(theme)
                     .build()?;
 

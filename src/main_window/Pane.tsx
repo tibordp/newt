@@ -17,7 +17,13 @@ import { safeCommand, safeCommandSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
-import { File, PaneState, DndFileInfo, FileRowContext } from "./types";
+import {
+  File,
+  FilterMode,
+  PaneState,
+  DndFileInfo,
+  FileRowContext,
+} from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
 import { FileContextMenuContent } from "./ContextMenu";
@@ -138,6 +144,7 @@ type FileRowProps = {
   isFocused: boolean;
   isSelected: boolean;
   filter?: string;
+  filterMode: FilterMode;
   widthPrefix: string;
   onClick: React.MouseEventHandler<HTMLLIElement>;
   onMouseDown: React.MouseEventHandler<HTMLLIElement>;
@@ -149,12 +156,13 @@ const FileRow = memo(function FileRow({
   isFocused,
   isSelected,
   filter,
+  filterMode,
   widthPrefix,
   onClick,
   onMouseDown,
   onOpen,
 }: FileRowProps) {
-  const ctx: FileRowContext = { isFocused, filter };
+  const ctx: FileRowContext = { isFocused, filter, filterMode };
   return (
     <li
       data-name={row.name}
@@ -295,6 +303,7 @@ function PaneInner(
     active,
     modalOpen,
     filter,
+    filter_mode,
     path,
     files,
     selected,
@@ -393,7 +402,7 @@ function PaneInner(
   useEffect(() => {
     if (active && !modalOpen) {
       if (!isVfsSelectorOpen) {
-        if (filter === null) {
+        if (filter == null && filter_mode !== "filter") {
           containerRef.current?.focus();
         } else {
           inputRef.current?.focus();
@@ -403,7 +412,7 @@ function PaneInner(
       inputRef.current?.blur();
       containerRef.current?.blur();
     }
-  }, [active, path, filter, modalOpen, isVfsSelectorOpen]);
+  }, [active, path, filter, filter_mode, modalOpen, isVfsSelectorOpen]);
 
   // --- Drag-to-select logic ---
 
@@ -947,6 +956,9 @@ function PaneInner(
       openContextMenu();
     } else if (e.key == "Backspace" && noModifiers) {
       command("navigate", { path: "..", exact: true }, true);
+    } else if (e.key == "/" && noModifiers) {
+      command("set_filter", { filter: "", mode: "filter" });
+      inputRef.current?.focus();
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
@@ -962,13 +974,21 @@ function PaneInner(
 
     if (onKeyDownCommon(e)) {
       // ...
-    } else if (e.key == "ArrowLeft" && noModifiers) {
+    } else if (
+      filter_mode === "quick_search" &&
+      e.key == "ArrowLeft" &&
+      noModifiers
+    ) {
       if (filter && filter.length > 0) {
         command("set_filter", {
           filter: focused!.substring(0, filter.length - 1),
         });
       }
-    } else if (e.key == "ArrowRight" && noModifiers) {
+    } else if (
+      filter_mode === "quick_search" &&
+      e.key == "ArrowRight" &&
+      noModifiers
+    ) {
       if (filter && focused && filter.length < focused.length) {
         command("set_filter", {
           filter: focused.substring(0, filter.length + 1),
@@ -1046,16 +1066,18 @@ function PaneInner(
       data-pane-handle={paneHandle}
       onClick={() => command("focus")}
     >
-      <input
-        className={styles.filterInput}
-        type="text"
-        value={filter || ""}
-        onChange={(e) => command("set_filter", { filter: e.target.value })}
-        ref={inputRef}
-        onKeyDown={onkeydownFilter}
-        onFocus={() => command("set_filter", { filter: filter || "" })}
-        tabIndex={-1}
-      />
+      {filter_mode !== "filter" && (
+        <input
+          className={styles.filterInput}
+          type="text"
+          value={filter || ""}
+          onChange={(e) => command("set_filter", { filter: e.target.value })}
+          ref={inputRef}
+          onKeyDown={onkeydownFilter}
+          onFocus={() => command("set_filter", { filter: filter || "" })}
+          tabIndex={-1}
+        />
+      )}
       <div className={styles.header}>
         <VfsSelector
           vfsDisplayName={vfs_display_name}
@@ -1118,6 +1140,7 @@ function PaneInner(
                       isFocused={isFocused}
                       isSelected={selectedLookup.has(row.name)}
                       filter={isFocused ? filter : undefined}
+                      filterMode={filter_mode}
                       widthPrefix={widthPrefix}
                       onClick={onClick}
                       onMouseDown={onDndMouseDown}
@@ -1137,6 +1160,23 @@ function PaneInner(
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
       <div className={styles.statusbar}>
+        {filter_mode === "filter" && (
+          <div className={styles.filterBar}>
+            <input
+              className={styles.filterBarInput}
+              type="text"
+              value={filter || ""}
+              placeholder="Filter (regex)"
+              onChange={(e) =>
+                command("set_filter", { filter: e.target.value })
+              }
+              ref={inputRef}
+              onKeyDown={onkeydownFilter}
+              autoFocus
+              tabIndex={-1}
+            />
+          </div>
+        )}
         {showSpinner && "Loading file list..."}
         {!showSpinner && loading && (
           <>

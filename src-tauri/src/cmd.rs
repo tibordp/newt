@@ -16,7 +16,7 @@ use crate::common::Error;
 
 use crate::main_window::OperationState;
 use crate::main_window::OperationStatus;
-use crate::main_window::pane::Sorting;
+use crate::main_window::pane::{FilterMode, Sorting};
 
 use crate::GlobalContext;
 use crate::main_window::ConfirmAction;
@@ -199,9 +199,14 @@ pub fn set_filter(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
     filter: Option<String>,
+    mode: Option<FilterMode>,
 ) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
-        pane.view_state_mut().set_filter(filter);
+        if let Some(mode) = mode {
+            pane.view_state_mut().set_filter_with_mode(filter, mode);
+        } else {
+            pane.view_state_mut().set_filter(filter);
+        }
         Ok(())
     })
 }
@@ -256,7 +261,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     .title(format!("{} - Viewer", path_display))
     .center()
     .focused(true)
-    .inner_size(800.0, 600.0)
+    .inner_size(1100.0, 800.0)
     .build()
     .unwrap();
 

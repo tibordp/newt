@@ -3,6 +3,7 @@
   flex-grow: 1;
   flex-direction: column;
   height: 100%;
+  position: relative;
 
   &,
   &:focus,
@@ -124,7 +125,27 @@
   }
 }
 
+.filterBar {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  padding: var(--space-1) var(--space-3);
+  z-index: 10;
+}
+
+.filterBarInput {
+  background: var(--color-chrome);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: inherit;
+  border: 1px solid var(--color-border);
+  outline: none;
+  padding: var(--space-1) var(--space-2);
+}
+
 .statusbar {
+  position: relative;
   padding: var(--space-2) var(--space-3);
   background: var(--color-chrome);
   white-space: nowrap;

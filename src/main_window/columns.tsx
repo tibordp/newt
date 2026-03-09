@@ -17,10 +17,12 @@ const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<
 function FileName({
   focused,
   filter,
+  filterMode,
   info,
 }: {
   focused: boolean;
   filter?: string;
+  filterMode: string;
   info: File;
 }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
@@ -35,8 +37,8 @@ function FileName({
 
   const nameElement = (
     <>
-      {(!focused || filter == null) && <>{name}</>}
-      {focused && filter != null && (
+      {(!focused || filter == null || filterMode === "filter") && <>{name}</>}
+      {focused && filter != null && filterMode !== "filter" && (
         <>
           <span className={styles.filterHead}>
             {name.substr(0, filter.length)}
@@ -86,8 +88,13 @@ export const columns: ColumnDef[] = [
         name: "Ext",
       },
     ],
-    render: (info, { isFocused, filter }) => (
-      <FileName filter={filter} focused={isFocused} info={info} />
+    render: (info, { isFocused, filter, filterMode }) => (
+      <FileName
+        filter={filter}
+        filterMode={filterMode}
+        focused={isFocused}
+        info={info}
+      />
     ),
     initialWidth: 250,
   },

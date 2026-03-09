@@ -29,6 +29,7 @@ export type File = {
 export type FileRowContext = {
   isFocused: boolean;
   filter?: string;
+  filterMode: FilterMode;
 };
 
 export type ColumnDef = {
@@ -65,6 +66,8 @@ export type PaneStats = {
   selected_bytes: number;
 };
 
+export type FilterMode = "quick_search" | "filter";
+
 export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
@@ -76,6 +79,7 @@ export type PaneState = {
   selected: string[];
   active: boolean;
   filter?: string;
+  filter_mode: FilterMode;
   fs_stats?: FsStats;
   stats: PaneStats;
   focused_index?: number;

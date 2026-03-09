@@ -183,38 +183,59 @@ function App() {
         {remoteState &&
           remoteState.connection_status.status === "connected" && (
             <>
-              <Allotment vertical separator proportionalLayout={false}>
-                <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
-                  <Allotment>
-                    {remoteState.panes.map((props, i) => (
-                      <Pane
-                        key={i}
-                        paneHandle={i}
-                        {...props}
-                        modal={remoteState.modal}
-                        modalOpen={modalOpen}
-                        active={
-                          remoteState.display_options.panes_focused &&
-                          remoteState.display_options.active_pane === i
-                        }
-                      />
-                    ))}
-                  </Allotment>
-                </Allotment.Pane>
-                <Allotment.Pane
-                  preferredSize={300}
-                  minSize={100}
-                  priority={LayoutPriority.Low}
-                  visible={remoteState.display_options.terminal_panel_visible}
-                >
-                  <TerminalPanel
-                    terminals={Object.values(remoteState.terminals)}
-                    activeTerminal={remoteState.display_options.active_terminal}
-                    panesFocused={remoteState.display_options.panes_focused}
-                    modalOpen={modalOpen}
-                  />
-                </Allotment.Pane>
-              </Allotment>
+              <div
+                style={{ flex: 1, overflow: "hidden" }}
+                onMouseDown={(e) => {
+                  // Prevent focus theft from non-interactive chrome (dividers,
+                  // headers, statusbars, etc.) so the file list, terminal, or
+                  // filter input keeps focus.
+                  const target = e.target as HTMLElement;
+                  if (
+                    !target.closest("ul") &&
+                    !target.closest("input") &&
+                    !target.closest("textarea") &&
+                    !target.closest("button") &&
+                    !target.closest("[class*='xterm']")
+                  ) {
+                    e.preventDefault();
+                  }
+                }}
+              >
+                <Allotment vertical separator proportionalLayout={false}>
+                  <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
+                    <Allotment>
+                      {remoteState.panes.map((props, i) => (
+                        <Pane
+                          key={i}
+                          paneHandle={i}
+                          {...props}
+                          modal={remoteState.modal}
+                          modalOpen={modalOpen}
+                          active={
+                            remoteState.display_options.panes_focused &&
+                            remoteState.display_options.active_pane === i
+                          }
+                        />
+                      ))}
+                    </Allotment>
+                  </Allotment.Pane>
+                  <Allotment.Pane
+                    preferredSize={300}
+                    minSize={100}
+                    priority={LayoutPriority.Low}
+                    visible={remoteState.display_options.terminal_panel_visible}
+                  >
+                    <TerminalPanel
+                      terminals={Object.values(remoteState.terminals)}
+                      activeTerminal={
+                        remoteState.display_options.active_terminal
+                      }
+                      panesFocused={remoteState.display_options.panes_focused}
+                      modalOpen={modalOpen}
+                    />
+                  </Allotment.Pane>
+                </Allotment>
+              </div>
               {Object.keys(remoteState.operations).length > 0 && (
                 <OperationsPanel
                   operations={remoteState.operations}

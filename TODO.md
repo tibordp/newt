@@ -9,8 +9,6 @@ world-class TAR support (with random access - idea is the same as ratarmount, we
 entire decompressor state at various checkpoints spaced ~every 10MB or so). This will allow us to efficiently do random byte range requests even through remoting without
 having to unpack everything.
 
-## Actual filtering in the panes
-
 ## Recursive file search
 
 ## Archive packing and unpacking

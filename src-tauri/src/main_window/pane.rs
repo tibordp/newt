@@ -481,6 +481,9 @@ impl Pane {
     /// If the selection is empty, returns the focused file.
     /// Otherwise, returns the selected files. The focused file is NOT included
     /// in the selection in this case.
+    ///
+    /// In filter mode, only files visible in the current filtered view are
+    /// included, so hidden selected files don't piggyback on operations.
     pub fn get_effective_selection(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
 
@@ -489,6 +492,13 @@ impl Pane {
                 .focused
                 .iter()
                 .map(|s| view_state.path.join(s))
+                .collect()
+        } else if view_state.filter_mode == FilterMode::Filter {
+            view_state
+                .selected
+                .iter()
+                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
+                .map(|s: &String| view_state.path.join(s))
                 .collect()
         } else {
             view_state
@@ -551,6 +561,14 @@ fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
     a.cmp(b)
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterMode {
+    #[default]
+    QuickSearch,
+    Filter,
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PaneViewState {
@@ -563,6 +581,7 @@ pub struct PaneViewState {
     pub focused: Option<String>,
     pub selected: HashSet<String>,
     pub filter: Option<String>,
+    pub filter_mode: FilterMode,
     pub fs_stats: Option<FsStats>,
     pub stats: PaneStats,
     pub focused_index: Option<usize>,
@@ -570,6 +589,8 @@ pub struct PaneViewState {
     pub vfs_display_name: String,
     pub breadcrumbs: Vec<Breadcrumb>,
 
+    #[serde(skip)]
+    all_files: Vec<File>,
     #[serde(skip)]
     file_lookup: HashMap<String, usize>,
     #[serde(skip)]
@@ -647,8 +668,15 @@ impl PaneViewState {
     }
 
     fn update_focus(&mut self) {
-        self.selected
-            .retain(|name| self.file_lookup.contains_key(name));
+        if self.filter_mode == FilterMode::Filter {
+            // In filter mode, retain selection based on all files (not just visible ones)
+            let all_names: HashSet<&str> = self.all_files.iter().map(|f| f.name.as_str()).collect();
+            self.selected
+                .retain(|name| all_names.contains(name.as_str()));
+        } else {
+            self.selected
+                .retain(|name| self.file_lookup.contains_key(name));
+        }
 
         if self.focused.is_none()
             || !self
@@ -659,12 +687,74 @@ impl PaneViewState {
         }
     }
 
-    fn update_filter(&mut self, filter: Option<String>) {
-        self.filter = filter;
-        self.filter_regex = self
-            .filter
+    fn update_filter_regex(&mut self) {
+        match self.filter_mode {
+            FilterMode::QuickSearch => {
+                self.filter_regex = self
+                    .filter
+                    .as_ref()
+                    .map(|f| regex::Regex::new(&format!("(?i)^{}", regex::escape(f))).unwrap());
+            }
+            FilterMode::Filter => {
+                self.filter_regex = self.filter.as_ref().and_then(|f| {
+                    regex::RegexBuilder::new(f)
+                        .case_insensitive(true)
+                        .build()
+                        .ok()
+                });
+            }
+        }
+    }
+
+    fn clear_filter(&mut self) {
+        let was_visual = self.filter_mode == FilterMode::Filter;
+        self.filter = None;
+        self.filter_regex = None;
+        self.filter_mode = FilterMode::QuickSearch;
+        if was_visual {
+            self.files = self.all_files.clone();
+            self.file_lookup = self
+                .files
+                .iter()
+                .enumerate()
+                .map(|(index, file)| (file.name.clone(), index))
+                .collect();
+        }
+    }
+
+    fn apply_visual_filter(&mut self) {
+        if self.filter_mode != FilterMode::Filter {
+            return;
+        }
+
+        self.files = self
+            .all_files
+            .iter()
+            .filter(|f| {
+                f.name == ".."
+                    || self
+                        .filter_regex
+                        .as_ref()
+                        .is_none_or(|re| re.is_match(&f.name))
+            })
+            .cloned()
+            .collect();
+
+        self.file_lookup = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| (file.name.clone(), index))
+            .collect();
+
+        // If current focus is no longer visible, pick a new one
+        if self
+            .focused
             .as_ref()
-            .map(|f| regex::Regex::new(&format!("(?i)^{}", regex::escape(f))).unwrap());
+            .is_none_or(|name| !self.file_lookup.contains_key(name))
+        {
+            self.focused = self.files.first().map(|f| f.name.clone());
+        }
     }
 
     // Public API
@@ -686,12 +776,14 @@ impl PaneViewState {
             .collect();
 
         self.sort(preferences.appearance.folders_first);
+        self.all_files = self.files.clone();
+        self.apply_visual_filter();
         self.update_focus();
         self.recompute_stats();
     }
 
     pub fn focus(&mut self, filename: String) {
-        self.update_filter(None);
+        self.clear_filter();
         self.focused = Some(filename);
         self.update_focus();
         self.recompute_stats();
@@ -723,7 +815,7 @@ impl PaneViewState {
         }
         self.selected.remove("..");
 
-        self.update_filter(None);
+        self.clear_filter();
         if focus_next {
             self.relative_jump(1, false);
         } else {
@@ -734,7 +826,7 @@ impl PaneViewState {
     }
 
     pub fn select_range(&mut self, filename: String) {
-        self.update_filter(None);
+        self.clear_filter();
         let Some(&start_index) = self
             .focused
             .as_deref()
@@ -757,22 +849,20 @@ impl PaneViewState {
     }
 
     pub fn select_all(&mut self) {
-        self.update_filter(None);
-        self.filter_regex = None;
+        self.clear_filter();
         self.selected = self.file_lookup.keys().cloned().collect();
         self.selected.remove("..");
         self.recompute_stats();
     }
 
     pub fn deselect_all(&mut self) {
-        self.update_filter(None);
-        self.filter_regex = None;
+        self.clear_filter();
         self.selected.clear();
         self.recompute_stats();
     }
 
     pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
-        self.update_filter(None);
+        self.clear_filter();
         self.selected = selected;
         self.selected.remove("..");
         if let Some(ref f) = focused
@@ -784,46 +874,65 @@ impl PaneViewState {
     }
 
     pub fn set_filter(&mut self, filter: Option<String>) {
+        self.set_filter_with_mode(filter, self.filter_mode);
+    }
+
+    pub fn set_filter_with_mode(&mut self, filter: Option<String>, mode: FilterMode) {
         let Some(filter) = filter else {
-            self.update_filter(None);
+            self.clear_filter();
+            self.update_focus();
             self.recompute_stats();
             return;
         };
 
-        let start_index = *self
-            .focused
-            .as_deref()
-            .map(|f| self.file_lookup.get(f).unwrap())
-            .unwrap_or(&0);
+        self.filter_mode = mode;
 
-        let new_filter = regex::Regex::new(&format!("(?i)^{}", regex::escape(&filter))).unwrap();
+        match mode {
+            FilterMode::QuickSearch => {
+                let start_index = *self
+                    .focused
+                    .as_deref()
+                    .map(|f| self.file_lookup.get(f).unwrap())
+                    .unwrap_or(&0);
 
-        // Search in the down direction first
-        for f in self.files.iter().skip(start_index) {
-            if new_filter.is_match(&f.name) {
-                self.focused = Some(f.name.clone());
-                self.filter = Some(filter);
-                self.filter_regex = Some(new_filter);
+                let new_filter =
+                    regex::Regex::new(&format!("(?i)^{}", regex::escape(&filter))).unwrap();
+
+                // Search in the down direction first
+                for f in self.files.iter().skip(start_index) {
+                    if new_filter.is_match(&f.name) {
+                        self.focused = Some(f.name.clone());
+                        self.filter = Some(filter);
+                        self.filter_regex = Some(new_filter);
+                        self.recompute_stats();
+                        return;
+                    }
+                }
+
+                // Then search in the up direction
+                for f in self.files.iter().take(start_index).rev() {
+                    if new_filter.is_match(&f.name) {
+                        self.focused = Some(f.name.clone());
+                        self.filter = Some(filter);
+                        self.filter_regex = Some(new_filter);
+                        self.recompute_stats();
+                        return;
+                    }
+                }
+
+                if self.filter.is_none() {
+                    self.filter = Some(Default::default());
+                    self.update_filter_regex();
+                }
                 self.recompute_stats();
-                return;
+            }
+            FilterMode::Filter => {
+                self.filter = Some(filter);
+                self.update_filter_regex();
+                self.apply_visual_filter();
+                self.recompute_stats();
             }
         }
-
-        // Then search in the up direction
-        for f in self.files.iter().take(start_index).rev() {
-            if new_filter.is_match(&f.name) {
-                self.focused = Some(f.name.clone());
-                self.filter = Some(filter);
-                self.filter_regex = Some(new_filter);
-                self.recompute_stats();
-                return;
-            }
-        }
-
-        if self.filter.is_none() {
-            self.update_filter(Some(Default::default()));
-        }
-        self.recompute_stats();
     }
 
     pub fn relative_jump(&mut self, mut offset: i32, with_selection: bool) {
@@ -851,10 +960,11 @@ impl PaneViewState {
             if i < 0 || i >= (self.files.len() as i32) || offset == 0 {
                 break;
             }
-            if self
-                .filter_regex
-                .as_ref()
-                .is_none_or(|re| re.is_match(&self.files[i as usize].name))
+            if self.filter_mode == FilterMode::Filter
+                || self
+                    .filter_regex
+                    .as_ref()
+                    .is_none_or(|re| re.is_match(&self.files[i as usize].name))
             {
                 new_index = i;
                 offset -= direction;

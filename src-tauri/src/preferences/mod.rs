@@ -1141,7 +1141,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "command_palette".into(),
             name: "Command Palette".into(),
-            short_name: Some("Commands".into()),
+            short_name: Some("CmdPalette".into()),
             category: "View".into(),
             default_key: Some("mod+shift+p".into()),
             default_when: None,
