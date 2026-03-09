@@ -5,19 +5,20 @@ use newt_common::operation::{
     StartOperationRequest,
 };
 use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::{lookup_descriptor, MountRequest, VfsId, VfsPath};
+use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor};
 use shell_quote::Quote;
-use tauri::ipc::Invoke;
 use tauri::Manager;
 use tauri::Window;
 use tauri::Wry;
+use tauri::ipc::Invoke;
 
 use crate::common::Error;
 
-use crate::main_window::pane::Sorting;
 use crate::main_window::OperationState;
 use crate::main_window::OperationStatus;
+use crate::main_window::pane::Sorting;
 
+use crate::GlobalContext;
 use crate::main_window::ConfirmAction;
 use crate::main_window::DndData;
 use crate::main_window::DndFile;
@@ -26,7 +27,6 @@ use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
 use crate::main_window::ModalDataKind;
 use crate::main_window::PaneHandle;
-use crate::GlobalContext;
 
 #[tauri::command]
 pub fn askpass_respond(ctx: MainWindowContext, response: Option<String>) -> Result<(), Error> {
@@ -1000,7 +1000,7 @@ pub async fn start_operation(
             "chmod".to_string(),
             format!("Setting permissions {:o} on {} item(s)", mode, paths.len()),
         ),
-        OperationRequest::RunCommand { ref command, .. } => {
+        OperationRequest::RunCommand { command, .. } => {
             ("command".to_string(), format!("Running: {}", command))
         }
     };
@@ -1504,7 +1504,10 @@ pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(
     let path = global_ctx.preferences().settings_file_path();
     // Create the file with defaults if it doesn't exist
     if !path.exists() {
-        std::fs::write(&path, "# Newt settings\n# See documentation for available options.\n\n[appearance]\n\n[behavior]\n")?;
+        std::fs::write(
+            &path,
+            "# Newt settings\n# See documentation for available options.\n\n[appearance]\n\n[behavior]\n",
+        )?;
     }
     opener::open(&path)?;
     Ok(())

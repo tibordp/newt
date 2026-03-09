@@ -167,14 +167,14 @@ impl S3Vfs {
     /// Get or create an S3 client for the given bucket's region.
     async fn client_for_bucket(&self, bucket: &str) -> Result<aws_sdk_s3::Client, Error> {
         // Check cache first
-        if let Some(region) = self.bucket_regions.lock().get(bucket).cloned() {
-            if let Some(client) = self.region_clients.lock().get(&region).cloned() {
-                debug!(
-                    "s3: client cache hit for bucket={} region={}",
-                    bucket, region
-                );
-                return Ok(client);
-            }
+        if let Some(region) = self.bucket_regions.lock().get(bucket).cloned()
+            && let Some(client) = self.region_clients.lock().get(&region).cloned()
+        {
+            debug!(
+                "s3: client cache hit for bucket={} region={}",
+                bucket, region
+            );
+            return Ok(client);
         }
 
         // Discover region via GetBucketLocation
@@ -283,10 +283,10 @@ impl S3Vfs {
             });
         }
 
-        if let Some(tx) = batch_tx {
-            if !files.is_empty() {
-                let _ = tx.send(files.clone());
-            }
+        if let Some(tx) = batch_tx
+            && !files.is_empty()
+        {
+            let _ = tx.send(files.clone());
         }
 
         Ok(files)
@@ -415,10 +415,10 @@ impl S3Vfs {
                 }
             }
 
-            if let Some(tx) = &batch_tx {
-                if !batch.is_empty() {
-                    let _ = tx.send(batch.clone());
-                }
+            if let Some(tx) = &batch_tx
+                && !batch.is_empty()
+            {
+                let _ = tx.send(batch.clone());
             }
             files.extend(batch);
 
@@ -869,11 +869,11 @@ impl S3AsyncWriter {
 impl VfsAsyncWriter for S3AsyncWriter {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         self.buffer.extend_from_slice(buf);
-        if self.buffer.len() >= MULTIPART_CHUNK_SIZE {
-            if let Err(e) = self.flush_part().await {
-                self.abort().await;
-                return Err(e);
-            }
+        if self.buffer.len() >= MULTIPART_CHUNK_SIZE
+            && let Err(e) = self.flush_part().await
+        {
+            self.abort().await;
+            return Err(e);
         }
         Ok(buf.len())
     }
@@ -881,11 +881,11 @@ impl VfsAsyncWriter for S3AsyncWriter {
     async fn finish(mut self: Box<Self>) -> Result<(), Error> {
         // Always flush remaining data (even if empty) when no parts have been
         // uploaded yet — CompleteMultipartUpload requires at least one part.
-        if self.completed_parts.is_empty() || !self.buffer.is_empty() {
-            if let Err(e) = self.flush_part_unconditional().await {
-                self.abort().await;
-                return Err(e);
-            }
+        if (self.completed_parts.is_empty() || !self.buffer.is_empty())
+            && let Err(e) = self.flush_part_unconditional().await
+        {
+            self.abort().await;
+            return Err(e);
         }
 
         let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()

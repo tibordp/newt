@@ -24,11 +24,11 @@ use main_window::MainWindowContext;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tauri::ipc::Invoke;
 use tauri::Manager;
 use tauri::State;
 use tauri::Webview;
 use tauri::Wry;
+use tauri::ipc::Invoke;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

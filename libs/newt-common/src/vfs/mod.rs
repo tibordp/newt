@@ -2,15 +2,15 @@ pub mod local;
 pub mod s3;
 pub mod sftp;
 
-pub use local::{LocalVfs, LocalVfsDescriptor, LOCAL_VFS_DESCRIPTOR};
+pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
 pub use sftp::SftpVfs;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use log::{debug, info};
@@ -20,10 +20,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
+use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails, FileReader};
 use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
 use crate::rpc::Communicator;
-use crate::Error;
 
 // ---------------------------------------------------------------------------
 // VfsId

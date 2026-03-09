@@ -1,9 +1,9 @@
 [package]
 name = "newt-common"
 version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2024"
+license = "MIT"
+description = "Shared types, RPC protocol, VFS traits, and operation logic for Newt"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

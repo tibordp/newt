@@ -2,11 +2,11 @@ use newt_common::operation::{OperationRequest, StartOperationRequest};
 use newt_common::vfs::VfsPath;
 use shell_quote::Quote;
 
+use crate::GlobalContext;
 use crate::common::Error;
 use crate::main_window::MainWindowContext;
 use crate::main_window::OperationStatus;
 use crate::main_window::PaneHandle;
-use crate::GlobalContext;
 
 // --- Template types ---
 

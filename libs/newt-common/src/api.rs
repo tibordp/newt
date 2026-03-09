@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use std::sync::atomic::AtomicU64;
 
 use crate::{
+    Error,
     file_reader::FileReader,
     filesystem::{FileList, Filesystem, ListFilesOptions, ShellService, StreamId},
     hot_paths::HotPathsProvider,
@@ -14,7 +15,6 @@ use crate::{
     rpc::{Api, Dispatcher, Message},
     terminal::TerminalClient,
     vfs::{MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
-    Error,
 };
 
 pub const API_POLL_CHANGES: Api = Api(0);
@@ -370,10 +370,10 @@ impl Dispatcher for OperationDispatcher {
             }
             API_RESOLVE_ISSUE => {
                 let request: ResolveIssueRequest = bincode::deserialize(&req[..]).unwrap();
-                if let Some(handle) = self.operations.lock().get(&request.operation_id) {
-                    if let Some(sender) = handle.issue_resolvers.lock().remove(&request.issue_id) {
-                        let _ = sender.send(request.response);
-                    }
+                if let Some(handle) = self.operations.lock().get(&request.operation_id)
+                    && let Some(sender) = handle.issue_resolvers.lock().remove(&request.issue_id)
+                {
+                    let _ = sender.send(request.response);
                 }
 
                 let ret: Result<(), Error> = Ok(());

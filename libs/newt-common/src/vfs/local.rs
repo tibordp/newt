@@ -240,10 +240,10 @@ impl Vfs for LocalVfs {
                 }
 
                 // Send any remaining entries as a final batch
-                if let Some(ref tx) = batch_tx {
-                    if !batch.is_empty() {
-                        let _ = tx.send(batch);
-                    }
+                if let Some(ref tx) = batch_tx
+                    && !batch.is_empty()
+                {
+                    let _ = tx.send(batch);
                 }
 
                 Ok(ret)
@@ -280,11 +280,9 @@ impl Vfs for LocalVfs {
                                 _ => event.paths.iter().any(|p| p.starts_with(&path)),
                             };
 
-                            if should_notify {
-                                if let Some(s) = tx.lock().take() {
-                                    debug!("{:?} (while watching {})", event, path.display());
-                                    let _ = s.send(());
-                                }
+                            if should_notify && let Some(s) = tx.lock().take() {
+                                debug!("{:?} (while watching {})", event, path.display());
+                                let _ = s.send(());
                             }
                         }
                         Err(e) => warn!("watch error: {:?}", e),
@@ -418,10 +416,8 @@ impl Vfs for LocalVfs {
                 None
             };
             let mut is_dir = meta.is_dir();
-            if is_symlink {
-                if let Ok(target_meta) = std::fs::metadata(&path) {
-                    is_dir = target_meta.is_dir();
-                }
+            if is_symlink && let Ok(target_meta) = std::fs::metadata(&path) {
+                is_dir = target_meta.is_dir();
             }
             let mode = meta.mode();
             let name = path

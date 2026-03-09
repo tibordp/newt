@@ -5,8 +5,8 @@ use tauri::ipc::CommandArg;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, State, WebviewWindow, Wry};
 
-use crate::common::{Error, UpdatePublisher};
 use crate::GlobalContext;
+use crate::common::{Error, UpdatePublisher};
 
 const LANGUAGES: &[(&str, &str)] = &[
     ("plaintext", "Plain Text"),

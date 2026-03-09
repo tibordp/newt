@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use log::info;
 use newt_common::{
+    Error,
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
         ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
@@ -11,7 +12,6 @@ use newt_common::{
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
     vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
-    Error,
 };
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};

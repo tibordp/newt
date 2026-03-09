@@ -7,7 +7,7 @@ use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
-use newt_common::vfs::{all_descriptors, lookup_descriptor, MountedVfsInfo, VfsId, VfsPath};
+use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
 use parking_lot::RwLock;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
@@ -23,9 +23,9 @@ use tauri::State;
 use tauri::WebviewWindow;
 use tauri::Wry;
 
+use crate::GlobalContext;
 use crate::common::Error;
 use crate::common::UpdatePublisher;
-use crate::GlobalContext;
 
 use self::pane::Pane;
 use self::session::Session;

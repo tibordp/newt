@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
+use crate::Error;
 use crate::filesystem::{Mode, UserGroup};
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
-use crate::Error;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileDetails {
@@ -31,7 +31,7 @@ pub struct FileChunk {
 pub trait FileReader: Send + Sync {
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
     async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
-        -> Result<FileChunk, Error>;
+    -> Result<FileChunk, Error>;
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
 }

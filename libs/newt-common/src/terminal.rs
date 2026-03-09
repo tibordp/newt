@@ -4,7 +4,7 @@ use std::{
     mem::MaybeUninit,
     os::unix::process::ExitStatusExt,
     path::PathBuf,
-    sync::{atomic::AtomicU32, Arc},
+    sync::{Arc, atomic::AtomicU32},
 };
 
 use parking_lot::Mutex;
@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use log::{debug, error, info};
 
-use crate::{rpc::Communicator, Error};
+use crate::{Error, rpc::Communicator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TerminalHandle(pub u32);

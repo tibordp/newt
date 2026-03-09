@@ -429,23 +429,23 @@ impl Vfs for SftpVfs {
         let mut files = Vec::new();
 
         // ".." entry
-        if let Some(parent) = path.parent() {
-            if parent != path {
-                files.push(File {
-                    name: "..".to_string(),
-                    size: None,
-                    is_dir: true,
-                    is_hidden: false,
-                    is_symlink: false,
-                    symlink_target: None,
-                    user: None,
-                    group: None,
-                    mode: Mode(0),
-                    modified: None,
-                    accessed: None,
-                    created: None,
-                });
-            }
+        if let Some(parent) = path.parent()
+            && parent != path
+        {
+            files.push(File {
+                name: "..".to_string(),
+                size: None,
+                is_dir: true,
+                is_hidden: false,
+                is_symlink: false,
+                symlink_target: None,
+                user: None,
+                group: None,
+                mode: Mode(0),
+                modified: None,
+                accessed: None,
+                created: None,
+            });
         }
 
         use futures::StreamExt;
@@ -475,10 +475,10 @@ impl Vfs for SftpVfs {
             files.push(file);
         }
 
-        if let Some(tx) = batch_tx {
-            if !files.is_empty() {
-                let _ = tx.send(files.clone());
-            }
+        if let Some(tx) = batch_tx
+            && !files.is_empty()
+        {
+            let _ = tx.send(files.clone());
         }
 
         Ok(files)

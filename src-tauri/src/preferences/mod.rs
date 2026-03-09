@@ -211,11 +211,11 @@ impl PreferencesManager {
             // Find and remove the entry with matching path
             let mut idx_to_remove = None;
             for (i, table) in arr.iter().enumerate() {
-                if let Some(p) = table.get("path").and_then(|v| v.as_str()) {
-                    if p == path {
-                        idx_to_remove = Some(i);
-                        break;
-                    }
+                if let Some(p) = table.get("path").and_then(|v| v.as_str())
+                    && p == path
+                {
+                    idx_to_remove = Some(i);
+                    break;
                 }
             }
             if let Some(idx) = idx_to_remove {
@@ -323,18 +323,19 @@ impl PreferencesManager {
         let mut table = toml_edit::Table::new();
         table.insert("title", toml_edit::value(&entry.title));
         table.insert("run", toml_edit::value(&entry.run));
-        if let Some(ref key) = entry.key {
-            if !key.is_empty() {
-                table.insert("key", toml_edit::value(key.as_str()));
-            }
+        if let Some(ref key) = entry.key
+            && !key.is_empty()
+        {
+            table.insert("key", toml_edit::value(key.as_str()));
         }
         if entry.terminal {
             table.insert("terminal", toml_edit::value(true));
         }
-        if let Some(ref when) = entry.when {
-            if !when.is_empty() && when != "any" {
-                table.insert("when", toml_edit::value(when.as_str()));
-            }
+        if let Some(ref when) = entry.when
+            && !when.is_empty()
+            && when != "any"
+        {
+            table.insert("when", toml_edit::value(when.as_str()));
         }
         table.set_implicit(true);
 

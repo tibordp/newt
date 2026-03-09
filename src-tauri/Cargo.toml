@@ -1,11 +1,10 @@
 [package]
 name = "newt"
 version = "0.0.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
-edition = "2021"
+description = "Dual-pane file manager"
+license = "MIT"
+repository = "https://github.com/tibordp/newt"
+edition = "2024"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

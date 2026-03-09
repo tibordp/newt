@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use crate::Error;
 use crate::rpc::Communicator;
 use crate::vfs::{VfsId, VfsPath};
-use crate::Error;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum HotPathCategory {
@@ -99,14 +99,14 @@ fn collect_standard_folders(out: &mut Vec<HotPathEntry>) {
     ];
 
     for (name, dir) in pairs {
-        if let Some(path) = dir {
-            if path.exists() {
-                out.push(make_entry(
-                    path,
-                    Some(name.to_string()),
-                    HotPathCategory::StandardFolder,
-                ));
-            }
+        if let Some(path) = dir
+            && path.exists()
+        {
+            out.push(make_entry(
+                path,
+                Some(name.to_string()),
+                HotPathCategory::StandardFolder,
+            ));
         }
     }
 }
@@ -143,10 +143,10 @@ fn collect_gtk_bookmarks(out: &mut Vec<HotPathEntry>) {
             Some(pos) => (&line[..pos], Some(line[pos + 1..].to_string())),
             None => (line, None),
         };
-        if let Some(path) = file_uri_to_path(uri_str) {
-            if path.exists() {
-                out.push(make_entry(path, label, HotPathCategory::Bookmark));
-            }
+        if let Some(path) = file_uri_to_path(uri_str)
+            && path.exists()
+        {
+            out.push(make_entry(path, label, HotPathCategory::Bookmark));
         }
     }
 }
@@ -259,8 +259,8 @@ fn unescape_mountinfo(s: &str) -> String {
 
 #[cfg(target_os = "linux")]
 fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     use std::collections::HashMap;
     use std::fs;
 
@@ -294,21 +294,20 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
                         _ => {}
                     }
                 }
-                if let Some(href) = href {
-                    if let Some(path) = file_uri_to_path(&href) {
-                        if let Some(parent) = path.parent() {
-                            let parent = parent.to_path_buf();
-                            let ts = modified.unwrap_or_default();
-                            dir_timestamps
-                                .entry(parent)
-                                .and_modify(|existing| {
-                                    if ts > *existing {
-                                        *existing = ts.clone();
-                                    }
-                                })
-                                .or_insert(ts);
-                        }
-                    }
+                if let Some(href) = href
+                    && let Some(path) = file_uri_to_path(&href)
+                    && let Some(parent) = path.parent()
+                {
+                    let parent = parent.to_path_buf();
+                    let ts = modified.unwrap_or_default();
+                    dir_timestamps
+                        .entry(parent)
+                        .and_modify(|existing| {
+                            if ts > *existing {
+                                *existing = ts.clone();
+                            }
+                        })
+                        .or_insert(ts);
                 }
             }
             Ok(Event::Eof) => break,

@@ -1,9 +1,9 @@
 [package]
 name = "newt-agent"
 version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2024"
+license = "MIT"
+description = "Agent binary for Newt remote and elevated sessions"
 
 [dependencies]
 async-compression = { version = "0.4.4", features = ["zstd", "tokio"] }

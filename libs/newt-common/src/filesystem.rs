@@ -2,16 +2,16 @@ use std::collections::HashMap;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
+use crate::Error;
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
-use crate::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StreamId(pub u64);

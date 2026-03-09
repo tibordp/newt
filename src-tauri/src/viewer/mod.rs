@@ -5,8 +5,8 @@ use tauri::ipc::CommandArg;
 use tauri::menu::{CheckMenuItem, Menu, Submenu};
 use tauri::{Manager, State, WebviewWindow, Wry};
 
-use crate::common::{Error, UpdatePublisher};
 use crate::GlobalContext;
+use crate::common::{Error, UpdatePublisher};
 
 const MODES: &[(&str, &str)] = &[
     ("text", "Text"),
@@ -50,13 +50,12 @@ impl ViewerWindow {
         let active_id = format!("viewer_mode_{}", active_mode);
         if let Ok(items) = self.menu.items() {
             for item in &items {
-                if let Some(submenu) = item.as_submenu() {
-                    if let Ok(sub_items) = submenu.items() {
-                        for sub_item in &sub_items {
-                            if let Some(check) = sub_item.as_check_menuitem() {
-                                let _ =
-                                    check.set_checked(check.id().as_ref() == active_id.as_str());
-                            }
+                if let Some(submenu) = item.as_submenu()
+                    && let Ok(sub_items) = submenu.items()
+                {
+                    for sub_item in &sub_items {
+                        if let Some(check) = sub_item.as_check_menuitem() {
+                            let _ = check.set_checked(check.id().as_ref() == active_id.as_str());
                         }
                     }
                 }

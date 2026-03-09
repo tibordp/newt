@@ -1,12 +1,12 @@
 use log::debug;
 use log::info;
 use log::warn;
-use newt_common::filesystem::resolve_vfs;
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
+use newt_common::filesystem::resolve_vfs;
 use newt_common::vfs::{Breadcrumb, VfsDescriptor, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -20,9 +20,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -775,10 +775,10 @@ impl PaneViewState {
         self.update_filter(None);
         self.selected = selected;
         self.selected.remove("..");
-        if let Some(ref f) = focused {
-            if self.file_lookup.contains_key(f) {
-                self.focused = Some(f.clone());
-            }
+        if let Some(ref f) = focused
+            && self.file_lookup.contains_key(f)
+        {
+            self.focused = Some(f.clone());
         }
         self.recompute_stats();
     }

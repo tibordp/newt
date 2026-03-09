@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use log::{debug, info, warn};
 use parking_lot::Mutex;
@@ -244,10 +244,10 @@ impl OperationsClient for Local {
     }
 
     async fn resolve_issue(&self, req: ResolveIssueRequest) -> Result<(), crate::Error> {
-        if let Some(handle) = self.operations.lock().get(&req.operation_id) {
-            if let Some(sender) = handle.issue_resolvers.lock().remove(&req.issue_id) {
-                let _ = sender.send(req.response);
-            }
+        if let Some(handle) = self.operations.lock().get(&req.operation_id)
+            && let Some(sender) = handle.issue_resolvers.lock().remove(&req.issue_id)
+        {
+            let _ = sender.send(req.response);
         }
         Ok(())
     }
@@ -1644,3 +1644,7 @@ async fn execute_move(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "operation_tests.rs"]
+mod tests;

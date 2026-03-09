@@ -1,4 +1,4 @@
-use newt_common::api::{VfsRegistryManager, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
+use newt_common::api::{API_LIST_FILES_BATCH, API_OPERATION_PROGRESS, VfsRegistryManager};
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
@@ -7,8 +7,8 @@ use newt_common::operation::{OperationContext, OperationProgress, OperationsClie
 use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
-    LocalVfs, MountedVfsInfo, VfsId, VfsManager, VfsManagerRemote, VfsPath, VfsRegistry,
-    VfsRegistryFileReader, VfsRegistryFs, LOCAL_VFS_DESCRIPTOR,
+    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, VfsId, VfsManager, VfsManagerRemote, VfsPath,
+    VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -16,13 +16,13 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Stdio;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::common::{Error, UpdatePublisher};
 
-use super::{apply_operation_progress, MainWindowState, Operations};
+use super::{MainWindowState, Operations, apply_operation_progress};
 
 /// Callback invoked when SSH needs user input (password, passphrase, host key
 /// confirmation). Returns `Some(response)` on success, `None` if the user
@@ -657,9 +657,9 @@ pub(super) async fn connect(
     session_slot: &Arc<arc_swap::ArcSwap<Option<Session>>>,
     set_status: impl Fn(&str),
     askpass_callback: impl Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    + Send
+    + Sync
+    + 'static,
 ) -> Result<(), Error> {
     let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
     let (services, stderr_log, child) = match connection_target {

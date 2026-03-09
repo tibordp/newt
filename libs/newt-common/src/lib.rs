@@ -9,6 +9,9 @@ pub mod sys;
 pub mod terminal;
 pub mod vfs;
 
+#[cfg(test)]
+mod test_support;
+
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

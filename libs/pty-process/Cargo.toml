@@ -1,22 +1,10 @@
 [package]
 name = "pty-process"
 version = "0.3.0"
-authors = ["Jesse Luehrs <doy@tozt.net>"]
-edition = "2021"
-
-description = "spawn commands attached to a pty"
-repository = "https://git.tozt.net/pty-process"
-readme = "README.md"
-keywords = ["pty", "spawn", "execute", "process"]
-categories = ["asynchronous", "command-line-interface"]
+edition = "2024"
 license = "MIT"
-include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
 
 [dependencies]
-libc = "0.2.139"
-nix = "0.26.2"
-tokio = { version = "1.26.0", features = ["fs", "process", "net"] }
-
-[dev-dependencies]
-futures = "0.3.26"
-regex = "1.7.1"
+libc = "*"
+nix = { version = "0.31", features = ["fs", "ioctl", "process", "term"] }
+tokio = { version = "*", features = ["fs", "process", "net"] }
