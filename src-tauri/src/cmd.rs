@@ -1388,6 +1388,37 @@ pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Resu
 }
 
 #[tauri::command]
+pub fn cmd_focus_panes(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        let mut opts = c.display_options.0.write();
+        opts.panes_focused = true;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn cmd_focus_terminal(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    if ctx.terminals().is_empty() {
+        let cwd = ctx.active_pane().map(|p| p.path().path);
+        ctx.create_terminal(cwd.as_deref()).await?;
+    } else {
+        ctx.with_update(|c| {
+            let mut opts = c.display_options.0.write();
+            opts.terminal_panel_visible = true;
+            opts.panes_focused = false;
+            if opts.active_terminal.is_none() {
+                opts.active_terminal = c.terminals.first_handle();
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn cmd_next_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let handles = c.terminals.handles_sorted();
@@ -1749,6 +1780,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_paste_from_clipboard,
         cmd_send_to_terminal,
         cmd_toggle_terminal_panel,
+        cmd_focus_panes,
+        cmd_focus_terminal,
         cmd_create_terminal,
         cmd_next_terminal,
         cmd_prev_terminal,

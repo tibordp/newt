@@ -32,6 +32,8 @@ pub struct ResolvedBinding {
 pub struct CommandInfo {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_name: Option<String>,
     pub category: String,
     pub shortcut: Option<String>,
     pub shortcut_display: Vec<String>,
@@ -497,6 +499,20 @@ impl PreferencesManager {
             }
         }
 
+        // Extra default aliases (commands with multiple default keys)
+        bindings.push((
+            "shift+delete".into(),
+            "delete_selected".into(),
+            Some("pane_focused".into()),
+        ));
+        if cfg!(target_os = "macos") {
+            bindings.push((
+                "meta+backspace".into(),
+                "delete_selected".into(),
+                Some("pane_focused".into()),
+            ));
+        }
+
         // 2. User overrides
         for entry in &user_file.bindings {
             bindings.push((entry.key.clone(), entry.command.clone(), entry.when.clone()));
@@ -545,6 +561,7 @@ impl PreferencesManager {
                 CommandInfo {
                     id: def.id.clone(),
                     name: def.name.clone(),
+                    short_name: def.short_name.clone(),
                     category: def.category.clone(),
                     shortcut,
                     shortcut_display,
@@ -569,6 +586,7 @@ impl PreferencesManager {
             commands.push(CommandInfo {
                 id: cmd_id,
                 name: uc.title.clone(),
+                short_name: None,
                 category: "User".to_string(),
                 shortcut,
                 shortcut_display,
@@ -769,6 +787,7 @@ fn json_to_toml_edit_value(value: &serde_json::Value) -> Result<toml_edit::Value
 pub struct CommandDef {
     pub id: String,
     pub name: String,
+    pub short_name: Option<String>,
     pub category: String,
     pub default_key: Option<String>,
     pub default_when: Option<String>,
@@ -780,6 +799,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "new_window".into(),
             name: "New Window".into(),
+            short_name: None,
             category: "File".into(),
             default_key: Some("mod+n".into()),
             default_when: None,
@@ -788,6 +808,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "copy_pane".into(),
             name: "As Other Pane".into(),
+            short_name: None,
             category: "Navigation".into(),
             default_key: Some("mod+.".into()),
             default_when: Some("pane_focused".into()),
@@ -796,6 +817,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "select_all".into(),
             name: "Select All".into(),
+            short_name: None,
             category: "Selection".into(),
             default_key: Some("mod+a".into()),
             default_when: Some("pane_focused".into()),
@@ -804,6 +826,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "deselect_all".into(),
             name: "Clear Selection".into(),
+            short_name: None,
             category: "Selection".into(),
             default_key: Some("mod+d".into()),
             default_when: Some("pane_focused".into()),
@@ -812,6 +835,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "view".into(),
             name: "View".into(),
+            short_name: None,
             category: "File".into(),
             default_key: Some("f3".into()),
             default_when: Some("pane_focused".into()),
@@ -820,6 +844,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "edit".into(),
             name: "Edit".into(),
+            short_name: None,
             category: "File".into(),
             default_key: Some("f4".into()),
             default_when: Some("pane_focused".into()),
@@ -828,6 +853,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "rename".into(),
             name: "Rename...".into(),
+            short_name: Some("Rename".into()),
             category: "File".into(),
             default_key: Some("f2".into()),
             default_when: Some("pane_focused".into()),
@@ -836,6 +862,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "properties".into(),
             name: "File Properties...".into(),
+            short_name: Some("Props".into()),
             category: "File".into(),
             default_key: Some("alt+enter".into()),
             default_when: Some("pane_focused".into()),
@@ -844,14 +871,16 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "delete_selected".into(),
             name: "Delete Selected".into(),
+            short_name: Some("Delete".into()),
             category: "File".into(),
-            default_key: Some("shift+delete".into()),
+            default_key: Some("f8".into()),
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },
         CommandDef {
             id: "create_directory".into(),
             name: "Create Directory...".into(),
+            short_name: Some("MkDir".into()),
             category: "File".into(),
             default_key: Some("f7".into()),
             default_when: Some("pane_focused".into()),
@@ -860,6 +889,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "create_file".into(),
             name: "Create File...".into(),
+            short_name: Some("MkFile".into()),
             category: "File".into(),
             default_key: None,
             default_when: Some("pane_focused".into()),
@@ -868,6 +898,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "create_and_edit".into(),
             name: "Create and Edit File...".into(),
+            short_name: Some("New+Edit".into()),
             category: "File".into(),
             default_key: Some("shift+f4".into()),
             default_when: Some("pane_focused".into()),
@@ -876,6 +907,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "navigate".into(),
             name: "Go To...".into(),
+            short_name: Some("Go To".into()),
             category: "Navigation".into(),
             default_key: Some("mod+l".into()),
             default_when: Some("pane_focused".into()),
@@ -884,6 +916,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "open".into(),
             name: "Open in Default App".into(),
+            short_name: Some("Open".into()),
             category: "File".into(),
             default_key: None,
             default_when: Some("pane_focused".into()),
@@ -892,6 +925,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "follow_symlink".into(),
             name: "Follow Symlink".into(),
+            short_name: None,
             category: "Navigation".into(),
             default_key: Some("shift+enter".into()),
             default_when: Some("pane_focused".into()),
@@ -900,6 +934,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "navigate_back".into(),
             name: "Navigate Back".into(),
+            short_name: Some("Back".into()),
             category: "Navigation".into(),
             default_key: Some("alt+left".into()),
             default_when: Some("pane_focused".into()),
@@ -908,6 +943,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "navigate_forward".into(),
             name: "Navigate Forward".into(),
+            short_name: Some("Forward".into()),
             category: "Navigation".into(),
             default_key: Some("alt+right".into()),
             default_when: Some("pane_focused".into()),
@@ -916,6 +952,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "send_to_terminal".into(),
             name: "Open in Terminal".into(),
+            short_name: Some("Terminal".into()),
             category: "Terminal".into(),
             default_key: Some("mod+enter".into()),
             default_when: Some("pane_focused".into()),
@@ -924,6 +961,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "copy".into(),
             name: "Copy to Other Pane...".into(),
+            short_name: Some("Copy".into()),
             category: "File".into(),
             default_key: Some("f5".into()),
             default_when: Some("pane_focused".into()),
@@ -932,6 +970,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "move".into(),
             name: "Move to Other Pane...".into(),
+            short_name: Some("Move".into()),
             category: "File".into(),
             default_key: Some("f6".into()),
             default_when: Some("pane_focused".into()),
@@ -940,6 +979,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "copy_to_clipboard".into(),
             name: "Copy Path to Clipboard".into(),
+            short_name: Some("CopyPath".into()),
             category: "Edit".into(),
             default_key: Some("mod+c".into()),
             default_when: Some("pane_focused".into()),
@@ -948,6 +988,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "paste_from_clipboard".into(),
             name: "Paste Path from Clipboard".into(),
+            short_name: Some("PastePath".into()),
             category: "Edit".into(),
             default_key: Some("mod+v".into()),
             default_when: Some("pane_focused".into()),
@@ -956,6 +997,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "toggle_hidden".into(),
             name: "Toggle Hidden Files".into(),
+            short_name: Some("Hidden".into()),
             category: "View".into(),
             default_key: Some("mod+h".into()),
             default_when: None,
@@ -964,6 +1006,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "close_window".into(),
             name: "Close Window".into(),
+            short_name: Some("Close".into()),
             category: "File".into(),
             default_key: Some("mod+w".into()),
             default_when: None,
@@ -972,6 +1015,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "reload_window".into(),
             name: "Reload Window".into(),
+            short_name: Some("Reload".into()),
             category: "View".into(),
             default_key: None,
             default_when: None,
@@ -980,6 +1024,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "connect_remote".into(),
             name: "Connect to Remote Host...".into(),
+            short_name: Some("Remote".into()),
             category: "File".into(),
             default_key: Some("mod+shift+r".into()),
             default_when: None,
@@ -988,6 +1033,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "open_elevated".into(),
             name: "Open Elevated".into(),
+            short_name: None,
             category: "File".into(),
             default_key: None,
             default_when: None,
@@ -996,6 +1042,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "select_vfs".into(),
             name: "Select Filesystem".into(),
+            short_name: Some("VFS".into()),
             category: "Navigation".into(),
             default_key: Some("mod+shift+l".into()),
             default_when: Some("pane_focused".into()),
@@ -1004,6 +1051,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "mount_s3".into(),
             name: "Mount S3".into(),
+            short_name: None,
             category: "Navigation".into(),
             default_key: None,
             default_when: None,
@@ -1012,6 +1060,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "mount_sftp".into(),
             name: "Mount SFTP...".into(),
+            short_name: Some("SFTP".into()),
             category: "Navigation".into(),
             default_key: None,
             default_when: None,
@@ -1020,6 +1069,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "open_folder".into(),
             name: "Open Folder in Default File Manager".into(),
+            short_name: Some("Reveal".into()),
             category: "File".into(),
             default_key: Some("shift+f3".into()),
             default_when: Some("pane_focused".into()),
@@ -1028,14 +1078,34 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "toggle_terminal_panel".into(),
             name: "Toggle Terminal".into(),
+            short_name: None,
             category: "Terminal".into(),
             default_key: Some("ctrl+`".into()),
             default_when: None,
             needs_pane: false,
         },
         CommandDef {
+            id: "focus_panes".into(),
+            name: "Focus File Panes".into(),
+            short_name: Some("Panes".into()),
+            category: "Navigation".into(),
+            default_key: Some("alt+up".into()),
+            default_when: None,
+            needs_pane: false,
+        },
+        CommandDef {
+            id: "focus_terminal".into(),
+            name: "Focus Terminal".into(),
+            short_name: Some("Terminal".into()),
+            category: "Navigation".into(),
+            default_key: Some("alt+down".into()),
+            default_when: None,
+            needs_pane: false,
+        },
+        CommandDef {
             id: "create_terminal".into(),
             name: "New Terminal".into(),
+            short_name: None,
             category: "Terminal".into(),
             default_key: Some("ctrl+shift+~".into()),
             default_when: None,
@@ -1044,6 +1114,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "next_terminal".into(),
             name: "Next Terminal".into(),
+            short_name: None,
             category: "Terminal".into(),
             default_key: Some("ctrl+pagedown".into()),
             default_when: None,
@@ -1052,6 +1123,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "prev_terminal".into(),
             name: "Previous Terminal".into(),
+            short_name: None,
             category: "Terminal".into(),
             default_key: Some("ctrl+pageup".into()),
             default_when: None,
@@ -1060,6 +1132,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "open_settings".into(),
             name: "Open Settings".into(),
+            short_name: Some("Settings".into()),
             category: "File".into(),
             default_key: Some("mod+,".into()),
             default_when: None,
@@ -1068,6 +1141,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "command_palette".into(),
             name: "Command Palette".into(),
+            short_name: Some("Commands".into()),
             category: "View".into(),
             default_key: Some("mod+shift+p".into()),
             default_when: None,
@@ -1076,6 +1150,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "hot_paths".into(),
             name: "Hot Paths".into(),
+            short_name: None,
             category: "Navigation".into(),
             default_key: Some("mod+p".into()),
             default_when: None,
@@ -1084,6 +1159,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "user_commands".into(),
             name: "User Commands".into(),
+            short_name: None,
             category: "View".into(),
             default_key: Some("f9".into()),
             default_when: Some("pane_focused".into()),
@@ -1092,6 +1168,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "add_bookmark".into(),
             name: "Add Current Path to Bookmarks".into(),
+            short_name: Some("Bookmark".into()),
             category: "Navigation".into(),
             default_key: Some("mod+b".into()),
             default_when: Some("pane_focused".into()),

@@ -26,6 +26,9 @@ pub struct AppearancePreferences {
     /// Always show folders before files regardless of sort order.
     #[schemars(title = "Folders First")]
     pub folders_first: bool,
+    /// Show the F-key command bar at the bottom of the window.
+    #[schemars(title = "Show Command Bar")]
+    pub show_command_bar: bool,
 }
 
 impl Default for AppearancePreferences {
@@ -33,6 +36,7 @@ impl Default for AppearancePreferences {
         Self {
             show_hidden: false,
             folders_first: true,
+            show_command_bar: true,
         }
     }
 }

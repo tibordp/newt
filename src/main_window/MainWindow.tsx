@@ -28,6 +28,7 @@ import { MainWindowState } from "./types";
 import Pane from "./Pane";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
+import CommandBar from "./CommandBar";
 
 enablePatches();
 
@@ -219,6 +220,9 @@ function App() {
                   operations={remoteState.operations}
                   foregroundOperationId={foregroundOp?.id}
                 />
+              )}
+              {preferences?.settings.appearance.show_command_bar && (
+                <CommandBar state={remoteState} preferences={preferences} />
               )}
             </>
           )}

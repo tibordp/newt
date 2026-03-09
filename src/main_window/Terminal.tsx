@@ -111,6 +111,9 @@ export default function Terminal({
       // Ctrl+PageDown / Ctrl+PageUp — cycle tabs
       if (e.ctrlKey && (e.key === "PageDown" || e.key === "PageUp"))
         return false;
+      // Alt+Up / Alt+Down — focus panes / terminal
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown"))
+        return false;
       return true;
     });
 

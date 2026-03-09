@@ -12,6 +12,7 @@ export type ResolvedBinding = {
 export type CommandInfo = {
   id: string;
   name: string;
+  short_name?: string;
   category: string;
   shortcut?: string;
   shortcut_display: string[];
@@ -22,6 +23,7 @@ export type CommandInfo = {
 export type AppPreferences = {
   appearance: {
     show_hidden: boolean;
+    show_command_bar: boolean;
   };
   behavior: {
     confirm_delete: boolean;
