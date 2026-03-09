@@ -22,12 +22,15 @@ export default function TerminalPanel({
         {terminals.map((term, i) => (
           <button
             key={term.handle}
-            className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""}`}
+            className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""} ${term.defunct ? styles.defunct : ""}`}
             onClick={() =>
               safeCommandSilent("activate_terminal", { handle: term.handle })
             }
           >
-            <span>Terminal {i + 1}</span>
+            <span>
+              Terminal {i + 1}
+              {term.defunct ? " (exited)" : ""}
+            </span>
             <span
               className={styles.tabClose}
               onClick={(e) => {
@@ -58,6 +61,7 @@ export default function TerminalPanel({
               active={!panesFocused && term.handle === activeTerminal}
               visible={term.handle === activeTerminal}
               modalOpen={modalOpen}
+              defunct={term.defunct}
             />
           </div>
         ))}

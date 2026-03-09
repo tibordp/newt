@@ -24,6 +24,7 @@ export type AppPreferences = {
   appearance: {
     show_hidden: boolean;
     show_command_bar: boolean;
+    theme: "system" | "light" | "dark";
   };
   behavior: {
     confirm_delete: boolean;

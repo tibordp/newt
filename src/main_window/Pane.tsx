@@ -209,11 +209,15 @@ function VfsSelector({
   open: boolean;
   onRestoreFocus: () => void;
 }) {
+  // Track when we're opening a mount dialog so we don't steal focus back
+  const openingDialogRef = useRef(false);
+
   return (
     <DropdownMenu.Root
       open={open}
       onOpenChange={(v) => {
-        if (!v) safeCommand("close_modal");
+        if (!v && !openingDialogRef.current) safeCommand("close_modal");
+        openingDialogRef.current = false;
       }}
     >
       <DropdownMenu.Trigger asChild>
@@ -242,7 +246,9 @@ function VfsSelector({
           loop
           onCloseAutoFocus={(e) => {
             e.preventDefault();
-            onRestoreFocus();
+            if (!openingDialogRef.current) {
+              onRestoreFocus();
+            }
           }}
         >
           {vfsTargets.map((target, i) => {
@@ -259,6 +265,7 @@ function VfsSelector({
                   // side, which updates `open` via props.
                   e.preventDefault();
                   if (target.vfs_id == null && target.mount_dialog) {
+                    openingDialogRef.current = true;
                     safeCommand("dialog", {
                       paneHandle,
                       dialog: target.mount_dialog,
@@ -280,6 +287,21 @@ function VfsSelector({
                 </span>
                 {isActive && (
                   <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                )}
+                {target.vfs_id != null && target.type_name !== "local" && (
+                  <button
+                    className={menuStyles.itemDismiss}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      safeCommand("unmount_vfs", {
+                        paneHandle,
+                        vfsId: target.vfs_id,
+                      });
+                    }}
+                    tabIndex={-1}
+                  >
+                    {"\u2715"}
+                  </button>
                 )}
               </DropdownMenu.Item>
             );

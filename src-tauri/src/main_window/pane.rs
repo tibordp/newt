@@ -731,6 +731,13 @@ impl PaneViewState {
         }
     }
 
+    /// Clear only if in QuickSearch mode; Filter mode persists across selection changes.
+    fn clear_quick_search(&mut self) {
+        if self.filter_mode != FilterMode::Filter {
+            self.clear_filter();
+        }
+    }
+
     fn apply_visual_filter(&mut self) {
         if self.filter_mode != FilterMode::Filter {
             return;
@@ -824,7 +831,7 @@ impl PaneViewState {
         }
         self.selected.remove("..");
 
-        self.clear_filter();
+        self.clear_quick_search();
         if focus_next {
             self.relative_jump(1, false);
         } else {
@@ -835,7 +842,7 @@ impl PaneViewState {
     }
 
     pub fn select_range(&mut self, filename: String) {
-        self.clear_filter();
+        self.clear_quick_search();
         let Some(&start_index) = self
             .focused
             .as_deref()
@@ -858,20 +865,20 @@ impl PaneViewState {
     }
 
     pub fn select_all(&mut self) {
-        self.clear_filter();
+        self.clear_quick_search();
         self.selected = self.file_lookup.keys().cloned().collect();
         self.selected.remove("..");
         self.recompute_stats();
     }
 
     pub fn deselect_all(&mut self) {
-        self.clear_filter();
+        self.clear_quick_search();
         self.selected.clear();
         self.recompute_stats();
     }
 
     pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
-        self.clear_filter();
+        self.clear_quick_search();
         self.selected = selected;
         self.selected.remove("..");
         if let Some(ref f) = focused

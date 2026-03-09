@@ -24,8 +24,6 @@ Requires registering a filesystem dispatcher on the Tauri side of the RPC channe
 ## Bug fixes and strengthening
 
 - S3 connect dialog with the ability to pick profile or enter credentials manually.
-- SFTP dialog not focusing when selected from the VFS dropdown
-- Ability to unmount VFSes
 
 ## Customizability
 

@@ -10,7 +10,8 @@ type SettingDef = {
   title: string;
   description: string;
   category: string;
-  type: "boolean" | "string" | "number";
+  type: "boolean" | "string" | "number" | "enum";
+  enumValues?: string[];
   value: any;
 };
 
@@ -50,15 +51,25 @@ function extractSettings(preferences: PreferencesState): SettingDef[] {
     const catSchema = resolveSchema(schema, rawCatSchema);
     if (catSchema?.type !== "object" || !catSchema.properties) continue;
 
-    for (const [prop, propSchema] of Object.entries(catSchema.properties) as [
-      string,
-      any,
-    ][]) {
+    for (const [prop, rawPropSchema] of Object.entries(
+      catSchema.properties,
+    ) as [string, any][]) {
+      const propSchema = resolveSchema(schema, rawPropSchema);
       const key = `${category}.${prop}`;
-      const title = propSchema.title || prop.replace(/_/g, " ");
-      const description = propSchema.description || "";
-      const type =
-        propSchema.type === "boolean"
+      const title =
+        rawPropSchema.title || propSchema.title || prop.replace(/_/g, " ");
+      const description =
+        rawPropSchema.description || propSchema.description || "";
+
+      // Detect string enums (schemars emits { type: "string", enum: [...] })
+      const enumValues: string[] | undefined =
+        propSchema.type === "string" && Array.isArray(propSchema.enum)
+          ? propSchema.enum
+          : undefined;
+
+      const type = enumValues
+        ? "enum"
+        : propSchema.type === "boolean"
           ? "boolean"
           : propSchema.type === "integer" || propSchema.type === "number"
             ? "number"
@@ -72,6 +83,7 @@ function extractSettings(preferences: PreferencesState): SettingDef[] {
         description,
         category,
         type,
+        enumValues,
         value,
       });
     }
@@ -104,6 +116,19 @@ function SettingControl({
           onChange={(e) => onUpdate(setting.key, Number(e.target.value))}
           style={{ width: "80px" }}
         />
+      );
+    case "enum":
+      return (
+        <select
+          value={setting.value ?? setting.enumValues?.[0] ?? ""}
+          onChange={(e) => onUpdate(setting.key, e.target.value)}
+        >
+          {setting.enumValues?.map((v) => (
+            <option key={v} value={v}>
+              {v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+            </option>
+          ))}
+        </select>
       );
     case "string":
       return (

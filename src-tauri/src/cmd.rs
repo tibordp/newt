@@ -1321,6 +1321,53 @@ pub async fn switch_vfs(
 }
 
 #[tauri::command]
+pub async fn cmd_unmount_vfs(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx
+        .panes()
+        .get(pane_handle)
+        .ok_or_else(|| Error::Custom("pane not found".into()))?;
+    let vfs_id = pane.path().vfs_id;
+    if vfs_id == VfsId::ROOT {
+        return Ok(());
+    }
+
+    // Navigate any panes using this VFS back to local root
+    for pane in ctx.panes().all() {
+        if pane.path().vfs_id == vfs_id {
+            pane.navigate_to(VfsPath::root("/")).await?;
+        }
+    }
+
+    ctx.unmount_vfs(vfs_id).await?;
+    let _ = ctx.publish();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unmount_vfs(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    vfs_id: VfsId,
+) -> Result<(), Error> {
+    // Navigate any panes using this VFS back to local root
+    for pane in ctx.panes().all() {
+        if pane.path().vfs_id == vfs_id {
+            pane.navigate_to(VfsPath::root("/")).await?;
+        }
+    }
+
+    ctx.unmount_vfs(vfs_id).await?;
+
+    // Close the modal (VFS selector dropdown) and refresh
+    ctx.with_pane_update(pane_handle, |gs, _pane| {
+        gs.close_modal();
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn cmd_create_terminal(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
@@ -1729,6 +1776,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         crate::editor::ping_editor,
         connect_remote,
         switch_vfs,
+        unmount_vfs,
         // Terminal
         terminal_write,
         terminal_resize,
@@ -1793,6 +1841,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_open_elevated,
         cmd_mount_s3,
         cmd_mount_sftp,
+        cmd_unmount_vfs,
         mount_sftp,
         cmd_hot_paths,
         cmd_add_bookmark,

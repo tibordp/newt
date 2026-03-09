@@ -2,7 +2,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::ipc::CommandArg;
-use tauri::menu::{CheckMenuItem, Menu, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
 use tauri::{Manager, State, WebviewWindow, Wry};
 
 use crate::GlobalContext;
@@ -107,7 +107,13 @@ pub fn create_viewer_window(
 
     // Register menu event handler
     let viewer_weak = Arc::downgrade(&viewer);
+    let window_clone = window.clone();
     app_handle.on_menu_event(move |_app_handle, event| {
+        if event.id().as_ref() == "viewer_close" {
+            let _ = window_clone.destroy();
+            return;
+        }
+
         let viewer = match viewer_weak.upgrade() {
             Some(v) => v,
             None => return,
@@ -148,7 +154,14 @@ fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
         .map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>)
         .collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
-    Ok(Menu::with_items(app_handle, &[&view_submenu])?)
+
+    let close_item = MenuItem::with_id(app_handle, "viewer_close", "Close", true, Some("Escape"))?;
+    let file_submenu = Submenu::with_items(app_handle, "File", true, &[&close_item])?;
+
+    Ok(Menu::with_items(
+        app_handle,
+        &[&file_submenu, &view_submenu],
+    )?)
 }
 
 // --- Tauri commands ---

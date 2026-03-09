@@ -29,6 +29,28 @@ pub struct AppearancePreferences {
     /// Show the F-key command bar at the bottom of the window.
     #[schemars(title = "Show Command Bar")]
     pub show_command_bar: bool,
+    /// Color theme: "system" follows OS preference, or force "light" / "dark".
+    #[schemars(title = "Theme")]
+    pub theme: ThemeMode,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    pub fn to_tauri_theme(&self) -> Option<tauri::Theme> {
+        match self {
+            ThemeMode::System => None,
+            ThemeMode::Light => Some(tauri::Theme::Light),
+            ThemeMode::Dark => Some(tauri::Theme::Dark),
+        }
+    }
 }
 
 impl Default for AppearancePreferences {
@@ -37,6 +59,7 @@ impl Default for AppearancePreferences {
             show_hidden: false,
             folders_first: true,
             show_command_bar: true,
+            theme: ThemeMode::default(),
         }
     }
 }
@@ -47,12 +70,16 @@ pub struct BehaviorPreferences {
     /// Ask for confirmation before deleting files.
     #[schemars(title = "Confirm Delete")]
     pub confirm_delete: bool,
+    /// Keep terminal tab open after the shell process exits.
+    #[schemars(title = "Keep Terminal Open After Exit")]
+    pub keep_terminal_open: bool,
 }
 
 impl Default for BehaviorPreferences {
     fn default() -> Self {
         Self {
             confirm_delete: true,
+            keep_terminal_open: true,
         }
     }
 }

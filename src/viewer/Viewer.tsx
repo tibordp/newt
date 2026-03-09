@@ -1149,27 +1149,14 @@ interface PdfViewerProps {
 }
 
 function PdfViewer({ filePath, fileUrl, fileSize }: PdfViewerProps) {
-  const viewerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [pdfError, setPdfError] = useState(false);
 
-  useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      safeCommand("close_window");
-      e.preventDefault();
-    }
-  }, []);
+  // Escape is handled by the native menu accelerator (Rust side) so it works
+  // even when the iframe plugin has focus and doesn't bubble key events.
 
   return (
-    <div
-      className={styles.viewer}
-      ref={viewerRef}
-      tabIndex={-1}
-      onKeyDown={handleKeyDown}
-    >
+    <div className={styles.viewer}>
       {pdfError ? (
         <div className={styles.mediaContent}>
           <div className={styles.imageErrorMessage}>
@@ -1177,10 +1164,23 @@ function PdfViewer({ filePath, fileUrl, fileSize }: PdfViewerProps) {
           </div>
         </div>
       ) : (
-        <embed
+        <iframe
+          ref={iframeRef}
           className={styles.pdfEmbed}
-          type="application/pdf"
           src={fileUrl}
+          onLoad={() => {
+            try {
+              const doc = iframeRef.current?.contentDocument;
+              if (doc?.body) {
+                doc.body.tabIndex = -1;
+                doc.body.focus();
+              } else {
+                iframeRef.current?.contentWindow?.focus();
+              }
+            } catch {
+              iframeRef.current?.focus();
+            }
+          }}
           onError={() => setPdfError(true)}
         />
       )}

@@ -1067,6 +1067,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "unmount_vfs".into(),
+            name: "Disconnect VFS".into(),
+            short_name: None,
+            category: "Navigation".into(),
+            default_key: None,
+            default_when: None,
+            needs_pane: true,
+        },
+        CommandDef {
             id: "open_folder".into(),
             name: "Open Folder in Default File Manager".into(),
             short_name: Some("Reveal".into()),

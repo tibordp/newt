@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use log::info;
 
@@ -25,12 +26,27 @@ pub struct TerminalData {
     pub data: Vec<u8>,
 }
 
-#[derive(serde::Serialize)]
 pub struct Terminal {
     pub handle: TerminalHandle,
-    pub defunct: bool,
-    #[serde(skip)]
+    defunct: AtomicBool,
+    #[allow(dead_code)]
     terminal_client: Arc<dyn TerminalClient>,
+}
+
+impl Terminal {
+    pub fn is_defunct(&self) -> bool {
+        self.defunct.load(Ordering::Relaxed)
+    }
+}
+
+impl serde::Serialize for Terminal {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("Terminal", 2)?;
+        s.serialize_field("handle", &self.handle)?;
+        s.serialize_field("defunct", &self.is_defunct())?;
+        s.end()
+    }
 }
 
 impl Terminal {
@@ -46,7 +62,7 @@ impl Terminal {
         Self {
             handle,
             terminal_client,
-            defunct: false,
+            defunct: AtomicBool::new(false),
         }
     }
 
@@ -68,7 +84,7 @@ impl Terminal {
         Ok(Self {
             handle,
             terminal_client,
-            defunct: false,
+            defunct: AtomicBool::new(false),
         })
     }
 
@@ -81,11 +97,12 @@ impl Terminal {
         tauri::async_runtime::spawn({
             let terminal_client = terminal_client.clone();
             async move {
+                let window_clone = window.clone();
                 let reader = tauri::async_runtime::spawn({
                     let terminal_client = terminal_client.clone();
                     async move {
                         while let Some(data) = terminal_client.read(handle).await? {
-                            window.emit("terminal_data", TerminalData { handle, data })?;
+                            window_clone.emit("terminal_data", TerminalData { handle, data })?;
                         }
 
                         Ok::<_, Error>(())
@@ -93,23 +110,59 @@ impl Terminal {
                 });
 
                 let exited = terminal_client.wait(handle);
-                tokio::select! {
-                    _ = exited => {},
-                    _ = reader => {},
-                }
+                let exit_status = tokio::select! {
+                    status = exited => Some(status),
+                    _ = reader => None,
+                };
 
                 terminal_client.kill(handle).await?;
                 info!("Terminal exited.");
 
+                let keep_open = context.preferences().load().behavior.keep_terminal_open;
+
+                if keep_open {
+                    // Print exit message to the terminal
+                    let msg = match exit_status {
+                        Some(Ok(ref s)) if s.signal.is_some() => {
+                            format!(
+                                "\r\n\x1b[90m[Process killed by signal {}. Press Enter to close.]\x1b[0m",
+                                s.signal.unwrap()
+                            )
+                        }
+                        Some(Ok(ref s)) => {
+                            let code = s.code.unwrap_or(0);
+                            format!(
+                                "\r\n\x1b[90m[Process exited with code {code}. Press Enter to close.]\x1b[0m"
+                            )
+                        }
+                        _ => {
+                            "\r\n\x1b[90m[Process exited. Press Enter to close.]\x1b[0m".to_string()
+                        }
+                    };
+                    let _ = window.emit(
+                        "terminal_data",
+                        TerminalData {
+                            handle,
+                            data: msg.into_bytes(),
+                        },
+                    );
+                }
+
                 context.with_update(|c| {
-                    c.terminals.remove(handle);
-                    let mut opts = c.display_options.0.write();
-                    if opts.active_terminal == Some(handle) {
-                        opts.active_terminal = c.terminals.first_handle();
-                    }
-                    if c.terminals.is_empty() {
-                        opts.terminal_panel_visible = false;
-                        opts.panes_focused = true;
+                    if keep_open {
+                        if let Some(term) = c.terminals.get(handle) {
+                            term.defunct.store(true, Ordering::Relaxed);
+                        }
+                    } else {
+                        c.terminals.remove(handle);
+                        let mut opts = c.display_options.0.write();
+                        if opts.active_terminal == Some(handle) {
+                            opts.active_terminal = c.terminals.first_handle();
+                        }
+                        if c.terminals.is_empty() {
+                            opts.terminal_panel_visible = false;
+                            opts.panes_focused = true;
+                        }
                     }
                     Ok(())
                 })?;

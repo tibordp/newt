@@ -428,7 +428,11 @@ pub async fn run_user_command(
         return Ok(());
     }
 
-    // No prompts/confirms — execute directly
+    // No prompts/confirms — close modal and execute directly
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })?;
     let pane_dir = pane_path.path.clone();
     execute_rendered(&ctx, &uc.title, rendered, pane_dir, uc.terminal).await
 }

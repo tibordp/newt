@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, ReactElement } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { invoke } from "@tauri-apps/api/core";
 import { safeCommand } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { VfsPath } from "../../lib/types";
+import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
 
 type HotPathCategory =
@@ -38,34 +39,6 @@ const CATEGORY_ORDER: HotPathCategory[] = [
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
-function Highlight({ text, filter }: { text: string; filter: string }) {
-  let a = 0;
-  let b = 0;
-  let key = 0;
-  const parts: ReactElement[] = [];
-
-  while (a < filter.length && b < text.length) {
-    if (filter[a].toLowerCase() === text[b].toLowerCase()) {
-      parts.push(
-        <span key={key++} className={styles.highlight}>
-          {text[b]}
-        </span>,
-      );
-      a++;
-      b++;
-    } else {
-      parts.push(<span key={key++}>{text[b]}</span>);
-      b++;
-    }
-  }
-
-  if (b < text.length) {
-    parts.push(<span key={key}>{text.slice(b)}</span>);
-  }
-
-  return <span>{parts}</span>;
-}
-
 function displayPath(entry: HotPathEntry): string {
   return entry.path.path;
 }
@@ -74,33 +47,6 @@ function searchableText(entry: HotPathEntry): string {
   const parts = [entry.path.path];
   if (entry.name) parts.push(entry.name);
   return parts.join(" ");
-}
-
-function fuzzyMatch(
-  filter: string,
-  text: string,
-): { matches: boolean; score: number } {
-  let a = 0;
-  let b = 0;
-  let consecutive = 0;
-  let maxConsecutive = 0;
-
-  while (a < filter.length && b < text.length) {
-    if (filter[a].toLowerCase() === text[b].toLowerCase()) {
-      consecutive++;
-      a++;
-      b++;
-    } else {
-      maxConsecutive = Math.max(maxConsecutive, consecutive);
-      consecutive = 0;
-      b++;
-    }
-  }
-
-  return {
-    matches: a === filter.length,
-    score: Math.max(maxConsecutive, consecutive),
-  };
 }
 
 export default function HotPaths({ state }: { state: MainWindowState | null }) {
@@ -201,7 +147,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
     return group.items[parseInt(idxStr, 10)] ?? null;
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (pendingDelete !== null) {
       // While confirming: Enter/Y confirms, N cancels
       // (Escape is handled by onEscapeKeyDown on Dialog.Content)
@@ -241,7 +187,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
       }}
     >
       <Dialog.Title className="sr-only">Hot Paths</Dialog.Title>
-      <Command shouldFilter={false} onKeyDown={onKeyDown}>
+      <Palette shouldFilter={false} onKeyDown={onKeyDown}>
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -297,12 +243,17 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                           {entry.name ? (
                             <>
                               <span className={styles.name}>
-                                <Highlight text={entry.name} filter={filter} />
+                                <Highlight
+                                  text={entry.name}
+                                  filter={filter}
+                                  highlightClass={styles.highlight}
+                                />
                               </span>
                               <span className={styles.path}>
                                 <Highlight
                                   text={displayPath(entry)}
                                   filter={filter}
+                                  highlightClass={styles.highlight}
                                 />
                               </span>
                             </>
@@ -311,6 +262,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                               <Highlight
                                 text={displayPath(entry)}
                                 filter={filter}
+                                highlightClass={styles.highlight}
                               />
                             </span>
                           )}
@@ -333,7 +285,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
             </Command.Group>
           ))}
         </Command.List>
-      </Command>
+      </Palette>
     </Dialog.Content>
   );
 }

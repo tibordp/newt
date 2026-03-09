@@ -192,8 +192,6 @@ fn main() {
         None => "Newt".to_string(),
     };
 
-    let theme = detect_theme();
-
     let ct = connection_target.clone();
     let wt = window_title.clone();
     let global_ctx = GlobalContext::default();
@@ -206,6 +204,15 @@ fn main() {
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle());
 
+            let theme = global_ctx
+                .preferences()
+                .handle()
+                .load()
+                .appearance
+                .theme
+                .to_tauri_theme()
+                .or_else(detect_theme);
+
             let window =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title(&wt)
@@ -215,11 +222,29 @@ fn main() {
                     .build()?;
 
             let prefs_handle = global_ctx.preferences().handle();
-            let ctx = MainWindowContext::new(window, ct.clone(), wt.clone(), prefs_handle);
+            let ctx = MainWindowContext::new(window.clone(), ct.clone(), wt.clone(), prefs_handle);
             global_ctx
                 .main_windows
                 .lock()
                 .insert("main".to_string(), ctx.clone());
+
+            // Watch for theme preference changes and apply live
+            {
+                let mut prefs_rx = global_ctx.preferences().handle().subscribe();
+                let prefs = global_ctx.preferences().handle();
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    while prefs_rx.changed().await.is_ok() {
+                        let theme = prefs
+                            .load()
+                            .appearance
+                            .theme
+                            .to_tauri_theme()
+                            .or_else(detect_theme);
+                        let _ = window.set_theme(theme);
+                    }
+                });
+            }
 
             // Local mode: connect synchronously so state is ready before JS runs.
             // Remote/Elevated: `init` command triggers connect asynchronously.

@@ -60,3 +60,19 @@
   flex-shrink: 0;
   color: var(--color-accent);
 }
+
+.itemDismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--color-fg-muted);
+  cursor: default;
+  padding: 0 var(--space-1);
+  font-size: 0.85em;
+  line-height: 1;
+
+  &:hover {
+    color: var(--color-fg);
+  }
+}

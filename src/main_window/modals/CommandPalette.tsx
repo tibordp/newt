@@ -1,40 +1,13 @@
-import { Fragment, useMemo, useState, ReactElement } from "react";
+import { Fragment, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { safeCommand } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
 import { MainWindowState } from "../types";
+import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./CommandPalette.module.scss";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
-
-function Highlight(props: { name: string; filter: string }) {
-  const { name, filter } = props;
-  let key = 0;
-  let a = 0;
-  let b = 0;
-  const parts: ReactElement[] = [];
-  while (a < filter.length && b < name.length) {
-    if (filter[a].toLowerCase() === name[b].toLowerCase()) {
-      parts.push(
-        <span key={key++} className={styles.highlight}>
-          {name[b]}
-        </span>,
-      );
-      a++;
-      b++;
-    } else {
-      parts.push(<span key={key++}>{name[b]}</span>);
-      b++;
-    }
-  }
-
-  if (b < name.length) {
-    parts.push(<span key={key}>{name.slice(b)}</span>);
-  }
-
-  return <span>{parts}</span>;
-}
 
 function matchesWhenCondition(
   command: { when?: string },
@@ -79,30 +52,10 @@ export default function CommandPalette({
   const allCommands = preferences?.commands ?? [];
 
   const filteredCommands = useMemo(() => {
-    let ret = allCommands.map((command) => {
-      let a = 0;
-      let b = 0;
-      let consecutive = 0;
-      let maxConsecutive = 0;
-
-      while (a < filter.length && b < command.name.length) {
-        if (filter[a].toLowerCase() === command.name[b].toLowerCase()) {
-          consecutive++;
-          a++;
-          b++;
-        } else {
-          maxConsecutive = Math.max(maxConsecutive, consecutive);
-          consecutive = 0;
-          b++;
-        }
-      }
-
-      return {
-        matches: a === filter.length,
-        score: maxConsecutive,
-        command: command,
-      };
-    });
+    let ret = allCommands.map((command) => ({
+      ...fuzzyMatch(filter, command.name),
+      command,
+    }));
 
     ret = ret.filter(
       ({ matches, command }) =>
@@ -145,7 +98,7 @@ export default function CommandPalette({
       onCloseAutoFocus={preventAutoFocus}
     >
       <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
-      <Command shouldFilter={false}>
+      <Palette shouldFilter={false}>
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -162,7 +115,11 @@ export default function CommandPalette({
               onSelect={onSelect}
             >
               <span>
-                <Highlight name={command.name} filter={filter} />
+                <Highlight
+                  text={command.name}
+                  filter={filter}
+                  highlightClass={styles.highlight}
+                />
                 {!categoryFilter && command.category === "User" && (
                   <span className={styles.badge}>User</span>
                 )}
@@ -180,7 +137,7 @@ export default function CommandPalette({
             </Command.Item>
           ))}
         </Command.List>
-      </Command>
+      </Palette>
     </Dialog.Content>
   );
 }

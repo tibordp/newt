@@ -99,6 +99,7 @@ export type DisplayOptions = {
 
 export type Terminal = {
   handle: number;
+  defunct: boolean;
 };
 
 export type DndFileInfo = {

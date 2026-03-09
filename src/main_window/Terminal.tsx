@@ -71,16 +71,20 @@ export default function Terminal({
   active,
   visible,
   modalOpen,
+  defunct,
 }: {
   handle: number;
   active: boolean;
   visible: boolean;
   modalOpen: boolean;
+  defunct: boolean;
 }) {
   const terminalRef = useRef<XTermJSTerminal>(null);
   const fitAddonRef = useRef<FitAddon>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const defunctRef = useRef(defunct);
+  defunctRef.current = defunct;
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
 
@@ -104,6 +108,21 @@ export default function Terminal({
 
     // Let panel-level shortcuts bubble through xterm
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.type !== "keydown") return true;
+      // Ctrl+Shift+C or Cmd+C — copy selection to clipboard
+      if (
+        (e.key === "c" || e.key === "C") &&
+        (e.metaKey || (e.ctrlKey && e.shiftKey))
+      ) {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel);
+        return false;
+      }
+      // Defunct terminal: Enter closes it
+      if (defunctRef.current && e.key === "Enter") {
+        safeCommandSilent("close_terminal", { handle });
+        return false;
+      }
       // Ctrl+` — toggle terminal panel
       if (e.ctrlKey && e.key === "`") return false;
       // Ctrl+Shift+` — new terminal (Shift+` produces ~)
