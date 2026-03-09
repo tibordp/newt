@@ -127,25 +127,19 @@
 
 .filterBar {
   position: absolute;
-  bottom: 100%;
-  left: 0;
+  bottom: 0;
   right: 0;
-  padding: var(--space-1) var(--space-3);
   z-index: 10;
+  background: transparent;
+  padding: var(--space-3) var(--space-3);
+  width: 250px;
 }
 
-.filterBarInput {
-  background: var(--color-chrome);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: inherit;
-  border: 1px solid var(--color-border);
-  outline: none;
-  padding: var(--space-1) var(--space-2);
+.filterBarInput[type="text"] {
+  height: 2em;
 }
 
 .statusbar {
-  position: relative;
   padding: var(--space-2) var(--space-3);
   background: var(--color-chrome);
   white-space: nowrap;

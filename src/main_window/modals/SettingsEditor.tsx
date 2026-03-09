@@ -462,7 +462,7 @@ function CommandsEditor({ commands }: { commands: UserCommandEntry[] }) {
             <p>
               <code>
                 {
-                  '{{ confirm("Delete " ~ files | length ~ " files?") }}rm -f {{ files | map(attribute="name") | shell_quote | join(" ") }}'
+                  '{% do confirm("Play " ~ file.name ~ "?" ) %} paplay {{ file.path | shell_quote }}'
                 }
               </code>
             </p>

@@ -290,6 +290,39 @@ function VfsSelector({
   );
 }
 
+function FilterBar({
+  initialValue,
+  inputRef,
+  onKeyDown,
+  onChange,
+}: {
+  initialValue: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onKeyDown: React.KeyboardEventHandler;
+  onChange: (value: string) => void;
+}) {
+  const [localValue, setLocalValue] = useState(initialValue);
+
+  return (
+    <div className={styles.filterBar}>
+      <input
+        className={styles.filterBarInput}
+        type="text"
+        value={localValue}
+        placeholder="Filter (regex)"
+        onChange={(e) => {
+          setLocalValue(e.target.value);
+          onChange(e.target.value);
+        }}
+        ref={inputRef}
+        onKeyDown={onKeyDown}
+        autoFocus
+        tabIndex={-1}
+      />
+    </div>
+  );
+}
+
 function PaneInner(
   props: PaneState & {
     paneHandle: number;
@@ -974,6 +1007,8 @@ function PaneInner(
 
     if (onKeyDownCommon(e)) {
       // ...
+    } else if (e.key == "/" && noModifiers && filter_mode === "quick_search") {
+      command("set_filter", { filter: filter || "", mode: "filter" });
     } else if (
       filter_mode === "quick_search" &&
       e.key == "ArrowLeft" &&
@@ -1159,24 +1194,15 @@ function PaneInner(
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
+      {filter_mode === "filter" && (
+        <FilterBar
+          initialValue={filter || ""}
+          inputRef={inputRef}
+          onKeyDown={onkeydownFilter}
+          onChange={(value) => command("set_filter", { filter: value })}
+        />
+      )}
       <div className={styles.statusbar}>
-        {filter_mode === "filter" && (
-          <div className={styles.filterBar}>
-            <input
-              className={styles.filterBarInput}
-              type="text"
-              value={filter || ""}
-              placeholder="Filter (regex)"
-              onChange={(e) =>
-                command("set_filter", { filter: e.target.value })
-              }
-              ref={inputRef}
-              onKeyDown={onkeydownFilter}
-              autoFocus
-              tabIndex={-1}
-            />
-          </div>
-        )}
         {showSpinner && "Loading file list..."}
         {!showSpinner && loading && (
           <>
@@ -1189,11 +1215,15 @@ function PaneInner(
             {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
             directories selected, {stats.selected_bytes.toLocaleString()} bytes
             total
+            {stats.total_count != null &&
+              ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
           </>
         )}
         {!showSpinner && !loading && selected.length == 0 && (
           <>
             {stats.file_count} files, {stats.dir_count} directories
+            {stats.total_count != null &&
+              ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
           </>
         )}
         {!showSpinner && !loading && partial && (

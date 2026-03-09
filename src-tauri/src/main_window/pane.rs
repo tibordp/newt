@@ -69,6 +69,7 @@ pub struct PaneStats {
     pub selected_file_count: usize,
     pub selected_dir_count: usize,
     pub selected_bytes: u64,
+    pub total_count: Option<usize>,
 }
 
 pub type DescriptorLookup =
@@ -614,6 +615,14 @@ impl PaneViewState {
                     stats.selected_file_count += 1;
                     stats.selected_bytes += f.size.unwrap_or(0);
                 }
+            }
+        }
+        if self.filter_mode == FilterMode::Filter {
+            // Exclude ".." from both counts for a meaningful "N of M" display
+            let visible = self.files.iter().filter(|f| f.name != "..").count();
+            let total = self.all_files.iter().filter(|f| f.name != "..").count();
+            if visible != total {
+                stats.total_count = Some(total);
             }
         }
         self.stats = stats;

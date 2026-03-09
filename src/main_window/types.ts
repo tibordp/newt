@@ -64,6 +64,7 @@ export type PaneStats = {
   selected_file_count: number;
   selected_dir_count: number;
   selected_bytes: number;
+  total_count?: number;
 };
 
 export type FilterMode = "quick_search" | "filter";
