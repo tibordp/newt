@@ -1,7 +1,9 @@
+pub mod archive;
 pub mod local;
 pub mod s3;
 pub mod sftp;
 
+pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
 pub use sftp::SftpVfs;
@@ -48,25 +50,41 @@ impl std::fmt::Display for VfsId {
 // VfsPath
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VfsPath {
     pub vfs_id: VfsId,
     pub path: PathBuf,
 }
 
-impl VfsPath {
-    pub fn root(path: impl Into<PathBuf>) -> Self {
+impl Default for VfsPath {
+    fn default() -> Self {
         Self {
             vfs_id: VfsId::ROOT,
-            path: path.into(),
+            path: PathBuf::from("/"),
+        }
+    }
+}
+
+impl VfsPath {
+    pub fn root(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        assert!(
+            path.is_absolute(),
+            "VfsPath must be absolute, got: {path:?}"
+        );
+        Self {
+            vfs_id: VfsId::ROOT,
+            path,
         }
     }
 
     pub fn new(vfs_id: VfsId, path: impl Into<PathBuf>) -> Self {
-        Self {
-            vfs_id,
-            path: path.into(),
-        }
+        let path = path.into();
+        assert!(
+            path.is_absolute(),
+            "VfsPath must be absolute, got: {path:?}"
+        );
+        Self { vfs_id, path }
     }
 
     pub fn join(&self, name: impl AsRef<Path>) -> Self {
@@ -145,6 +163,13 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_rename(&self) -> bool;
     fn can_copy_within(&self) -> bool;
     fn can_hard_link(&self) -> bool;
+
+    // --- Origin ---
+    /// Whether this VFS type is grafted onto another VFS (e.g. archive mounts).
+    /// When true, navigating `..` from the root should exit to the origin VFS.
+    fn has_origin(&self) -> bool {
+        false
+    }
 
     // --- Display ---
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
@@ -656,6 +681,7 @@ impl FileReader for VfsRegistryFileReader {
 pub enum MountRequest {
     S3 { region: Option<String> },
     Sftp { host: String },
+    Archive { origin: VfsPath },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -663,6 +689,7 @@ pub struct MountResponse {
     pub vfs_id: VfsId,
     pub type_name: String,
     pub mount_meta: Vec<u8>,
+    pub origin: Option<VfsPath>,
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +700,7 @@ pub struct MountedVfsInfo {
     pub vfs_id: VfsId,
     pub descriptor: &'static dyn VfsDescriptor,
     pub mount_meta: Vec<u8>,
+    pub origin: Option<VfsPath>,
 }
 
 // ---------------------------------------------------------------------------

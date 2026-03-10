@@ -6,7 +6,6 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::filesystem::resolve_vfs;
 use newt_common::vfs::{Breadcrumb, VfsDescriptor, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -72,8 +71,10 @@ pub struct PaneStats {
     pub total_count: Option<usize>,
 }
 
-pub type DescriptorLookup =
-    Arc<dyn Fn(VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)> + Send + Sync>;
+pub trait VfsInfoService: Send + Sync {
+    fn descriptor(&self, vfs_id: VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)>;
+    fn origin(&self, vfs_id: VfsId) -> Option<VfsPath>;
+}
 
 struct HistoryEntry {
     path: VfsPath,
@@ -97,8 +98,9 @@ pub struct Pane {
     preferences: crate::preferences::PreferencesHandle,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     cancellation_token: Mutex<Option<CancellationToken>>,
-    descriptor_lookup: DescriptorLookup,
+    vfs_info: Arc<dyn VfsInfoService>,
     history: Mutex<NavigationHistory>,
+    event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
 }
 
 impl Pane {
@@ -108,7 +110,8 @@ impl Pane {
         display_options: DisplayOptions,
         preferences: crate::preferences::PreferencesHandle,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
-        descriptor_lookup: DescriptorLookup,
+        vfs_info: Arc<dyn VfsInfoService>,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
     ) -> Self {
         let (tx, rx) = tokio::sync::watch::channel(());
 
@@ -123,7 +126,8 @@ impl Pane {
             preferences,
             publisher,
             cancellation_token: Mutex::new(None),
-            descriptor_lookup,
+            event_tx,
+            vfs_info,
             history: Mutex::new(NavigationHistory::default()),
         }
     }
@@ -327,6 +331,9 @@ impl Pane {
         ws.partial = false;
         if has_path_changed {
             let _ = changes_sender.send(());
+            if let Some(tx) = &self.event_tx {
+                let _ = tx.send(super::MainWindowEvent::PaneNavigated);
+            }
             // Only clear if we didn't already do it on first batch
             if first_batch {
                 ws.set_filter(None);
@@ -339,7 +346,14 @@ impl Pane {
         self.update_display(&mut ws);
 
         if has_path_changed {
-            if target == *new_file_list.path() {
+            if old_file_list.path().vfs_id != new_file_list.path().vfs_id {
+                // VFS boundary crossed (e.g. exiting an archive) — focus the origin filename
+                if let Some(origin) = self.vfs_info.origin(old_file_list.path().vfs_id)
+                    && let Some(name) = origin.path.file_name()
+                {
+                    ws.focus(name.to_string_lossy().to_string());
+                }
+            } else if target == *new_file_list.path() {
                 ws.focus_descendant(&old_file_list.path().path);
             } else {
                 ws.focus_descendant(&target.path);
@@ -377,7 +391,7 @@ impl Pane {
     }
 
     fn update_display(&self, ws: &mut PaneViewState) {
-        if let Some((desc, meta)) = (self.descriptor_lookup)(ws.path.vfs_id) {
+        if let Some((desc, meta)) = self.vfs_info.descriptor(ws.path.vfs_id) {
             ws.display_path = desc.format_path(&ws.path.path, &meta);
             ws.vfs_display_name = desc.display_name().to_string();
         } else {
@@ -385,7 +399,7 @@ impl Pane {
             ws.vfs_display_name = String::new();
         }
         let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
-        if let Some((shown_desc, shown_meta)) = (self.descriptor_lookup)(shown_path.vfs_id) {
+        if let Some((shown_desc, shown_meta)) = self.vfs_info.descriptor(shown_path.vfs_id) {
             ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path, &shown_meta);
         }
     }
@@ -416,7 +430,7 @@ impl Pane {
 
     pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let current = self.path();
-        let target = resolve_vfs(&current.join(path));
+        let target = self.resolve_relative(&current, path.as_ref());
 
         // Cancel any pending navigation
         self.cancel();
@@ -424,6 +438,69 @@ impl Pane {
         let mut changes_sender = self.navigation_mutex.lock().await;
         self.navigate_impl(target, false, false, &mut changes_sender)
             .await
+    }
+
+    /// Resolve a relative path against a VfsPath, crossing VFS boundaries
+    /// when `..` escapes above root on a VFS that has an origin.
+    fn resolve_relative(&self, base: &VfsPath, rel: &Path) -> VfsPath {
+        use std::path::Component;
+
+        // Start by resolving the base path's components into a stack
+        let mut vfs_id = base.vfs_id;
+        let mut components: Vec<std::ffi::OsString> = base
+            .path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_os_string()),
+                _ => None,
+            })
+            .collect();
+
+        for component in rel.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if components.is_empty() {
+                        // At root — try to escape to origin VFS
+                        if let Some((desc, _)) = self.vfs_info.descriptor(vfs_id)
+                            && desc.has_origin()
+                            && let Some(origin) = self.vfs_info.origin(vfs_id)
+                        {
+                            // Switch to the origin's VFS and path
+                            vfs_id = origin.vfs_id;
+                            components = origin
+                                .path
+                                .components()
+                                .filter_map(|c| match c {
+                                    Component::Normal(s) => Some(s.to_os_string()),
+                                    _ => None,
+                                })
+                                .collect();
+                            // The `..` pops the archive filename itself
+                            components.pop();
+                            continue;
+                        }
+                        // No origin — clamp at root (like resolve_vfs)
+                    } else {
+                        components.pop();
+                    }
+                }
+                Component::Normal(s) => {
+                    components.push(s.to_os_string());
+                }
+                Component::RootDir => {
+                    // Absolute path resets to root of current VFS
+                    components.clear();
+                }
+                Component::Prefix(_) => {}
+            }
+        }
+
+        let mut path = PathBuf::from("/");
+        for c in components {
+            path.push(c);
+        }
+        VfsPath::new(vfs_id, path)
     }
 
     pub async fn navigate_to(&self, target: VfsPath) -> Result<(), Error> {
@@ -516,6 +593,16 @@ impl Pane {
         view_state.focused.as_ref().map(|s| view_state.path.join(s))
     }
 
+    pub fn get_focused_file_info(&self) -> Option<newt_common::filesystem::File> {
+        let view_state = self.view_state.read();
+        let focused = view_state.focused.as_ref()?;
+        view_state
+            .files
+            .iter()
+            .find(|f| f.name == *focused)
+            .cloned()
+    }
+
     pub fn get_focused_symlink_target(&self) -> Option<PathBuf> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
@@ -528,6 +615,10 @@ impl Pane {
 
     /// Returns true if the focused item is known to be a directory.
     /// Returns false for non-directories, unknown items, or if nothing is focused.
+    pub fn focus_file(&self, name: &str) {
+        self.view_state.write().focus(name.to_string());
+    }
+
     pub fn is_focused_dir(&self) -> bool {
         let view_state = self.view_state.read();
         let focused = match view_state.focused.as_ref() {

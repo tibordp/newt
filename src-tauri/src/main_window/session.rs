@@ -205,11 +205,40 @@ pub struct Session {
     pub(super) file_server_port: u16,
     pub(super) file_server_token: String,
     _file_server_handle: tokio::task::JoinHandle<()>,
+    _event_loop_handle: tokio::task::JoinHandle<()>,
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self._file_server_handle.abort();
+        self._event_loop_handle.abort();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VfsInfoService implementation
+// ---------------------------------------------------------------------------
+
+struct MountedVfsInfoService {
+    mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
+}
+
+impl super::pane::VfsInfoService for MountedVfsInfoService {
+    fn descriptor(
+        &self,
+        vfs_id: VfsId,
+    ) -> Option<(&'static dyn newt_common::vfs::VfsDescriptor, Vec<u8>)> {
+        self.mounted_vfs
+            .read()
+            .get(&vfs_id)
+            .map(|info| (info.descriptor, info.mount_meta.clone()))
+    }
+
+    fn origin(&self, vfs_id: VfsId) -> Option<VfsPath> {
+        self.mounted_vfs
+            .read()
+            .get(&vfs_id)
+            .and_then(|info| info.origin.clone())
     }
 }
 
@@ -660,6 +689,7 @@ pub(super) async fn connect(
     + Send
     + Sync
     + 'static,
+    main_window_ctx: super::MainWindowContext,
 ) -> Result<(), Error> {
     let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
     let (services, stderr_log, child) = match connection_target {
@@ -692,6 +722,7 @@ pub(super) async fn connect(
             .shell_service
             .shell_expand("~".to_string())
             .await
+            .map(VfsPath::root)
             .unwrap_or(services.initial_dir.clone())
     };
 
@@ -703,17 +734,16 @@ pub(super) async fn connect(
             vfs_id: VfsId::ROOT,
             descriptor: &LOCAL_VFS_DESCRIPTOR,
             mount_meta: Vec::new(),
+            origin: None,
         },
     );
     let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
-    let lookup_ref = mounted_vfs.clone();
-    let descriptor_lookup: super::pane::DescriptorLookup = Arc::new(move |vfs_id| {
-        lookup_ref
-            .read()
-            .get(&vfs_id)
-            .map(|info| (info.descriptor, info.mount_meta.clone()))
+    let vfs_info: Arc<dyn super::pane::VfsInfoService> = Arc::new(MountedVfsInfoService {
+        mounted_vfs: mounted_vfs.clone(),
     });
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
     state.panes.add(super::pane::Pane::new(
         services.fs.clone(),
@@ -721,7 +751,8 @@ pub(super) async fn connect(
         state.display_options.clone(),
         preferences.clone(),
         publisher.clone(),
-        descriptor_lookup.clone(),
+        vfs_info.clone(),
+        Some(event_tx.clone()),
     ));
     state.panes.add(super::pane::Pane::new(
         services.fs.clone(),
@@ -729,7 +760,8 @@ pub(super) async fn connect(
         state.display_options.clone(),
         preferences,
         publisher.clone(),
-        descriptor_lookup,
+        vfs_info,
+        Some(event_tx.clone()),
     ));
 
     set_status("Loading...");
@@ -745,6 +777,21 @@ pub(super) async fn connect(
     let (file_server_port, file_server_handle) =
         crate::file_server::start(services.file_reader.clone(), file_server_token.clone());
 
+    let event_loop_handle = tokio::spawn({
+        let ctx = main_window_ctx;
+        async move {
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    super::MainWindowEvent::PaneNavigated => {
+                        if let Err(e) = ctx.cleanup_stale_archive_mounts().await {
+                            log::warn!("failed to cleanup stale archive mounts: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let session = Session {
         fs: services.fs,
         shell_service: services.shell_service,
@@ -758,6 +805,7 @@ pub(super) async fn connect(
         file_server_port,
         file_server_token,
         _file_server_handle: file_server_handle,
+        _event_loop_handle: event_loop_handle,
     };
 
     session_slot.store(Arc::new(Some(session)));

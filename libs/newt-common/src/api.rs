@@ -422,6 +422,7 @@ impl VfsManager for VfsRegistryManager {
                     vfs_id,
                     type_name,
                     mount_meta,
+                    origin: None,
                 })
             }
             MountRequest::Sftp { host } => {
@@ -435,6 +436,44 @@ impl VfsManager for VfsRegistryManager {
                     vfs_id,
                     type_name,
                     mount_meta,
+                    origin: None,
+                })
+            }
+            MountRequest::Archive { origin } => {
+                log::info!("mounting archive VFS for origin={}", origin);
+                let (upstream_vfs, archive_path) = self.registry.resolve(&origin)?;
+
+                // Compute display path for mount_meta
+                let upstream_desc = upstream_vfs.descriptor();
+                let upstream_meta = upstream_vfs.mount_meta();
+                let display_path = upstream_desc.format_path(&archive_path, &upstream_meta);
+                let mount_meta = display_path.into_bytes();
+
+                let vfs: Arc<dyn crate::vfs::Vfs> =
+                    if crate::vfs::is_zip_name(&archive_path.to_string_lossy()) {
+                        Arc::new(crate::vfs::ZipArchiveVfs::new(
+                            upstream_vfs,
+                            archive_path,
+                            origin.clone(),
+                            mount_meta.clone(),
+                        ))
+                    } else {
+                        Arc::new(crate::vfs::TarArchiveVfs::new(
+                            upstream_vfs,
+                            archive_path,
+                            origin.clone(),
+                            mount_meta.clone(),
+                        ))
+                    };
+
+                let type_name = vfs.descriptor().type_name().to_string();
+                let vfs_id = self.registry.mount(vfs);
+                log::info!("mounted archive VFS as vfs_id={:?}", vfs_id);
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                    origin: Some(origin),
                 })
             }
         }

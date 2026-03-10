@@ -73,16 +73,27 @@ pub async fn navigate(
 ) -> Result<(), Error> {
     if !exact {
         // First try resolving as a VFS display path (handles s3://, etc.)
-        let target = if let Some(vfs_path) = ctx.resolve_display_path(path) {
-            vfs_path
+        let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
+            Some(vfs_path)
         } else {
-            // Fall back to shell expansion (handles local paths, ~, relative paths)
-            ctx.shell_service()?.shell_expand(path.to_string()).await?
+            // Try shell expansion (handles ~, env vars, etc.)
+            let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
+            if expanded.is_absolute() {
+                Some(VfsPath::root(expanded))
+            } else {
+                // Relative path — will be resolved against the pane's current path
+                None
+            }
         };
 
         ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
             gs.close_modal();
-            pane.navigate_to(target).await?;
+            if let Some(target) = resolved {
+                pane.navigate_to(target).await?;
+            } else {
+                // Resolve relative to the pane's current directory
+                pane.navigate(path).await?;
+            }
             Ok(())
         })
         .await
@@ -347,17 +358,58 @@ pub async fn cmd_new_window(_pane_handle: PaneHandle) -> Result<(), Error> {
 }
 
 #[tauri::command]
-pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
+    let file = match pane.get_focused_file_info() {
+        Some(f) => f,
+        None => return Ok(()),
+    };
+
+    if file.name == ".." || file.is_dir {
+        return navigate(ctx, pane_handle, &file.name, true).await;
+    }
+
+    if newt_common::vfs::is_archive_name(&file.name) {
+        return cmd_open_archive(ctx, pane_handle).await;
+    }
+
+    // Default: open with system handler
     let full_path = match pane.get_focused_file() {
         Some(s) => s,
         None => return Ok(()),
     };
-
-    // open only works for local paths
     opener::open(&full_path.path)?;
-
     Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    enter(ctx, pane_handle).await
+}
+
+#[tauri::command]
+pub async fn cmd_open_archive(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let origin = match pane.get_focused_file() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    let response = ctx
+        .mount_vfs(MountRequest::Archive {
+            origin: origin.clone(),
+        })
+        .await?;
+    let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -518,14 +570,24 @@ pub async fn cmd_paste_from_clipboard(
     let text = text.trim();
 
     // Same resolution chain as the navigate command with exact: false
-    let target = if let Some(vfs_path) = ctx.resolve_display_path(text) {
-        vfs_path
+    let resolved = if let Some(vfs_path) = ctx.resolve_display_path(text) {
+        Some(vfs_path)
     } else {
-        ctx.shell_service()?.shell_expand(text.to_string()).await?
+        let expanded = ctx.shell_service()?.shell_expand(text.to_string()).await?;
+        if expanded.is_absolute() {
+            Some(VfsPath::root(expanded))
+        } else {
+            None
+        }
     };
 
+    let text = text.to_string();
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        pane.navigate_to(target).await?;
+        if let Some(target) = resolved {
+            pane.navigate_to(target).await?;
+        } else {
+            pane.navigate(text).await?;
+        }
         Ok(())
     })
     .await
@@ -1604,7 +1666,7 @@ pub async fn get_hot_paths(
     global_ctx: tauri::State<'_, GlobalContext>,
 ) -> Result<Vec<newt_common::hot_paths::HotPathEntry>, Error> {
     use newt_common::hot_paths::{HotPathCategory, HotPathEntry};
-    use newt_common::vfs::{VfsId, VfsPath};
+    use newt_common::vfs::VfsPath;
 
     let prefs = global_ctx.preferences().resolved();
     let hp_settings = &prefs.settings.hot_paths;
@@ -1624,10 +1686,7 @@ pub async fn get_hot_paths(
     // Add user-defined bookmarks from preferences (always included)
     for bm in &prefs.bookmarks {
         entries.push(HotPathEntry {
-            path: VfsPath {
-                vfs_id: VfsId::ROOT,
-                path: bm.path.clone().into(),
-            },
+            path: VfsPath::root(bm.path.as_str()),
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
         });
@@ -1745,6 +1804,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         // Pane interaction (called directly by frontend components)
         cancel,
         navigate,
+        enter,
         focus,
         set_sorting,
         toggle_selected,
@@ -1822,6 +1882,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_view,
         cmd_edit,
         cmd_open,
+        cmd_open_archive,
         cmd_open_folder,
         cmd_follow_symlink,
         cmd_navigate_back,

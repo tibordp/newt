@@ -144,10 +144,7 @@ pub fn resolve(path: &Path) -> PathBuf {
 
 /// Resolve a VfsPath by canonicalizing its path component.
 pub fn resolve_vfs(vfs_path: &VfsPath) -> VfsPath {
-    VfsPath {
-        vfs_id: vfs_path.vfs_id,
-        path: resolve(&vfs_path.path),
-    }
+    VfsPath::new(vfs_path.vfs_id, resolve(&vfs_path.path))
 }
 
 pub struct UidGidCache {
@@ -399,18 +396,18 @@ impl Filesystem for Remote {
 
 #[async_trait::async_trait]
 pub trait ShellService: Send + Sync {
-    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error>;
+    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error>;
 }
 
 pub struct LocalShellService;
 
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
+    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
         let expanded =
             tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
-        Ok(VfsPath::root(expanded))
+        Ok(expanded)
     }
 }
 
@@ -426,8 +423,8 @@ impl ShellRemote {
 
 #[async_trait::async_trait]
 impl ShellService for ShellRemote {
-    async fn shell_expand(&self, input: String) -> Result<VfsPath, Error> {
-        let ret: Result<VfsPath, Error> = self
+    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
+        let ret: Result<PathBuf, Error> = self
             .communicator
             .invoke(crate::api::API_SHELL_EXPAND, &input)
             .await?;

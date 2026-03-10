@@ -1849,7 +1849,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]
@@ -2790,6 +2790,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "iluvatar"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84d821ba96958f8c130cb0931eb22976f085acac2d75f7b36e6461a12bfb2761"
+dependencies = [
+ "bincode",
+ "bzip2",
+ "miniz_oxide 0.9.0",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "image"
 version = "0.25.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3291,6 +3305,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5faa9f23e86bd5768d76def086192ff5f869fb088da12a976ea21e9796b975f6"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
 name = "mio"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3448,6 +3471,7 @@ dependencies = [
  "expanduser",
  "filetime",
  "futures",
+ "iluvatar",
  "inventory",
  "libc",
  "log",
@@ -3462,6 +3486,7 @@ dependencies = [
  "quick-xml 0.37.5",
  "serde",
  "thiserror 1.0.69",
+ "time",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -4143,7 +4168,7 @@ dependencies = [
  "crc32fast",
  "fdeflate",
  "flate2",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]
@@ -4156,7 +4181,7 @@ dependencies = [
  "crc32fast",
  "fdeflate",
  "flate2",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]

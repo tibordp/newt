@@ -192,6 +192,8 @@ const VFS_ICONS: Record<string, string> = {
   local: "\u{f02ca}",
   s3: "\u{f0e0f}",
   sftp: "\u{eb3a}",
+  archive: "\u{eaa0}",
+  archive_zip: "\u{eaa0}",
 };
 
 function VfsSelector({
@@ -938,11 +940,7 @@ function PaneInner(
   const onOpen = useCallback(
     (file: File) => {
       if (!file || pendingPathRef.current) return;
-      if (file.is_dir) {
-        safeCommand("navigate", { paneHandle, path: file.name, exact: true });
-      } else {
-        safeCommand("cmd_open", { paneHandle, filename: file.name });
-      }
+      safeCommand("enter", { paneHandle });
     },
     [paneHandle],
   );

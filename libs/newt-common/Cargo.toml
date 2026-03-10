@@ -25,7 +25,8 @@ nix = { version = "0.31", features = ["fs", "user"] }
 filetime = "0.2"
 expanduser = "*"
 inventory = "0.3"
-zip = "2"
+zip = { version = "2", features = ["time"] }
+time = "0.3"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
 mimetype-detector = "0"
@@ -33,6 +34,7 @@ dirs = "6"
 url = "2"
 openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
+iluvatar = { version = "0.1.1", features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 quick-xml = "0.37"

@@ -600,6 +600,15 @@ pub(crate) fn apply_operation_progress(operations: &Operations, progress: Operat
 // MainWindowContext
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+pub enum MainWindowEvent {
+    /// A pane navigated — check for stale archive mounts.
+    PaneNavigated,
+}
+
 #[allow(dead_code)]
 struct MainWindowContextInner {
     window: WebviewWindow,
@@ -706,6 +715,7 @@ impl MainWindowContext {
                 let _ = publisher.publish();
             },
             askpass_callback,
+            self.clone(),
         )
         .await
     }
@@ -954,6 +964,7 @@ impl MainWindowContext {
                     vfs_id: response.vfs_id,
                     descriptor,
                     mount_meta: response.mount_meta.clone(),
+                    origin: response.origin.clone(),
                 },
             );
         })?;
@@ -967,20 +978,6 @@ impl MainWindowContext {
             s.mounted_vfs.write().remove(&vfs_id);
         })?;
         Ok(())
-    }
-
-    pub fn vfs_descriptor(
-        &self,
-        vfs_id: VfsId,
-    ) -> Option<&'static dyn newt_common::vfs::VfsDescriptor> {
-        self.with_session(|s| {
-            s.mounted_vfs
-                .read()
-                .get(&vfs_id)
-                .map(|info| info.descriptor)
-        })
-        .ok()
-        .flatten()
     }
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
@@ -1017,6 +1014,29 @@ impl MainWindowContext {
             Ok(())
         })
         .await?;
+        Ok(())
+    }
+
+    pub(super) async fn cleanup_stale_archive_mounts(&self) -> Result<(), Error> {
+        // Collect VFS IDs currently in use by any pane
+        let pane_vfs_ids: std::collections::HashSet<VfsId> =
+            self.panes().all().iter().map(|p| p.path().vfs_id).collect();
+
+        // Find archive mounts that no pane references
+        let stale_ids: Vec<VfsId> = self.with_session(|s| {
+            s.mounted_vfs
+                .read()
+                .iter()
+                .filter(|(id, info)| info.origin.is_some() && !pane_vfs_ids.contains(id))
+                .map(|(id, _)| *id)
+                .collect()
+        })?;
+
+        for vfs_id in stale_ids {
+            log::info!("unmounting stale archive VFS {:?}", vfs_id);
+            self.unmount_vfs(vfs_id).await?;
+        }
+
         Ok(())
     }
 }

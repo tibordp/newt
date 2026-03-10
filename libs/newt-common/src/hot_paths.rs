@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::Error;
 use crate::rpc::Communicator;
-use crate::vfs::{VfsId, VfsPath};
+use crate::vfs::VfsPath;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum HotPathCategory {
@@ -54,10 +54,7 @@ impl HotPathsProvider for Local {
 
 fn make_entry(path: PathBuf, name: Option<String>, category: HotPathCategory) -> HotPathEntry {
     HotPathEntry {
-        path: VfsPath {
-            vfs_id: VfsId::ROOT,
-            path,
-        },
+        path: VfsPath::root(path),
         name,
         category,
     }

@@ -147,17 +147,11 @@ async fn run_operation_cancellable(
 }
 
 fn vfs_path(path: &str) -> VfsPath {
-    VfsPath {
-        vfs_id: VfsId::ROOT,
-        path: PathBuf::from(path),
-    }
+    VfsPath::root(path)
 }
 
 fn vfs_path_id(vfs_id: u32, path: &str) -> VfsPath {
-    VfsPath {
-        vfs_id: VfsId(vfs_id),
-        path: PathBuf::from(path),
-    }
+    VfsPath::new(VfsId(vfs_id), path)
 }
 
 fn has_completed(events: &[OperationProgress]) -> bool {
