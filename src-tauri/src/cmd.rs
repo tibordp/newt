@@ -224,9 +224,70 @@ pub fn set_filter(
 }
 
 #[tauri::command]
-pub async fn cmd_copy_pane(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update_async(|gs| async move { gs.copy_pane(pane_handle).await })
+pub async fn cmd_as_other_pane(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    ctx.with_update_async(|gs| async move { gs.as_other_pane(pane_handle).await })
         .await
+}
+
+pub async fn cmd_open_in_other_pane(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    target: PaneHandle,
+) -> Result<(), Error> {
+    if pane_handle == target {
+        return Ok(());
+    }
+
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane_path = pane.path();
+    let file = match pane.get_focused_file_info() {
+        Some(f) => f,
+        None => return Ok(()),
+    };
+
+    let mut target_path = match file.name.as_str() {
+        ".." => pane_path.parent().unwrap_or(pane_path),
+        _ => match pane.get_focused_file() {
+            Some(s) => s,
+            None => return Ok(()),
+        },
+    };
+
+    if newt_common::vfs::is_archive_name(&file.name) {
+        let response = ctx
+            .mount_vfs(MountRequest::Archive {
+                origin: target_path.clone(),
+            })
+            .await?;
+        target_path = VfsPath::new(response.vfs_id, "/");
+    }
+
+    ctx.with_pane_update_async(target, |_gs, pane| async move {
+        pane.navigate_to(target_path).await?;
+        Ok(())
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_open_in_left_pane(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    cmd_open_in_other_pane(ctx, pane_handle, PaneHandle::left()).await
+}
+
+#[tauri::command]
+pub async fn cmd_open_in_right_pane(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    cmd_open_in_other_pane(ctx, pane_handle, PaneHandle::right()).await
 }
 
 #[tauri::command]
@@ -550,13 +611,14 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     const LINE_ENDING: &str = "\n";
 
     let mut text = String::new();
-    for line in pane.get_effective_selection() {
+    for (idx, line) in pane.get_effective_selection().into_iter().enumerate() {
+        if idx != 0 {
+            text.push_str(LINE_ENDING);
+        }
         text.push_str(&ctx.format_vfs_path(&line));
-        text.push_str(LINE_ENDING);
     }
 
-    let mut clipboard = arboard::Clipboard::new()?;
-    clipboard.set_text(text)?;
+    ctx.clipboard().set_text(text)?;
 
     Ok(())
 }
@@ -1928,7 +1990,9 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_follow_symlink,
         cmd_navigate_back,
         cmd_navigate_forward,
-        cmd_copy_pane,
+        cmd_as_other_pane,
+        cmd_open_in_left_pane,
+        cmd_open_in_right_pane,
         cmd_select_all,
         cmd_deselect_all,
         cmd_copy_to_clipboard,

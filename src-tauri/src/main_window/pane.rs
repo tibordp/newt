@@ -688,7 +688,9 @@ fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
     let a = a.name.rfind('.').map(|i| &a.name[i + 1..]).unwrap_or("");
     let b = b.name.rfind('.').map(|i| &b.name[i + 1..]).unwrap_or("");
 
-    a.cmp(b)
+    a.to_lowercase()
+        .cmp(&b.to_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -779,7 +781,11 @@ impl PaneViewState {
 
             let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
             match self.sorting.key {
-                SortingKey::Name => a.name.cmp(&b.name),
+                SortingKey::Name => a
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.name.to_lowercase())
+                    .then_with(|| a.name.cmp(&b.name)),
                 SortingKey::Extension => compare_extension(a, b),
                 SortingKey::Size => a.size.cmp(&b.size),
                 SortingKey::User => a
@@ -816,11 +822,19 @@ impl PaneViewState {
                 .retain(|name| self.file_lookup.contains_key(name));
         }
 
-        if self.focused.is_none()
-            || !self
-                .file_lookup
-                .contains_key(self.focused.as_ref().unwrap())
+        // If our focused file has disappeared, we try to focus the next one (by index)
+        if let Some(focused_name) = self.focused.as_mut()
+            && !self.file_lookup.contains_key(focused_name)
+            && let Some(new_focus) = self
+                .files
+                .get(self.focused_index.unwrap_or(0))
+                .map(|f| f.name.clone())
         {
+            *focused_name = new_focus;
+        }
+
+        // ...and if that didn't work (e.g. empty directory), we just focus the first file if there is one
+        if self.focused.is_none() {
             self.focused = self.files.first().map(|f| f.name.clone());
         }
     }

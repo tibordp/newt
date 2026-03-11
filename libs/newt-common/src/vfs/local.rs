@@ -69,7 +69,7 @@ impl VfsDescriptor for LocalVfsDescriptor {
         true
     }
     fn can_remove_tree(&self) -> bool {
-        true
+        false
     }
     fn has_symlinks(&self) -> bool {
         true
@@ -495,22 +495,6 @@ impl Vfs for LocalVfs {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
             std::fs::remove_dir(&path)?;
-            Ok(())
-        })
-        .await?
-    }
-
-    async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let meta = std::fs::symlink_metadata(&path)?;
-            if meta.is_dir() {
-                // symlink_metadata doesn't follow symlinks, so this is a real directory
-                std::fs::remove_dir_all(&path)?;
-            } else {
-                // Files and symlinks (including symlinks to directories)
-                std::fs::remove_file(&path)?;
-            }
             Ok(())
         })
         .await?

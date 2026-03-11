@@ -1119,6 +1119,15 @@ function PaneInner(
       className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
       data-pane-handle={paneHandle}
       onClick={() => command("focus")}
+      onMouseDown={(e) => {
+        if (e.button === 3) {
+          e.preventDefault();
+          command("cmd_navigate_back");
+        } else if (e.button === 4) {
+          e.preventDefault();
+          command("cmd_navigate_forward");
+        }
+      }}
     >
       {filter_mode !== "filter" && (
         <input

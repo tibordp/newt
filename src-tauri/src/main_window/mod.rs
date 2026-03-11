@@ -8,7 +8,7 @@ use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockWriteGuard};
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::cmp::PartialOrd;
@@ -80,6 +80,16 @@ impl serde::Serialize for DisplayOptions {
     serde::Deserialize,
 )]
 pub struct PaneHandle(usize);
+
+impl PaneHandle {
+    pub fn left() -> Self {
+        PaneHandle(0)
+    }
+
+    pub fn right() -> Self {
+        PaneHandle(1)
+    }
+}
 
 #[derive(Clone)]
 pub struct Panes(Arc<RwLock<Vec<Arc<Pane>>>>);
@@ -509,7 +519,7 @@ impl MainWindowState {
         opts.panes_focused = true;
     }
 
-    pub async fn copy_pane(&self, handle: PaneHandle) -> Result<(), Error> {
+    pub async fn as_other_pane(&self, handle: PaneHandle) -> Result<(), Error> {
         let other_pane = self.other_pane(handle);
         let pane = self.panes.get(handle).unwrap();
 
@@ -621,6 +631,7 @@ struct MainWindowContextInner {
     window_title: String,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
+    clipboard: RwLock<arboard::Clipboard>,
 }
 
 #[derive(Clone)]
@@ -668,6 +679,9 @@ impl MainWindowContext {
                 window_title,
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
                 askpass_response: Arc::new(parking_lot::Mutex::new(None)),
+                clipboard: RwLock::new(
+                    arboard::Clipboard::new().expect("failed to initialize clipboard"),
+                ),
             }),
         }
     }
@@ -1063,5 +1077,9 @@ impl MainWindowContext {
         }
 
         Ok(())
+    }
+
+    pub fn clipboard(&self) -> RwLockWriteGuard<'_, arboard::Clipboard> {
+        self.inner.clipboard.write()
     }
 }
