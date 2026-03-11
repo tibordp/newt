@@ -318,7 +318,7 @@ export default function OperationsPanel({
   foregroundOperationId?: number;
 }) {
   const ops = Object.values(operations).filter(
-    (op) => op.id !== foregroundOperationId,
+    (op) => op && op.id !== foregroundOperationId,
   );
 
   if (ops.length === 0) return null;

@@ -1,5 +1,6 @@
 import React, { Suspense, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
+import { ErrorBoundary, RouteErrorBoundary } from "./ErrorBoundary";
 
 const MainWindow = React.lazy(() => import("./main_window/MainWindow"));
 const Viewer = React.lazy(() => import("./viewer/Viewer"));
@@ -14,6 +15,7 @@ import { safeCommand } from "./lib/ipc";
 const router = createBrowserRouter([
   {
     path: "/",
+    errorElement: <RouteErrorBoundary />,
     element: (
       <Suspense>
         <MainWindow />
@@ -22,6 +24,7 @@ const router = createBrowserRouter([
   },
   {
     path: "/viewer",
+    errorElement: <RouteErrorBoundary />,
     element: (
       <Suspense>
         <Viewer />
@@ -30,6 +33,7 @@ const router = createBrowserRouter([
   },
   {
     path: "/editor",
+    errorElement: <RouteErrorBoundary />,
     element: (
       <Suspense>
         <Editor />
@@ -69,8 +73,10 @@ function App({ children }: { children: React.ReactNode }) {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   // <React.StrictMode>
-  <App>
-    <RouterProvider router={router} />
-  </App>,
+  <ErrorBoundary>
+    <App>
+      <RouterProvider router={router} />
+    </App>
+  </ErrorBoundary>,
   // </React.StrictMode>
 );

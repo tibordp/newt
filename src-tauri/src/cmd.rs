@@ -27,6 +27,7 @@ use crate::main_window::ModalContext;
 use crate::main_window::ModalData;
 use crate::main_window::ModalDataKind;
 use crate::main_window::PaneHandle;
+use crate::main_window::session::ConnectionTarget;
 
 #[tauri::command]
 pub fn askpass_respond(ctx: MainWindowContext, response: Option<String>) -> Result<(), Error> {
@@ -867,6 +868,15 @@ pub fn dialog(
                 },
                 "hot_paths" => ModalDataKind::HotPaths,
                 "settings" => ModalDataKind::Settings,
+                "debug" => {
+                    if !cfg!(debug_assertions) {
+                        return Err(Error::Custom(
+                            "debug dialog is only available in debug builds".into(),
+                        ));
+                    }
+                    ModalDataKind::Debug
+                }
+                "connection_log" => ModalDataKind::ConnectionLog,
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext { pane_handle },
@@ -1173,6 +1183,34 @@ pub fn background_operation(
         }
     }
     ctx.publish()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = tokio::process::Command::new(exe);
+
+    match ctx.connection_target() {
+        ConnectionTarget::Remote { transport_cmd } => {
+            // transport_cmd is ["ssh", "host"] — extract the host
+            if let Some(host) = transport_cmd.get(1) {
+                cmd.arg("--connect").arg(host);
+            }
+        }
+        ConnectionTarget::Elevated => {
+            cmd.arg("--elevated");
+        }
+        ConnectionTarget::Local => {}
+    }
+
+    let title = ctx.window_title();
+    if !title.is_empty() {
+        cmd.arg("--title").arg(title);
+    }
+
+    cmd.spawn()?;
+    ctx.window().close()?;
     Ok(())
 }
 
@@ -1768,6 +1806,8 @@ cmd_dialog!(cmd_command_palette, "command_palette");
 cmd_dialog!(cmd_user_commands, "user_commands");
 cmd_dialog!(cmd_hot_paths, "hot_paths");
 cmd_dialog!(cmd_open_settings, "settings");
+cmd_dialog!(cmd_debug, "debug");
+cmd_dialog!(cmd_connection_log, "connection_log");
 
 #[tauri::command]
 pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
@@ -1834,6 +1874,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         crate::editor::set_editor_language,
         crate::editor::set_editor_wrap,
         crate::editor::ping_editor,
+        reconnect,
         connect_remote,
         switch_vfs,
         unmount_vfs,
@@ -1909,6 +1950,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_open_config_file,
         cmd_reload_window,
         cmd_delete_selected,
+        cmd_debug,
+        cmd_connection_log,
     ]);
 
     // Middleware: close the current modal before any cmd_* command runs.

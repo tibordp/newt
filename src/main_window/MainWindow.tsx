@@ -9,6 +9,7 @@ import {
 
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
+import ConnectionLog from "./ConnectionLog";
 import dialogStyles from "./modals/Dialog.module.scss";
 
 import { enablePatches } from "immer";
@@ -254,20 +255,27 @@ function App() {
           />
         )}
         {remoteState &&
+          remoteState.connection_status.status !== "connected" &&
+          remoteState.connection_status.log.length > 0 && (
+            <ConnectionLog log={remoteState.connection_status.log} />
+          )}
+        {remoteState &&
           remoteState.connection_status.status === "connecting" && (
             <div className="connection-status">
               {remoteState.connection_status.message}
             </div>
           )}
-        {remoteState && remoteState.connection_status.status === "failed" && (
-          <div className="connection-status connection-error">
-            {remoteState.connection_status.error}
-          </div>
-        )}
         {remoteState &&
-          remoteState.connection_status.status === "disconnected" && (
+          (remoteState.connection_status.status === "failed" ||
+            remoteState.connection_status.status === "disconnected") && (
             <div className="connection-status connection-error">
-              {remoteState.connection_status.error}
+              {remoteState.connection_status.error}{" "}
+              <button
+                className="connection-retry"
+                onClick={() => invoke("reconnect").catch(console.error)}
+              >
+                Reconnect
+              </button>
             </div>
           )}
       </div>

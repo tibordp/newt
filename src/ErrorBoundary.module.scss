@@ -1,0 +1,26 @@
+.container {
+  padding: var(--space-8);
+  font-family: monospace;
+  color: var(--color-error);
+  background: var(--color-bg);
+  height: 100vh;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stack {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-fg-muted);
+  font-size: 0.85em;
+}
+
+.retryButton {
+  margin-top: var(--space-6);
+}

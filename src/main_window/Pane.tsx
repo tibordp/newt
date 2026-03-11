@@ -939,7 +939,7 @@ function PaneInner(
 
   const onOpen = useCallback(
     (file: File) => {
-      if (!file || pendingPathRef.current) return;
+      if (!file) return;
       safeCommand("enter", { paneHandle });
     },
     [paneHandle],
@@ -1062,7 +1062,6 @@ function PaneInner(
         suppressClickRef.current = false;
         return;
       }
-      if (pendingPathRef.current) return;
       if (e.ctrlKey) {
         safeCommand("toggle_selected", {
           paneHandle,

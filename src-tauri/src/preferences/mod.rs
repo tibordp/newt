@@ -795,7 +795,7 @@ pub struct CommandDef {
 }
 
 pub fn default_commands() -> Vec<CommandDef> {
-    vec![
+    let mut commands = vec![
         CommandDef {
             id: "new_window".into(),
             name: "New Window".into(),
@@ -1183,5 +1183,29 @@ pub fn default_commands() -> Vec<CommandDef> {
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },
-    ]
+    ];
+
+    commands.push(CommandDef {
+        id: "connection_log".into(),
+        name: "Connection Log".into(),
+        short_name: None,
+        category: "View".into(),
+        default_key: None,
+        default_when: None,
+        needs_pane: false,
+    });
+
+    if cfg!(debug_assertions) {
+        commands.push(CommandDef {
+            id: "debug".into(),
+            name: "Debug".into(),
+            short_name: None,
+            category: "View".into(),
+            default_key: None,
+            default_when: None,
+            needs_pane: false,
+        });
+    }
+
+    commands
 }

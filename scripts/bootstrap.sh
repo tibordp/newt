@@ -58,10 +58,17 @@ AGENT_PATH="${CACHE_DIR}/newt-agent-${NEWT_HASH}"
 if [ -x "$AGENT_PATH" ]; then
     echo "NEWT:READY"
 else
-    echo "NEWT:NEED:${TRIPLE}"
+    # Detect available decompression tools
+    CAPS=""
+    if command -v gzip >/dev/null 2>&1; then
+        CAPS="gzip"
+    fi
 
-    # Read size line from stdin
-    read -r SIZE
+    echo "NEWT:NEED:${TRIPLE}:${CAPS}"
+
+    # Read transfer header: "SIZE ENCODING\n"
+    #   ENCODING is "gzip" or "raw"
+    read -r SIZE ENCODING
 
     # Validate size is a number
     case "$SIZE" in
@@ -71,9 +78,16 @@ else
             ;;
     esac
 
-    # Read exact byte count from stdin (head -c is available on Linux and macOS)
+    # Read exact byte count from stdin, decompress if needed
     TMPFILE="${AGENT_PATH}.tmp.$$"
-    head -c "$SIZE" > "$TMPFILE"
+    case "$ENCODING" in
+        gzip)
+            head -c "$SIZE" | gzip -d > "$TMPFILE"
+            ;;
+        *)
+            head -c "$SIZE" > "$TMPFILE"
+            ;;
+    esac
 
     chmod +x "$TMPFILE"
     mv "$TMPFILE" "$AGENT_PATH"

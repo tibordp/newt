@@ -66,3 +66,9 @@ body {
 .connection-error {
   color: var(--error-foreground, #cd3131);
 }
+
+.connection-retry {
+  margin-left: var(--space-4);
+  padding: 0 var(--space-4);
+  font-size: inherit;
+}

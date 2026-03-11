@@ -326,6 +326,8 @@ pub enum ModalDataKind {
         prompts: Vec<UserCommandPrompt>,
         confirms: Vec<String>,
     },
+    Debug,
+    ConnectionLog,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -734,6 +736,14 @@ impl MainWindowContext {
             .map(f)
     }
 
+    pub fn connection_target(&self) -> &ConnectionTarget {
+        &self.inner.connection_target
+    }
+
+    pub fn window_title(&self) -> &str {
+        &self.inner.window_title
+    }
+
     pub fn is_connected(&self) -> bool {
         let guard = self.inner.session.load();
         let opt: &Option<Session> = &guard;
@@ -1022,12 +1032,27 @@ impl MainWindowContext {
         let pane_vfs_ids: std::collections::HashSet<VfsId> =
             self.panes().all().iter().map(|p| p.path().vfs_id).collect();
 
-        // Find archive mounts that no pane references
+        // A VFS is "in use" if a pane references it, or if another in-use VFS
+        // has it as its origin (transitively). This prevents unmounting a parent
+        // archive when a nested child archive is still open.
         let stale_ids: Vec<VfsId> = self.with_session(|s| {
-            s.mounted_vfs
-                .read()
+            let mounted = s.mounted_vfs.read();
+
+            // Expand pane VFS IDs to include all transitive origins
+            let mut in_use = pane_vfs_ids.clone();
+            let mut queue: Vec<VfsId> = pane_vfs_ids.into_iter().collect();
+            while let Some(vfs_id) = queue.pop() {
+                if let Some(info) = mounted.get(&vfs_id)
+                    && let Some(ref origin) = info.origin
+                    && in_use.insert(origin.vfs_id)
+                {
+                    queue.push(origin.vfs_id);
+                }
+            }
+
+            mounted
                 .iter()
-                .filter(|(id, info)| info.origin.is_some() && !pane_vfs_ids.contains(id))
+                .filter(|(id, info)| info.origin.is_some() && !in_use.contains(id))
                 .map(|(id, _)| *id)
                 .collect()
         })?;

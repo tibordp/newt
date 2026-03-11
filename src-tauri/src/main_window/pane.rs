@@ -186,6 +186,11 @@ impl Pane {
         skip_history: bool,
         changes_sender: &mut tokio::sync::watch::Sender<()>,
     ) -> Result<(), Error> {
+        debug!(
+            "navigate_impl: target={:?} silent={} skip_history={}",
+            target, silent, skip_history
+        );
+
         if !skip_history {
             let entry = self.snapshot();
             if !entry.path.path.as_os_str().is_empty() && entry.path != target {
@@ -230,6 +235,12 @@ impl Pane {
         // Skip batches when refreshing the same path — keep the current view
         // intact and swap in the final result atomically.
         let same_path = *old_file_list.path() == target;
+        debug!(
+            "navigate_impl: same_path={} silent={} streaming={}",
+            same_path,
+            silent,
+            !silent && !same_path
+        );
         let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<FileList>();
         let streaming_fut = self.fs.list_files(
             target.clone(),
@@ -250,13 +261,21 @@ impl Pane {
             tokio::select! {
                 biased;
                 _ = token.cancelled() => {
+                    debug!("navigate_impl: cancelled");
                     break Err(Error::Cancelled);
                 }
                 result = &mut streaming_fut => {
+                    debug!("navigate_impl: streaming_fut completed, ok={}", result.is_ok());
                     break result.map_err(Error::from);
                 }
                 Some(file_list) = batch_rx.recv() => {
                     let incoming_path = file_list.path().clone();
+                    debug!(
+                        "navigate_impl: batch received, {} files, path={:?}, path_changed={}",
+                        file_list.files().len(),
+                        incoming_path,
+                        batch_path.as_ref() != Some(&incoming_path)
+                    );
                     if batch_path.as_ref() != Some(&incoming_path) {
                         accumulated.clear();
                         batch_path = Some(incoming_path);
@@ -294,10 +313,23 @@ impl Pane {
             }
         };
 
+        debug!(
+            "navigate_impl: loop exited, accumulated={} files, dirty={}",
+            accumulated.len(),
+            dirty
+        );
+
         let new_file_list = match result {
-            Ok(ret) => Arc::new(ret),
+            Ok(ret) => {
+                debug!(
+                    "navigate_impl: success, {} files at {:?}",
+                    ret.files().len(),
+                    ret.path()
+                );
+                Arc::new(ret)
+            }
             Err(e) => {
-                debug!("navigation failed: {}", e);
+                debug!("navigate_impl: failed: {}", e);
 
                 if !dirty {
                     // Restore the old navigation state, but only if we haven't already published a partial update
@@ -324,6 +356,12 @@ impl Pane {
         *file_list = new_file_list.clone();
 
         let has_path_changed = old_file_list.path() != new_file_list.path();
+        debug!(
+            "navigate_impl: finalizing, old={:?} new={:?} path_changed={}",
+            old_file_list.path(),
+            new_file_list.path(),
+            has_path_changed
+        );
         let display_options = self.display_options.0.read().clone();
 
         ws.pending_path = None;

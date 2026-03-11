@@ -113,7 +113,7 @@ export type DndState = {
 };
 
 export type ConnectionStatus =
-  | { status: "connecting"; message: string }
+  | { status: "connecting"; message: string; log: string[] }
   | { status: "connected"; log: string[] }
   | { status: "disconnected"; log: string[]; error: string }
   | { status: "failed"; log: string[]; error: string };

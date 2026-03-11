@@ -248,7 +248,11 @@ impl CommunicatorInner {
             tokio::spawn(async move {
                 while let Some(msg) = inbox.recv().await {
                     tx.feed(msg).await?;
-                    // Since this is an interactive RPC, we flush after every message
+                    // Drain any additional messages that are already available
+                    // before flushing, so consecutive messages share one flush.
+                    while let Ok(msg) = inbox.try_recv() {
+                        tx.feed(msg).await?;
+                    }
                     tx.flush().await?;
                 }
                 info!("outbox closed");
@@ -322,7 +326,15 @@ impl CommunicatorInner {
             }
         };
 
-        sender.await??;
+        // Abort all pending handler tasks so their outbox sender clones are
+        // dropped, then abort the sender task.  Without this, the sender task
+        // would wait forever for the channel to close (since handler tasks and
+        // CommunicatorInner.outbox keep senders alive), deadlocking shutdown.
+        for (_, handle) in self.tasks.lock().drain() {
+            handle.abort();
+        }
+        sender.abort();
+
         result
     }
 }

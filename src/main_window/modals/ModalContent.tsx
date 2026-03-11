@@ -9,6 +9,7 @@ import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
+import Debug from "./Debug";
 import UserCommandInput from "./UserCommandInput";
 
 export type ModalState = {
@@ -55,6 +56,8 @@ export function ModalContent({ state }: { state: ModalState | null }) {
       return <Properties {...state.data} {...commonProps} />;
     case "user_command_input":
       return <UserCommandInput {...state.data} {...commonProps} />;
+    case "debug":
+      return <Debug {...commonProps} />;
     default:
       return null;
   }

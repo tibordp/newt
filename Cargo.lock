@@ -3406,6 +3406,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "flate2",
  "gio",
  "libc",
  "log",

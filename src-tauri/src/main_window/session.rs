@@ -24,6 +24,28 @@ use crate::common::{Error, UpdatePublisher};
 
 use super::{MainWindowState, Operations, apply_operation_progress};
 
+/// On Linux, arrange for the child to receive SIGTERM when the parent exits.
+/// This ensures SSH/agent processes don't linger if Newt is killed.
+/// On other platforms this is a no-op.
+fn set_parent_death_signal(cmd: &mut tokio::process::Command) {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: prctl(PR_SET_PDEATHSIG) is async-signal-safe and this is
+        // the only thing we do in the pre_exec closure.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// Callback invoked when SSH needs user input (password, passphrase, host key
 /// confirmation). Returns `Some(response)` on success, `None` if the user
 /// cancelled.
@@ -52,7 +74,7 @@ pub enum ConnectionTarget {
 #[derive(Clone, serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ConnectionStatus {
-    Connecting { message: String },
+    Connecting { message: String, log: Vec<String> },
     Connected { log: Vec<String> },
     Disconnected { log: Vec<String>, error: String },
     Failed { log: Vec<String>, error: String },
@@ -65,6 +87,7 @@ impl Default for ConnectionState {
     fn default() -> Self {
         Self(Arc::new(RwLock::new(ConnectionStatus::Connecting {
             message: "Loading...".into(),
+            log: Vec::new(),
         })))
     }
 }
@@ -261,26 +284,61 @@ impl StderrLog {
 
 impl ConnectionState {
     pub fn set_connecting(&self, message: &str) {
-        *self.0.write() = ConnectionStatus::Connecting {
+        let mut status = self.0.write();
+        let existing_log = match &*status {
+            ConnectionStatus::Connecting { log, .. } => log.clone(),
+            _ => Vec::new(),
+        };
+        *status = ConnectionStatus::Connecting {
             message: message.to_string(),
+            log: existing_log,
         };
     }
 
     pub fn set_failed(&self, error: String) {
-        *self.0.write() = ConnectionStatus::Failed {
-            log: Vec::new(),
+        let mut status = self.0.write();
+        let existing_log = match &*status {
+            ConnectionStatus::Connecting { log, .. } => log.clone(),
+            _ => Vec::new(),
+        };
+        *status = ConnectionStatus::Failed {
+            log: existing_log,
             error,
         };
+    }
+
+    /// Append a line to the connection log.
+    fn append_log(&self, line: String) {
+        let mut status = self.0.write();
+        match &mut *status {
+            ConnectionStatus::Connecting { log, .. } | ConnectionStatus::Connected { log } => {
+                log.push(line);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Helper that pushes a line to both the stderr log and the connection status,
+/// then publishes so the frontend sees it immediately.
+struct ConnectionLog {
+    stderr_log: StderrLog,
+    connection_status: ConnectionState,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
+}
+
+impl ConnectionLog {
+    fn log(&self, line: impl Into<String>) {
+        let line = line.into();
+        self.stderr_log.push(line.clone());
+        self.connection_status.append_log(line);
+        let _ = self.publisher.publish();
     }
 }
 
 /// Spawn a task that reads lines from `stderr` and appends them to `log`.
 /// Publishes after each line so the frontend can see logs in real-time.
-fn spawn_stderr_reader(
-    stderr: tokio::process::ChildStderr,
-    log: StderrLog,
-    publisher: Arc<UpdatePublisher<MainWindowState>>,
-) {
+fn spawn_stderr_reader(stderr: tokio::process::ChildStderr, conn_log: ConnectionLog) {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
@@ -289,8 +347,7 @@ fn spawn_stderr_reader(
             match reader.read_line(&mut line).await {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    log.push(line.trim_end().to_string());
-                    let _ = publisher.publish();
+                    conn_log.log(line.trim_end());
                 }
             }
         }
@@ -435,7 +492,7 @@ type DynStream =
 /// Result of spawning a child process with a bidirectional RPC stream.
 struct ChildConnection {
     child: tokio::process::Child,
-    stderr: tokio::process::ChildStderr,
+    stderr: Option<tokio::process::ChildStderr>,
     stream: DynStream,
 }
 
@@ -506,6 +563,7 @@ async fn spawn_remote(
     transport_cmd: &[String],
     agent_resolver: &AgentResolver,
     askpass_callback: Arc<AskpassCallback>,
+    conn_log: &ConnectionLog,
 ) -> Result<ChildConnection, Error> {
     let (program, args) = transport_cmd
         .split_first()
@@ -524,8 +582,10 @@ async fn spawn_remote(
     let askpass_binary = agent_resolver.find_local_agent_binary()?;
     let askpass_sock = spawn_askpass_listener(askpass_callback)?;
 
-    let mut child = tokio::process::Command::new(program)
-        .args(args)
+    conn_log.log(format!("Spawning: {} {}", program, args.join(" ")));
+
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args)
         .arg(&sh_cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -533,11 +593,25 @@ async fn spawn_remote(
         .env("SSH_ASKPASS", &askpass_binary)
         .env("SSH_ASKPASS_REQUIRE", "force")
         .env("NEWT_ASKPASS_SOCK", &askpass_sock)
-        .spawn()?;
+        .kill_on_drop(true);
+    set_parent_death_signal(&mut cmd);
+    let mut child = cmd.spawn()?;
+
+    conn_log.log("Process spawned, waiting for bootstrap...");
 
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
+
+    // Start reading stderr immediately so SSH logs appear during connection
+    spawn_stderr_reader(
+        stderr,
+        ConnectionLog {
+            stderr_log: conn_log.stderr_log.clone(),
+            connection_status: conn_log.connection_status.clone(),
+            publisher: conn_log.publisher.clone(),
+        },
+    );
 
     // Read status line, skipping any noise from .bashrc etc.
     let mut reader = BufReader::new(stdout);
@@ -545,21 +619,11 @@ async fn spawn_remote(
         let mut line = String::new();
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
-            // Connection closed — drain stderr for context
-            let mut buf_stderr = BufReader::new(stderr);
-            let mut stderr_lines = Vec::new();
-            let mut stderr_line = String::new();
-            while let Ok(n) = buf_stderr.read_line(&mut stderr_line).await {
-                if n == 0 {
-                    break;
-                }
-                stderr_lines.push(stderr_line.trim_end().to_string());
-                stderr_line.clear();
-            }
-            let detail = stderr_lines
-                .last()
-                .map(|l| format!(": {}", l))
-                .unwrap_or_default();
+            // Connection closed — use stderr log for context (already being
+            // captured by the stderr reader task).
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let lines = conn_log.stderr_log.lines();
+            let detail = lines.last().map(|l| format!(": {}", l)).unwrap_or_default();
             return Err(Error::Custom(format!(
                 "remote connection closed before bootstrap completed{}",
                 detail
@@ -569,29 +633,67 @@ async fn spawn_remote(
         if trimmed.starts_with("NEWT:") {
             break trimmed.to_string();
         }
-        log::debug!("bootstrap noise: {}", trimmed);
+        conn_log.log(format!("bootstrap: {}", trimmed));
     };
     let status_line = status_line.as_str();
 
     if status_line == "NEWT:READY" {
+        conn_log.log("Agent ready");
         Ok(ChildConnection {
             stream: make_stream(reader, stdin),
             child,
-            stderr,
+            stderr: None,
         })
-    } else if let Some(triple) = status_line.strip_prefix("NEWT:NEED:") {
+    } else if let Some(need_rest) = status_line.strip_prefix("NEWT:NEED:") {
+        // Format: NEWT:NEED:<triple>:<caps> where caps is comma-separated
+        let (triple, caps_str) = need_rest.split_once(':').unwrap_or((need_rest, ""));
+        let caps: Vec<&str> = caps_str.split(',').filter(|s| !s.is_empty()).collect();
+        let has_gzip = caps.contains(&"gzip");
+
+        conn_log.log(format!(
+            "Agent needs upload for {} (caps: {})",
+            triple,
+            if caps.is_empty() { "none" } else { caps_str }
+        ));
         let binary_path = agent_resolver.find_agent_binary(triple)?;
         let binary_data = tokio::fs::read(&binary_path).await?;
-        let size = binary_data.len();
+        let raw_size = binary_data.len();
 
-        stdin.write_all(format!("{}\n", size).as_bytes()).await?;
-        stdin.write_all(&binary_data).await?;
+        let (upload_data, encoding) = if has_gzip {
+            use flate2::Compression;
+            use flate2::write::GzEncoder;
+            use std::io::Write;
+
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+            encoder.write_all(&binary_data)?;
+            let compressed = encoder.finish()?;
+            conn_log.log(format!(
+                "Compressed {} → {} bytes ({:.0}%)",
+                raw_size,
+                compressed.len(),
+                compressed.len() as f64 / raw_size as f64 * 100.0
+            ));
+            (compressed, "gzip")
+        } else {
+            (binary_data, "raw")
+        };
+
+        conn_log.log(format!(
+            "Uploading agent ({} bytes, {})...",
+            upload_data.len(),
+            encoding
+        ));
+        stdin
+            .write_all(format!("{} {}\n", upload_data.len(), encoding).as_bytes())
+            .await?;
+        stdin.write_all(&upload_data).await?;
         stdin.flush().await?;
+        conn_log.log("Agent uploaded");
 
         Ok(ChildConnection {
             stream: make_stream(reader, stdin),
             child,
-            stderr,
+            stderr: None,
         })
     } else if let Some(error) = status_line.strip_prefix("NEWT:ERROR:") {
         Err(Error::Custom(format!("remote bootstrap error: {}", error)))
@@ -616,7 +718,9 @@ async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnectio
     cmd.arg(&agent_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    set_parent_death_signal(&mut cmd);
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
         cmd.env("RUST_LOG", rust_log);
     }
@@ -633,7 +737,7 @@ async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnectio
     Ok(ChildConnection {
         child,
         stream,
-        stderr,
+        stderr: Some(stderr),
     })
 }
 
@@ -641,14 +745,23 @@ async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnectio
 /// session and sets the connection status to `Disconnected`.
 fn spawn_child_watcher(
     mut child: tokio::process::Child,
-    stderr: tokio::process::ChildStderr,
+    stderr: Option<tokio::process::ChildStderr>,
     stderr_log: StderrLog,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
     connection_status: ConnectionState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
 ) {
-    // Start capturing stderr immediately
-    spawn_stderr_reader(stderr, stderr_log.clone(), publisher.clone());
+    // Start capturing stderr if not already being read
+    if let Some(stderr) = stderr {
+        spawn_stderr_reader(
+            stderr,
+            ConnectionLog {
+                stderr_log: stderr_log.clone(),
+                connection_status: connection_status.clone(),
+                publisher: publisher.clone(),
+            },
+        );
+    }
 
     tokio::spawn(async move {
         let status = child.wait().await;
@@ -699,10 +812,22 @@ pub(super) async fn connect(
         }
         ConnectionTarget::Remote { transport_cmd } => {
             set_status("Connecting to remote host...");
-            let conn =
-                spawn_remote(transport_cmd, agent_resolver, askpass_callback.clone()).await?;
-            let (services, _) = create_rpc_services(conn.stream, &state.operations, publisher);
             let stderr_log = StderrLog::default();
+            let conn_log = ConnectionLog {
+                stderr_log: stderr_log.clone(),
+                connection_status: state.connection_status.clone(),
+                publisher: publisher.clone(),
+            };
+            let conn = spawn_remote(
+                transport_cmd,
+                agent_resolver,
+                askpass_callback.clone(),
+                &conn_log,
+            )
+            .await?;
+            conn_log.log("Setting up RPC services...");
+            let (services, _) = create_rpc_services(conn.stream, &state.operations, publisher);
+            conn_log.log("Connected");
             (services, stderr_log, Some((conn.child, conn.stderr)))
         }
         ConnectionTarget::Elevated => {

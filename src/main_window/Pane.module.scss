@@ -26,6 +26,7 @@
     background: url("../assets/spinner.svg") no-repeat center;
     background-size: 40px;
     animation: spin 1s linear infinite;
+    pointer-events: none;
   }
 }
 

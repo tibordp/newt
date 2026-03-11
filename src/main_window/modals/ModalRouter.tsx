@@ -4,6 +4,7 @@ import { safeCommand } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { PreferencesState } from "../../lib/preferences";
 import CommandPaletteContent from "./CommandPalette";
+import ConnectionLogContent from "./ConnectionLogDialog";
 import HotPathsContent from "./HotPaths";
 import SettingsEditorContent from "./SettingsEditor";
 import { ModalContent } from "./ModalContent";
@@ -40,6 +41,8 @@ export default function ModalRouter({
         return <HotPathsContent state={state} />;
       case "settings":
         return <SettingsEditorContent preferences={preferences} />;
+      case "connection_log":
+        return <ConnectionLogContent state={state} />;
       default:
         return (
           <Dialog.Content
