@@ -1253,6 +1253,8 @@ pub async fn start_operation(
                 error: None,
                 issue: None,
                 backgrounded: false,
+                scanning_items: None,
+                scanning_bytes: None,
             },
         );
     }
@@ -1297,7 +1299,6 @@ pub async fn resolve_issue(
         "skip" => IssueAction::Skip,
         "overwrite" => IssueAction::Overwrite,
         "retry" => IssueAction::Retry,
-        "abort" => IssueAction::Abort,
         _ => return Err(Error::Custom(format!("unknown action: {}", action))),
     };
 

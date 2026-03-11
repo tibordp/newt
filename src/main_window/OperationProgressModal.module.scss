@@ -84,13 +84,19 @@
 
 .progressInfo {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .progressText {
   font-size: 0.9em;
+  color: var(--color-fg-muted);
+  flex-shrink: 0;
+}
+
+.speedInfo {
+  font-size: 0.85em;
   color: var(--color-fg-muted);
   flex-shrink: 0;
 }
@@ -102,8 +108,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  flex: 1;
+  text-align: right;
   direction: rtl;
-  text-align: left;
 }
 
 .status {

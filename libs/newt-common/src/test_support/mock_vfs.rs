@@ -132,6 +132,9 @@ impl VfsDescriptor for MockVfsDescriptor {
     fn has_symlinks(&self) -> bool {
         self.config.has_symlinks
     }
+    fn can_stat_directories(&self) -> bool {
+        true
+    }
     fn can_fs_stats(&self) -> bool {
         false
     }

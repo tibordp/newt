@@ -75,6 +75,9 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     fn has_symlinks(&self) -> bool {
         false
     }
+    fn can_stat_directories(&self) -> bool {
+        true
+    }
     fn can_fs_stats(&self) -> bool {
         false
     }

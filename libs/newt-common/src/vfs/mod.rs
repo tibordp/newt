@@ -157,6 +157,7 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
 
     // --- Capabilities ---
     fn has_symlinks(&self) -> bool;
+    fn can_stat_directories(&self) -> bool;
     fn can_fs_stats(&self) -> bool;
 
     // --- Same-VFS fast paths ---

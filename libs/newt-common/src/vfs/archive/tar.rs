@@ -79,6 +79,9 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn has_symlinks(&self) -> bool {
         true
     }
+    fn can_stat_directories(&self) -> bool {
+        true
+    }
     fn can_fs_stats(&self) -> bool {
         false
     }

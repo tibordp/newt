@@ -230,6 +230,9 @@ pub struct OperationState {
     pub error: Option<String>,
     pub issue: Option<OperationIssueInfo>,
     pub backgrounded: bool,
+    /// Running totals from the scanning/planning phase.
+    pub scanning_items: Option<u64>,
+    pub scanning_bytes: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -545,6 +548,16 @@ impl MainWindowState {
 pub(crate) fn apply_operation_progress(operations: &Operations, progress: OperationProgress) {
     let mut ops = operations.0.write();
     match progress {
+        OperationProgress::Scanning {
+            id,
+            items_found,
+            bytes_found,
+        } => {
+            if let Some(op) = ops.get_mut(&id) {
+                op.scanning_items = Some(items_found);
+                op.scanning_bytes = Some(bytes_found);
+            }
+        }
         OperationProgress::Prepared {
             id,
             total_bytes,
@@ -599,7 +612,6 @@ pub(crate) fn apply_operation_progress(operations: &Operations, progress: Operat
                                 "overwrite".to_string()
                             }
                             newt_common::operation::IssueAction::Retry => "retry".to_string(),
-                            newt_common::operation::IssueAction::Abort => "abort".to_string(),
                         })
                         .collect(),
                 });

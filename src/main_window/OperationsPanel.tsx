@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { safeCommand } from "../lib/ipc";
 import * as Dialog from "@radix-ui/react-dialog";
 import styles from "./OperationsPanel.module.scss";
@@ -33,6 +33,8 @@ export type OperationState = {
   error: string | null;
   issue: OperationIssue | null;
   backgrounded: boolean;
+  scanning_items: number | null;
+  scanning_bytes: number | null;
 };
 
 export function progressFraction(op: OperationState): number {
@@ -46,16 +48,91 @@ export function progressFraction(op: OperationState): number {
   return 0;
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 export function formatProgress(op: OperationState): string {
-  if (op.status === "scanning") return "Scanning...";
+  if (op.status === "scanning") {
+    if (op.scanning_items !== null && op.scanning_items > 0) {
+      const parts = [`${op.scanning_items} items`];
+      if (op.scanning_bytes !== null && op.scanning_bytes > 0) {
+        parts.push(formatSize(op.scanning_bytes));
+      }
+      return `Scanning... ${parts.join(", ")}`;
+    }
+    return "Scanning...";
+  }
   if (op.total_bytes !== null && op.total_bytes > 0) {
     const pct = Math.round((op.bytes_done / op.total_bytes) * 100);
-    return `${pct}%`;
+    return `${pct}% (${formatSize(op.bytes_done)} / ${formatSize(op.total_bytes)})`;
   }
   if (op.total_items !== null && op.total_items > 0) {
     return `${op.items_done}/${op.total_items}`;
   }
   return "";
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return `${m}m ${s}s`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+/** Track transfer speed via a rolling window of bytes_done samples. */
+function useTransferSpeed(bytesDone: number, totalBytes: number | null) {
+  const samplesRef = useRef<{ time: number; bytes: number }[]>([]);
+  const [speed, setSpeed] = useState<number | null>(null);
+  const [eta, setEta] = useState<string | null>(null);
+
+  useEffect(() => {
+    const now = Date.now();
+    const samples = samplesRef.current;
+    samples.push({ time: now, bytes: bytesDone });
+
+    // Keep a 5-second rolling window
+    const cutoff = now - 5000;
+    while (samples.length > 1 && samples[0].time < cutoff) {
+      samples.shift();
+    }
+
+    if (samples.length >= 2) {
+      const first = samples[0];
+      const elapsed = (now - first.time) / 1000;
+      if (elapsed > 0.5) {
+        const bytesPerSec = (bytesDone - first.bytes) / elapsed;
+        setSpeed(bytesPerSec);
+        if (totalBytes !== null && totalBytes > bytesDone && bytesPerSec > 0) {
+          setEta(formatDuration((totalBytes - bytesDone) / bytesPerSec));
+        } else {
+          setEta(null);
+        }
+      }
+    }
+  }, [bytesDone, totalBytes]);
+
+  return { speed, eta };
+}
+
+function TransferSpeedInfo({ op }: { op: OperationState }) {
+  const { speed, eta } = useTransferSpeed(op.bytes_done, op.total_bytes);
+  if (speed === null || op.status !== "running") return null;
+
+  return (
+    <span className={modalStyles.speedInfo}>
+      {formatSize(speed)}/s{eta ? ` — ${eta} remaining` : ""}
+    </span>
+  );
 }
 
 export const ACTION_LABELS: Record<IssueAction, string> = {
@@ -242,6 +319,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
                       <span className={modalStyles.progressText}>
                         {progress}
                       </span>
+                      <TransferSpeedInfo op={op} />
                       {op.current_item && (
                         <span
                           className={modalStyles.currentItem}

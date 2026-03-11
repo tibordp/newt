@@ -360,6 +360,8 @@ async fn execute_rendered(
                     error: None,
                     issue: None,
                     backgrounded: false,
+                    scanning_items: None,
+                    scanning_bytes: None,
                 },
             );
         }

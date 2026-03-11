@@ -72,6 +72,9 @@ impl VfsDescriptor for S3VfsDescriptor {
     fn has_symlinks(&self) -> bool {
         false
     }
+    fn can_stat_directories(&self) -> bool {
+        false
+    }
     fn can_fs_stats(&self) -> bool {
         false
     }
