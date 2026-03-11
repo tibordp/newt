@@ -21,6 +21,7 @@ pub type IssueId = u64;
 pub enum IssueKind {
     AlreadyExists,
     PermissionDenied,
+    IoError,
     Other(String),
 }
 
@@ -311,7 +312,7 @@ impl SyncProgressSender {
         let _ = self.progress_tx.send(progress);
     }
 
-    fn maybe_send_progress(&mut self, bytes_done: u64, items_done: u64, current_item: &str) {
+    fn maybe_send_progress(&self, bytes_done: u64, items_done: u64, current_item: &str) {
         let now = std::time::Instant::now();
         let mut last = self.last_report.lock();
         if now.duration_since(*last).as_millis() >= 100 {
@@ -326,7 +327,7 @@ impl SyncProgressSender {
         }
     }
 
-    fn maybe_send_scanning(&mut self, items_found: u64, bytes_found: u64) {
+    fn maybe_send_scanning(&self, items_found: u64, bytes_found: u64) {
         let now = std::time::Instant::now();
         let mut last = self.last_report.lock();
         if now.duration_since(*last).as_millis() >= 100 {
@@ -395,12 +396,12 @@ impl ProgressReporter {
         });
     }
 
-    fn maybe_send_progress(&mut self, bytes_done: u64, items_done: u64, current_item: &str) {
+    fn maybe_send_progress(&self, bytes_done: u64, items_done: u64, current_item: &str) {
         self.sync_sender
             .maybe_send_progress(bytes_done, items_done, current_item);
     }
 
-    fn maybe_send_scanning(&mut self, items_found: u64, bytes_found: u64) {
+    fn maybe_send_scanning(&self, items_found: u64, bytes_found: u64) {
         self.sync_sender
             .maybe_send_scanning(items_found, bytes_found);
     }
@@ -486,7 +487,7 @@ impl ProgressReporter {
         let kind = match error.kind {
             crate::ErrorKind::PermissionDenied => IssueKind::PermissionDenied,
             crate::ErrorKind::AlreadyExists => IssueKind::AlreadyExists,
-            _ => IssueKind::Other(error.message.clone()),
+            _ => IssueKind::IoError,
         };
         let mut actions = vec![IssueAction::Skip];
         if allow_retry {
@@ -589,6 +590,7 @@ pub async fn execute_operation(
                 options,
                 cancel.clone(),
                 false,
+                0,
             )
             .await
         }
@@ -802,7 +804,7 @@ fn copy_bytes_sync(
     reader: &mut dyn std::io::Read,
     writer: &mut dyn std::io::Write,
     cancel: &CancellationToken,
-    sender: &mut SyncProgressSender,
+    sender: &SyncProgressSender,
     bytes_done: &mut u64,
     items_done: u64,
     display: &str,
@@ -902,7 +904,7 @@ async fn copy_single_file(
         let mut writer = dst_vfs.overwrite_sync(&entry.dest).await?;
 
         let cancel2 = cancel.clone();
-        let mut sender2 = reporter.sync_sender();
+        let sender2 = reporter.sync_sender();
         let bd = *bytes_done;
         let id = items_done;
         let display_owned = display.to_string();
@@ -913,7 +915,7 @@ async fn copy_single_file(
                 &mut *reader,
                 &mut *writer,
                 &cancel2,
-                &mut sender2,
+                &sender2,
                 &mut bd_local,
                 id,
                 &display_owned,
@@ -1010,7 +1012,7 @@ async fn copy_single_file(
         // Bridge async reader to sync writer via channel + spawn_blocking
         let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, crate::Error>>(4);
         let cancel2 = cancel.clone();
-        let mut sender2 = reporter.sync_sender();
+        let sender2 = reporter.sync_sender();
         let bd = *bytes_done;
         let id = items_done;
         let display_owned = display.to_string();
@@ -1105,6 +1107,7 @@ async fn preserve_metadata(
 
 // --- Execute Copy (async outer loop, uses Vfs) ---
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_copy(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
@@ -1113,6 +1116,7 @@ async fn execute_copy(
     options: CopyOptions,
     cancel: CancellationToken,
     is_move: bool,
+    items_done_offset: u64,
 ) -> Result<(), crate::Error> {
     let first_source = sources
         .first()
@@ -1123,6 +1127,14 @@ async fn execute_copy(
     let src_vfs_id = first_source.vfs_id;
     let dst_vfs_id = destination.vfs_id;
     let same_vfs = src_vfs_id == dst_vfs_id;
+
+    // Validate all sources share the same VFS
+    if let Some(mismatched) = sources.iter().find(|s| s.vfs_id != src_vfs_id) {
+        return Err(crate::Error::custom(format!(
+            "all sources must be on the same VFS (expected {}, got {})",
+            src_vfs_id, mismatched.vfs_id
+        )));
+    }
 
     let src_descriptor = src_vfs.descriptor();
     let dst_descriptor = dst_vfs.descriptor();
@@ -1172,11 +1184,11 @@ async fn execute_copy(
     )
     .await?;
 
-    let total_items = plan.entries.len() as u64;
+    let total_items = plan.entries.len() as u64 + items_done_offset;
     reporter.send_prepared(plan.total_bytes, total_items);
 
     let mut bytes_done = 0u64;
-    let mut items_done = 0u64;
+    let mut items_done = items_done_offset;
 
     for entry in &plan.entries {
         if cancel.is_cancelled() {
@@ -1239,6 +1251,7 @@ async fn execute_copy(
                             .await
                         {
                             Ok(IssueAction::Skip) => {
+                                bytes_done += entry.size_bytes;
                                 items_done += 1;
                                 continue;
                             }
@@ -1257,6 +1270,7 @@ async fn execute_copy(
                             .await
                         {
                             Ok(IssueAction::Skip) => {
+                                bytes_done += entry.size_bytes;
                                 items_done += 1;
                                 continue;
                             }
@@ -1340,7 +1354,10 @@ async fn execute_copy(
                         )
                         .await?
                     {
-                        IssueOutcome::Skip => {}
+                        IssueOutcome::Skip => {
+                            // Advance bytes so progress reaches 100% even with skips
+                            bytes_done = bytes_before + entry.size_bytes;
+                        }
                         IssueOutcome::Retry => {
                             retry = true;
                         }
@@ -1806,6 +1823,7 @@ async fn execute_move(
     let src_descriptor = src_vfs.descriptor();
 
     let mut needs_copy = Vec::new();
+    let mut renamed_count = 0u64;
 
     if same_vfs && src_descriptor.can_rename() {
         debug!(
@@ -1824,6 +1842,53 @@ async fn execute_move(
             };
             let dest_local = dst_path.join(file_name);
 
+            // Check for destination conflicts before renaming (rename silently overwrites)
+            if let Ok(dest_file) = src_vfs.file_info(&dest_local).await {
+                let source_file = src_vfs.file_info(&source.path).await?;
+                if dest_file.is_dir != source_file.is_dir {
+                    // Type mismatch (file vs directory) — can only skip
+                    let msg = if dest_file.is_dir {
+                        format!(
+                            "Cannot replace directory with file: {}",
+                            dest_local.display()
+                        )
+                    } else {
+                        format!(
+                            "Cannot replace file with directory: {}",
+                            dest_local.display()
+                        )
+                    };
+                    match reporter
+                        .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
+                        .await
+                    {
+                        Ok(IssueAction::Skip) => continue,
+                        Err(e) => return Err(e),
+                        _ => unreachable!("not offered"),
+                    }
+                } else if !dest_file.is_dir {
+                    // Both are files — offer skip/overwrite
+                    match reporter
+                        .raise_issue(
+                            IssueKind::AlreadyExists,
+                            format!("File already exists: {}", dest_local.display()),
+                            None,
+                            vec![IssueAction::Skip, IssueAction::Overwrite],
+                        )
+                        .await
+                    {
+                        Ok(IssueAction::Skip) => continue,
+                        Ok(IssueAction::Overwrite) => {
+                            // Proceed with rename (will overwrite)
+                        }
+                        Err(e) => return Err(e),
+                        _ => unreachable!("not offered"),
+                    }
+                }
+                // Both are directories: merge semantics — fall through to rename
+                // (which will fail for non-empty dirs, then fall back to copy+delete)
+            }
+
             match src_vfs.rename(&source.path, &dest_local).await {
                 Ok(()) => {
                     debug!(
@@ -1831,6 +1896,7 @@ async fn execute_move(
                         source.path.display(),
                         dest_local.display()
                     );
+                    renamed_count += 1;
                 }
                 Err(_) => {
                     debug!(
@@ -1849,7 +1915,8 @@ async fn execute_move(
     }
 
     if needs_copy.is_empty() {
-        reporter.send_prepared(0, sources.len() as u64);
+        reporter.send_prepared(0, renamed_count);
+        reporter.maybe_send_progress(0, renamed_count, "");
         return Ok(());
     }
 
@@ -1864,6 +1931,7 @@ async fn execute_move(
         options,
         cancel,
         true,
+        renamed_count,
     )
     .await
 }
