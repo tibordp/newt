@@ -1197,26 +1197,43 @@ function PdfViewer({ filePath, fileUrl, fileSize }: PdfViewerProps) {
 
 // --- Main Viewer component ---
 
+interface ViewerRemoteState {
+  mode: string;
+  file_path: VfsPath | null;
+  display_path: string | null;
+  file_server_base: string | null;
+}
+
 function Viewer() {
   const [searchParams] = useSearchParams();
-  const displayPath = searchParams.get("path") || "";
-  const filePath: VfsPath = JSON.parse(
-    searchParams.get("vfs_path") ||
-      `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`,
-  );
-  const fileServerBase = searchParams.get("file_server_base") || "";
-  const fileUrl = `${fileServerBase}/${filePath.vfs_id}${filePath.path}`;
+  const viewerState = useRemoteState<ViewerRemoteState>("viewer");
 
-  const viewerState = useRemoteState<{ mode: string }>("viewer");
+  // Read file info from remote state, fall back to search params
+  const displayPath =
+    viewerState?.display_path ?? searchParams.get("path") ?? "";
+  const filePath: VfsPath | null =
+    viewerState?.file_path ??
+    (searchParams.has("vfs_path")
+      ? JSON.parse(searchParams.get("vfs_path")!)
+      : null);
+  const fileServerBase =
+    viewerState?.file_server_base ?? searchParams.get("file_server_base") ?? "";
+  const fileUrl = filePath
+    ? `${fileServerBase}/${filePath.vfs_id}${filePath.path}`
+    : "";
 
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const chunkCache = useRef(new Map<number, Uint8Array>());
 
-  // Fetch file info on mount and push auto-detected mode to Rust
+  // Fetch file info when file path becomes available and push auto-detected mode to Rust
   useEffect(() => {
-    if (!displayPath) return;
+    if (!displayPath || !filePath) return;
+    // Reset state for new file
+    setInfo(null);
+    setError(null);
+    chunkCache.current.clear();
     document.title = displayPath;
 
     (async () => {
@@ -1232,7 +1249,9 @@ function Viewer() {
     })();
   }, [displayPath]);
 
-  const currentMode = (viewerState?.mode as ViewerMode) ?? null;
+  const currentMode = filePath
+    ? ((viewerState?.mode as ViewerMode) ?? null)
+    : null;
 
   // Preload first hex chunk when switching to hex mode (or when auto-detected as hex)
   useEffect(() => {
@@ -1255,10 +1274,11 @@ function Viewer() {
   }, [currentMode, info]);
 
   // Chunked text loading — enabled only in text mode
+  const dummyPath: VfsPath = { vfs_id: 0, path: "" };
   const textState = useChunkedTextLoader(
-    filePath,
+    filePath ?? dummyPath,
     info?.size ?? 0,
-    info !== null && currentMode === "text",
+    filePath !== null && info !== null && currentMode === "text",
   );
 
   const loadChunk = useCallback(
@@ -1308,7 +1328,7 @@ function Viewer() {
     );
   }
 
-  if (!info || !currentMode) {
+  if (!filePath || !info || !currentMode) {
     return (
       <div
         className={styles.viewer}
@@ -1318,7 +1338,7 @@ function Viewer() {
       >
         <div className={styles.viewerContent} />
         <div className={styles.viewerStatus}>
-          <span>Loading...</span>
+          {filePath ? <span>Loading...</span> : null}
         </div>
       </div>
     );

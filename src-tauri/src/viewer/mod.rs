@@ -1,3 +1,4 @@
+use newt_common::vfs::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
@@ -19,23 +20,39 @@ const MODES: &[(&str, &str)] = &[
 
 pub struct ViewerState {
     mode: RwLock<String>,
+    file_path: RwLock<Option<VfsPath>>,
+    display_path: RwLock<Option<String>>,
+    file_server_base: RwLock<Option<String>>,
 }
 
 impl Serialize for ViewerState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("ViewerState", 1)?;
+        let mut s = serializer.serialize_struct("ViewerState", 4)?;
         s.serialize_field("mode", &*self.mode.read())?;
+        s.serialize_field("file_path", &*self.file_path.read())?;
+        s.serialize_field("display_path", &*self.display_path.read())?;
+        s.serialize_field("file_server_base", &*self.file_server_base.read())?;
         s.end()
     }
 }
 
 pub struct ViewerWindow {
     publisher: Arc<UpdatePublisher<ViewerState>>,
-    menu: Menu<Wry>,
+    menu: RwLock<Option<Menu<Wry>>>,
 }
 
 impl ViewerWindow {
+    pub fn set_file(&self, file_path: VfsPath, display_path: String, file_server_base: String) {
+        let state = self.publisher.state();
+        *state.file_path.write() = Some(file_path);
+        *state.display_path.write() = Some(display_path);
+        *state.file_server_base.write() = Some(file_server_base);
+        // Reset mode for new file
+        *state.mode.write() = "text".to_string();
+        let _ = self.publisher.publish_full();
+    }
+
     pub fn set_mode(&self, mode: &str) {
         *self.publisher.state().mode.write() = mode.to_string();
         self.update_menu_checks(mode);
@@ -47,15 +64,20 @@ impl ViewerWindow {
     }
 
     fn update_menu_checks(&self, active_mode: &str) {
-        let active_id = format!("viewer_mode_{}", active_mode);
-        if let Ok(items) = self.menu.items() {
+        let menu_guard = self.menu.read();
+        let menu = match menu_guard.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let suffix = format!("mode_{}", active_mode);
+        if let Ok(items) = menu.items() {
             for item in &items {
                 if let Some(submenu) = item.as_submenu()
                     && let Ok(sub_items) = submenu.items()
                 {
                     for sub_item in &sub_items {
                         if let Some(check) = sub_item.as_check_menuitem() {
-                            let _ = check.set_checked(check.id().as_ref() == active_id.as_str());
+                            let _ = check.set_checked(check.id().as_ref().ends_with(&suffix));
                         }
                     }
                 }
@@ -80,17 +102,38 @@ impl<'de> CommandArg<'de, Wry> for ViewerWindowContext {
     }
 }
 
-pub fn create_viewer_window(
+/// Create a ViewerWindow with UpdatePublisher but no menu.
+/// Used both for pre-warming and direct creation.
+pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
+    let state = ViewerState {
+        mode: RwLock::new("text".to_string()),
+        file_path: RwLock::new(None),
+        display_path: RwLock::new(None),
+        file_server_base: RwLock::new(None),
+    };
+    let publisher = Arc::new(UpdatePublisher::new(window.clone(), "viewer", state));
+
+    Arc::new(ViewerWindow {
+        publisher,
+        menu: RwLock::new(None),
+    })
+}
+
+/// Attach menu and register event handler. Called when showing the window.
+pub fn activate_viewer_window(
     app_handle: &tauri::AppHandle,
-    _label: &str,
+    label: &str,
     window: &WebviewWindow,
-) -> Result<Arc<ViewerWindow>, Error> {
-    let menu = build_menu(app_handle)?;
+    viewer: &Arc<ViewerWindow>,
+) -> Result<(), Error> {
+    let prefix = format!("viewer_{}_", label);
+    let close_id = format!("{}close", prefix);
+    let menu = build_menu(app_handle, &prefix)?;
 
     #[cfg(target_os = "macos")]
     {
         let global_ctx: State<GlobalContext> = app_handle.state();
-        global_ctx.set_window_menu(_label, menu.clone());
+        global_ctx.set_window_menu(label, menu.clone());
         let _ = app_handle.set_menu(menu.clone());
     }
     #[cfg(not(target_os = "macos"))]
@@ -98,48 +141,47 @@ pub fn create_viewer_window(
         let _ = window.set_menu(menu.clone());
     }
 
-    let state = ViewerState {
-        mode: RwLock::new("text".to_string()),
-    };
-    let publisher = Arc::new(UpdatePublisher::new(window.clone(), "viewer", state));
+    *viewer.menu.write() = Some(menu);
 
-    let viewer = Arc::new(ViewerWindow { publisher, menu });
-
-    // Register menu event handler
-    let viewer_weak = Arc::downgrade(&viewer);
+    // Register menu event handler — IDs are prefixed with the window label
+    // so each handler only reacts to its own window's menu items.
+    let viewer_weak = Arc::downgrade(viewer);
     let window_clone = window.clone();
     app_handle.on_menu_event(move |_app_handle, event| {
-        if event.id().as_ref() == "viewer_close" {
+        let id = event.id().0.as_str();
+
+        if id == close_id {
             let _ = window_clone.destroy();
             return;
         }
+
+        // Only handle events with our prefix
+        let suffix = match id.strip_prefix(prefix.as_str()) {
+            Some(s) => s,
+            None => return,
+        };
 
         let viewer = match viewer_weak.upgrade() {
             Some(v) => v,
             None => return,
         };
-        let mode = match event.id().as_ref() {
-            "viewer_mode_text" => "text",
-            "viewer_mode_hex" => "hex",
-            "viewer_mode_image" => "image",
-            "viewer_mode_audio" => "audio",
-            "viewer_mode_video" => "video",
-            "viewer_mode_pdf" => "pdf",
-            _ => return,
+        let mode = match suffix.strip_prefix("mode_") {
+            Some(m) => m,
+            None => return,
         };
         viewer.set_mode(mode);
     });
 
-    Ok(viewer)
+    Ok(())
 }
 
-fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
+fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, Error> {
     let mode_items: Vec<CheckMenuItem<Wry>> = MODES
         .iter()
         .map(|(id, label)| {
             CheckMenuItem::with_id(
                 app_handle,
-                format!("viewer_mode_{}", id),
+                format!("{}mode_{}", prefix, id),
                 *label,
                 true,
                 false,
@@ -155,7 +197,13 @@ fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
         .collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
 
-    let close_item = MenuItem::with_id(app_handle, "viewer_close", "Close", true, Some("Escape"))?;
+    let close_item = MenuItem::with_id(
+        app_handle,
+        format!("{}close", prefix),
+        "Close",
+        true,
+        Some("Escape"),
+    )?;
     let file_submenu = Submenu::with_items(app_handle, "File", true, &[&close_item])?;
 
     Ok(Menu::with_items(

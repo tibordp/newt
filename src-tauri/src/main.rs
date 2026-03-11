@@ -27,6 +27,7 @@ use std::sync::OnceLock;
 use tauri::Manager;
 use tauri::State;
 use tauri::Webview;
+use tauri::WebviewWindow;
 use tauri::Wry;
 use tauri::ipc::Invoke;
 
@@ -46,10 +47,20 @@ struct Args {
     title: Option<String>,
 }
 
+/// A pre-warmed hidden window ready to be activated.
+pub struct PrewarmedWindow {
+    pub label: String,
+    pub window: WebviewWindow,
+}
+
 pub struct GlobalContext {
     main_windows: Mutex<HashMap<String, MainWindowContext>>,
     viewer_windows: Mutex<HashMap<String, viewer::ViewerWindowContext>>,
     editor_windows: Mutex<HashMap<String, editor::EditorWindowContext>>,
+    /// Pre-warmed hidden viewer windows, keyed by parent main window label.
+    prewarmed_viewers: Mutex<HashMap<String, PrewarmedWindow>>,
+    /// Pre-warmed hidden editor windows, keyed by parent main window label.
+    prewarmed_editors: Mutex<HashMap<String, PrewarmedWindow>>,
     agent_resolver: OnceLock<AgentResolver>,
     preferences: OnceLock<preferences::PreferencesManager>,
     #[cfg(target_os = "macos")]
@@ -62,6 +73,8 @@ impl Default for GlobalContext {
             main_windows: Mutex::new(HashMap::new()),
             viewer_windows: Mutex::new(HashMap::new()),
             editor_windows: Mutex::new(HashMap::new()),
+            prewarmed_viewers: Mutex::new(HashMap::new()),
+            prewarmed_editors: Mutex::new(HashMap::new()),
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
             #[cfg(target_os = "macos")]
@@ -115,12 +128,66 @@ impl GlobalContext {
 
     pub fn destroy_window(&self, label: &str) -> Result<(), Error> {
         info!("destroying window {}", label);
-        self.main_windows.lock().remove(label);
+        let was_main = self.main_windows.lock().remove(label).is_some();
         self.viewer_windows.lock().remove(label);
         self.editor_windows.lock().remove(label);
         #[cfg(target_os = "macos")]
         self.window_menus.lock().remove(label);
+
+        // If a main window was destroyed, also destroy its pre-warmed children
+        if was_main {
+            self.destroy_prewarmed_for(label);
+        }
+
+        // Also clean up if a pre-warmed window itself was destroyed
+        self.prewarmed_viewers
+            .lock()
+            .retain(|_, pw| pw.label != label);
+        self.prewarmed_editors
+            .lock()
+            .retain(|_, pw| pw.label != label);
+
         Ok(())
+    }
+
+    /// Take a pre-warmed viewer window for the given main window.
+    pub fn take_prewarmed_viewer(&self, main_label: &str) -> Option<PrewarmedWindow> {
+        self.prewarmed_viewers.lock().remove(main_label)
+    }
+
+    /// Take a pre-warmed editor window for the given main window.
+    pub fn take_prewarmed_editor(&self, main_label: &str) -> Option<PrewarmedWindow> {
+        self.prewarmed_editors.lock().remove(main_label)
+    }
+
+    /// Store a pre-warmed viewer window for the given main window.
+    pub fn set_prewarmed_viewer(&self, main_label: &str, pw: PrewarmedWindow) {
+        self.prewarmed_viewers
+            .lock()
+            .insert(main_label.to_string(), pw);
+    }
+
+    /// Store a pre-warmed editor window for the given main window.
+    pub fn set_prewarmed_editor(&self, main_label: &str, pw: PrewarmedWindow) {
+        self.prewarmed_editors
+            .lock()
+            .insert(main_label.to_string(), pw);
+    }
+
+    /// Destroy pre-warmed windows belonging to a main window.
+    fn destroy_prewarmed_for(&self, main_label: &str) {
+        if let Some(pw) = self.prewarmed_viewers.lock().remove(main_label) {
+            info!("destroying pre-warmed viewer {}", pw.label);
+            self.viewer_windows.lock().remove(&pw.label);
+            self.main_windows.lock().remove(&pw.label);
+            let _ = pw.window.destroy();
+        }
+        if let Some(pw) = self.prewarmed_editors.lock().remove(main_label) {
+            info!("destroying pre-warmed editor {}", pw.label);
+            self.editor_windows.lock().remove(&pw.label);
+            self.main_windows.lock().remove(&pw.label);
+            let _ = pw.window.destroy();
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -251,6 +318,10 @@ fn main() {
             if matches!(ct, ConnectionTarget::Local) {
                 let agent_resolver = global_ctx.agent_resolver();
                 tauri::async_runtime::block_on(ctx.connect(agent_resolver)).unwrap();
+
+                // Pre-warm viewer and editor windows
+                cmd::prewarm_viewer(app.handle(), &ctx, "main");
+                cmd::prewarm_editor(app.handle(), &ctx, "main");
             }
 
             Ok(())

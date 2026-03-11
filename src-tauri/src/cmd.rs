@@ -13,6 +13,12 @@ use tauri::Wry;
 use tauri::ipc::Invoke;
 
 use crate::common::Error;
+use tauri::WebviewWindow;
+
+fn show_prewarmed(window: &WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
 
 use crate::main_window::OperationState;
 use crate::main_window::OperationStatus;
@@ -54,6 +60,13 @@ pub async fn init(
         ctx.set_connection_failed(e.to_string());
         return Err(e);
     }
+
+    // Pre-warm viewer and editor windows now that we're connected
+    let app_handle = webview.app_handle().clone();
+    let main_label = ctx.main_window_label().to_string();
+    prewarm_viewer(&app_handle, &ctx, &main_label);
+    prewarm_editor(&app_handle, &ctx, &main_label);
+
     Ok(())
 }
 
@@ -290,6 +303,71 @@ pub async fn cmd_open_in_right_pane(
     cmd_open_in_other_pane(ctx, pane_handle, PaneHandle::right()).await
 }
 
+/// Create a pre-warmed hidden viewer window for a main window.
+pub fn prewarm_viewer(
+    app_handle: &tauri::AppHandle,
+    main_ctx: &MainWindowContext,
+    main_label: &str,
+) {
+    let label = uuid::Uuid::new_v4().to_string();
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+
+    // Pre-register the parent's MainWindowContext so IPC commands work
+    global_ctx
+        .main_windows
+        .lock()
+        .insert(label.clone(), main_ctx.clone());
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        &label,
+        tauri::WebviewUrl::App("/viewer".into()),
+    )
+    .title("Viewer")
+    .inner_size(1100.0, 800.0)
+    .center()
+    .visible(false)
+    .build()
+    .unwrap();
+
+    let viewer = crate::viewer::create_viewer_window(&window);
+    global_ctx.register_viewer_window(&label, crate::viewer::ViewerWindowContext(viewer));
+    global_ctx.set_prewarmed_viewer(main_label, crate::PrewarmedWindow { label, window });
+    log::debug!("pre-warmed viewer for {}", main_label);
+}
+
+/// Create a pre-warmed hidden editor window for a main window.
+pub fn prewarm_editor(
+    app_handle: &tauri::AppHandle,
+    main_ctx: &MainWindowContext,
+    main_label: &str,
+) {
+    let label = uuid::Uuid::new_v4().to_string();
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+
+    global_ctx
+        .main_windows
+        .lock()
+        .insert(label.clone(), main_ctx.clone());
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        &label,
+        tauri::WebviewUrl::App("/editor".into()),
+    )
+    .title("Editor")
+    .inner_size(900.0, 700.0)
+    .center()
+    .visible(false)
+    .build()
+    .unwrap();
+
+    let editor = crate::editor::create_editor_window(&window);
+    global_ctx.register_editor_window(&label, crate::editor::EditorWindowContext(editor));
+    global_ctx.set_prewarmed_editor(main_label, crate::PrewarmedWindow { label, window });
+    log::debug!("pre-warmed editor for {}", main_label);
+}
+
 #[tauri::command]
 pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
@@ -301,98 +379,111 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         None => return Ok(()),
     };
 
-    let viewer_label = uuid::Uuid::new_v4().to_string();
+    let app_handle = ctx.window().app_handle().clone();
+    let main_label = ctx.main_window_label().to_string();
+    let path_display = ctx.format_vfs_path(&full_path);
+    let file_server_base = ctx.file_server_base_url()?;
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
 
-    let window = ctx.window().clone();
+    // Try to use a pre-warmed viewer window
+    if let Some(pw) = global_ctx.take_prewarmed_viewer(&main_label) {
+        let viewer_ctx = global_ctx
+            .viewer_window(&pw.label)
+            .expect("pre-warmed viewer must be registered");
 
-    // Pre-register the parent's MainWindowContext for the viewer window label
-    // so that on_page_load sees it and doesn't spawn a new agent.
-    {
-        let app_handle = window.app_handle();
-        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        viewer_ctx
+            .0
+            .set_file(full_path, path_display.clone(), file_server_base);
+        crate::viewer::activate_viewer_window(&app_handle, &pw.label, &pw.window, &viewer_ctx.0)?;
+
+        let _ = pw.window.set_title(&format!("{} - Viewer", path_display));
+        show_prewarmed(&pw.window);
+
+        // Spawn a replacement pre-warmed window
+        let ctx_clone = ctx.clone();
+        let ml = main_label.clone();
+        prewarm_viewer(&app_handle, &ctx_clone, &ml);
+    } else {
+        // Fallback: create window directly (no pre-warmed window available)
+        let label = uuid::Uuid::new_v4().to_string();
         global_ctx
             .main_windows
             .lock()
-            .insert(viewer_label.clone(), ctx.clone());
-    }
+            .insert(label.clone(), ctx.clone());
 
-    let path_display = ctx.format_vfs_path(&full_path);
-    let vfs_path_json = serde_json::to_string(&full_path).unwrap();
-    let query: String = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("path", &path_display)
-        .append_pair("vfs_path", &vfs_path_json)
-        .append_pair("file_server_base", &ctx.file_server_base_url()?)
-        .finish();
-    let url_path = format!("/viewer?{}", query);
+        let window = tauri::WebviewWindowBuilder::new(
+            &app_handle,
+            &label,
+            tauri::WebviewUrl::App("/viewer".into()),
+        )
+        .title(format!("{} - Viewer", path_display))
+        .center()
+        .focused(true)
+        .inner_size(1100.0, 800.0)
+        .build()
+        .unwrap();
 
-    let app_handle = window.app_handle();
-    let viewer_window = tauri::WebviewWindowBuilder::new(
-        app_handle,
-        &viewer_label,
-        tauri::WebviewUrl::App(url_path.into()),
-    )
-    .title(format!("{} - Viewer", path_display))
-    .center()
-    .focused(true)
-    .inner_size(1100.0, 800.0)
-    .build()
-    .unwrap();
+        let viewer = crate::viewer::create_viewer_window(&window);
+        viewer.set_file(full_path, path_display, file_server_base);
+        crate::viewer::activate_viewer_window(&app_handle, &label, &window, &viewer)?;
+        global_ctx.register_viewer_window(&label, crate::viewer::ViewerWindowContext(viewer));
 
-    let viewer = crate::viewer::create_viewer_window(app_handle, &viewer_label, &viewer_window)?;
-    {
-        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
-        global_ctx
-            .register_viewer_window(&viewer_label, crate::viewer::ViewerWindowContext(viewer));
+        // Also start pre-warming for next time
+        prewarm_viewer(&app_handle, &ctx, &main_label);
     }
 
     Ok(())
 }
 
 fn open_editor_window(ctx: &MainWindowContext, full_path: &VfsPath) -> Result<(), Error> {
-    let editor_label = uuid::Uuid::new_v4().to_string();
+    let app_handle = ctx.window().app_handle().clone();
+    let main_label = ctx.main_window_label().to_string();
+    let path_display = ctx.format_vfs_path(full_path);
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
 
-    let window = ctx.window().clone();
+    // Try to use a pre-warmed editor window
+    if let Some(pw) = global_ctx.take_prewarmed_editor(&main_label) {
+        let editor_ctx = global_ctx
+            .editor_window(&pw.label)
+            .expect("pre-warmed editor must be registered");
 
-    // Pre-register the parent's MainWindowContext for the editor window label
-    // so that on_page_load sees it and doesn't spawn a new agent.
-    {
-        let app_handle = window.app_handle();
-        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        editor_ctx
+            .0
+            .set_file(full_path.clone(), path_display.clone());
+        crate::editor::activate_editor_window(&app_handle, &pw.label, &pw.window, &editor_ctx.0)?;
+
+        let _ = pw.window.set_title(&format!("{} - Editor", path_display));
+        show_prewarmed(&pw.window);
+
+        // Spawn a replacement pre-warmed window
+        prewarm_editor(&app_handle, ctx, &main_label);
+    } else {
+        // Fallback: create window directly
+        let label = uuid::Uuid::new_v4().to_string();
         global_ctx
             .main_windows
             .lock()
-            .insert(editor_label.clone(), ctx.clone());
-    }
+            .insert(label.clone(), ctx.clone());
 
-    let path_display = ctx.format_vfs_path(full_path);
-    let vfs_path_json = serde_json::to_string(full_path).unwrap();
-    let query: String = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("path", &path_display)
-        .append_pair("vfs_path", &vfs_path_json)
-        .finish();
-    let url_path = format!("/editor?{}", query);
+        let window = tauri::WebviewWindowBuilder::new(
+            &app_handle,
+            &label,
+            tauri::WebviewUrl::App("/editor".into()),
+        )
+        .title(format!("{} - Editor", path_display))
+        .center()
+        .focused(true)
+        .inner_size(900.0, 700.0)
+        .build()
+        .unwrap();
 
-    let app_handle = window.app_handle();
-    let editor_window = tauri::WebviewWindowBuilder::new(
-        app_handle,
-        &editor_label,
-        tauri::WebviewUrl::App(url_path.into()),
-    )
-    .title(format!("{} - Editor", path_display))
-    .center()
-    .focused(true)
-    .inner_size(900.0, 700.0)
-    .build()
-    .unwrap();
+        let editor = crate::editor::create_editor_window(&window);
+        editor.set_file(full_path.clone(), path_display);
+        crate::editor::activate_editor_window(&app_handle, &label, &window, &editor)?;
+        global_ctx.register_editor_window(&label, crate::editor::EditorWindowContext(editor));
 
-    let editor_ctx =
-        crate::editor::create_editor_window(app_handle, &editor_label, &editor_window)?;
-    {
-        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
-        global_ctx.register_editor_window(
-            &editor_label,
-            crate::editor::EditorWindowContext(editor_ctx),
-        );
+        // Also start pre-warming for next time
+        prewarm_editor(&app_handle, ctx, &main_label);
     }
 
     Ok(())

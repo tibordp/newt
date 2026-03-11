@@ -1,3 +1,4 @@
+use newt_common::vfs::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
@@ -41,14 +42,18 @@ const LANGUAGES: &[(&str, &str)] = &[
 pub struct EditorState {
     language: RwLock<String>,
     word_wrap: RwLock<bool>,
+    file_path: RwLock<Option<VfsPath>>,
+    display_path: RwLock<Option<String>>,
 }
 
 impl Serialize for EditorState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("EditorState", 2)?;
+        let mut s = serializer.serialize_struct("EditorState", 4)?;
         s.serialize_field("language", &*self.language.read())?;
         s.serialize_field("word_wrap", &*self.word_wrap.read())?;
+        s.serialize_field("file_path", &*self.file_path.read())?;
+        s.serialize_field("display_path", &*self.display_path.read())?;
         s.end()
     }
 }
@@ -56,10 +61,20 @@ impl Serialize for EditorState {
 pub struct EditorWindow {
     window: WebviewWindow,
     publisher: Arc<UpdatePublisher<EditorState>>,
-    menu: Menu<Wry>,
+    menu: RwLock<Option<Menu<Wry>>>,
 }
 
 impl EditorWindow {
+    pub fn set_file(&self, file_path: VfsPath, display_path: String) {
+        let state = self.publisher.state();
+        *state.file_path.write() = Some(file_path);
+        *state.display_path.write() = Some(display_path);
+        // Reset state for new file
+        *state.language.write() = "plaintext".to_string();
+        *state.word_wrap.write() = false;
+        let _ = self.publisher.publish_full();
+    }
+
     pub fn set_language(&self, lang: &str) {
         *self.publisher.state().language.write() = lang.to_string();
         self.update_language_checks(lang);
@@ -77,17 +92,28 @@ impl EditorWindow {
     }
 
     fn update_language_checks(&self, active_lang: &str) {
-        let active_id = format!("editor_lang_{}", active_lang);
-        for check in check_menu_items(&self.menu) {
-            if check.id().as_ref().starts_with("editor_lang_") {
-                let _ = check.set_checked(check.id().as_ref() == active_id.as_str());
+        let menu_guard = self.menu.read();
+        let menu = match menu_guard.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let suffix = format!("lang_{}", active_lang);
+        for check in check_menu_items(menu) {
+            let id = check.id();
+            if id.as_ref().contains("lang_") {
+                let _ = check.set_checked(id.as_ref().ends_with(&suffix));
             }
         }
     }
 
     fn update_wrap_check(&self, wrap: bool) {
-        for check in check_menu_items(&self.menu) {
-            if check.id().as_ref() == "editor_wrap" {
+        let menu_guard = self.menu.read();
+        let menu = match menu_guard.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        for check in check_menu_items(menu) {
+            if check.id().as_ref().ends_with("wrap") {
                 let _ = check.set_checked(wrap);
             }
         }
@@ -110,17 +136,39 @@ impl<'de> CommandArg<'de, Wry> for EditorWindowContext {
     }
 }
 
-pub fn create_editor_window(
+/// Create an EditorWindow with UpdatePublisher but no menu.
+pub fn create_editor_window(window: &WebviewWindow) -> Arc<EditorWindow> {
+    let state = EditorState {
+        language: RwLock::new("plaintext".to_string()),
+        word_wrap: RwLock::new(false),
+        file_path: RwLock::new(None),
+        display_path: RwLock::new(None),
+    };
+    let publisher = Arc::new(UpdatePublisher::new(window.clone(), "editor", state));
+
+    Arc::new(EditorWindow {
+        window: window.clone(),
+        publisher,
+        menu: RwLock::new(None),
+    })
+}
+
+/// Attach menu and register event handler. Called when showing the window.
+pub fn activate_editor_window(
     app_handle: &tauri::AppHandle,
-    _label: &str,
+    label: &str,
     window: &WebviewWindow,
-) -> Result<Arc<EditorWindow>, Error> {
-    let menu = build_menu(app_handle)?;
+    editor: &Arc<EditorWindow>,
+) -> Result<(), Error> {
+    let prefix = format!("editor_{}_", label);
+    let save_id = format!("{}save", prefix);
+    let close_id = format!("{}close", prefix);
+    let menu = build_menu(app_handle, &prefix)?;
 
     #[cfg(target_os = "macos")]
     {
         let global_ctx: State<GlobalContext> = app_handle.state();
-        global_ctx.set_window_menu(_label, menu.clone());
+        global_ctx.set_window_menu(label, menu.clone());
         let _ = app_handle.set_menu(menu.clone());
     }
     #[cfg(not(target_os = "macos"))]
@@ -128,45 +176,50 @@ pub fn create_editor_window(
         let _ = window.set_menu(menu.clone());
     }
 
-    let state = EditorState {
-        language: RwLock::new("plaintext".to_string()),
-        word_wrap: RwLock::new(false),
-    };
-    let publisher = Arc::new(UpdatePublisher::new(window.clone(), "editor", state));
+    *editor.menu.write() = Some(menu);
 
-    let editor = Arc::new(EditorWindow {
-        window: window.clone(),
-        publisher,
-        menu,
-    });
-
-    // Register menu event handler
-    let editor_weak = Arc::downgrade(&editor);
+    // Register menu event handler — IDs are prefixed with the window label
+    // so each handler only reacts to its own window's menu items.
+    let editor_weak = Arc::downgrade(editor);
     app_handle.on_menu_event(move |_app_handle, event| {
+        let id = event.id().0.as_str();
+
+        // Only handle events with our prefix
+        if !id.starts_with(prefix.as_str()) {
+            return;
+        }
+
         let editor = match editor_weak.upgrade() {
             Some(e) => e,
             None => return,
         };
-        let id = event.id().0.as_str();
-        if id == "editor_save" {
-            let _ = editor.window.emit("editor-action", "save");
-        } else if id == "editor_close" {
+
+        if id == save_id {
+            let _ = editor
+                .window
+                .emit_to(editor.window.label(), "editor-action", "save");
+        } else if id == close_id {
             let _ = editor.window.close();
-        } else if id == "editor_wrap" {
+        } else if id.ends_with("wrap") {
             // CheckMenuItem auto-toggles; read the new checked state
-            let checked = check_menu_items(&editor.menu)
-                .find(|c| c.id().as_ref() == "editor_wrap")
-                .and_then(|c| c.is_checked().ok());
+            let menu_guard = editor.menu.read();
+            let checked = menu_guard.as_ref().and_then(|menu| {
+                check_menu_items(menu)
+                    .find(|c| c.id().as_ref().ends_with("wrap"))
+                    .and_then(|c| c.is_checked().ok())
+            });
             if let Some(checked) = checked {
                 *editor.publisher.state().word_wrap.write() = checked;
                 let _ = editor.publisher.publish_full();
             }
-        } else if let Some(lang) = id.strip_prefix("editor_lang_") {
+        } else if let Some(suffix) = id.strip_prefix(prefix.as_str())
+            && let Some(lang) = suffix.strip_prefix("lang_")
+        {
             editor.set_language(lang);
         }
     });
 
-    Ok(editor)
+    Ok(())
 }
 
 /// Iterate all `CheckMenuItem`s across all submenus of a menu.
@@ -179,13 +232,18 @@ fn check_menu_items(menu: &Menu<Wry>) -> impl Iterator<Item = CheckMenuItem<Wry>
         .filter_map(|item| item.as_check_menuitem().cloned())
 }
 
-fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
+fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, Error> {
     // File menu
-    let save_item =
-        MenuItem::with_id(app_handle, "editor_save", "Save", true, Some("CmdOrCtrl+S"))?;
+    let save_item = MenuItem::with_id(
+        app_handle,
+        format!("{}save", prefix),
+        "Save",
+        true,
+        Some("CmdOrCtrl+S"),
+    )?;
     let close_item = MenuItem::with_id(
         app_handle,
-        "editor_close",
+        format!("{}close", prefix),
         "Close",
         true,
         Some("CmdOrCtrl+W"),
@@ -204,7 +262,7 @@ fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
     // View menu — word wrap as checkbox
     let wrap_item = CheckMenuItem::with_id(
         app_handle,
-        "editor_wrap",
+        format!("{}wrap", prefix),
         "Word Wrap",
         true,
         false,
@@ -218,7 +276,7 @@ fn build_menu(app_handle: &tauri::AppHandle) -> Result<Menu<Wry>, Error> {
         .map(|(id, label)| {
             CheckMenuItem::with_id(
                 app_handle,
-                format!("editor_lang_{}", id),
+                format!("{}lang_{}", prefix, id),
                 *label,
                 true,
                 false,

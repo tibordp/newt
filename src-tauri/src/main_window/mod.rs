@@ -807,6 +807,11 @@ impl MainWindowContext {
         self.inner.window.clone()
     }
 
+    /// The label of the main window that owns this context.
+    pub fn main_window_label(&self) -> &str {
+        self.inner.window.label()
+    }
+
     pub fn preferences(&self) -> &crate::preferences::PreferencesHandle {
         &self.inner.preferences
     }

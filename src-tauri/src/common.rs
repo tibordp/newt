@@ -228,7 +228,8 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             (version, patch)
         };
 
-        self.window.emit(
+        self.window.emit_to(
+            self.window.label(),
             &self.event_name,
             UpdatePayload {
                 version,
@@ -250,7 +251,8 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
             std::mem::replace(&mut *base, (version, serialized.clone()))
         };
 
-        self.window.emit(
+        self.window.emit_to(
+            self.window.label(),
             &self.event_name,
             UpdatePayload {
                 version,

@@ -76,6 +76,7 @@ Click a column header to sort ascending by that key; click the same header again
 - The `..` parent directory entry *always* sorts first, regardless of sort key or direction.
 - When "Folders first" is enabled (preference), directories sort before files (but after `..`).
 - Extension sort treats directories as having no extension.
+- Name and extension sorting is **case-insensitive** (Unicode `to_lowercase`), with a stable byte-order tiebreaker for entries differing only by case.
 
 **Visual indicators**:
 - Selected files: distinct background highlight.
@@ -351,6 +352,10 @@ When an operation encounters a conflict:
 
 Opens in a separate window (1100×800 pixels). Automatically detects the file's MIME type and selects the appropriate viewing mode.
 
+### Pre-warmed Windows
+
+Viewer windows are **pre-warmed** for instant opening. A hidden window is created in the background with all web content and static UI already loaded. When F3 is pressed, the pre-warmed window receives the file path via the existing `UpdatePublisher` state mechanism, attaches its menu bar, and is made visible — avoiding the WebKit startup and JavaScript initialization latency. A replacement pre-warmed window is spawned immediately in the background. Falls back to direct window creation if no pre-warmed window is available.
+
 ### Mode Selection
 
 The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Image, Audio, Video, PDF. The initial mode is chosen automatically:
@@ -452,6 +457,10 @@ The viewer and editor access files through an internal HTTP server on localhost 
 ## 6. File Editor (F4)
 
 Opens in a separate window (900×700 pixels) using Monaco Editor (the editor core from VS Code).
+
+### Pre-warmed Windows
+
+Like the viewer, editor windows are **pre-warmed** — a hidden window with Monaco Editor fully initialized runs in the background. When F4 is pressed, the file path is sent via state, the menu is attached, and the window is shown instantly. Monaco's heavy JavaScript initialization happens during the pre-warm phase, so the editor is ready to type immediately. A replacement is spawned after each use.
 
 ### Language Detection
 
@@ -1087,10 +1096,14 @@ Path resolution priority: First checks if any mounted VFS claims the path (e.g.,
 
 Each pane maintains its own navigation history (path + focused filename):
 
-- **Back** (Alt+Left): Return to the previous directory. The previously focused file is restored.
-- **Forward** (Alt+Right): Go forward after going back.
+- **Back** (Alt+Left or Mouse Back): Return to the previous directory. The previously focused file is restored.
+- **Forward** (Alt+Right or Mouse Forward): Go forward after going back.
 
 History entries store both the path and the focused filename, so navigating back restores your exact cursor position.
+
+### Open in Left/Right Pane (Ctrl+Left / Ctrl+Right)
+
+Opens the directory under the cursor in the left or right pane respectively, regardless of which pane is currently active. Useful for quickly setting up both panes for a copy/move operation.
 
 ### Hidden Files (Mod+H)
 
@@ -1128,6 +1141,8 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+L | Navigate (Go To...) | Pane focused |
 | Alt+Left | Navigate back | Pane focused |
 | Alt+Right | Navigate forward | Pane focused |
+| Ctrl+Left | Open in left pane | Pane focused |
+| Ctrl+Right | Open in right pane | Pane focused |
 | Mod+. | Copy pane path to other pane | Pane focused |
 | Mod+P | Hot paths | Any |
 | Mod+B | Add bookmark | Pane focused |

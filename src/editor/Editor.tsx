@@ -133,17 +133,25 @@ interface FileInfo {
   is_dir: boolean;
 }
 
+interface EditorRemoteState {
+  language: string;
+  word_wrap: boolean;
+  file_path: VfsPath | null;
+  display_path: string | null;
+}
+
 function Editor() {
   const [searchParams] = useSearchParams();
-  const displayPath = searchParams.get("path") || "";
-  const filePath: VfsPath = JSON.parse(
-    searchParams.get("vfs_path") ||
-      `{"vfs_id":0,"path":${JSON.stringify(displayPath)}}`,
-  );
+  const editorState = useRemoteState<EditorRemoteState>("editor");
 
-  const editorState = useRemoteState<{ language: string; word_wrap: boolean }>(
-    "editor",
-  );
+  // Read file info from remote state, fall back to search params
+  const displayPath =
+    editorState?.display_path ?? searchParams.get("path") ?? "";
+  const filePath: VfsPath | null =
+    editorState?.file_path ??
+    (searchParams.has("vfs_path")
+      ? JSON.parse(searchParams.get("vfs_path")!)
+      : null);
 
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +164,7 @@ function Editor() {
   const monacoRef = useRef<Monaco | null>(null);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
+  const suppressDirtyRef = useRef(false);
 
   const language = editorState?.language ?? "plaintext";
   const wordWrap = editorState?.word_wrap ? "on" : "off";
@@ -184,6 +193,14 @@ function Editor() {
     editorRef.current?.updateOptions({ wordWrap });
   }, [wordWrap]);
 
+  // When content finishes loading, make editor writable and focus it
+  useEffect(() => {
+    if (content !== null && editorRef.current) {
+      editorRef.current.updateOptions({ readOnly: false });
+      editorRef.current.focus();
+    }
+  }, [content]);
+
   // Update window title with dirty indicator
   useEffect(() => {
     if (!displayPath) return;
@@ -191,9 +208,13 @@ function Editor() {
     invoke("set_window_title", { title }).catch(console.error);
   }, [displayPath, dirty]);
 
-  // Load file on mount
+  // Load file when file path becomes available
   useEffect(() => {
-    if (!displayPath) return;
+    if (!displayPath || !filePath) return;
+    setContent(null);
+    setError(null);
+    setDirty(false);
+    setFileSize(0);
 
     (async () => {
       try {
@@ -213,7 +234,15 @@ function Editor() {
           maxSize: MAX_FILE_SIZE,
         });
         const decoder = new TextDecoder("utf-8", { fatal: false });
-        setContent(decoder.decode(new Uint8Array(data)));
+        const text = decoder.decode(new Uint8Array(data));
+
+        // Set content in Monaco if already mounted, suppressing dirty flag
+        if (editorRef.current) {
+          suppressDirtyRef.current = true;
+          editorRef.current.setValue(text);
+          suppressDirtyRef.current = false;
+        }
+        setContent(text);
       } catch (e: unknown) {
         const msg = String(e);
         setError(msg);
@@ -292,9 +321,9 @@ function Editor() {
         });
       });
 
-      // Track dirty state
+      // Track dirty state (suppressed during programmatic setValue)
       editor.onDidChangeModelContent(() => {
-        if (!dirtyRef.current) {
+        if (!dirtyRef.current && !suppressDirtyRef.current) {
           setDirty(true);
         }
       });
@@ -308,8 +337,6 @@ function Editor() {
           save();
         },
       });
-
-      editor.focus();
     },
     [save],
   );
@@ -325,22 +352,13 @@ function Editor() {
     );
   }
 
-  if (content === null) {
-    return (
-      <div className={styles.editor}>
-        <div className={styles.loadingContent}>Loading...</div>
-        <div className={styles.editorStatus}>
-          <span>{displayPath}</span>
-        </div>
-      </div>
-    );
-  }
+  const ready = filePath && content !== null;
 
   return (
     <div className={styles.editor}>
       <div className={styles.editorContent}>
         <MonacoEditor
-          defaultValue={content}
+          defaultValue=""
           language={language}
           theme={isDark ? "vs-dark" : "vs"}
           onMount={handleEditorMount}
@@ -352,28 +370,35 @@ function Editor() {
             automaticLayout: true,
             wordWrap,
             renderWhitespace: "selection",
+            readOnly: !ready,
           }}
         />
       </div>
       <div className={styles.editorStatus}>
-        <span>
-          {displayPath}
-          {dirty ? " [Modified]" : ""}
-        </span>
-        <span className={styles.statusSeparator}>|</span>
-        <span>{language}</span>
-        <span className={styles.statusSeparator}>|</span>
-        <span>
-          Ln {cursorPosition.line}, Col {cursorPosition.column}
-        </span>
-        <span className={styles.statusSeparator}>|</span>
-        <span>{formatSize(fileSize)}</span>
-        {saving && (
+        {ready ? (
           <>
+            <span>
+              {displayPath}
+              {dirty ? " [Modified]" : ""}
+            </span>
             <span className={styles.statusSeparator}>|</span>
-            <span>Saving...</span>
+            <span>{language}</span>
+            <span className={styles.statusSeparator}>|</span>
+            <span>
+              Ln {cursorPosition.line}, Col {cursorPosition.column}
+            </span>
+            <span className={styles.statusSeparator}>|</span>
+            <span>{formatSize(fileSize)}</span>
+            {saving && (
+              <>
+                <span className={styles.statusSeparator}>|</span>
+                <span>Saving...</span>
+              </>
+            )}
           </>
-        )}
+        ) : filePath ? (
+          <span>Loading...</span>
+        ) : null}
       </div>
     </div>
   );
