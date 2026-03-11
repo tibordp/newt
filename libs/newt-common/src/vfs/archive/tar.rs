@@ -16,7 +16,8 @@ use super::super::{Breadcrumb, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath
 use super::{
     DirectoryTree, SNAPSHOT_INTERVAL, archive_breadcrumbs, archive_format_path,
     archive_mount_label, archive_try_parse_display_path, build_directory_tree_from_iluvatar,
-    detect_compression_from_name, mtime_to_i128, normalize_dir_path, not_found,
+    detect_compression_from_name, index_get, index_path_str, mtime_to_i128, normalize_dir_path,
+    not_found,
 };
 
 // ---------------------------------------------------------------------------
@@ -575,8 +576,7 @@ impl Vfs for TarArchiveVfs {
         let normalized = normalize_dir_path(path);
         let path_str = normalized.to_string_lossy();
 
-        let entry = index
-            .get(&path_str)
+        let entry = index_get(index, &path_str)
             .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
 
         Ok(FileDetails {
@@ -604,9 +604,12 @@ impl Vfs for TarArchiveVfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
+        let index = self.wait_for_index().await?;
         let normalized = normalize_dir_path(path);
-        let path_str = normalized.to_string_lossy().to_string();
-        let data = self.drive_read_engine(&path_str, None).await?;
+        let path_str = normalized.to_string_lossy();
+        let archive_path = index_path_str(index, &path_str)
+            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let data = self.drive_read_engine(&archive_path, None).await?;
         Ok(Box::new(std::io::Cursor::new(data)))
     }
 
@@ -615,14 +618,13 @@ impl Vfs for TarArchiveVfs {
         let normalized = normalize_dir_path(path);
         let path_str = normalized.to_string_lossy();
 
-        let entry = index
-            .get(&path_str)
+        let entry = index_get(index, &path_str)
             .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
         let total_size = entry.size;
-        let path_str = path_str.to_string();
+        let archive_path = index_path_str(index, &path_str).unwrap();
 
         let data = self
-            .drive_read_engine(&path_str, Some((offset, length)))
+            .drive_read_engine(&archive_path, Some((offset, length)))
             .await?;
 
         Ok(FileChunk {

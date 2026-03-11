@@ -229,8 +229,35 @@ impl DirectoryTree {
 fn normalize_dir_path(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     let s = s.trim_start_matches('/');
+    let s = s.trim_start_matches("./");
     let s = s.trim_end_matches('/');
     PathBuf::from(s)
+}
+
+/// Look up an entry in the iluvatar index by normalized path, falling back
+/// to a `./`-prefixed variant (many tar archives store paths like `./foo`).
+fn index_get<'a>(
+    index: &'a iluvatar::ArchiveIndex,
+    normalized: &str,
+) -> Option<&'a iluvatar::IndexEntry> {
+    index
+        .get(normalized)
+        .or_else(|| index.get(&format!("./{}", normalized)))
+}
+
+/// Return the path string used for a given entry in the iluvatar index.
+/// Handles the `./`-prefix convention used by many tar generators.
+fn index_path_str(index: &iluvatar::ArchiveIndex, normalized: &str) -> Option<String> {
+    if index.get(normalized).is_some() {
+        Some(normalized.to_string())
+    } else {
+        let dotslash = format!("./{}", normalized);
+        if index.get(&dotslash).is_some() {
+            Some(dotslash)
+        } else {
+            None
+        }
+    }
 }
 
 fn mtime_to_i128(mtime: u64) -> Option<i128> {
@@ -340,7 +367,11 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
     seen_dirs.insert(PathBuf::from(""));
 
     for entry in &entries {
-        let path = entry.path.trim_start_matches('/').trim_end_matches('/');
+        let path = entry
+            .path
+            .trim_start_matches('/')
+            .trim_start_matches("./")
+            .trim_end_matches('/');
         if path.is_empty() {
             continue;
         }

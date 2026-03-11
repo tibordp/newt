@@ -76,6 +76,8 @@ When a task or direction is unclear — especially around architecture or design
 
 ## Git Commits
 
+When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated.
+
 Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any and fix the issues surface.
 
 Do not add `Co-Authored-By` lines to commit messages.

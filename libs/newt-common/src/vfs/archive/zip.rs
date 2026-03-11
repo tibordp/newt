@@ -122,6 +122,8 @@ struct ZipIndex {
 }
 
 struct ZipEntry {
+    /// Original name as stored in the ZIP archive (for `by_name` lookups).
+    raw_name: String,
     size: u64,
     is_dir: bool,
     mode: u32,
@@ -239,7 +241,10 @@ fn build_zip_index(
             .map_err(|e| Error::custom(format!("failed to read ZIP entry: {}", e)))?;
 
         let raw_name = entry.name().to_string();
-        let path = raw_name.trim_start_matches('/').trim_end_matches('/');
+        let path = raw_name
+            .trim_start_matches('/')
+            .trim_start_matches("./")
+            .trim_end_matches('/');
         if path.is_empty() {
             continue;
         }
@@ -293,6 +298,7 @@ fn build_zip_index(
             entries.insert(
                 path.to_string(),
                 ZipEntry {
+                    raw_name: raw_name.clone(),
                     size,
                     is_dir,
                     mode,
@@ -312,6 +318,7 @@ fn build_zip_index(
         entries.insert(
             path.to_string(),
             ZipEntry {
+                raw_name: raw_name.clone(),
                 size,
                 is_dir,
                 mode,
@@ -385,9 +392,14 @@ impl Vfs for ZipArchiveVfs {
     }
 
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
+        let (index, _) = self.ensure_indexed().await?;
         let normalized = normalize_dir_path(path);
-        let path_str = normalized.to_string_lossy().to_string();
-        let data = self.extract_zip_file(path_str).await?;
+        let path_str = normalized.to_string_lossy();
+        let entry = index
+            .entries
+            .get(path_str.as_ref())
+            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let data = self.extract_zip_file(entry.raw_name.clone()).await?;
         Ok(Box::new(std::io::Cursor::new(data)))
     }
 
@@ -402,7 +414,7 @@ impl Vfs for ZipArchiveVfs {
             .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
         let total_size = entry.size;
 
-        let data = self.extract_zip_file(path_str.to_string()).await?;
+        let data = self.extract_zip_file(entry.raw_name.clone()).await?;
         let start = (offset as usize).min(data.len());
         let end = ((offset + length) as usize).min(data.len());
 
