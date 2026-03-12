@@ -727,6 +727,8 @@ pub struct PaneViewState {
     file_lookup: HashMap<String, usize>,
     #[serde(skip)]
     filter_regex: Option<regex::Regex>,
+    #[serde(skip)]
+    default_filter_mode: FilterMode,
 }
 
 impl PaneViewState {
@@ -822,20 +824,19 @@ impl PaneViewState {
                 .retain(|name| self.file_lookup.contains_key(name));
         }
 
-        // If our focused file has disappeared, we try to focus the next one (by index)
-        if let Some(focused_name) = self.focused.as_mut()
-            && !self.file_lookup.contains_key(focused_name)
-            && let Some(new_focus) = self
-                .files
-                .get(self.focused_index.unwrap_or(0))
-                .map(|f| f.name.clone())
+        // If our focused file has disappeared, try to focus the nearest one by index
+        if self
+            .focused
+            .as_ref()
+            .is_none_or(|name| !self.file_lookup.contains_key(name))
         {
-            *focused_name = new_focus;
-        }
-
-        // ...and if that didn't work (e.g. empty directory), we just focus the first file if there is one
-        if self.focused.is_none() {
-            self.focused = self.files.first().map(|f| f.name.clone());
+            // focused_index has not been updated yet, so we still have the chance to use it to find a nearby file to focus.
+            // This makes the UI feel more stable when files are added/removed above the focused file.
+            let index = self
+                .focused_index
+                .unwrap_or(0)
+                .min(self.files.len().saturating_sub(1));
+            self.focused = self.files.get(index).map(|f| f.name.clone());
         }
     }
 
@@ -862,7 +863,7 @@ impl PaneViewState {
         let was_visual = self.filter_mode == FilterMode::Filter;
         self.filter = None;
         self.filter_regex = None;
-        self.filter_mode = FilterMode::QuickSearch;
+        self.filter_mode = self.default_filter_mode;
         if was_visual {
             self.files = self.all_files.clone();
             self.file_lookup = self
@@ -924,6 +925,18 @@ impl PaneViewState {
         file_list: &FileList,
     ) {
         // the path is expected to be canonical by now
+
+        self.default_filter_mode = if preferences.behavior.quick_search {
+            FilterMode::QuickSearch
+        } else {
+            FilterMode::Filter
+        };
+
+        // If no filter is active, adopt the default mode so the frontend
+        // renders the correct input from the start.
+        if self.filter.is_none() {
+            self.filter_mode = self.default_filter_mode;
+        }
 
         self.path = file_list.path().clone();
         self.fs_stats = file_list.fs_stats().cloned();

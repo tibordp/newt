@@ -143,7 +143,7 @@ type FileRowProps = {
   row: File;
   isFocused: boolean;
   isSelected: boolean;
-  filter?: string;
+  filter: string | null;
   filterMode: FilterMode;
   widthPrefix: string;
   onClick: React.MouseEventHandler<HTMLLIElement>;
@@ -314,37 +314,54 @@ function VfsSelector({
   );
 }
 
-function FilterBar({
-  initialValue,
+function FilterInput({
+  value,
+  filterMode,
   inputRef,
   onKeyDown,
   onChange,
+  onFocus,
 }: {
-  initialValue: string;
+  value: string | null;
+  filterMode: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onKeyDown: React.KeyboardEventHandler;
   onChange: (value: string) => void;
+  onFocus: () => void;
 }) {
-  const [localValue, setLocalValue] = useState(initialValue);
+  const [localValue, setLocalValue] = useState(value ?? "");
+  // filter=null means no active session → always hidden.
+  // filter="" (user backspaced everything) keeps the bar visible until Escape.
+  const isVisibleFilter = filterMode === "filter" && value != null;
 
-  return (
-    <div className={styles.filterBar}>
-      <input
-        className={styles.filterBarInput}
-        type="text"
-        value={localValue}
-        placeholder="Filter (regex)"
-        onChange={(e) => {
-          setLocalValue(e.target.value);
-          onChange(e.target.value);
-        }}
-        ref={inputRef}
-        onKeyDown={onKeyDown}
-        autoFocus
-        tabIndex={-1}
-      />
-    </div>
+  // Sync local value when the remote value changes (e.g. quick-search
+  // prefix updates from the backend).
+  useEffect(() => {
+    setLocalValue(value ?? "");
+  }, [value]);
+
+  const input = (
+    <input
+      className={isVisibleFilter ? styles.filterBarInput : undefined}
+      type="text"
+      value={localValue}
+      placeholder={isVisibleFilter ? "Filter (regex)" : undefined}
+      onChange={(e) => {
+        setLocalValue(e.target.value);
+        onChange(e.target.value);
+      }}
+      ref={inputRef}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
+      tabIndex={-1}
+    />
   );
+
+  if (isVisibleFilter) {
+    return <div className={styles.filterBar}>{input}</div>;
+  }
+
+  return <div className={styles.filterInput}>{input}</div>;
 }
 
 function PaneInner(
@@ -459,10 +476,10 @@ function PaneInner(
   useEffect(() => {
     if (active && !modalOpen) {
       if (!isVfsSelectorOpen) {
-        if (filter == null && filter_mode !== "filter") {
-          containerRef.current?.focus();
-        } else {
+        if (filter != null) {
           inputRef.current?.focus();
+        } else {
+          containerRef.current?.focus();
         }
       }
     } else if (!active) {
@@ -661,7 +678,7 @@ function PaneInner(
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || e.shiftKey) return;
       // Only start drag from empty space — not on file icon or filename text
       const target = e.target as HTMLElement;
       if (target.closest(".file-icon") || target.closest(".filename-part"))
@@ -687,7 +704,7 @@ function PaneInner(
       }
 
       const startScrollX = e.clientX - rect.left + container.scrollLeft;
-      let startScrollY = e.clientY - rect.top + container.scrollTop;
+      const startScrollY = e.clientY - rect.top + container.scrollTop;
 
       let mode: DragMode = "normal";
       let baseSelection = new Set<string>();
@@ -695,11 +712,6 @@ function PaneInner(
       if (e.ctrlKey) {
         mode = "ctrl";
         baseSelection = new Set(selected);
-      } else if (e.shiftKey) {
-        mode = "shift";
-        // Start rect from focused file's top edge
-        const fi = currentFiles.findIndex((f) => f.name === focused);
-        if (fi >= 0) startScrollY = fi * 22;
       }
 
       dragRef.current = {
@@ -1034,7 +1046,7 @@ function PaneInner(
       e.key == "ArrowLeft" &&
       noModifiers
     ) {
-      if (filter && filter.length > 0) {
+      if (filter !== null && filter.length > 0) {
         command("set_filter", {
           filter: focused!.substring(0, filter.length - 1),
         });
@@ -1044,7 +1056,7 @@ function PaneInner(
       e.key == "ArrowRight" &&
       noModifiers
     ) {
-      if (filter && focused && filter.length < focused.length) {
+      if (filter !== null && focused && filter.length < focused.length) {
         command("set_filter", {
           filter: focused.substring(0, filter.length + 1),
         });
@@ -1129,18 +1141,18 @@ function PaneInner(
         }
       }}
     >
-      {filter_mode !== "filter" && (
-        <input
-          className={styles.filterInput}
-          type="text"
-          value={filter || ""}
-          onChange={(e) => command("set_filter", { filter: e.target.value })}
-          ref={inputRef}
-          onKeyDown={onkeydownFilter}
-          onFocus={() => command("set_filter", { filter: filter || "" })}
-          tabIndex={-1}
-        />
-      )}
+      <FilterInput
+        value={filter}
+        filterMode={filter_mode}
+        inputRef={inputRef}
+        onKeyDown={onkeydownFilter}
+        onChange={(value) => command("set_filter", { filter: value })}
+        onFocus={() => {
+          if (filter != null) {
+            command("set_filter", { filter: filter });
+          }
+        }}
+      />
       <div className={styles.header}>
         <VfsSelector
           vfsDisplayName={vfs_display_name}
@@ -1202,7 +1214,7 @@ function PaneInner(
                       row={row}
                       isFocused={isFocused}
                       isSelected={selectedLookup.has(row.name)}
-                      filter={isFocused ? filter : undefined}
+                      filter={isFocused ? filter : null}
                       filterMode={filter_mode}
                       widthPrefix={widthPrefix}
                       onClick={onClick}
@@ -1222,14 +1234,6 @@ function PaneInner(
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
-      {filter_mode === "filter" && (
-        <FilterBar
-          initialValue={filter || ""}
-          inputRef={inputRef}
-          onKeyDown={onkeydownFilter}
-          onChange={(value) => command("set_filter", { filter: value })}
-        />
-      )}
       <div className={styles.statusbar}>
         {showSpinner && "Loading file list..."}
         {!showSpinner && loading && (

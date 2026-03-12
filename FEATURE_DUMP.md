@@ -188,11 +188,11 @@ Right-click a file or press Shift+F10 / Menu key:
 
 ## 3. Filtering and Search
 
-Two filter modes for narrowing the visible file list within a pane:
+Two filter modes for narrowing the visible file list within a pane. The default mode when typing is controlled by the `quick_search` preference (default: true). When disabled, typing goes directly to Filter mode.
 
 ### Quick Search Mode
 
-- **Activation**: Start typing any printable character (not modified with Ctrl/Shift/Alt) while the pane is focused.
+- **Activation**: Start typing any printable character (not modified with Ctrl/Shift/Alt) while the pane is focused. Requires `quick_search = true` (default).
 - **Matching**: Case-insensitive **prefix** matching on filenames. Wraps around the file list (searches downward from cursor, then wraps to top).
 - **Live updates**: Results update as you type. The cursor moves to the first match.
 - **Arrow Left/Right**: Adjusts the search string based on the focused file's name. Right extends the search to include more of the focused filename; Left trims it.
@@ -201,7 +201,7 @@ Two filter modes for narrowing the visible file list within a pane:
 
 ### Filter Mode (Visual Regex)
 
-- **Activation**: Press `/` (or switch from Quick Search by pressing `/`).
+- **Activation**: Press `/`, switch from Quick Search by pressing `/`, or start typing when `quick_search = false`.
 - **UI**: A filter input bar appears at the bottom of the pane.
 - **Matching**: Full **regex** pattern matching (case-insensitive). Files that don't match are hidden entirely.
 - **`..` always visible**: The parent directory entry is never hidden by a filter.
@@ -941,6 +941,8 @@ theme = "system"            # "system", "light", or "dark"
 [behavior]
 confirm_delete = true       # Ask for confirmation before deleting
 keep_terminal_open = true   # Keep terminal tab open after shell exits
+keep_finished_operations = false  # Keep completed/cancelled ops in panel
+quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
 
 [hot_paths]
 standard_folders = true     # Show Home, Downloads, Documents, etc.

@@ -76,6 +76,10 @@ pub struct BehaviorPreferences {
     /// Keep completed/cancelled operations visible in the operations panel.
     #[schemars(title = "Keep Finished Operations")]
     pub keep_finished_operations: bool,
+    /// Use incremental quick-search when typing in a file pane. When disabled,
+    /// typing opens the regex filter directly.
+    #[schemars(title = "Quick Search")]
+    pub quick_search: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -84,6 +88,7 @@ impl Default for BehaviorPreferences {
             confirm_delete: true,
             keep_terminal_open: true,
             keep_finished_operations: false,
+            quick_search: true,
         }
     }
 }

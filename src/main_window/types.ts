@@ -28,7 +28,7 @@ export type File = {
 
 export type FileRowContext = {
   isFocused: boolean;
-  filter?: string;
+  filter: string | null;
   filterMode: FilterMode;
 };
 
@@ -79,7 +79,7 @@ export type PaneState = {
   focused?: string;
   selected: string[];
   active: boolean;
-  filter?: string;
+  filter: string | null;
   filter_mode: FilterMode;
   fs_stats?: FsStats;
   stats: PaneStats;

@@ -119,10 +119,12 @@
   opacity: 0;
   pointer-events: none;
 
-  &,
-  &:focus {
-    outline: none;
-    border: none;
+  input {
+    &,
+    &:focus {
+      outline: none;
+      border: none;
+    }
   }
 }
 

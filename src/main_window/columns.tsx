@@ -21,7 +21,7 @@ function FileName({
   info,
 }: {
   focused: boolean;
-  filter?: string;
+  filter: string | null;
   filterMode: string;
   info: File;
 }) {
