@@ -118,16 +118,6 @@ export default function Terminal({
         if (sel) navigator.clipboard.writeText(sel);
         return false;
       }
-      // Ctrl+Shift+V or Cmd+V — paste from clipboard
-      if (
-        (e.key === "v" || e.key === "V") &&
-        (e.metaKey || (e.ctrlKey && e.shiftKey))
-      ) {
-        navigator.clipboard.readText().then((text) => {
-          if (text) term.paste(text);
-        });
-        return false;
-      }
       // Defunct terminal: Enter closes it
       if (defunctRef.current && e.key === "Enter") {
         safeCommandSilent("close_terminal", { handle });
