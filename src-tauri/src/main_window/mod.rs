@@ -967,11 +967,19 @@ impl MainWindowContext {
         let mounted = mounted_vfs.read();
         let mut targets = Vec::new();
 
+        let is_remote = matches!(self.connection_target(), ConnectionTarget::Remote { .. });
+
         for (vfs_id, info) in mounted.iter() {
+            let display_name =
+                if is_remote && *vfs_id == VfsId::ROOT && info.descriptor.type_name() == "local" {
+                    "Remote".to_string()
+                } else {
+                    info.descriptor.display_name().to_string()
+                };
             targets.push(VfsTarget {
                 vfs_id: Some(*vfs_id),
                 type_name: info.descriptor.type_name().to_string(),
-                display_name: info.descriptor.display_name().to_string(),
+                display_name,
                 label: info.descriptor.mount_label(&info.mount_meta),
                 mount_dialog: None,
             });

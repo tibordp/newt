@@ -244,6 +244,8 @@ impl Drop for Session {
 
 struct MountedVfsInfoService {
     mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
+    /// When set, overrides the display name for the root local VFS (e.g. "Remote").
+    root_vfs_display_name: Option<&'static str>,
 }
 
 impl super::pane::VfsInfoService for MountedVfsInfoService {
@@ -262,6 +264,10 @@ impl super::pane::VfsInfoService for MountedVfsInfoService {
             .read()
             .get(&vfs_id)
             .and_then(|info| info.origin.clone())
+    }
+
+    fn root_vfs_display_name(&self) -> Option<&str> {
+        self.root_vfs_display_name
     }
 }
 
@@ -476,15 +482,21 @@ fn create_rpc_services(
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
 ) -> (Services, PendingStreams) {
+    use newt_common::api::VfsDispatcher;
+    use newt_common::rpc::DispatcherExt;
+    use newt_common::vfs::LocalVfs;
+
     let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
 
+    let host_vfs = Arc::new(LocalVfs::new());
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
         publisher: publisher.clone(),
         pending_streams: pending_streams.clone(),
         preferences: preferences.clone(),
     };
-    let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
+    let combined_dispatcher = host_dispatcher.chain(VfsDispatcher::new(host_vfs));
+    let communicator = Communicator::with_dispatcher(combined_dispatcher, stream);
     let services = create_remote_services(communicator, pending_streams.clone());
     (services, pending_streams)
 }
@@ -871,10 +883,44 @@ pub(super) async fn connect(
             origin: None,
         },
     );
+
+    // For remote sessions, mount the local proxy VFS so the user can browse
+    // the client-local filesystem from within the remote session.
+    if matches!(connection_target, ConnectionTarget::Remote { .. }) {
+        match services
+            .vfs_manager
+            .mount(newt_common::vfs::MountRequest::Remote)
+            .await
+        {
+            Ok(resp) => {
+                log::info!("local proxy VFS mounted as vfs_id={:?}", resp.vfs_id);
+                if let Some(desc) = newt_common::vfs::lookup_descriptor(&resp.type_name) {
+                    initial_mounted.insert(
+                        resp.vfs_id,
+                        MountedVfsInfo {
+                            vfs_id: resp.vfs_id,
+                            descriptor: desc,
+                            mount_meta: resp.mount_meta,
+                            origin: None,
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("failed to mount local proxy VFS: {}", e);
+            }
+        }
+    }
+
     let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
+    let root_vfs_display_name = match connection_target {
+        ConnectionTarget::Remote { .. } => Some("Remote"),
+        _ => None,
+    };
     let vfs_info: Arc<dyn super::pane::VfsInfoService> = Arc::new(MountedVfsInfoService {
         mounted_vfs: mounted_vfs.clone(),
+        root_vfs_display_name,
     });
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();

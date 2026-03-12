@@ -5,7 +5,7 @@ use newt_common::{
     Error,
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher, VfsRegistryManager,
+        ShellServiceDispatcher, TerminalDispatcher, VfsMountDispatcher, VfsRegistryManager,
     },
     filesystem::LocalShellService,
     hot_paths,
@@ -110,6 +110,10 @@ async fn run_agent() -> Result<(), Error> {
     });
     let filesystem = VfsRegistryFs::new(registry.clone());
 
+    // OnceLock for the host communicator — set after the RPC loop starts,
+    // allows RemoteVfs to call back to the host.
+    let host_communicator = Arc::new(std::sync::OnceLock::new());
+
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
@@ -117,14 +121,21 @@ async fn run_agent() -> Result<(), Error> {
             registry.clone(),
         )))
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
-        .chain(VfsDispatcher::new(VfsRegistryManager::new(
-            registry.clone(),
-        )))
+        .chain(VfsMountDispatcher::new(
+            VfsRegistryManager::new_with_host_communicator(
+                registry.clone(),
+                host_communicator.clone(),
+            ),
+        ))
         .chain(HotPathsDispatcher::new(hot_paths::Local::new()));
 
     info!("agent started, entering RPC loop");
 
     let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
+
+    // Now that the communicator exists, make it available for Remote VFS mounts
+    let _ = host_communicator.set(rpc.clone());
+
     rpc.closed().await;
 
     info!("RPC connection closed, agent exiting");

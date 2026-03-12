@@ -74,6 +74,10 @@ pub struct PaneStats {
 pub trait VfsInfoService: Send + Sync {
     fn descriptor(&self, vfs_id: VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)>;
     fn origin(&self, vfs_id: VfsId) -> Option<VfsPath>;
+    /// Override for the root local VFS display name (e.g. "Remote" in SSH sessions).
+    fn root_vfs_display_name(&self) -> Option<&str> {
+        None
+    }
 }
 
 struct HistoryEntry {
@@ -431,7 +435,14 @@ impl Pane {
     fn update_display(&self, ws: &mut PaneViewState) {
         if let Some((desc, meta)) = self.vfs_info.descriptor(ws.path.vfs_id) {
             ws.display_path = desc.format_path(&ws.path.path, &meta);
-            ws.vfs_display_name = desc.display_name().to_string();
+            ws.vfs_display_name = if ws.path.vfs_id == VfsId::ROOT && desc.type_name() == "local" {
+                self.vfs_info
+                    .root_vfs_display_name()
+                    .unwrap_or(desc.display_name())
+            } else {
+                desc.display_name()
+            }
+            .to_string();
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();

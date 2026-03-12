@@ -49,6 +49,30 @@ pub const API_UNMOUNT_VFS: Api = Api(401);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
+// Host VFS APIs — invoked by the agent, handled by the Tauri host.
+// Used by RemoteVfs to access the client-local filesystem.
+pub const API_HOST_VFS_LIST_FILES: Api = Api(600);
+pub const API_HOST_VFS_POLL_CHANGES: Api = Api(601);
+pub const API_HOST_VFS_FS_STATS: Api = Api(602);
+pub const API_HOST_VFS_OPEN_READ_SYNC: Api = Api(603);
+pub const API_HOST_VFS_READ_RANGE: Api = Api(604);
+pub const API_HOST_VFS_FILE_DETAILS: Api = Api(605);
+pub const API_HOST_VFS_FILE_INFO: Api = Api(606);
+pub const API_HOST_VFS_OVERWRITE_SYNC: Api = Api(607);
+pub const API_HOST_VFS_CREATE_DIRECTORY: Api = Api(608);
+pub const API_HOST_VFS_CREATE_SYMLINK: Api = Api(609);
+pub const API_HOST_VFS_TOUCH: Api = Api(610);
+pub const API_HOST_VFS_TRUNCATE: Api = Api(611);
+pub const API_HOST_VFS_REMOVE_FILE: Api = Api(612);
+pub const API_HOST_VFS_REMOVE_DIR: Api = Api(613);
+pub const API_HOST_VFS_REMOVE_TREE: Api = Api(614);
+pub const API_HOST_VFS_GET_METADATA: Api = Api(615);
+pub const API_HOST_VFS_SET_METADATA: Api = Api(616);
+pub const API_HOST_VFS_AVAILABLE_SPACE: Api = Api(617);
+pub const API_HOST_VFS_RENAME: Api = Api(618);
+pub const API_HOST_VFS_COPY_WITHIN: Api = Api(619);
+pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
+
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
     outbox: tokio::sync::mpsc::UnboundedSender<Message>,
@@ -394,11 +418,27 @@ impl Dispatcher for OperationDispatcher {
 
 pub struct VfsRegistryManager {
     registry: Arc<VfsRegistry>,
+    /// When set, allows mounting a Remote VFS that proxies calls back to
+    /// the host. Used by the agent in remote sessions.
+    host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
 }
 
 impl VfsRegistryManager {
     pub fn new(registry: Arc<VfsRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            host_communicator: Arc::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    pub fn new_with_host_communicator(
+        registry: Arc<VfsRegistry>,
+        host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+    ) -> Self {
+        Self {
+            registry,
+            host_communicator,
+        }
     }
 }
 
@@ -432,6 +472,24 @@ impl VfsManager for VfsRegistryManager {
                 let type_name = vfs.descriptor().type_name().to_string();
                 let vfs_id = self.registry.mount(vfs);
                 log::info!("mounted SFTP VFS for host={} as vfs_id={:?}", host, vfs_id);
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                    origin: None,
+                })
+            }
+            MountRequest::Remote => {
+                let communicator = self
+                    .host_communicator
+                    .get()
+                    .ok_or_else(|| Error::custom("host communicator not available"))?
+                    .clone();
+                let vfs = Arc::new(crate::vfs::RemoteVfs::new(communicator));
+                let mount_meta = vfs.mount_meta();
+                let type_name = vfs.descriptor().type_name().to_string();
+                let vfs_id = self.registry.mount(vfs);
+                log::info!("mounted remote VFS as vfs_id={:?}", vfs_id);
                 Ok(MountResponse {
                     vfs_id,
                     type_name,
@@ -487,11 +545,11 @@ impl VfsManager for VfsRegistryManager {
     }
 }
 
-pub struct VfsDispatcher {
+pub struct VfsMountDispatcher {
     vfs_manager: Box<dyn VfsManager>,
 }
 
-impl VfsDispatcher {
+impl VfsMountDispatcher {
     pub fn new<V: VfsManager + 'static>(vfs_manager: V) -> Self {
         Self {
             vfs_manager: Box::new(vfs_manager),
@@ -500,7 +558,7 @@ impl VfsDispatcher {
 }
 
 #[async_trait::async_trait]
-impl Dispatcher for VfsDispatcher {
+impl Dispatcher for VfsMountDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_MOUNT_VFS => {
@@ -543,6 +601,160 @@ impl Dispatcher for HotPathsDispatcher {
             API_SYSTEM_HOT_PATHS => {
                 let _: () = bincode::deserialize(&req[..]).unwrap();
                 let ret = self.provider.system_hot_paths().await;
+                bincode::serialize(&ret).unwrap()
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VfsDispatcher — handles API_HOST_VFS_* invoke requests from the agent
+// ---------------------------------------------------------------------------
+
+pub struct VfsDispatcher {
+    vfs: Arc<dyn Vfs>,
+}
+
+impl VfsDispatcher {
+    pub fn new(vfs: Arc<dyn Vfs>) -> Self {
+        Self { vfs }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for VfsDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        use std::io::Read;
+        use std::path::PathBuf;
+
+        let ret = match api {
+            API_HOST_VFS_LIST_FILES => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.list_files(&path, None).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_POLL_CHANGES => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.poll_changes(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_FS_STATS => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.fs_stats(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_OPEN_READ_SYNC => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = match self.vfs.open_read_sync(&path).await {
+                    Ok(mut reader) => {
+                        let mut data = Vec::new();
+                        match reader.read_to_end(&mut data) {
+                            Ok(_) => Ok(data),
+                            Err(e) => Err(e.into()),
+                        }
+                    }
+                    Err(e) => Err(e),
+                };
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_READ_RANGE => {
+                let (path, offset, length): (PathBuf, u64, u64) =
+                    bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.read_range(&path, offset, length).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_FILE_DETAILS => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.file_details(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_FILE_INFO => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.file_info(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_OVERWRITE_SYNC => {
+                let (path, data): (PathBuf, Vec<u8>) = bincode::deserialize(&req[..]).unwrap();
+                let ret = match self.vfs.overwrite_sync(&path).await {
+                    Ok(mut writer) => match std::io::Write::write_all(&mut writer, &data) {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(e.into()),
+                    },
+                    Err(e) => Err(e),
+                };
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_CREATE_DIRECTORY => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.create_directory(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_CREATE_SYMLINK => {
+                let (link, target): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.create_symlink(&link, &target).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_TOUCH => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.touch(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_TRUNCATE => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.truncate(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_REMOVE_FILE => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.remove_file(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_REMOVE_DIR => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.remove_dir(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_REMOVE_TREE => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.remove_tree(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_GET_METADATA => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.get_metadata(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_SET_METADATA => {
+                let (path, meta): (PathBuf, crate::vfs::VfsMetadata) =
+                    bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.set_metadata(&path, &meta).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_AVAILABLE_SPACE => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.available_space(&path).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_RENAME => {
+                let (from, to): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.rename(&from, &to).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_COPY_WITHIN => {
+                let (from, to): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.copy_within(&from, &to).await;
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_HARD_LINK => {
+                let (link, target): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let ret = self.vfs.hard_link(&link, &target).await;
                 bincode::serialize(&ret).unwrap()
             }
             _ => return Ok(None),
