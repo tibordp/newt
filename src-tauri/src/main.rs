@@ -295,6 +295,28 @@ fn main() {
                 .lock()
                 .insert("main".to_string(), ctx.clone());
 
+            // On macOS, a menu with Edit > Paste (etc.) is required so that
+            // Cmd+V / Cmd+C / Cmd+A reach the webview as native events.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+
+                let edit_submenu = Submenu::with_items(
+                    app.handle(),
+                    "Edit",
+                    true,
+                    &[
+                        &PredefinedMenuItem::cut(app.handle(), None)?,
+                        &PredefinedMenuItem::copy(app.handle(), None)?,
+                        &PredefinedMenuItem::paste(app.handle(), None)?,
+                        &PredefinedMenuItem::select_all(app.handle(), None)?,
+                    ],
+                )?;
+                let menu = Menu::with_items(app.handle(), &[&edit_submenu])?;
+                global_ctx.set_window_menu("main", menu.clone());
+                let _ = app.handle().set_menu(menu);
+            }
+
             // Watch for theme preference changes and apply live
             {
                 let mut prefs_rx = global_ctx.preferences().handle().subscribe();

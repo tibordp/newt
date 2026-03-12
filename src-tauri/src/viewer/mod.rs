@@ -3,7 +3,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::ipc::CommandArg;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Manager, State, WebviewWindow, Wry};
 
 use crate::GlobalContext;
@@ -197,6 +197,19 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
         .collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
 
+    // Edit menu — predefined items so macOS routes Cmd+C/V/X/A to the webview
+    let edit_submenu = Submenu::with_items(
+        app_handle,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::cut(app_handle, None)?,
+            &PredefinedMenuItem::copy(app_handle, None)?,
+            &PredefinedMenuItem::paste(app_handle, None)?,
+            &PredefinedMenuItem::select_all(app_handle, None)?,
+        ],
+    )?;
+
     let close_item = MenuItem::with_id(
         app_handle,
         format!("{}close", prefix),
@@ -208,7 +221,7 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
 
     Ok(Menu::with_items(
         app_handle,
-        &[&file_submenu, &view_submenu],
+        &[&file_submenu, &edit_submenu, &view_submenu],
     )?)
 }
 

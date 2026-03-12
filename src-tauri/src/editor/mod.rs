@@ -259,6 +259,19 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
         ],
     )?;
 
+    // Edit menu — predefined items so macOS routes Cmd+C/V/X/A to the webview
+    let edit_submenu = Submenu::with_items(
+        app_handle,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::cut(app_handle, None)?,
+            &PredefinedMenuItem::copy(app_handle, None)?,
+            &PredefinedMenuItem::paste(app_handle, None)?,
+            &PredefinedMenuItem::select_all(app_handle, None)?,
+        ],
+    )?;
+
     // View menu — word wrap as checkbox
     let wrap_item = CheckMenuItem::with_id(
         app_handle,
@@ -294,7 +307,7 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
 
     Ok(Menu::with_items(
         app_handle,
-        &[&file_submenu, &view_submenu, &lang_submenu],
+        &[&file_submenu, &edit_submenu, &view_submenu, &lang_submenu],
     )?)
 }
 
