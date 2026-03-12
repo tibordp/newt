@@ -545,7 +545,11 @@ impl MainWindowState {
 
 /// Apply an `OperationProgress` update to the operations state map.
 /// Used by both local progress forwarding and remote RPC notifications.
-pub(crate) fn apply_operation_progress(operations: &Operations, progress: OperationProgress) {
+pub(crate) fn apply_operation_progress(
+    operations: &Operations,
+    progress: OperationProgress,
+    keep_finished: bool,
+) {
     let mut ops = operations.0.write();
     match progress {
         OperationProgress::Scanning {
@@ -584,7 +588,14 @@ pub(crate) fn apply_operation_progress(operations: &Operations, progress: Operat
             }
         }
         OperationProgress::Completed { id } => {
-            ops.remove(&id);
+            if keep_finished {
+                if let Some(op) = ops.get_mut(&id) {
+                    op.status = OperationStatus::Completed;
+                    op.backgrounded = true;
+                }
+            } else {
+                ops.remove(&id);
+            }
         }
         OperationProgress::Failed { id, error } => {
             if let Some(op) = ops.get_mut(&id) {
@@ -593,7 +604,14 @@ pub(crate) fn apply_operation_progress(operations: &Operations, progress: Operat
             }
         }
         OperationProgress::Cancelled { id } => {
-            ops.remove(&id);
+            if keep_finished {
+                if let Some(op) = ops.get_mut(&id) {
+                    op.status = OperationStatus::Cancelled;
+                    op.backgrounded = true;
+                }
+            } else {
+                ops.remove(&id);
+            }
         }
         OperationProgress::Issue { id, issue } => {
             if let Some(op) = ops.get_mut(&id) {

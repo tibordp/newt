@@ -651,6 +651,17 @@ pub async fn execute_operation(
     }
 }
 
+/// Wrap an async VFS call so it respects cancellation.
+async fn cancellable<T>(
+    cancel: &CancellationToken,
+    fut: impl std::future::Future<Output = Result<T, crate::Error>>,
+) -> Result<T, crate::Error> {
+    tokio::select! {
+        result = fut => result,
+        _ = cancel.cancelled() => Err(crate::Error::cancelled()),
+    }
+}
+
 // --- Plan copy (async, uses Vfs) ---
 
 async fn plan_copy(
@@ -684,7 +695,7 @@ async fn plan_copy(
             let parent = source
                 .parent()
                 .ok_or_else(|| crate::Error::custom("source has no parent".to_string()))?;
-            let file_list = src_vfs.list_files(parent, None).await?;
+            let file_list = cancellable(cancel, src_vfs.list_files(parent, None)).await?;
             file_list
                 .into_iter()
                 .find(|f| f.name == file_name.to_string_lossy().as_ref())
@@ -717,8 +728,9 @@ async fn plan_copy(
                 }
 
                 let file_list = loop {
-                    match src_vfs.list_files(&src_dir, None).await {
+                    match cancellable(cancel, src_vfs.list_files(&src_dir, None)).await {
                         Ok(list) => break list,
+                        Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
                         Err(e) => {
                             match reporter
                                 .handle_io_error(
@@ -1457,6 +1469,7 @@ async fn probe_is_dir(
     vfs: &dyn Vfs,
     descriptor: &dyn VfsDescriptor,
     path: &Path,
+    cancel: &CancellationToken,
 ) -> Result<bool, crate::Error> {
     if descriptor.can_stat_directories() {
         return Ok(vfs.file_info(path).await?.is_dir);
@@ -1466,7 +1479,7 @@ async fn probe_is_dir(
     let file_name = path.file_name().map(|n| n.to_string_lossy().to_string());
     match file_name {
         Some(name) => {
-            let listing = vfs.list_files(parent, None).await?;
+            let listing = cancellable(cancel, vfs.list_files(parent, None)).await?;
             Ok(listing
                 .iter()
                 .find(|f| f.name == name)
@@ -1499,8 +1512,9 @@ async fn collect_delete_entries(
         }
 
         let file_list = loop {
-            match vfs.list_files(&dir, None).await {
+            match cancellable(cancel, vfs.list_files(&dir, None)).await {
                 Ok(list) => break list,
+                Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
                 Err(e) => {
                     match reporter
                         .handle_io_error(
@@ -1560,8 +1574,9 @@ async fn collect_chmod_entries(
         }
 
         let file_list = loop {
-            match vfs.list_files(&dir, None).await {
+            match cancellable(cancel, vfs.list_files(&dir, None)).await {
                 Ok(list) => break list,
+                Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
                 Err(e) => {
                     match reporter
                         .handle_io_error(
@@ -1614,11 +1629,15 @@ async fn execute_set_permissions(
     let mut all_entries: Vec<(Arc<dyn Vfs>, PathBuf, String)> = Vec::new();
 
     for vfs_path in &paths {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
         let descriptor = vfs.descriptor();
 
         if recursive {
-            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path).await?;
+            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
             if is_dir {
                 let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
                 for entry in entries {
@@ -1717,7 +1736,7 @@ async fn execute_delete(
                 use_remove_tree: true,
             });
         } else {
-            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path).await?;
+            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
             if is_dir {
                 let children =
                     collect_delete_entries(&*vfs, &local_path, reporter, &cancel).await?;

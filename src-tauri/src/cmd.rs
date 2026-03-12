@@ -1319,7 +1319,20 @@ pub async fn resolve_issue(
 pub fn dismiss_operation(ctx: MainWindowContext, operation_id: OperationId) -> Result<(), Error> {
     {
         let mut ops = ctx.operations().0.write();
-        ops.remove(&operation_id);
+        if let Some(op) = ops.get(&operation_id) {
+            match op.status {
+                OperationStatus::Completed
+                | OperationStatus::Failed
+                | OperationStatus::Cancelled => {
+                    ops.remove(&operation_id);
+                }
+                _ => {
+                    return Err(Error::Custom(
+                        "Cannot dismiss an active operation".to_string(),
+                    ));
+                }
+            }
+        }
     }
     ctx.publish()?;
     Ok(())
@@ -1334,6 +1347,21 @@ pub fn background_operation(
         let mut ops = ctx.operations().0.write();
         if let Some(op) = ops.get_mut(&operation_id) {
             op.backgrounded = true;
+        }
+    }
+    ctx.publish()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn foreground_operation(
+    ctx: MainWindowContext,
+    operation_id: OperationId,
+) -> Result<(), Error> {
+    {
+        let mut ops = ctx.operations().0.write();
+        if let Some(op) = ops.get_mut(&operation_id) {
+            op.backgrounded = false;
         }
     }
     ctx.publish()?;
@@ -2017,6 +2045,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         resolve_issue,
         dismiss_operation,
         background_operation,
+        foreground_operation,
         // File viewing/opening/editing
         file_details,
         read_file_range,

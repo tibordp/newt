@@ -362,6 +362,7 @@ struct HostDispatcher {
     operations: Operations,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     pending_streams: PendingStreams,
+    preferences: crate::preferences::PreferencesHandle,
 }
 
 #[async_trait::async_trait]
@@ -381,7 +382,8 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
     ) -> Result<bool, newt_common::Error> {
         if api == API_OPERATION_PROGRESS {
             let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
-            apply_operation_progress(&self.operations, progress);
+            let keep = self.preferences.load().behavior.keep_finished_operations;
+            apply_operation_progress(&self.operations, progress, keep);
             let _ = self.publisher.publish();
             Ok(true)
         } else if api == API_LIST_FILES_BATCH {
@@ -416,6 +418,7 @@ struct Services {
 fn create_local_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
+    preferences: &crate::preferences::PreferencesHandle,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
@@ -427,9 +430,11 @@ fn create_local_services(
 
     let operations = operations.clone();
     let publisher_clone = publisher.clone();
+    let preferences = preferences.clone();
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
-            apply_operation_progress(&operations, progress);
+            let keep = preferences.load().behavior.keep_finished_operations;
+            apply_operation_progress(&operations, progress, keep);
             let _ = publisher_clone.publish();
         }
     });
@@ -469,6 +474,7 @@ fn create_rpc_services(
     stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static,
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
+    preferences: &crate::preferences::PreferencesHandle,
 ) -> (Services, PendingStreams) {
     let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
 
@@ -476,6 +482,7 @@ fn create_rpc_services(
         operations: operations.clone(),
         publisher: publisher.clone(),
         pending_streams: pending_streams.clone(),
+        preferences: preferences.clone(),
     };
     let communicator = Communicator::with_dispatcher(host_dispatcher, stream);
     let services = create_remote_services(communicator, pending_streams.clone());
@@ -807,7 +814,7 @@ pub(super) async fn connect(
     let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
     let (services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
-            let services = create_local_services(&state.operations, publisher);
+            let services = create_local_services(&state.operations, publisher, &preferences);
             (services, StderrLog::default(), None)
         }
         ConnectionTarget::Remote { transport_cmd } => {
@@ -826,14 +833,16 @@ pub(super) async fn connect(
             )
             .await?;
             conn_log.log("Setting up RPC services...");
-            let (services, _) = create_rpc_services(conn.stream, &state.operations, publisher);
+            let (services, _) =
+                create_rpc_services(conn.stream, &state.operations, publisher, &preferences);
             conn_log.log("Connected");
             (services, stderr_log, Some((conn.child, conn.stderr)))
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
             let conn = spawn_elevated(agent_resolver).await?;
-            let (services, _) = create_rpc_services(conn.stream, &state.operations, publisher);
+            let (services, _) =
+                create_rpc_services(conn.stream, &state.operations, publisher, &preferences);
             let stderr_log = StderrLog::default();
             (services, stderr_log, Some((conn.child, conn.stderr)))
         }

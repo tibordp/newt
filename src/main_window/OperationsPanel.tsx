@@ -202,10 +202,19 @@ function OperationRow({ op }: { op: OperationState }) {
     op.status === "scanning" ||
     op.status === "running" ||
     op.status === "waiting_for_input";
+  const isFinished =
+    op.status === "completed" ||
+    op.status === "failed" ||
+    op.status === "cancelled";
   const isWaiting = op.status === "waiting_for_input" && op.issue;
 
   return (
-    <div className={styles.operationRow}>
+    <div
+      className={styles.operationRow}
+      onClick={() =>
+        safeCommand("foreground_operation", { operationId: op.id })
+      }
+    >
       <div className={styles.operationInfo}>
         <span className={styles.operationKind}>{op.kind}</span>
         <span className={styles.operationDescription}>{op.description}</span>
@@ -240,7 +249,10 @@ function OperationRow({ op }: { op: OperationState }) {
         </div>
       )}
 
-      <div className={styles.operationActions}>
+      <div
+        className={styles.operationActions}
+        onClick={(e) => e.stopPropagation()}
+      >
         {isActive && (
           <button
             onClick={() =>
@@ -250,13 +262,15 @@ function OperationRow({ op }: { op: OperationState }) {
             Cancel
           </button>
         )}
-        <button
-          onClick={() =>
-            safeCommand("dismiss_operation", { operationId: op.id })
-          }
-        >
-          Dismiss
-        </button>
+        {isFinished && (
+          <button
+            onClick={() =>
+              safeCommand("dismiss_operation", { operationId: op.id })
+            }
+          >
+            Dismiss
+          </button>
+        )}
       </div>
     </div>
   );
@@ -371,7 +385,9 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
                 </button>
               </>
             )}
-            {op.status === "failed" && (
+            {(op.status === "completed" ||
+              op.status === "failed" ||
+              op.status === "cancelled") && (
               <button
                 autoFocus
                 onClick={() =>

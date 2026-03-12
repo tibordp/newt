@@ -73,6 +73,9 @@ pub struct BehaviorPreferences {
     /// Keep terminal tab open after the shell process exits.
     #[schemars(title = "Keep Terminal Open After Exit")]
     pub keep_terminal_open: bool,
+    /// Keep completed/cancelled operations visible in the operations panel.
+    #[schemars(title = "Keep Finished Operations")]
+    pub keep_finished_operations: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -80,6 +83,7 @@ impl Default for BehaviorPreferences {
         Self {
             confirm_delete: true,
             keep_terminal_open: true,
+            keep_finished_operations: false,
         }
     }
 }
