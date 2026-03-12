@@ -260,6 +260,7 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
     )?;
 
     // Edit menu — predefined items so macOS routes Cmd+C/V/X/A to the webview
+    #[cfg(target_os = "macos")]
     let edit_submenu = Submenu::with_items(
         app_handle,
         "Edit",
@@ -305,10 +306,16 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
         .collect();
     let lang_submenu = Submenu::with_items(app_handle, "Language", true, &lang_refs)?;
 
-    Ok(Menu::with_items(
+    #[cfg(target_os = "macos")]
+    let ret = Menu::with_items(
         app_handle,
         &[&file_submenu, &edit_submenu, &view_submenu, &lang_submenu],
-    )?)
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    let ret = Menu::with_items(app_handle, &[&file_submenu, &view_submenu, &lang_submenu]);
+
+    Ok(ret?)
 }
 
 // --- Tauri commands ---

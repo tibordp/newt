@@ -344,7 +344,7 @@ async fn execute_rendered(
         let id = ctx.next_operation_id()?;
 
         {
-            let mut ops = ctx.operations().0.write();
+            let mut ops = ctx.operations().state.write();
             ops.insert(
                 id,
                 crate::main_window::OperationState {
@@ -375,7 +375,7 @@ async fn execute_rendered(
             },
         };
         if let Err(e) = ctx.operations_client()?.start_operation(req).await {
-            let mut ops = ctx.operations().0.write();
+            let mut ops = ctx.operations().state.write();
             if let Some(op) = ops.get_mut(&id) {
                 op.status = OperationStatus::Failed;
                 op.error = Some(e.to_string());

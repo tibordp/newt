@@ -202,14 +202,12 @@ function VfsSelector({
   paneHandle,
   activeVfsId,
   open,
-  onRestoreFocus,
 }: {
   vfsDisplayName: string;
   vfsTargets: VfsTarget[];
   paneHandle: number;
   activeVfsId: number;
   open: boolean;
-  onRestoreFocus: () => void;
 }) {
   // Track when we're opening a mount dialog so we don't steal focus back
   const openingDialogRef = useRef(false);
@@ -247,10 +245,10 @@ function VfsSelector({
           sideOffset={4}
           loop
           onCloseAutoFocus={(e) => {
+            // Prevent Radix from focusing the trigger button — the pane
+            // focus effect handles restoring focus to the correct (active)
+            // pane when modalOpen/isVfsSelectorOpen change.
             e.preventDefault();
-            if (!openingDialogRef.current) {
-              onRestoreFocus();
-            }
           }}
         >
           {vfsTargets.map((target, i) => {
@@ -1160,7 +1158,6 @@ function PaneInner(
           paneHandle={paneHandle}
           activeVfsId={path.vfs_id}
           open={isVfsSelectorOpen}
-          onRestoreFocus={() => containerRef.current?.focus()}
         />
         <div className={styles.headerPath}>
           <PathBreadcrumbs breadcrumbs={breadcrumbs} paneHandle={paneHandle} />

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use log::info;
@@ -129,13 +129,14 @@ async fn serve_file(
 
         Response::builder()
             .status(StatusCode::PARTIAL_CONTENT)
-            .header("content-type", &mime)
-            .header("content-length", length.to_string())
+            .header(header::CONTENT_TYPE, &mime)
+            .header(header::CONTENT_LENGTH, length.to_string())
             .header(
-                "content-range",
+                header::CONTENT_RANGE,
                 format!("bytes {}-{}/{}", range_start, range_end, file_size),
             )
-            .header("accept-ranges", "bytes")
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(body)
             .unwrap()
     } else {
@@ -150,9 +151,10 @@ async fn serve_file(
 
         Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", &mime)
-            .header("content-length", file_size.to_string())
-            .header("accept-ranges", "bytes")
+            .header(header::CONTENT_TYPE, &mime)
+            .header(header::CONTENT_LENGTH, file_size.to_string())
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(body)
             .unwrap()
     }

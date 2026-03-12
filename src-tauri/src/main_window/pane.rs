@@ -6,7 +6,7 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::{Breadcrumb, VfsDescriptor, VfsId, VfsPath};
+use newt_common::vfs::{Breadcrumb, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::common::Error;
 use crate::common::UpdatePublisher;
+use crate::main_window::session::VfsInfo;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -71,15 +72,6 @@ pub struct PaneStats {
     pub total_count: Option<usize>,
 }
 
-pub trait VfsInfoService: Send + Sync {
-    fn descriptor(&self, vfs_id: VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)>;
-    fn origin(&self, vfs_id: VfsId) -> Option<VfsPath>;
-    /// Override for the root local VFS display name (e.g. "Remote" in SSH sessions).
-    fn root_vfs_display_name(&self) -> Option<&str> {
-        None
-    }
-}
-
 struct HistoryEntry {
     path: VfsPath,
     focused: Option<String>,
@@ -102,7 +94,7 @@ pub struct Pane {
     preferences: crate::preferences::PreferencesHandle,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     cancellation_token: Mutex<Option<CancellationToken>>,
-    vfs_info: Arc<dyn VfsInfoService>,
+    vfs_info: Arc<dyn VfsInfo>,
     history: Mutex<NavigationHistory>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
 }
@@ -114,7 +106,7 @@ impl Pane {
         display_options: DisplayOptions,
         preferences: crate::preferences::PreferencesHandle,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
-        vfs_info: Arc<dyn VfsInfoService>,
+        vfs_info: Arc<dyn VfsInfo>,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
     ) -> Self {
         let (tx, rx) = tokio::sync::watch::channel(());
@@ -435,14 +427,11 @@ impl Pane {
     fn update_display(&self, ws: &mut PaneViewState) {
         if let Some((desc, meta)) = self.vfs_info.descriptor(ws.path.vfs_id) {
             ws.display_path = desc.format_path(&ws.path.path, &meta);
-            ws.vfs_display_name = if ws.path.vfs_id == VfsId::ROOT && desc.type_name() == "local" {
-                self.vfs_info
-                    .root_vfs_display_name()
-                    .unwrap_or(desc.display_name())
-            } else {
-                desc.display_name()
-            }
-            .to_string();
+            ws.vfs_display_name = self
+                .vfs_info
+                .display_name(ws.path.vfs_id)
+                .unwrap_or_default()
+                .to_string();
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();
@@ -948,7 +937,11 @@ impl PaneViewState {
         if self.filter.is_none() {
             self.filter_mode = self.default_filter_mode;
         }
-
+        if self.path != *file_list.path() {
+            // HACK: focused_index stores the previous position, so if the file disappears (but we stayed on the same path), we don't jump back to the beginning
+            // but we don't want that if the path has actually changed
+            self.focused_index = None;
+        }
         self.path = file_list.path().clone();
         self.fs_stats = file_list.fs_stats().cloned();
         self.files = file_list
@@ -966,7 +959,7 @@ impl PaneViewState {
     }
 
     pub fn focus(&mut self, filename: String) {
-        self.clear_filter();
+        self.clear_quick_search();
         self.focused = Some(filename);
         self.update_focus();
         self.recompute_stats();

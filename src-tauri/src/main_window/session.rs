@@ -7,8 +7,8 @@ use newt_common::operation::{OperationContext, OperationProgress, OperationsClie
 use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
-    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, VfsId, VfsManager, VfsManagerRemote, VfsPath,
-    VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
+    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, VfsDescriptor, VfsId, VfsManager,
+    VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -219,6 +219,7 @@ pub struct Session {
     pub(super) fs: Arc<dyn Filesystem>,
     pub(super) shell_service: Arc<dyn ShellService>,
     pub(super) vfs_manager: Arc<dyn VfsManager>,
+    pub(super) vfs_info: Arc<dyn VfsInfo>,
     pub(super) terminal_client: Arc<dyn TerminalClient>,
     pub(super) file_reader: Arc<dyn FileReader>,
     pub(super) operations_client: Arc<dyn OperationsClient>,
@@ -242,13 +243,23 @@ impl Drop for Session {
 // VfsInfoService implementation
 // ---------------------------------------------------------------------------
 
-struct MountedVfsInfoService {
-    mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
-    /// When set, overrides the display name for the root local VFS (e.g. "Remote").
-    root_vfs_display_name: Option<&'static str>,
+pub trait VfsInfo: Send + Sync {
+    fn descriptor(&self, vfs_id: VfsId) -> Option<(&'static dyn VfsDescriptor, Vec<u8>)>;
+    fn origin(&self, vfs_id: VfsId) -> Option<VfsPath>;
+    /// Whether the given VFS is backed by the host machine's local filesystem.
+    fn is_host_local(&self, vfs_id: VfsId) -> bool;
+    fn display_name(&self, vfs_id: VfsId) -> Option<&str>;
+    /// Returns the VFS ID of a filesystem that is local to the host machine
+    /// (the machine running the Tauri process), or `None` if no such VFS is mounted.
+    fn host_local_vfs_id(&self) -> Option<VfsId>;
 }
 
-impl super::pane::VfsInfoService for MountedVfsInfoService {
+struct MountedVfsInfoService {
+    mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
+    remote_session: bool,
+}
+
+impl VfsInfo for MountedVfsInfoService {
     fn descriptor(
         &self,
         vfs_id: VfsId,
@@ -266,8 +277,38 @@ impl super::pane::VfsInfoService for MountedVfsInfoService {
             .and_then(|info| info.origin.clone())
     }
 
-    fn root_vfs_display_name(&self) -> Option<&str> {
-        self.root_vfs_display_name
+    fn is_host_local(&self, vfs_id: VfsId) -> bool {
+        match self
+            .mounted_vfs
+            .read()
+            .get(&vfs_id)
+            .map(|info| info.descriptor.type_name())
+        {
+            Some("local") => !self.remote_session, // Local VFS is host-local in remote sessions, but not in local sessions
+            Some("remote") => self.remote_session, // Remote VFS is host-local in remote sessions, but not in local sessions
+            _ => false,
+        }
+    }
+
+    fn display_name(&self, vfs_id: VfsId) -> Option<&str> {
+        let descriptor = self
+            .mounted_vfs
+            .read()
+            .get(&vfs_id)
+            .map(|info| info.descriptor)?;
+
+        Some(match descriptor.type_name() {
+            "local" if !self.remote_session => "Local",
+            "local" if self.remote_session => "Remote",
+            "remote" if self.remote_session => "Local",
+            "remote" if !self.remote_session => "Remote",
+            _ => descriptor.display_name(), // For custom VFS types, just show the type name
+        })
+    }
+
+    fn host_local_vfs_id(&self) -> Option<VfsId> {
+        let mounted = self.mounted_vfs.read();
+        mounted.keys().copied().find(|id| self.is_host_local(*id))
     }
 }
 
@@ -1069,13 +1110,9 @@ pub(super) async fn connect(
 
     let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
-    let root_vfs_display_name = match connection_target {
-        ConnectionTarget::Remote { .. } => Some("Remote"),
-        _ => None,
-    };
-    let vfs_info: Arc<dyn super::pane::VfsInfoService> = Arc::new(MountedVfsInfoService {
+    let vfs_info: Arc<dyn VfsInfo> = Arc::new(MountedVfsInfoService {
         mounted_vfs: mounted_vfs.clone(),
-        root_vfs_display_name,
+        remote_session: matches!(connection_target, ConnectionTarget::Remote { .. }),
     });
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1095,7 +1132,7 @@ pub(super) async fn connect(
         state.display_options.clone(),
         preferences,
         publisher.clone(),
-        vfs_info,
+        vfs_info.clone(),
         Some(event_tx.clone()),
     ));
 
@@ -1136,6 +1173,7 @@ pub(super) async fn connect(
         operations_client: services.operations_client,
         hot_paths_provider: services.hot_paths_provider,
         mounted_vfs,
+        vfs_info,
         next_operation_id: AtomicU64::new(1),
         file_server_port,
         file_server_token,

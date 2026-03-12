@@ -3,7 +3,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::ipc::CommandArg;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
 use tauri::{Manager, State, WebviewWindow, Wry};
 
 use crate::GlobalContext;
@@ -198,15 +198,16 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
 
     // Edit menu — predefined items so macOS routes Cmd+C/V/X/A to the webview
+    #[cfg(target_os = "macos")]
     let edit_submenu = Submenu::with_items(
         app_handle,
         "Edit",
         true,
         &[
-            &PredefinedMenuItem::cut(app_handle, None)?,
-            &PredefinedMenuItem::copy(app_handle, None)?,
-            &PredefinedMenuItem::paste(app_handle, None)?,
-            &PredefinedMenuItem::select_all(app_handle, None)?,
+            &tauri::menu::PredefinedMenuItem::cut(app_handle, None)?,
+            &tauri::menu::PredefinedMenuItem::copy(app_handle, None)?,
+            &tauri::menu::PredefinedMenuItem::paste(app_handle, None)?,
+            &tauri::menu::PredefinedMenuItem::select_all(app_handle, None)?,
         ],
     )?;
 
@@ -219,10 +220,13 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
     )?;
     let file_submenu = Submenu::with_items(app_handle, "File", true, &[&close_item])?;
 
-    Ok(Menu::with_items(
-        app_handle,
-        &[&file_submenu, &edit_submenu, &view_submenu],
-    )?)
+    #[cfg(target_os = "macos")]
+    let ret = Menu::with_items(app_handle, &[&file_submenu, &edit_submenu, &view_submenu]);
+
+    #[cfg(not(target_os = "macos"))]
+    let ret = Menu::with_items(app_handle, &[&file_submenu, &view_submenu]);
+
+    Ok(ret?)
 }
 
 // --- Tauri commands ---

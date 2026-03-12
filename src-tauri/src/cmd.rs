@@ -531,7 +531,50 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
         Some(s) => s,
         None => return Ok(()),
     };
-    opener::open(&full_path.path)?;
+
+    // Open through shell if on local VFS
+    if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
+        opener::open(&full_path.path)?;
+    } else {
+        download_and_open(&ctx, full_path, &file.name).await?;
+    }
+
+    Ok(())
+}
+
+/// Download a file from a non-host-local VFS to a temp directory on the host,
+/// then open it with the system's default handler when the copy completes.
+async fn download_and_open(
+    ctx: &MainWindowContext,
+    source: VfsPath,
+    filename: &str,
+) -> Result<(), Error> {
+    let vfs_info = ctx.vfs_info()?;
+    let host_vfs = vfs_info.host_local_vfs_id().ok_or_else(|| {
+        Error::Custom("No local filesystem mounted — cannot open files externally".to_string())
+    })?;
+
+    let temp_dir = tempfile::tempdir_in(std::env::temp_dir())?.keep();
+    let dest_path = temp_dir.join(filename);
+    let dest_vfs_path = VfsPath::new(host_vfs, temp_dir.to_string_lossy().to_string());
+
+    let op_id = start_operation(
+        ctx.clone(),
+        OperationRequest::Copy {
+            sources: vec![source],
+            destination: dest_vfs_path,
+            options: CopyOptions::default(),
+        },
+    )
+    .await?;
+
+    ctx.operations().register_completion_callback(
+        op_id,
+        Box::new(move || {
+            let _ = opener::open(&dest_path);
+        }),
+    );
+
     Ok(())
 }
 
@@ -600,7 +643,9 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
 
-    opener::open(&full_path.path)?;
+    if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
+        opener::open(&full_path.path)?;
+    }
 
     Ok(())
 }
@@ -1237,7 +1282,7 @@ pub async fn start_operation(
 
     // Insert initial operation state
     {
-        let mut ops = ctx.operations().0.write();
+        let mut ops = ctx.operations().state.write();
         ops.insert(
             id,
             OperationState {
@@ -1264,7 +1309,7 @@ pub async fn start_operation(
     let req = StartOperationRequest { id, request };
     if let Err(e) = ctx.operations_client()?.start_operation(req).await {
         // Operation failed to start — mark as failed so it doesn't get stuck
-        let mut ops = ctx.operations().0.write();
+        let mut ops = ctx.operations().state.write();
         if let Some(op) = ops.get_mut(&id) {
             op.status = OperationStatus::Failed;
             op.error = Some(e.to_string());
@@ -1318,7 +1363,7 @@ pub async fn resolve_issue(
 #[tauri::command]
 pub fn dismiss_operation(ctx: MainWindowContext, operation_id: OperationId) -> Result<(), Error> {
     {
-        let mut ops = ctx.operations().0.write();
+        let mut ops = ctx.operations().state.write();
         if let Some(op) = ops.get(&operation_id) {
             match op.status {
                 OperationStatus::Completed
@@ -1344,7 +1389,7 @@ pub fn background_operation(
     operation_id: OperationId,
 ) -> Result<(), Error> {
     {
-        let mut ops = ctx.operations().0.write();
+        let mut ops = ctx.operations().state.write();
         if let Some(op) = ops.get_mut(&operation_id) {
             op.backgrounded = true;
         }
@@ -1359,7 +1404,7 @@ pub fn foreground_operation(
     operation_id: OperationId,
 ) -> Result<(), Error> {
     {
-        let mut ops = ctx.operations().0.write();
+        let mut ops = ctx.operations().state.write();
         if let Some(op) = ops.get_mut(&operation_id) {
             op.backgrounded = false;
         }

@@ -8,11 +8,11 @@ use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
-use parking_lot::{RwLock, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::cmp::PartialOrd;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 use std::future::Future;
@@ -26,6 +26,7 @@ use tauri::Wry;
 use crate::GlobalContext;
 use crate::common::Error;
 use crate::common::UpdatePublisher;
+use crate::main_window::session::VfsInfo;
 
 use self::pane::Pane;
 use self::session::Session;
@@ -235,23 +236,40 @@ pub struct OperationState {
     pub scanning_bytes: Option<u64>,
 }
 
+type OperationCallback = Box<dyn FnOnce() + Send>;
+
 #[derive(Clone)]
-pub struct Operations(pub Arc<RwLock<HashMap<OperationId, OperationState>>>);
+pub struct Operations {
+    pub state: Arc<RwLock<HashMap<OperationId, OperationState>>>,
+    callbacks: Arc<Mutex<HashMap<OperationId, OperationCallback>>>,
+}
 
 impl Default for Operations {
     fn default() -> Self {
-        Self(Arc::new(RwLock::new(HashMap::new())))
+        Self {
+            state: Arc::new(RwLock::new(HashMap::new())),
+            callbacks: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
 impl Operations {
     pub fn foreground_operation_id(&self) -> Option<OperationId> {
-        self.0
+        self.state
             .read()
             .values()
             .filter(|op| !op.backgrounded)
             .min_by_key(|op| op.id)
             .map(|op| op.id)
+    }
+
+    pub fn register_completion_callback(&self, id: OperationId, cb: Box<dyn FnOnce() + Send>) {
+        self.callbacks.lock().insert(id, cb);
+    }
+
+    /// If a completion callback is registered for `id`, remove and return it.
+    fn take_callback(&self, id: OperationId) -> Option<Box<dyn FnOnce() + Send>> {
+        self.callbacks.lock().remove(&id)
     }
 }
 
@@ -260,7 +278,7 @@ impl serde::Serialize for Operations {
     where
         S: serde::ser::Serializer,
     {
-        let lock = self.0.read();
+        let lock = self.state.read();
         let mut map = serializer.serialize_map(Some(lock.len()))?;
         for (k, v) in lock.iter() {
             map.serialize_entry(&k.to_string(), v)?;
@@ -550,7 +568,7 @@ pub(crate) fn apply_operation_progress(
     progress: OperationProgress,
     keep_finished: bool,
 ) {
-    let mut ops = operations.0.write();
+    let mut ops = operations.state.write();
     match progress {
         OperationProgress::Scanning {
             id,
@@ -596,12 +614,16 @@ pub(crate) fn apply_operation_progress(
             } else {
                 ops.remove(&id);
             }
+            if let Some(cb) = operations.take_callback(id) {
+                cb();
+            }
         }
         OperationProgress::Failed { id, error } => {
             if let Some(op) = ops.get_mut(&id) {
                 op.status = OperationStatus::Failed;
                 op.error = Some(error);
             }
+            operations.take_callback(id); // discard
         }
         OperationProgress::Cancelled { id } => {
             if keep_finished {
@@ -612,6 +634,7 @@ pub(crate) fn apply_operation_progress(
             } else {
                 ops.remove(&id);
             }
+            operations.take_callback(id); // discard
         }
         OperationProgress::Issue { id, issue } => {
             if let Some(op) = ops.get_mut(&id) {
@@ -772,7 +795,7 @@ impl MainWindowContext {
         }
     }
 
-    fn with_session<T>(&self, f: impl FnOnce(&Session) -> T) -> Result<T, Error> {
+    pub fn with_session<T>(&self, f: impl FnOnce(&Session) -> T) -> Result<T, Error> {
         let guard = self.inner.session.load();
         let opt: &Option<Session> = &guard;
         opt.as_ref()
@@ -816,6 +839,10 @@ impl MainWindowContext {
 
     pub fn file_reader(&self) -> Result<Arc<dyn FileReader>, Error> {
         self.with_session(|s| s.file_reader.clone())
+    }
+
+    pub fn vfs_info(&self) -> Result<Arc<dyn VfsInfo>, Error> {
+        self.with_session(|s| s.vfs_info.clone())
     }
 
     pub fn hot_paths_provider(
@@ -963,32 +990,25 @@ impl MainWindowContext {
             }
         }
 
-        let mounted_vfs = self.with_session(|s| s.mounted_vfs.clone())?;
-        let mounted = mounted_vfs.read();
         let mut targets = Vec::new();
-
-        let is_remote = matches!(self.connection_target(), ConnectionTarget::Remote { .. });
-
-        for (vfs_id, info) in mounted.iter() {
-            let display_name =
-                if is_remote && *vfs_id == VfsId::ROOT && info.descriptor.type_name() == "local" {
-                    "Remote".to_string()
-                } else {
-                    info.descriptor.display_name().to_string()
-                };
-            targets.push(VfsTarget {
-                vfs_id: Some(*vfs_id),
-                type_name: info.descriptor.type_name().to_string(),
-                display_name,
-                label: info.descriptor.mount_label(&info.mount_meta),
-                mount_dialog: None,
-            });
-        }
-
-        let mounted_types: std::collections::HashSet<&str> = mounted
-            .values()
-            .map(|info| info.descriptor.type_name())
-            .collect();
+        let mut mounted_types = HashSet::new();
+        self.with_session(|s| {
+            let mounted = s.mounted_vfs.read();
+            for (vfs_id, info) in mounted.iter() {
+                mounted_types.insert(info.descriptor.type_name());
+                targets.push(VfsTarget {
+                    vfs_id: Some(*vfs_id),
+                    type_name: info.descriptor.type_name().to_string(),
+                    display_name: s
+                        .vfs_info
+                        .display_name(*vfs_id)
+                        .unwrap_or_default()
+                        .to_string(),
+                    label: info.descriptor.mount_label(&info.mount_meta),
+                    mount_dialog: None,
+                });
+            }
+        })?;
 
         for desc in all_descriptors() {
             if mounted_types.contains(desc.type_name()) {

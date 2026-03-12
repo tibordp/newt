@@ -25,9 +25,7 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         "remote"
     }
     fn display_name(&self) -> &'static str {
-        // From the user's perspective this is their local machine, even though
-        // the VFS implementation proxies calls over the network.
-        "Local"
+        "Remote"
     }
     fn auto_mount_request(&self) -> Option<super::MountRequest> {
         None
