@@ -2,11 +2,14 @@
 
 ## Askpass support for SFTP VFS
 
-## Host VFS (local ↔ remote bridge)
+## Host VFS (local ↔ remote bridge) — DONE (basic)
 
-Expose the Tauri-side (host) filesystem as a VFS accessible from the agent side, and vice versa. In a remote session, this lets you mount the local machine as a browsable pane and use the standard operation system for uploads/downloads with full progress, conflict resolution, and cancellation. In a local session, a remote VFS could be useful for copying into containers or other environments where an agent can be bootstrapped.
+Basic Remote VFS is implemented: in SSH sessions, the client-local filesystem is exposed as a mountable VFS on the agent side. Hairpin diversion routes list_files, poll_changes, read_range, read_file, and write_file directly through the Tauri backend, avoiding double network roundtrips. Gated behind `behavior.expose_local_fs` preference (default false for security).
 
-Requires registering a filesystem dispatcher on the Tauri side of the RPC channel (protocol is already symmetric, just no dispatchers registered on the local side today). Also unlocks: external drag-and-drop (drop → copy from host VFS), opening remote files locally (download then xdg-open), and having a proper local pane in remote sessions.
+Remaining work:
+- Hairpin diversion for additional methods (rename, touch, create_directory, etc.)
+- External drag-and-drop (drop → copy from host VFS)
+- Opening remote files locally (download then xdg-open)
 
 ## Recursive file search
 

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::rpc::Communicator;
-use crate::vfs::VfsPath;
+use crate::vfs::{VfsId, VfsPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StreamId(pub u64);
@@ -122,6 +122,11 @@ impl FileList {
 
     pub fn fs_stats(&self) -> Option<&FsStats> {
         self.fs_stats.as_ref()
+    }
+
+    /// Replace the VFS ID in this file list's path.
+    pub fn rewrite_vfs_id(&mut self, vfs_id: VfsId) {
+        self.path.vfs_id = vfs_id;
     }
 }
 

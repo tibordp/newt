@@ -708,6 +708,20 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Limitations**: Read-only. No create, modify, delete, rename, or metadata changes inside archives. Tar archives support symlinks; ZIP archives do not.
 
+### Remote VFS (client-local filesystem in SSH sessions)
+
+In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on the remote agent, allowing the user to browse local files alongside remote ones. The root VFS label shows "Remote" in SSH sessions to distinguish it from the client-local VFS which shows "Local".
+
+**Gated by preference**: `behavior.expose_local_fs` (default: false). When disabled, the remote VFS is not available and no local filesystem access is exposed to the remote host.
+
+**Architecture**: The agent mounts a `RemoteVfs` that proxies all Vfs trait calls back to the Tauri host over bidirectional RPC. The host runs a `VfsDispatcher` that dispatches these calls to a real `LocalVfs`.
+
+**Hairpin diversion**: For performance, the most latency-sensitive methods (`list_files`, `poll_changes`, `read_range`, `read_file`, `write_file`) are diverted at the Tauri backend — they execute against the local filesystem directly without round-tripping through the remote agent. This is transparent: the wrapper rewrites VFS IDs so callers see consistent paths.
+
+**Operations supported**: Full read/write, browsing, file watching — same as local filesystem.
+
+**VFS ID rewriting**: Batch streaming results from `list_files` have their VFS IDs rewritten from the local root to the remote VFS ID before being forwarded to the UI.
+
 ### VFS Selector Dialog (Mod+Shift+L)
 
 - Lists all currently **mounted** VFS instances (with VFS ID, type, and mount label).
@@ -737,7 +751,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 5. If missing or outdated: Requests upload (`NEWT:NEED:triple:caps`). Newt compresses the agent binary with gzip (if remote supports it) and uploads it. The script caches it for future use and cleans up old versions.
 6. The agent enters RPC mode, and all further communication happens over the binary RPC protocol (bincode over stdin/stdout).
 
-**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote host. The UI is identical to local mode — the abstraction is transparent.
+**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote host. The UI is identical to local mode — the abstraction is transparent. If `behavior.expose_local_fs` is enabled, the client-local filesystem is automatically mounted as a Remote VFS (see VFS section).
 
 **Connection logging**: Every step (SSH negotiation, bootstrap progress, agent startup) is logged. The Connection Log dialog shows this log in real-time.
 
@@ -943,6 +957,7 @@ confirm_delete = true       # Ask for confirmation before deleting
 keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
+expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
 
 [hot_paths]
 standard_folders = true     # Show Home, Downloads, Documents, etc.

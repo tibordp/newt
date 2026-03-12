@@ -80,6 +80,11 @@ pub struct BehaviorPreferences {
     /// typing opens the regex filter directly.
     #[schemars(title = "Quick Search")]
     pub quick_search: bool,
+    /// In remote (SSH) sessions, expose the local filesystem to the remote
+    /// host so it can be browsed alongside remote files. Disable this if the
+    /// remote host is untrusted.
+    #[schemars(title = "Expose Local Filesystem in Remote Sessions")]
+    pub expose_local_fs: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -89,6 +94,7 @@ impl Default for BehaviorPreferences {
             keep_terminal_open: true,
             keep_finished_operations: false,
             quick_search: true,
+            expose_local_fs: false,
         }
     }
 }

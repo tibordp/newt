@@ -272,6 +272,127 @@ impl super::pane::VfsInfoService for MountedVfsInfoService {
 }
 
 // ---------------------------------------------------------------------------
+// Hairpin diversion wrappers — for remote sessions, divert certain calls for
+// the RemoteVfs (client-local filesystem) to a local VfsRegistryFs/FileReader
+// instead of round-tripping through the agent.
+// ---------------------------------------------------------------------------
+
+struct HairpinFs {
+    remote_vfs_id: VfsId,
+    local_fs: VfsRegistryFs,
+    inner: Arc<dyn Filesystem>,
+}
+
+#[async_trait::async_trait]
+impl Filesystem for HairpinFs {
+    async fn poll_changes(&self, path: VfsPath) -> Result<(), newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_fs
+                .poll_changes(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.poll_changes(path).await
+        }
+    }
+
+    async fn list_files(
+        &self,
+        path: VfsPath,
+        options: newt_common::filesystem::ListFilesOptions,
+        batch_tx: Option<tokio::sync::mpsc::UnboundedSender<FileList>>,
+    ) -> Result<FileList, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            // Wrap the batch channel to rewrite VFS IDs before forwarding
+            let rewriting_tx = batch_tx.map(|outer_tx| {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<FileList>();
+                let vfs_id = self.remote_vfs_id;
+                tokio::spawn(async move {
+                    while let Some(mut batch) = rx.recv().await {
+                        batch.rewrite_vfs_id(vfs_id);
+                        if outer_tx.send(batch).is_err() {
+                            break;
+                        }
+                    }
+                });
+                tx
+            });
+
+            let mut result = self
+                .local_fs
+                .list_files(VfsPath::new(VfsId::ROOT, path.path), options, rewriting_tx)
+                .await?;
+            result.rewrite_vfs_id(self.remote_vfs_id);
+            Ok(result)
+        } else {
+            self.inner.list_files(path, options, batch_tx).await
+        }
+    }
+
+    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), newt_common::Error> {
+        self.inner.rename(old_path, new_path).await
+    }
+
+    async fn touch(&self, path: VfsPath) -> Result<(), newt_common::Error> {
+        self.inner.touch(path).await
+    }
+
+    async fn create_directory(&self, path: VfsPath) -> Result<(), newt_common::Error> {
+        self.inner.create_directory(path).await
+    }
+}
+
+struct HairpinFileReader {
+    remote_vfs_id: VfsId,
+    local_reader: VfsRegistryFileReader,
+    inner: Arc<dyn FileReader>,
+}
+
+#[async_trait::async_trait]
+impl FileReader for HairpinFileReader {
+    async fn file_details(
+        &self,
+        path: VfsPath,
+    ) -> Result<newt_common::file_reader::FileDetails, newt_common::Error> {
+        self.inner.file_details(path).await
+    }
+
+    async fn read_range(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        length: u64,
+    ) -> Result<newt_common::file_reader::FileChunk, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_reader
+                .read_range(VfsPath::new(VfsId::ROOT, path.path), offset, length)
+                .await
+        } else {
+            self.inner.read_range(path, offset, length).await
+        }
+    }
+
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_reader
+                .read_file(VfsPath::new(VfsId::ROOT, path.path), max_size)
+                .await
+        } else {
+            self.inner.read_file(path, max_size).await
+        }
+    }
+
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_reader
+                .write_file(VfsPath::new(VfsId::ROOT, path.path), data)
+                .await
+        } else {
+            self.inner.write_file(path, data).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Stderr log buffer — shared between the background reader and the context
 // ---------------------------------------------------------------------------
 
@@ -481,22 +602,27 @@ fn create_rpc_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
+    expose_local_fs: bool,
 ) -> (Services, PendingStreams) {
-    use newt_common::api::VfsDispatcher;
     use newt_common::rpc::DispatcherExt;
-    use newt_common::vfs::LocalVfs;
 
     let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
 
-    let host_vfs = Arc::new(LocalVfs::new());
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
         publisher: publisher.clone(),
         pending_streams: pending_streams.clone(),
         preferences: preferences.clone(),
     };
-    let combined_dispatcher = host_dispatcher.chain(VfsDispatcher::new(host_vfs));
-    let communicator = Communicator::with_dispatcher(combined_dispatcher, stream);
+    let communicator = if expose_local_fs {
+        use newt_common::api::VfsDispatcher;
+        use newt_common::vfs::LocalVfs;
+        let host_vfs = Arc::new(LocalVfs::new());
+        let combined_dispatcher = host_dispatcher.chain(VfsDispatcher::new(host_vfs));
+        Communicator::with_dispatcher(combined_dispatcher, stream)
+    } else {
+        Communicator::with_dispatcher(host_dispatcher, stream)
+    };
     let services = create_remote_services(communicator, pending_streams.clone());
     (services, pending_streams)
 }
@@ -824,7 +950,7 @@ pub(super) async fn connect(
     main_window_ctx: super::MainWindowContext,
 ) -> Result<(), Error> {
     let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
-    let (services, stderr_log, child) = match connection_target {
+    let (mut services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
             let services = create_local_services(&state.operations, publisher, &preferences);
             (services, StderrLog::default(), None)
@@ -845,16 +971,27 @@ pub(super) async fn connect(
             )
             .await?;
             conn_log.log("Setting up RPC services...");
-            let (services, _) =
-                create_rpc_services(conn.stream, &state.operations, publisher, &preferences);
+            let expose_local_fs = preferences.load().behavior.expose_local_fs;
+            let (services, _) = create_rpc_services(
+                conn.stream,
+                &state.operations,
+                publisher,
+                &preferences,
+                expose_local_fs,
+            );
             conn_log.log("Connected");
             (services, stderr_log, Some((conn.child, conn.stderr)))
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
             let conn = spawn_elevated(agent_resolver).await?;
-            let (services, _) =
-                create_rpc_services(conn.stream, &state.operations, publisher, &preferences);
+            let (services, _) = create_rpc_services(
+                conn.stream,
+                &state.operations,
+                publisher,
+                &preferences,
+                false,
+            );
             let stderr_log = StderrLog::default();
             (services, stderr_log, Some((conn.child, conn.stderr)))
         }
@@ -884,16 +1021,20 @@ pub(super) async fn connect(
         },
     );
 
-    // For remote sessions, mount the local proxy VFS so the user can browse
+    // For remote sessions, mount the remote VFS so the user can browse
     // the client-local filesystem from within the remote session.
-    if matches!(connection_target, ConnectionTarget::Remote { .. }) {
+    // Also set up hairpin diversion so list_files/read/write for the remote
+    // VFS are handled locally without round-tripping through the agent.
+    if matches!(connection_target, ConnectionTarget::Remote { .. })
+        && preferences.load().behavior.expose_local_fs
+    {
         match services
             .vfs_manager
             .mount(newt_common::vfs::MountRequest::Remote)
             .await
         {
             Ok(resp) => {
-                log::info!("local proxy VFS mounted as vfs_id={:?}", resp.vfs_id);
+                log::info!("remote VFS mounted as vfs_id={:?}", resp.vfs_id);
                 if let Some(desc) = newt_common::vfs::lookup_descriptor(&resp.type_name) {
                     initial_mounted.insert(
                         resp.vfs_id,
@@ -905,9 +1046,23 @@ pub(super) async fn connect(
                         },
                     );
                 }
+
+                // Set up hairpin diversion — local VFS calls bypass the agent
+                let local_vfs = Arc::new(LocalVfs::new());
+                let local_registry = Arc::new(VfsRegistry::with_root(local_vfs));
+                services.fs = Arc::new(HairpinFs {
+                    remote_vfs_id: resp.vfs_id,
+                    local_fs: VfsRegistryFs::new(local_registry.clone()),
+                    inner: services.fs,
+                });
+                services.file_reader = Arc::new(HairpinFileReader {
+                    remote_vfs_id: resp.vfs_id,
+                    local_reader: VfsRegistryFileReader::new(local_registry),
+                    inner: services.file_reader,
+                });
             }
             Err(e) => {
-                log::warn!("failed to mount local proxy VFS: {}", e);
+                log::warn!("failed to mount remote VFS: {}", e);
             }
         }
     }
