@@ -20,8 +20,11 @@ type PropertiesProps = CommonDialogProps & {
   created: number | null;
 };
 
-function formatUserGroup(ug: { name: string } | { id: number } | null): string {
-  if (!ug) return "(mixed)";
+function formatUserGroup(
+  ug: { name: string } | { id: number } | null,
+  isSingle: boolean,
+): string {
+  if (!ug) return isSingle ? "-" : "(mixed)";
   if ("name" in ug) return ug.name;
   return String(ug.id);
 }
@@ -186,8 +189,18 @@ export default function Properties({
                 />
               )}
               <InfoRow label="Size" value={formatSize(size)} />
-              <InfoRow label="Owner" value={formatUserGroup(owner)} />
-              <InfoRow label="Group" value={formatUserGroup(group)} />
+              {(owner != null || !isSingle) && (
+                <InfoRow
+                  label="Owner"
+                  value={formatUserGroup(owner, isSingle)}
+                />
+              )}
+              {(group != null || !isSingle) && (
+                <InfoRow
+                  label="Group"
+                  value={formatUserGroup(group, isSingle)}
+                />
+              )}
             </dl>
             {isSingle &&
               (modified != null || accessed != null || created != null) && (

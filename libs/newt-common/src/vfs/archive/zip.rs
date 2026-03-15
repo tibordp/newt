@@ -129,7 +129,7 @@ struct ZipEntry {
     raw_name: String,
     size: u64,
     is_dir: bool,
-    mode: u32,
+    mode: Option<u32>,
     mtime: Option<u64>,
 }
 
@@ -254,9 +254,7 @@ fn build_zip_index(
 
         let is_dir = entry.is_dir();
         let size = entry.size();
-        let mode = entry
-            .unix_mode()
-            .unwrap_or(if is_dir { 0o755 } else { 0o644 });
+        let unix_mode = entry.unix_mode();
         let mtime = zip_mtime(&entry);
 
         let entry_path = PathBuf::from(path);
@@ -284,7 +282,7 @@ fn build_zip_index(
             symlink_target: None,
             user: None,
             group: None,
-            mode: Mode(mode),
+            mode: unix_mode.map(Mode),
             modified: mtime.and_then(mtime_to_i128),
             accessed: None,
             created: None,
@@ -304,7 +302,7 @@ fn build_zip_index(
                     raw_name: raw_name.clone(),
                     size,
                     is_dir,
-                    mode,
+                    mode: unix_mode,
                     mtime,
                 },
             );
@@ -324,7 +322,7 @@ fn build_zip_index(
                 raw_name: raw_name.clone(),
                 size,
                 is_dir,
-                mode,
+                mode: unix_mode,
                 mtime,
             },
         );
@@ -350,7 +348,7 @@ impl Vfs for ZipArchiveVfs {
     async fn list_files(
         &self,
         path: &Path,
-        _batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         let (_, tree) = self.ensure_indexed().await?;
         tree.list(path)
@@ -376,13 +374,13 @@ impl Vfs for ZipArchiveVfs {
 
         Ok(FileDetails {
             size: entry.size,
-            mime_type: None,
+            mime_type: crate::file_reader::guess_mime_type(path),
             is_dir: entry.is_dir,
             is_symlink: false,
             symlink_target: None,
             user: None,
             group: None,
-            mode: Some(Mode(entry.mode)),
+            mode: entry.mode.map(Mode),
             modified: entry.mtime.and_then(mtime_to_i128),
             accessed: None,
             created: None,

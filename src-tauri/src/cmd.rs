@@ -962,9 +962,13 @@ pub fn dialog(
 
                     // For mode: if single file, use its mode; if multiple, bitwise AND of all modes
                     let mode = if files.len() == 1 {
-                        Some(files[0].mode.0)
-                    } else if files.iter().all(|f| f.mode.0 != 0) {
-                        Some(files.iter().fold(0o7777, |acc, f| acc & f.mode.0))
+                        files[0].mode.as_ref().map(|m| m.0)
+                    } else if files.iter().all(|f| f.mode.is_some()) {
+                        Some(
+                            files
+                                .iter()
+                                .fold(0o7777, |acc, f| acc & f.mode.as_ref().unwrap().0),
+                        )
                     } else {
                         None
                     };

@@ -134,7 +134,7 @@ impl Vfs for RemoteVfs {
     async fn list_files(
         &self,
         path: &Path,
-        _batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         let ret: Result<Vec<File>, Error> = self
             .communicator

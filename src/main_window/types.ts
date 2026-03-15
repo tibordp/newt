@@ -15,15 +15,15 @@ export type File = {
   user: {
     name?: string;
     id?: number;
-  };
+  } | null;
   group: {
     name?: string;
     id?: number;
-  };
-  mode: number;
-  modified: number;
-  accessed: number;
-  created: number;
+  } | null;
+  mode: number | null;
+  modified: number | null;
+  accessed: number | null;
+  created: number | null;
 };
 
 export type FileRowContext = {

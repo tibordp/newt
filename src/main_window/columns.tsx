@@ -128,7 +128,13 @@ export const columns: ColumnDef[] = [
         sortKey: "modified",
       },
     ],
-    render: (info) => <>{new Date(info.modified).toLocaleDateString()}</>,
+    render: (info) => (
+      <>
+        {info.modified != null
+          ? new Date(info.modified).toLocaleDateString()
+          : ""}
+      </>
+    ),
   },
   {
     align: "right",
@@ -140,7 +146,13 @@ export const columns: ColumnDef[] = [
         sortKey: "modified",
       },
     ],
-    render: (info) => <>{new Date(info.modified).toLocaleTimeString()}</>,
+    render: (info) => (
+      <>
+        {info.modified != null
+          ? new Date(info.modified).toLocaleTimeString()
+          : ""}
+      </>
+    ),
   },
   {
     align: "left",
@@ -176,7 +188,7 @@ export const columns: ColumnDef[] = [
         sortKey: "mode",
       },
     ],
-    render: (info) => <>{modeString(info.mode)}</>,
+    render: (info) => <>{info.mode != null ? modeString(info.mode) : ""}</>,
   },
 ];
 

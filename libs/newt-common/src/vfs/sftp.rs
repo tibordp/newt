@@ -382,7 +382,7 @@ fn metadata_to_file(
     let is_dir = effective_meta.file_type().is_some_and(|ft| ft.is_dir());
     let size = if is_dir { None } else { meta.len() };
 
-    let mode = meta.permissions().map_or(0, |p| permissions_to_mode(&p));
+    let mode = meta.permissions().map(|p| Mode(permissions_to_mode(&p)));
 
     File {
         is_hidden: name.starts_with('.'),
@@ -393,7 +393,7 @@ fn metadata_to_file(
         symlink_target: None,
         user: meta.uid().map(UserGroup::Id),
         group: meta.gid().map(UserGroup::Id),
-        mode: Mode(mode),
+        mode,
         modified: meta
             .modified()
             .map(|t| sftp_time_to_system_time(t).to_unix()),
@@ -419,7 +419,7 @@ impl Vfs for SftpVfs {
     async fn list_files(
         &self,
         path: &Path,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         debug!("sftp: list_files {}", path.display());
 
@@ -444,7 +444,7 @@ impl Vfs for SftpVfs {
                 symlink_target: None,
                 user: None,
                 group: None,
-                mode: Mode(0),
+                mode: None,
                 modified: None,
                 accessed: None,
                 created: None,
@@ -481,7 +481,7 @@ impl Vfs for SftpVfs {
         if let Some(tx) = batch_tx
             && !files.is_empty()
         {
-            let _ = tx.send(files.clone());
+            let _ = tx.send(files.clone()).await;
         }
 
         Ok(files)
@@ -551,24 +551,29 @@ impl Vfs for SftpVfs {
 
         drop(fs);
 
-        // Detect MIME type from file header
+        // MIME detection: try extension first, then content sniffing
         let mime_type = if is_dir {
             None
         } else {
-            match self.read_range_inner(&sftp, path, 0, 8192).await {
-                Ok(chunk) => {
-                    let detected = mimetype_detector::detect(&chunk.data);
-                    if detected.is("application/octet-stream") {
-                        if !chunk.data.contains(&0) {
-                            Some("text/plain".to_string())
+            let from_extension = crate::file_reader::guess_mime_type(path);
+            if from_extension.is_some() {
+                from_extension
+            } else {
+                match self.read_range_inner(&sftp, path, 0, 8192).await {
+                    Ok(chunk) => {
+                        let detected = mimetype_detector::detect(&chunk.data);
+                        if detected.is("application/octet-stream") {
+                            if !chunk.data.contains(&0) {
+                                Some("text/plain".to_string())
+                            } else {
+                                Some("application/octet-stream".to_string())
+                            }
                         } else {
-                            Some("application/octet-stream".to_string())
+                            Some(detected.mime().to_string())
                         }
-                    } else {
-                        Some(detected.mime().to_string())
                     }
+                    Err(_) => None,
                 }
-                Err(_) => None,
             }
         };
 

@@ -110,7 +110,9 @@ impl Dispatcher for FilesystemDispatcher {
                 let (path, opts, stream_id): (VfsPath, ListFilesOptions, StreamId) =
                     bincode::deserialize(&req[..]).unwrap();
 
-                let (batch_tx, mut batch_rx) = tokio::sync::mpsc::unbounded_channel::<FileList>();
+                let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel::<FileList>(
+                    crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
+                );
 
                 // Spawn a forwarder task: batches → Notify messages
                 let outbox = self.outbox.clone();

@@ -13,6 +13,9 @@ use crate::Error;
 use crate::rpc::Communicator;
 use crate::vfs::{VfsId, VfsPath};
 
+/// Channel capacity for streaming file-list batches back to the UI.
+pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StreamId(pub u64);
 
@@ -72,7 +75,7 @@ pub struct File {
     pub symlink_target: Option<PathBuf>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
-    pub mode: Mode,
+    pub mode: Option<Mode>,
     pub modified: Option<i128>,
     pub accessed: Option<i128>,
     pub created: Option<i128>,
@@ -219,7 +222,7 @@ pub trait Filesystem: Send + Sync {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
+        batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error>;
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
@@ -243,7 +246,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
+        batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         // Get the full listing from the inner filesystem, then drip-feed it
@@ -257,7 +260,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
                     chunk.to_vec(),
                     file_list.fs_stats().cloned(),
                 );
-                if batch_tx.send(batch).is_err() {
+                if batch_tx.send(batch).await.is_err() {
                     break;
                 }
             }
@@ -278,8 +281,7 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     }
 }
 
-pub type PendingStreams =
-    Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::UnboundedSender<FileList>>>>;
+pub type PendingStreams = Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::Sender<FileList>>>>;
 
 pub struct Remote {
     communicator: Communicator,
@@ -323,7 +325,7 @@ impl Filesystem for Remote {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
+        batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error> {
         if let Some(batch_tx) = batch_tx {
             let stream_id = StreamId(

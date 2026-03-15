@@ -30,6 +30,7 @@ time = "0.3"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
 mimetype-detector = "0"
+mime_guess = "2"
 dirs = "6"
 url = "2"
 openssh-sftp-client = "0.15"

@@ -7,7 +7,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode};
+use crate::filesystem::{File, FsStats};
 use crate::{Error, ToUnix};
 
 use super::{
@@ -248,7 +248,7 @@ impl S3Vfs {
 
     async fn list_buckets(
         &self,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         let resp = self
             .default_client
@@ -279,7 +279,7 @@ impl S3Vfs {
                 symlink_target: None,
                 user: None,
                 group: None,
-                mode: Mode(0),
+                mode: None,
                 modified: None,
                 accessed: None,
                 created,
@@ -289,7 +289,7 @@ impl S3Vfs {
         if let Some(tx) = batch_tx
             && !files.is_empty()
         {
-            let _ = tx.send(files.clone());
+            let _ = tx.send(files.clone()).await;
         }
 
         Ok(files)
@@ -299,7 +299,7 @@ impl S3Vfs {
         &self,
         bucket: &str,
         prefix: Option<&str>,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         // S3 requires prefixes to end with '/' to list directory contents
         let prefix = prefix.map(|p| {
@@ -323,7 +323,7 @@ impl S3Vfs {
             symlink_target: None,
             user: None,
             group: None,
-            mode: Mode(0),
+            mode: None,
             modified: None,
             accessed: None,
             created: None,
@@ -373,7 +373,7 @@ impl S3Vfs {
                             symlink_target: None,
                             user: None,
                             group: None,
-                            mode: Mode(0),
+                            mode: None,
                             modified: None,
                             accessed: None,
                             created: None,
@@ -410,7 +410,7 @@ impl S3Vfs {
                             .and_then(|o| o.display_name())
                             .map(|n| crate::filesystem::UserGroup::Name(n.to_string())),
                         group: None,
-                        mode: Mode(0),
+                        mode: None,
                         modified,
                         accessed: None,
                         created: None,
@@ -421,7 +421,7 @@ impl S3Vfs {
             if let Some(tx) = &batch_tx
                 && !batch.is_empty()
             {
-                let _ = tx.send(batch.clone());
+                let _ = tx.send(batch.clone()).await;
             }
             files.extend(batch);
 
@@ -445,7 +445,7 @@ impl Vfs for S3Vfs {
     async fn list_files(
         &self,
         path: &Path,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         let (bucket, prefix) = Self::parse_path(path);
         match bucket {
@@ -503,7 +503,7 @@ impl Vfs for S3Vfs {
             symlink_target: None,
             user: None,
             group: None,
-            mode: Mode(0),
+            mode: None,
             modified,
             accessed: None,
             created: None,
@@ -525,7 +525,11 @@ impl Vfs for S3Vfs {
             .map_err(|e| Error::custom(e.to_string()))?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
-        let mime_type = resp.content_type().map(|s| s.to_string());
+        let mime_type = resp
+            .content_type()
+            .map(|s| s.to_string())
+            .filter(|s| s != "application/octet-stream")
+            .or_else(|| crate::file_reader::guess_mime_type(path));
         let is_dir = key.ends_with('/') && size == 0;
 
         let modified = resp.last_modified().and_then(|d| {

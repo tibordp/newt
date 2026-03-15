@@ -340,17 +340,19 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         options: newt_common::filesystem::ListFilesOptions,
-        batch_tx: Option<tokio::sync::mpsc::UnboundedSender<FileList>>,
+        batch_tx: Option<tokio::sync::mpsc::Sender<FileList>>,
     ) -> Result<FileList, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             // Wrap the batch channel to rewrite VFS IDs before forwarding
             let rewriting_tx = batch_tx.map(|outer_tx| {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<FileList>();
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<FileList>(
+                    newt_common::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
+                );
                 let vfs_id = self.remote_vfs_id;
                 tokio::spawn(async move {
                     while let Some(mut batch) = rx.recv().await {
                         batch.rewrite_vfs_id(vfs_id);
-                        if outer_tx.send(batch).is_err() {
+                        if outer_tx.send(batch).await.is_err() {
                             break;
                         }
                     }
@@ -557,8 +559,9 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
         } else if api == API_LIST_FILES_BATCH {
             let (stream_id, file_list): (StreamId, FileList) =
                 bincode::deserialize(&req[..]).unwrap();
-            if let Some(tx) = self.pending_streams.lock().get(&stream_id) {
-                let _ = tx.send(file_list);
+            let tx = self.pending_streams.lock().get(&stream_id).cloned();
+            if let Some(tx) = tx {
+                let _ = tx.send(file_list).await;
             }
             Ok(true)
         } else {

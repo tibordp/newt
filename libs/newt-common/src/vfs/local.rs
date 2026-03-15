@@ -161,7 +161,7 @@ impl Vfs for LocalVfs {
     async fn list_files(
         &self,
         path: &Path,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         assert!(path.is_absolute());
         let path = path.to_path_buf();
@@ -185,7 +185,7 @@ impl Vfs for LocalVfs {
                         is_hidden: false,
                         user: cache.user_name(metadata.uid()).ok(),
                         group: cache.group_name(metadata.gid()).ok(),
-                        mode: Mode(mode),
+                        mode: Some(Mode(mode)),
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -222,7 +222,7 @@ impl Vfs for LocalVfs {
                         is_hidden: name.starts_with('.'),
                         user: cache.user_name(metadata.uid()).ok(),
                         group: cache.group_name(metadata.gid()).ok(),
-                        mode: Mode(mode),
+                        mode: Some(Mode(mode)),
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -232,7 +232,7 @@ impl Vfs for LocalVfs {
 
                     if batch.len() >= BATCH_SIZE {
                         if let Some(ref tx) = batch_tx {
-                            if tx.send(std::mem::take(&mut batch)).is_err() {
+                            if tx.blocking_send(std::mem::take(&mut batch)).is_err() {
                                 // Receiver dropped — cancelled
                                 return Ok(ret);
                             }
@@ -246,7 +246,7 @@ impl Vfs for LocalVfs {
                 if let Some(ref tx) = batch_tx
                     && !batch.is_empty()
                 {
-                    let _ = tx.send(batch);
+                    let _ = tx.blocking_send(batch);
                 }
 
                 Ok(ret)
@@ -331,26 +331,31 @@ impl Vfs for LocalVfs {
             let size = meta.len();
             let mode = meta.mode();
 
-            // MIME detection for files
+            // MIME detection for files: try extension first, then content sniffing
             let mime_type = if is_dir {
                 None
             } else {
-                let file = std::fs::File::open(&path)?;
-                let mut buf = vec![0u8; 8192.min(size as usize)];
-                let mut reader = std::io::BufReader::new(file);
-                let n = reader.read(&mut buf)?;
-                let header = &buf[..n];
-
-                let detected = mimetype_detector::detect(header);
-                if detected.is("application/octet-stream") {
-                    // No specific match — fall back to null-byte heuristic
-                    if !header.contains(&0) {
-                        Some("text/plain".to_string())
-                    } else {
-                        Some("application/octet-stream".to_string())
-                    }
+                let from_extension = crate::file_reader::guess_mime_type(&path);
+                if from_extension.is_some() {
+                    from_extension
                 } else {
-                    Some(detected.mime().to_string())
+                    let file = std::fs::File::open(&path)?;
+                    let mut buf = vec![0u8; 8192.min(size as usize)];
+                    let mut reader = std::io::BufReader::new(file);
+                    let n = reader.read(&mut buf)?;
+                    let header = &buf[..n];
+
+                    let detected = mimetype_detector::detect(header);
+                    if detected.is("application/octet-stream") {
+                        // No specific match — fall back to null-byte heuristic
+                        if !header.contains(&0) {
+                            Some("text/plain".to_string())
+                        } else {
+                            Some("application/octet-stream".to_string())
+                        }
+                    } else {
+                        Some(detected.mime().to_string())
+                    }
                 }
             };
 
@@ -436,7 +441,7 @@ impl Vfs for LocalVfs {
                 symlink_target,
                 user: cache.user_name(meta.uid()).ok(),
                 group: cache.group_name(meta.gid()).ok(),
-                mode: Mode(mode),
+                mode: Some(Mode(mode)),
                 modified: meta.modified().map(|t| t.to_unix()).ok(),
                 accessed: meta.accessed().map(|t| t.to_unix()).ok(),
                 created: meta.created().map(|t| t.to_unix()).ok(),

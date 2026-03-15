@@ -237,7 +237,8 @@ impl Pane {
             silent,
             !silent && !same_path
         );
-        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel::<FileList>();
+        let (batch_tx, mut batch_rx) =
+            mpsc::channel::<FileList>(newt_common::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
         let streaming_fut = self.fs.list_files(
             target.clone(),
             ListFilesOptions { strict: !silent },

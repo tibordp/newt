@@ -327,7 +327,7 @@ pub trait Vfs: Send + Sync {
     async fn list_files(
         &self,
         path: &Path,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error>;
@@ -512,7 +512,7 @@ impl Filesystem for VfsRegistryFs {
         &self,
         path: VfsPath,
         options: ListFilesOptions,
-        batch_tx: Option<mpsc::UnboundedSender<FileList>>,
+        batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error> {
         let vfs_id = path.vfs_id;
         let (vfs, mut local_path) = self.registry.resolve(&path)?;
@@ -524,14 +524,15 @@ impl Filesystem for VfsRegistryFs {
             };
 
             let (inner_tx, forwarder) = if let Some(ref outer_tx) = batch_tx {
-                let (tx, mut rx) = mpsc::unbounded_channel::<Vec<File>>();
+                let (tx, mut rx) =
+                    mpsc::channel::<Vec<File>>(crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
                 let outer_tx = outer_tx.clone();
                 let vfs_path = VfsPath::new(vfs_id, local_path.clone());
                 let fs_stats = fs_stats.clone();
                 let handle = tokio::spawn(async move {
                     while let Some(files) = rx.recv().await {
                         let batch = FileList::new(vfs_path.clone(), files, fs_stats.clone());
-                        if outer_tx.send(batch).is_err() {
+                        if outer_tx.send(batch).await.is_err() {
                             break;
                         }
                     }

@@ -262,7 +262,7 @@ impl MockVfs {
                     symlink_target,
                     user: None,
                     group: None,
-                    mode: Mode(mode),
+                    mode: Some(Mode(mode)),
                     modified: None,
                     accessed: None,
                     created: None,
@@ -286,7 +286,7 @@ impl Vfs for MockVfs {
     async fn list_files(
         &self,
         path: &Path,
-        _batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, crate::Error> {
         if let Some(e) = self.check_failure(path, "list_files") {
             return Err(e);
@@ -441,7 +441,7 @@ impl Vfs for MockVfs {
                 symlink_target: None,
                 user: None,
                 group: None,
-                mode: Mode(*mode),
+                mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
@@ -455,7 +455,7 @@ impl Vfs for MockVfs {
                 symlink_target: None,
                 user: None,
                 group: None,
-                mode: Mode(*mode),
+                mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
@@ -469,7 +469,7 @@ impl Vfs for MockVfs {
                 symlink_target: Some(target.clone()),
                 user: None,
                 group: None,
-                mode: Mode(0o777),
+                mode: Some(Mode(0o777)),
                 modified: None,
                 accessed: None,
                 created: None,

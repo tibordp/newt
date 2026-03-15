@@ -484,7 +484,7 @@ impl Vfs for TarArchiveVfs {
     async fn list_files(
         &self,
         path: &Path,
-        batch_tx: Option<mpsc::UnboundedSender<Vec<File>>>,
+        batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         self.start_indexing_once();
 
@@ -528,26 +528,27 @@ impl Vfs for TarArchiveVfs {
 
             // Send only NEW files as a delta batch
             if let Some(ref tx) = batch_tx {
-                let tree = self.state.tree.read();
-                if let Ok(files) = tree.list(path) {
-                    let new_files: Vec<File> = files
-                        .into_iter()
-                        .filter(|f| sent_names.insert(f.name.clone()))
-                        .collect();
-                    if !new_files.is_empty() {
-                        log::debug!(
-                            "archive: list_files {} — sending delta batch ({} new files, {} total sent)",
-                            path.display(),
-                            new_files.len(),
-                            sent_names.len()
-                        );
-                        if tx.send(new_files).is_err() {
-                            log::debug!(
-                                "archive: list_files {} — receiver dropped",
-                                path.display()
-                            );
-                            break;
-                        }
+                let new_files = {
+                    let tree = self.state.tree.read();
+                    tree.list(path).ok().map(|files| {
+                        files
+                            .into_iter()
+                            .filter(|f| sent_names.insert(f.name.clone()))
+                            .collect::<Vec<File>>()
+                    })
+                };
+                if let Some(new_files) = new_files
+                    && !new_files.is_empty()
+                {
+                    log::debug!(
+                        "archive: list_files {} — sending delta batch ({} new files, {} total sent)",
+                        path.display(),
+                        new_files.len(),
+                        sent_names.len()
+                    );
+                    if tx.send(new_files).await.is_err() {
+                        log::debug!("archive: list_files {} — receiver dropped", path.display());
+                        break;
                     }
                 }
             }
@@ -584,7 +585,7 @@ impl Vfs for TarArchiveVfs {
 
         Ok(FileDetails {
             size: entry.size,
-            mime_type: None,
+            mime_type: crate::file_reader::guess_mime_type(path),
             is_dir: entry.entry_type.is_directory(),
             is_symlink: matches!(entry.entry_type, iluvatar::EntryType::SymLink),
             symlink_target: entry.link_target.as_ref().map(PathBuf::from),
