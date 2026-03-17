@@ -220,6 +220,24 @@ pub fn relative_jump(
 }
 
 #[tauri::command]
+pub fn set_viewport(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    first_visible: usize,
+    visible_count: usize,
+) -> Result<(), Error> {
+    let changed = {
+        let pane = ctx.panes().get(pane_handle).unwrap();
+        pane.view_state_mut()
+            .set_viewport_hint(first_visible, visible_count)
+    };
+    if changed {
+        ctx.publish()?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_filter(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -2082,6 +2100,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         select_range,
         set_selection,
         relative_jump,
+        set_viewport,
         set_filter,
         // File operations (called from dialog submissions)
         create_directory,

@@ -20,7 +20,7 @@ function matchesWhenCondition(
   if (!pane) return true;
 
   const focused = pane.focused
-    ? pane.files.find((f) => f.name === pane.focused)
+    ? pane.file_window.items.find((f) => f.name === pane.focused)
     : undefined;
 
   switch (command.when) {

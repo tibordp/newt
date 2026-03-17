@@ -702,6 +702,17 @@ pub enum FilterMode {
     Filter,
 }
 
+/// A windowed slice of the file list sent to the frontend.
+#[derive(Default, Clone, serde::Serialize)]
+pub struct FileWindow {
+    /// The files in the current window.
+    pub items: Vec<File>,
+    /// Index of the first item in `items` within the full sorted/filtered list.
+    pub offset: usize,
+    /// Total number of files in the full sorted/filtered list.
+    pub total_count: usize,
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PaneViewState {
@@ -710,7 +721,7 @@ pub struct PaneViewState {
     pub loading: bool,
     pub partial: bool,
     pub sorting: Sorting,
-    pub files: Vec<File>,
+    pub file_window: FileWindow,
     pub focused: Option<String>,
     pub selected: HashSet<String>,
     pub filter: Option<String>,
@@ -722,6 +733,9 @@ pub struct PaneViewState {
     pub vfs_display_name: String,
     pub breadcrumbs: Vec<Breadcrumb>,
 
+    /// Full sorted/filtered file list (not serialized — only the window is sent).
+    #[serde(skip)]
+    files: Vec<File>,
     #[serde(skip)]
     all_files: Vec<File>,
     #[serde(skip)]
@@ -730,6 +744,16 @@ pub struct PaneViewState {
     filter_regex: Option<regex::Regex>,
     #[serde(skip)]
     default_filter_mode: FilterMode,
+    /// Last viewport hint from the frontend: (first_visible_index, visible_count).
+    #[serde(skip)]
+    viewport_hint: (usize, usize),
+    /// Incremented when the file list changes, forcing recompute_window to
+    /// rebuild even if the boundary indices happen to match.
+    #[serde(skip)]
+    file_generation: u64,
+    /// The generation at which the current window was built.
+    #[serde(skip)]
+    window_generation: u64,
 }
 
 impl PaneViewState {
@@ -760,10 +784,84 @@ impl PaneViewState {
             }
         }
         self.stats = stats;
+        self.recompute_focused_index();
+    }
+
+    /// Lightweight update: only recomputes focused_index and conditionally
+    /// recomputes the window. Use instead of recompute_stats when only the
+    /// focused item changed (not files, selection, or filter).
+    fn recompute_focused_index(&mut self) {
         self.focused_index = self
             .focused
             .as_ref()
             .and_then(|name| self.file_lookup.get(name).copied());
+        self.recompute_window();
+    }
+
+    /// Like recompute_focused_index, but also slides the viewport hint to
+    /// cover the focused item when it's outside the current viewport range.
+    /// Use this when focus is intentionally changing (keyboard nav, click)
+    /// but NOT when the file list changes (sort, filter, navigation) — in
+    /// those cases the viewport should stay where it is.
+    fn recompute_focused_index_and_viewport(&mut self) {
+        self.focused_index = self
+            .focused
+            .as_ref()
+            .and_then(|name| self.file_lookup.get(name).copied());
+        if let Some(fi) = self.focused_index {
+            let (fv, vc) = self.viewport_hint;
+            let vc = if vc == 0 { 50 } else { vc };
+            if fi < fv || fi >= fv + vc {
+                self.viewport_hint = (fi.saturating_sub(vc / 2), vc);
+            }
+        }
+        self.recompute_window();
+    }
+
+    /// Recomputes the file window slice. Skips the clone if boundaries
+    /// haven't changed and the file list generation matches, keeping the
+    /// serialized state identical and making publish() diffing free.
+    fn recompute_window(&mut self) {
+        let total = self.files.len();
+        let (first_visible, visible_count) = self.viewport_hint;
+
+        // Before the frontend reports its viewport, use a reasonable default
+        let visible_count = if visible_count == 0 {
+            50
+        } else {
+            visible_count
+        };
+        let buffer = visible_count * 2; // 2 pages each direction
+
+        // Clamp first_visible to the actual file count to handle stale hints
+        let first_visible = first_visible.min(total.saturating_sub(1));
+        let start = first_visible.saturating_sub(buffer);
+        let end = (first_visible + visible_count + buffer).min(total);
+
+        // Skip the clone if the window boundaries and file contents haven't changed
+        if self.window_generation == self.file_generation
+            && self.file_window.offset == start
+            && self.file_window.items.len() == end - start
+            && self.file_window.total_count == total
+        {
+            return;
+        }
+
+        self.file_window = FileWindow {
+            items: self.files[start..end].to_vec(),
+            offset: start,
+            total_count: total,
+        };
+        self.window_generation = self.file_generation;
+    }
+
+    /// Returns true if the window actually changed.
+    pub fn set_viewport_hint(&mut self, first_visible: usize, visible_count: usize) -> bool {
+        self.viewport_hint = (first_visible, visible_count);
+        let old_offset = self.file_window.offset;
+        let old_len = self.file_window.items.len();
+        self.recompute_window();
+        self.file_window.offset != old_offset || self.file_window.items.len() != old_len
     }
 
     fn sort(&mut self, folders_first: bool) {
@@ -812,6 +910,7 @@ impl PaneViewState {
             .enumerate()
             .map(|(index, file)| (file.name.clone(), index))
             .collect();
+        self.file_generation += 1;
     }
 
     fn update_focus(&mut self) {
@@ -873,6 +972,7 @@ impl PaneViewState {
                 .enumerate()
                 .map(|(index, file)| (file.name.clone(), index))
                 .collect();
+            self.file_generation += 1;
         }
     }
 
@@ -907,6 +1007,7 @@ impl PaneViewState {
             .enumerate()
             .map(|(index, file)| (file.name.clone(), index))
             .collect();
+        self.file_generation += 1;
 
         // If current focus is no longer visible, pick a new one
         if self
@@ -963,7 +1064,7 @@ impl PaneViewState {
         self.clear_quick_search();
         self.focused = Some(filename);
         self.update_focus();
-        self.recompute_stats();
+        self.recompute_focused_index_and_viewport();
     }
 
     pub fn focus_descendant(&mut self, path: &Path) {
@@ -1149,6 +1250,10 @@ impl PaneViewState {
         }
 
         self.focused = Some(self.files[new_index as usize].name.clone());
-        self.recompute_stats();
+        if with_selection {
+            self.recompute_stats();
+        } else {
+            self.recompute_focused_index_and_viewport();
+        }
     }
 }

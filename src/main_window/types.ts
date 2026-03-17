@@ -69,13 +69,19 @@ export type PaneStats = {
 
 export type FilterMode = "quick_search" | "filter";
 
+export type FileWindow = {
+  items: File[];
+  offset: number;
+  total_count: number;
+};
+
 export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
   loading?: boolean;
   partial?: boolean;
   sorting: Sorting;
-  files: File[];
+  file_window: FileWindow;
   focused?: string;
   selected: string[];
   active: boolean;
