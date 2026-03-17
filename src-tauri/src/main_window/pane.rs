@@ -1139,6 +1139,27 @@ impl PaneViewState {
         self.recompute_stats();
     }
 
+    pub fn set_selection_by_indices(
+        &mut self,
+        start: usize,
+        end: usize,
+        base_selection: Option<HashSet<String>>,
+    ) {
+        self.clear_quick_search();
+        let lo = start.min(end).min(self.files.len());
+        let hi = start.max(end).min(self.files.len().saturating_sub(1));
+        let mut selected: HashSet<String> = base_selection.unwrap_or_default();
+        if lo <= hi {
+            for i in lo..=hi {
+                if self.files[i].name != ".." {
+                    selected.insert(self.files[i].name.clone());
+                }
+            }
+        }
+        self.selected = selected;
+        self.recompute_stats();
+    }
+
     pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
         self.clear_quick_search();
         self.selected = selected;

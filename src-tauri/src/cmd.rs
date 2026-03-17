@@ -193,6 +193,24 @@ pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 }
 
 #[tauri::command]
+pub fn set_selection_by_indices(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    start: usize,
+    end: usize,
+    base_selection: Option<Vec<String>>,
+) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.view_state_mut().set_selection_by_indices(
+            start,
+            end,
+            base_selection.map(|v| v.into_iter().collect()),
+        );
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub fn set_selection(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -2099,6 +2117,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         toggle_selected,
         select_range,
         set_selection,
+        set_selection_by_indices,
         relative_jump,
         set_viewport,
         set_filter,

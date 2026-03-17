@@ -127,42 +127,59 @@ type FileRowProps = {
   onOpen: (file: File) => void;
 };
 
-const FileRow = memo(function FileRow({
-  row,
-  isFocused,
-  isSelected,
-  filter,
-  filterMode,
-  widthPrefix,
-  onClick,
-  onMouseDown,
-  onOpen,
-}: FileRowProps) {
-  const ctx: FileRowContext = { isFocused, filter, filterMode };
-  return (
-    <li
-      data-name={row.name}
-      data-is-dir={row.is_dir ? "true" : undefined}
-      className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
-      onClick={onClick}
-      onMouseDown={onMouseDown}
-      onDoubleClick={() => onOpen(row)}
-    >
-      {columns.map((column) => (
-        <div
-          key={column.key}
-          style={{
-            textAlign: column.align,
-            width: `var(--${widthPrefix}-${column.key})`,
-          }}
-          className={columnStyles.datum}
-        >
-          {column.render(row, ctx)}
-        </div>
-      ))}
-    </li>
-  );
-});
+const FileRow = memo(
+  function FileRow({
+    row,
+    isFocused,
+    isSelected,
+    filter,
+    filterMode,
+    widthPrefix,
+    onClick,
+    onMouseDown,
+    onOpen,
+  }: FileRowProps) {
+    const ctx: FileRowContext = { isFocused, filter, filterMode };
+    return (
+      <li
+        data-name={row.name}
+        data-is-dir={row.is_dir ? "true" : undefined}
+        className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
+        onClick={onClick}
+        onMouseDown={onMouseDown}
+        onDoubleClick={() => onOpen(row)}
+      >
+        {columns.map((column) => (
+          <div
+            key={column.key}
+            style={{
+              textAlign: column.align,
+              width: `var(--${widthPrefix}-${column.key})`,
+            }}
+            className={columnStyles.datum}
+          >
+            {column.render(row, ctx)}
+          </div>
+        ))}
+      </li>
+    );
+  },
+  (prev, next) =>
+    prev.row.name === next.row.name &&
+    prev.row.size === next.row.size &&
+    prev.row.modified === next.row.modified &&
+    prev.row.mode === next.row.mode &&
+    prev.row.is_dir === next.row.is_dir &&
+    prev.row.is_symlink === next.row.is_symlink &&
+    prev.isFocused === next.isFocused &&
+    prev.isSelected === next.isSelected &&
+    prev.filter === next.filter &&
+    prev.filterMode === next.filterMode &&
+    prev.widthPrefix === next.widthPrefix &&
+    prev.onClick === next.onClick &&
+    prev.onMouseDown === next.onMouseDown &&
+    prev.onOpen === next.onOpen,
+);
 
 const VFS_ICONS: Record<string, string> = {
   local: "\u{f02ca}",
@@ -457,27 +474,13 @@ function PaneInner(
   // --- Drag-to-select logic ---
 
   const sendDragSelection = useCallback(
-    (rectTop: number, rectBottom: number, base: Set<string> | null) => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      // Collect names of files whose rows overlap the drag rect, using
-      // actual DOM positions so we're immune to spacer-math mismatches.
-      const names: string[] = base ? [...base] : [];
-      const items = container.querySelectorAll("li[data-name]");
-      for (const el of items) {
-        const htmlEl = el as HTMLElement;
-        const top = htmlEl.offsetTop;
-        const bottom = top + htmlEl.offsetHeight;
-        if (bottom > rectTop && top < rectBottom) {
-          const name = htmlEl.dataset.name!;
-          if (name !== "..") names.push(name);
-        }
-      }
-      safeCommandSilent("set_selection", {
+    (drag: DragState, startIdx: number, endIdx: number) => {
+      const base = drag.mode === "ctrl" ? [...drag.baseSelection] : undefined;
+      safeCommandSilent("set_selection_by_indices", {
         paneHandle,
-        selected: names,
-        focused: null,
+        start: startIdx,
+        end: endIdx,
+        baseSelection: base,
       });
     },
     [paneHandle],
@@ -505,18 +508,16 @@ function PaneInner(
     (drag: DragState, curScrollY: number) => {
       const rectTop = Math.min(drag.startScrollY, curScrollY);
       const rectBottom = Math.max(drag.startScrollY, curScrollY);
+      const startIdx = Math.max(0, Math.floor(rectTop / ITEM_SIZE));
+      const endIdx = Math.max(0, Math.ceil(rectBottom / ITEM_SIZE) - 1);
 
-      // Use integer rounding to avoid re-sending for sub-pixel moves
-      const roundedTop = Math.floor(rectTop);
-      const roundedBottom = Math.ceil(rectBottom);
       if (
-        roundedTop !== drag.lastSentStartIdx ||
-        roundedBottom !== drag.lastSentEndIdx
+        startIdx !== drag.lastSentStartIdx ||
+        endIdx !== drag.lastSentEndIdx
       ) {
-        drag.lastSentStartIdx = roundedTop;
-        drag.lastSentEndIdx = roundedBottom;
-        const base = drag.mode === "ctrl" ? drag.baseSelection : null;
-        sendDragSelection(rectTop, rectBottom, base);
+        drag.lastSentStartIdx = startIdx;
+        drag.lastSentEndIdx = endIdx;
+        sendDragSelection(drag, startIdx, endIdx);
       }
     },
     [sendDragSelection],
@@ -1107,6 +1108,22 @@ function PaneInner(
     }
   }, [path, paneHandle]);
 
+  const topSpacerStyle = useMemo(
+    () => ({ height: file_window.offset * ITEM_SIZE, flexShrink: 0 }),
+    [file_window.offset],
+  );
+  const bottomSpacerStyle = useMemo(
+    () => ({
+      height:
+        (file_window.total_count -
+          file_window.offset -
+          file_window.items.length) *
+        ITEM_SIZE,
+      flexShrink: 0,
+    }),
+    [file_window.total_count, file_window.offset, file_window.items.length],
+  );
+
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
     const el = e.currentTarget;
     tableHeaderRef.current!.scrollLeft = el.scrollLeft;
@@ -1215,12 +1232,7 @@ function PaneInner(
               tabIndex={-1}
               onScroll={onScroll}
             >
-              <div
-                style={{
-                  height: file_window.offset * ITEM_SIZE,
-                  flexShrink: 0,
-                }}
-              />
+              <div style={topSpacerStyle} />
               {file_window.items.map((row) => {
                 const isFocused = active && row.name === focused;
                 return (
@@ -1238,16 +1250,7 @@ function PaneInner(
                   />
                 );
               })}
-              <div
-                style={{
-                  height:
-                    (file_window.total_count -
-                      file_window.offset -
-                      file_window.items.length) *
-                    ITEM_SIZE,
-                  flexShrink: 0,
-                }}
-              />
+              <div style={bottomSpacerStyle} />
               <div className={styles.dragRect} ref={dragRectRef} />
             </ul>
           </ContextMenu.Trigger>
