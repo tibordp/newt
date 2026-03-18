@@ -91,7 +91,6 @@ type DragState = {
   startScrollX: number;
   startScrollY: number;
   mode: DragMode;
-  baseSelection: Set<string>;
   lastSentStartIdx: number;
   lastSentEndIdx: number;
   lastClientY: number;
@@ -496,12 +495,11 @@ function PaneInner(
 
   const sendDragSelection = useCallback(
     (drag: DragState, startIdx: number, endIdx: number) => {
-      const base = drag.mode === "ctrl" ? [...drag.baseSelection] : undefined;
       safeCommandSilent("set_selection_by_indices", {
         paneHandle,
         start: startIdx,
         end: endIdx,
-        baseSelection: base,
+        additive: drag.mode === "ctrl",
       });
     },
     [paneHandle],
@@ -695,22 +693,13 @@ function PaneInner(
       const startScrollX = e.clientX - rect.left + container.scrollLeft;
       const startScrollY = e.clientY - rect.top + container.scrollTop;
 
-      let mode: DragMode = "normal";
-      let baseSelection = new Set<string>();
-
-      if (e.ctrlKey) {
-        mode = "ctrl";
-        baseSelection = new Set(selected);
-      }
-
       dragRef.current = {
         active: false,
         startX: e.clientX,
         startY: e.clientY,
         startScrollX,
         startScrollY,
-        mode,
-        baseSelection,
+        mode: e.ctrlKey ? "ctrl" : "normal",
         lastSentStartIdx: -1,
         lastSentEndIdx: -1,
         lastClientY: e.clientY,
@@ -718,7 +707,7 @@ function PaneInner(
         scrollIntervalId: null,
       };
     },
-    [paneHandle, selected, focused],
+    [paneHandle, focused],
   );
 
   // --- End drag-to-select logic ---
@@ -1306,22 +1295,26 @@ function PaneInner(
             items so far)
           </>
         )}
-        {!showSpinner && !loading && selected.length > 0 && (
-          <>
-            {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
-            directories selected, {stats.selected_bytes.toLocaleString()} bytes
-            total
-            {stats.total_count != null &&
-              ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
-          </>
-        )}
-        {!showSpinner && !loading && selected.length == 0 && (
-          <>
-            {stats.file_count} files, {stats.dir_count} directories
-            {stats.total_count != null &&
-              ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
-          </>
-        )}
+        {!showSpinner &&
+          !loading &&
+          stats.selected_file_count + stats.selected_dir_count > 0 && (
+            <>
+              {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
+              directories selected, {stats.selected_bytes.toLocaleString()}{" "}
+              bytes total
+              {stats.total_count != null &&
+                ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+            </>
+          )}
+        {!showSpinner &&
+          !loading &&
+          stats.selected_file_count + stats.selected_dir_count === 0 && (
+            <>
+              {stats.file_count} files, {stats.dir_count} directories
+              {stats.total_count != null &&
+                ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+            </>
+          )}
         {!showSpinner && !loading && partial && (
           <span className={styles.partial}> (partial)</span>
         )}

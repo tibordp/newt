@@ -613,7 +613,7 @@ impl Pane {
     pub fn get_effective_selection(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
 
-        if view_state.selected.is_empty() {
+        if view_state.all_selected.is_empty() {
             view_state
                 .focused
                 .iter()
@@ -621,14 +621,14 @@ impl Pane {
                 .collect()
         } else if view_state.filter_mode == FilterMode::Filter {
             view_state
-                .selected
+                .all_selected
                 .iter()
                 .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
                 .map(|s: &String| view_state.path.join(s))
                 .collect()
         } else {
             view_state
-                .selected
+                .all_selected
                 .iter()
                 .map(|s: &String| view_state.path.join(s))
                 .collect()
@@ -732,7 +732,12 @@ pub struct PaneViewState {
     pub sorting: Sorting,
     pub file_window: FileWindow,
     pub focused: Option<String>,
+    /// Selected filenames intersected with the current window (for frontend rendering).
     pub selected: HashSet<String>,
+    #[serde(skip)]
+    all_selected: HashSet<String>,
+    #[serde(skip)]
+    drag_base: Option<HashSet<String>>,
     pub filter: Option<String>,
     pub filter_mode: FilterMode,
     pub fs_stats: Option<FsStats>,
@@ -776,7 +781,7 @@ impl PaneViewState {
                 stats.file_count += 1;
                 stats.bytes += f.size.unwrap_or(0);
             }
-            if self.selected.contains(&f.name) {
+            if self.all_selected.contains(&f.name) {
                 if f.is_dir {
                     stats.selected_dir_count += 1;
                 } else {
@@ -795,6 +800,10 @@ impl PaneViewState {
         }
         self.stats = stats;
         self.recompute_focused_index();
+        // Always recompute the windowed selection after stats, since
+        // recompute_window may have early-returned (unchanged boundaries)
+        // but the selection itself may have changed.
+        self.recompute_selected_window();
     }
 
     /// Lightweight update: only recomputes focused_index and conditionally
@@ -863,6 +872,19 @@ impl PaneViewState {
             total_count: total,
         };
         self.window_generation = self.file_generation;
+        self.recompute_selected_window();
+    }
+
+    /// Projects all_selected onto the current window so only visible
+    /// selection state is serialized to the frontend.
+    fn recompute_selected_window(&mut self) {
+        self.selected = self
+            .file_window
+            .items
+            .iter()
+            .filter(|f| self.all_selected.contains(&f.name))
+            .map(|f| f.name.clone())
+            .collect();
     }
 
     /// Returns true if the window actually changed.
@@ -927,10 +949,10 @@ impl PaneViewState {
         if self.filter_mode == FilterMode::Filter {
             // In filter mode, retain selection based on all files (not just visible ones)
             let all_names: HashSet<&str> = self.all_files.iter().map(|f| f.name.as_str()).collect();
-            self.selected
+            self.all_selected
                 .retain(|name| all_names.contains(name.as_str()));
         } else {
-            self.selected
+            self.all_selected
                 .retain(|name| self.file_lookup.contains_key(name));
         }
 
@@ -1094,14 +1116,15 @@ impl PaneViewState {
     }
 
     pub fn toggle_selected(&mut self, filename: Option<String>, focus_next: bool) {
+        self.drag_base = None;
         let Some(filename) = filename.as_ref().or(self.focused.as_ref()).cloned() else {
             return;
         };
 
-        if !self.selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
-            self.selected.insert(filename.clone());
+        if !self.all_selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
+            self.all_selected.insert(filename.clone());
         }
-        self.selected.remove("..");
+        self.all_selected.remove("..");
 
         self.clear_quick_search();
         if focus_next {
@@ -1114,6 +1137,7 @@ impl PaneViewState {
     }
 
     pub fn select_range(&mut self, filename: String) {
+        self.drag_base = None;
         self.clear_quick_search();
         let Some(&start_index) = self
             .focused
@@ -1128,37 +1152,45 @@ impl PaneViewState {
         };
 
         for i in start_index.min(end_index)..=start_index.max(end_index) {
-            self.selected.insert(self.files[i].name.clone());
+            self.all_selected.insert(self.files[i].name.clone());
         }
-        self.selected.remove("..");
+        self.all_selected.remove("..");
 
         self.focused = Some(filename);
         self.recompute_stats();
     }
 
     pub fn select_all(&mut self) {
+        self.drag_base = None;
         self.clear_quick_search();
-        self.selected = self.file_lookup.keys().cloned().collect();
-        self.selected.remove("..");
+        self.all_selected = self.file_lookup.keys().cloned().collect();
+        self.all_selected.remove("..");
         self.recompute_stats();
     }
 
     pub fn deselect_all(&mut self) {
+        self.drag_base = None;
         self.clear_quick_search();
-        self.selected.clear();
+        self.all_selected.clear();
         self.recompute_stats();
     }
 
-    pub fn set_selection_by_indices(
-        &mut self,
-        start: usize,
-        end: usize,
-        base_selection: Option<HashSet<String>>,
-    ) {
+    pub fn set_selection_by_indices(&mut self, start: usize, end: usize, additive: bool) {
         self.clear_quick_search();
         let lo = start.min(end).min(self.files.len());
         let hi = start.max(end).min(self.files.len().saturating_sub(1));
-        let mut selected: HashSet<String> = base_selection.unwrap_or_default();
+
+        // For additive (Ctrl+drag): auto-snapshot the base on first call,
+        // then union base + range.
+        let mut selected: HashSet<String> = if additive {
+            self.drag_base
+                .get_or_insert_with(|| self.all_selected.clone())
+                .clone()
+        } else {
+            self.drag_base = None;
+            HashSet::new()
+        };
+
         if lo <= hi {
             for i in lo..=hi {
                 if self.files[i].name != ".." {
@@ -1166,14 +1198,15 @@ impl PaneViewState {
                 }
             }
         }
-        self.selected = selected;
+        self.all_selected = selected;
         self.recompute_stats();
     }
 
     pub fn set_selection(&mut self, selected: HashSet<String>, focused: Option<String>) {
+        self.drag_base = None;
         self.clear_quick_search();
-        self.selected = selected;
-        self.selected.remove("..");
+        self.all_selected = selected;
+        self.all_selected.remove("..");
         if let Some(ref f) = focused
             && self.file_lookup.contains_key(f)
         {
@@ -1259,10 +1292,10 @@ impl PaneViewState {
 
         let mut i = new_index;
         if with_selection {
-            self.selected
+            self.all_selected
                 .insert(self.files[new_index as usize].name.clone());
         }
-        self.selected.remove("..");
+        self.all_selected.remove("..");
 
         loop {
             i += direction;

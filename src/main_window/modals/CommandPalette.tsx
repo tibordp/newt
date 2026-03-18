@@ -29,7 +29,10 @@ function matchesWhenCondition(
     case "directory":
       return !!focused && focused.is_dir;
     case "selection":
-      return pane.selected.length > 0 || (!!focused && focused.name !== "..");
+      return (
+        pane.stats.selected_file_count + pane.stats.selected_dir_count > 0 ||
+        (!!focused && focused.name !== "..")
+      );
     default:
       return true;
   }

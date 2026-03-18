@@ -198,14 +198,11 @@ pub fn set_selection_by_indices(
     pane_handle: PaneHandle,
     start: usize,
     end: usize,
-    base_selection: Option<Vec<String>>,
+    additive: bool,
 ) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
-        pane.view_state_mut().set_selection_by_indices(
-            start,
-            end,
-            base_selection.map(|v| v.into_iter().collect()),
-        );
+        pane.view_state_mut()
+            .set_selection_by_indices(start, end, additive);
         Ok(())
     })
 }
