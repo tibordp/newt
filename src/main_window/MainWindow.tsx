@@ -13,6 +13,7 @@ import ConnectionLog from "./ConnectionLog";
 import dialogStyles from "./modals/Dialog.module.scss";
 
 import { enablePatches } from "immer";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { invoke } from "@tauri-apps/api/core";
 import { TerminalData, useRemoteState, useTerminalData } from "../lib/ipc";
@@ -192,6 +193,79 @@ function App() {
     };
     document.addEventListener("contextmenu", handler);
     return () => document.removeEventListener("contextmenu", handler);
+  }, []);
+
+  // Prevent the browser from navigating when files are dropped.
+  useEffect(() => {
+    const prevent = (e: DragEvent) => e.preventDefault();
+    document.addEventListener("drop", prevent);
+    document.addEventListener("dragover", prevent);
+    return () => {
+      document.removeEventListener("drop", prevent);
+      document.removeEventListener("dragover", prevent);
+    };
+  }, []);
+
+  // Route Tauri external drag-drop events to the pane under the cursor.
+  // Dispatches CustomEvents on the pane's [data-pane-handle] element so
+  // each pane can handle highlighting and drop logic locally.
+  useEffect(() => {
+    const appWindow = getCurrentWebviewWindow();
+    let lastPaneEl: HTMLElement | null = null;
+
+    const unlisten = appWindow.listen<{
+      kind: string;
+      paths?: string[];
+      x?: number;
+      y?: number;
+    }>("external-drag", (event) => {
+      const { kind, paths, x, y } = event.payload;
+
+      if (kind === "leave") {
+        if (lastPaneEl) {
+          lastPaneEl.dispatchEvent(
+            new CustomEvent("external-drag-leave", { bubbles: false }),
+          );
+          lastPaneEl = null;
+        }
+        return;
+      }
+
+      const el = document.elementFromPoint(x ?? 0, y ?? 0);
+      const paneEl = el?.closest("[data-pane-handle]") as HTMLElement | null;
+
+      // Pane changed — dispatch leave on old, enter on new
+      if (paneEl !== lastPaneEl) {
+        if (lastPaneEl) {
+          lastPaneEl.dispatchEvent(
+            new CustomEvent("external-drag-leave", { bubbles: false }),
+          );
+        }
+        lastPaneEl = paneEl;
+      }
+
+      if (!paneEl) return;
+
+      if (kind === "enter" || kind === "over") {
+        paneEl.dispatchEvent(
+          new CustomEvent("external-drag-over", {
+            bubbles: false,
+            detail: { x, y },
+          }),
+        );
+      } else if (kind === "drop") {
+        paneEl.dispatchEvent(
+          new CustomEvent("external-drop", {
+            bubbles: false,
+            detail: { paths, x, y },
+          }),
+        );
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   return (

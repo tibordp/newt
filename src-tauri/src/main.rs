@@ -377,6 +377,48 @@ fn main() {
                             tauri::async_runtime::spawn(async move { ctx.refresh(false).await });
                         }
                     }
+                    tauri::WindowEvent::DragDrop(event) => {
+                        use tauri::Emitter;
+                        match event {
+                            tauri::DragDropEvent::Enter { paths, position } => {
+                                let _ = window.emit(
+                                    "external-drag",
+                                    serde_json::json!({
+                                        "kind": "enter",
+                                        "paths": paths,
+                                        "x": position.x,
+                                        "y": position.y,
+                                    }),
+                                );
+                            }
+                            tauri::DragDropEvent::Over { position } => {
+                                let _ = window.emit(
+                                    "external-drag",
+                                    serde_json::json!({
+                                        "kind": "over",
+                                        "x": position.x,
+                                        "y": position.y,
+                                    }),
+                                );
+                            }
+                            tauri::DragDropEvent::Drop { paths, position } => {
+                                let _ = window.emit(
+                                    "external-drag",
+                                    serde_json::json!({
+                                        "kind": "drop",
+                                        "paths": paths,
+                                        "x": position.x,
+                                        "y": position.y,
+                                    }),
+                                );
+                            }
+                            tauri::DragDropEvent::Leave => {
+                                let _ = window
+                                    .emit("external-drag", serde_json::json!({ "kind": "leave" }));
+                            }
+                            _ => {}
+                        }
+                    }
                     _ => {}
                 }
             },

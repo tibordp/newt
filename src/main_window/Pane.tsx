@@ -382,6 +382,67 @@ function FilterInput({
 
 const ITEM_SIZE = 22;
 
+// --- Shared DnD helpers (used by both internal and external drag-and-drop) ---
+
+/** Clear all drop-target highlights in the document. */
+function clearDropHighlights() {
+  document
+    .querySelectorAll(".dnd-drop-target, .dnd-drop-hover")
+    .forEach((el) => {
+      el.classList.remove("dnd-drop-target", "dnd-drop-hover");
+    });
+}
+
+type DropTarget = {
+  paneEl: HTMLElement;
+  paneHandle: number;
+  subdirectory: string | null;
+};
+
+/** Find the pane and directory row under a screen point. */
+function resolveDropTarget(x: number, y: number): DropTarget | null {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const paneEl = el.closest("[data-pane-handle]") as HTMLElement | null;
+  if (!paneEl) return null;
+  const paneHandle = parseInt(paneEl.dataset.paneHandle!, 10);
+  const li = el.closest("li[data-is-dir='true']") as HTMLElement | null;
+  const subdirectory = li?.dataset.name ?? null;
+  return { paneEl, paneHandle, subdirectory };
+}
+
+/** Apply drop-target highlighting for a resolved target.
+ *  Pane background and folder row highlights are mutually exclusive:
+ *  hovering a folder highlights the row, otherwise the pane. */
+function highlightDropTarget(
+  target: DropTarget,
+  sourcePaneHandle?: number,
+  excludeNames?: Set<string>,
+) {
+  clearDropHighlights();
+  const isCrossPane =
+    sourcePaneHandle === undefined || target.paneHandle !== sourcePaneHandle;
+
+  // Try to highlight a folder row
+  if (target.subdirectory) {
+    if (!excludeNames || !excludeNames.has(target.subdirectory)) {
+      const li = target.paneEl.querySelector(
+        `li[data-name="${CSS.escape(target.subdirectory)}"]`,
+      );
+      if (li) {
+        li.classList.add("dnd-drop-hover");
+        return;
+      }
+    }
+  }
+
+  // No folder target — highlight the pane background (current dir)
+  // For internal same-pane, this is not a valid drop (no-op)
+  if (isCrossPane) {
+    target.paneEl.classList.add("dnd-drop-target");
+  }
+}
+
 function PaneInner(
   props: PaneState & {
     paneHandle: number;
@@ -768,11 +829,7 @@ function PaneInner(
   const cleanupDnd = useCallback(() => {
     const ghost = dndGhostRef.current;
     if (ghost) ghost.style.display = "none";
-    document
-      .querySelectorAll(".dnd-drop-target, .dnd-drop-hover")
-      .forEach((el) => {
-        el.classList.remove("dnd-drop-target", "dnd-drop-hover");
-      });
+    clearDropHighlights();
   }, []);
 
   useEffect(() => {
@@ -825,44 +882,15 @@ function PaneInner(
       }
 
       // Highlight drop targets
-      document
-        .querySelectorAll(".dnd-drop-target, .dnd-drop-hover")
-        .forEach((el) => {
-          el.classList.remove("dnd-drop-target", "dnd-drop-hover");
-        });
-
-      const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
-      if (!elementUnder) return;
-
-      const targetPane = elementUnder.closest(
-        "[data-pane-handle]",
-      ) as HTMLElement | null;
-      if (targetPane) {
-        const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
-        const isSamePane = targetPaneHandle === paneHandle;
-        const targetLi = elementUnder.closest(
-          "li[data-is-dir='true']",
-        ) as HTMLElement | null;
-
-        if (!isSamePane) {
-          targetPane.classList.add("dnd-drop-target");
-        }
-
-        if (targetLi) {
-          const targetName = targetLi.dataset.name!;
-          // In same pane: don't highlight ".." or dirs being dragged (can't drop into yourself)
-          if (isSamePane) {
-            const dnd = dndRef.current;
-            const draggedNames = dnd
-              ? new Set(dnd.files.map((f) => f.name))
-              : new Set<string>();
-            if (targetName !== ".." && !draggedNames.has(targetName)) {
-              targetLi.classList.add("dnd-drop-hover");
-            }
-          } else {
-            targetLi.classList.add("dnd-drop-hover");
-          }
-        }
+      const target = resolveDropTarget(e.clientX, e.clientY);
+      if (target) {
+        const dnd = dndRef.current;
+        const draggedNames = dnd
+          ? new Set(dnd.files.map((f) => f.name))
+          : undefined;
+        highlightDropTarget(target, paneHandle, draggedNames);
+      } else {
+        clearDropHighlights();
       }
     };
 
@@ -880,41 +908,20 @@ function PaneInner(
       suppressClickRef.current = true;
       dndRef.current = null;
 
-      const elementUnder = document.elementFromPoint(e.clientX, e.clientY);
-      if (!elementUnder) {
+      const target = resolveDropTarget(e.clientX, e.clientY);
+      if (!target) {
         safeCommandSilent("cancel_dnd");
         return;
       }
 
-      const targetPane = elementUnder.closest(
-        "[data-pane-handle]",
-      ) as HTMLElement | null;
-      if (!targetPane) {
-        safeCommandSilent("cancel_dnd");
-        return;
-      }
+      const isSamePane = target.paneHandle === paneHandle;
+      let subdirectory = target.subdirectory;
 
-      const targetPaneHandle = parseInt(targetPane.dataset.paneHandle!, 10);
-      const isSamePane = targetPaneHandle === paneHandle;
-
-      let subdirectory: string | null = null;
-      const targetLi = elementUnder.closest(
-        "li[data-is-dir='true']",
-      ) as HTMLElement | null;
-      if (targetLi) {
-        const targetName = targetLi.dataset.name || null;
-        if (isSamePane) {
-          // Same pane: don't drop onto ".." or a dir being dragged
-          const draggedNames = new Set(dnd.files.map((f) => f.name));
-          if (
-            targetName &&
-            targetName !== ".." &&
-            !draggedNames.has(targetName)
-          ) {
-            subdirectory = targetName;
-          }
-        } else if (targetName) {
-          subdirectory = targetName;
+      // In same pane: don't drop onto dirs being dragged (can't drop into yourself)
+      if (isSamePane && subdirectory) {
+        const draggedNames = new Set(dnd.files.map((f) => f.name));
+        if (draggedNames.has(subdirectory)) {
+          subdirectory = null;
         }
       }
 
@@ -925,7 +932,7 @@ function PaneInner(
       }
 
       safeCommand("execute_dnd", {
-        destinationPane: targetPaneHandle,
+        destinationPane: target.paneHandle,
         subdirectory,
         isMove: e.shiftKey,
       });
@@ -1199,9 +1206,52 @@ function PaneInner(
   };
 
   const widthPrefix = `pane-${paneHandle}-column-`;
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  // External drag-and-drop (files from outside the app).
+  // MainWindow dispatches custom events on the [data-pane-handle] element.
+  useEffect(() => {
+    const el = paneRef.current;
+    if (!el) return;
+
+    const onDragOver = (e: Event) => {
+      const { x, y } = (e as CustomEvent).detail;
+      const target = resolveDropTarget(x, y);
+      if (target) {
+        highlightDropTarget(target);
+      }
+    };
+
+    const onDragLeave = () => {
+      clearDropHighlights();
+    };
+
+    const onDrop = (e: Event) => {
+      const { paths, x, y } = (e as CustomEvent).detail;
+      const target = resolveDropTarget(x, y);
+      clearDropHighlights();
+      if (paths?.length) {
+        safeCommand("external_drop", {
+          paneHandle,
+          subdirectory: target?.subdirectory ?? null,
+          paths,
+        });
+      }
+    };
+
+    el.addEventListener("external-drag-over", onDragOver);
+    el.addEventListener("external-drag-leave", onDragLeave);
+    el.addEventListener("external-drop", onDrop);
+    return () => {
+      el.removeEventListener("external-drag-over", onDragOver);
+      el.removeEventListener("external-drag-leave", onDragLeave);
+      el.removeEventListener("external-drop", onDrop);
+    };
+  }, [paneHandle, path]);
 
   return (
     <div
+      ref={paneRef}
       className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
       data-pane-handle={paneHandle}
       onClick={() => command("focus")}

@@ -1673,6 +1673,44 @@ pub async fn execute_dnd(
     start_operation(ctx, request).await
 }
 
+/// Handle files dropped from outside the app (OS file manager).
+/// The dropped paths are host-local, so we need the host-local VFS to
+/// construct VfsPaths from them.
+#[tauri::command]
+pub async fn external_drop(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    subdirectory: Option<String>,
+    paths: Vec<String>,
+) -> Result<OperationId, Error> {
+    let vfs_info = ctx.vfs_info()?;
+    let host_vfs = vfs_info.host_local_vfs_id().ok_or_else(|| {
+        Error::Custom(
+            "No local filesystem mounted \u{2014} cannot accept external drops".to_string(),
+        )
+    })?;
+
+    let sources: Vec<VfsPath> = paths.iter().map(|p| VfsPath::new(host_vfs, p)).collect();
+
+    let dest_path = ctx
+        .panes()
+        .get(pane_handle)
+        .ok_or_else(|| Error::Custom("pane not found".into()))?
+        .path();
+    let destination = match subdirectory {
+        Some(sub) => dest_path.join(&sub),
+        None => dest_path,
+    };
+
+    let request = OperationRequest::Copy {
+        sources,
+        destination,
+        options: Default::default(),
+    };
+
+    start_operation(ctx, request).await
+}
+
 #[tauri::command]
 pub async fn start_copy_move(
     ctx: MainWindowContext,
@@ -2273,6 +2311,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         start_dnd,
         cancel_dnd,
         execute_dnd,
+        external_drop,
         // Preferences
         get_preferences,
         update_preference,
