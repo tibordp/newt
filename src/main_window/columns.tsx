@@ -71,7 +71,7 @@ function FileName({
   );
 }
 
-export const columns: ColumnDef[] = [
+export const allColumns: ColumnDef[] = [
   {
     align: "left",
     key: "name",
@@ -191,6 +191,24 @@ export const columns: ColumnDef[] = [
     render: (info) => <>{info.mode != null ? modeString(info.mode) : ""}</>,
   },
 ];
+
+const columnsByKey = new Map(allColumns.map((c) => [c.key, c]));
+
+/** Returns columns filtered and ordered by the preference list.
+ *  Falls back to all columns if the list is empty or missing. */
+export function getVisibleColumns(columnKeys?: string[]): ColumnDef[] {
+  if (!columnKeys || columnKeys.length === 0) return allColumns;
+  const result: ColumnDef[] = [];
+  for (const key of columnKeys) {
+    const col = columnsByKey.get(key);
+    if (col) result.push(col);
+  }
+  // Always include "name" even if somehow omitted
+  if (!result.some((c) => c.key === "name")) {
+    result.unshift(columnsByKey.get("name")!);
+  }
+  return result;
+}
 
 type ColumnHeaderProps = {
   widthPrefix: string;

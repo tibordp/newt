@@ -17,13 +17,15 @@ import { Breadcrumb, VfsTarget } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
 import {
   File,
+  ColumnDef,
   FilterMode,
   PaneState,
   DndFileInfo,
   FileRowContext,
 } from "./types";
 import { getSiPrefixedNumber } from "./utils";
-import { ColumnHeader, columns } from "./columns";
+import { ColumnHeader, getVisibleColumns } from "./columns";
+import { usePreferences } from "../lib/preferences";
 import {
   FileContextMenuContent,
   PaneContextMenuContent,
@@ -133,6 +135,7 @@ function getFileIconChar(
 
 type FileRowProps = {
   row: File;
+  columns: ColumnDef[];
   isFocused: boolean;
   isSelected: boolean;
   filter: string | null;
@@ -146,6 +149,7 @@ type FileRowProps = {
 const FileRow = memo(
   function FileRow({
     row,
+    columns,
     isFocused,
     isSelected,
     filter,
@@ -187,6 +191,7 @@ const FileRow = memo(
     prev.row.mode === next.row.mode &&
     prev.row.is_dir === next.row.is_dir &&
     prev.row.is_symlink === next.row.is_symlink &&
+    prev.columns === next.columns &&
     prev.isFocused === next.isFocused &&
     prev.isSelected === next.isSelected &&
     prev.filter === next.filter &&
@@ -418,6 +423,12 @@ function PaneInner(
       safeCommand(cmd, { paneHandle, ...args });
     }
   };
+
+  const preferences = usePreferences();
+  const columns = useMemo(
+    () => getVisibleColumns(preferences?.settings?.appearance?.columns),
+    [preferences?.settings?.appearance?.columns],
+  );
 
   const [showSpinner, setShowSpinner] = useState(false);
 
@@ -1266,6 +1277,7 @@ function PaneInner(
                   <FileRow
                     key={row.name}
                     row={row}
+                    columns={columns}
                     isFocused={isFocused}
                     isSelected={selectedLookup.has(row.name)}
                     filter={isFocused ? filter : null}

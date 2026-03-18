@@ -32,6 +32,10 @@ pub struct AppearancePreferences {
     /// Color theme: "system" follows OS preference, or force "light" / "dark".
     #[schemars(title = "Theme")]
     pub theme: ThemeMode,
+    /// Visible columns and their order. Available columns:
+    /// name, size, modified_date, modified_time, user, group, mode.
+    #[schemars(title = "Columns")]
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -60,6 +64,15 @@ impl Default for AppearancePreferences {
             folders_first: true,
             show_command_bar: true,
             theme: ThemeMode::default(),
+            columns: vec![
+                "name".into(),
+                "size".into(),
+                "modified_date".into(),
+                "modified_time".into(),
+                "user".into(),
+                "group".into(),
+                "mode".into(),
+            ],
         }
     }
 }
