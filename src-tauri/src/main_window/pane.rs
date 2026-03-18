@@ -287,7 +287,7 @@ impl Pane {
                             ws.pending_path = batch_path.clone();
                             ws.loading = true;
                             ws.set_filter(None);
-                            ws.selected.clear();
+                            ws.all_selected.clear();
                             ws.focused = None;
                             self.update_display(&mut ws);
                             first_batch = false;
@@ -372,7 +372,7 @@ impl Pane {
             // Only clear if we didn't already do it on first batch
             if first_batch {
                 ws.set_filter(None);
-                ws.selected.clear();
+                ws.all_selected.clear();
                 ws.focused = None;
             }
         }
