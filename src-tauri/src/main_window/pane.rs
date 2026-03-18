@@ -116,7 +116,31 @@ impl Pane {
             navigation_mutex: tokio::sync::Mutex::new(tx),
             file_list: RwLock::new(Arc::new(FileList::new(path, vec![], None))),
             refresh_queue: AtomicUsize::new(0),
-            view_state: RwLock::new(PaneViewState::default()),
+            view_state: RwLock::new({
+                let prefs = preferences.load();
+                PaneViewState {
+                    sorting: Sorting {
+                        key: match prefs.behavior.default_sort.key {
+                            crate::preferences::schema::DefaultSortKey::Name => SortingKey::Name,
+                            crate::preferences::schema::DefaultSortKey::Extension => {
+                                SortingKey::Extension
+                            }
+                            crate::preferences::schema::DefaultSortKey::Size => SortingKey::Size,
+                            crate::preferences::schema::DefaultSortKey::Modified => {
+                                SortingKey::Modified
+                            }
+                            crate::preferences::schema::DefaultSortKey::Accessed => {
+                                SortingKey::Accessed
+                            }
+                            crate::preferences::schema::DefaultSortKey::Created => {
+                                SortingKey::Created
+                            }
+                        },
+                        asc: prefs.behavior.default_sort.ascending,
+                    },
+                    ..Default::default()
+                }
+            }),
             nav_changes_rx: rx,
             display_options,
             preferences,

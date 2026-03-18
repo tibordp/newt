@@ -14,16 +14,23 @@ const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<
   { fontCharacter: string; fontColor: string }
 >;
 
+function fileStem(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.substring(0, dot) : name;
+}
+
 function FileName({
   focused,
   filter,
   filterMode,
   info,
+  displayName,
 }: {
   focused: boolean;
   filter: string | null;
   filterMode: string;
   info: File;
+  displayName: string;
 }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
 
@@ -37,13 +44,15 @@ function FileName({
 
   const nameElement = (
     <>
-      {(!focused || filter == null || filterMode === "filter") && <>{name}</>}
+      {(!focused || filter == null || filterMode === "filter") && (
+        <>{displayName}</>
+      )}
       {focused && filter != null && filterMode !== "filter" && (
         <>
           <span className={styles.filterHead}>
-            {name.substr(0, filter.length)}
+            {displayName.substr(0, filter.length)}
           </span>
-          <span>{name.substr(filter.length)}</span>
+          <span>{displayName.substr(filter.length)}</span>
         </>
       )}
     </>
@@ -94,9 +103,30 @@ export const allColumns: ColumnDef[] = [
         filterMode={filterMode}
         focused={isFocused}
         info={info}
+        displayName={info.name}
       />
     ),
     initialWidth: 250,
+  },
+  {
+    align: "left",
+    key: "stem",
+    subcolumns: [
+      {
+        sortKey: "name",
+        name: "Name",
+      },
+    ],
+    render: (info, { isFocused, filter, filterMode }) => (
+      <FileName
+        filter={filter}
+        filterMode={filterMode}
+        focused={isFocused}
+        info={info}
+        displayName={info.is_dir ? info.name : fileStem(info.name)}
+      />
+    ),
+    initialWidth: 200,
   },
   {
     align: "right",
@@ -190,22 +220,127 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info) => <>{info.mode != null ? modeString(info.mode) : ""}</>,
   },
+  {
+    align: "left",
+    initialWidth: 60,
+    key: "extension",
+    subcolumns: [
+      {
+        name: "Ext",
+        sortKey: "extension",
+      },
+    ],
+    render: (info) => {
+      if (info.is_dir) return <></>;
+      const dot = info.name.lastIndexOf(".");
+      return <>{dot > 0 ? info.name.substring(dot + 1) : ""}</>;
+    },
+  },
+  {
+    align: "right",
+    initialWidth: 80,
+    key: "accessed_date",
+    subcolumns: [
+      {
+        name: "Accessed",
+        sortKey: "accessed",
+      },
+    ],
+    render: (info) => (
+      <>
+        {info.accessed != null
+          ? new Date(info.accessed).toLocaleDateString()
+          : ""}
+      </>
+    ),
+  },
+  {
+    align: "right",
+    initialWidth: 80,
+    key: "accessed_time",
+    subcolumns: [
+      {
+        name: "Acc. Time",
+        sortKey: "accessed",
+      },
+    ],
+    render: (info) => (
+      <>
+        {info.accessed != null
+          ? new Date(info.accessed).toLocaleTimeString()
+          : ""}
+      </>
+    ),
+  },
+  {
+    align: "right",
+    initialWidth: 80,
+    key: "created_date",
+    subcolumns: [
+      {
+        name: "Created",
+        sortKey: "created",
+      },
+    ],
+    render: (info) => (
+      <>
+        {info.created != null
+          ? new Date(info.created).toLocaleDateString()
+          : ""}
+      </>
+    ),
+  },
+  {
+    align: "right",
+    initialWidth: 80,
+    key: "created_time",
+    subcolumns: [
+      {
+        name: "Cr. Time",
+        sortKey: "created",
+      },
+    ],
+    render: (info) => (
+      <>
+        {info.created != null
+          ? new Date(info.created).toLocaleTimeString()
+          : ""}
+      </>
+    ),
+  },
+  {
+    align: "left",
+    initialWidth: 150,
+    key: "symlink_target",
+    subcolumns: [
+      {
+        name: "Link Target",
+      },
+    ],
+    render: (info) => <>{info.symlink_target ?? ""}</>,
+  },
 ];
 
 const columnsByKey = new Map(allColumns.map((c) => [c.key, c]));
 
 /** Returns columns filtered and ordered by the preference list.
- *  Falls back to all columns if the list is empty or missing. */
+ *  Falls back to all columns if the list is empty or missing.
+ *  When "extension" is in the list, "name" is swapped for "stem". */
 export function getVisibleColumns(columnKeys?: string[]): ColumnDef[] {
   if (!columnKeys || columnKeys.length === 0) return allColumns;
+  const hasExtension = columnKeys.includes("extension");
   const result: ColumnDef[] = [];
   for (const key of columnKeys) {
-    const col = columnsByKey.get(key);
+    // When extension is a separate column, swap name → stem
+    const resolvedKey = key === "name" && hasExtension ? "stem" : key;
+    // "stem" shouldn't appear directly in config — it's an internal swap
+    if (key === "stem") continue;
+    const col = columnsByKey.get(resolvedKey);
     if (col) result.push(col);
   }
-  // Always include "name" even if somehow omitted
-  if (!result.some((c) => c.key === "name")) {
-    result.unshift(columnsByKey.get("name")!);
+  // Always include a name column even if somehow omitted
+  if (!result.some((c) => c.key === "name" || c.key === "stem")) {
+    result.unshift(columnsByKey.get(hasExtension ? "stem" : "name")!);
   }
   return result;
 }

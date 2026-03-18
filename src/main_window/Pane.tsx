@@ -971,9 +971,15 @@ function PaneInner(
     } else if (e.key == "ArrowUp" && (noModifiers || e.shiftKey)) {
       relativeJump(-1, e.shiftKey);
     } else if (e.key == "PageDown" && (noModifiers || e.shiftKey)) {
-      relativeJump(10, e.shiftKey);
+      const pageSize = Math.floor(
+        (containerRef.current?.clientHeight ?? 220) / ITEM_SIZE,
+      );
+      relativeJump(pageSize, e.shiftKey);
     } else if (e.key == "PageUp" && (noModifiers || e.shiftKey)) {
-      relativeJump(-10, e.shiftKey);
+      const pageSize = Math.floor(
+        (containerRef.current?.clientHeight ?? 220) / ITEM_SIZE,
+      );
+      relativeJump(-pageSize, e.shiftKey);
     } else if (e.key == "Home" && noModifiers) {
       relativeJump(-Math.pow(2, 31), e.shiftKey);
     } else if (e.key == "End" && noModifiers) {

@@ -54,6 +54,7 @@ export type UserCommandEntry = {
 export type PreferencesState = {
   settings: AppPreferences;
   schema: any;
+  modified_keys: string[];
   bindings: ResolvedBinding[];
   commands: CommandInfo[];
   bookmarks: BookmarkEntry[];

@@ -14,6 +14,9 @@ use tauri::{Emitter, Manager};
 pub struct ResolvedPreferences {
     pub settings: AppPreferences,
     pub schema: serde_json::Value,
+    /// Dotted keys that are explicitly set in the user's settings file
+    /// (i.e. not inherited from defaults or profile).
+    pub modified_keys: Vec<String>,
     pub bindings: Vec<ResolvedBinding>,
     pub commands: Vec<CommandInfo>,
     pub bookmarks: Vec<BookmarkEntry>,
@@ -67,7 +70,8 @@ pub struct PreferencesManager {
     config_dir: PathBuf,
     resolved: Arc<RwLock<ResolvedPreferences>>,
     handle: PreferencesHandle,
-    _notify_tx: tokio::sync::watch::Sender<()>,
+    notify_tx: tokio::sync::watch::Sender<()>,
+    app_handle: tauri::AppHandle,
     _watcher: Option<RecommendedWatcher>,
 }
 
@@ -106,7 +110,8 @@ impl PreferencesManager {
             config_dir,
             resolved,
             handle,
-            _notify_tx: notify_tx,
+            notify_tx,
+            app_handle: app_handle.clone(),
             _watcher: watcher,
         }
     }
@@ -129,6 +134,23 @@ impl PreferencesManager {
 
     pub fn settings_file_path(&self) -> PathBuf {
         self.config_dir.join("settings.toml")
+    }
+
+    /// Reload preferences from disk and update the stored state.
+    /// Returns the new resolved preferences for immediate emission.
+    /// Reload preferences from disk, update stored state, notify subscribers,
+    /// and emit to the frontend.
+    pub fn reload(&self) {
+        let new_resolved = Self::load_and_resolve(&self.config_dir);
+        {
+            let mut guard = self.resolved.write();
+            *guard = new_resolved.clone();
+        }
+        self.handle
+            .settings
+            .store(Arc::new(new_resolved.settings.clone()));
+        let _ = self.notify_tx.send(());
+        let _ = self.app_handle.emit("update:preferences", &new_resolved);
     }
 
     /// Update a single preference value via dotted path (e.g. "appearance.show_hidden").
@@ -159,6 +181,36 @@ impl PreferencesManager {
 
         let toml_value = json_to_toml_edit_value(&value)?;
         table.insert(leaf[0], toml_edit::value(toml_value));
+
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Remove a preference key from settings.toml so it falls back to the default.
+    pub fn reset_preference(&self, key: &str) -> Result<(), String> {
+        let path = self.settings_file_path();
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        let parts: Vec<&str> = key.split('.').collect();
+        if parts.is_empty() {
+            return Err("empty key".into());
+        }
+
+        let (table_parts, leaf) = parts.split_at(parts.len() - 1);
+        let mut table = doc.as_table_mut();
+        for part in table_parts {
+            match table.get_mut(part).and_then(|v| v.as_table_mut()) {
+                Some(t) => table = t,
+                None => return Ok(()), // key doesn't exist, nothing to reset
+            }
+        }
+
+        table.remove(leaf[0]);
 
         std::fs::write(&path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
@@ -602,12 +654,31 @@ impl PreferencesManager {
             bookmarks.extend(pf.bookmarks.iter().cloned());
         }
 
+        // Determine which keys the user has explicitly set in their settings file
+        let modified_keys = {
+            let sections: &[(&str, &toml::Value)] = &[
+                ("appearance", &user_file.appearance),
+                ("behavior", &user_file.behavior),
+                ("hot_paths", &user_file.hot_paths),
+            ];
+            let mut keys = Vec::new();
+            for (section, value) in sections {
+                if let toml::Value::Table(table) = value {
+                    for key in table.keys() {
+                        keys.push(format!("{}.{}", section, key));
+                    }
+                }
+            }
+            keys
+        };
+
         let schema = schemars::schema_for!(AppPreferences);
         let schema_json = serde_json::to_value(schema).unwrap_or_default();
 
         ResolvedPreferences {
             settings,
             schema: schema_json,
+            modified_keys,
             bindings: resolved_bindings,
             commands,
             bookmarks,
@@ -779,6 +850,20 @@ fn json_to_toml_edit_value(value: &serde_json::Value) -> Result<toml_edit::Value
             }
         }
         serde_json::Value::String(s) => Ok(toml_edit::Value::from(s.as_str())),
+        serde_json::Value::Array(arr) => {
+            let mut toml_arr = toml_edit::Array::new();
+            for item in arr {
+                toml_arr.push(json_to_toml_edit_value(item)?);
+            }
+            Ok(toml_edit::Value::Array(toml_arr))
+        }
+        serde_json::Value::Object(obj) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (k, v) in obj {
+                table.insert(k, json_to_toml_edit_value(v)?);
+            }
+            Ok(toml_edit::Value::InlineTable(table))
+        }
         _ => Err(format!("unsupported value type for TOML: {:?}", value)),
     }
 }

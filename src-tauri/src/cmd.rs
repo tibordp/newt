@@ -2011,10 +2011,23 @@ pub fn update_preference(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), Error> {
-    global_ctx
-        .preferences()
+    let prefs = global_ctx.preferences();
+    prefs
         .update_preference(&key, value)
-        .map_err(Error::Custom)
+        .map_err(Error::Custom)?;
+    prefs.reload();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_preference(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    key: String,
+) -> Result<(), Error> {
+    let prefs = global_ctx.preferences();
+    prefs.reset_preference(&key).map_err(Error::Custom)?;
+    prefs.reload();
+    Ok(())
 }
 
 #[tauri::command]
@@ -2240,6 +2253,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         // Preferences
         get_preferences,
         update_preference,
+        reset_preference,
         get_preferences_schema,
         open_config_file,
         // Hot paths

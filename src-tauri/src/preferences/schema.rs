@@ -10,10 +10,13 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct AppPreferences {
     #[serde(default)]
+    #[schemars(title = "Appearance")]
     pub appearance: AppearancePreferences,
     #[serde(default)]
+    #[schemars(title = "Behavior")]
     pub behavior: BehaviorPreferences,
     #[serde(default)]
+    #[schemars(title = "Hot Paths")]
     pub hot_paths: HotPathsPreferences,
 }
 
@@ -32,8 +35,7 @@ pub struct AppearancePreferences {
     /// Color theme: "system" follows OS preference, or force "light" / "dark".
     #[schemars(title = "Theme")]
     pub theme: ThemeMode,
-    /// Visible columns and their order. Available columns:
-    /// name, size, modified_date, modified_time, user, group, mode.
+    /// Visible columns and their order.
     #[schemars(title = "Columns")]
     pub columns: Vec<String>,
 }
@@ -79,6 +81,34 @@ impl Default for AppearancePreferences {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
+pub struct DefaultSort {
+    pub key: DefaultSortKey,
+    pub ascending: bool,
+}
+
+impl Default for DefaultSort {
+    fn default() -> Self {
+        Self {
+            key: DefaultSortKey::default(),
+            ascending: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultSortKey {
+    #[default]
+    Name,
+    Extension,
+    Size,
+    Modified,
+    Accessed,
+    Created,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default)]
 pub struct BehaviorPreferences {
     /// Ask for confirmation before deleting files.
     #[schemars(title = "Confirm Delete")]
@@ -98,6 +128,9 @@ pub struct BehaviorPreferences {
     /// remote host is untrusted.
     #[schemars(title = "Expose Local Filesystem in Remote Sessions")]
     pub expose_local_fs: bool,
+    /// Default sort order for new panes.
+    #[schemars(title = "Default Sort")]
+    pub default_sort: DefaultSort,
 }
 
 impl Default for BehaviorPreferences {
@@ -108,6 +141,7 @@ impl Default for BehaviorPreferences {
             keep_finished_operations: false,
             quick_search: true,
             expose_local_fs: false,
+            default_sort: DefaultSort::default(),
         }
     }
 }
