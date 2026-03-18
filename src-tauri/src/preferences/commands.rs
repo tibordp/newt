@@ -10,8 +10,41 @@ pub struct CommandDef {
     pub needs_pane: bool,
 }
 
+/// Like `vec![]` but supports `@if(expr) { ... }` blocks for
+/// runtime-conditional items and `@cfg(pred) { ... }` blocks for
+/// compile-time conditional items.
+macro_rules! conditional_vec {
+    (@inner $v:ident,) => {};
+    // @cfg(pred) { items... }, rest...
+    (@inner $v:ident, @cfg($pred:meta) { $($item:expr),* $(,)? } $($rest:tt)*) => {
+        $(
+            #[cfg($pred)]
+            $v.push($item);
+        )*
+        conditional_vec!(@inner $v, $($rest)*);
+    };
+    // @if(expr) { items... }, rest...
+    (@inner $v:ident, @if($cond:expr) { $($item:expr),* $(,)? } $($rest:tt)*) => {
+        if $cond {
+            $( $v.push($item); )*
+        }
+        conditional_vec!(@inner $v, $($rest)*);
+    };
+    // regular item, rest...
+    (@inner $v:ident, $item:expr, $($rest:tt)*) => {
+        $v.push($item);
+        conditional_vec!(@inner $v, $($rest)*);
+    };
+    // entry point
+    ($($body:tt)*) => {{
+        let mut v: Vec<_> = Vec::with_capacity(64);
+        conditional_vec!(@inner v, $($body)*);
+        v
+    }};
+}
+
 pub fn default_commands() -> Vec<CommandDef> {
-    let mut commands = vec![
+    conditional_vec![
         CommandDef {
             id: "new_window".into(),
             name: "New Window".into(),
@@ -273,15 +306,17 @@ pub fn default_commands() -> Vec<CommandDef> {
             default_when: None,
             needs_pane: false,
         },
-        CommandDef {
-            id: "open_elevated".into(),
-            name: "Open Elevated".into(),
-            short_name: None,
-            category: "File".into(),
-            default_key: None,
-            default_when: None,
-            needs_pane: false,
-        },
+        @cfg(target_os = "linux") {
+            CommandDef {
+                id: "open_elevated".into(),
+                name: "Open Elevated".into(),
+                short_name: None,
+                category: "File".into(),
+                default_key: None,
+                default_when: None,
+                needs_pane: false,
+            },
+        }
         CommandDef {
             id: "select_vfs".into(),
             name: "Select Filesystem".into(),
@@ -426,29 +461,25 @@ pub fn default_commands() -> Vec<CommandDef> {
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },
-    ];
-
-    commands.push(CommandDef {
-        id: "connection_log".into(),
-        name: "Connection Log".into(),
-        short_name: None,
-        category: "View".into(),
-        default_key: None,
-        default_when: None,
-        needs_pane: false,
-    });
-
-    if cfg!(debug_assertions) {
-        commands.push(CommandDef {
-            id: "debug".into(),
-            name: "Debug".into(),
+        CommandDef {
+            id: "connection_log".into(),
+            name: "Connection Log".into(),
             short_name: None,
             category: "View".into(),
             default_key: None,
             default_when: None,
             needs_pane: false,
-        });
-    }
-
-    commands
+        },
+        @if(cfg!(debug_assertions)) {
+            CommandDef {
+                id: "debug".into(),
+                name: "Debug".into(),
+                short_name: None,
+                category: "View".into(),
+                default_key: None,
+                default_when: None,
+                needs_pane: false,
+            },
+        }
+    ]
 }

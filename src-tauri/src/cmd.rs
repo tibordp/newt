@@ -1577,6 +1577,7 @@ pub async fn connect_remote(host: String) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[tauri::command]
 pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
     let exe = std::env::current_exe()?;
@@ -1586,6 +1587,14 @@ pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
         .arg("Elevated")
         .spawn()?;
     Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
+    Err(Error::Custom(
+        "Elevated mode is only supported on Linux".into(),
+    ))
 }
 
 #[tauri::command]
