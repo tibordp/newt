@@ -1175,6 +1175,10 @@ impl PaneViewState {
         self.recompute_stats();
     }
 
+    pub fn end_drag_selection(&mut self) {
+        self.drag_base = None;
+    }
+
     pub fn set_selection_by_indices(&mut self, start: usize, end: usize, additive: bool) {
         self.clear_quick_search();
         let lo = start.min(end).min(self.files.len());

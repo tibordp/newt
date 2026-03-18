@@ -193,6 +193,13 @@ pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 }
 
 #[tauri::command]
+pub fn end_drag_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    pane.view_state_mut().end_drag_selection();
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_selection_by_indices(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -2146,6 +2153,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         select_range,
         set_selection,
         set_selection_by_indices,
+        end_drag_selection,
         relative_jump,
         set_viewport,
         set_filter,

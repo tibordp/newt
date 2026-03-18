@@ -603,7 +603,10 @@ function PaneInner(
       if (e.buttons === 0) {
         if (drag.scrollIntervalId !== null)
           clearInterval(drag.scrollIntervalId);
-        if (drag.active) suppressClickRef.current = true;
+        if (drag.active) {
+          suppressClickRef.current = true;
+          safeCommandSilent("end_drag_selection", { paneHandle });
+        }
         hideDragRect();
         dragRef.current = null;
         return;
@@ -632,7 +635,12 @@ function PaneInner(
       const drag = dragRef.current;
       if (!drag) return;
       if (drag.scrollIntervalId !== null) clearInterval(drag.scrollIntervalId);
-      if (drag.active) suppressClickRef.current = true;
+      if (drag.active) {
+        suppressClickRef.current = true;
+        // Finalize the drag so the next Ctrl+drag snapshots the
+        // accumulated selection as its new base.
+        safeCommandSilent("end_drag_selection", { paneHandle });
+      }
       hideDragRect();
       dragRef.current = null;
     };
