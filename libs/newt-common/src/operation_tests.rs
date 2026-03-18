@@ -989,7 +989,7 @@ async fn test_move_symlink_not_followed_inside_dir() {
 }
 
 // ===========================================================================
-// SetPermissions tests
+// SetMetadata tests
 // ===========================================================================
 
 #[tokio::test]
@@ -1000,9 +1000,12 @@ async fn test_set_permissions_single_file() {
 
     let result = run_operation(
         vfs,
-        OperationRequest::SetPermissions {
+        OperationRequest::SetMetadata {
             paths: vec![vfs_path("/a.txt")],
-            mode: 0o755,
+            mode_set: 0o111,
+            mode_clear: 0,
+            uid: None,
+            gid: None,
             recursive: false,
         },
         skip_all,
@@ -1024,9 +1027,12 @@ async fn test_set_permissions_recursive() {
 
     let result = run_operation(
         vfs,
-        OperationRequest::SetPermissions {
+        OperationRequest::SetMetadata {
             paths: vec![vfs_path("/mydir")],
-            mode: 0o700,
+            mode_set: 0o700,
+            mode_clear: 0o077,
+            uid: None,
+            gid: None,
             recursive: true,
         },
         skip_all,
@@ -1060,9 +1066,12 @@ async fn test_set_permissions_error_skip() {
 
     let result = run_operation(
         vfs,
-        OperationRequest::SetPermissions {
+        OperationRequest::SetMetadata {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
-            mode: 0o755,
+            mode_set: 0o111,
+            mode_clear: 0,
+            uid: None,
+            gid: None,
             recursive: false,
         },
         skip_all,
@@ -1073,6 +1082,146 @@ async fn test_set_permissions_error_skip() {
     // a.txt should be unchanged (error skipped), b.txt should be updated
     assert_eq!(result.vfs.get_mode("/a.txt"), Some(0o644));
     assert_eq!(result.vfs.get_mode("/b.txt"), Some(0o755));
+}
+
+#[tokio::test]
+async fn test_set_metadata_mask() {
+    // Verify that only specified bits change, others preserved
+    // File has 0o644, mode_set=0o100 (add owner execute), mode_clear=0o004 (remove other read)
+    // Result: (0o644 | 0o100) & !0o004 = 0o740
+    let vfs = MockVfs::builder()
+        .file_with_mode("/a.txt", b"hello", 0o644)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::SetMetadata {
+            paths: vec![vfs_path("/a.txt")],
+            mode_set: 0o100,
+            mode_clear: 0o004,
+            uid: None,
+            gid: None,
+            recursive: false,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.get_mode("/a.txt"), Some(0o740));
+}
+
+#[tokio::test]
+async fn test_set_metadata_uid_gid() {
+    let vfs = MockVfs::builder()
+        .file_with_owner("/a.txt", b"hello", 0o644, 1000, 1000)
+        .file_with_owner("/b.txt", b"world", 0o644, 1000, 1000)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::SetMetadata {
+            paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
+            mode_set: 0,
+            mode_clear: 0,
+            uid: Some(500),
+            gid: Some(600),
+            recursive: false,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    // Mode should be unchanged
+    assert_eq!(result.vfs.get_mode("/a.txt"), Some(0o644));
+    assert_eq!(result.vfs.get_mode("/b.txt"), Some(0o644));
+    // uid/gid should be updated
+    assert_eq!(result.vfs.get_uid("/a.txt"), Some(500));
+    assert_eq!(result.vfs.get_gid("/a.txt"), Some(600));
+    assert_eq!(result.vfs.get_uid("/b.txt"), Some(500));
+    assert_eq!(result.vfs.get_gid("/b.txt"), Some(600));
+}
+
+#[tokio::test]
+async fn test_set_metadata_uid_gid_recursive() {
+    let vfs = MockVfs::builder()
+        .dir_with_owner("/mydir", 0o755, 1000, 1000)
+        .file_with_owner("/mydir/a.txt", b"a", 0o644, 1000, 1000)
+        .dir_with_owner("/mydir/sub", 0o755, 1000, 1000)
+        .file_with_owner("/mydir/sub/b.txt", b"b", 0o644, 1000, 1000)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::SetMetadata {
+            paths: vec![vfs_path("/mydir")],
+            mode_set: 0,
+            mode_clear: 0,
+            uid: Some(500),
+            gid: Some(600),
+            recursive: true,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    // Mode should be unchanged
+    assert_eq!(result.vfs.get_mode("/mydir"), Some(0o755));
+    assert_eq!(result.vfs.get_mode("/mydir/a.txt"), Some(0o644));
+    assert_eq!(result.vfs.get_mode("/mydir/sub"), Some(0o755));
+    assert_eq!(result.vfs.get_mode("/mydir/sub/b.txt"), Some(0o644));
+    // uid/gid should be updated
+    assert_eq!(result.vfs.get_uid("/mydir"), Some(500));
+    assert_eq!(result.vfs.get_gid("/mydir"), Some(600));
+    assert_eq!(result.vfs.get_uid("/mydir/a.txt"), Some(500));
+    assert_eq!(result.vfs.get_gid("/mydir/a.txt"), Some(600));
+    assert_eq!(result.vfs.get_uid("/mydir/sub"), Some(500));
+    assert_eq!(result.vfs.get_gid("/mydir/sub"), Some(600));
+    assert_eq!(result.vfs.get_uid("/mydir/sub/b.txt"), Some(500));
+    assert_eq!(result.vfs.get_gid("/mydir/sub/b.txt"), Some(600));
+}
+
+#[tokio::test]
+async fn test_set_metadata_uid_gid_error_skip() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    let vfs = MockVfs::builder()
+        .file_with_owner("/a.txt", b"a", 0o644, 1000, 1000)
+        .file_with_owner("/b.txt", b"b", 0o644, 1000, 1000)
+        .failure(FailureSpec {
+            path: PathBuf::from("/a.txt"),
+            operation: "set_metadata",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::SetMetadata {
+            paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
+            mode_set: 0,
+            mode_clear: 0,
+            uid: Some(500),
+            gid: Some(600),
+            recursive: false,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    // a.txt should be unchanged (error skipped)
+    assert_eq!(result.vfs.get_uid("/a.txt"), Some(1000));
+    assert_eq!(result.vfs.get_gid("/a.txt"), Some(1000));
+    // b.txt should be updated
+    assert_eq!(result.vfs.get_uid("/b.txt"), Some(500));
+    assert_eq!(result.vfs.get_gid("/b.txt"), Some(600));
 }
 
 // ===========================================================================

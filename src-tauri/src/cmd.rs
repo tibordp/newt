@@ -13,6 +13,14 @@ use tauri::Wry;
 use tauri::ipc::Invoke;
 
 use crate::common::Error;
+use newt_common::filesystem::UserGroup;
+
+fn usergroup_id(ug: Option<&UserGroup>) -> Option<u32> {
+    match ug {
+        Some(UserGroup::Id(id)) => Some(*id),
+        _ => None,
+    }
+}
 use tauri::WebviewWindow;
 
 fn show_prewarmed(window: &WebviewWindow) {
@@ -961,8 +969,13 @@ pub fn dialog(
                     let pane = pane.unwrap();
                     let pane_path = pane.path();
                     let file_list = pane.file_list();
-                    // Use ".." entry which holds the current directory's metadata
                     let dir_entry = file_list.files().iter().find(|f| f.name == "..");
+
+                    let can_set_metadata = ctx
+                        .vfs_info()
+                        .ok()
+                        .and_then(|vi| vi.descriptor(pane_path.vfs_id))
+                        .is_some_and(|(d, _)| d.can_set_metadata());
 
                     let name = pane_path
                         .path
@@ -970,16 +983,23 @@ pub fn dialog(
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| pane_path.path.to_string_lossy().to_string());
 
+                    let mode = dir_entry.and_then(|f| f.mode.as_ref().map(|m| m.0));
+
                     ModalDataKind::Properties {
                         paths: vec![pane_path],
+                        can_set_metadata,
                         name,
                         size: dir_entry.and_then(|f| f.size),
                         is_dir: true,
                         is_symlink: false,
                         symlink_target: None,
-                        mode: dir_entry.and_then(|f| f.mode.as_ref().map(|m| m.0)),
+                        mode_set: mode.unwrap_or(0),
+                        mode_clear: mode.map(|m| !m & 0o7777).unwrap_or(0),
+                        has_mode: mode.is_some(),
                         owner: dir_entry.and_then(|f| f.user.clone()),
                         group: dir_entry.and_then(|f| f.group.clone()),
+                        owner_id: dir_entry.and_then(|f| usergroup_id(f.user.as_ref())),
+                        group_id: dir_entry.and_then(|f| usergroup_id(f.group.as_ref())),
                         modified: dir_entry.and_then(|f| f.modified),
                         accessed: dir_entry.and_then(|f| f.accessed),
                         created: dir_entry.and_then(|f| f.created),
@@ -991,6 +1011,12 @@ pub fn dialog(
                     if paths.is_empty() {
                         return Ok(());
                     }
+
+                    let can_set_metadata = ctx
+                        .vfs_info()
+                        .ok()
+                        .and_then(|vi| vi.descriptor(pane.path().vfs_id))
+                        .is_some_and(|(d, _)| d.can_set_metadata());
 
                     let file_list = pane.file_list();
                     let files: Vec<&newt_common::filesystem::File> = paths
@@ -1028,20 +1054,23 @@ pub fn dialog(
                         None
                     };
 
-                    // For mode: if single file, use its mode; if multiple, bitwise AND of all modes
-                    let mode = if files.len() == 1 {
-                        files[0].mode.as_ref().map(|m| m.0)
-                    } else if files.iter().all(|f| f.mode.is_some()) {
-                        Some(
-                            files
-                                .iter()
-                                .fold(0o7777, |acc, f| acc & f.mode.as_ref().unwrap().0),
-                        )
+                    // Tri-state mode: mode_set = bits ON in ALL files,
+                    // mode_clear = bits OFF in ALL files.
+                    // Bits in neither are indeterminate (mixed).
+                    let has_mode = files.iter().any(|f| f.mode.is_some());
+                    let (mode_set, mode_clear) = if has_mode {
+                        let all_set = files.iter().fold(0o7777u32, |acc, f| {
+                            acc & f.mode.as_ref().map(|m| m.0).unwrap_or(0)
+                        });
+                        let all_clear = files.iter().fold(0o7777u32, |acc, f| {
+                            acc & !f.mode.as_ref().map(|m| m.0).unwrap_or(0) & 0o7777
+                        });
+                        (all_set, all_clear)
                     } else {
-                        None
+                        (0, 0)
                     };
 
-                    // Owner: show only if identical across all files
+                    // Owner/group: show only if identical across all files
                     let owner = if let Some(first) = files[0].user.as_ref() {
                         if files.iter().all(|f| f.user.as_ref() == Some(first)) {
                             Some(first.clone())
@@ -1052,7 +1081,6 @@ pub fn dialog(
                         None
                     };
 
-                    // Group: show only if identical across all files
                     let group = if let Some(first) = files[0].group.as_ref() {
                         if files.iter().all(|f| f.group.as_ref() == Some(first)) {
                             Some(first.clone())
@@ -1063,6 +1091,9 @@ pub fn dialog(
                         None
                     };
 
+                    let owner_id = owner.as_ref().and_then(|u| usergroup_id(Some(u)));
+                    let group_id = group.as_ref().and_then(|g| usergroup_id(Some(g)));
+
                     // Timestamps: only for single file
                     let (modified, accessed, created) = if files.len() == 1 {
                         (files[0].modified, files[0].accessed, files[0].created)
@@ -1072,14 +1103,19 @@ pub fn dialog(
 
                     ModalDataKind::Properties {
                         paths,
+                        can_set_metadata,
                         name,
                         size,
                         is_dir,
                         is_symlink,
                         symlink_target,
-                        mode,
+                        mode_set,
+                        mode_clear,
+                        has_mode,
                         owner,
                         group,
+                        owner_id,
+                        group_id,
                         modified,
                         accessed,
                         created,
@@ -1282,16 +1318,23 @@ pub async fn rename(
 }
 
 #[tauri::command]
-pub async fn set_permissions(
+#[allow(clippy::too_many_arguments)]
+pub async fn set_metadata(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
     paths: Vec<VfsPath>,
-    mode: u32,
+    mode_set: u32,
+    mode_clear: u32,
+    uid: Option<u32>,
+    gid: Option<u32>,
     recursive: bool,
 ) -> Result<(), Error> {
-    let request = OperationRequest::SetPermissions {
+    let request = OperationRequest::SetMetadata {
         paths,
-        mode,
+        mode_set,
+        mode_clear,
+        uid,
+        gid,
         recursive,
     };
     start_operation(ctx.clone(), request).await?;
@@ -1343,9 +1386,9 @@ pub async fn start_operation(
             "delete".to_string(),
             format!("Deleting {} item(s)", paths.len()),
         ),
-        OperationRequest::SetPermissions { paths, mode, .. } => (
+        OperationRequest::SetMetadata { paths, .. } => (
             "chmod".to_string(),
-            format!("Setting permissions {:o} on {} item(s)", mode, paths.len()),
+            format!("Setting metadata on {} item(s)", paths.len()),
         ),
         OperationRequest::RunCommand { command, .. } => {
             ("command".to_string(), format!("Running: {}", command))
@@ -2161,7 +2204,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         create_directory,
         touch_file,
         rename,
-        set_permissions,
+        set_metadata,
         start_operation,
         start_copy_move,
         cancel_operation,

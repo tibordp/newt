@@ -18,9 +18,20 @@ use crate::vfs::{
 
 #[derive(Debug, Clone)]
 pub enum MockEntry {
-    File { content: Vec<u8>, mode: u32 },
-    Directory { mode: u32 },
-    Symlink { target: PathBuf },
+    File {
+        content: Vec<u8>,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    },
+    Directory {
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    },
+    Symlink {
+        target: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -238,19 +249,58 @@ impl MockVfs {
         }
     }
 
+    /// Get uid of a file/directory.
+    pub fn get_uid(&self, path: impl AsRef<Path>) -> Option<u32> {
+        match self.entries.lock().get(path.as_ref()) {
+            Some(MockEntry::File { uid, .. }) | Some(MockEntry::Directory { uid, .. }) => {
+                Some(*uid)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get gid of a file/directory.
+    pub fn get_gid(&self, path: impl AsRef<Path>) -> Option<u32> {
+        match self.entries.lock().get(path.as_ref()) {
+            Some(MockEntry::File { gid, .. }) | Some(MockEntry::Directory { gid, .. }) => {
+                Some(*gid)
+            }
+            _ => None,
+        }
+    }
+
     fn list_children(&self, parent: &Path) -> Vec<File> {
         let entries = self.entries.lock();
         let mut children = Vec::new();
         for (path, entry) in entries.iter() {
             if path.parent() == Some(parent) && path != parent {
                 let name = path.file_name().unwrap().to_string_lossy().to_string();
-                let (is_dir, is_symlink, symlink_target, size, mode) = match entry {
-                    MockEntry::File { content, mode } => {
-                        (false, false, None, Some(content.len() as u64), *mode)
-                    }
-                    MockEntry::Directory { mode } => (true, false, None, None, *mode),
+                let (is_dir, is_symlink, symlink_target, size, mode, user, group) = match entry {
+                    MockEntry::File {
+                        content,
+                        mode,
+                        uid,
+                        gid,
+                    } => (
+                        false,
+                        false,
+                        None,
+                        Some(content.len() as u64),
+                        *mode,
+                        Some(crate::filesystem::UserGroup::Id(*uid)),
+                        Some(crate::filesystem::UserGroup::Id(*gid)),
+                    ),
+                    MockEntry::Directory { mode, uid, gid } => (
+                        true,
+                        false,
+                        None,
+                        None,
+                        *mode,
+                        Some(crate::filesystem::UserGroup::Id(*uid)),
+                        Some(crate::filesystem::UserGroup::Id(*gid)),
+                    ),
                     MockEntry::Symlink { target } => {
-                        (false, true, Some(target.clone()), None, 0o777)
+                        (false, true, Some(target.clone()), None, 0o777, None, None)
                     }
                 };
                 children.push(File {
@@ -260,8 +310,8 @@ impl MockVfs {
                     is_hidden: false,
                     is_symlink,
                     symlink_target,
-                    user: None,
-                    group: None,
+                    user,
+                    group,
                     mode: Some(Mode(mode)),
                     modified: None,
                     accessed: None,
@@ -377,27 +427,32 @@ impl Vfs for MockVfs {
         path: &Path,
     ) -> Result<crate::file_reader::FileDetails, crate::Error> {
         match self.entries.lock().get(path) {
-            Some(MockEntry::File { content, mode, .. }) => Ok(crate::file_reader::FileDetails {
+            Some(MockEntry::File {
+                content,
+                mode,
+                uid,
+                gid,
+            }) => Ok(crate::file_reader::FileDetails {
                 size: content.len() as u64,
                 mime_type: None,
                 is_dir: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: None,
-                group: None,
+                user: Some(crate::filesystem::UserGroup::Id(*uid)),
+                group: Some(crate::filesystem::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
             }),
-            Some(MockEntry::Directory { mode, .. }) => Ok(crate::file_reader::FileDetails {
+            Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::file_reader::FileDetails {
                 size: 0,
                 mime_type: None,
                 is_dir: true,
                 is_symlink: false,
                 symlink_target: None,
-                user: None,
-                group: None,
+                user: Some(crate::filesystem::UserGroup::Id(*uid)),
+                group: Some(crate::filesystem::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
@@ -432,29 +487,34 @@ impl Vfs for MockVfs {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         match self.entries.lock().get(path) {
-            Some(MockEntry::File { content, mode, .. }) => Ok(File {
+            Some(MockEntry::File {
+                content,
+                mode,
+                uid,
+                gid,
+            }) => Ok(File {
                 name,
                 size: Some(content.len() as u64),
                 is_dir: false,
                 is_hidden: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: None,
-                group: None,
+                user: Some(crate::filesystem::UserGroup::Id(*uid)),
+                group: Some(crate::filesystem::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
             }),
-            Some(MockEntry::Directory { mode, .. }) => Ok(File {
+            Some(MockEntry::Directory { mode, uid, gid }) => Ok(File {
                 name,
                 size: None,
                 is_dir: true,
                 is_hidden: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: None,
-                group: None,
+                user: Some(crate::filesystem::UserGroup::Id(*uid)),
+                group: Some(crate::filesystem::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
@@ -514,7 +574,14 @@ impl Vfs for MockVfs {
                 message: format!("already exists: {}", path.display()),
             });
         }
-        entries.insert(path.to_path_buf(), MockEntry::Directory { mode: 0o755 });
+        entries.insert(
+            path.to_path_buf(),
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
         Ok(())
     }
 
@@ -614,12 +681,13 @@ impl Vfs for MockVfs {
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, crate::Error> {
         match self.entries.lock().get(path) {
-            Some(MockEntry::File { mode, .. }) | Some(MockEntry::Directory { mode, .. }) => {
-                Ok(VfsMetadata {
-                    permissions: Some(*mode),
-                    ..Default::default()
-                })
-            }
+            Some(MockEntry::File { mode, uid, gid, .. })
+            | Some(MockEntry::Directory { mode, uid, gid, .. }) => Ok(VfsMetadata {
+                permissions: Some(*mode),
+                uid: Some(*uid),
+                gid: Some(*gid),
+                ..Default::default()
+            }),
             Some(MockEntry::Symlink { .. }) => Ok(VfsMetadata::default()),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
@@ -634,9 +702,16 @@ impl Vfs for MockVfs {
         }
         let mut entries = self.entries.lock();
         match entries.get_mut(path) {
-            Some(MockEntry::File { mode, .. }) | Some(MockEntry::Directory { mode, .. }) => {
+            Some(MockEntry::File { mode, uid, gid, .. })
+            | Some(MockEntry::Directory { mode, uid, gid, .. }) => {
                 if let Some(p) = meta.permissions {
                     *mode = p;
+                }
+                if let Some(u) = meta.uid {
+                    *uid = u;
+                }
+                if let Some(g) = meta.gid {
+                    *gid = g;
                 }
                 Ok(())
             }
@@ -724,6 +799,8 @@ impl MockWriter {
             MockEntry::File {
                 content,
                 mode: 0o644,
+                uid: 1000,
+                gid: 1000,
             },
         );
     }
@@ -776,7 +853,14 @@ pub struct MockVfsBuilder {
 impl MockVfsBuilder {
     pub fn new() -> Self {
         let mut entries = BTreeMap::new();
-        entries.insert(PathBuf::from("/"), MockEntry::Directory { mode: 0o755 });
+        entries.insert(
+            PathBuf::from("/"),
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
         Self {
             entries,
             failures: Vec::new(),
@@ -793,15 +877,34 @@ impl MockVfsBuilder {
         self.ensure_parents(path.as_ref());
         self.entries.insert(
             path.as_ref().to_path_buf(),
-            MockEntry::Directory { mode: 0o755 },
+            MockEntry::Directory {
+                mode: 0o755,
+                uid: 1000,
+                gid: 1000,
+            },
         );
         self
     }
 
     pub fn dir_with_mode(mut self, path: impl AsRef<Path>, mode: u32) -> Self {
         self.ensure_parents(path.as_ref());
-        self.entries
-            .insert(path.as_ref().to_path_buf(), MockEntry::Directory { mode });
+        self.entries.insert(
+            path.as_ref().to_path_buf(),
+            MockEntry::Directory {
+                mode,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn dir_with_owner(mut self, path: impl AsRef<Path>, mode: u32, uid: u32, gid: u32) -> Self {
+        self.ensure_parents(path.as_ref());
+        self.entries.insert(
+            path.as_ref().to_path_buf(),
+            MockEntry::Directory { mode, uid, gid },
+        );
         self
     }
 
@@ -812,6 +915,8 @@ impl MockVfsBuilder {
             MockEntry::File {
                 content: content.to_vec(),
                 mode: 0o644,
+                uid: 1000,
+                gid: 1000,
             },
         );
         self
@@ -824,6 +929,29 @@ impl MockVfsBuilder {
             MockEntry::File {
                 content: content.to_vec(),
                 mode,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+        self
+    }
+
+    pub fn file_with_owner(
+        mut self,
+        path: impl AsRef<Path>,
+        content: &[u8],
+        mode: u32,
+        uid: u32,
+        gid: u32,
+    ) -> Self {
+        self.ensure_parents(path.as_ref());
+        self.entries.insert(
+            path.as_ref().to_path_buf(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode,
+                uid,
+                gid,
             },
         );
         self
@@ -851,8 +979,14 @@ impl MockVfsBuilder {
             if p == Path::new("/") || self.entries.contains_key(p) {
                 break;
             }
-            self.entries
-                .insert(p.to_path_buf(), MockEntry::Directory { mode: 0o755 });
+            self.entries.insert(
+                p.to_path_buf(),
+                MockEntry::Directory {
+                    mode: 0o755,
+                    uid: 1000,
+                    gid: 1000,
+                },
+            );
             current = p.parent();
         }
     }

@@ -83,9 +83,14 @@ pub enum OperationRequest {
     Delete {
         paths: Vec<VfsPath>,
     },
-    SetPermissions {
+    SetMetadata {
         paths: Vec<VfsPath>,
-        mode: u32,
+        /// Bits to force ON (applied as `old_mode | mode_set`)
+        mode_set: u32,
+        /// Bits to force OFF (applied as `old_mode & !mode_clear`)
+        mode_clear: u32,
+        uid: Option<u32>,
+        gid: Option<u32>,
         recursive: bool,
     },
     RunCommand {
@@ -609,16 +614,22 @@ pub async fn execute_operation(
             )
             .await
         }
-        OperationRequest::SetPermissions {
+        OperationRequest::SetMetadata {
             paths,
-            mode,
+            mode_set,
+            mode_clear,
+            uid,
+            gid,
             recursive,
         } => {
-            execute_set_permissions(
+            execute_set_metadata(
                 &mut reporter,
                 &context,
                 paths,
-                mode,
+                mode_set,
+                mode_clear,
+                uid,
+                gid,
                 recursive,
                 cancel.clone(),
             )
@@ -1610,18 +1621,25 @@ async fn collect_chmod_entries(
     Ok(entries)
 }
 
-async fn execute_set_permissions(
+#[allow(clippy::too_many_arguments)]
+async fn execute_set_metadata(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
     paths: Vec<VfsPath>,
-    mode: u32,
+    mode_set: u32,
+    mode_clear: u32,
+    uid: Option<u32>,
+    gid: Option<u32>,
     recursive: bool,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     debug!(
-        "execute_set_permissions: {} paths, mode={:o}, recursive={}",
+        "execute_set_metadata: {} paths, mode_set={:o}, mode_clear={:o}, uid={:?}, gid={:?}, recursive={}",
         paths.len(),
-        mode,
+        mode_set,
+        mode_clear,
+        uid,
+        gid,
         recursive
     );
 
@@ -1655,10 +1673,7 @@ async fn execute_set_permissions(
     let total_items = all_entries.len() as u64;
     reporter.send_prepared(0, total_items);
 
-    let meta = crate::vfs::VfsMetadata {
-        permissions: Some(mode),
-        ..Default::default()
-    };
+    let has_mode_changes = mode_set != 0 || mode_clear != 0;
 
     let mut items_done = 0u64;
 
@@ -1672,11 +1687,51 @@ async fn execute_set_permissions(
         let mut retry = true;
         while retry {
             retry = false;
+
+            // Compute the new permissions if mode bits are being changed
+            let new_permissions = if has_mode_changes {
+                match vfs.file_info(local_path).await {
+                    Ok(file_info) => {
+                        let old_mode = file_info.mode.map(|m| m.0).unwrap_or(0);
+                        Some((old_mode | mode_set) & !mode_clear)
+                    }
+                    Err(e) => {
+                        match reporter
+                            .handle_io_error(
+                                e,
+                                &format!("Error setting metadata on {}", display),
+                                None,
+                                &cancel,
+                                true,
+                            )
+                            .await?
+                        {
+                            IssueOutcome::Skip => {
+                                break;
+                            }
+                            IssueOutcome::Retry => {
+                                retry = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            } else {
+                None
+            };
+
+            let meta = crate::vfs::VfsMetadata {
+                permissions: new_permissions,
+                uid,
+                gid,
+                ..Default::default()
+            };
+
             if let Err(e) = vfs.set_metadata(local_path, &meta).await {
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Error setting permissions on {}", display),
+                        &format!("Error setting metadata on {}", display),
                         None,
                         &cancel,
                         true,

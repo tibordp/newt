@@ -310,9 +310,20 @@ pub enum ModalDataKind {
         is_dir: bool,
         is_symlink: bool,
         symlink_target: Option<String>,
-        mode: Option<u32>,
+        /// Whether the VFS supports metadata changes (chmod/chown)
+        can_set_metadata: bool,
+        /// Bits that are ON in all selected files
+        mode_set: u32,
+        /// Bits that are OFF in all selected files
+        mode_clear: u32,
+        /// Whether any file has a mode at all
+        has_mode: bool,
         owner: Option<UserGroup>,
         group: Option<UserGroup>,
+        /// Owner UID (resolved from name if needed)
+        owner_id: Option<u32>,
+        /// Group GID (resolved from name if needed)
+        group_id: Option<u32>,
         modified: Option<i128>,
         accessed: Option<i128>,
         created: Option<i128>,

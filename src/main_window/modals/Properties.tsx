@@ -12,9 +12,14 @@ type PropertiesProps = CommonDialogProps & {
   is_dir: boolean;
   is_symlink: boolean;
   symlink_target: string | null;
-  mode: number | null;
+  can_set_metadata: boolean;
+  mode_set: number;
+  mode_clear: number;
+  has_mode: boolean;
   owner: { name: string } | { id: number } | null;
   group: { name: string } | { id: number } | null;
+  owner_id: number | null;
+  group_id: number | null;
   modified: number | null;
   accessed: number | null;
   created: number | null;
@@ -22,10 +27,13 @@ type PropertiesProps = CommonDialogProps & {
 
 function formatUserGroup(
   ug: { name: string } | { id: number } | null,
+  id: number | null,
   isSingle: boolean,
 ): string {
   if (!ug) return isSingle ? "-" : "(mixed)";
-  if ("name" in ug) return ug.name;
+  if ("name" in ug) {
+    return id != null ? `${ug.name} (${id})` : ug.name;
+  }
   return String(ug.id);
 }
 
@@ -45,7 +53,6 @@ function formatSize(bytes: number | null): string {
 
 function formatTimestamp(ms: number | null): string {
   if (ms == null) return "-";
-  // Timestamps come as milliseconds since epoch from Rust's ToUnix trait
   return new Date(Number(ms)).toLocaleString();
 }
 
@@ -62,15 +69,70 @@ const SPECIAL_BITS = [
   { label: "Sticky", bit: 0o1000 },
 ];
 
-function PermissionEditor({
-  mode,
+// Tri-state: a bit can be "set", "clear", or "indeterminate" (mixed).
+// We track this with two masks: modeSet (bits forced ON) and modeClear (bits forced OFF).
+// A bit in neither mask is indeterminate.
+type TriState = "checked" | "unchecked" | "indeterminate";
+
+function getBitState(
+  modeSet: number,
+  modeClear: number,
+  bit: number,
+): TriState {
+  if (modeSet & bit) return "checked";
+  if (modeClear & bit) return "unchecked";
+  return "indeterminate";
+}
+
+function cycleBit(
+  modeSet: number,
+  modeClear: number,
+  bit: number,
+): [number, number] {
+  const state = getBitState(modeSet, modeClear, bit);
+  if (state === "checked") {
+    // checked → unchecked
+    return [modeSet & ~bit, modeClear | bit];
+  } else if (state === "unchecked") {
+    // unchecked → indeterminate (leave unchanged)
+    return [modeSet & ~bit, modeClear & ~bit];
+  } else {
+    // indeterminate → checked
+    return [modeSet | bit, modeClear & ~bit];
+  }
+}
+
+function TriStateCheckbox({
+  state,
   onChange,
 }: {
-  mode: number;
-  onChange: (m: number) => void;
+  state: TriState;
+  onChange: () => void;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={state === "checked"}
+      ref={(el) => {
+        if (el) el.indeterminate = state === "indeterminate";
+      }}
+      onChange={onChange}
+    />
+  );
+}
+
+function PermissionEditor({
+  modeSet,
+  modeClear,
+  onChange,
+}: {
+  modeSet: number;
+  modeClear: number;
+  onChange: (modeSet: number, modeClear: number) => void;
 }) {
   const toggle = (bit: number) => {
-    onChange(mode ^ bit);
+    const [s, c] = cycleBit(modeSet, modeClear, bit);
+    onChange(s, c);
   };
 
   return (
@@ -84,9 +146,8 @@ function PermissionEditor({
           <div className={styles.permLabel}>{label}</div>
           {bits.map((bit) => (
             <div key={bit} className={styles.permCell}>
-              <input
-                type="checkbox"
-                checked={(mode & bit) !== 0}
+              <TriStateCheckbox
+                state={getBitState(modeSet, modeClear, bit)}
                 onChange={() => toggle(bit)}
               />
             </div>
@@ -96,9 +157,8 @@ function PermissionEditor({
       <div className={styles.specialBits}>
         {SPECIAL_BITS.map(({ label, bit }) => (
           <label key={bit} className={styles.specialBitLabel}>
-            <input
-              type="checkbox"
-              checked={(mode & bit) !== 0}
+            <TriStateCheckbox
+              state={getBitState(modeSet, modeClear, bit)}
               onChange={() => toggle(bit)}
             />
             {label}
@@ -107,6 +167,56 @@ function PermissionEditor({
       </div>
     </div>
   );
+}
+
+// Owner/group editor: "leave unchanged" | enter name or numeric ID
+type OwnerEditState = {
+  enabled: boolean;
+  value: string;
+};
+
+function OwnerEditor({
+  label,
+  state,
+  onChange,
+}: {
+  label: string;
+  state: OwnerEditState;
+  onChange: (s: OwnerEditState) => void;
+}) {
+  return (
+    <div className={styles.ownerEditor}>
+      <label className={styles.ownerLabel}>
+        <input
+          type="checkbox"
+          checked={state.enabled}
+          onChange={(e) => onChange({ ...state, enabled: e.target.checked })}
+        />
+        {label}
+      </label>
+      {state.enabled && (
+        <input
+          type="text"
+          className={styles.ownerInput}
+          placeholder="name or numeric ID"
+          value={state.value}
+          autoComplete="off"
+          autoCorrect="off"
+          onChange={(e) => onChange({ ...state, value: e.target.value })}
+        />
+      )}
+    </div>
+  );
+}
+
+function parseOwnerId(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const num = Number(trimmed);
+  if (Number.isInteger(num) && num >= 0) return num;
+  // For now, only numeric IDs are supported for setting.
+  // Name resolution would require a Rust-side lookup.
+  return null;
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -125,32 +235,65 @@ export default function Properties({
   is_dir,
   is_symlink,
   symlink_target,
-  mode: initialMode,
+  can_set_metadata,
+  mode_set: initialModeSet,
+  mode_clear: initialModeClear,
+  has_mode,
   owner,
   group,
+  owner_id,
+  group_id,
   modified,
   accessed,
   created,
   cancel,
   context,
 }: PropertiesProps) {
-  const [mode, setMode] = useState(initialMode ?? 0);
+  const [modeSet, setModeSet] = useState(initialModeSet);
+  const [modeClear, setModeClear] = useState(initialModeClear);
   const [recursive, setRecursive] = useState(false);
+  const [ownerEdit, setOwnerEdit] = useState<OwnerEditState>({
+    enabled: false,
+    value: "",
+  });
+  const [groupEdit, setGroupEdit] = useState<OwnerEditState>({
+    enabled: false,
+    value: "",
+  });
   const isSingle = paths.length === 1;
-  const hasMode = initialMode != null;
   const hasDirs = is_dir || paths.length > 1;
 
-  const octalMode = useMemo(() => {
-    return "0" + mode.toString(8).padStart(4, "0");
-  }, [mode]);
+  const octalDisplay = useMemo(() => {
+    // Show definite bits; indeterminate bits shown as "?"
+    const chars = [];
+    for (const shift of [9, 6, 3, 0]) {
+      const mask = 0o7 << shift;
+      const set = (modeSet >> shift) & 0o7;
+      const clear = (modeClear >> shift) & 0o7;
+      if ((set | clear) === 0o7) {
+        // All bits determined
+        chars.push(set.toString(8));
+      } else {
+        chars.push("?");
+      }
+    }
+    return chars.join("");
+  }, [modeSet, modeClear]);
 
-  const isDirty = hasMode && mode !== initialMode;
+  const modeChanged =
+    modeSet !== initialModeSet || modeClear !== initialModeClear;
+  const ownerChanged = ownerEdit.enabled && ownerEdit.value.trim() !== "";
+  const groupChanged = groupEdit.enabled && groupEdit.value.trim() !== "";
+  const isDirty = modeChanged || ownerChanged || groupChanged;
 
   function onApply() {
-    safeCommand("set_permissions", {
+    safeCommand("set_metadata", {
       paneHandle: context?.pane_handle,
       paths,
-      mode,
+      modeSet,
+      modeClear,
+      uid: ownerChanged ? parseOwnerId(ownerEdit.value) : null,
+      gid: groupChanged ? parseOwnerId(groupEdit.value) : null,
       recursive,
     });
   }
@@ -161,14 +304,16 @@ export default function Properties({
       ? "Directory"
       : "File";
 
+  const canEdit = can_set_metadata && has_mode;
+
   return (
     <div>
       <div className={dialogStyles.dialogContents}>
         <Dialog.Title className={dialogStyles.dialogTitle}>
-          {isSingle ? "Properties" : `Properties — ${name}`}
+          {isSingle ? "Properties" : `Properties \u2014 ${name}`}
         </Dialog.Title>
 
-        <div className={hasMode ? styles.columns : undefined}>
+        <div className={canEdit ? styles.columns : undefined}>
           <div className={styles.infoSection}>
             <dl className={styles.infoList}>
               {isSingle && <InfoRow label="Name" value={name} />}
@@ -181,7 +326,7 @@ export default function Properties({
                       {symlink_target && (
                         <span className={styles.symlinkTarget}>
                           {" "}
-                          → {symlink_target}
+                          &rarr; {symlink_target}
                         </span>
                       )}
                     </>
@@ -192,13 +337,13 @@ export default function Properties({
               {(owner != null || !isSingle) && (
                 <InfoRow
                   label="Owner"
-                  value={formatUserGroup(owner, isSingle)}
+                  value={formatUserGroup(owner, owner_id, isSingle)}
                 />
               )}
               {(group != null || !isSingle) && (
                 <InfoRow
                   label="Group"
-                  value={formatUserGroup(group, isSingle)}
+                  value={formatUserGroup(group, group_id, isSingle)}
                 />
               )}
             </dl>
@@ -224,13 +369,33 @@ export default function Properties({
               )}
           </div>
 
-          {hasMode && (
+          {canEdit && (
             <div className={styles.permSection}>
               <div className={styles.permSectionHeader}>Permissions</div>
-              <PermissionEditor mode={mode} onChange={setMode} />
+              <PermissionEditor
+                modeSet={modeSet}
+                modeClear={modeClear}
+                onChange={(s, c) => {
+                  setModeSet(s);
+                  setModeClear(c);
+                }}
+              />
               <div className={styles.octalDisplay}>
-                <code>{octalMode}</code>
+                <code>{octalDisplay}</code>
               </div>
+
+              <div className={styles.permSectionHeader}>Ownership</div>
+              <OwnerEditor
+                label="Set owner"
+                state={ownerEdit}
+                onChange={setOwnerEdit}
+              />
+              <OwnerEditor
+                label="Set group"
+                state={groupEdit}
+                onChange={setGroupEdit}
+              />
+
               {hasDirs && (
                 <label className={styles.recursiveLabel}>
                   <input
@@ -247,9 +412,9 @@ export default function Properties({
       </div>
       <div className={dialogStyles.dialogButtons}>
         <button type="button" onClick={cancel}>
-          {hasMode ? "Cancel" : "Close"}
+          {canEdit ? "Cancel" : "Close"}
         </button>
-        {hasMode && (
+        {canEdit && (
           <button
             type="button"
             className="suggested"

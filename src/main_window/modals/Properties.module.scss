@@ -8,13 +8,14 @@
 
 .infoSection {
   flex: 1;
-  min-width: 0;
+  min-width: 200px;
 }
 
 .permSection {
   flex-shrink: 0;
   border-left: 1px solid var(--color-border);
   padding-left: var(--space-7);
+  min-width: 220px;
 }
 
 // -- Info list (dl) --
@@ -23,7 +24,7 @@
   margin: 0 0 var(--space-5);
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: var(--space-1) var(--space-5);
+  gap: var(--space-2) var(--space-5);
 }
 
 .infoRow {
@@ -34,6 +35,7 @@
     white-space: nowrap;
     text-align: right;
     padding: var(--space-1) 0;
+    font-size: 0.9em;
   }
 
   dd {
@@ -45,27 +47,38 @@
 
 .symlinkTarget {
   color: var(--color-fg-muted);
+  font-style: italic;
 }
 
 // -- Permissions --
 
 .permSectionHeader {
-  font-weight: bold;
-  margin-bottom: var(--space-4);
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+
+  &:not(:first-child) {
+    margin-top: var(--space-5);
+  }
 }
 
 .permGrid {
   display: grid;
   grid-template-columns: auto 1fr 1fr 1fr;
-  gap: var(--space-2) var(--space-5);
+  gap: var(--space-2) var(--space-4);
   align-items: center;
   margin-bottom: var(--space-4);
 }
 
 .permHeader {
   text-align: center;
-  font-weight: bold;
-  font-size: 0.9em;
+  font-weight: 600;
+  font-size: 0.85em;
   color: var(--color-fg-muted);
 }
 
@@ -75,7 +88,6 @@
 
 .permLabel {
   text-align: right;
-  color: var(--color-fg-muted);
   font-size: 0.9em;
 }
 
@@ -87,7 +99,9 @@
   grid-column: 1 / -1;
   display: flex;
   gap: var(--space-5);
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
 }
 
 .specialBitLabel {
@@ -96,22 +110,57 @@
   gap: var(--space-2);
   font-size: 0.9em;
   color: var(--color-fg-muted);
+  cursor: pointer;
 }
 
 .octalDisplay {
   margin-bottom: var(--space-4);
+  text-align: center;
 
   code {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    padding: var(--space-1) var(--space-3);
+    padding: var(--space-1) var(--space-4);
     font-size: 1.1em;
+    letter-spacing: 0.1em;
   }
 }
+
+// -- Ownership --
+
+.ownerEditor {
+  margin-bottom: var(--space-3);
+}
+
+.ownerLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.ownerInput {
+  display: block;
+  margin-top: var(--space-2);
+  margin-left: calc(
+    var(--space-2) + 13px
+  ); // align with label text past checkbox
+  width: calc(100% - var(--space-2) - 13px);
+  box-sizing: border-box;
+  font-size: 0.9em;
+}
+
+// -- Footer controls --
 
 .recursiveLabel {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.9em;
+  cursor: pointer;
 }
