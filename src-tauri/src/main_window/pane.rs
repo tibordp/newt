@@ -775,6 +775,9 @@ impl PaneViewState {
     fn recompute_stats(&mut self) {
         let mut stats = PaneStats::default();
         for f in &self.files {
+            if f.name == ".." {
+                continue;
+            }
             if f.is_dir {
                 stats.dir_count += 1;
             } else {
