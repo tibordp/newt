@@ -12,11 +12,13 @@ use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
 
-use super::super::{Breadcrumb, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath};
+use super::super::{
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+};
 use super::{
     DirectoryTree, SNAPSHOT_INTERVAL, archive_breadcrumbs, archive_format_path,
     archive_mount_label, archive_try_parse_display_path, build_directory_tree_from_iluvatar,
-    detect_compression_from_name, index_get, index_path_str, mtime_to_i128, normalize_dir_path,
+    detect_compression_from_name, index_get, index_path_str, mtime_to_i64, normalize_dir_path,
     not_found,
 };
 
@@ -104,7 +106,7 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
         archive_breadcrumbs(path, mount_meta)
     }
-    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         archive_try_parse_display_path(input, mount_meta)
     }
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
@@ -595,7 +597,7 @@ impl Vfs for TarArchiveVfs {
             user: Some(UserGroup::Id(entry.uid as u32)),
             group: Some(UserGroup::Id(entry.gid as u32)),
             mode: Some(Mode(entry.mode)),
-            modified: mtime_to_i128(entry.mtime),
+            modified: mtime_to_i64(entry.mtime),
             accessed: None,
             created: None,
         })

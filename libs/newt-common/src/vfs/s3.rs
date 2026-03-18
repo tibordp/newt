@@ -11,7 +11,8 @@ use crate::filesystem::{File, FsStats};
 use crate::{Error, ToUnix};
 
 use super::{
-    Breadcrumb, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor,
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier,
+    VfsDescriptor,
 };
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -31,7 +32,7 @@ impl VfsDescriptor for S3VfsDescriptor {
         "S3"
     }
     fn auto_mount_request(&self) -> Option<super::MountRequest> {
-        Some(super::MountRequest::S3 { region: None })
+        None
     }
     fn can_watch(&self) -> bool {
         true
@@ -91,25 +92,46 @@ impl VfsDescriptor for S3VfsDescriptor {
         false
     }
 
-    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
         let s = path.to_string_lossy();
         let s = s.trim_start_matches('/');
-        if s.is_empty() {
-            "s3://".to_string()
+        if bucket_prefix.is_empty() {
+            // Unscoped: path includes bucket name
+            if s.is_empty() {
+                "s3://".to_string()
+            } else {
+                format!("s3://{}", s)
+            }
         } else {
-            format!("s3://{}", s)
+            // Scoped: prepend bucket to path
+            if s.is_empty() {
+                format!("s3://{}/", bucket_prefix)
+            } else {
+                format!("s3://{}/{}", bucket_prefix, s)
+            }
         }
     }
 
-    fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
         let mut crumbs = Vec::new();
         let s = path.to_string_lossy();
         let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
 
-        crumbs.push(Breadcrumb {
-            label: "s3://".to_string(),
-            nav_path: "/".to_string(),
-        });
+        if bucket_prefix.is_empty() {
+            // Unscoped: first segment is the bucket
+            crumbs.push(Breadcrumb {
+                label: "s3://".to_string(),
+                nav_path: "/".to_string(),
+            });
+        } else {
+            // Scoped: root breadcrumb shows s3://bucket/
+            crumbs.push(Breadcrumb {
+                label: format!("s3://{}/", bucket_prefix),
+                nav_path: "/".to_string(),
+            });
+        }
 
         let mut accumulated = String::new();
         for (i, seg) in segments.iter().enumerate() {
@@ -129,12 +151,38 @@ impl VfsDescriptor for S3VfsDescriptor {
         crumbs
     }
 
-    fn try_parse_display_path(&self, input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
-        let rest = input.strip_prefix("s3://")?;
-        if rest.is_empty() {
-            Some(PathBuf::from("/"))
+    fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
+        let s = String::from_utf8_lossy(mount_meta);
+        if s.is_empty() {
+            None
         } else {
-            Some(PathBuf::from(format!("/{}", rest)))
+            Some(s.into_owned())
+        }
+    }
+
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        let rest = input.strip_prefix("s3://")?;
+        let bucket_prefix = String::from_utf8_lossy(mount_meta);
+
+        if bucket_prefix.is_empty() {
+            // Unscoped: any s3:// path matches generically
+            let path = if rest.is_empty() {
+                PathBuf::from("/")
+            } else {
+                PathBuf::from(format!("/{}", rest))
+            };
+            Some(DisplayPathMatch::generic(path))
+        } else {
+            // Scoped: only match if the bucket prefix matches
+            let after_bucket = rest
+                .strip_prefix(bucket_prefix.as_ref())
+                .and_then(|s| s.strip_prefix('/').or(Some(s)))?;
+            let path = if after_bucket.is_empty() {
+                PathBuf::from("/")
+            } else {
+                PathBuf::from(format!("/{}", after_bucket))
+            };
+            Some(DisplayPathMatch::exact(path))
         }
     }
 }
@@ -155,17 +203,24 @@ pub struct S3Vfs {
     region_clients: Mutex<HashMap<String, aws_sdk_s3::Client>>,
     /// Cached bucket → region mapping.
     bucket_regions: Mutex<HashMap<String, String>>,
+    /// When set, the VFS is scoped to this bucket (root = bucket contents).
+    scoped_bucket: Option<String>,
     /// Change notifier for self-notification on mutations.
     notifier: VfsChangeNotifier,
 }
 
 impl S3Vfs {
-    pub fn new(default_client: aws_sdk_s3::Client, sdk_config: aws_config::SdkConfig) -> Self {
+    pub fn new(
+        default_client: aws_sdk_s3::Client,
+        sdk_config: aws_config::SdkConfig,
+        scoped_bucket: Option<String>,
+    ) -> Self {
         Self {
             default_client,
             sdk_config: aws_sdk_s3::config::Builder::from(&sdk_config),
             region_clients: Mutex::new(HashMap::new()),
             bucket_regions: Mutex::new(HashMap::new()),
+            scoped_bucket,
             notifier: VfsChangeNotifier::new(),
         }
     }
@@ -229,9 +284,22 @@ impl S3Vfs {
     /// `/` → (None, None) — list buckets
     /// `/my-bucket` → (Some("my-bucket"), None) — list bucket root
     /// `/my-bucket/some/prefix/` → (Some("my-bucket"), Some("some/prefix/"))
-    fn parse_path(path: &Path) -> (Option<String>, Option<String>) {
+    ///
+    /// When scoped to a bucket, the bucket is prepended to the path:
+    /// `/` → (Some("scoped-bucket"), None)
+    /// `/some/prefix/` → (Some("scoped-bucket"), Some("some/prefix/"))
+    fn parse_path(&self, path: &Path) -> (Option<String>, Option<String>) {
         let s = path.to_string_lossy();
         let s = s.trim_start_matches('/');
+
+        // When scoped to a bucket, treat the entire path as a prefix within it
+        if let Some(ref bucket) = self.scoped_bucket {
+            if s.is_empty() {
+                return (Some(bucket.clone()), None);
+            }
+            return (Some(bucket.clone()), Some(s.to_string()));
+        }
+
         if s.is_empty() {
             return (None, None);
         }
@@ -316,22 +384,24 @@ impl S3Vfs {
 
         let mut files = Vec::new();
 
-        // ".." entry
-        let dotdot = File {
-            name: "..".to_string(),
-            size: None,
-            is_dir: true,
-            is_hidden: false,
-            is_symlink: false,
-            symlink_target: None,
-            user: None,
-            group: None,
-            mode: None,
-            modified: None,
-            accessed: None,
-            created: None,
-        };
-        files.push(dotdot);
+        // ".." entry — skip at the root of a scoped bucket (nowhere to go up to)
+        let at_scoped_root = self.scoped_bucket.is_some() && prefix.is_none();
+        if !at_scoped_root {
+            files.push(File {
+                name: "..".to_string(),
+                size: None,
+                is_dir: true,
+                is_hidden: false,
+                is_symlink: false,
+                symlink_target: None,
+                user: None,
+                group: None,
+                mode: None,
+                modified: None,
+                accessed: None,
+                created: None,
+            });
+        }
 
         debug!("s3: list_objects bucket={} prefix={:?}", bucket, prefix);
 
@@ -445,12 +515,20 @@ impl Vfs for S3Vfs {
         &S3_VFS_DESCRIPTOR
     }
 
+    fn mount_meta(&self) -> Vec<u8> {
+        self.scoped_bucket
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes()
+            .to_vec()
+    }
+
     async fn list_files(
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         match bucket {
             None => self.list_buckets(batch_tx).await,
             Some(bucket) => {
@@ -470,7 +548,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -514,7 +592,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -559,7 +637,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -602,7 +680,7 @@ impl Vfs for S3Vfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -619,7 +697,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -658,7 +736,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or(Error::not_supported())?;
 
@@ -678,7 +756,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or(Error::not_supported())?;
 
@@ -705,11 +783,11 @@ impl Vfs for S3Vfs {
     }
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let (src_bucket, src_key) = Self::parse_path(from);
+        let (src_bucket, src_key) = self.parse_path(from);
         let src_bucket = src_bucket.ok_or(Error::not_supported())?;
         let src_key = src_key.ok_or_else(|| Error::custom("no source key"))?;
 
-        let (dst_bucket, dst_key) = Self::parse_path(to);
+        let (dst_bucket, dst_key) = self.parse_path(to);
         let dst_bucket = dst_bucket.ok_or(Error::not_supported())?;
         let dst_key = dst_key.ok_or_else(|| Error::custom("no destination key"))?;
 
@@ -734,7 +812,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
@@ -774,7 +852,7 @@ impl Vfs for S3Vfs {
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
-        let (bucket, prefix) = Self::parse_path(path);
+        let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;

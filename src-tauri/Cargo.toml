@@ -49,6 +49,7 @@ nix = { version = "0.31", features = ["fs", "hostname"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 arc-swap = "1.8.2"
+keyring = { version = "3", features = ["apple-native", "linux-native"] }
 minijinja = "2"
 flate2 = "1.1.9"
 tempfile = "3.27.0"

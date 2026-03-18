@@ -274,28 +274,35 @@ function Editor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayPath]);
 
+  const closeEditor = useCallback(async () => {
+    if (dirtyRef.current) {
+      const ok = await confirm(
+        "You have unsaved changes. Close without saving?",
+        { title: "Unsaved Changes", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    safeCommand("destroy_window");
+  }, []);
+
   // Intercept window close when dirty
   useEffect(() => {
     const currentWindow = getCurrentWebviewWindow();
     const unlisten = currentWindow.onCloseRequested(async (event) => {
       if (!dirtyRef.current) return;
       event.preventDefault();
-      const ok = await confirm(
-        "You have unsaved changes. Close without saving?",
-        { title: "Unsaved Changes", kind: "warning" },
-      );
-      if (ok) {
-        safeCommand("destroy_window");
-      }
+      closeEditor();
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [closeEditor]);
 
-  // Listen for menu action events (save)
+  // Refs for Monaco actions (need stable references)
   const saveRef = useRef(save);
   saveRef.current = save;
+  const closeRef = useRef(closeEditor);
+  closeRef.current = closeEditor;
   useEffect(() => {
     const currentWindow = getCurrentWebviewWindow();
     const unlisten = currentWindow.listen<string>("editor-action", (event) => {
@@ -308,38 +315,45 @@ function Editor() {
     };
   }, []);
 
-  const handleEditorMount: OnMount = useCallback(
-    (editor, monaco) => {
-      editorRef.current = editor;
-      monacoRef.current = monaco;
+  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
 
-      // Track cursor position
-      editor.onDidChangeCursorPosition((e) => {
-        setCursorPosition({
-          line: e.position.lineNumber,
-          column: e.position.column,
-        });
+    // Track cursor position
+    editor.onDidChangeCursorPosition((e) => {
+      setCursorPosition({
+        line: e.position.lineNumber,
+        column: e.position.column,
       });
+    });
 
-      // Track dirty state (suppressed during programmatic setValue)
-      editor.onDidChangeModelContent(() => {
-        if (!dirtyRef.current && !suppressDirtyRef.current) {
-          setDirty(true);
-        }
-      });
+    // Track dirty state (suppressed during programmatic setValue)
+    editor.onDidChangeModelContent(() => {
+      if (!dirtyRef.current && !suppressDirtyRef.current) {
+        setDirty(true);
+      }
+    });
 
-      // Ctrl+S / Cmd+S to save
-      editor.addAction({
-        id: "editor-save",
-        label: "Save",
-        keybindings: [2048 | 49], // KeyMod.CtrlCmd | KeyCode.KeyS
-        run: () => {
-          save();
-        },
-      });
-    },
-    [save],
-  );
+    // Ctrl+S / Cmd+S to save
+    editor.addAction({
+      id: "editor-save",
+      label: "Save",
+      keybindings: [2048 | 49], // KeyMod.CtrlCmd | KeyCode.KeyS
+      run: () => {
+        saveRef.current();
+      },
+    });
+
+    // Escape to close (prompts if dirty)
+    editor.addAction({
+      id: "editor-close",
+      label: "Close",
+      keybindings: [9], // KeyCode.Escape
+      run: () => {
+        closeRef.current();
+      },
+    });
+  }, []);
 
   if (error) {
     return (

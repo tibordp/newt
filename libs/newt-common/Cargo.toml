@@ -29,6 +29,7 @@ zip = { version = "2", features = ["time"] }
 time = "0.3"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
+aws-sdk-sts = "1"
 mimetype-detector = "0"
 mime_guess = "2"
 dirs = "6"

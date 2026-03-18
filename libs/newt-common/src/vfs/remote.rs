@@ -9,8 +9,8 @@ use crate::filesystem::File;
 use crate::rpc::Communicator;
 
 use super::{
-    Breadcrumb, LOCAL_VFS_DESCRIPTOR, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata,
-    VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, LOCAL_VFS_DESCRIPTOR, RegisteredDescriptor, Vfs, VfsDescriptor,
+    VfsMetadata, VfsSpaceInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         LOCAL_VFS_DESCRIPTOR.breadcrumbs(path, mount_meta)
     }
 
-    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         None
     }
 }

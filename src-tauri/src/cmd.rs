@@ -1163,6 +1163,15 @@ pub fn dialog(
                 "mount_sftp" => ModalDataKind::MountSftp {
                     host: String::new(),
                 },
+                "mount_s3" => ModalDataKind::MountS3,
+                "quick_connect" => {
+                    let app_handle = ctx.window().app_handle().clone();
+                    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+                    let config_dir = global_ctx.preferences().config_dir().to_path_buf();
+                    ModalDataKind::QuickConnect {
+                        connections: crate::connections::list_connections(&config_dir),
+                    }
+                }
                 "select_vfs" => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
@@ -1660,18 +1669,9 @@ pub async fn start_copy_move(
     ctx: MainWindowContext,
     kind: String,
     sources: Vec<VfsPath>,
-    initial_destination: VfsPath,
-    destination_input: String,
+    destination: VfsPath,
     options: CopyOptions,
 ) -> Result<OperationId, Error> {
-    // Resolve the user-typed destination string
-    let destination = if let Some(vfs_path) = ctx.resolve_display_path(&destination_input) {
-        vfs_path
-    } else {
-        // No VFS claimed it — treat as a path within the same VFS as the initial destination
-        VfsPath::new(initial_destination.vfs_id, destination_input)
-    };
-
     let request = match kind.as_str() {
         "copy" => OperationRequest::Copy {
             sources,
@@ -1695,8 +1695,20 @@ pub async fn start_copy_move(
 }
 
 #[tauri::command]
-pub async fn cmd_mount_s3(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let response = ctx.mount_vfs(MountRequest::S3 { region: None }).await?;
+pub async fn mount_s3(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    region: Option<String>,
+    bucket: Option<String>,
+    credentials: newt_common::vfs::S3Credentials,
+) -> Result<(), Error> {
+    let response = ctx
+        .mount_vfs(MountRequest::S3 {
+            region,
+            bucket,
+            credentials,
+        })
+        .await?;
     let vfs_path = VfsPath::new(response.vfs_id, "/");
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
@@ -2157,6 +2169,8 @@ cmd_dialog!(cmd_copy, "copy");
 cmd_dialog!(cmd_move, "move");
 cmd_dialog!(cmd_connect_remote, "connect_remote");
 cmd_dialog!(cmd_select_vfs, "select_vfs");
+cmd_dialog!(cmd_quick_connect, "quick_connect");
+cmd_dialog!(cmd_mount_s3, "mount_s3");
 cmd_dialog!(cmd_mount_sftp, "mount_sftp");
 cmd_dialog!(cmd_command_palette, "command_palette");
 cmd_dialog!(cmd_user_commands, "user_commands");
@@ -2307,7 +2321,9 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_next_terminal,
         cmd_prev_terminal,
         cmd_open_elevated,
+        cmd_quick_connect,
         cmd_mount_s3,
+        mount_s3,
         cmd_mount_sftp,
         cmd_unmount_vfs,
         mount_sftp,
@@ -2318,6 +2334,16 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_delete_selected,
         cmd_debug,
         cmd_connection_log,
+        // Keychain
+        crate::keychain::keychain_get,
+        crate::keychain::keychain_set,
+        crate::keychain::keychain_delete,
+        // Connections
+        crate::connections::cmd_list_connections,
+        crate::connections::cmd_save_connection,
+        crate::connections::cmd_delete_connection,
+        crate::connections::cmd_get_connection_secret,
+        crate::connections::connect_profile,
     ]);
 
     // Middleware: close the current modal before any cmd_* command runs.

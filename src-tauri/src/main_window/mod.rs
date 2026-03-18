@@ -324,9 +324,9 @@ pub enum ModalDataKind {
         owner_id: Option<u32>,
         /// Group GID (resolved from name if needed)
         group_id: Option<u32>,
-        modified: Option<i128>,
-        accessed: Option<i128>,
-        created: Option<i128>,
+        modified: Option<i64>,
+        accessed: Option<i64>,
+        created: Option<i64>,
     },
     Navigate {
         path: VfsPath,
@@ -348,6 +348,10 @@ pub enum ModalDataKind {
     },
     MountSftp {
         host: String,
+    },
+    MountS3,
+    QuickConnect {
+        connections: Vec<crate::connections::ConnectionProfile>,
     },
     SelectVfs {
         targets: Vec<VfsTarget>,
@@ -996,6 +1000,7 @@ impl MainWindowContext {
         /// Maps VFS type_name → dialog name for types that need user input to mount.
         fn mount_dialog_for(type_name: &str) -> Option<&'static str> {
             match type_name {
+                "s3" => Some("mount_s3"),
                 "sftp" => Some("mount_sftp"),
                 _ => None,
             }
@@ -1080,15 +1085,19 @@ impl MainWindowContext {
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
         self.with_session(|s| {
-            for (vfs_id, info) in s.mounted_vfs.read().iter() {
-                if let Some(internal_path) = info
-                    .descriptor
-                    .try_parse_display_path(input, &info.mount_meta)
-                {
-                    return Some(VfsPath::new(*vfs_id, internal_path));
-                }
-            }
-            None
+            let mut matches: Vec<_> = s
+                .mounted_vfs
+                .read()
+                .iter()
+                .filter_map(|(vfs_id, info)| {
+                    let m = info
+                        .descriptor
+                        .try_parse_display_path(input, &info.mount_meta)?;
+                    Some((m.priority, VfsPath::new(*vfs_id, m.path)))
+                })
+                .collect();
+            matches.sort_by_key(|(priority, _)| *priority);
+            matches.into_iter().next().map(|(_, path)| path)
         })
         .ok()
         .flatten()

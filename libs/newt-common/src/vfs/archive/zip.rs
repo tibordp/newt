@@ -10,10 +10,12 @@ use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode};
 
-use super::super::{Breadcrumb, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath};
+use super::super::{
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+};
 use super::{
     DirectoryTree, RangeReadAdapter, archive_breadcrumbs, archive_format_path, archive_mount_label,
-    archive_try_parse_display_path, ensure_ancestors, mtime_to_i128, normalize_dir_path, not_found,
+    archive_try_parse_display_path, ensure_ancestors, mtime_to_i64, normalize_dir_path, not_found,
 };
 
 // ---------------------------------------------------------------------------
@@ -100,7 +102,7 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
         archive_breadcrumbs(path, mount_meta)
     }
-    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         archive_try_parse_display_path(input, mount_meta)
     }
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
@@ -286,7 +288,7 @@ fn build_zip_index(
             user: None,
             group: None,
             mode: unix_mode.map(Mode),
-            modified: mtime.and_then(mtime_to_i128),
+            modified: mtime.and_then(mtime_to_i64),
             accessed: None,
             created: None,
         };
@@ -384,7 +386,7 @@ impl Vfs for ZipArchiveVfs {
             user: None,
             group: None,
             mode: entry.mode.map(Mode),
-            modified: entry.mtime.and_then(mtime_to_i128),
+            modified: entry.mtime.and_then(mtime_to_i64),
             accessed: None,
             created: None,
         })

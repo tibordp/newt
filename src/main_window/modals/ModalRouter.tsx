@@ -6,6 +6,7 @@ import { PreferencesState } from "../../lib/preferences";
 import CommandPaletteContent from "./CommandPalette";
 import ConnectionLogContent from "./ConnectionLogDialog";
 import HotPathsContent from "./HotPaths";
+import QuickConnectContent from "./QuickConnect";
 import SettingsEditorContent from "./SettingsEditor";
 import { ModalContent } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
@@ -39,6 +40,13 @@ export default function ModalRouter({
         );
       case "hot_paths":
         return <HotPathsContent state={state} />;
+      case "quick_connect":
+        return (
+          <QuickConnectContent
+            connections={state?.modal?.data?.connections ?? []}
+            state={state}
+          />
+        );
       case "settings":
         return <SettingsEditorContent preferences={preferences} />;
       case "connection_log":

@@ -23,9 +23,9 @@ pub struct FileDetails {
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
-    pub modified: Option<i128>,
-    pub accessed: Option<i128>,
-    pub created: Option<i128>,
+    pub modified: Option<i64>,
+    pub accessed: Option<i64>,
+    pub created: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

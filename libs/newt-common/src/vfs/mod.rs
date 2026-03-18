@@ -132,6 +132,40 @@ pub struct Breadcrumb {
 // VfsDescriptor — type-level metadata for a VFS implementation
 // ---------------------------------------------------------------------------
 
+/// Result of `try_parse_display_path`. Lower priority values are preferred.
+/// Within the same priority, mount order (first mounted wins) is used as
+/// a tiebreaker via stable sort.
+pub struct DisplayPathMatch {
+    pub path: PathBuf,
+    pub priority: DisplayPathPriority,
+}
+
+/// Priority for display path resolution. Variants are ordered from
+/// highest priority (most specific) to lowest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DisplayPathPriority {
+    /// Exact scoped match (e.g., S3 mount for a specific bucket).
+    Exact = 0,
+    /// Generic prefix match (e.g., unscoped S3 mount matching any s3:// path).
+    Generic = 1,
+}
+
+impl DisplayPathMatch {
+    pub fn exact(path: PathBuf) -> Self {
+        Self {
+            path,
+            priority: DisplayPathPriority::Exact,
+        }
+    }
+
+    pub fn generic(path: PathBuf) -> Self {
+        Self {
+            path,
+            priority: DisplayPathPriority::Generic,
+        }
+    }
+}
+
 pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn type_name(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
@@ -188,7 +222,9 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     /// Try to parse a user-entered display path. Returns the VFS-internal path
     /// if this VFS recognizes the input (e.g., S3 recognizes "s3://...").
     /// Returns None if this VFS doesn't claim the input.
-    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<PathBuf>;
+    /// Returns `Exact` for scoped matches (e.g., S3 mount scoped to a specific
+    /// bucket), `Generic` for prefix matches (e.g., unscoped S3 mount).
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch>;
 
     /// Human-readable label for a mounted instance, derived from mount_meta.
     /// E.g. for SFTP this returns the hostname. Shown in the VFS selector
@@ -688,11 +724,42 @@ impl FileReader for VfsRegistryFileReader {
 // Mount/unmount RPC types
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct S3Credentials {
+    /// AWS access key ID (IAM user or assumed role).
+    pub access_key_id: Option<String>,
+    /// AWS secret access key.
+    pub secret_access_key: Option<String>,
+    /// AWS session token (for temporary credentials / AssumeRole).
+    pub session_token: Option<String>,
+    /// AWS profile name (from ~/.aws/config). Overrides default profile.
+    pub profile: Option<String>,
+    /// Custom endpoint URL (for S3-compatible services like MinIO, R2, etc.)
+    pub endpoint_url: Option<String>,
+    /// IAM role ARN to assume. When set, uses STS AssumeRole with the
+    /// ambient or explicit credentials, then mounts with the resulting
+    /// temporary credentials.
+    pub role_arn: Option<String>,
+    /// External ID for AssumeRole (optional, for cross-account access).
+    pub external_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MountRequest {
-    S3 { region: Option<String> },
-    Sftp { host: String },
-    Archive { origin: VfsPath },
+    S3 {
+        region: Option<String>,
+        /// When set, the VFS is scoped to this bucket (root = bucket contents).
+        /// When None, root lists all buckets.
+        bucket: Option<String>,
+        #[serde(default)]
+        credentials: S3Credentials,
+    },
+    Sftp {
+        host: String,
+    },
+    Archive {
+        origin: VfsPath,
+    },
     Remote,
 }
 

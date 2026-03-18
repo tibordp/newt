@@ -11,8 +11,8 @@ use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
 use super::{
-    Breadcrumb, MountRequest, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier,
-    VfsDescriptor, VfsMetadata,
+    Breadcrumb, DisplayPathMatch, MountRequest, RegisteredDescriptor, Vfs, VfsAsyncWriter,
+    VfsChangeNotifier, VfsDescriptor, VfsMetadata,
 };
 
 // ---------------------------------------------------------------------------
@@ -125,17 +125,18 @@ impl VfsDescriptor for SftpVfsDescriptor {
         crumbs
     }
 
-    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         let rest = input.strip_prefix("sftp://")?;
         let host = String::from_utf8_lossy(mount_meta);
         let after_host = rest.strip_prefix(host.as_ref())?;
-        if after_host.is_empty() || after_host == "/" {
-            Some(PathBuf::from("/"))
+        let path = if after_host.is_empty() || after_host == "/" {
+            PathBuf::from("/")
         } else if after_host.starts_with('/') {
-            Some(PathBuf::from(after_host))
+            PathBuf::from(after_host)
         } else {
-            None
-        }
+            return None;
+        };
+        Some(DisplayPathMatch::exact(path))
     }
 
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {

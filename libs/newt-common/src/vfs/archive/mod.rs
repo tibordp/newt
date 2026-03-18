@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::filesystem::{File, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
-use super::Breadcrumb;
+use super::{Breadcrumb, DisplayPathMatch};
 
 mod tar;
 mod zip;
@@ -138,18 +138,19 @@ fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
     crumbs
 }
 
-fn archive_try_parse_display_path(input: &str, mount_meta: &[u8]) -> Option<PathBuf> {
+fn archive_try_parse_display_path(input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
     let origin_display = String::from_utf8_lossy(mount_meta);
     if input == origin_display.as_ref() {
-        return Some(PathBuf::from("/"));
+        return Some(DisplayPathMatch::exact(PathBuf::from("/")));
     }
     let rest = input.strip_prefix(origin_display.as_ref())?;
     let rest = rest.strip_prefix('/')?;
-    if rest.is_empty() {
-        Some(PathBuf::from("/"))
+    let path = if rest.is_empty() {
+        PathBuf::from("/")
     } else {
-        Some(PathBuf::from(format!("/{}", rest)))
-    }
+        PathBuf::from(format!("/{}", rest))
+    };
+    Some(DisplayPathMatch::exact(path))
 }
 
 fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
@@ -260,8 +261,8 @@ fn index_path_str(index: &iluvatar::ArchiveIndex, normalized: &str) -> Option<St
     }
 }
 
-fn mtime_to_i128(mtime: u64) -> Option<i128> {
-    Some((mtime as i128) * 1_000)
+fn mtime_to_i64(mtime: u64) -> Option<i64> {
+    i64::try_from(mtime).ok().map(|t| t.saturating_mul(1_000))
 }
 
 fn ensure_ancestors(
@@ -405,7 +406,7 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
             user: Some(UserGroup::Id(entry.uid as u32)),
             group: Some(UserGroup::Id(entry.gid as u32)),
             mode: Some(Mode(entry.mode)),
-            modified: mtime_to_i128(entry.mtime),
+            modified: mtime_to_i64(entry.mtime),
             accessed: None,
             created: None,
         };

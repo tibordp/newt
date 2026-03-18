@@ -19,7 +19,7 @@ struct FileTemplateObject {
     stem: String,
     is_dir: bool,
     size: Option<u64>,
-    modified: Option<i128>,
+    modified: Option<i64>,
 }
 
 impl std::fmt::Display for FileTemplateObject {

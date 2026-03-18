@@ -17,12 +17,11 @@ type CopyMoveProps = CommonDialogProps & {
 export default function CopyMove({
   kind,
   sources,
-  destination: initialDestination,
+  destination,
   display_destination,
   summary: itemSummary,
   cancel,
 }: CopyMoveProps) {
-  const [destinationPath, setDestinationPath] = useState(display_destination);
   const [preserveTimestamps, setPreserveTimestamps] = useState(false);
   const [preserveOwner, setPreserveOwner] = useState(false);
   const [preserveGroup, setPreserveGroup] = useState(false);
@@ -38,8 +37,7 @@ export default function CopyMove({
     safeCommand("start_copy_move", {
       kind,
       sources,
-      initialDestination,
-      destinationInput: destinationPath,
+      destination,
       options: {
         preserve_timestamps: preserveTimestamps,
         preserve_owner: preserveOwner,
@@ -58,13 +56,7 @@ export default function CopyMove({
         <p className={dialogStyles.dialogSummary}>
           {title} <b>{itemSummary}</b> to:
         </p>
-        <input
-          type="text"
-          value={destinationPath}
-          onChange={(e) => setDestinationPath(e.target.value)}
-          size={50}
-          autoFocus
-        />
+        <input type="text" value={display_destination} readOnly size={50} />
         <div className={styles.copyOptions}>
           {isCopy && isSingleFile && (
             <label className={styles.optionLabel}>
@@ -109,7 +101,7 @@ export default function CopyMove({
         <button type="button" onClick={cancel}>
           Cancel
         </button>
-        <button type="submit" className="suggested" disabled={!destinationPath}>
+        <button type="submit" className="suggested">
           {title}
         </button>
       </div>

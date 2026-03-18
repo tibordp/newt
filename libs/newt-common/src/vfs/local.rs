@@ -14,9 +14,10 @@ use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode};
 use crate::{Error, ToUnix};
 
-use std::path::PathBuf;
-
-use super::{Breadcrumb, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata, VfsSpaceInfo};
+use super::{
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata,
+    VfsSpaceInfo,
+};
 
 // ---------------------------------------------------------------------------
 // LocalVfsDescriptor
@@ -122,7 +123,7 @@ impl VfsDescriptor for LocalVfsDescriptor {
         crumbs
     }
 
-    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         None
     }
 }
