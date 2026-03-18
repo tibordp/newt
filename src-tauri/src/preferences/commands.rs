@@ -247,13 +247,13 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: false,
         },
         CommandDef {
-            id: "reload_window".into(),
-            name: "Reload Window".into(),
-            short_name: Some("Reload".into()),
+            id: "refresh".into(),
+            name: "Refresh File List".into(),
+            short_name: Some("Refresh".into()),
             category: "View".into(),
-            default_key: None,
+            default_key: Some("mod+r".into()),
             default_when: None,
-            needs_pane: false,
+            needs_pane: true,
         },
         CommandDef {
             id: "connect_remote".into(),

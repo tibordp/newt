@@ -372,7 +372,7 @@ fn main() {
                         if let Some(ctx) =
                             global_ctx.main_windows.lock().get(window.label()).cloned()
                         {
-                            tauri::async_runtime::spawn(async move { ctx.refresh().await });
+                            tauri::async_runtime::spawn(async move { ctx.refresh(false).await });
                         }
                     }
                     _ => {}

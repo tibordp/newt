@@ -86,6 +86,9 @@ impl VfsDescriptor for SftpVfsDescriptor {
     fn can_hard_link(&self) -> bool {
         true
     }
+    fn auto_refresh(&self) -> bool {
+        false
+    }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
         let host = String::from_utf8_lossy(mount_meta);

@@ -523,9 +523,9 @@ impl MainWindowState {
         self.panes.get(PaneHandle(1 - handle.0)).unwrap()
     }
 
-    pub async fn refresh(&self) -> Result<(), Error> {
+    pub async fn refresh(&self, force: bool) -> Result<(), Error> {
         for pane in self.panes.all() {
-            pane.refresh(None).await?;
+            pane.refresh(None, force).await?;
         }
         Ok(())
     }
@@ -1095,9 +1095,9 @@ impl MainWindowContext {
         .unwrap_or_else(|| vfs_path.to_string())
     }
 
-    pub async fn refresh(&self) -> Result<(), Error> {
+    pub async fn refresh(&self, force: bool) -> Result<(), Error> {
         self.with_update_async(|gs| async move {
-            gs.refresh().await?;
+            gs.refresh(force).await?;
             Ok(())
         })
         .await?;

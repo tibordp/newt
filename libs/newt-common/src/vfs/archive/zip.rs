@@ -36,6 +36,9 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     fn has_origin(&self) -> bool {
         true
     }
+    fn auto_refresh(&self) -> bool {
+        false
+    }
     fn can_watch(&self) -> bool {
         false
     }

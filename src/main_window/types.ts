@@ -92,6 +92,7 @@ export type PaneState = {
   focused_index?: number;
   display_path: string;
   vfs_display_name: string;
+  is_host_local: boolean;
   breadcrumbs: Breadcrumb[];
 };
 

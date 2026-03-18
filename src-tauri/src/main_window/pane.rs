@@ -159,7 +159,7 @@ impl Pane {
 
             let cloned = self.clone();
             tauri::async_runtime::spawn(async move {
-                match cloned.refresh(Some(vfs_path)).await {
+                match cloned.refresh(Some(vfs_path), true).await {
                     Ok(()) => cloned.publisher.publish().unwrap(),
                     Err(e) => warn!("failed to refresh pane: {}", e),
                 }
@@ -437,16 +437,25 @@ impl Pane {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();
         }
+        ws.is_host_local = self.vfs_info.is_host_local(ws.path.vfs_id);
         let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
         if let Some((shown_desc, shown_meta)) = self.vfs_info.descriptor(shown_path.vfs_id) {
             ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path, &shown_meta);
         }
     }
 
-    pub async fn refresh(&self, expected_path: Option<VfsPath>) -> Result<(), Error> {
+    pub async fn refresh(&self, expected_path: Option<VfsPath>, force: bool) -> Result<(), Error> {
         let Some(expected_path) = expected_path else {
             return self.navigate(".").await;
         };
+
+        // Skip auto-refresh for VFS types that don't support it (e.g. S3, SFTP, archives)
+        if !force
+            && let Some((desc, _)) = self.vfs_info.descriptor(expected_path.vfs_id)
+            && !desc.auto_refresh()
+        {
+            return Ok(());
+        }
 
         self.refresh_queue.fetch_add(1, Ordering::SeqCst);
 
@@ -731,6 +740,7 @@ pub struct PaneViewState {
     pub focused_index: Option<usize>,
     pub display_path: String,
     pub vfs_display_name: String,
+    pub is_host_local: bool,
     pub breadcrumbs: Vec<Breadcrumb>,
 
     /// Full sorted/filtered file list (not serialized — only the window is sent).

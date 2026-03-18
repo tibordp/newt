@@ -953,6 +953,34 @@ pub fn dialog(
                     path: pane.unwrap().path(),
                     open_editor: true,
                 },
+                "directory_properties" => {
+                    let pane = pane.unwrap();
+                    let pane_path = pane.path();
+                    let file_list = pane.file_list();
+                    // Use ".." entry which holds the current directory's metadata
+                    let dir_entry = file_list.files().iter().find(|f| f.name == "..");
+
+                    let name = pane_path
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| pane_path.path.to_string_lossy().to_string());
+
+                    ModalDataKind::Properties {
+                        paths: vec![pane_path],
+                        name,
+                        size: dir_entry.and_then(|f| f.size),
+                        is_dir: true,
+                        is_symlink: false,
+                        symlink_target: None,
+                        mode: dir_entry.and_then(|f| f.mode.as_ref().map(|m| m.0)),
+                        owner: dir_entry.and_then(|f| f.user.clone()),
+                        group: dir_entry.and_then(|f| f.group.clone()),
+                        modified: dir_entry.and_then(|f| f.modified),
+                        accessed: dir_entry.and_then(|f| f.accessed),
+                        created: dir_entry.and_then(|f| f.created),
+                    }
+                }
                 "properties" => {
                     let pane = pane.unwrap();
                     let paths = pane.get_effective_selection();
@@ -1139,7 +1167,7 @@ pub async fn create_directory(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(None).await?;
+            pane.refresh(None, true).await?;
             pane.view_state_mut().focus(name);
         }
 
@@ -1164,7 +1192,7 @@ pub async fn touch_file(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(None).await?;
+            pane.refresh(None, true).await?;
             pane.view_state_mut().focus(name);
         }
 
@@ -1240,7 +1268,7 @@ pub async fn rename(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(None).await?;
+            pane.refresh(None, true).await?;
             pane.view_state_mut().focus(new_name);
         }
 
@@ -1268,7 +1296,7 @@ pub async fn set_permissions(
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
             let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(None).await?;
+            pane.refresh(None, true).await?;
         }
         Ok(())
     })
@@ -2060,6 +2088,7 @@ macro_rules! cmd_dialog {
 
 cmd_dialog!(cmd_rename, "rename");
 cmd_dialog!(cmd_properties, "properties");
+cmd_dialog!(cmd_directory_properties, "directory_properties");
 cmd_dialog!(cmd_create_directory, "create_directory");
 cmd_dialog!(cmd_create_file, "create_file");
 cmd_dialog!(cmd_create_and_edit, "create_and_edit");
@@ -2090,8 +2119,10 @@ pub fn cmd_open_config_file(ctx: MainWindowContext, _pane_handle: PaneHandle) ->
 }
 
 #[tauri::command]
-pub fn cmd_reload_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
-    let _ = ctx.window().eval("window.location.reload()");
+pub async fn cmd_refresh(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    pane.refresh(None, true).await?;
+    ctx.publish()?;
     Ok(())
 }
 
@@ -2186,6 +2217,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_select_vfs,
         cmd_command_palette,
         cmd_user_commands,
+        cmd_directory_properties,
         cmd_open_settings,
         cmd_new_window,
         cmd_toggle_hidden,
@@ -2220,7 +2252,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_hot_paths,
         cmd_add_bookmark,
         cmd_open_config_file,
-        cmd_reload_window,
+        cmd_refresh,
         cmd_delete_selected,
         cmd_debug,
         cmd_connection_log,

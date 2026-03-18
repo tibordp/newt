@@ -1140,7 +1140,7 @@ pub(super) async fn connect(
     ));
 
     set_status("Loading...");
-    state.refresh().await?;
+    state.refresh(true).await?;
 
     for pane in state.panes.all() {
         tauri::async_runtime::spawn(async move {

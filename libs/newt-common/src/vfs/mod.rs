@@ -174,6 +174,13 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Whether panes on this VFS should auto-refresh on window focus.
+    /// Defaults to true (suitable for local/remote filesystems). Override
+    /// to false for VFSes where listing is expensive (S3, SFTP, archives).
+    fn auto_refresh(&self) -> bool {
+        true
+    }
+
     // --- Display ---
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb>;

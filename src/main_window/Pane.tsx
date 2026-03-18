@@ -5,7 +5,6 @@ import {
   useMemo,
   useLayoutEffect,
   useCallback,
-  Fragment,
   memo,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,7 +24,11 @@ import {
 } from "./types";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, columns } from "./columns";
-import { FileContextMenuContent } from "./ContextMenu";
+import {
+  FileContextMenuContent,
+  PaneContextMenuContent,
+  BreadcrumbContextMenuContent,
+} from "./ContextMenu";
 import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
@@ -33,33 +36,47 @@ import columnStyles from "./Columns.module.scss";
 function PathBreadcrumbs(props: {
   breadcrumbs: Breadcrumb[];
   paneHandle: number;
+  displayPath: string;
 }) {
-  const { breadcrumbs, paneHandle } = props;
+  const { breadcrumbs, paneHandle, displayPath } = props;
+
+  // Build the display path up to each breadcrumb by joining labels.
+  // The last breadcrumb gets the full display_path.
+  const pathUpTo = (index: number): string => {
+    if (index === breadcrumbs.length - 1) return displayPath;
+    return breadcrumbs
+      .slice(0, index + 1)
+      .map((c) => c.label)
+      .join("");
+  };
 
   return (
     <>
       {breadcrumbs.map((crumb, i) => (
-        <Fragment key={i}>
-          <a
-            className={styles.pathBreadcrumb}
-            href="#"
-            tabIndex={-1}
-            onClick={(e) => {
-              e.preventDefault();
-              if (i === breadcrumbs.length - 1) {
-                safeCommand("dialog", { paneHandle, dialog: "navigate" });
-              } else {
-                safeCommand("navigate", {
-                  paneHandle,
-                  path: crumb.nav_path,
-                  exact: true,
-                });
-              }
-            }}
-          >
-            {crumb.label}
-          </a>
-        </Fragment>
+        <ContextMenu.Root key={i}>
+          <ContextMenu.Trigger asChild>
+            <a
+              className={styles.pathBreadcrumb}
+              href="#"
+              tabIndex={-1}
+              onClick={(e) => {
+                e.preventDefault();
+                if (i === breadcrumbs.length - 1) {
+                  safeCommand("dialog", { paneHandle, dialog: "navigate" });
+                } else {
+                  safeCommand("navigate", {
+                    paneHandle,
+                    path: crumb.nav_path,
+                    exact: true,
+                  });
+                }
+              }}
+            >
+              {crumb.label}
+            </a>
+          </ContextMenu.Trigger>
+          <BreadcrumbContextMenuContent displayPath={pathUpTo(i)} />
+        </ContextMenu.Root>
       ))}
     </>
   );
@@ -335,7 +352,7 @@ function FilterInput({
     <input
       className={isVisibleFilter ? styles.filterBarInput : undefined}
       type="text"
-      value={localValue}
+      value={isVisibleFilter ? localValue : (value ?? "")}
       placeholder={isVisibleFilter ? "Filter (regex)" : undefined}
       onChange={(e) => {
         setLocalValue(e.target.value);
@@ -345,6 +362,10 @@ function FilterInput({
       onKeyDown={onKeyDown}
       onFocus={onFocus}
       tabIndex={-1}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
     />
   );
 
@@ -1069,18 +1090,23 @@ function PaneInner(
   const contextMenuFileRef = useRef<string | null>(null);
   const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
 
+  const [contextMenuOnFile, setContextMenuOnFile] = useState(true);
+
   const onContextMenu = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {
       // Find which file row was right-clicked
       const target = e.target as HTMLElement;
       const li = target.closest("li[data-name]") as HTMLElement | null;
       if (!li) {
-        e.preventDefault();
+        // Right-clicked on empty space — show the pane-level context menu
+        setContextMenuOnFile(false);
+        setContextMenuIsParentDir(false);
         return;
       }
 
       const fileName = li.dataset.name!;
       contextMenuFileRef.current = fileName;
+      setContextMenuOnFile(true);
       setContextMenuIsParentDir(fileName === "..");
 
       // If right-clicked file is not in the selection, focus it (clearing selection)
@@ -1196,7 +1222,11 @@ function PaneInner(
           open={isVfsSelectorOpen}
         />
         <div className={styles.headerPath}>
-          <PathBreadcrumbs breadcrumbs={breadcrumbs} paneHandle={paneHandle} />
+          <PathBreadcrumbs
+            breadcrumbs={breadcrumbs}
+            paneHandle={paneHandle}
+            displayPath={props.display_path}
+          />
         </div>
         {fs_stats?.available_bytes !== undefined && (
           <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
@@ -1254,10 +1284,17 @@ function PaneInner(
               <div className={styles.dragRect} ref={dragRectRef} />
             </ul>
           </ContextMenu.Trigger>
-          <FileContextMenuContent
-            paneHandle={paneHandle}
-            isParentDir={contextMenuIsParentDir}
-          />
+          {contextMenuOnFile ? (
+            <FileContextMenuContent
+              paneHandle={paneHandle}
+              isParentDir={contextMenuIsParentDir}
+            />
+          ) : (
+            <PaneContextMenuContent
+              paneHandle={paneHandle}
+              isHostLocal={props.is_host_local}
+            />
+          )}
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />

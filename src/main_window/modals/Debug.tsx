@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { CommonDialogProps } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import React from "react";
@@ -20,6 +21,15 @@ export default function Debug({ cancel }: CommonDialogProps) {
             gap: "var(--space-4)",
           }}
         >
+          <button
+            type="button"
+            onClick={() => invoke("plugin:webview|internal_toggle_devtools")}
+          >
+            Toggle DevTools
+          </button>
+          <button type="button" onClick={() => window.location.reload()}>
+            Reload Window
+          </button>
           <button type="button" onClick={() => setCrashed(true)}>
             Crash (throw error)
           </button>

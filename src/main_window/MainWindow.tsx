@@ -176,6 +176,24 @@ function App() {
     return () => window.removeEventListener("keydown", onkeydown);
   }, [onkeydown]);
 
+  // Suppress the default browser context menu except on text inputs,
+  // so only our custom Radix context menus are used.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", handler);
+    return () => document.removeEventListener("contextmenu", handler);
+  }, []);
+
   return (
     <TerminalData.Provider value={terminalData}>
       <ModalRouter state={remoteState} preferences={preferences} />

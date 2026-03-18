@@ -87,6 +87,9 @@ impl VfsDescriptor for S3VfsDescriptor {
     fn can_hard_link(&self) -> bool {
         false
     }
+    fn auto_refresh(&self) -> bool {
+        false
+    }
 
     fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
         let s = path.to_string_lossy();
