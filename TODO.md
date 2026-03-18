@@ -22,9 +22,11 @@ Remaining work:
 - S3 connect dialog with the ability to pick profile or enter credentials manually.
 - Rework MIME handling so we fall back to file extension rather than binary sniffing when we can't read the file cheaply
 - Per-byte progress tracking for copying
-- ErrorBoundary
 - Remount VFS when navigating to it from history - save mount data in history
+- Persist column widths across sessions
 
-## Customizability
+## Customizability — DONE (basic)
+
+Settings dialog with schema-driven UI, custom widgets for complex preferences (columns, default sort), reset-to-default support. Column visibility/order and default sort are configurable. See Preferences section in FEATURE_DUMP.md.
 
 ## Compute dir sizes recursively (with caching)

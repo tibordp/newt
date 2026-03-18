@@ -31,7 +31,8 @@ Zoom is applied as frontend-side CSS scaling.
 
 - **New Window** (Mod+N): Opens a fresh Newt window (new session).
 - **Close Window** (Mod+W): Closes the current window.
-- **Reload Window** (command palette): Reloads the frontend UI.
+- **Reload Window**: Available in the Debug dialog (debug builds only).
+- **Refresh File List** (Mod+R): Force-refreshes the active pane's directory listing.
 
 ---
 
@@ -51,20 +52,32 @@ Each pane is an independent file browser with its own path, selection, filter, s
 
 ### File List
 
-Virtualized (viewport-rendered) list with 22px fixed row height. Only visible rows plus a small overscan buffer are rendered, enabling smooth performance even with very large directories.
+Server-side windowed list with 22px fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
 
-**Columns** (all sortable by clicking the header):
+**Default columns** (all sortable by clicking the header):
 
 | Column | Width | Alignment | Content |
 |--------|-------|-----------|---------|
 | Name | 250px | Left | File type icon (color-coded, VSCode icon set) + filename |
-| Extension | (sub-column of Name) | | Sorted separately from name |
 | Size | 100px | Right | Locale-formatted byte count, "DIR" for directories, "???" if unknown |
 | Modified Date | 80px | Right | Locale-formatted date |
 | Modified Time | 80px | Right | Locale-formatted time |
 | User | 70px | Left | Owner name (or numeric UID if name unavailable) |
 | Group | 70px | Left | Group name (or numeric GID) |
 | Mode | 70px | Left | Unix permissions string, e.g., `drwxr-xr-x` |
+
+**Additional columns** (available via settings, not shown by default):
+
+| Column | Content |
+|--------|---------|
+| Extension | File extension only |
+| Accessed Date/Time | Access timestamp |
+| Created Date/Time | Creation timestamp |
+| Link Target | Symlink target path |
+
+When the Extension column is visible, the Name column automatically shows just the file stem (name without extension).
+
+Column visibility and order are configurable via `appearance.columns` preference (transfer list widget in Settings dialog).
 
 Column widths are resizable by dragging the grip between column headers. Minimum width: 10px. Column widths persist per-pane during the session.
 
@@ -110,8 +123,8 @@ Large directories are loaded incrementally via streaming:
 |-----|--------|
 | Arrow Up/Down | Move focus one item |
 | Shift+Arrow Up/Down | Move focus and extend selection |
-| Page Up/Down | Jump 10 items |
-| Shift+Page Up/Down | Jump 10 items with selection |
+| Page Up/Down | Jump one viewport height |
+| Shift+Page Up/Down | Jump one viewport height with selection |
 | Home | Jump to first item |
 | End | Jump to last item |
 | Enter | Open file or enter directory (see "Enter behavior" below) |
@@ -154,7 +167,9 @@ Large directories are loaded incrementally via streaming:
 
 ### Context Menu
 
-Right-click a file or press Shift+F10 / Menu key:
+The default browser context menu is suppressed in the main window (but not in the viewer/editor). Text inputs retain their native context menus.
+
+**Right-click a file** or press Shift+F10 / Menu key:
 
 | Item | Shortcut |
 |------|----------|
@@ -166,6 +181,21 @@ Right-click a file or press Shift+F10 / Menu key:
 | Delete | F8 |
 | Open in Terminal | Mod+Enter |
 | Properties | Alt+Enter |
+
+**Right-click empty space** in the file list:
+
+| Item | Shortcut |
+|------|----------|
+| Open in Default App | Shift+F3 (host-local VFS only) |
+| New Directory | F7 |
+| New File | |
+| Directory Properties | |
+
+**Right-click a breadcrumb** in the path bar:
+
+| Item | Description |
+|------|-------------|
+| Copy Path | Copies the display path up to that breadcrumb segment |
 
 ### Drag and Drop
 
@@ -291,24 +321,31 @@ Same dialog and options as Copy (except "Create symbolic link" is not available)
 
 ### Properties (Alt+Enter)
 
-Modal dialog showing file metadata. Supports single files and multi-file selections.
+Modal dialog showing file metadata. Supports single files and multi-file selections. Read-only on VFS types that don't support metadata changes (S3, archives).
 
 **Information displayed**:
 - Name
 - Size (human-readable + exact byte count)
 - Type (file / directory / symlink)
 - Symlink target path (if applicable)
-- Owner (name or UID)
-- Group (name or GID)
+- Owner (name and numeric ID when available, e.g., "root (0)")
+- Group (name and numeric ID)
 - Mode (Unix permissions)
 - Modified, Accessed, Created timestamps (locale-formatted)
 
-**Permission editor** (when applicable):
-- 3×3 checkbox grid: Owner/Group/Other × Read/Write/Execute.
-- Special bits row: Set UID, Set GID, Sticky.
-- Octal notation display that updates live (e.g., "0755").
-- **Recursive** checkbox (for directories): Applies permissions to all contents.
-- **Multi-file selections**: Shows "(mixed)" for permission bits that differ across selected files. Checking/unchecking a mixed bit applies uniformly to all selected files.
+**Permission editor** (when VFS supports metadata changes):
+- **Tri-state checkboxes**: 3×3 grid (Owner/Group/Other × Read/Write/Execute). For multi-file selections with mixed permissions, differing bits show as indeterminate. Click cycles: checked → unchecked → indeterminate (leave unchanged) → checked.
+- Special bits row: Set UID, Set GID, Sticky (also tri-state).
+- Octal notation display — shows "?" for indeterminate digit positions.
+- Mask-based application: only explicitly set/cleared bits are modified; indeterminate bits are preserved per-file.
+
+**Ownership editor**:
+- Separate checkboxes to enable owner/group editing.
+- Text input accepts numeric ID. Name resolution planned for future.
+
+**Recursive** checkbox (for directories): Applies permissions and ownership changes to all contents.
+
+**Directory Properties**: Available from the pane context menu (right-click empty space). Shows metadata for the current directory itself.
 
 ### Clipboard Operations
 
@@ -619,6 +656,8 @@ These shortcuts are handled by the terminal's custom key event handler and bubbl
 ## 8. VFS (Virtual Filesystem) Support
 
 All filesystem access goes through trait abstractions. Multiple VFS types can be mounted simultaneously and accessed independently from either pane.
+
+**Auto-refresh**: Panes auto-refresh on window focus for local and remote VFS types. Auto-refresh is disabled for S3, SFTP, and archive VFS types (where listing is expensive). Manual refresh is always available via Mod+R.
 
 ### Local Filesystem (always mounted, VFS ID 0)
 
@@ -951,6 +990,7 @@ show_hidden = false         # Show files starting with "."
 folders_first = true        # Directories before files in sort order
 show_command_bar = true     # Show F-key bar at bottom of window
 theme = "system"            # "system", "light", or "dark"
+columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
 
 [behavior]
 confirm_delete = true       # Ask for confirmation before deleting
@@ -958,6 +998,7 @@ keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
 expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
+default_sort = { key = "name", ascending = true }
 
 [hot_paths]
 standard_folders = true     # Show Home, Downloads, Documents, etc.
@@ -991,14 +1032,25 @@ The `profile` field in `settings.toml` loads an additional TOML file from `~/.co
 Three tabs:
 
 **Settings tab**:
-- Sidebar with category filter (All, Appearance, Behavior, Hot Paths).
+- Sidebar with category filter (All, Appearance, Behavior, Hot Paths). Category names from schema titles.
 - Search box for full-text search across setting titles and descriptions.
 - Each setting rendered as a row with title, description, and appropriate control:
   - Boolean → checkbox.
   - Enum → dropdown.
   - Number → number input.
   - String → text input.
-- Changes are saved immediately to `settings.toml`.
+  - Custom widgets for complex preferences (rendered below the description):
+    - **Columns**: Transfer list with Available/Visible panels, arrow buttons for reorder, keyboard navigation (arrow keys + Enter).
+    - **Default Sort**: Dropdown for sort key + ascending checkbox.
+- **Reset button**: Appears next to settings that have been explicitly set in `settings.toml`. Clicking removes the key from the file, reverting to the cascade default.
+- Changes are saved immediately to `settings.toml` and proactively reloaded (not relying solely on file watcher).
+
+### Debug Dialog
+
+Available in debug builds only. Provides:
+- **Toggle DevTools**: Opens/closes the WebKitGTK inspector.
+- **Reload Window**: Reloads the frontend UI.
+- **Crash (throw error)**: Tests the ErrorBoundary by throwing a React error.
 
 **Keybindings tab**:
 - Table listing all commands with their current shortcut and `when` condition.
