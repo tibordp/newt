@@ -171,9 +171,9 @@ jobs:
                 libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
             runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
 
-          - name: Fedora 41
-            container: fedora:41
-            distro: fedora41
+          - name: Fedora 43
+            container: fedora:43
+            distro: fedora43
             pkg_type: rpm
             install_deps: |
               dnf install -y gcc g++ make pkg-config git python3 \
