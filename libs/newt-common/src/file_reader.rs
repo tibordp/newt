@@ -14,6 +14,18 @@ pub fn guess_mime_type(path: &Path) -> Option<String> {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum SearchPattern {
+    Literal(Vec<u8>),
+    Regex(String),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchMatch {
+    pub offset: u64,
+    pub length: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileDetails {
     pub size: u64,
     pub mime_type: Option<String>,
@@ -42,6 +54,13 @@ pub trait FileReader: Send + Sync {
     -> Result<FileChunk, Error>;
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error>;
 }
 
 pub struct Remote {
@@ -94,6 +113,23 @@ impl FileReader for Remote {
             .invoke(crate::api::API_WRITE_FILE, &(path, data))
             .await?;
 
+        Ok(ret?)
+    }
+
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error> {
+        let ret: Result<Option<SearchMatch>, Error> = self
+            .communicator
+            .invoke(
+                crate::api::API_FIND_IN_FILE,
+                &(path, offset, pattern, max_length),
+            )
+            .await?;
         Ok(ret?)
     }
 }

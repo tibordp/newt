@@ -433,6 +433,29 @@ impl FileReader for HairpinFileReader {
             self.inner.write_file(path, data).await
         }
     }
+
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: newt_common::file_reader::SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<newt_common::file_reader::SearchMatch>, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_reader
+                .find_in_file(
+                    VfsPath::new(VfsId::ROOT, path.path),
+                    offset,
+                    pattern,
+                    max_length,
+                )
+                .await
+        } else {
+            self.inner
+                .find_in_file(path, offset, pattern, max_length)
+                .await
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

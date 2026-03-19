@@ -25,7 +25,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails, FileReader};
+use crate::file_reader::{FileChunk, FileDetails, FileReader, SearchMatch, SearchPattern};
 use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
 use crate::rpc::Communicator;
 
@@ -717,6 +717,89 @@ impl FileReader for VfsRegistryFileReader {
         } else {
             Err(Error::not_supported())
         }
+    }
+
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error> {
+        let compiled = compile_regex(&pattern)?;
+        let overlap = compute_overlap(&pattern);
+        let mut carry: Vec<u8> = Vec::new();
+        let mut pos = offset;
+        let end = offset.saturating_add(max_length);
+
+        while pos < end {
+            let chunk_len = std::cmp::min(SEARCH_CHUNK_SIZE as u64, end - pos);
+            let chunk = self.read_range(path.clone(), pos, chunk_len).await?;
+            if chunk.data.is_empty() {
+                break;
+            }
+
+            let carry_len = carry.len();
+            carry.extend_from_slice(&chunk.data);
+
+            if let Some((match_pos, match_len)) =
+                find_in_buffer(&carry, &pattern, compiled.as_ref())
+            {
+                let abs_offset = pos - carry_len as u64 + match_pos as u64;
+                return Ok(Some(SearchMatch {
+                    offset: abs_offset,
+                    length: match_len as u64,
+                }));
+            }
+
+            pos += chunk.data.len() as u64;
+
+            // Keep overlap bytes for next iteration
+            if carry.len() > overlap {
+                let start = carry.len() - overlap;
+                carry.drain(..start);
+            }
+
+            if chunk.data.len() < chunk_len as usize {
+                break; // EOF
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Search helpers for find_in_file
+// ---------------------------------------------------------------------------
+
+const SEARCH_CHUNK_SIZE: usize = 256 * 1024;
+
+fn compute_overlap(pattern: &SearchPattern) -> usize {
+    match pattern {
+        SearchPattern::Literal(pat) => pat.len().saturating_sub(1),
+        SearchPattern::Regex(_) => std::cmp::min(65536, SEARCH_CHUNK_SIZE / 2),
+    }
+}
+
+fn find_in_buffer(
+    buf: &[u8],
+    pattern: &SearchPattern,
+    compiled_regex: Option<&regex::bytes::Regex>,
+) -> Option<(usize, usize)> {
+    match pattern {
+        SearchPattern::Literal(pat) => memchr::memmem::find(buf, pat).map(|pos| (pos, pat.len())),
+        SearchPattern::Regex(_) => compiled_regex?.find(buf).map(|m| (m.start(), m.len())),
+    }
+}
+
+fn compile_regex(pattern: &SearchPattern) -> Result<Option<regex::bytes::Regex>, Error> {
+    match pattern {
+        SearchPattern::Regex(pat) => {
+            let re = regex::bytes::Regex::new(pat).map_err(|e| Error::custom(e.to_string()))?;
+            Ok(Some(re))
+        }
+        _ => Ok(None),
     }
 }
 

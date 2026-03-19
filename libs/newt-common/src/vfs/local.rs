@@ -382,10 +382,11 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || {
             use std::io::{Read, Seek, SeekFrom};
             let mut file = std::fs::File::open(&path)?;
-            let metadata = file.metadata()?;
-            let total_size = metadata.len();
+            let total_size = file.metadata()?.len();
             file.seek(SeekFrom::Start(offset))?;
-            let to_read = length.min(total_size.saturating_sub(offset)) as usize;
+            // Don't cap at total_size — pseudo-files (procfs, sysfs) and
+            // block devices report size 0 but have readable content.
+            let to_read = length as usize;
             let mut data = vec![0u8; to_read];
             let mut total_read = 0;
             while total_read < to_read {

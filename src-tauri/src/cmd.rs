@@ -2301,6 +2301,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         // Viewer / Editor
         crate::viewer::set_viewer_mode,
         crate::viewer::ping_viewer,
+        crate::viewer::copy_viewer_range,
+        crate::viewer::find_in_viewer,
         crate::editor::set_editor_language,
         crate::editor::set_editor_wrap,
         crate::editor::ping_editor,

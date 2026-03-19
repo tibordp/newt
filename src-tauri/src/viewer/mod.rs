@@ -1,13 +1,15 @@
+use newt_common::file_reader::{SearchMatch, SearchPattern};
 use newt_common::vfs::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::ipc::CommandArg;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
-use tauri::{Manager, State, WebviewWindow, Wry};
+use tauri::{Emitter, Manager, State, WebviewWindow, Wry};
 
 use crate::GlobalContext;
 use crate::common::{Error, UpdatePublisher};
+use crate::main_window::MainWindowContext;
 
 const MODES: &[(&str, &str)] = &[
     ("text", "Text"),
@@ -40,6 +42,8 @@ impl Serialize for ViewerState {
 pub struct ViewerWindow {
     publisher: Arc<UpdatePublisher<ViewerState>>,
     menu: RwLock<Option<Menu<Wry>>>,
+    window: RwLock<Option<WebviewWindow>>,
+    prefix: RwLock<Option<String>>,
 }
 
 impl ViewerWindow {
@@ -55,7 +59,7 @@ impl ViewerWindow {
 
     pub fn set_mode(&self, mode: &str) {
         *self.publisher.state().mode.write() = mode.to_string();
-        self.update_menu_checks(mode);
+        self.rebuild_menu(mode);
         let _ = self.publisher.publish_full();
     }
 
@@ -63,26 +67,28 @@ impl ViewerWindow {
         let _ = self.publisher.publish_full();
     }
 
-    fn update_menu_checks(&self, active_mode: &str) {
-        let menu_guard = self.menu.read();
-        let menu = match menu_guard.as_ref() {
-            Some(m) => m,
-            None => return,
+    fn rebuild_menu(&self, active_mode: &str) {
+        let window_guard = self.window.read();
+        let prefix_guard = self.prefix.read();
+        let (window, prefix) = match (window_guard.as_ref(), prefix_guard.as_ref()) {
+            (Some(w), Some(p)) => (w, p),
+            _ => return,
         };
-        let suffix = format!("mode_{}", active_mode);
-        if let Ok(items) = menu.items() {
-            for item in &items {
-                if let Some(submenu) = item.as_submenu()
-                    && let Ok(sub_items) = submenu.items()
-                {
-                    for sub_item in &sub_items {
-                        if let Some(check) = sub_item.as_check_menuitem() {
-                            let _ = check.set_checked(check.id().as_ref().ends_with(&suffix));
-                        }
-                    }
-                }
-            }
+        let app_handle = window.app_handle();
+        let Ok(menu) = build_menu(app_handle, prefix, active_mode) else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        {
+            let global_ctx: State<GlobalContext> = app_handle.state();
+            global_ctx.set_window_menu(window.label(), menu.clone());
+            let _ = app_handle.set_menu(menu.clone());
         }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window.set_menu(menu.clone());
+        }
+        *self.menu.write() = Some(menu);
     }
 }
 
@@ -116,6 +122,8 @@ pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
     Arc::new(ViewerWindow {
         publisher,
         menu: RwLock::new(None),
+        window: RwLock::new(None),
+        prefix: RwLock::new(None),
     })
 }
 
@@ -128,7 +136,8 @@ pub fn activate_viewer_window(
 ) -> Result<(), Error> {
     let prefix = format!("viewer_{}_", label);
     let close_id = format!("{}close", prefix);
-    let menu = build_menu(app_handle, &prefix)?;
+    let current_mode = viewer.publisher.state().mode.read().clone();
+    let menu = build_menu(app_handle, &prefix, &current_mode)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -142,6 +151,8 @@ pub fn activate_viewer_window(
     }
 
     *viewer.menu.write() = Some(menu);
+    *viewer.window.write() = Some(window.clone());
+    *viewer.prefix.write() = Some(prefix.clone());
 
     // Register menu event handler — IDs are prefixed with the window label
     // so each handler only reacts to its own window's menu items.
@@ -161,6 +172,12 @@ pub fn activate_viewer_window(
             None => return,
         };
 
+        // Handle edit menu items by emitting events to the frontend
+        if suffix == "copy" || suffix == "select_all" || suffix == "goto" {
+            let _ = window_clone.emit("viewer-menu", suffix);
+            return;
+        }
+
         let viewer = match viewer_weak.upgrade() {
             Some(v) => v,
             None => return,
@@ -175,56 +192,86 @@ pub fn activate_viewer_window(
     Ok(())
 }
 
-fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, Error> {
-    let mode_items: Vec<CheckMenuItem<Wry>> = MODES
-        .iter()
-        .map(|(id, label)| {
-            CheckMenuItem::with_id(
+fn has_edit_menu(mode: &str) -> bool {
+    matches!(mode, "text" | "hex")
+}
+
+fn build_menu(app_handle: &tauri::AppHandle, prefix: &str, mode: &str) -> Result<Menu<Wry>, Error> {
+    // Use a checked CheckMenuItem for the active mode, plain MenuItem for the rest.
+    // This avoids showing empty checkbox indicators (visible on some GTK themes).
+    let mut mode_items: Vec<Box<dyn tauri::menu::IsMenuItem<Wry>>> = Vec::new();
+    for (id, label) in MODES {
+        let menu_id = format!("{}mode_{}", prefix, id);
+        if *id == mode {
+            mode_items.push(Box::new(CheckMenuItem::with_id(
                 app_handle,
-                format!("{}mode_{}", prefix, id),
+                &menu_id,
                 *label,
                 true,
-                false,
+                true,
                 None::<&str>,
-            )
-            .unwrap()
-        })
-        .collect();
+            )?));
+        } else {
+            mode_items.push(Box::new(MenuItem::with_id(
+                app_handle,
+                &menu_id,
+                *label,
+                true,
+                None::<&str>,
+            )?));
+        }
+    }
 
-    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = mode_items
-        .iter()
-        .map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>)
-        .collect();
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
+        mode_items.iter().map(|i| i.as_ref()).collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
-
-    // Edit menu — predefined items so macOS routes Cmd+C/V/X/A to the webview
-    #[cfg(target_os = "macos")]
-    let edit_submenu = Submenu::with_items(
-        app_handle,
-        "Edit",
-        true,
-        &[
-            &tauri::menu::PredefinedMenuItem::cut(app_handle, None)?,
-            &tauri::menu::PredefinedMenuItem::copy(app_handle, None)?,
-            &tauri::menu::PredefinedMenuItem::paste(app_handle, None)?,
-            &tauri::menu::PredefinedMenuItem::select_all(app_handle, None)?,
-        ],
-    )?;
 
     let close_item = MenuItem::with_id(
         app_handle,
         format!("{}close", prefix),
         "Close",
         true,
-        Some("Escape"),
+        None::<&str>,
     )?;
     let file_submenu = Submenu::with_items(app_handle, "File", true, &[&close_item])?;
 
-    #[cfg(target_os = "macos")]
-    let ret = Menu::with_items(app_handle, &[&file_submenu, &edit_submenu, &view_submenu]);
+    let ret = if has_edit_menu(mode) {
+        // No native accelerators — the webview handles Ctrl+C/A/G directly
+        // and the menu event handler bridges menu clicks via viewer-menu events.
+        // Registering native accelerators causes GTK warnings on menu rebuild.
+        let copy_item = MenuItem::with_id(
+            app_handle,
+            format!("{}copy", prefix),
+            "Copy",
+            true,
+            None::<&str>,
+        )?;
+        let select_all_item = MenuItem::with_id(
+            app_handle,
+            format!("{}select_all", prefix),
+            "Select All",
+            true,
+            None::<&str>,
+        )?;
+        let goto_item = MenuItem::with_id(
+            app_handle,
+            format!("{}goto", prefix),
+            "Go to Line/Offset",
+            true,
+            None::<&str>,
+        )?;
+        let edit_sep = tauri::menu::PredefinedMenuItem::separator(app_handle)?;
+        let edit_submenu = Submenu::with_items(
+            app_handle,
+            "Edit",
+            true,
+            &[&copy_item, &select_all_item, &edit_sep, &goto_item],
+        )?;
 
-    #[cfg(not(target_os = "macos"))]
-    let ret = Menu::with_items(app_handle, &[&file_submenu, &view_submenu]);
+        Menu::with_items(app_handle, &[&file_submenu, &edit_submenu, &view_submenu])
+    } else {
+        Menu::with_items(app_handle, &[&file_submenu, &view_submenu])
+    };
 
     Ok(ret?)
 }
@@ -241,4 +288,75 @@ pub fn set_viewer_mode(ctx: ViewerWindowContext, mode: String) -> Result<(), Err
 pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
     ctx.0.publish_full();
     Ok(())
+}
+
+/// Copy a byte range from a file to the system clipboard.
+/// `format`: "text" (UTF-8), "hex" (space-separated hex), "ascii" (printable ASCII).
+#[tauri::command]
+pub async fn copy_viewer_range(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    offset: u64,
+    length: u64,
+    format: String,
+) -> Result<(), Error> {
+    const MAX_COPY_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+    if length > MAX_COPY_BYTES {
+        return Err(Error::Custom(format!(
+            "Selection too large to copy ({} bytes, max {} bytes)",
+            length, MAX_COPY_BYTES
+        )));
+    }
+
+    let mut buf = Vec::with_capacity(length as usize);
+    let mut pos = offset;
+    let end = offset + length;
+    while pos < end {
+        let chunk_len = std::cmp::min(end - pos, 128 * 1024);
+        let chunk = ctx
+            .file_reader()?
+            .read_range(path.clone(), pos, chunk_len)
+            .await?;
+        if chunk.data.is_empty() {
+            break;
+        }
+        pos += chunk.data.len() as u64;
+        buf.extend_from_slice(&chunk.data);
+    }
+
+    let text = match format.as_str() {
+        "hex" => buf
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" "),
+        "ascii" => buf
+            .iter()
+            .map(|&b| {
+                if (0x20..=0x7e).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect(),
+        _ => String::from_utf8_lossy(&buf).into_owned(),
+    };
+
+    ctx.clipboard().set_text(text)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn find_in_viewer(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    offset: u64,
+    pattern: SearchPattern,
+    max_length: u64,
+) -> Result<Option<SearchMatch>, Error> {
+    Ok(ctx
+        .file_reader()?
+        .find_in_file(path, offset, pattern, max_length)
+        .await?)
 }
