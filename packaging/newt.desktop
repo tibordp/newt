@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Newt
+Comment=Dual-pane file manager
+GenericName=File Manager
+Exec=newt %U
+Icon=newt
+Terminal=false
+Type=Application
+Categories=System;FileManager;Utility;
+Keywords=file;manager;dual;pane;
+StartupWMClass=newt
+MimeType=inode/directory;
