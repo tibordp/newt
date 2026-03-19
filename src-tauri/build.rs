@@ -1,3 +1,5 @@
+use std::process::Command;
+
 fn main() {
     // Ensure agent stub files exist so Tauri's resource validation passes
     // during dev builds. In CI/release builds, real binaries are placed here
@@ -22,6 +24,36 @@ fn main() {
     println!(
         "cargo:rustc-env=NEWT_TARGET_TRIPLE={}",
         std::env::var("TARGET").unwrap()
+    );
+
+    // Git revision (short hash + dirty flag). Gracefully falls back for
+    // builds outside a git repo or without git installed.
+    let git_rev = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    let git_dirty = Command::new("git")
+        .args(["diff", "--quiet", "HEAD"])
+        .status()
+        .ok()
+        .map(|s| !s.success())
+        .unwrap_or(false);
+
+    if let Some(rev) = git_rev {
+        let suffix = if git_dirty { "+" } else { "" };
+        println!("cargo:rustc-env=NEWT_GIT_REVISION={}{}", rev, suffix);
+    }
+
+    // Build date (UTC, YYYY-MM-DD)
+    let now = time::OffsetDateTime::now_utc();
+    println!(
+        "cargo:rustc-env=NEWT_BUILD_DATE={:04}-{:02}-{:02}",
+        now.year(),
+        now.month() as u8,
+        now.day()
     );
 
     tauri_build::build()

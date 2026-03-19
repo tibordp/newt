@@ -2,7 +2,7 @@
 name = "newt-common"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-2.0-only"
 description = "Shared types, RPC protocol, VFS traits, and operation logic for Newt"
 
 [dependencies]

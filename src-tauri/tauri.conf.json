@@ -23,8 +23,8 @@
     }
   },
   "productName": "Newt",
-  "version": "0.0.0",
-  "identifier": "com.newt",
+  "version": "0.1.0",
+  "identifier": "io.github.tibordp.newt",
   "plugins": {},
   "app": {
     "withGlobalTauri": false,

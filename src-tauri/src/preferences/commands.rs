@@ -481,5 +481,14 @@ pub fn default_commands() -> Vec<CommandDef> {
                 needs_pane: false,
             },
         }
+        CommandDef {
+            id: "about".into(),
+            name: "About Newt".into(),
+            short_name: Some("About".into()),
+            category: "Help".into(),
+            default_key: None,
+            default_when: None,
+            needs_pane: false,
+        },
     ]
 }

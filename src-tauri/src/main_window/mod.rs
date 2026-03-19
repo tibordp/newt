@@ -374,6 +374,12 @@ pub enum ModalDataKind {
     },
     Debug,
     ConnectionLog,
+    About {
+        version: String,
+        git_revision: Option<String>,
+        build_date: Option<String>,
+        target_triple: String,
+    },
 }
 
 #[derive(Clone, Debug, serde::Serialize)]

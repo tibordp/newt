@@ -1192,6 +1192,12 @@ pub fn dialog(
                     ModalDataKind::Debug
                 }
                 "connection_log" => ModalDataKind::ConnectionLog,
+                "about" => ModalDataKind::About {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    git_revision: option_env!("NEWT_GIT_REVISION").map(|s| s.to_string()),
+                    build_date: option_env!("NEWT_BUILD_DATE").map(|s| s.to_string()),
+                    target_triple: env!("NEWT_TARGET_TRIPLE").to_string(),
+                },
                 _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext { pane_handle },
@@ -2225,6 +2231,7 @@ cmd_dialog!(cmd_hot_paths, "hot_paths");
 cmd_dialog!(cmd_open_settings, "settings");
 cmd_dialog!(cmd_debug, "debug");
 cmd_dialog!(cmd_connection_log, "connection_log");
+cmd_dialog!(cmd_about, "about");
 
 #[tauri::command]
 pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
@@ -2382,6 +2389,7 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_delete_selected,
         cmd_debug,
         cmd_connection_log,
+        cmd_about,
         // Keychain
         crate::keychain::keychain_get,
         crate::keychain::keychain_set,

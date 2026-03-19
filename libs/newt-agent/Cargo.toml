@@ -2,7 +2,7 @@
 name = "newt-agent"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-2.0-only"
 description = "Agent binary for Newt remote and elevated sessions"
 
 [dependencies]

@@ -1,5 +1,6 @@
 import { safeCommand } from "../../lib/ipc";
 
+import About from "./About";
 import Confirm from "./Confirm";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
@@ -61,6 +62,8 @@ export function ModalContent({ state }: { state: ModalState | null }) {
       return <UserCommandInput {...state.data} {...commonProps} />;
     case "debug":
       return <Debug {...commonProps} />;
+    case "about":
+      return <About {...state.data} {...commonProps} />;
     default:
       return null;
   }
