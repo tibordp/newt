@@ -16,7 +16,7 @@ Newt is a keyboard-centric dual-pane file manager built with
 Tauri, featuring SSH remoting and virtual filesystem support.
 
 %install
-make install DESTDIR=%{buildroot} PREFIX=/usr BINARY=%{_newt_binary} AGENT_DIR=%{_newt_agent_dir}
+make -C %{_newt_srcdir} install DESTDIR=%{buildroot} PREFIX=/usr BINARY=%{_newt_binary} AGENT_DIR=%{_newt_agent_dir}
 
 %files
 /usr/bin/newt

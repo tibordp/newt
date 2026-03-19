@@ -43,6 +43,6 @@ EOF
 
 # Build the package
 cd "$STAGING"
-bsdtar -czf "${OLDPWD}/${PKG}.pkg.tar.zst" --zstd .PKGINFO usr/
+bsdtar -cf "${OLDPWD}/${PKG}.pkg.tar.zst" --zstd .PKGINFO usr/
 cd "$OLDPWD"
 echo "Built: ${PKG}.pkg.tar.zst"

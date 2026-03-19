@@ -273,6 +273,7 @@ jobs:
           VERSION=$(cat version.txt)
           rpmbuild -bb packaging/rpm/newt.spec \
             --define "_topdir $(pwd)/rpmbuild" \
+            --define "_newt_srcdir $(pwd)" \
             --define "_newt_version $VERSION" \
             --define "_newt_binary $(pwd)/target/release/newt" \
             --define "_newt_agent_dir $(pwd)/agents"
