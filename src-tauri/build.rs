@@ -26,6 +26,11 @@ fn main() {
         std::env::var("TARGET").unwrap()
     );
 
+    // Pass through optional system agent directory for distro packages.
+    if let Ok(dir) = std::env::var("NEWT_SYSTEM_AGENT_DIR") {
+        println!("cargo:rustc-env=NEWT_SYSTEM_AGENT_DIR={}", dir);
+    }
+
     // Git revision (short hash + dirty flag). Gracefully falls back for
     // builds outside a git repo or without git installed.
     let git_rev = Command::new("git")

@@ -108,9 +108,10 @@ impl serde::Serialize for ConnectionState {
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
 /// Resolves agent binary locations. Searches directories in priority order:
-/// 1. `NEWT_AGENT_DIR` env var (dev override)
-/// 2. Tauri resource dir (`agents/` inside the bundled app)
-/// 3. `agents/` relative fallback (legacy/dev)
+/// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
+/// 2. `NEWT_SYSTEM_AGENT_DIR` compile-time path (distro packages)
+/// 3. Tauri resource dir (`agents/` inside the bundled app)
+/// 4. `agents/` relative fallback (legacy/dev)
 pub struct AgentResolver {
     dirs: Vec<PathBuf>,
 }
@@ -121,6 +122,10 @@ impl AgentResolver {
         let mut dirs = Vec::new();
 
         if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
+            dirs.push(PathBuf::from(dir));
+        }
+
+        if let Some(dir) = option_env!("NEWT_SYSTEM_AGENT_DIR") {
             dirs.push(PathBuf::from(dir));
         }
 

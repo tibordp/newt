@@ -204,7 +204,15 @@ The default browser context menu is suppressed in the main window (but not in th
 - **Drop targets**: Drop on a folder to copy/move into it. Drop on the pane background to copy/move to the pane's current directory.
 - **Modifier keys**: Normal drop = copy. Shift+drop = move.
 - **Visual feedback**: Drop target pane/folder highlights on hover.
-- **Same-pane restrictions**: Cannot drop on `..`, cannot drop a folder onto itself.
+- **Same-pane restrictions**: Cannot drop a folder onto itself.
+
+**External drag-and-drop** (from the OS file manager):
+- Drag one or more files from the OS file manager (Nautilus, Dolphin, Finder, etc.) and drop onto any pane.
+- **Drop on pane background**: Copies files to the pane's current directory.
+- **Drop on a folder row**: Copies files into that folder.
+- **Visual feedback**: Pane background or folder row highlights as the cursor moves, same styling as internal drag-and-drop.
+- **Always copies**: External drops always create copies (no modifier key for move).
+- **Requires host-local VFS**: Only works when a local filesystem VFS is mounted (to resolve source paths).
 
 ### Focus Preservation
 
@@ -284,7 +292,7 @@ Deletes all selected files and directories (recursive for directories).
 
 Opens a modal dialog with:
 
-- **Destination path** input (auto-focused, pre-filled with the other pane's directory).
+- **Destination path** display (read-only, pre-filled with the other pane's directory).
 - **Summary**: Shows the filename (single file) or "N items" (multiple selection).
 - **Options** (checkboxes):
   - **Create symbolic link** — only available for single-file copies. Creates a symlink at the destination pointing to the source. Disables the other options when checked.
@@ -406,13 +414,38 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | `application/pdf` | PDF |
 | Everything else | Hex |
 
+### Mode Toggle
+
+The status bar includes mode toggle buttons on the right side. The auto-detected mode and Hex are always available as quick-switch options. Pressing **F3** toggles between the auto-detected mode and Hex (e.g., auto=Image, current=Image → F3 → Hex; auto=Image, current=Hex → F3 → Image).
+
 ### Text Mode
 
 - Line-numbered display with a non-selectable gutter. Gutter width adjusts to fit the number of digits in the total line count.
-- **Chunked loading**: Loads files in 128 KB chunks. Large files don't need to be fully loaded before viewing.
+- **Chunked loading**: Loads files in 128 KB chunks on demand. Large files don't need to be fully loaded before viewing. LRU cache holds up to 32 chunks (4 MB); older chunks are evicted as new ones load.
 - **UTF-8 aware**: Detects incomplete UTF-8 sequences at chunk boundaries and handles them gracefully.
-- **Virtual scrolling**: Only renders visible lines plus 5-line overscan for smooth scrolling.
-- **Text is selectable** (`<pre>` element with user-select).
+- **Virtual scrolling**: Only renders visible lines plus 5-line overscan for smooth scrolling. Scroll scaling for files exceeding browser's max element height (16M px).
+- **Incremental line index**: Line positions are built by scanning for `0x0A` in chunks as they load. The `+` after the line count in the status bar indicates more lines may exist in unscanned chunks.
+
+**Selection**:
+- **Mouse drag**: Click and drag to select character ranges. Selection is character-granular (uses `caretRangeFromPoint`).
+- **Shift+Click**: Extend selection from anchor to clicked position.
+- **Ctrl+A**: Select entire file.
+- **Auto-scroll**: Dragging near top/bottom edges (20px margin) auto-scrolls.
+- **Escape**: Clears selection (does not close the viewer).
+
+**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`). 10 MB copy size limit.
+
+**Search** (Ctrl+F): Opens a search bar at the bottom of the viewer.
+- **Literal text search** (default) or **regex** (toggle with `.*` button).
+- **Enter**: Find next match from current position. Wraps around to start if at end of file.
+- **Shift+Enter**: Find from start of file.
+- Match is selected and scrolled into view (including horizontal scroll if needed).
+- Status indicator shows "Not found", "Wrapped", or error messages.
+- Search executes on the backend via `find_in_file` on the `FileReader` trait — works for remote files too.
+
+**Go to Line** (Ctrl+G): Opens a bar with a line number input (1-based). Enter to jump, Escape to cancel.
+
+**Context menu** (right-click): Copy, Select All, Go to Line...
 
 **Keyboard**:
 | Key | Action |
@@ -421,23 +454,47 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | Page Up/Down | Scroll one page |
 | Home | Jump to start of file |
 | End | Jump to end of file |
-| Escape | Close viewer |
+| Ctrl+A | Select all |
+| Ctrl+C | Copy selection |
+| Ctrl+F | Open search |
+| Ctrl+G | Go to line |
+| Escape | Clear selection / close search / close viewer |
+| F3 | Toggle mode |
 
-**Status bar**: `path/to/file.txt | Text | Line 42 / 1250+ | 125.4 KB | Loading 45%`
+**Status bar**: `path/to/file.txt | Text | Line 42 / 1250+ | Sel: L10 C5–C20 (0x00A5–0x00B4, 15) | 125.4 KB`
 
-The `+` after the line count indicates the file is still loading. Loading percentage shows progress.
+The `+` after the line count indicates the file is still loading. Selection info shows line/column range with byte offsets and size.
 
 ### Hex Mode
 
 - Classic hex dump layout: offset column (8 hex digits) | 16 hex bytes (grouped 8+8 with a gap) | ASCII representation.
 - Non-printable bytes shown as `.` in the ASCII column. Printable range: 0x20–0x7E.
 - **Virtual scrolling** with max scroll height clamping (prevents browser rendering issues with very tall elements).
-- **On-demand chunk loading**: 128 KB chunks cached in memory and loaded as the user scrolls. Preloads chunks for the visible viewport and overscan area.
+- **On-demand chunk loading**: 128 KB chunks with LRU cache (32 chunks). Preloads chunks for the visible viewport and overscan area.
 - **Mouse wheel**: Handles both pixel-mode and line-mode scroll deltas. Accumulates sub-row pixel deltas across events to snap to row boundaries.
 
-**Keyboard**: Same as Text mode.
+**Selection**:
+- **Byte-granular**: Click in the hex or ASCII column to select a byte. The clicked column becomes the "active" column (blue highlight); the other column shows the same selection in grey.
+- **Mouse drag**: Drag across bytes to select a range.
+- **Shift+Click**: Extend selection to the clicked byte.
+- **Ctrl+A**: Select all bytes.
+- **Auto-scroll**: Dragging near edges auto-scrolls.
+- **Escape**: Clears selection.
 
-**Status bar**: `path/to/file.bin | Hex | Offset 00000A20 / 000FFFFF | 1.0 MB`
+**Copy** (Ctrl+C): Copies selection using the active column's format.
+
+**Context menu** (right-click): Copy as Hex (space-separated uppercase, e.g., `4D 5A 90 00`), Copy as Text (UTF-8), Select All, Go to Offset...
+
+**Search** (Ctrl+F): Same search bar as Text mode, plus a **Hex toggle** button.
+- **Hex mode**: Input parsed as hex bytes (e.g., `4D 5A` or `4d5a`).
+- **Literal text** and **regex** modes also available.
+- Matches are selected as byte ranges in the hex view.
+
+**Go to Offset** (Ctrl+G): Opens a bar with label "Go to offset (hex)". Input is parsed as hexadecimal (e.g., `1A0` jumps to byte 416).
+
+**Keyboard**: Same as Text mode (Ctrl+A, Ctrl+C, Ctrl+F, Ctrl+G, arrows, Page Up/Down, Home, End, Escape, F3).
+
+**Status bar**: `path/to/file.bin | Hex | Offset 00000A20 / 000FFFFF | Sel: 00000A20–00000A2F (16) | 1.0 MB`
 
 ### Image Mode
 
@@ -446,6 +503,7 @@ The `+` after the line count indicates the file is still loading. Loading percen
 - **Pan**: Left-click or middle-click drag to pan when zoomed in. Pan is clamped to keep the image visible (no empty edges).
 - **Reset**: Press `0` (zero) to reset to fit-to-window.
 - **Escape**: Close viewer.
+- **Cached image handling**: Correctly detects already-cached images (`img.complete`) to avoid missed load events.
 
 **Status bar**: `path/to/image.png | Image | 1920×1080 | 150% | 2.4 MB`
 
@@ -471,15 +529,17 @@ The `+` after the line count indicates the file is still loading. Loading percen
 
 ### PDF Mode
 
-- Embedded in an `<iframe>` using the browser's built-in PDF viewer (typically PDF.js).
-- Fills the entire window. Native PDF zoom, scroll, and search.
-- **Escape** is handled via the native window menu accelerator (not a keyboard event listener, since the iframe captures events).
+- Rendered via PDF.js with a custom toolbar (not a browser iframe).
+- **Toolbar**: Previous/Next page buttons, page display ("1 / 42"), zoom in/out/fit buttons, zoom percentage.
+- **Keyboard**: Ctrl+= zoom in, Ctrl+- zoom out, Ctrl+0 reset to fit.
+- **Escape**: Close viewer (via window-level menu accelerator).
 
 **Status bar**: `path/to/document.pdf | PDF | 2.3 MB`
 
 ### Viewer Menu Bar
 
 - **File**: Close (Escape)
+- **Edit** (Text/Hex modes only): Copy, Select All, separator, Go to Line / Go to Offset
 - **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
 
 ### File Serving
@@ -568,6 +628,7 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 ### Dirty State and Closing
 
 - **Dirty indicator**: Window title shows `* filename - Editor` when unsaved.
+- **Escape**: Closes the editor window. If unsaved changes exist, a confirmation dialog appears first.
 - **Close with unsaved changes**: A warning confirmation dialog appears: "You have unsaved changes. Close without saving?" User must confirm to discard changes.
 - **Close without unsaved changes**: Window closes immediately.
 
@@ -667,7 +728,17 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 ### S3 (Amazon S3 / S3-Compatible)
 
-**Mounting**: Via command palette ("Mount S3") or VFS selector dropdown. Uses ambient AWS credentials (environment variables, IAM role, AWS profiles). Optional region parameter.
+**Mounting**: Via command palette ("Mount S3"), VFS selector dropdown, or Quick Connect. Opens a dialog with:
+
+- **Region** (optional): AWS region (e.g., `us-east-1`).
+- **Bucket** (optional): Scope the mount to a specific bucket instead of listing all buckets.
+- **Endpoint URL** (optional): Custom S3-compatible endpoint (Minio, Ceph, etc.).
+- **Credentials** dropdown with four modes:
+  - **Default** (environment / instance metadata): Uses the AWS default credential chain.
+  - **AWS Profile**: Specify a named AWS profile.
+  - **IAM User (access key)**: Enter Access Key ID and Secret Access Key (masked). Secrets stored in system keychain.
+  - **Assume Role**: Enter Role ARN and optional External ID for cross-account access.
+- **Save as connection profile** checkbox: Saves the configuration for quick access via Quick Connect. Auto-generates a name from bucket/endpoint/region.
 
 **Browsing**:
 - Root (`/`) lists all buckets.
@@ -686,7 +757,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 ### SFTP
 
-**Mounting**: Via dialog (Mod+Shift+L → SFTP, or "Mount SFTP" in command palette) with `user@hostname` input.
+**Mounting**: Via dialog (Mod+Shift+L → SFTP, or "Mount SFTP" in command palette) with `user@hostname` input. Includes a **Save as connection profile** checkbox to save for Quick Connect.
 
 **Connection**: Spawns an SSH process (`ssh <host> -s sftp`) with stdin/stdout piped. SFTP handshake happens over the SSH connection. 30-second timeout on connection.
 
@@ -778,9 +849,29 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 All operations run directly in the Tauri process. No agent subprocess, no serialization, no network. This is the default when launching Newt without arguments.
 
+### Connection Profiles and Quick Connect
+
+**Connection profiles** are saved connection configurations stored in `~/.config/newt/connections.toml`. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Linux Secret Service via `keyring` crate) under the service name `com.newt.credentials`.
+
+**Three profile types**:
+- **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
+- **SFTP**: Host (`user@hostname`).
+- **Remote**: Host (`user@hostname`). Connecting opens a new window.
+
+Profiles are created via the **Save as connection profile** checkbox in the S3 Mount, SFTP Mount, and Remote Connect dialogs.
+
+**Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing all saved connection profiles.
+
+- **Search**: Searches across name, ID, bucket, host, region, and endpoint URL.
+- **Each entry shows**: Connection name, type badge, and relevant details (bucket, host, region, etc.).
+- **Enter**: Activates the selected connection (mounts VFS or opens new window for remote).
+- **Delete**: Removes the selected profile (with inline Yes/No confirmation). Also removes associated keychain secrets.
+- **Escape**: Closes the palette.
+- Empty state: "No saved connections. Use the connect or mount dialogs to save one."
+
 ### Remote Mode (SSH)
 
-**Connecting**: Via dialog (Mod+Shift+R) or command line (`newt --connect user@host`).
+**Connecting**: Via dialog (Mod+Shift+R) or command line (`newt --connect user@host`). The dialog includes a **Save as connection profile** checkbox.
 
 **Bootstrap protocol**:
 1. Newt spawns an SSH process and sends a bootstrap shell script to the remote host.
@@ -800,7 +891,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 ### Elevated Mode (pkexec — Linux only)
 
-**Connecting**: Via command palette ("Open Elevated").
+**Connecting**: Via command palette ("Open Elevated"). Only available on Linux (macOS lacks a pkexec equivalent with stdio redirection).
 
 Spawns `pkexec <agent-binary-path>`. The system's privilege escalation dialog (e.g., Polkit) prompts for the user's password. The agent runs as root, providing full filesystem access to the entire system.
 
@@ -1139,6 +1230,19 @@ Focus is a first-class concern — broken focus means reaching for the mouse, wh
 
 ## 16. Miscellaneous Features
 
+### About Dialog
+
+Available from the command palette. Shows:
+
+- **App icon** (96×96), title ("Newt"), tagline ("A keyboard-centric dual-pane file manager").
+- **Version**: e.g., `v0.1.0 (a1b2c3d+)` — short git hash with `+` suffix if built from a dirty working tree.
+- **Build date** and **target triple** (e.g., `x86_64-unknown-linux-gnu`).
+- **License**: GNU General Public License v2.0.
+- **GitHub link**: Clickable link to the repository, opens in browser.
+- **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation). The icon rotates slightly on activation.
+
+Build metadata (git revision, date, target) is captured at compile time via `build.rs` and gracefully falls back when git is unavailable.
+
 ### Copy Pane (Mod+.)
 
 Sets the other pane's directory to match the active pane's current path. Useful for quickly aligning both panes to the same location before a copy/move.
@@ -1269,8 +1373,25 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+N | New window | Any |
 | Mod+W | Close window | Any |
 | Mod+Shift+R | Connect remote | Any |
+| Ctrl+R | Quick Connect | Pane focused |
 | Ctrl+= | Zoom in | Any |
 | Ctrl+- | Zoom out | Any |
 | Ctrl+0 | Reset zoom | Any |
+
+Note: Refresh (Mod+R) is unbound by default to avoid conflict with Quick Connect (Ctrl+R). Rebind via settings if needed.
+
+### Viewer-Specific Shortcuts
+
+| Shortcut | Action | Modes |
+|----------|--------|-------|
+| Ctrl+A | Select all | Text, Hex |
+| Ctrl+C | Copy selection | Text, Hex |
+| Ctrl+F | Search | Text, Hex |
+| Ctrl+G | Go to Line / Go to Offset | Text, Hex |
+| F3 | Toggle mode (auto ↔ hex) | All |
+| 0 | Reset zoom to fit | Image |
+| Ctrl+= | Zoom in | PDF |
+| Ctrl+- | Zoom out | PDF |
+| Ctrl+0 | Reset zoom | PDF |
 
 All keybindings are fully customizable via the Settings dialog or `settings.toml`. `Mod` = Ctrl on Linux/Windows, Cmd on macOS.
