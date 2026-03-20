@@ -2,7 +2,7 @@ Name:           newt-fm
 Version:        %{_newt_version}
 Release:        1%{?dist}
 Summary:        Dual-pane file manager
-License:        MIT
+License:        GPL-2.0-only
 URL:            https://github.com/tibordp/newt
 
 %define debug_package %{nil}

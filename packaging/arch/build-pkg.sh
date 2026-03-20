@@ -36,6 +36,7 @@ url = https://github.com/tibordp/newt
 builddate = $(date +%s)
 size = $(du -sb "$STAGING" | cut -f1)
 arch = ${ARCH}
+license = GPL-2.0-only
 depend = webkit2gtk-4.1
 depend = gtk3
 depend = libappindicator-gtk3

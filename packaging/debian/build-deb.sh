@@ -41,7 +41,8 @@ cat > "$STAGING/DEBIAN/control" <<EOF
 Package: newt-fm
 Version: ${VERSION}
 Architecture: ${ARCH}
-Maintainer: Newt Developers <newt@example.com>
+Maintainer: Tibor Djurica Potpara <tibor.djurica@ojdip.net>
+Homepage: https://github.com/tibordp/newt
 Description: Dual-pane file manager
  Newt is a keyboard-centric dual-pane file manager built with
  Tauri, featuring SSH remoting and virtual filesystem support.
