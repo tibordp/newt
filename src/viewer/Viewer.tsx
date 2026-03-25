@@ -71,7 +71,7 @@ function Viewer() {
         setInfo(fi);
         const mode = detectAutoMode(fi.mime_type);
         setAutoMode(mode);
-        invoke("set_viewer_mode", { mode }).catch(() => {});
+        safeCommand("set_viewer_mode", { mode });
       } catch (e: any) {
         setError(e.toString());
         await message(e.toString(), { kind: "error", title: "Error" });
@@ -133,7 +133,7 @@ function Viewer() {
       } else if (e.key === "F3" && currentMode) {
         e.preventDefault();
         const resolved = autoMode ?? currentMode;
-        invoke("set_viewer_mode", {
+        safeCommand("set_viewer_mode", {
           mode: getAlternateMode(currentMode, resolved),
         });
       }

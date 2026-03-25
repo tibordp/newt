@@ -166,18 +166,21 @@ fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
 // Directory tree built from archive index
 // ---------------------------------------------------------------------------
 
+/// Maximum number of symlink hops before we declare a loop (matches Linux MAXSYMLINKS).
+const MAX_SYMLINK_HOPS: usize = 40;
+
 struct DirectoryTree {
     dirs: HashMap<PathBuf, Vec<File>>,
 }
 
 impl DirectoryTree {
     fn list(&self, path: &Path) -> Result<Vec<File>, Error> {
-        let normalized = normalize_dir_path(path);
-        let entries = match self.dirs.get(&normalized) {
+        let resolved = self.resolve_path(path, true)?;
+        let entries = match self.dirs.get(&resolved) {
             Some(entries) => entries,
             None => {
                 // Check if it exists as a file rather than a directory
-                if self.file_info(path).is_ok() {
+                if self.lookup_entry(&resolved).is_some() {
                     return Err(Error {
                         kind: ErrorKind::NotADirectory,
                         message: format!("not a directory: {}", path.display()),
@@ -204,26 +207,131 @@ impl DirectoryTree {
             accessed: None,
             created: None,
         }];
-        files.extend(entries.iter().cloned());
+        for entry in entries {
+            let mut file = entry.clone();
+            self.fill_symlink_target_metadata(&resolved, &mut file);
+            files.push(file);
+        }
         Ok(files)
     }
 
     fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let parent = path.parent().ok_or_else(|| not_found("no parent"))?;
-        let name = path
-            .file_name()
-            .ok_or_else(|| not_found("no filename"))?
-            .to_string_lossy();
-        let normalized_parent = normalize_dir_path(parent);
-        let children = self
-            .dirs
-            .get(&normalized_parent)
-            .ok_or_else(|| not_found(format!("parent not found: {}", parent.display())))?;
-        children
-            .iter()
-            .find(|f| f.name == *name)
-            .cloned()
-            .ok_or_else(|| not_found(format!("file not found: {}", path.display())))
+        let normalized = normalize_dir_path(path);
+        let resolved = self.resolve_path(&normalized, false)?;
+        let mut file = self
+            .lookup_entry(&resolved)
+            .ok_or_else(|| not_found(format!("file not found: {}", path.display())))?;
+        let parent = resolved.parent().unwrap_or(Path::new(""));
+        self.fill_symlink_target_metadata(parent, &mut file);
+        Ok(file)
+    }
+
+    /// For symlink entries, follow the target and fill in `is_dir` and `size`
+    /// from the resolved target — mirroring the lstat+stat pattern used by the
+    /// local filesystem VFS. The entry keeps `is_symlink=true` and
+    /// `symlink_target` intact.  If resolution fails (broken link), the
+    /// original metadata is left unchanged.
+    fn fill_symlink_target_metadata(&self, parent: &Path, file: &mut File) {
+        if !file.is_symlink {
+            return;
+        }
+        let mut full_path = parent.to_path_buf();
+        full_path.push(&file.name);
+        if let Ok(resolved_target) = self.resolve_path(&full_path, true) {
+            if self.dirs.contains_key(&resolved_target) {
+                file.is_dir = true;
+                file.size = None;
+            } else if let Some(target_file) = self.lookup_entry(&resolved_target) {
+                file.is_dir = target_file.is_dir;
+                file.size = target_file.size;
+            }
+        }
+    }
+
+    /// Look up an entry by its exact normalized path (no symlink resolution).
+    fn lookup_entry(&self, normalized: &Path) -> Option<File> {
+        let parent = normalized.parent()?;
+        let name = normalized.file_name()?.to_string_lossy();
+        let children = self.dirs.get(parent)?;
+        children.iter().find(|f| f.name == *name).cloned()
+    }
+
+    /// Resolve symlinks in a path within the archive.
+    ///
+    /// If `follow_last` is true, the final component is also followed if it's
+    /// a symlink. Returns the resolved normalized path (no leading slash).
+    fn resolve_path(&self, path: &Path, follow_last: bool) -> Result<PathBuf, Error> {
+        let normalized = normalize_dir_path(path);
+        let s = normalized.to_string_lossy();
+        if s.is_empty() {
+            return Ok(PathBuf::from(""));
+        }
+        let components: Vec<String> = s
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        self.resolve_components(&components, follow_last, 0)
+    }
+
+    fn resolve_components(
+        &self,
+        components: &[String],
+        follow_last: bool,
+        hops: usize,
+    ) -> Result<PathBuf, Error> {
+        if hops > MAX_SYMLINK_HOPS {
+            return Err(Error {
+                kind: ErrorKind::Other,
+                message: "too many levels of symbolic links".into(),
+            });
+        }
+
+        let mut resolved = PathBuf::new();
+
+        for (i, component) in components.iter().enumerate() {
+            let is_last = i == components.len() - 1;
+
+            let file = self
+                .dirs
+                .get(&resolved)
+                .and_then(|children| children.iter().find(|f| f.name == *component));
+
+            match file {
+                Some(f) if f.is_symlink && (!is_last || follow_last) => {
+                    if let Some(ref target) = f.symlink_target {
+                        let target_resolved = if target.is_absolute() {
+                            normalize_path_dotdot(&normalize_dir_path(target))
+                        } else {
+                            let mut base = resolved.clone();
+                            base.push(target.as_path());
+                            normalize_path_dotdot(&base)
+                        };
+                        // Resolve target + remaining components together
+                        let target_str = target_resolved.to_string_lossy();
+                        let mut remaining: Vec<String> = target_str
+                            .split('/')
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                            .collect();
+                        remaining.extend_from_slice(&components[i + 1..]);
+                        return self.resolve_components(&remaining, follow_last, hops + 1);
+                    }
+                    // Symlink with no target — treat as-is
+                    resolved.push(component);
+                }
+                Some(_) => {
+                    resolved.push(component);
+                }
+                None => {
+                    // Component not found in tree
+                    resolved.push(component);
+                    return Ok(resolved);
+                }
+            }
+        }
+
+        Ok(resolved)
     }
 }
 
@@ -233,6 +341,32 @@ fn normalize_dir_path(path: &Path) -> PathBuf {
     let s = s.trim_start_matches("./");
     let s = s.trim_end_matches('/');
     PathBuf::from(s)
+}
+
+/// Normalize a path by resolving `.` and `..` components.
+/// Absolute paths are treated as relative to the archive root.
+fn normalize_path_dotdot(path: &Path) -> PathBuf {
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(s) => parts.push(s),
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            // CurDir, RootDir, Prefix — skip
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        PathBuf::from("")
+    } else {
+        parts.iter().collect()
+    }
+}
+
+/// Convert a normalized PathBuf to a string suitable for index lookups.
+fn normalized_to_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 /// Look up an entry in the iluvatar index by normalized path, falling back
@@ -361,6 +495,19 @@ impl Seek for RangeReadAdapter {
 const SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
 fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> DirectoryTree {
+    // Build a quick lookup for hard link target sizes
+    let entry_by_path: HashMap<&str, &iluvatar::IndexEntry> = entries
+        .iter()
+        .map(|e| {
+            let p = e
+                .path
+                .trim_start_matches('/')
+                .trim_start_matches("./")
+                .trim_end_matches('/');
+            (p, *e)
+        })
+        .collect();
+
     let mut dirs: HashMap<PathBuf, Vec<File>> = HashMap::new();
     let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
@@ -395,14 +542,39 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
 
         let is_dir = entry.entry_type.is_directory();
         let is_symlink = matches!(entry.entry_type, iluvatar::EntryType::SymLink);
+        let is_hardlink = matches!(entry.entry_type, iluvatar::EntryType::HardLink);
+
+        // Hard link entries typically have size=0 — use the target's size instead.
+        let size = if is_dir {
+            None
+        } else if is_hardlink {
+            if let Some(ref target) = entry.link_target {
+                let target_norm = target
+                    .trim_start_matches('/')
+                    .trim_start_matches("./")
+                    .trim_end_matches('/');
+                entry_by_path
+                    .get(target_norm)
+                    .map(|t| t.size)
+                    .or(Some(entry.size))
+            } else {
+                Some(entry.size)
+            }
+        } else {
+            Some(entry.size)
+        };
 
         let file = File {
             name: name.clone(),
-            size: if is_dir { None } else { Some(entry.size) },
+            size,
             is_dir,
             is_hidden: name.starts_with('.'),
             is_symlink,
-            symlink_target: entry.link_target.as_ref().map(PathBuf::from),
+            symlink_target: if is_symlink {
+                entry.link_target.as_ref().map(PathBuf::from)
+            } else {
+                None
+            },
             user: Some(UserGroup::Id(entry.uid as u32)),
             group: Some(UserGroup::Id(entry.gid as u32)),
             mode: Some(Mode(entry.mode)),

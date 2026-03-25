@@ -19,7 +19,7 @@ use super::{
     DirectoryTree, SNAPSHOT_INTERVAL, archive_breadcrumbs, archive_format_path,
     archive_mount_label, archive_try_parse_display_path, build_directory_tree_from_iluvatar,
     detect_compression_from_name, index_get, index_path_str, mtime_to_i64, normalize_dir_path,
-    not_found,
+    normalized_to_string, not_found,
 };
 
 // ---------------------------------------------------------------------------
@@ -406,6 +406,38 @@ impl TarArchiveVfs {
         }
     }
 
+    /// Resolve a path for reading: follow symlinks in the directory tree,
+    /// then follow hard links in the iluvatar index. Returns the index path
+    /// string and the resolved index entry.
+    fn resolve_for_read<'a>(
+        &self,
+        index: &'a iluvatar::ArchiveIndex,
+        path: &Path,
+    ) -> Result<(String, &'a iluvatar::IndexEntry), Error> {
+        let resolved = self.state.tree.read().resolve_path(path, true)?;
+        let resolved_str = normalized_to_string(&resolved);
+
+        let entry = index_get(index, &resolved_str)
+            .ok_or_else(|| not_found(format!("file not found in archive: {}", resolved_str)))?;
+
+        // Follow hard links — the target path is the archive path of the
+        // original entry that holds the actual data.
+        if matches!(entry.entry_type, iluvatar::EntryType::HardLink)
+            && let Some(ref target) = entry.link_target
+        {
+            let target_normalized = normalize_dir_path(Path::new(target));
+            let target_str = target_normalized.to_string_lossy();
+            let target_entry = index_get(index, &target_str)
+                .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
+            let target_path = index_path_str(index, &target_str).unwrap();
+            return Ok((target_path, target_entry));
+        }
+
+        let archive_path = index_path_str(index, &resolved_str)
+            .ok_or_else(|| not_found(format!("file not found in archive: {}", resolved_str)))?;
+        Ok((archive_path, entry))
+    }
+
     /// Drive the sans-I/O ReadEngine using upstream's read_range for I/O.
     async fn drive_read_engine(
         &self,
@@ -582,22 +614,46 @@ impl Vfs for TarArchiveVfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let index = self.wait_for_index().await?;
+
+        // Try direct lookup for symlink identity (lstat equivalent).
+        // This may return None if the path traverses through a symlink
+        // directory (e.g. "/symlink_dir/file.txt" — only the resolved
+        // path exists in the index).
         let normalized = normalize_dir_path(path);
         let path_str = normalized.to_string_lossy();
+        let original_entry = index_get(index, &path_str);
 
-        let entry = index_get(index, &path_str)
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let is_symlink =
+            original_entry.is_some_and(|e| matches!(e.entry_type, iluvatar::EntryType::SymLink));
+        let symlink_target = if is_symlink {
+            original_entry.and_then(|e| e.link_target.as_ref().map(PathBuf::from))
+        } else {
+            None
+        };
+
+        // Resolve symlinks/hardlinks for actual metadata (stat equivalent).
+        // Fall back to the original entry if the target is broken.
+        let (_, resolved_entry) = match self.resolve_for_read(index, path) {
+            Ok(resolved) => resolved,
+            Err(e) => match original_entry {
+                Some(fallback) => {
+                    let ap = index_path_str(index, &path_str).unwrap_or_default();
+                    (ap, fallback)
+                }
+                None => return Err(e),
+            },
+        };
 
         Ok(FileDetails {
-            size: entry.size,
+            size: resolved_entry.size,
             mime_type: crate::file_reader::guess_mime_type(path),
-            is_dir: entry.entry_type.is_directory(),
-            is_symlink: matches!(entry.entry_type, iluvatar::EntryType::SymLink),
-            symlink_target: entry.link_target.as_ref().map(PathBuf::from),
-            user: Some(UserGroup::Id(entry.uid as u32)),
-            group: Some(UserGroup::Id(entry.gid as u32)),
-            mode: Some(Mode(entry.mode)),
-            modified: mtime_to_i64(entry.mtime),
+            is_dir: resolved_entry.entry_type.is_directory(),
+            is_symlink,
+            symlink_target,
+            user: Some(UserGroup::Id(resolved_entry.uid as u32)),
+            group: Some(UserGroup::Id(resolved_entry.gid as u32)),
+            mode: Some(Mode(resolved_entry.mode)),
+            modified: mtime_to_i64(resolved_entry.mtime),
             accessed: None,
             created: None,
         })
@@ -614,23 +670,15 @@ impl Vfs for TarArchiveVfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let index = self.wait_for_index().await?;
-        let normalized = normalize_dir_path(path);
-        let path_str = normalized.to_string_lossy();
-        let archive_path = index_path_str(index, &path_str)
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let (archive_path, _entry) = self.resolve_for_read(index, path)?;
         let data = self.drive_read_engine(&archive_path, None).await?;
         Ok(Box::new(std::io::Cursor::new(data)))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let index = self.wait_for_index().await?;
-        let normalized = normalize_dir_path(path);
-        let path_str = normalized.to_string_lossy();
-
-        let entry = index_get(index, &path_str)
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let (archive_path, entry) = self.resolve_for_read(index, path)?;
         let total_size = entry.size;
-        let archive_path = index_path_str(index, &path_str).unwrap();
 
         let data = self
             .drive_read_engine(&archive_path, Some((offset, length)))

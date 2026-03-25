@@ -9,7 +9,8 @@ use tokio::sync::mpsc;
 
 use crate::filesystem::{File, Mode};
 use crate::vfs::{
-    Breadcrumb, MountRequest, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, MountRequest, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata,
+    VfsSpaceInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -164,7 +165,7 @@ impl VfsDescriptor for MockVfsDescriptor {
     fn breadcrumbs(&self, _path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
         Vec::new()
     }
-    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<PathBuf> {
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         None
     }
 }

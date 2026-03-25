@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import styles from "./Viewer.module.scss";
+import { safeCommand } from "../lib/ipc";
 import type { ViewerMode } from "./helpers";
 
 interface ModeToggleProps {
@@ -43,7 +43,7 @@ export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
           key={mode}
           tabIndex={-1}
           className={`${styles.modeToggleBtn} ${mode === currentMode ? styles.modeToggleBtnActive : ""}`}
-          onClick={() => invoke("set_viewer_mode", { mode })}
+          onClick={() => safeCommand("set_viewer_mode", { mode })}
         >
           {label}
         </button>

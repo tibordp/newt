@@ -8,7 +8,7 @@ import React, {
 
 import * as CM from "@radix-ui/react-context-menu";
 
-import { invoke } from "@tauri-apps/api/core";
+import { safeCommand } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 
 import styles from "./Viewer.module.scss";
@@ -291,12 +291,12 @@ export function HexViewer({
       const start = Math.min(sel.anchor, sel.head);
       const end = Math.max(sel.anchor, sel.head);
       const fmt = format ?? activeColumnRef.current;
-      invoke("copy_viewer_range", {
+      safeCommand("copy_viewer_range", {
         path: vfsPath,
         offset: start,
         length: end - start + 1,
         format: fmt,
-      }).catch((e) => console.error("copy failed:", e));
+      });
     },
     [vfsPath],
   );

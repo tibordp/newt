@@ -9,11 +9,11 @@ import React, {
 
 import * as CM from "@radix-ui/react-context-menu";
 
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import styles from "./Viewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
+import { safeCommand } from "../lib/ipc";
 import { GoToBar } from "./GoToDialog";
 import { SearchBar } from "./SearchBar";
 import {
@@ -397,12 +397,12 @@ export function TextViewer({
     if (!range) return;
     const [startByte, endByte] = range;
     if (endByte <= startByte) return;
-    invoke("copy_viewer_range", {
+    safeCommand("copy_viewer_range", {
       path: vfsPath,
       offset: startByte,
       length: endByte - startByte,
       format: "text",
-    }).catch((e) => console.error("copy failed:", e));
+    });
   }, [vfsPath, selectionByteRange]);
 
   const selectAll = useCallback(() => {
@@ -545,6 +545,8 @@ export function TextViewer({
   const handleTextMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return;
+      // Skip single-click handling on double-click (detail >= 2)
+      if (e.detail >= 2) return;
       e.preventDefault();
       const pos = getPositionFromMouse(e.clientX, e.clientY);
       if (e.shiftKey && selectionRef.current) {
@@ -556,6 +558,35 @@ export function TextViewer({
       isDraggingRef.current = true;
     },
     [getPositionFromMouse],
+  );
+
+  const handleTextDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const pos = getPositionFromMouse(e.clientX, e.clientY);
+      const text = getLineText(pos.line);
+      if (!text) return;
+
+      // Find word boundaries around pos.col
+      const isWordChar = (ch: string) => /\w/.test(ch);
+      let start = pos.col;
+      let end = pos.col;
+
+      if (start < text.length && isWordChar(text[start])) {
+        while (start > 0 && isWordChar(text[start - 1])) start--;
+        while (end < text.length && isWordChar(text[end])) end++;
+      } else {
+        // Non-word character: select just that character
+        if (end < text.length) end++;
+      }
+
+      setSelection({
+        anchor: { line: pos.line, col: start },
+        head: { line: pos.line, col: end },
+      });
+    },
+    [getPositionFromMouse, getLineText],
   );
 
   // Window-level mousemove/mouseup for drag selection
@@ -669,7 +700,12 @@ export function TextViewer({
 
       switch (e.key) {
         case "Escape":
-          if (selectionRef.current) {
+          if (
+            selectionRef.current &&
+            (selectionRef.current.anchor.line !==
+              selectionRef.current.head.line ||
+              selectionRef.current.anchor.col !== selectionRef.current.head.col)
+          ) {
             setSelection(null);
             e.stopPropagation();
             e.preventDefault();
@@ -744,6 +780,7 @@ export function TextViewer({
               <div
                 style={{ display: "flex" }}
                 onMouseDown={handleTextMouseDown}
+                onDoubleClick={handleTextDoubleClick}
               >
                 <div
                   className={styles.viewerGutter}
