@@ -1,4 +1,4 @@
-name: Package Linux
+name: Package
 
 on:
   workflow_dispatch:
@@ -9,95 +9,49 @@ env:
 jobs:
   # ─── Stage 1: Build agent binaries ───
 
-  agent-x86_64-linux:
-    name: Agent (x86_64-unknown-linux-musl)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-x86_64-linux
-      - name: Install musl tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/x86_64-unknown-linux-musl/newt-agent
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-x86_64-unknown-linux-musl
-          path: agents/x86_64-unknown-linux-musl/
-          retention-days: 7
+  agent:
+    name: Agent (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y musl-tools
 
-  agent-aarch64-linux:
-    name: Agent (aarch64-unknown-linux-musl)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-aarch64-linux
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: |
-          cross build --release --target aarch64-unknown-linux-musl -p newt-agent
-          mkdir -p agents/aarch64-unknown-linux-musl
-          cp target/aarch64-unknown-linux-musl/release/newt-agent agents/aarch64-unknown-linux-musl/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-aarch64-unknown-linux-musl
-          path: agents/aarch64-unknown-linux-musl/
-          retention-days: 7
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            deps: cargo install cross --git https://github.com/cross-rs/cross
+            build: |
+              cross build --release --target aarch64-unknown-linux-musl -p newt-agent
+              mkdir -p agents/aarch64-unknown-linux-musl
+              cp target/aarch64-unknown-linux-musl/release/newt-agent agents/aarch64-unknown-linux-musl/
 
-  agent-aarch64-darwin:
-    name: Agent (aarch64-apple-darwin)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-aarch64-darwin
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/aarch64-apple-darwin/newt-agent
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-aarch64-apple-darwin
-          path: agents/aarch64-apple-darwin/
-          retention-days: 7
+          - target: aarch64-apple-darwin
+            runner: macos-latest
 
-  agent-x86_64-darwin:
-    name: Agent (x86_64-apple-darwin)
-    runs-on: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: agent-x86_64-darwin
+          key: agent-${{ matrix.target }}
+      - name: Install dependencies
+        if: matrix.deps
+        run: ${{ matrix.deps }}
       - name: Build agent
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/x86_64-apple-darwin/newt-agent
+        run: ${{ matrix.build || format('make agents/{0}/newt-agent', matrix.target) }}
       - uses: actions/upload-artifact@v4
         with:
-          name: agent-x86_64-apple-darwin
-          path: agents/x86_64-apple-darwin/
+          name: agent-${{ matrix.target }}
+          path: agents/${{ matrix.target }}/
           retention-days: 7
 
   # ─── Stage 2: Build frontend once ───
@@ -134,7 +88,7 @@ jobs:
     name: Package (${{ matrix.name }})
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
-    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin, agent-x86_64-darwin, frontend]
+    needs: [agent, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -292,4 +246,48 @@ jobs:
             *.deb
             *.rpm
             *.pkg.tar.zst
+          retention-days: 7
+
+  # ─── Stage 3b: macOS .dmg ───
+
+  package-macos:
+    name: Package (macOS aarch64)
+    runs-on: macos-latest
+    needs: [agent, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-macos
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+      - name: Download frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+      - name: Download agent artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: agents/
+          merge-multiple: false
+      - name: Arrange agent artifacts
+        run: |
+          cd agents
+          for dir in agent-*/; do
+            triple="${dir#agent-}"
+            triple="${triple%/}"
+            mkdir -p "$triple"
+            cp -r "$dir"* "$triple/"
+            rm -rf "$dir"
+          done
+          chmod +x */newt-agent
+      - name: Build Tauri app
+        run: cargo tauri build --bundles dmg --config '{"build":{"beforeBuildCommand":""}}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-macos-aarch64
+          path: target/release/bundle/dmg/*.dmg
           retention-days: 7

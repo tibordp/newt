@@ -10,191 +10,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ─── Stage 1: Build agent binaries (3 parallel jobs) ───
-
-  agent-x86_64-linux:
-    name: Agent (x86_64-unknown-linux-musl)
+  frontend:
+    name: Frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-x86_64-linux
-      - name: Install musl tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/x86_64-unknown-linux-musl/newt-agent
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-x86_64-unknown-linux-musl
-          path: agents/x86_64-unknown-linux-musl/
-          retention-days: 7
-
-  agent-aarch64-linux:
-    name: Agent (aarch64-unknown-linux-musl)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-aarch64-linux
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: |
-          cross build --release --target aarch64-unknown-linux-musl -p newt-agent
-          mkdir -p agents/aarch64-unknown-linux-musl
-          cp target/aarch64-unknown-linux-musl/release/newt-agent agents/aarch64-unknown-linux-musl/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-aarch64-unknown-linux-musl
-          path: agents/aarch64-unknown-linux-musl/
-          retention-days: 7
-
-  agent-aarch64-darwin:
-    name: Agent (aarch64-apple-darwin)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-aarch64-darwin
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/aarch64-apple-darwin/newt-agent
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-aarch64-apple-darwin
-          path: agents/aarch64-apple-darwin/
-          retention-days: 7
-
-  agent-x86_64-darwin:
-    name: Agent (x86_64-apple-darwin)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: agent-x86_64-darwin
-      - name: Build agent
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/x86_64-apple-darwin/newt-agent
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-x86_64-apple-darwin
-          path: agents/x86_64-apple-darwin/
-          retention-days: 7
-
-  # ─── Stage 2: Build Tauri apps (depend on all agent jobs) ───
-
-  app-linux:
-    name: App (Linux x86_64)
-    runs-on: ubuntu-latest
-    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin, agent-x86_64-darwin]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: app-linux
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Typecheck
+        run: yarn tsc --noEmit
+      - name: Lint
+        run: yarn lint
+      - name: Format check
+        run: yarn format:check
+      - name: Build
+        run: yarn build
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Download agent artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: agent-*
-          path: agents/
-          merge-multiple: false
-      - name: Arrange agent artifacts
-        run: |
-          # download-artifact creates agent-<name>/ dirs; move contents into place
-          cd agents
-          for dir in agent-*/; do
-            triple="${dir#agent-}"
-            triple="${triple%/}"
-            mkdir -p "$triple"
-            cp -r "$dir"* "$triple/"
-            rm -rf "$dir"
-          done
-          find . -type f | head -20
-          chmod +x */newt-agent
-      - name: Install frontend dependencies
-        run: yarn install --frozen-lockfile
-      - name: Build Tauri app
-        run: yarn tauri build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-linux-x86_64
-          path: |
-            target/release/bundle/deb/*.deb
-            target/release/bundle/rpm/*.rpm
-            target/release/bundle/appimage/*.AppImage
-          retention-days: 7
-
-  app-macos:
-    name: App (macOS aarch64)
-    runs-on: macos-latest
-    needs: [agent-x86_64-linux, agent-aarch64-linux, agent-aarch64-darwin, agent-x86_64-darwin]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: app-macos
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: yarn
-      - name: Download agent artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: agent-*
-          path: agents/
-          merge-multiple: false
-      - name: Arrange agent artifacts
-        run: |
-          cd agents
-          for dir in agent-*/; do
-            triple="${dir#agent-}"
-            triple="${triple%/}"
-            mkdir -p "$triple"
-            cp -r "$dir"* "$triple/"
-            rm -rf "$dir"
-          done
-          find . -type f | head -20
-          chmod +x */newt-agent
-      - name: Install frontend dependencies
-        run: yarn install --frozen-lockfile
-      - name: Build Tauri app
-        run: yarn tauri build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-macos-aarch64
-          path: |
-            target/release/bundle/macos/*.app
-            target/release/bundle/dmg/*.dmg
-          retention-days: 7
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build
+        run: cargo build --all-targets
+      - name: Test
+        run: cargo test --all-targets
