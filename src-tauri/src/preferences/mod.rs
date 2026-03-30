@@ -1,6 +1,9 @@
 pub mod commands;
 pub mod schema;
 
+#[cfg(test)]
+mod tests;
+
 use log::{info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;

@@ -133,6 +133,10 @@ impl FileList {
     }
 }
 
+#[cfg(test)]
+#[path = "filesystem_tests.rs"]
+mod tests;
+
 /// Canonicalize . and .. segments in a path (without following symlinks or
 /// checking whether they exists)
 pub fn resolve(path: &Path) -> PathBuf {

@@ -5,6 +5,10 @@ pub mod remote;
 pub mod s3;
 pub mod sftp;
 
+#[cfg(test)]
+#[path = "../vfs_tests.rs"]
+mod tests;
+
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};

@@ -145,6 +145,10 @@ pub fn create_outbox() -> (Outbox, OutboxReceiver) {
     )
 }
 
+#[cfg(test)]
+#[path = "rpc_tests.rs"]
+mod tests;
+
 struct MessageCodec {}
 
 impl tokio_util::codec::Decoder for MessageCodec {

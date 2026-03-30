@@ -12,6 +12,8 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx,css,scss,json}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx,css,scss,json}'",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepare": "husky"
   },
   "dependencies": {
@@ -52,7 +54,8 @@
     "sass": "^1.97.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^8.0.1"
+    "vite": "^8.0.1",
+    "vitest": "^3.2.0"
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [
