@@ -1,16 +1,19 @@
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
+use std::task::{Context, Poll};
 
 use tokio::sync::mpsc;
 
 use crate::Error;
+use crate::api::PendingVfsReadStreams;
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::File;
+use crate::filesystem::{File, StreamId};
 use crate::rpc::Communicator;
 
 use super::{
-    Breadcrumb, DisplayPathMatch, LOCAL_VFS_DESCRIPTOR, RegisteredDescriptor, Vfs, VfsDescriptor,
-    VfsMetadata, VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, LOCAL_VFS_DESCRIPTOR, RegisteredDescriptor, Vfs, VfsAsyncWriter,
+    VfsDescriptor, VfsMetadata, VfsSpaceInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,16 +37,16 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         true
     }
     fn can_read_sync(&self) -> bool {
-        true
+        false
     }
     fn can_read_async(&self) -> bool {
-        false
-    }
-    fn can_overwrite_sync(&self) -> bool {
         true
     }
-    fn can_overwrite_async(&self) -> bool {
+    fn can_overwrite_sync(&self) -> bool {
         false
+    }
+    fn can_overwrite_async(&self) -> bool {
+        true
     }
     fn can_create_directory(&self) -> bool {
         true
@@ -105,13 +108,30 @@ inventory::submit!(RegisteredDescriptor(&REMOTE_VFS_DESCRIPTOR));
 // RemoteVfs — proxies Vfs calls back to the host over RPC
 // ---------------------------------------------------------------------------
 
+/// Channel capacity for read-chunk streams between the notification dispatcher
+/// and the AsyncRead consumer.
+const READ_STREAM_CHANNEL_CAPACITY: usize = 4;
+
 pub struct RemoteVfs {
     communicator: Communicator,
+    pending_read_streams: PendingVfsReadStreams,
+    next_stream_id: AtomicU64,
 }
 
 impl RemoteVfs {
-    pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
+    pub fn new(communicator: Communicator, pending_read_streams: PendingVfsReadStreams) -> Self {
+        Self {
+            communicator,
+            pending_read_streams,
+            next_stream_id: AtomicU64::new(1),
+        }
+    }
+
+    fn next_stream_id(&self) -> StreamId {
+        StreamId(
+            self.next_stream_id
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        )
     }
 }
 
@@ -119,10 +139,11 @@ use crate::api::{
     API_HOST_VFS_AVAILABLE_SPACE, API_HOST_VFS_COPY_WITHIN, API_HOST_VFS_CREATE_DIRECTORY,
     API_HOST_VFS_CREATE_SYMLINK, API_HOST_VFS_FILE_DETAILS, API_HOST_VFS_FILE_INFO,
     API_HOST_VFS_FS_STATS, API_HOST_VFS_GET_METADATA, API_HOST_VFS_HARD_LINK,
-    API_HOST_VFS_LIST_FILES, API_HOST_VFS_OPEN_READ_SYNC, API_HOST_VFS_OVERWRITE_SYNC,
-    API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_RANGE, API_HOST_VFS_REMOVE_DIR,
-    API_HOST_VFS_REMOVE_FILE, API_HOST_VFS_REMOVE_TREE, API_HOST_VFS_RENAME,
-    API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRUNCATE,
+    API_HOST_VFS_LIST_FILES, API_HOST_VFS_OPEN_READ_ASYNC, API_HOST_VFS_OVERWRITE_ASYNC_BEGIN,
+    API_HOST_VFS_OVERWRITE_ASYNC_FINISH, API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_RANGE,
+    API_HOST_VFS_REMOVE_DIR, API_HOST_VFS_REMOVE_FILE, API_HOST_VFS_REMOVE_TREE,
+    API_HOST_VFS_RENAME, API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRUNCATE,
+    API_HOST_VFS_WRITE_CHUNK,
 };
 
 #[async_trait::async_trait]
@@ -159,12 +180,48 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
-        let ret: Result<Vec<u8>, Error> = self
-            .communicator
-            .invoke(API_HOST_VFS_OPEN_READ_SYNC, &path.to_path_buf())
-            .await?;
-        Ok(Box::new(std::io::Cursor::new(ret?)))
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, Error> {
+        let stream_id = self.next_stream_id();
+        let (chunk_tx, chunk_rx) = mpsc::channel::<Vec<u8>>(READ_STREAM_CHANNEL_CAPACITY);
+
+        // Register so the VfsReadChunkDispatcher can route notifications to us.
+        self.pending_read_streams.lock().insert(
+            stream_id,
+            crate::api::ReadStream {
+                tx: chunk_tx,
+                expected_seq: 0,
+            },
+        );
+
+        // RAII guard to clean up the stream on cancellation/error.
+        let guard = StreamGuard {
+            stream_id,
+            pending: self.pending_read_streams.clone(),
+        };
+
+        // The invoke blocks until the host has sent all chunks (including the
+        // empty sentinel that signals EOF), then returns Ok(()) or an error.
+        // The sentinel is delivered through the data channel, so the reader sees
+        // EOF independently of when the invoke completes.
+        let communicator = self.communicator.clone();
+        let path = path.to_path_buf();
+        let invoke_handle = tokio::spawn(async move {
+            let ret: Result<Result<(), Error>, _> = communicator
+                .invoke(API_HOST_VFS_OPEN_READ_ASYNC, &(path, stream_id))
+                .await;
+            ret
+        });
+
+        Ok(Box::new(ChannelAsyncRead {
+            rx: chunk_rx,
+            current_chunk: Vec::new(),
+            chunk_offset: 0,
+            _invoke_handle: invoke_handle,
+            _guard: guard,
+        }))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
@@ -194,11 +251,17 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
-        Ok(Box::new(ProxyWriter {
-            path: path.to_path_buf(),
+    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        let stream_id: Result<StreamId, Error> = self
+            .communicator
+            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_path_buf())
+            .await?;
+        let stream_id = stream_id?;
+
+        Ok(Box::new(RemoteVfsWriter {
+            stream_id,
             communicator: self.communicator.clone(),
-            buffer: Vec::new(),
+            next_seq: 0,
         }))
     }
 
@@ -320,40 +383,119 @@ impl Vfs for RemoteVfs {
 }
 
 // ---------------------------------------------------------------------------
-// ProxyWriter — buffers writes, sends all data on drop via blocking RPC call
+// ChannelAsyncRead — turns a stream of sequenced Vec<u8> chunks into AsyncRead.
+//
+// Chunks carry (stream_id, seq, data). An empty `data` is the EOF sentinel.
+// Sequence numbers are validated — an out-of-order chunk is a protocol error.
 // ---------------------------------------------------------------------------
 
-struct ProxyWriter {
-    path: PathBuf,
-    communicator: Communicator,
-    buffer: Vec<u8>,
+struct ChannelAsyncRead {
+    rx: mpsc::Receiver<Vec<u8>>,
+    current_chunk: Vec<u8>,
+    chunk_offset: usize,
+    /// Keeps the invoke task alive; its result is unused — EOF is signaled
+    /// in-band via the empty sentinel chunk.
+    _invoke_handle: tokio::task::JoinHandle<Result<Result<(), Error>, Error>>,
+    /// Removes the stream from the pending map on drop (cancellation safety).
+    _guard: StreamGuard,
 }
 
-impl Write for ProxyWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buffer.extend_from_slice(buf);
+struct StreamGuard {
+    stream_id: StreamId,
+    pending: PendingVfsReadStreams,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        self.pending.lock().remove(&self.stream_id);
+    }
+}
+
+impl tokio::io::AsyncRead for ChannelAsyncRead {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // Serve from the current buffered chunk first.
+        if self.chunk_offset < self.current_chunk.len() {
+            let remaining = &self.current_chunk[self.chunk_offset..];
+            let n = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..n]);
+            self.chunk_offset += n;
+            return Poll::Ready(Ok(()));
+        }
+
+        // Try to receive the next chunk.
+        match self.rx.poll_recv(cx) {
+            Poll::Ready(Some(chunk)) => {
+                if chunk.is_empty() {
+                    // Empty sentinel — EOF.
+                    Poll::Ready(Ok(()))
+                } else {
+                    let n = chunk.len().min(buf.remaining());
+                    buf.put_slice(&chunk[..n]);
+                    if n < chunk.len() {
+                        self.current_chunk = chunk;
+                        self.chunk_offset = n;
+                    } else {
+                        self.current_chunk = Vec::new();
+                        self.chunk_offset = 0;
+                    }
+                    Poll::Ready(Ok(()))
+                }
+            }
+            Poll::Ready(None) => {
+                // Channel closed unexpectedly (e.g. connection dropped).
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RemoteVfsWriter — streams sequenced write chunks as notifications,
+// sends sentinel + finish invoke to complete.
+// ---------------------------------------------------------------------------
+
+struct RemoteVfsWriter {
+    stream_id: StreamId,
+    communicator: Communicator,
+    next_seq: u64,
+}
+
+#[async_trait::async_trait]
+impl VfsAsyncWriter for RemoteVfsWriter {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let data = buf.to_vec();
+        self.communicator
+            .notify(API_HOST_VFS_WRITE_CHUNK, &(self.stream_id, seq, data))
+            .await?;
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
+    async fn finish(mut self: Box<Self>) -> Result<(), Error> {
+        // Send empty sentinel to signal end-of-stream. This goes through the
+        // same notify path (low priority) as data chunks, so it is ordered
+        // after all preceding chunks regardless of outbox scheduling.
+        let seq = self.next_seq;
+        self.communicator
+            .notify(
+                API_HOST_VFS_WRITE_CHUNK,
+                &(self.stream_id, seq, Vec::<u8>::new()),
+            )
+            .await?;
 
-impl Drop for ProxyWriter {
-    fn drop(&mut self) {
-        let data = std::mem::take(&mut self.buffer);
-        if data.is_empty() {
-            return;
-        }
-        let communicator = self.communicator.clone();
-        let path = self.path.clone();
-        tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(async move {
-                let _: Result<Result<(), Error>, _> = communicator
-                    .invoke(API_HOST_VFS_OVERWRITE_SYNC, &(path, data))
-                    .await;
-            });
-        });
+        // The finish invoke waits for the host-side writer task to complete
+        // and returns any write errors. It does not participate in stream
+        // shutdown — the sentinel does that.
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_FINISH, &self.stream_id)
+            .await?;
+        ret
     }
 }

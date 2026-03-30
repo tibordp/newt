@@ -686,14 +686,16 @@ fn create_rpc_services(
         pending_streams: pending_streams.clone(),
         preferences: preferences.clone(),
     };
+    let (outbox, inbox) = Communicator::create_outbox();
     let communicator = if expose_local_fs {
         use newt_common::api::VfsDispatcher;
         use newt_common::vfs::LocalVfs;
         let host_vfs = Arc::new(LocalVfs::new());
-        let combined_dispatcher = host_dispatcher.chain(VfsDispatcher::new(host_vfs));
-        Communicator::with_dispatcher(combined_dispatcher, stream)
+        let combined_dispatcher =
+            host_dispatcher.chain(VfsDispatcher::new(host_vfs, outbox.clone()));
+        Communicator::with_dispatcher_and_outbox(combined_dispatcher, stream, outbox, inbox)
     } else {
-        Communicator::with_dispatcher(host_dispatcher, stream)
+        Communicator::with_dispatcher_and_outbox(host_dispatcher, stream, outbox, inbox)
     };
     let services = create_remote_services(communicator, pending_streams.clone());
     (services, pending_streams)

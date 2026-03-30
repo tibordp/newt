@@ -20,11 +20,14 @@ darwin-agents: $(addprefix $(DIST)/,$(addsuffix /newt-agent,$(DARWIN_TARGETS)))
 
 cross-agents: $(addprefix $(DIST)/,$(addsuffix /newt-agent.cross,$(CROSS_TARGETS)))
 
-# Build via cross (Docker-based, no local toolchain needed)
+# Build via cross (Docker-based, no local toolchain needed).
+# Uses a separate target directory to avoid invalidating the local build cache.
+CROSS_TARGET_DIR := target-cross
+
 $(DIST)/%/newt-agent.cross: FORCE
-	cross build --release --target $* -p newt-agent
+	CARGO_TARGET_DIR=$(CROSS_TARGET_DIR) cross build --release --target $* -p newt-agent
 	@mkdir -p $(dir $@)
-	cp target/$*/release/newt-agent $(DIST)/$*/newt-agent
+	cp $(CROSS_TARGET_DIR)/$*/release/newt-agent $(DIST)/$*/newt-agent
 	$(SHA256) $(DIST)/$*/newt-agent > $(DIST)/$*/newt-agent.sha256
 
 # All targets via cargo (install musl toolchains locally)

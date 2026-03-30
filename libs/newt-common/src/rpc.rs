@@ -33,6 +33,118 @@ pub enum Message {
     Notify(Api, bytes::Bytes),
 }
 
+impl Message {
+    fn is_high_priority(&self) -> bool {
+        matches!(
+            self,
+            Message::Ping(_) | Message::InvokeRequest(..) | Message::InvokeCancel(_)
+        )
+    }
+}
+
+// --- Priority-aware outbox ---
+
+const LOW_PRIORITY_CHANNEL_CAPACITY: usize = 64;
+
+/// Sender half of the priority-aware outbox. Cloneable.
+///
+/// Messages are auto-classified by variant into high-priority (unbounded) and
+/// low-priority (bounded) internal channels.
+#[derive(Clone)]
+pub struct Outbox {
+    high: tokio::sync::mpsc::UnboundedSender<Message>,
+    low: tokio::sync::mpsc::Sender<Message>,
+}
+
+impl Outbox {
+    /// Synchronous, non-blocking send for high-priority messages only.
+    ///
+    /// Panics if `msg` is not high-priority. The high-priority channel is
+    /// unbounded, so this never blocks due to capacity — it only fails if the
+    /// receiver has been dropped.
+    pub fn send_high(
+        &self,
+        msg: Message,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<Message>> {
+        assert!(
+            msg.is_high_priority(),
+            "send_high called with low-priority message: {:?}",
+            std::mem::discriminant(&msg),
+        );
+        self.high.send(msg)
+    }
+
+    /// Async send with backpressure. High-priority messages go through the
+    /// unbounded channel and never block. Low-priority messages await capacity
+    /// on the bounded queue.
+    pub async fn send(
+        &self,
+        msg: Message,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<Message>> {
+        if msg.is_high_priority() {
+            self.high.send(msg)
+        } else {
+            self.low.send(msg).await
+        }
+    }
+
+    /// Blocking send for low-priority messages. Intended for use inside
+    /// `spawn_blocking` where `.await` is not available.
+    pub fn blocking_send_low(
+        &self,
+        msg: Message,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<Message>> {
+        assert!(
+            !msg.is_high_priority(),
+            "blocking_send_low called with high-priority message: {:?}",
+            std::mem::discriminant(&msg),
+        );
+        self.low.blocking_send(msg)
+    }
+
+    /// Completes when the receiver half is dropped.
+    pub async fn closed(&self) {
+        self.high.closed().await
+    }
+}
+
+/// Receiver half of the priority-aware outbox.
+pub struct OutboxReceiver {
+    high: tokio::sync::mpsc::UnboundedReceiver<Message>,
+    low: tokio::sync::mpsc::Receiver<Message>,
+}
+
+impl OutboxReceiver {
+    /// Wait for the next message, preferring high-priority.
+    pub async fn recv(&mut self) -> Option<Message> {
+        tokio::select! {
+            biased;
+            msg = self.high.recv() => msg,
+            msg = self.low.recv() => msg,
+        }
+    }
+
+    /// Non-blocking receive, preferring high-priority.
+    pub fn try_recv(&mut self) -> Result<Message, tokio::sync::mpsc::error::TryRecvError> {
+        self.high.try_recv().or_else(|_| self.low.try_recv())
+    }
+}
+
+pub fn create_outbox() -> (Outbox, OutboxReceiver) {
+    let (high_tx, high_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (low_tx, low_rx) = tokio::sync::mpsc::channel(LOW_PRIORITY_CHANNEL_CAPACITY);
+    (
+        Outbox {
+            high: high_tx,
+            low: low_tx,
+        },
+        OutboxReceiver {
+            high: high_rx,
+            low: low_rx,
+        },
+    )
+}
+
 struct MessageCodec {}
 
 impl tokio_util::codec::Decoder for MessageCodec {
@@ -218,7 +330,7 @@ pub struct CancelGuard<'a>(&'a CommunicatorInner, RequestId);
 impl<'a> Drop for CancelGuard<'a> {
     fn drop(&mut self) {
         self.0.response.lock().remove(&self.1);
-        let _ = self.0.outbox.send(Message::InvokeCancel(self.1));
+        let _ = self.0.outbox.send_high(Message::InvokeCancel(self.1));
     }
 }
 
@@ -230,14 +342,14 @@ struct CommunicatorInner {
     tasks: Mutex<HashMap<RequestId, AbortHandle>>,
     response: Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<bytes::Bytes>>>,
     dispatcher: Arc<dyn Dispatcher>,
-    outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+    outbox: Outbox,
 }
 
 impl CommunicatorInner {
     async fn handle_connection<S: Stream>(
         self: Arc<Self>,
         stream: S,
-        mut inbox: tokio::sync::mpsc::UnboundedReceiver<Message>,
+        mut inbox: OutboxReceiver,
     ) -> Result<(), Error> {
         use futures::SinkExt;
         use futures::StreamExt;
@@ -250,6 +362,7 @@ impl CommunicatorInner {
                     tx.feed(msg).await?;
                     // Drain any additional messages that are already available
                     // before flushing, so consecutive messages share one flush.
+                    // Priority is enforced by try_recv (high before low).
                     while let Ok(msg) = inbox.try_recv() {
                         tx.feed(msg).await?;
                     }
@@ -266,7 +379,7 @@ impl CommunicatorInner {
                 Some(Ok(msg)) => match msg {
                     Message::Ping(response) => {
                         if !response {
-                            let _ = self.outbox.send(Message::Ping(true));
+                            let _ = self.outbox.send_high(Message::Ping(true));
                         } else {
                             info!("ping response received");
                         }
@@ -279,7 +392,8 @@ impl CommunicatorInner {
                             tokio::spawn(async move {
                                 match dispatcher.invoke(api, payload).await {
                                     Ok(Some(resp)) => {
-                                        let _ = outbox.send(Message::InvokeResponse(id, resp));
+                                        let _ =
+                                            outbox.send(Message::InvokeResponse(id, resp)).await;
                                     }
                                     Ok(None) => {
                                         error!("unknown API invoked");
@@ -298,18 +412,21 @@ impl CommunicatorInner {
                         }
                     }
                     Message::Notify(api, payload) => {
-                        let dispatcher = self.dispatcher.clone();
-                        tokio::spawn(async move {
-                            match dispatcher.notify(api, payload).await {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    error!("unknown API invoked");
-                                }
-                                Err(e) => {
-                                    error!("error handling notification: {}", e)
-                                }
+                        // Notifications are processed inline (not spawned) to
+                        // guarantee ordering with respect to subsequent
+                        // invoke responses/requests.  This is critical for
+                        // streaming protocols (read/write chunks) where the
+                        // invoke that follows the notification stream must
+                        // not be processed before all chunk notifications.
+                        match self.dispatcher.notify(api, payload).await {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                error!("unknown API invoked");
                             }
-                        });
+                            Err(e) => {
+                                error!("error handling notification: {}", e)
+                            }
+                        }
                     }
                     Message::InvokeCancel(id) => {
                         if let Some(task) = self.tasks.lock().remove(&id) {
@@ -347,14 +464,11 @@ impl Communicator {
         Self::with_dispatcher(NullDispatcher, stream)
     }
 
-    /// Create a pre-connected outbox channel that can be passed to
+    /// Create a pre-connected outbox that can be passed to
     /// `with_dispatcher_and_outbox`. This allows other components (like
     /// OperationDispatcher) to send messages before the Communicator is built.
-    pub fn create_outbox() -> (
-        tokio::sync::mpsc::UnboundedSender<Message>,
-        tokio::sync::mpsc::UnboundedReceiver<Message>,
-    ) {
-        tokio::sync::mpsc::unbounded_channel()
+    pub fn create_outbox() -> (Outbox, OutboxReceiver) {
+        create_outbox()
     }
 
     pub fn with_dispatcher<D: Dispatcher, S: Stream>(dispatcher: D, stream: S) -> Self {
@@ -365,8 +479,8 @@ impl Communicator {
     pub fn with_dispatcher_and_outbox<D: Dispatcher, S: Stream>(
         dispatcher: D,
         stream: S,
-        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
-        inbox: tokio::sync::mpsc::UnboundedReceiver<Message>,
+        outbox: Outbox,
+        inbox: OutboxReceiver,
     ) -> Self {
         let ret = Arc::new(CommunicatorInner {
             request_id: AtomicU64::new(0),
@@ -414,7 +528,7 @@ impl Communicator {
         let message = Message::InvokeRequest(api, id, bytes.into());
         self.0
             .outbox
-            .send(message)
+            .send_high(message)
             .map_err(|_| Error::connection())?;
 
         let resp = rx.await.map_err(|_| Error::connection())?;
@@ -433,12 +547,13 @@ impl Communicator {
         self.0
             .outbox
             .send(message)
+            .await
             .map_err(|_| Error::connection())?;
 
         Ok(())
     }
 
-    pub fn outbox(&self) -> tokio::sync::mpsc::UnboundedSender<Message> {
+    pub fn outbox(&self) -> Outbox {
         self.0.outbox.clone()
     }
 

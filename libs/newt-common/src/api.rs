@@ -12,7 +12,7 @@ use crate::{
     filesystem::{FileList, Filesystem, ListFilesOptions, ShellService, StreamId},
     hot_paths::HotPathsProvider,
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
-    rpc::{Api, Dispatcher, Message},
+    rpc::{Api, Dispatcher, Message, Outbox},
     terminal::TerminalClient,
     vfs::{MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
 };
@@ -55,11 +55,14 @@ pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 pub const API_HOST_VFS_LIST_FILES: Api = Api(600);
 pub const API_HOST_VFS_POLL_CHANGES: Api = Api(601);
 pub const API_HOST_VFS_FS_STATS: Api = Api(602);
-pub const API_HOST_VFS_OPEN_READ_SYNC: Api = Api(603);
+pub const API_HOST_VFS_OPEN_READ_ASYNC: Api = Api(603);
+pub const API_HOST_VFS_READ_CHUNK: Api = Api(621);
 pub const API_HOST_VFS_READ_RANGE: Api = Api(604);
 pub const API_HOST_VFS_FILE_DETAILS: Api = Api(605);
 pub const API_HOST_VFS_FILE_INFO: Api = Api(606);
-pub const API_HOST_VFS_OVERWRITE_SYNC: Api = Api(607);
+pub const API_HOST_VFS_OVERWRITE_ASYNC_BEGIN: Api = Api(607);
+pub const API_HOST_VFS_WRITE_CHUNK: Api = Api(622);
+pub const API_HOST_VFS_OVERWRITE_ASYNC_FINISH: Api = Api(623);
 pub const API_HOST_VFS_CREATE_DIRECTORY: Api = Api(608);
 pub const API_HOST_VFS_CREATE_SYMLINK: Api = Api(609);
 pub const API_HOST_VFS_TOUCH: Api = Api(610);
@@ -76,14 +79,11 @@ pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
 
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
-    outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+    outbox: Outbox,
 }
 
 impl FilesystemDispatcher {
-    pub fn new<F: Filesystem + 'static>(
-        filesystem: F,
-        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
-    ) -> Self {
+    pub fn new<F: Filesystem + 'static>(filesystem: F, outbox: Outbox) -> Self {
         Self {
             filesystem: Box::new(filesystem),
             outbox,
@@ -120,7 +120,9 @@ impl Dispatcher for FilesystemDispatcher {
                 let forwarder = tokio::spawn(async move {
                     while let Some(file_list) = batch_rx.recv().await {
                         let bytes = bincode::serialize(&(stream_id, file_list)).unwrap();
-                        let _ = outbox.send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()));
+                        let _ = outbox
+                            .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
+                            .await;
                     }
                 });
 
@@ -329,17 +331,14 @@ impl Dispatcher for FileReaderDispatcher {
 }
 
 pub struct OperationDispatcher {
-    outbox: tokio::sync::mpsc::UnboundedSender<Message>,
+    outbox: Outbox,
     operations: Arc<Mutex<HashMap<OperationId, OperationHandle>>>,
     next_issue_id: Arc<AtomicU64>,
     context: Arc<operation::OperationContext>,
 }
 
 impl OperationDispatcher {
-    pub fn new(
-        outbox: tokio::sync::mpsc::UnboundedSender<Message>,
-        context: Arc<operation::OperationContext>,
-    ) -> Self {
+    pub fn new(outbox: Outbox, context: Arc<operation::OperationContext>) -> Self {
         Self {
             outbox,
             operations: Arc::new(Mutex::new(HashMap::new())),
@@ -378,7 +377,8 @@ impl Dispatcher for OperationDispatcher {
                     while let Some(progress) = progress_rx.recv().await {
                         let bytes = bincode::serialize(&progress).unwrap();
                         let _ = outbox_for_bridge
-                            .send(Message::Notify(API_OPERATION_PROGRESS, bytes.into()));
+                            .send(Message::Notify(API_OPERATION_PROGRESS, bytes.into()))
+                            .await;
                     }
                 });
 
@@ -433,11 +433,20 @@ impl Dispatcher for OperationDispatcher {
 // VfsRegistryManager — local VfsManager backed by a VfsRegistry
 // ---------------------------------------------------------------------------
 
+pub struct ReadStream {
+    pub tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    pub expected_seq: u64,
+}
+
+pub type PendingVfsReadStreams = Arc<parking_lot::Mutex<HashMap<StreamId, ReadStream>>>;
+
 pub struct VfsRegistryManager {
     registry: Arc<VfsRegistry>,
     /// When set, allows mounting a Remote VFS that proxies calls back to
     /// the host. Used by the agent in remote sessions.
     host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+    /// Shared map for routing read-chunk notifications to the correct stream.
+    pending_read_streams: PendingVfsReadStreams,
 }
 
 impl VfsRegistryManager {
@@ -445,16 +454,19 @@ impl VfsRegistryManager {
         Self {
             registry,
             host_communicator: Arc::new(std::sync::OnceLock::new()),
+            pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }
 
     pub fn new_with_host_communicator(
         registry: Arc<VfsRegistry>,
         host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+        pending_read_streams: PendingVfsReadStreams,
     ) -> Self {
         Self {
             registry,
             host_communicator,
+            pending_read_streams,
         }
     }
 }
@@ -564,7 +576,10 @@ impl VfsManager for VfsRegistryManager {
                     .get()
                     .ok_or_else(|| Error::custom("host communicator not available"))?
                     .clone();
-                let vfs = Arc::new(crate::vfs::RemoteVfs::new(communicator));
+                let vfs = Arc::new(crate::vfs::RemoteVfs::new(
+                    communicator,
+                    self.pending_read_streams.clone(),
+                ));
                 let mount_meta = vfs.mount_meta();
                 let type_name = vfs.descriptor().type_name().to_string();
                 let vfs_id = self.registry.mount(vfs);
@@ -697,20 +712,43 @@ impl Dispatcher for HotPathsDispatcher {
 // VfsDispatcher — handles API_HOST_VFS_* invoke requests from the agent
 // ---------------------------------------------------------------------------
 
+const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
+
+struct WriteSession {
+    tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    expected_seq: u64,
+}
+
+type PendingVfsWriteSessions = Arc<parking_lot::Mutex<HashMap<StreamId, WriteSession>>>;
+
+/// Shared state for write sessions, accessible from both invoke and notify
+/// handlers. The JoinHandle map lets the FINISH invoke await the writer task.
+type WriteTaskHandles =
+    Arc<parking_lot::Mutex<HashMap<StreamId, tokio::task::JoinHandle<Result<(), Error>>>>>;
+
 pub struct VfsDispatcher {
     vfs: Arc<dyn Vfs>,
+    outbox: Outbox,
+    write_sessions: PendingVfsWriteSessions,
+    write_task_handles: WriteTaskHandles,
+    next_stream_id: AtomicU64,
 }
 
 impl VfsDispatcher {
-    pub fn new(vfs: Arc<dyn Vfs>) -> Self {
-        Self { vfs }
+    pub fn new(vfs: Arc<dyn Vfs>, outbox: Outbox) -> Self {
+        Self {
+            vfs,
+            outbox,
+            write_sessions: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            write_task_handles: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            next_stream_id: AtomicU64::new(1),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Dispatcher for VfsDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
-        use std::io::Read;
         use std::path::PathBuf;
 
         let ret = match api {
@@ -729,18 +767,69 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.vfs.fs_stats(&path).await;
                 bincode::serialize(&ret).unwrap()
             }
-            API_HOST_VFS_OPEN_READ_SYNC => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
-                let ret = match self.vfs.open_read_sync(&path).await {
-                    Ok(mut reader) => {
-                        let mut data = Vec::new();
-                        match reader.read_to_end(&mut data) {
-                            Ok(_) => Ok(data),
-                            Err(e) => Err(e.into()),
+            API_HOST_VFS_OPEN_READ_ASYNC => {
+                let (path, stream_id): (PathBuf, StreamId) =
+                    bincode::deserialize(&req[..]).unwrap();
+                let descriptor = self.vfs.descriptor();
+                let outbox = self.outbox.clone();
+
+                let ret: Result<(), Error> = if descriptor.can_read_async() {
+                    use tokio::io::AsyncReadExt;
+                    let mut reader = self.vfs.open_read_async(&path).await?;
+                    let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+                    let mut seq: u64 = 0;
+                    loop {
+                        let n = reader.read(&mut buf).await.map_err(Error::from)?;
+                        if n == 0 {
+                            break;
                         }
+                        let chunk = buf[..n].to_vec();
+                        let bytes = bincode::serialize(&(stream_id, seq, chunk)).unwrap();
+                        let _ = outbox
+                            .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                            .await;
+                        seq += 1;
                     }
-                    Err(e) => Err(e),
+                    // Send empty sentinel to signal EOF.
+                    let bytes = bincode::serialize(&(stream_id, seq, Vec::<u8>::new())).unwrap();
+                    let _ = outbox
+                        .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                        .await;
+                    Ok(())
+                } else if descriptor.can_read_sync() {
+                    let mut reader = self.vfs.open_read_sync(&path).await?;
+                    let outbox = outbox.clone();
+                    tokio::task::spawn_blocking(move || {
+                        use std::io::Read;
+                        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+                        let mut seq: u64 = 0;
+                        loop {
+                            let n = reader.read(&mut buf)?;
+                            if n == 0 {
+                                break;
+                            }
+                            let chunk = buf[..n].to_vec();
+                            let bytes = bincode::serialize(&(stream_id, seq, chunk)).unwrap();
+                            let _ = outbox.blocking_send_low(Message::Notify(
+                                API_HOST_VFS_READ_CHUNK,
+                                bytes.into(),
+                            ));
+                            seq += 1;
+                        }
+                        // Send empty sentinel to signal EOF.
+                        let bytes =
+                            bincode::serialize(&(stream_id, seq, Vec::<u8>::new())).unwrap();
+                        let _ = outbox.blocking_send_low(Message::Notify(
+                            API_HOST_VFS_READ_CHUNK,
+                            bytes.into(),
+                        ));
+                        Ok::<(), Error>(())
+                    })
+                    .await?
+                } else {
+                    Err(Error::not_supported())
                 };
+
                 bincode::serialize(&ret).unwrap()
             }
             API_HOST_VFS_READ_RANGE => {
@@ -759,14 +848,94 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.vfs.file_info(&path).await;
                 bincode::serialize(&ret).unwrap()
             }
-            API_HOST_VFS_OVERWRITE_SYNC => {
-                let (path, data): (PathBuf, Vec<u8>) = bincode::deserialize(&req[..]).unwrap();
-                let ret = match self.vfs.overwrite_sync(&path).await {
-                    Ok(mut writer) => match std::io::Write::write_all(&mut writer, &data) {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(e.into()),
+            API_HOST_VFS_OVERWRITE_ASYNC_BEGIN => {
+                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let descriptor = self.vfs.descriptor();
+
+                let ret: Result<StreamId, Error> = if descriptor.can_overwrite_async() {
+                    let writer = self.vfs.overwrite_async(&path).await?;
+                    let stream_id = StreamId(
+                        self.next_stream_id
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    );
+
+                    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+                    self.write_sessions.lock().insert(
+                        stream_id,
+                        WriteSession {
+                            tx: chunk_tx,
+                            expected_seq: 0,
+                        },
+                    );
+
+                    let write_task_handles = self.write_task_handles.clone();
+                    let write_sessions = self.write_sessions.clone();
+                    let handle = tokio::spawn(async move {
+                        let mut writer = writer;
+                        while let Some(data) = chunk_rx.recv().await {
+                            writer.write(&data).await?;
+                        }
+                        writer.finish().await?;
+                        write_sessions.lock().remove(&stream_id);
+                        Ok(())
+                    });
+                    // Update abort handle and store JoinHandle for FINISH to await.
+                    write_task_handles.lock().insert(stream_id, handle);
+
+                    Ok(stream_id)
+                } else if descriptor.can_overwrite_sync() {
+                    let writer = self.vfs.overwrite_sync(&path).await?;
+                    let stream_id = StreamId(
+                        self.next_stream_id
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    );
+
+                    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+                    self.write_sessions.lock().insert(
+                        stream_id,
+                        WriteSession {
+                            tx: chunk_tx,
+                            expected_seq: 0,
+                        },
+                    );
+
+                    let write_task_handles = self.write_task_handles.clone();
+                    let write_sessions = self.write_sessions.clone();
+                    let handle = tokio::task::spawn_blocking(move || {
+                        use std::io::Write;
+                        let mut writer = writer;
+                        while let Some(data) =
+                            tokio::runtime::Handle::current().block_on(chunk_rx.recv())
+                        {
+                            writer.write_all(&data)?;
+                        }
+                        drop(writer); // flush on drop
+                        write_sessions.lock().remove(&stream_id);
+                        Ok(())
+                    });
+                    write_task_handles.lock().insert(stream_id, handle);
+
+                    Ok(stream_id)
+                } else {
+                    Err(Error::not_supported())
+                };
+
+                bincode::serialize(&ret).unwrap()
+            }
+            API_HOST_VFS_OVERWRITE_ASYNC_FINISH => {
+                let stream_id: StreamId = bincode::deserialize(&req[..]).unwrap();
+                // The sentinel (empty chunk) already closed the data channel.
+                // Wait for the writer task to finish and propagate its result.
+                let handle = self.write_task_handles.lock().remove(&stream_id);
+                let ret: Result<(), Error> = match handle {
+                    Some(h) => match h.await {
+                        Ok(r) => r,
+                        Err(e) => Err(Error::custom(format!("writer task failed: {}", e))),
                     },
-                    Err(e) => Err(e),
+                    None => {
+                        // Writer task already finished or was never started.
+                        Ok(())
+                    }
                 };
                 bincode::serialize(&ret).unwrap()
             }
@@ -842,7 +1011,106 @@ impl Dispatcher for VfsDispatcher {
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        Ok(false)
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api == API_HOST_VFS_WRITE_CHUNK {
+            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) =
+                bincode::deserialize(&req[..]).unwrap();
+
+            let tx = {
+                let mut sessions = self.write_sessions.lock();
+                let session = sessions.get_mut(&stream_id);
+                match session {
+                    Some(session) => {
+                        assert!(
+                            seq == session.expected_seq,
+                            "VFS write chunk out of order for stream {:?}: expected seq {}, got {}",
+                            stream_id,
+                            session.expected_seq,
+                            seq,
+                        );
+                        session.expected_seq += 1;
+
+                        if data.is_empty() {
+                            // Sentinel — remove session to close the channel.
+                            sessions.remove(&stream_id);
+                            None
+                        } else {
+                            Some(session.tx.clone())
+                        }
+                    }
+                    None => None,
+                }
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(data).await;
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VfsReadChunkDispatcher — agent-side: routes read-chunk notifications
+// from the host into the correct RemoteVfs stream.
+// ---------------------------------------------------------------------------
+
+pub struct VfsReadChunkDispatcher {
+    pending_read_streams: PendingVfsReadStreams,
+}
+
+impl VfsReadChunkDispatcher {
+    pub fn new(pending_read_streams: PendingVfsReadStreams) -> Self {
+        Self {
+            pending_read_streams,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for VfsReadChunkDispatcher {
+    async fn invoke(&self, _api: Api, _req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        Ok(None)
+    }
+
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api == API_HOST_VFS_READ_CHUNK {
+            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) =
+                bincode::deserialize(&req[..]).unwrap();
+
+            let tx = {
+                let mut streams = self.pending_read_streams.lock();
+                let stream = streams.get_mut(&stream_id);
+                match stream {
+                    Some(stream) => {
+                        assert!(
+                            seq == stream.expected_seq,
+                            "VFS read chunk out of order for stream {:?}: expected seq {}, got {}",
+                            stream_id,
+                            stream.expected_seq,
+                            seq,
+                        );
+                        stream.expected_seq += 1;
+                        let tx = stream.tx.clone();
+
+                        if data.is_empty() {
+                            // Sentinel — remove from map so the channel closes
+                            // after this send (the tx clone is the last sender).
+                            streams.remove(&stream_id);
+                        }
+                        Some(tx)
+                    }
+                    None => None,
+                }
+            };
+            if let Some(tx) = tx {
+                // Send the chunk (or empty sentinel) — the reader distinguishes.
+                let _ = tx.send(data).await;
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }

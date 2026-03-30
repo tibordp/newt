@@ -5,7 +5,8 @@ use newt_common::{
     Error,
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        ShellServiceDispatcher, TerminalDispatcher, VfsMountDispatcher, VfsRegistryManager,
+        PendingVfsReadStreams, ShellServiceDispatcher, TerminalDispatcher, VfsMountDispatcher,
+        VfsReadChunkDispatcher, VfsRegistryManager,
     },
     filesystem::LocalShellService,
     hot_paths,
@@ -114,6 +115,10 @@ async fn run_agent() -> Result<(), Error> {
     // allows RemoteVfs to call back to the host.
     let host_communicator = Arc::new(std::sync::OnceLock::new());
 
+    // Shared map for routing read-chunk notifications from the host to
+    // the correct RemoteVfs read stream.
+    let pending_read_streams: PendingVfsReadStreams = Default::default();
+
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
@@ -125,8 +130,10 @@ async fn run_agent() -> Result<(), Error> {
             VfsRegistryManager::new_with_host_communicator(
                 registry.clone(),
                 host_communicator.clone(),
+                pending_read_streams.clone(),
             ),
         ))
+        .chain(VfsReadChunkDispatcher::new(pending_read_streams))
         .chain(HotPathsDispatcher::new(hot_paths::Local::new()));
 
     info!("agent started, entering RPC loop");
