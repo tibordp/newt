@@ -208,6 +208,7 @@ const VFS_ICONS: Record<string, string> = {
   sftp: "\u{eb3a}",
   archive: "\u{eaa0}",
   archive_zip: "\u{eaa0}",
+  k8s: "\u{f10fe}",
 };
 
 function VfsSelector({
