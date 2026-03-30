@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use bytes::Buf;
 use log::{debug, error, info, warn};
 use openssh_sftp_client::Sftp;
 use tokio::io::AsyncRead;
@@ -525,37 +526,43 @@ impl Vfs for SftpVfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         debug!("sftp: file_details {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
 
-        let symlink_meta = fs.symlink_metadata(path).await?;
+        // Gather metadata while holding the lock, then release.
+        let (symlink_meta, effective_meta, symlink_target) = {
+            let sftp = self.sftp.lock().await;
+            let mut fs = sftp.fs();
 
-        let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
+            let symlink_meta = fs.symlink_metadata(path).await?;
+            let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
-        let effective_meta = if is_symlink {
-            fs.metadata(path).await.unwrap_or(symlink_meta)
-        } else {
-            symlink_meta
+            let effective_meta = if is_symlink {
+                fs.metadata(path).await.unwrap_or(symlink_meta)
+            } else {
+                symlink_meta
+            };
+
+            let symlink_target = if is_symlink {
+                fs.read_link(path)
+                    .await
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            } else {
+                None
+            };
+
+            (symlink_meta, effective_meta, symlink_target)
         };
 
+        let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
         let is_dir = effective_meta.file_type().is_some_and(|ft| ft.is_dir());
         let size = effective_meta.len().unwrap_or(0);
         let mode = effective_meta
             .permissions()
             .map(|p| Mode(permissions_to_mode(&p)));
 
-        let symlink_target = if is_symlink {
-            fs.read_link(path)
-                .await
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-        drop(fs);
-
-        // MIME detection: try extension first, then content sniffing
+        // MIME detection: try extension first, then content sniffing.
+        // Content sniffing opens and reads a small range without holding the
+        // global SFTP lock.
         let mime_type = if is_dir {
             None
         } else {
@@ -563,7 +570,20 @@ impl Vfs for SftpVfs {
             if from_extension.is_some() {
                 from_extension
             } else {
-                match self.read_range_inner(&sftp, path, 0, 8192).await {
+                let sniff_result = async {
+                    let (mut file, total_size) = {
+                        let sftp = self.sftp.lock().await;
+                        let mut fs = sftp.fs();
+                        let meta = fs.metadata(path).await?;
+                        let total_size = meta.len().unwrap_or(0);
+                        let file = sftp.open(path).await?;
+                        Ok::<_, Error>((file, total_size))
+                    }?;
+                    Self::read_range_from_file(&mut file, 0, 8192, total_size).await
+                }
+                .await;
+
+                match sniff_result {
                     Ok(chunk) => {
                         let detected = mimetype_detector::detect(&chunk.data);
                         if detected.is("application/octet-stream") {
@@ -607,8 +627,18 @@ impl Vfs for SftpVfs {
             offset,
             length
         );
-        let sftp = self.sftp.lock().await;
-        self.read_range_inner(&sftp, path, offset, length).await
+
+        // Get metadata and open the file while holding the lock, then release.
+        let (mut file, total_size) = {
+            let sftp = self.sftp.lock().await;
+            let mut fs = sftp.fs();
+            let meta = fs.metadata(path).await?;
+            let total_size = meta.len().unwrap_or(0);
+            let file = sftp.open(path).await?;
+            (file, total_size)
+        };
+
+        Self::read_range_from_file(&mut file, offset, length, total_size).await
     }
 
     async fn open_read_async(
@@ -616,23 +646,40 @@ impl Vfs for SftpVfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         debug!("sftp: open_read_async {}", path.display());
-        // Read entire file into memory since TokioCompatFile is !Unpin
-        // and we need to return Box<dyn AsyncRead + Send + Unpin>.
-        let sftp = self.sftp.lock().await;
-        let mut file = sftp.open(path).await?;
 
-        // Get file size for read_all, or use a large default
-        let file_len = {
-            let mut fs = sftp.fs();
-            fs.metadata(path)
-                .await
-                .ok()
-                .and_then(|m| m.len())
-                .unwrap_or(1024 * 1024) as usize
+        // Open the file handle while holding the lock, then release it.
+        // The SFTP file handle is independent and doesn't need the lock
+        // for I/O, so reads won't block other SFTP operations.
+        let file = {
+            let sftp = self.sftp.lock().await;
+            sftp.open(path).await?
         };
-        let data = file.read_all(file_len, bytes::BytesMut::new()).await?;
 
-        Ok(Box::new(std::io::Cursor::new(data.freeze())))
+        // Bridge the !Unpin SFTP file into AsyncRead via a channel + task.
+        let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, Error>>(4);
+        tokio::spawn(async move {
+            let mut file = file;
+            const CHUNK_SIZE: u32 = 64 * 1024;
+            loop {
+                match file.read(CHUNK_SIZE, bytes::BytesMut::new()).await {
+                    Ok(Some(data)) if !data.is_empty() => {
+                        if tx.send(Ok(data.freeze())).await.is_err() {
+                            break; // receiver dropped
+                        }
+                    }
+                    Ok(_) => break, // EOF
+                    Err(e) => {
+                        let _ = tx.send(Err(e.into())).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(Box::new(SftpAsyncReader {
+            rx,
+            current_chunk: bytes::Bytes::new(),
+        }))
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
@@ -792,18 +839,15 @@ impl Vfs for SftpVfs {
 }
 
 impl SftpVfs {
-    async fn read_range_inner(
-        &self,
-        sftp: &Sftp,
-        path: &Path,
+    /// Read a range from an already-opened file handle. Does not require the
+    /// SFTP mutex since file handles are independent after opening.
+    async fn read_range_from_file(
+        file: &mut openssh_sftp_client::file::File,
         offset: u64,
         length: u64,
+        total_size: u64,
     ) -> Result<FileChunk, Error> {
         use tokio::io::AsyncSeekExt;
-
-        let mut fs = sftp.fs();
-        let meta = fs.metadata(path).await?;
-        let total_size = meta.len().unwrap_or(0);
 
         let to_read = length.min(total_size.saturating_sub(offset)) as usize;
         if to_read == 0 {
@@ -814,9 +858,6 @@ impl SftpVfs {
             });
         }
 
-        let mut file = sftp.open(path).await?;
-
-        // Seek to offset — File implements AsyncSeek by adjusting the internal offset
         if offset > 0 {
             file.seek(std::io::SeekFrom::Start(offset)).await?;
         }
@@ -839,6 +880,50 @@ impl SftpVfs {
             offset,
             total_size,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SftpAsyncReader — bridges the !Unpin SFTP File into AsyncRead via a channel
+// ---------------------------------------------------------------------------
+
+struct SftpAsyncReader {
+    rx: mpsc::Receiver<Result<bytes::Bytes, Error>>,
+    current_chunk: bytes::Bytes,
+}
+
+impl tokio::io::AsyncRead for SftpAsyncReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        // Serve from the current buffered chunk first.
+        if !self.current_chunk.is_empty() {
+            let n = self.current_chunk.len().min(buf.remaining());
+            buf.put_slice(&self.current_chunk[..n]);
+            self.current_chunk.advance(n);
+            return std::task::Poll::Ready(Ok(()));
+        }
+
+        match self.rx.poll_recv(cx) {
+            std::task::Poll::Ready(Some(Ok(chunk))) => {
+                let n = chunk.len().min(buf.remaining());
+                buf.put_slice(&chunk[..n]);
+                if n < chunk.len() {
+                    self.current_chunk = chunk.slice(n..);
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => {
+                std::task::Poll::Ready(Err(std::io::Error::other(e.to_string())))
+            }
+            std::task::Poll::Ready(None) => {
+                // Channel closed — EOF.
+                std::task::Poll::Ready(Ok(()))
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
 
