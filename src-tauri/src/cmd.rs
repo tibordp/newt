@@ -1164,6 +1164,9 @@ pub fn dialog(
                     host: String::new(),
                 },
                 "mount_s3" => ModalDataKind::MountS3,
+                "mount_k8s" => ModalDataKind::MountK8s {
+                    k8s_context: String::new(),
+                },
                 "quick_connect" => {
                     let app_handle = ctx.window().app_handle().clone();
                     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
@@ -1798,6 +1801,33 @@ pub async fn mount_sftp(
 }
 
 #[tauri::command]
+pub async fn mount_k8s(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    context: String,
+) -> Result<(), Error> {
+    log::info!("cmd: mount_k8s context={} pane={:?}", context, pane_handle);
+    let response = ctx
+        .mount_vfs(MountRequest::Kubernetes {
+            context: context.clone(),
+        })
+        .await
+        .map_err(|e| {
+            log::error!("cmd: mount_k8s failed for context={}: {}", context, e);
+            e
+        })?;
+    log::info!("cmd: mount_k8s succeeded, vfs_id={:?}", response.vfs_id);
+    let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn switch_vfs(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -2225,6 +2255,7 @@ cmd_dialog!(cmd_select_vfs, "select_vfs");
 cmd_dialog!(cmd_quick_connect, "quick_connect");
 cmd_dialog!(cmd_mount_s3, "mount_s3");
 cmd_dialog!(cmd_mount_sftp, "mount_sftp");
+cmd_dialog!(cmd_mount_k8s, "mount_k8s");
 cmd_dialog!(cmd_command_palette, "command_palette");
 cmd_dialog!(cmd_user_commands, "user_commands");
 cmd_dialog!(cmd_hot_paths, "hot_paths");
@@ -2382,8 +2413,10 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_mount_s3,
         mount_s3,
         cmd_mount_sftp,
+        cmd_mount_k8s,
         cmd_unmount_vfs,
         mount_sftp,
+        mount_k8s,
         cmd_hot_paths,
         cmd_add_bookmark,
         cmd_open_config_file,

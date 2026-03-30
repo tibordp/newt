@@ -570,6 +570,24 @@ impl VfsManager for VfsRegistryManager {
                     origin: None,
                 })
             }
+            MountRequest::Kubernetes { context } => {
+                log::info!("mounting Kubernetes VFS for context={}", context);
+                let vfs = Arc::new(crate::vfs::K8sVfs::connect(&context).await?);
+                let mount_meta = vfs.mount_meta();
+                let type_name = vfs.descriptor().type_name().to_string();
+                let vfs_id = self.registry.mount(vfs);
+                log::info!(
+                    "mounted Kubernetes VFS for context={} as vfs_id={:?}",
+                    context,
+                    vfs_id
+                );
+                Ok(MountResponse {
+                    vfs_id,
+                    type_name,
+                    mount_meta,
+                    origin: None,
+                })
+            }
             MountRequest::Remote => {
                 let communicator = self
                     .host_communicator

@@ -1,10 +1,12 @@
 pub mod archive;
+pub mod k8s;
 pub mod local;
 pub mod remote;
 pub mod s3;
 pub mod sftp;
 
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
+pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
@@ -839,6 +841,9 @@ pub enum MountRequest {
     },
     Sftp {
         host: String,
+    },
+    Kubernetes {
+        context: String,
     },
     Archive {
         origin: VfsPath,

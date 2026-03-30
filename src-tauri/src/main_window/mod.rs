@@ -350,6 +350,9 @@ pub enum ModalDataKind {
         host: String,
     },
     MountS3,
+    MountK8s {
+        k8s_context: String,
+    },
     QuickConnect {
         connections: Vec<crate::connections::ConnectionProfile>,
     },
@@ -1008,6 +1011,7 @@ impl MainWindowContext {
             match type_name {
                 "s3" => Some("mount_s3"),
                 "sftp" => Some("mount_sftp"),
+                "k8s" => Some("mount_k8s"),
                 _ => None,
             }
         }

@@ -6,6 +6,7 @@ import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
+import MountK8s from "./MountK8s";
 import MountS3 from "./MountS3";
 import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
@@ -54,6 +55,8 @@ export function ModalContent({ state }: { state: ModalState | null }) {
       return <MountS3 {...commonProps} />;
     case "mount_sftp":
       return <MountSftp {...state.data} {...commonProps} />;
+    case "mount_k8s":
+      return <MountK8s {...state.data} {...commonProps} />;
     case "confirm":
       return <Confirm {...state.data} {...commonProps} />;
     case "properties":
