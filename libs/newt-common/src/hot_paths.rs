@@ -400,13 +400,12 @@ fn collect_macos_recent_folders(out: &mut Vec<HotPathEntry>) {
     // RecentMoveAndCopyDestinations: array of file:// URL strings
     if let Some(plist::Value::Array(arr)) = dict.get("RecentMoveAndCopyDestinations") {
         for val in arr {
-            if let Some(s) = val.as_string() {
-                if let Some(path) = file_uri_to_path(s) {
-                    if path.exists() {
-                        let name = path.file_name().map(|n| n.to_string_lossy().to_string());
-                        out.push(make_entry(path, name, HotPathCategory::RecentFolder));
-                    }
-                }
+            if let Some(s) = val.as_string()
+                && let Some(path) = file_uri_to_path(s)
+                && path.exists()
+            {
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string());
+                out.push(make_entry(path, name, HotPathCategory::RecentFolder));
             }
         }
     }

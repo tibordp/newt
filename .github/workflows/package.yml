@@ -18,19 +18,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
-            deps: sudo apt-get update && sudo apt-get install -y musl-tools
-
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
-            deps: cargo install cross --git https://github.com/cross-rs/cross
-            build: |
-              cross build --release --target aarch64-unknown-linux-musl -p newt-agent
-              mkdir -p agents/aarch64-unknown-linux-musl
-              cp target/aarch64-unknown-linux-musl/release/newt-agent agents/aarch64-unknown-linux-musl/
-
           - target: aarch64-apple-darwin
             runner: macos-latest
-
           - target: x86_64-apple-darwin
             runner: macos-latest
     steps:
@@ -41,13 +32,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: agent-${{ matrix.target }}
-      - name: Install dependencies
-        if: matrix.deps
-        run: ${{ matrix.deps }}
+      # Linux-musl targets cross-compile via cargo-zigbuild. Zig 0.16
+      # ships a broken `ar` that fails to create archives for C -sys
+      # crates (aws-lc-sys, bzip2-sys, etc.) — stay on 0.15 until
+      # cargo-zigbuild supports the newer llvm-ar behavior.
+      - name: Install zig
+        if: contains(matrix.target, 'linux-musl')
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Install cargo-zigbuild
+        if: contains(matrix.target, 'linux-musl')
+        run: cargo install cargo-zigbuild --version 0.22.2 --locked
       - name: Build agent
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: ${{ matrix.build || format('make agents/{0}/newt-agent', matrix.target) }}
+        run: make agents/${{ matrix.target }}/newt-agent
       - uses: actions/upload-artifact@v4
         with:
           name: agent-${{ matrix.target }}

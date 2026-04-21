@@ -662,10 +662,8 @@ impl K8sVfs {
 
             match prefix {
                 // Listing contents of a group dir → show version dirs
-                [group] if r.group == *group => {
-                    if seen.insert(r.version.clone()) {
-                        files.push(dir_entry(&r.version));
-                    }
+                [group] if r.group == *group && seen.insert(r.version.clone()) => {
+                    files.push(dir_entry(&r.version));
                 }
                 // Core resource: version is the top dir → show resource plural dirs
                 [version] if r.group.is_empty() && r.version == *version => {

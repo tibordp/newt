@@ -157,7 +157,7 @@ pub fn create_editor_window(window: &WebviewWindow) -> Arc<EditorWindow> {
 pub fn activate_editor_window(
     app_handle: &tauri::AppHandle,
     label: &str,
-    window: &WebviewWindow,
+    #[cfg_attr(target_os = "macos", allow(unused_variables))] window: &WebviewWindow,
     editor: &Arc<EditorWindow>,
 ) -> Result<(), Error> {
     let prefix = format!("editor_{}_", label);
