@@ -118,6 +118,10 @@ impl Panes {
     pub fn all(&self) -> Vec<Arc<Pane>> {
         self.0.read().clone()
     }
+
+    pub fn clear(&self) {
+        self.0.write().clear();
+    }
 }
 
 impl serde::Serialize for Panes {
@@ -179,6 +183,10 @@ impl Terminals {
         let mut handles: Vec<_> = self.0.read().keys().copied().collect();
         handles.sort_by_key(|h| h.0);
         handles
+    }
+
+    pub fn clear(&self) {
+        self.0.write().clear();
     }
 }
 
@@ -270,6 +278,11 @@ impl Operations {
     /// If a completion callback is registered for `id`, remove and return it.
     fn take_callback(&self, id: OperationId) -> Option<Box<dyn FnOnce() + Send>> {
         self.callbacks.lock().remove(&id)
+    }
+
+    pub fn clear(&self) {
+        self.state.write().clear();
+        self.callbacks.lock().clear();
     }
 }
 
@@ -1175,4 +1188,137 @@ impl MainWindowContext {
     pub fn clipboard(&self) -> RwLockWriteGuard<'_, arboard::Clipboard> {
         self.inner.clipboard.write()
     }
+
+    /// Tear down the current session and wipe connection-scoped UI state so this
+    /// window can be reconnected from scratch. Safe to call if there's no
+    /// session (e.g. the previous one already disconnected).
+    pub async fn disconnect_for_reconnect(&self) {
+        // Best-effort: kill open PTYs while we still have a live terminal
+        // client. If the session is already gone this is a no-op.
+        if let Ok(tc) = self.terminal_client() {
+            for handle in self.inner.main_window_state.terminals.handles_sorted() {
+                let _ = tc.kill(handle).await;
+            }
+        }
+
+        let state = &self.inner.main_window_state;
+        state.panes.clear();
+        state.terminals.clear();
+        state.operations.clear();
+        {
+            let mut opts = state.display_options.0.write();
+            opts.active_terminal = None;
+            opts.terminal_panel_visible = false;
+            opts.panes_focused = true;
+            opts.active_pane = PaneHandle(0);
+        }
+        *state.connection_status.0.write() = ConnectionStatus::Connecting {
+            message: "Reconnecting...".into(),
+            log: Vec::new(),
+        };
+
+        // Drop the session — aborts file server / event loop handles and, for
+        // remote/elevated, causes the agent subprocess to exit.
+        self.inner.session.store(Arc::new(None));
+
+        let _ = self.publish();
+    }
+}
+
+/// Create a new main window in the current process.
+///
+/// Creates the `WebviewWindow`, constructs a `MainWindowContext`, registers it
+/// in `GlobalContext.main_windows`, attaches the per-window macOS Edit menu,
+/// and subscribes to theme preference changes.
+///
+/// Does **not** connect the session. For the initial window at startup, the
+/// caller (`main.rs::setup`) may synchronously `block_on(ctx.connect())` before
+/// the webview loads. For windows created from IPC commands, the frontend's
+/// `init` command drives the async connect.
+pub fn spawn_main_window(
+    app_handle: &tauri::AppHandle,
+    connection_target: ConnectionTarget,
+    window_title: String,
+) -> Result<(WebviewWindow, MainWindowContext), Error> {
+    let global_ctx: State<GlobalContext> = app_handle.state();
+
+    // First window uses the stable "main" label; subsequent windows get UUIDs.
+    let label = {
+        let locked = global_ctx.main_windows.lock();
+        if locked.contains_key("main") {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            "main".to_string()
+        }
+    };
+
+    let prefs_handle = global_ctx.preferences().handle();
+    let theme = prefs_handle
+        .load()
+        .appearance
+        .theme
+        .to_tauri_theme()
+        .or_else(crate::detect_theme);
+
+    let window =
+        tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into()))
+            .title(&window_title)
+            .resizable(true)
+            .inner_size(1100.0, 800.0)
+            .theme(theme)
+            .build()?;
+
+    let ctx = MainWindowContext::new(
+        window.clone(),
+        connection_target,
+        window_title,
+        prefs_handle.clone(),
+    );
+    global_ctx
+        .main_windows
+        .lock()
+        .insert(label.clone(), ctx.clone());
+
+    // On macOS, a menu with Edit > Paste (etc.) is required so that Cmd+V /
+    // Cmd+C / Cmd+A reach the webview as native events. Keep one menu per
+    // window in `GlobalContext.window_menus` so `on_window_event Focused` can
+    // swap the app-wide menu when this window takes focus.
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+        let edit_submenu = Submenu::with_items(
+            app_handle,
+            "Edit",
+            true,
+            &[
+                &PredefinedMenuItem::cut(app_handle, None)?,
+                &PredefinedMenuItem::copy(app_handle, None)?,
+                &PredefinedMenuItem::paste(app_handle, None)?,
+                &PredefinedMenuItem::select_all(app_handle, None)?,
+            ],
+        )?;
+        let menu = Menu::with_items(app_handle, &[&edit_submenu])?;
+        global_ctx.set_window_menu(&label, menu.clone());
+        let _ = app_handle.set_menu(menu);
+    }
+
+    // Live theme updates when the user changes preferences.
+    {
+        let mut prefs_rx = prefs_handle.subscribe();
+        let prefs = prefs_handle.clone();
+        let window_clone = window.clone();
+        tauri::async_runtime::spawn(async move {
+            while prefs_rx.changed().await.is_ok() {
+                let theme = prefs
+                    .load()
+                    .appearance
+                    .theme
+                    .to_tauri_theme()
+                    .or_else(crate::detect_theme);
+                let _ = window_clone.set_theme(theme);
+            }
+        });
+    }
+
+    Ok((window, ctx))
 }

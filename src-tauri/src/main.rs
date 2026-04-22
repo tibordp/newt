@@ -22,6 +22,7 @@ use log::info;
 use main_window::AgentResolver;
 use main_window::ConnectionTarget;
 use main_window::MainWindowContext;
+use main_window::spawn_main_window;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -202,7 +203,7 @@ impl GlobalContext {
     }
 }
 
-fn detect_theme() -> Option<tauri::Theme> {
+pub fn detect_theme() -> Option<tauri::Theme> {
     #[cfg(target_os = "linux")]
     {
         use gio::prelude::SettingsExt;
@@ -272,69 +273,7 @@ fn main() {
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle());
 
-            let theme = global_ctx
-                .preferences()
-                .handle()
-                .load()
-                .appearance
-                .theme
-                .to_tauri_theme()
-                .or_else(detect_theme);
-
-            let window =
-                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title(&wt)
-                    .resizable(true)
-                    .inner_size(1100.0, 800.0)
-                    .theme(theme)
-                    .build()?;
-
-            let prefs_handle = global_ctx.preferences().handle();
-            let ctx = MainWindowContext::new(window.clone(), ct.clone(), wt.clone(), prefs_handle);
-            global_ctx
-                .main_windows
-                .lock()
-                .insert("main".to_string(), ctx.clone());
-
-            // On macOS, a menu with Edit > Paste (etc.) is required so that
-            // Cmd+V / Cmd+C / Cmd+A reach the webview as native events.
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
-
-                let edit_submenu = Submenu::with_items(
-                    app.handle(),
-                    "Edit",
-                    true,
-                    &[
-                        &PredefinedMenuItem::cut(app.handle(), None)?,
-                        &PredefinedMenuItem::copy(app.handle(), None)?,
-                        &PredefinedMenuItem::paste(app.handle(), None)?,
-                        &PredefinedMenuItem::select_all(app.handle(), None)?,
-                    ],
-                )?;
-                let menu = Menu::with_items(app.handle(), &[&edit_submenu])?;
-                global_ctx.set_window_menu("main", menu.clone());
-                let _ = app.handle().set_menu(menu);
-            }
-
-            // Watch for theme preference changes and apply live
-            {
-                let mut prefs_rx = global_ctx.preferences().handle().subscribe();
-                let prefs = global_ctx.preferences().handle();
-                let window = window.clone();
-                tauri::async_runtime::spawn(async move {
-                    while prefs_rx.changed().await.is_ok() {
-                        let theme = prefs
-                            .load()
-                            .appearance
-                            .theme
-                            .to_tauri_theme()
-                            .or_else(detect_theme);
-                        let _ = window.set_theme(theme);
-                    }
-                });
-            }
+            let (_window, ctx) = spawn_main_window(app.handle(), ct.clone(), wt.clone())?;
 
             // Local mode: connect synchronously so state is ready before JS runs.
             // Remote/Elevated: `init` command triggers connect asynchronously.
@@ -358,6 +297,21 @@ fn main() {
                 match event {
                     tauri::WindowEvent::Destroyed => {
                         global_ctx.destroy_window(window.label()).unwrap();
+                        // Exit when the last real main window is gone. On macOS,
+                        // Tauri would otherwise keep the process alive (standard
+                        // Cocoa behavior); we want the same semantics as
+                        // pre-refactor, when each main window was its own
+                        // process. `main_windows` also contains aliased entries
+                        // for prewarmed/active viewer/editor children (value is
+                        // the parent's ctx), so filter to self-parented entries.
+                        let has_real_main = global_ctx
+                            .main_windows
+                            .lock()
+                            .iter()
+                            .any(|(k, ctx)| k == ctx.main_window_label());
+                        if !has_real_main {
+                            app_handle.exit(0);
+                        }
                     }
                     tauri::WindowEvent::Focused(true) => {
                         // On macOS, swap the app-wide menu to match the focused window

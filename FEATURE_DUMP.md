@@ -34,6 +34,8 @@ Zoom is applied as frontend-side CSS scaling.
 - **Reload Window**: Available in the Debug dialog (debug builds only).
 - **Refresh File List** (Mod+R): Force-refreshes the active pane's directory listing.
 
+Multiple main windows coexist in the same process: "New Window", remote connections, and elevated sessions all create additional windows within the running app. Each window has its own independent session, panes, terminals, and operations; closing the last main window exits the app.
+
 ---
 
 ## 2. Dual-Pane File Browser
@@ -918,7 +920,7 @@ When SSH needs interactive input (password, passphrase, host key verification), 
 
 ### Reconnect
 
-After disconnection, a "Reconnect" button appears. Clicking it re-establishes the connection using the same transport parameters (SSH host, elevated mode, etc.).
+After disconnection, a "Reconnect" button appears. Clicking it reconnects in-place on the same window using the same transport parameters (SSH host, elevated mode, etc.): the old session is torn down (agent subprocess terminated, PTYs killed), panes / terminals / operations are cleared, and a fresh session is established.
 
 ---
 

@@ -225,15 +225,14 @@ pub async fn connect_profile(
 
     match &profile.kind {
         ConnectionKind::Remote { host } => {
-            // Remote sessions spawn a new window process
-            let exe = std::env::current_exe().map_err(|e| Error::Custom(e.to_string()))?;
-            tokio::process::Command::new(exe)
-                .arg("--connect")
-                .arg(host)
-                .arg("--title")
-                .arg(&profile.name)
-                .spawn()
-                .map_err(|e| Error::Custom(e.to_string()))?;
+            let app_handle = ctx.window().app_handle().clone();
+            crate::main_window::spawn_main_window(
+                &app_handle,
+                crate::main_window::ConnectionTarget::Remote {
+                    transport_cmd: vec!["ssh".to_string(), host.clone()],
+                },
+                format!("Newt [{}]", profile.name),
+            )?;
             ctx.with_update(|gs| {
                 gs.close_modal();
                 Ok(())

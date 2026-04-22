@@ -552,9 +552,15 @@ pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 }
 
 #[tauri::command]
-pub async fn cmd_new_window(_pane_handle: PaneHandle) -> Result<(), Error> {
-    let exe = std::env::current_exe()?;
-    tokio::process::Command::new(exe).spawn()?;
+pub async fn cmd_new_window(
+    webview: tauri::Webview,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    crate::main_window::spawn_main_window(
+        webview.app_handle(),
+        ConnectionTarget::Local,
+        "Newt".to_string(),
+    )?;
     Ok(())
 }
 
@@ -1548,53 +1554,42 @@ pub fn foreground_operation(
 
 #[tauri::command]
 pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
-    let exe = std::env::current_exe()?;
-    let mut cmd = tokio::process::Command::new(exe);
+    ctx.disconnect_for_reconnect().await;
 
-    match ctx.connection_target() {
-        ConnectionTarget::Remote { transport_cmd } => {
-            // transport_cmd is ["ssh", "host"] — extract the host
-            if let Some(host) = transport_cmd.get(1) {
-                cmd.arg("--connect").arg(host);
-            }
-        }
-        ConnectionTarget::Elevated => {
-            cmd.arg("--elevated");
-        }
-        ConnectionTarget::Local => {}
-    }
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    let agent_resolver = global_ctx.agent_resolver();
+    ctx.connect(agent_resolver).await?;
 
-    let title = ctx.window_title();
-    if !title.is_empty() {
-        cmd.arg("--title").arg(title);
-    }
-
-    cmd.spawn()?;
-    ctx.window().close()?;
+    // Prewarmed viewer/editor windows hold only UI state (file_path, mode,
+    // etc. — all populated at activation via cmd_view / open_editor_window),
+    // not session data, so they survive the session swap. No re-prewarm.
     Ok(())
 }
 
 #[tauri::command]
-pub async fn connect_remote(host: String) -> Result<(), Error> {
-    let exe = std::env::current_exe()?;
-    tokio::process::Command::new(exe)
-        .arg("--connect")
-        .arg(&host)
-        .arg("--title")
-        .arg(&host)
-        .spawn()?;
+pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(), Error> {
+    crate::main_window::spawn_main_window(
+        webview.app_handle(),
+        ConnectionTarget::Remote {
+            transport_cmd: vec!["ssh".to_string(), host.clone()],
+        },
+        format!("Newt [{}]", host),
+    )?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
-pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
-    let exe = std::env::current_exe()?;
-    tokio::process::Command::new(exe)
-        .arg("--elevated")
-        .arg("--title")
-        .arg("Elevated")
-        .spawn()?;
+pub async fn cmd_open_elevated(
+    webview: tauri::Webview,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    crate::main_window::spawn_main_window(
+        webview.app_handle(),
+        ConnectionTarget::Elevated,
+        "Newt [Elevated]".to_string(),
+    )?;
     Ok(())
 }
 
