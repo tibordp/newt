@@ -81,7 +81,7 @@ When the Extension column is visible, the Name column automatically shows just t
 
 Column visibility and order are configurable via `appearance.columns` preference (transfer list widget in Settings dialog).
 
-Column widths are resizable by dragging the grip between column headers. Minimum width: 10px. Column widths persist per-pane during the session.
+Column widths are resizable by dragging the grip between column headers. Minimum width: 10px. Widths are stored in per-pane CSS custom properties and reset to their defaults whenever the column header component re-mounts (e.g. on window reload); they are not persisted to preferences.
 
 Click a column header to sort ascending by that key; click the same header again to toggle descending. A triangle indicator (▲/▼) shows the active sort column and direction.
 
@@ -142,7 +142,7 @@ Large directories are loaded incrementally via streaming:
 - **Directory**: Navigate into it.
 - **Archive file** (`.tar.gz`, `.zip`, etc.): Mount as VFS and navigate into the archive root.
 - **Symlink to directory**: Follow the symlink and enter the target directory.
-- **Regular file**: Open with system default application.
+- **Regular file**: Open with system default application. For host-local files this opens directly via the OS opener; for files on a non-host-local VFS (S3, SFTP, archives, remote), the file is first downloaded to a temp directory on the host using the standard Copy operation, and the system handler is launched on completion.
 - **`..`**: Navigate to parent directory.
 
 ### Mouse Interactions
@@ -304,7 +304,7 @@ Opens a modal dialog with:
 
 **Copy execution**:
 
-1. **Planning phase**: Recursively traverses all source directories to build a complete file list. Reports total bytes and items. UI shows "Scanning..." during this phase.
+1. **Planning phase**: Recursively traverses all source directories to build a complete file list. The UI shows "Scanning..." with a live count of items and bytes discovered so far. Subdirectory scan errors raise a skip/retry prompt rather than aborting the whole operation.
 2. **Conflict detection**: For each file, checks if the destination already exists:
    - File → File: Offers Skip/Overwrite.
    - Directory → Directory: Merges (copies contents into existing directory without error).
@@ -326,7 +326,7 @@ Opens a modal dialog with:
 Same dialog and options as Copy (except "Create symbolic link" is not available).
 
 **Move execution**:
-1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works.
+1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same Skip / Overwrite prompt as Copy is shown rather than silently overwriting.
 2. **Fallback to copy+delete**: If rename fails (cross-device, cross-VFS, permission error), falls back to copying each file and immediately deleting the source after successful copy. After all files are copied, empty source directories are removed in reverse order (deepest first). Directories that still contain files (because some copies were skipped) are left intact.
 
 ### Properties (Alt+Enter)
@@ -367,7 +367,7 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 When a copy, move, or delete operation runs, it's tracked in the **Operations Panel**:
 
 **Foreground modal** (default for new operations):
-- Large overlay showing operation kind, description, progress bar, percentage, and the current file being processed.
+- Large overlay showing operation kind, description, progress bar, percentage, the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
 - **Cancel** button: Stops the operation. Partially copied files are left as-is.
 - **Background** button: Minimizes the operation to the compact panel, freeing the UI for other work.
 
@@ -375,10 +375,12 @@ When a copy, move, or delete operation runs, it's tracked in the **Operations Pa
 - Shows all backgrounded operations as a compact list.
 - Each operation shows: kind, description, progress bar, percentage.
 - Cancel and Dismiss buttons per operation.
+- **Click a backgrounded operation** to foreground it again (re-opens the modal).
 
 **Operation states**: Scanning → Running → Completed / Failed / Cancelled.
-- Completed and Cancelled operations are automatically removed from the panel.
+- By default, Completed and Cancelled operations are automatically removed from the panel. Set the `behavior.keep_finished_operations` preference to keep them visible until dismissed.
 - Failed operations persist with an error message until dismissed.
+- The Close button in the foreground modal is available for all finished states (completed, cancelled, failed).
 
 **Issue resolution** (file conflicts):
 When an operation encounters a conflict:
@@ -430,10 +432,11 @@ The status bar includes mode toggle buttons on the right side. The auto-detected
 
 **Selection**:
 - **Mouse drag**: Click and drag to select character ranges. Selection is character-granular (uses `caretRangeFromPoint`).
+- **Double-click**: Selects the word under the cursor.
 - **Shift+Click**: Extend selection from anchor to clicked position.
 - **Ctrl+A**: Select entire file.
 - **Auto-scroll**: Dragging near top/bottom edges (20px margin) auto-scrolls.
-- **Escape**: Clears selection (does not close the viewer).
+- **Escape**: Clears the selection. If there is no selection, closes the viewer.
 
 **Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`). 10 MB copy size limit.
 
@@ -685,7 +688,8 @@ Terminal colors follow the system/app theme:
 ### Copy/Paste
 
 - **Copy**: Ctrl+Shift+C (or Cmd+C on macOS) copies the terminal selection to the system clipboard.
-- **Paste**: Handled by xterm.js built-in paste support.
+- **Paste**: Ctrl+Shift+V on Linux/Windows, Cmd+V on macOS. The terminal reads the clipboard via `navigator.clipboard.readText()` and writes it into the PTY (an explicit handler is needed on macOS because Cmd+V is not delivered to the webview without an Edit menu — see below).
+- **macOS Edit menu**: Main, viewer, and editor windows include a native Edit submenu with Undo / Redo / Cut / Copy / Paste / Select All entries. Without this menu, macOS silently swallows Cmd+V/C/X/A before they reach the webview, so this is required for clipboard shortcuts to work in any text input.
 - **Selection**: Highlight text with the mouse to select. Text is selectable by default.
 
 ### Terminal Lifecycle
@@ -818,7 +822,41 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Stale mount cleanup**: Archive mounts are automatically removed when no pane references them (or their child archives).
 
+**Symlink and hard link resolution** (TAR/CPIO): Symlinks and hard links inside the archive are resolved internally. Directory listings show the *target's* size and `is_dir` for symlinks, and reading or viewing a file through a symlink or hard link transparently fetches the target's contents.
+
 **Limitations**: Read-only. No create, modify, delete, rename, or metadata changes inside archives. Tar archives support symlinks; ZIP archives do not.
+
+### Kubernetes (Read-Only)
+
+Browse a Kubernetes cluster as a navigable directory tree of YAML manifests.
+
+**Mounting**: Via VFS selector ("Mount Kubernetes…") or command palette ("Mount Kubernetes"). Opens a dialog with a single field:
+
+- **Context** (optional): kubectl context name. Empty = current context from kubeconfig.
+
+Connection runs `kubectl config current-context` (if needed) and `kubectl api-resources --verbs=list,get -o wide` to enumerate all available resource types in the cluster.
+
+**Path layout**:
+
+- `/cluster/<group>/<version>/<resource>/<name>.yaml` — cluster-scoped resources.
+- `/namespaces/<ns>/<group>/<version>/<resource>/<name>.yaml` — namespaced resources.
+- Core API resources live under the `core` group (e.g. `core/v1/pods`).
+
+**Resource discovery**:
+- All cluster resource types are discovered dynamically, including CRDs.
+- The full API group/version hierarchy is walked, so multiple versions of the same kind appear as separate directories.
+
+**Symlink shortcuts**: At the top level (and per-namespace), unambiguous resource names get symlinks for convenience — e.g. `pods → core/v1/pods`, `deployments → apps/v1/deployments`. When a kind exists under multiple groups/versions, a preferred-version heuristic picks the winning target (core API beats things like `metrics.k8s.io`). Symlinks are resolved internally so navigation is seamless.
+
+**Resources as files**: Each resource is rendered as a YAML file (`<name>.yaml`) generated by `kubectl get -o yaml`. Files are viewable in the built-in viewer (F3).
+
+**Operations supported**: List, read.
+
+**Operations NOT supported**: Write, create, delete, rename, metadata changes. The VFS is strictly read-only.
+
+**Display path**: `k8s://<context>/path`
+
+**Requires**: A working `kubectl` on `PATH` and a configured kubeconfig.
 
 ### Remote VFS (client-local filesystem in SSH sessions)
 
@@ -840,6 +878,7 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 - Lists **available** VFS types to mount:
   - S3: Mounts immediately on selection (uses ambient credentials).
   - SFTP: Opens hostname input dialog.
+  - Kubernetes: Opens a context input dialog (defaults to current kubectl context).
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
 
