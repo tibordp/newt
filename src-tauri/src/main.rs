@@ -238,7 +238,7 @@ fn main() {
 
     let connection_target = if let Some(ref host) = args.connect {
         ConnectionTarget::Remote {
-            transport_cmd: vec!["ssh".to_string(), host.clone()],
+            transport_cmd: crate::main_window::ssh_transport_cmd(host),
         }
     } else if args.elevated {
         ConnectionTarget::Elevated

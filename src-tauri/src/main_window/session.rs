@@ -67,6 +67,20 @@ pub enum ConnectionTarget {
     Elevated,
 }
 
+/// Build a `transport_cmd` for an ssh-based remote session, with
+/// application-level keepalive enabled so that idle TCP connections aren't
+/// silently killed by NAT / firewalls / load balancers.
+pub fn ssh_transport_cmd(host: &str) -> Vec<String> {
+    vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        "ServerAliveInterval=30".to_string(),
+        "-o".to_string(),
+        "ServerAliveCountMax=3".to_string(),
+        host.to_string(),
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // ConnectionStatus (serialized to the frontend via MainWindowState)
 // ---------------------------------------------------------------------------
@@ -257,6 +271,27 @@ pub trait VfsInfo: Send + Sync {
     /// Returns the VFS ID of a filesystem that is local to the host machine
     /// (the machine running the Tauri process), or `None` if no such VFS is mounted.
     fn host_local_vfs_id(&self) -> Option<VfsId>;
+
+    /// Resolve a `VfsPath` to a directory on the terminal's filesystem
+    /// (`VfsId::ROOT` — the local FS in local mode, the agent's FS in
+    /// remote/elevated mode), suitable for use as a child-process cwd.
+    ///
+    /// For paths already on `VfsId::ROOT` this returns the path unchanged.
+    /// For VFSes that have an origin (today: archives), it walks to the
+    /// enclosing directory of the origin file and recurses. For VFSes with
+    /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
+    /// callers can fall back to the spawning process's inherited cwd.
+    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<PathBuf> {
+        let mut current = path.clone();
+        loop {
+            if current.vfs_id == VfsId::ROOT {
+                return Some(current.path);
+            }
+            let origin = self.origin(current.vfs_id)?;
+            let parent = origin.path.parent()?.to_path_buf();
+            current = VfsPath::new(origin.vfs_id, parent);
+        }
+    }
 }
 
 struct MountedVfsInfoService {

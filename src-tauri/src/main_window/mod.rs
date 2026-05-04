@@ -32,7 +32,9 @@ use self::pane::Pane;
 use self::session::Session;
 use self::terminal::Terminal;
 
-pub use self::session::{AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget};
+pub use self::session::{
+    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, ssh_transport_cmd,
+};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayOptionsInner {

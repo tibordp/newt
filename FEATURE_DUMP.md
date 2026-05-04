@@ -703,6 +703,14 @@ Terminal colors follow the system/app theme:
 
 Terminals in remote sessions run on the remote host. The PTY is allocated by the agent process. Terminal I/O is forwarded over the RPC protocol. From the user's perspective, the terminal behaves identically to local mode.
 
+### Working Directory Resolution
+
+When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus terminal, send-to-terminal), its initial cwd is resolved from the active pane's path:
+
+- **Path on the terminal's filesystem** (the local FS in local mode, the agent's FS in remote/elevated mode): used as cwd directly.
+- **Archive VFS**: walks to the enclosing directory of the archive's origin file (e.g., browsing `/home/user/foo.tar.gz/inner` opens the terminal in `/home/user`). Nested archives walk the chain back to a host path.
+- **VFSes with no origin** (S3, SFTP, Kubernetes, Remote): the spawning process's inherited cwd is used (no `working_dir` is set), since there is no host path that meaningfully corresponds to the pane location.
+
 ### Keyboard Shortcuts
 
 | Key | Action |

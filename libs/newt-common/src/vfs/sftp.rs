@@ -1,11 +1,14 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use bytes::Buf;
+use futures::StreamExt;
 use log::{debug, error, info, warn};
 use openssh_sftp_client::Sftp;
 use tokio::io::AsyncRead;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
@@ -158,14 +161,25 @@ inventory::submit!(RegisteredDescriptor(&SFTP_VFS_DESCRIPTOR));
 // ---------------------------------------------------------------------------
 
 pub struct SftpVfs {
-    sftp: tokio::sync::Mutex<Sftp>,
+    sftp: Sftp,
     host: String,
     notifier: VfsChangeNotifier,
-    _child: tokio::sync::Mutex<tokio::process::Child>,
+    /// Set by the death-watcher task when the ssh process exits. Operations
+    /// short-circuit with a clear connection error instead of hanging on
+    /// the next request.
+    dead: Arc<AtomicBool>,
+    /// Sent on `Drop` to ask the death-watcher to kill the ssh process.
+    kill_tx: Option<oneshot::Sender<()>>,
 }
 
 /// Timeout for the SSH connection + SFTP handshake.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Number of concurrent symlink-target metadata fetches during list_files.
+const SYMLINK_RESOLVE_CONCURRENCY: usize = 16;
+
+/// Number of files per streaming batch sent to the UI from list_files.
+const LIST_BATCH_SIZE: usize = 200;
 
 impl SftpVfs {
     pub async fn connect(host: &str) -> Result<Self, Error> {
@@ -191,7 +205,16 @@ impl SftpVfs {
     }
 
     async fn connect_inner(host: &str) -> Result<Self, Error> {
+        // Application-level keepalive prevents idle TCP connections from being
+        // silently killed by NAT / firewalls / load balancers between us and
+        // the server (typical idle window: 60–300s on home routers, much
+        // shorter on cellular). Three failed probes 30s apart = ~90s before we
+        // consider the connection dead.
         let mut child = tokio::process::Command::new("ssh")
+            .arg("-o")
+            .arg("ServerAliveInterval=30")
+            .arg("-o")
+            .arg("ServerAliveCountMax=3")
             .arg(host)
             .arg("-s")
             .arg("sftp")
@@ -219,8 +242,9 @@ impl SftpVfs {
 
         // Race the SFTP handshake against the ssh process exiting.
         // If ssh exits first (auth failure, bad host, etc.), we read stderr
-        // and produce a clear error. If the handshake succeeds, we start a
-        // background task to log any subsequent stderr output.
+        // and produce a clear error. If the handshake succeeds, we start
+        // background tasks to drain stderr and watch for the ssh process
+        // exiting unexpectedly.
         let handshake = Sftp::new(stdin, stdout, openssh_sftp_client::SftpOptions::default());
 
         tokio::select! {
@@ -229,7 +253,10 @@ impl SftpVfs {
                     Ok(sftp) => {
                         info!("sftp: connected to {}", host);
 
-                        // Connection succeeded — log any future stderr in the background
+                        let dead = Arc::new(AtomicBool::new(false));
+                        let (kill_tx, kill_rx) = oneshot::channel::<()>();
+
+                        // Stderr drainer
                         let host_owned = host.to_string();
                         tokio::spawn(async move {
                             use tokio::io::{AsyncBufReadExt, BufReader};
@@ -239,11 +266,40 @@ impl SftpVfs {
                             }
                         });
 
+                        // Death watcher: races the child exiting against a
+                        // kill signal from `Drop`. Either way it sets `dead`,
+                        // so subsequent operations short-circuit.
+                        let host_owned = host.to_string();
+                        let dead_for_watcher = dead.clone();
+                        tokio::spawn(async move {
+                            tokio::select! {
+                                status = child.wait() => {
+                                    match status {
+                                        Ok(s) => warn!(
+                                            "sftp [{}] ssh exited unexpectedly: {}",
+                                            host_owned, s
+                                        ),
+                                        Err(e) => warn!(
+                                            "sftp [{}] failed to wait on ssh: {}",
+                                            host_owned, e
+                                        ),
+                                    }
+                                }
+                                _ = kill_rx => {
+                                    let _ = child.start_kill();
+                                    let _ = child.wait().await;
+                                    debug!("sftp [{}] ssh terminated on unmount", host_owned);
+                                }
+                            }
+                            dead_for_watcher.store(true, Ordering::SeqCst);
+                        });
+
                         Ok(Self {
-                            sftp: tokio::sync::Mutex::new(sftp),
+                            sftp,
                             host: host.to_string(),
                             notifier: VfsChangeNotifier::new(),
-                            _child: tokio::sync::Mutex::new(child),
+                            dead,
+                            kill_tx: Some(kill_tx),
                         })
                     }
                     Err(e) => {
@@ -264,6 +320,20 @@ impl SftpVfs {
                 error!("sftp: {} for {}", exit_msg, host);
                 Err(Self::connect_error(host, &exit_msg, &stderr_text, status.ok()))
             }
+        }
+    }
+
+    /// Returns `Err(ErrorKind::Connection)` if the ssh process has exited.
+    /// Called at the start of each operation so subsequent calls fail fast
+    /// instead of hanging on the SFTP client's internal queues.
+    fn check_alive(&self) -> Result<(), Error> {
+        if self.dead.load(Ordering::Relaxed) {
+            Err(Error {
+                kind: ErrorKind::Connection,
+                message: format!("SFTP connection to '{}' has been lost", self.host),
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -302,10 +372,11 @@ impl SftpVfs {
 
 impl Drop for SftpVfs {
     fn drop(&mut self) {
-        // Kill the SSH process on cleanup
-        let child = self._child.get_mut();
-        if let Err(e) = child.start_kill() {
-            warn!("sftp: failed to kill ssh process: {}", e);
+        // Signal the death-watcher task to kill the ssh process. If the
+        // watcher is already gone (ssh exited on its own), the send fails
+        // silently — there's nothing to clean up.
+        if let Some(tx) = self.kill_tx.take() {
+            let _ = tx.send(());
         }
     }
 }
@@ -427,20 +498,58 @@ impl Vfs for SftpVfs {
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<Vec<File>, Error> {
         debug!("sftp: list_files {}", path.display());
+        self.check_alive()?;
 
-        let dir = {
-            let sftp = self.sftp.lock().await;
-            let mut fs = sftp.fs();
-            fs.open_dir(path).await?
-        };
+        let dir = self.sftp.fs().open_dir(path).await?;
+
+        // Collect raw entries first so we can resolve symlink targets
+        // concurrently below. read_dir itself batches multiple entries per
+        // SSH_FXP_READDIR round-trip, so this isn't a streaming loss.
+        let mut raw_entries = Vec::new();
+        {
+            let read_dir = dir.read_dir();
+            tokio::pin!(read_dir);
+            while let Some(entry) = read_dir.next().await {
+                let entry = entry?;
+                let name = entry.filename().to_string_lossy().to_string();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                raw_entries.push((name, entry.metadata()));
+            }
+        }
+
+        let path_owned = path.to_path_buf();
+        let sftp = &self.sftp;
+
+        // Resolve symlink targets in parallel (capped). Order is preserved
+        // by `buffered`, so the resulting file list is in the same order as
+        // the directory entries arrived.
+        let resolve_stream =
+            futures::stream::iter(raw_entries.into_iter().map(move |(name, meta)| {
+                let target_path = path_owned.join(&name);
+                async move {
+                    let is_symlink = meta.file_type().is_some_and(|ft| ft.is_symlink());
+                    let follow_meta = if is_symlink {
+                        sftp.fs().metadata(target_path).await.ok()
+                    } else {
+                        None
+                    };
+                    metadata_to_file(name, &meta, follow_meta.as_ref())
+                }
+            }))
+            .buffered(SYMLINK_RESOLVE_CONCURRENCY);
+        tokio::pin!(resolve_stream);
 
         let mut files = Vec::new();
+        let mut batch = Vec::new();
 
-        // ".." entry
+        // ".." goes first and is included in the first batch so the UI
+        // shows it immediately.
         if let Some(parent) = path.parent()
             && parent != path
         {
-            files.push(File {
+            let dotdot = File {
                 name: "..".to_string(),
                 size: None,
                 is_dir: true,
@@ -453,40 +562,30 @@ impl Vfs for SftpVfs {
                 modified: None,
                 accessed: None,
                 created: None,
-            });
-        }
-
-        use futures::StreamExt;
-        let read_dir = dir.read_dir();
-        tokio::pin!(read_dir);
-        while let Some(entry) = read_dir.next().await {
-            let entry = entry?;
-            let name = entry.filename().to_string_lossy().to_string();
-            if name == "." || name == ".." {
-                continue;
-            }
-
-            let meta = entry.metadata();
-            let is_symlink = meta.file_type().is_some_and(|ft| ft.is_symlink());
-
-            // For symlinks, try to stat the target to determine if it's a directory
-            let follow_meta = if is_symlink {
-                let target_path = path.join(&name);
-                let sftp = self.sftp.lock().await;
-                let mut fs = sftp.fs();
-                fs.metadata(target_path).await.ok()
-            } else {
-                None
             };
-
-            let file = metadata_to_file(name, &meta, follow_meta.as_ref());
-            files.push(file);
+            files.push(dotdot.clone());
+            batch.push(dotdot);
         }
 
-        if let Some(tx) = batch_tx
-            && !files.is_empty()
+        while let Some(file) = resolve_stream.next().await {
+            files.push(file.clone());
+            batch.push(file);
+            if batch.len() >= LIST_BATCH_SIZE {
+                if let Some(ref tx) = batch_tx {
+                    if tx.send(std::mem::take(&mut batch)).await.is_err() {
+                        // Receiver dropped — caller cancelled the listing.
+                        return Ok(files);
+                    }
+                } else {
+                    batch.clear();
+                }
+            }
+        }
+
+        if let Some(ref tx) = batch_tx
+            && !batch.is_empty()
         {
-            let _ = tx.send(files.clone()).await;
+            let _ = tx.send(batch).await;
         }
 
         Ok(files)
@@ -503,8 +602,8 @@ impl Vfs for SftpVfs {
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         debug!("sftp: file_info {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
+        self.check_alive()?;
+        let mut fs = self.sftp.fs();
 
         let symlink_meta = fs.symlink_metadata(path).await?;
 
@@ -526,79 +625,38 @@ impl Vfs for SftpVfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         debug!("sftp: file_details {}", path.display());
+        self.check_alive()?;
+        let mut fs = self.sftp.fs();
 
-        // Gather metadata while holding the lock, then release.
-        let (symlink_meta, effective_meta, symlink_target) = {
-            let sftp = self.sftp.lock().await;
-            let mut fs = sftp.fs();
+        let symlink_meta = fs.symlink_metadata(path).await?;
+        let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
-            let symlink_meta = fs.symlink_metadata(path).await?;
-            let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
-
-            let effective_meta = if is_symlink {
-                fs.metadata(path).await.unwrap_or(symlink_meta)
-            } else {
-                symlink_meta
-            };
-
-            let symlink_target = if is_symlink {
-                fs.read_link(path)
-                    .await
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            } else {
-                None
-            };
-
-            (symlink_meta, effective_meta, symlink_target)
+        let (effective_meta, symlink_target) = if is_symlink {
+            let follow = fs.metadata(path).await.ok();
+            let target = fs
+                .read_link(path)
+                .await
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            (follow.unwrap_or(symlink_meta), target)
+        } else {
+            (symlink_meta, None)
         };
 
-        let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
         let is_dir = effective_meta.file_type().is_some_and(|ft| ft.is_dir());
         let size = effective_meta.len().unwrap_or(0);
         let mode = effective_meta
             .permissions()
             .map(|p| Mode(permissions_to_mode(&p)));
 
-        // MIME detection: try extension first, then content sniffing.
-        // Content sniffing opens and reads a small range without holding the
-        // global SFTP lock.
+        // Extension-based MIME detection only — content sniffing on SFTP would
+        // require an extra open + 8 KB read on every focus change, which is
+        // costly on high-latency links and rarely contributes information that
+        // mime_guess can't already provide from the extension.
         let mime_type = if is_dir {
             None
         } else {
-            let from_extension = crate::file_reader::guess_mime_type(path);
-            if from_extension.is_some() {
-                from_extension
-            } else {
-                let sniff_result = async {
-                    let (mut file, total_size) = {
-                        let sftp = self.sftp.lock().await;
-                        let mut fs = sftp.fs();
-                        let meta = fs.metadata(path).await?;
-                        let total_size = meta.len().unwrap_or(0);
-                        let file = sftp.open(path).await?;
-                        Ok::<_, Error>((file, total_size))
-                    }?;
-                    Self::read_range_from_file(&mut file, 0, 8192, total_size).await
-                }
-                .await;
-
-                match sniff_result {
-                    Ok(chunk) => {
-                        let detected = mimetype_detector::detect(&chunk.data);
-                        if detected.is("application/octet-stream") {
-                            if !chunk.data.contains(&0) {
-                                Some("text/plain".to_string())
-                            } else {
-                                Some("application/octet-stream".to_string())
-                            }
-                        } else {
-                            Some(detected.mime().to_string())
-                        }
-                    }
-                    Err(_) => None,
-                }
-            }
+            crate::file_reader::guess_mime_type(path)
         };
 
         Ok(FileDetails {
@@ -627,16 +685,11 @@ impl Vfs for SftpVfs {
             offset,
             length
         );
+        self.check_alive()?;
 
-        // Get metadata and open the file while holding the lock, then release.
-        let (mut file, total_size) = {
-            let sftp = self.sftp.lock().await;
-            let mut fs = sftp.fs();
-            let meta = fs.metadata(path).await?;
-            let total_size = meta.len().unwrap_or(0);
-            let file = sftp.open(path).await?;
-            (file, total_size)
-        };
+        let meta = self.sftp.fs().metadata(path).await?;
+        let total_size = meta.len().unwrap_or(0);
+        let mut file = self.sftp.open(path).await?;
 
         Self::read_range_from_file(&mut file, offset, length, total_size).await
     }
@@ -646,14 +699,9 @@ impl Vfs for SftpVfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         debug!("sftp: open_read_async {}", path.display());
+        self.check_alive()?;
 
-        // Open the file handle while holding the lock, then release it.
-        // The SFTP file handle is independent and doesn't need the lock
-        // for I/O, so reads won't block other SFTP operations.
-        let file = {
-            let sftp = self.sftp.lock().await;
-            sftp.open(path).await?
-        };
+        let file = self.sftp.open(path).await?;
 
         // Bridge the !Unpin SFTP file into AsyncRead via a channel + task.
         let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, Error>>(4);
@@ -684,8 +732,9 @@ impl Vfs for SftpVfs {
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         debug!("sftp: overwrite_async {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let file = sftp
+        self.check_alive()?;
+        let file = self
+            .sftp
             .options()
             .write(true)
             .create(true)
@@ -702,9 +751,8 @@ impl Vfs for SftpVfs {
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         debug!("sftp: create_directory {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.create_dir(path).await?;
+        self.check_alive()?;
+        self.sftp.fs().create_dir(path).await?;
         self.notifier.notify(path);
         Ok(())
     }
@@ -715,36 +763,32 @@ impl Vfs for SftpVfs {
             link.display(),
             target.display()
         );
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.symlink(target, link).await?;
+        self.check_alive()?;
+        self.sftp.fs().symlink(target, link).await?;
         self.notifier.notify(link);
         Ok(())
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         debug!("sftp: remove_file {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.remove_file(path).await?;
+        self.check_alive()?;
+        self.sftp.fs().remove_file(path).await?;
         self.notifier.notify(path);
         Ok(())
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         debug!("sftp: remove_dir {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.remove_dir(path).await?;
+        self.check_alive()?;
+        self.sftp.fs().remove_dir(path).await?;
         self.notifier.notify(path);
         Ok(())
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         debug!("sftp: rename {} -> {}", from.display(), to.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.rename(from, to).await?;
+        self.check_alive()?;
+        self.sftp.fs().rename(from, to).await?;
         self.notifier.notify(from);
         self.notifier.notify(to);
         Ok(())
@@ -752,17 +796,22 @@ impl Vfs for SftpVfs {
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
         debug!("sftp: hard_link {} -> {}", link.display(), target.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        fs.hard_link(target, link).await?;
+        self.check_alive()?;
+        self.sftp.fs().hard_link(target, link).await?;
         self.notifier.notify(link);
         Ok(())
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         debug!("sftp: touch {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let file = sftp.options().create(true).write(true).open(path).await?;
+        self.check_alive()?;
+        let file = self
+            .sftp
+            .options()
+            .create(true)
+            .write(true)
+            .open(path)
+            .await?;
         file.close().await?;
         self.notifier.notify(path);
         Ok(())
@@ -770,8 +819,14 @@ impl Vfs for SftpVfs {
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         debug!("sftp: truncate {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let file = sftp.options().write(true).truncate(true).open(path).await?;
+        self.check_alive()?;
+        let file = self
+            .sftp
+            .options()
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .await?;
         file.close().await?;
         self.notifier.notify(path);
         Ok(())
@@ -779,9 +834,8 @@ impl Vfs for SftpVfs {
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         debug!("sftp: get_metadata {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
-        let meta = fs.symlink_metadata(path).await?;
+        self.check_alive()?;
+        let meta = self.sftp.fs().symlink_metadata(path).await?;
 
         Ok(VfsMetadata {
             permissions: meta.permissions().map(|p| permissions_to_mode(&p)),
@@ -794,8 +848,8 @@ impl Vfs for SftpVfs {
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
         debug!("sftp: set_metadata {}", path.display());
-        let sftp = self.sftp.lock().await;
-        let mut fs = sftp.fs();
+        self.check_alive()?;
+        let mut fs = self.sftp.fs();
 
         let mut sftp_meta = openssh_sftp_client::metadata::MetaDataBuilder::new();
 
@@ -833,6 +887,7 @@ impl Vfs for SftpVfs {
         }
 
         fs.set_metadata(path, sftp_meta.create()).await?;
+        self.notifier.notify(path);
 
         Ok(())
     }

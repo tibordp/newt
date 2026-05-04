@@ -229,7 +229,7 @@ pub async fn connect_profile(
             crate::main_window::spawn_main_window(
                 &app_handle,
                 crate::main_window::ConnectionTarget::Remote {
-                    transport_cmd: vec!["ssh".to_string(), host.clone()],
+                    transport_cmd: crate::main_window::ssh_transport_cmd(host),
                 },
                 format!("Newt [{}]", profile.name),
             )?;

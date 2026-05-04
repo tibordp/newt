@@ -870,7 +870,8 @@ pub async fn cmd_send_to_terminal(
         })?;
         terminal
     } else {
-        ctx.create_terminal(Some(&pane.path().path)).await?
+        let cwd = ctx.vfs_info()?.resolve_terminal_cwd(&pane.path());
+        ctx.create_terminal(cwd.as_deref()).await?
     };
 
     let input: Vec<_> = pane
@@ -1572,7 +1573,7 @@ pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(),
     crate::main_window::spawn_main_window(
         webview.app_handle(),
         ConnectionTarget::Remote {
-            transport_cmd: vec!["ssh".to_string(), host.clone()],
+            transport_cmd: crate::main_window::ssh_transport_cmd(&host),
         },
         format!("Newt [{}]", host),
     )?;
@@ -1904,7 +1905,10 @@ pub async fn cmd_create_terminal(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    let cwd = ctx.active_pane().map(|p| p.path().path);
+    let cwd = match ctx.active_pane() {
+        Some(p) => ctx.vfs_info()?.resolve_terminal_cwd(&p.path()),
+        None => None,
+    };
     ctx.create_terminal(cwd.as_deref()).await?;
     Ok(())
 }
@@ -1944,7 +1948,10 @@ pub async fn cmd_toggle_terminal_panel(
     } else {
         // Show the panel — auto-create a terminal if none exist
         if ctx.terminals().is_empty() {
-            let cwd = ctx.active_pane().map(|p| p.path().path);
+            let cwd = match ctx.active_pane() {
+                Some(p) => ctx.vfs_info()?.resolve_terminal_cwd(&p.path()),
+                None => None,
+            };
             ctx.create_terminal(cwd.as_deref()).await?;
         } else {
             ctx.with_update(|c| {
@@ -1986,7 +1993,10 @@ pub async fn cmd_focus_terminal(
     _pane_handle: PaneHandle,
 ) -> Result<(), Error> {
     if ctx.terminals().is_empty() {
-        let cwd = ctx.active_pane().map(|p| p.path().path);
+        let cwd = match ctx.active_pane() {
+            Some(p) => ctx.vfs_info()?.resolve_terminal_cwd(&p.path()),
+            None => None,
+        };
         ctx.create_terminal(cwd.as_deref()).await?;
     } else {
         ctx.with_update(|c| {
