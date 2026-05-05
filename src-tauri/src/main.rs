@@ -19,10 +19,10 @@ use clap::Parser;
 use common::Error;
 use log::debug;
 use log::info;
-use main_window::AgentResolver;
 use main_window::ConnectionTarget;
 use main_window::MainWindowContext;
 use main_window::spawn_main_window;
+use main_window::{AgentResolver, TauriAgentResolver};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -63,7 +63,7 @@ pub struct GlobalContext {
     prewarmed_viewers: Mutex<HashMap<String, PrewarmedWindow>>,
     /// Pre-warmed hidden editor windows, keyed by parent main window label.
     prewarmed_editors: Mutex<HashMap<String, PrewarmedWindow>>,
-    agent_resolver: OnceLock<AgentResolver>,
+    agent_resolver: OnceLock<TauriAgentResolver>,
     preferences: OnceLock<preferences::PreferencesManager>,
     #[cfg(target_os = "macos")]
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
@@ -87,10 +87,12 @@ impl Default for GlobalContext {
 
 impl GlobalContext {
     pub fn init_agent_resolver(&self, app_handle: &tauri::AppHandle) {
-        self.agent_resolver.set(AgentResolver::new(app_handle)).ok();
+        self.agent_resolver
+            .set(TauriAgentResolver::new(app_handle))
+            .ok();
     }
 
-    pub fn agent_resolver(&self) -> &AgentResolver {
+    pub fn agent_resolver(&self) -> &dyn AgentResolver {
         self.agent_resolver
             .get()
             .expect("AgentResolver not initialized")

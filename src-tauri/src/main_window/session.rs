@@ -12,9 +12,7 @@ use newt_common::vfs::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -46,15 +44,7 @@ fn set_parent_death_signal(cmd: &mut tokio::process::Command) {
     }
 }
 
-/// Callback invoked when SSH needs user input (password, passphrase, host key
-/// confirmation). Returns `Some(response)` on success, `None` if the user
-/// cancelled.
-pub type AskpassCallback = Box<
-    dyn Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-        + Send
-        + Sync
-        + 'static,
->;
+use newt_common::askpass::AskpassProvider;
 
 // ---------------------------------------------------------------------------
 // ConnectionTarget
@@ -121,16 +111,19 @@ impl serde::Serialize for ConnectionState {
 
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
-/// Resolves agent binary locations. Searches directories in priority order:
+pub use newt_common::agent_resolver::AgentResolver;
+use newt_common::agent_resolver::local_agent_triple;
+
+/// Host-side resolver. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
 /// 2. `NEWT_SYSTEM_AGENT_DIR` compile-time path (distro packages)
 /// 3. Tauri resource dir (`agents/` inside the bundled app)
 /// 4. `agents/` relative fallback (legacy/dev)
-pub struct AgentResolver {
+pub struct TauriAgentResolver {
     dirs: Vec<PathBuf>,
 }
 
-impl AgentResolver {
+impl TauriAgentResolver {
     pub fn new(app_handle: &tauri::AppHandle) -> Self {
         use tauri::Manager;
         let mut dirs = Vec::new();
@@ -151,9 +144,11 @@ impl AgentResolver {
 
         Self { dirs }
     }
+}
 
+impl AgentResolver for TauriAgentResolver {
     /// Compute a hash that changes whenever any agent binary changes.
-    pub fn agent_hash(&self) -> Result<String, Error> {
+    fn agent_hash(&self) -> Result<String, newt_common::Error> {
         let mut hasher = blake3::Hasher::new();
         let mut found = false;
 
@@ -182,8 +177,8 @@ impl AgentResolver {
         }
 
         if !found {
-            return Err(Error::Custom(
-                "no agent binaries found to compute hash".into(),
+            return Err(newt_common::Error::custom(
+                "no agent binaries found to compute hash",
             ));
         }
 
@@ -191,7 +186,7 @@ impl AgentResolver {
     }
 
     /// Look up the agent binary for a given target triple.
-    pub fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, Error> {
+    fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, newt_common::Error> {
         for dir in &self.dirs {
             let path = dir.join(triple).join("newt-agent");
             if path.exists() {
@@ -203,7 +198,7 @@ impl AgentResolver {
             }
         }
 
-        Err(Error::Custom(format!(
+        Err(newt_common::Error::custom(format!(
             "agent binary not found for triple: {}. Set NEWT_AGENT_DIR to the directory containing the agent binary.",
             triple
         )))
@@ -211,22 +206,9 @@ impl AgentResolver {
 
     /// Find the agent binary on the local machine (for elevated mode).
     /// Maps the compile-time target to the agent triple (always musl on Linux).
-    pub fn find_local_agent_binary(&self) -> Result<PathBuf, Error> {
+    fn find_local_agent_binary(&self) -> Result<PathBuf, newt_common::Error> {
         let triple = local_agent_triple();
         self.find_agent_binary(&triple)
-    }
-}
-
-/// Map the compile-time target to the agent binary triple.
-/// Agents are always musl on Linux, so e.g. `x86_64-unknown-linux-gnu` → `x86_64-unknown-linux-musl`.
-fn local_agent_triple() -> String {
-    let target = env!("NEWT_TARGET_TRIPLE");
-    if target.contains("-linux-") {
-        // Replace the environment suffix with musl
-        let arch = target.split('-').next().unwrap_or("x86_64");
-        format!("{}-unknown-linux-musl", arch)
-    } else {
-        target.to_string()
     }
 }
 
@@ -598,6 +580,41 @@ struct HostDispatcher {
     preferences: crate::preferences::PreferencesHandle,
 }
 
+/// Dispatches `API_HOST_ASKPASS` from the agent to an `AskpassProvider`.
+/// Used so an agent-side ssh process (e.g. a VFS-mounted SFTP) can prompt
+/// the user via the same dialog the host's main SSH transport uses.
+struct HostAskpassDispatcher {
+    provider: Arc<dyn AskpassProvider>,
+}
+
+#[async_trait::async_trait]
+impl newt_common::rpc::Dispatcher for HostAskpassDispatcher {
+    async fn invoke(
+        &self,
+        api: newt_common::rpc::Api,
+        req: bytes::Bytes,
+    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
+        if api == newt_common::api::API_HOST_ASKPASS {
+            let request: newt_common::askpass::AskpassRequest = bincode::deserialize(&req[..])
+                .map_err(|e| newt_common::Error::custom(e.to_string()))?;
+            let response = self.provider.prompt(request).await;
+            let bytes = bincode::serialize(&response)
+                .map_err(|e| newt_common::Error::custom(e.to_string()))?;
+            Ok(Some(bytes::Bytes::from(bytes)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn notify(
+        &self,
+        _api: newt_common::rpc::Api,
+        _req: bytes::Bytes,
+    ) -> Result<bool, newt_common::Error> {
+        Ok(false)
+    }
+}
+
 #[async_trait::async_trait]
 impl newt_common::rpc::Dispatcher for HostDispatcher {
     async fn invoke(
@@ -653,6 +670,7 @@ fn create_local_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
+    sftp_askpass: Option<newt_common::api::SftpAskpass>,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
@@ -676,7 +694,14 @@ fn create_local_services(
     Services {
         fs: Arc::new(VfsRegistryFs::new(registry.clone())),
         shell_service: Arc::new(LocalShellService),
-        vfs_manager: Arc::new(VfsRegistryManager::new(registry.clone())),
+        vfs_manager: Arc::new({
+            let mgr = VfsRegistryManager::new(registry.clone());
+            if let Some(askpass) = sftp_askpass {
+                mgr.with_sftp_askpass(askpass)
+            } else {
+                mgr
+            }
+        }),
         terminal_client: Arc::new(newt_common::terminal::Local::new()),
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
@@ -710,6 +735,7 @@ fn create_rpc_services(
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
     expose_local_fs: bool,
+    askpass_provider: Arc<dyn AskpassProvider>,
 ) -> (Services, PendingStreams) {
     use newt_common::rpc::DispatcherExt;
 
@@ -721,16 +747,19 @@ fn create_rpc_services(
         pending_streams: pending_streams.clone(),
         preferences: preferences.clone(),
     };
+    let askpass_dispatcher = HostAskpassDispatcher {
+        provider: askpass_provider,
+    };
     let (outbox, inbox) = Communicator::create_outbox();
+    let base = host_dispatcher.chain(askpass_dispatcher);
     let communicator = if expose_local_fs {
         use newt_common::api::VfsDispatcher;
         use newt_common::vfs::LocalVfs;
         let host_vfs = Arc::new(LocalVfs::new());
-        let combined_dispatcher =
-            host_dispatcher.chain(VfsDispatcher::new(host_vfs, outbox.clone()));
+        let combined_dispatcher = base.chain(VfsDispatcher::new(host_vfs, outbox.clone()));
         Communicator::with_dispatcher_and_outbox(combined_dispatcher, stream, outbox, inbox)
     } else {
-        Communicator::with_dispatcher_and_outbox(host_dispatcher, stream, outbox, inbox)
+        Communicator::with_dispatcher_and_outbox(base, stream, outbox, inbox)
     };
     let services = create_remote_services(communicator, pending_streams.clone());
     (services, pending_streams)
@@ -748,6 +777,9 @@ struct ChildConnection {
     child: tokio::process::Child,
     stderr: Option<tokio::process::ChildStderr>,
     stream: DynStream,
+    /// Askpass listener tied to the ssh process; dropped when the connection
+    /// tears down. `None` for elevated mode (no askpass).
+    _askpass: Option<newt_common::askpass::listener::AskpassListener>,
 }
 
 fn make_stream(
@@ -759,64 +791,11 @@ fn make_stream(
     tokio_duplex::Duplex::new(rx, tx)
 }
 
-/// Spawn an askpass listener on a temporary Unix domain socket. Each askpass
-/// invocation by SSH connects, sends two lines (prompt type + prompt text),
-/// and reads one line (response). Returns the socket path for the env var.
-fn spawn_askpass_listener(askpass_callback: Arc<AskpassCallback>) -> Result<PathBuf, Error> {
-    let sock_path = std::env::temp_dir().join(format!("newt-askpass-{}.sock", std::process::id()));
-
-    // Clean up any stale socket
-    let _ = std::fs::remove_file(&sock_path);
-
-    let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
-    listener.set_nonblocking(true)?;
-    let listener = tokio::net::UnixListener::from_std(listener)?;
-
-    let cleanup_path = sock_path.clone();
-    tokio::spawn(async move {
-        loop {
-            let (stream, _) = match listener.accept().await {
-                Ok(conn) => conn,
-                Err(_) => break,
-            };
-
-            let askpass_callback = askpass_callback.clone();
-            tokio::spawn(async move {
-                use newt_common::askpass::{self, AskpassResponse, PromptType};
-
-                let (mut reader, mut writer) = stream.into_split();
-
-                let request: askpass::AskpassRequest =
-                    match askpass::tokio::read_msg(&mut reader).await {
-                        Ok(r) => r,
-                        Err(_) => return,
-                    };
-
-                // When SSH_ASKPASS_PROMPT is unset (mapped to Secret), fall
-                // back to prompt text heuristics for host-key confirmations.
-                // OpenSSH doesn't set SSH_ASKPASS_PROMPT for host key prompts.
-                let is_secret = match request.prompt_type {
-                    PromptType::Confirm | PromptType::Info => false,
-                    PromptType::Secret => !request.prompt.contains("(yes/no/[fingerprint])"),
-                };
-
-                let response = askpass_callback(request.prompt, is_secret).await;
-                let _ = askpass::tokio::write_msg(&mut writer, &AskpassResponse(response)).await;
-                // If None (cancelled), just drop the connection — askpass gets EOF
-            });
-        }
-
-        let _ = std::fs::remove_file(&cleanup_path);
-    });
-
-    Ok(sock_path)
-}
-
 /// Spawn SSH + bootstrap script, negotiate agent upload if needed.
 async fn spawn_remote(
     transport_cmd: &[String],
-    agent_resolver: &AgentResolver,
-    askpass_callback: Arc<AskpassCallback>,
+    agent_resolver: &dyn AgentResolver,
+    askpass_provider: Arc<dyn AskpassProvider>,
     conn_log: &ConnectionLog,
 ) -> Result<ChildConnection, Error> {
     let (program, args) = transport_cmd
@@ -834,7 +813,7 @@ async fn spawn_remote(
 
     // Set up askpass via a named Unix domain socket
     let askpass_binary = agent_resolver.find_local_agent_binary()?;
-    let askpass_sock = spawn_askpass_listener(askpass_callback)?;
+    let askpass_listener = newt_common::askpass::listener::spawn(askpass_provider)?;
 
     conn_log.log(format!("Spawning: {} {}", program, args.join(" ")));
 
@@ -846,7 +825,7 @@ async fn spawn_remote(
         .stderr(Stdio::piped())
         .env("SSH_ASKPASS", &askpass_binary)
         .env("SSH_ASKPASS_REQUIRE", "force")
-        .env("NEWT_ASKPASS_SOCK", &askpass_sock)
+        .env("NEWT_ASKPASS_SOCK", &askpass_listener.socket_path)
         .kill_on_drop(true);
     set_parent_death_signal(&mut cmd);
     let mut child = cmd.spawn()?;
@@ -897,6 +876,7 @@ async fn spawn_remote(
             stream: make_stream(reader, stdin),
             child,
             stderr: None,
+            _askpass: Some(askpass_listener),
         })
     } else if let Some(need_rest) = status_line.strip_prefix("NEWT:NEED:") {
         // Format: NEWT:NEED:<triple>:<caps> where caps is comma-separated
@@ -948,6 +928,7 @@ async fn spawn_remote(
             stream: make_stream(reader, stdin),
             child,
             stderr: None,
+            _askpass: Some(askpass_listener),
         })
     } else if let Some(error) = status_line.strip_prefix("NEWT:ERROR:") {
         Err(Error::Custom(format!("remote bootstrap error: {}", error)))
@@ -960,7 +941,7 @@ async fn spawn_remote(
 }
 
 /// Spawn pkexec + agent binary (elevated mode, Linux only).
-async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnection, Error> {
+async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
     if cfg!(not(target_os = "linux")) {
         return Err(Error::Custom(
             "elevated mode is not supported on this platform".into(),
@@ -992,6 +973,7 @@ async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnectio
         child,
         stream,
         stderr: Some(stderr),
+        _askpass: None,
     })
 }
 
@@ -1000,6 +982,7 @@ async fn spawn_elevated(agent_resolver: &AgentResolver) -> Result<ChildConnectio
 fn spawn_child_watcher(
     mut child: tokio::process::Child,
     stderr: Option<tokio::process::ChildStderr>,
+    askpass_listener: Option<newt_common::askpass::listener::AskpassListener>,
     stderr_log: StderrLog,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
     connection_status: ConnectionState,
@@ -1020,6 +1003,10 @@ fn spawn_child_watcher(
     tokio::spawn(async move {
         let status = child.wait().await;
         log::info!("child process exited: {:?}", status);
+
+        // Drop the askpass listener now that ssh is gone (cleans up the
+        // socket file). Owned here so it lives at least as long as ssh.
+        drop(askpass_listener);
 
         // Drop the session — this aborts the file server, etc.
         session_slot.store(Arc::new(None));
@@ -1046,22 +1033,37 @@ fn spawn_child_watcher(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn connect(
     connection_target: &ConnectionTarget,
-    agent_resolver: &AgentResolver,
+    agent_resolver: &dyn AgentResolver,
     state: &MainWindowState,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: crate::preferences::PreferencesHandle,
     session_slot: &Arc<arc_swap::ArcSwap<Option<Session>>>,
     set_status: impl Fn(&str),
-    askpass_callback: impl Fn(String, bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-    + Send
-    + Sync
-    + 'static,
+    askpass_provider: Arc<dyn AskpassProvider>,
     main_window_ctx: super::MainWindowContext,
 ) -> Result<(), Error> {
-    let askpass_callback: Arc<AskpassCallback> = Arc::new(Box::new(askpass_callback));
     let (mut services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
-            let services = create_local_services(&state.operations, publisher, &preferences);
+            // Build SFTP askpass config from the resolved local agent binary
+            // path + the host UI callback. If the agent binary can't be
+            // resolved we proceed without askpass support — SFTP mounts will
+            // then inherit the process environment and fail loudly if a
+            // password is needed.
+            let sftp_askpass = match agent_resolver.find_local_agent_binary() {
+                Ok(askpass_binary) => Some(newt_common::api::SftpAskpass {
+                    askpass_binary,
+                    provider: askpass_provider.clone(),
+                }),
+                Err(e) => {
+                    log::warn!(
+                        "no local agent binary for SFTP askpass: {} (SFTP mounts that need a password will fail)",
+                        e
+                    );
+                    None
+                }
+            };
+            let services =
+                create_local_services(&state.operations, publisher, &preferences, sftp_askpass);
             (services, StderrLog::default(), None)
         }
         ConnectionTarget::Remote { transport_cmd } => {
@@ -1075,7 +1077,7 @@ pub(super) async fn connect(
             let conn = spawn_remote(
                 transport_cmd,
                 agent_resolver,
-                askpass_callback.clone(),
+                askpass_provider.clone(),
                 &conn_log,
             )
             .await?;
@@ -1087,9 +1089,14 @@ pub(super) async fn connect(
                 publisher,
                 &preferences,
                 expose_local_fs,
+                askpass_provider.clone(),
             );
             conn_log.log("Connected");
-            (services, stderr_log, Some((conn.child, conn.stderr)))
+            (
+                services,
+                stderr_log,
+                Some((conn.child, conn.stderr, conn._askpass)),
+            )
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
@@ -1100,9 +1107,14 @@ pub(super) async fn connect(
                 publisher,
                 &preferences,
                 false,
+                askpass_provider.clone(),
             );
             let stderr_log = StderrLog::default();
-            (services, stderr_log, Some((conn.child, conn.stderr)))
+            (
+                services,
+                stderr_log,
+                Some((conn.child, conn.stderr, conn._askpass)),
+            )
         }
     };
 
@@ -1252,10 +1264,11 @@ pub(super) async fn connect(
     session_slot.store(Arc::new(Some(session)));
 
     // Spawn process watcher for remote/elevated
-    if let Some((child, stderr)) = child {
+    if let Some((child, stderr, askpass_listener)) = child {
         spawn_child_watcher(
             child,
             stderr,
+            askpass_listener,
             stderr_log.clone(),
             Arc::clone(session_slot),
             state.connection_status.clone(),

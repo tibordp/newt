@@ -170,6 +170,10 @@ pub struct SftpVfs {
     dead: Arc<AtomicBool>,
     /// Sent on `Drop` to ask the death-watcher to kill the ssh process.
     kill_tx: Option<oneshot::Sender<()>>,
+    /// Askpass listener kept alive for the lifetime of the ssh process so
+    /// that resumed prompts (e.g. ServerAliveInterval reauth) keep working.
+    /// `None` when no askpass was configured.
+    _askpass_listener: Option<crate::askpass::listener::AskpassListener>,
 }
 
 /// Timeout for the SSH connection + SFTP handshake.
@@ -182,10 +186,13 @@ const SYMLINK_RESOLVE_CONCURRENCY: usize = 16;
 const LIST_BATCH_SIZE: usize = 200;
 
 impl SftpVfs {
-    pub async fn connect(host: &str) -> Result<Self, Error> {
+    pub async fn connect(
+        host: &str,
+        askpass: Option<crate::api::SftpAskpass>,
+    ) -> Result<Self, Error> {
         info!("sftp: connecting to {}", host);
 
-        match tokio::time::timeout(CONNECT_TIMEOUT, Self::connect_inner(host)).await {
+        match tokio::time::timeout(CONNECT_TIMEOUT, Self::connect_inner(host, askpass)).await {
             Ok(result) => result,
             Err(_) => {
                 error!(
@@ -204,14 +211,17 @@ impl SftpVfs {
         }
     }
 
-    async fn connect_inner(host: &str) -> Result<Self, Error> {
+    async fn connect_inner(
+        host: &str,
+        askpass: Option<crate::api::SftpAskpass>,
+    ) -> Result<Self, Error> {
         // Application-level keepalive prevents idle TCP connections from being
         // silently killed by NAT / firewalls / load balancers between us and
         // the server (typical idle window: 60–300s on home routers, much
         // shorter on cellular). Three failed probes 30s apart = ~90s before we
         // consider the connection dead.
-        let mut child = tokio::process::Command::new("ssh")
-            .arg("-o")
+        let mut cmd = tokio::process::Command::new("ssh");
+        cmd.arg("-o")
             .arg("ServerAliveInterval=30")
             .arg("-o")
             .arg("ServerAliveCountMax=3")
@@ -220,15 +230,34 @@ impl SftpVfs {
             .arg("sftp")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                error!("sftp: failed to spawn ssh for {}: {}", host, e);
-                Error {
-                    kind: ErrorKind::Connection,
-                    message: format!("Failed to start SSH: {}", e),
-                }
-            })?;
+            .stderr(std::process::Stdio::piped());
+
+        // If an askpass config was provided, spawn a listener and route
+        // password / host-key prompts through it. Whether the listener forwards
+        // to the host UI directly (host session) or to the host UI via a
+        // reverse RPC (agent session) is up to the callback.
+        let askpass_listener = match askpass {
+            Some(cfg) => {
+                let listener =
+                    crate::askpass::listener::spawn(cfg.provider).map_err(|e| Error {
+                        kind: ErrorKind::Connection,
+                        message: format!("Failed to start askpass listener: {}", e),
+                    })?;
+                cmd.env("SSH_ASKPASS", &cfg.askpass_binary)
+                    .env("SSH_ASKPASS_REQUIRE", "force")
+                    .env("NEWT_ASKPASS_SOCK", &listener.socket_path);
+                Some(listener)
+            }
+            None => None,
+        };
+
+        let mut child = cmd.spawn().map_err(|e| {
+            error!("sftp: failed to spawn ssh for {}: {}", host, e);
+            Error {
+                kind: ErrorKind::Connection,
+                message: format!("Failed to start SSH: {}", e),
+            }
+        })?;
 
         debug!(
             "sftp: ssh process spawned for {}, pid={:?}",
@@ -300,6 +329,7 @@ impl SftpVfs {
                             notifier: VfsChangeNotifier::new(),
                             dead,
                             kill_tx: Some(kill_tx),
+                            _askpass_listener: askpass_listener,
                         })
                     }
                     Err(e) => {

@@ -1,7 +1,5 @@
 # TODO
 
-## Askpass support for SFTP VFS
-
 ## Host VFS (local ↔ remote bridge)
 
 Basic Remote VFS is implemented. Remaining work:

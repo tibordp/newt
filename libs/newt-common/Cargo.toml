@@ -39,6 +39,7 @@ url = "2"
 openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
 iluvatar = { version = "0.1.1", features = ["tokio"] }
+blake3 = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 quick-xml = "0.37"

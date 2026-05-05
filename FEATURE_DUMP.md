@@ -773,11 +773,11 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Mounting**: Via dialog (Mod+Shift+L → SFTP, or "Mount SFTP" in command palette) with `user@hostname` input. Includes a **Save as connection profile** checkbox to save for Quick Connect.
 
-**Connection**: Spawns an SSH process (`ssh <host> -s sftp`) with stdin/stdout piped. SFTP handshake happens over the SSH connection. 30-second timeout on connection.
+**Connection**: Spawns an SSH process (`ssh <host> -s sftp`) with stdin/stdout piped. SFTP handshake happens over the SSH connection. 30-second timeout on connection. In remote sessions the `ssh` is spawned by the agent on the remote host, so the SFTP connection originates from there.
 
 **Authentication**: Relies on the SSH client's configuration:
 - Public key (SSH agent, key files).
-- Password (via askpass dialog — see Connection Management).
+- Password (via askpass dialog — see Connection Management). Prompts originating from agent-side `ssh` (i.e. when SFTP is mounted inside a remote session) round-trip back to the host UI via reverse RPC, so the dialog appears in the host window regardless of where the `ssh` process actually runs.
 - Keyboard-interactive.
 - SSH config file (`~/.ssh/config`) is respected.
 - Host key verification prompts appear as in-app dialogs.
@@ -957,8 +957,8 @@ Displayed as an overlay on the main window during connection:
 When SSH needs interactive input (password, passphrase, host key verification), Newt handles it entirely within the app:
 
 1. SSH invokes the askpass helper (the `newt-agent` binary in askpass mode, set via `SSH_ASKPASS` environment variable).
-2. The helper connects to a Unix domain socket that Newt is listening on.
-3. Newt displays a modal dialog with the SSH prompt.
+2. The helper connects to a Unix domain socket whose path is passed in via `NEWT_ASKPASS_SOCK`. The socket is owned by whichever process spawned `ssh` (the host for the main remote-session transport, the agent for SFTP mounts in a remote session).
+3. The askpass listener forwards the request to an `AskpassProvider`. The host's provider drives the UI directly; the agent's provider proxies the request back to the host over the `API_HOST_ASKPASS` reverse RPC, so the dialog always appears in the host window regardless of where the `ssh` process actually runs.
 4. The dialog shows:
    - **Title**: "Host Key Verification" (for host key prompts containing "yes/no"), "Authentication" (for passwords), or "SSH" (for other prompts).
    - **Input field**: Password field (masked) for secrets, text field for confirmations.

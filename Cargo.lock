@@ -3628,6 +3628,7 @@ dependencies = [
  "aws-sdk-s3",
  "aws-sdk-sts",
  "bincode",
+ "blake3",
  "byteorder",
  "bytes",
  "dirs 6.0.0",

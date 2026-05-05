@@ -23,6 +23,18 @@ pub struct AskpassRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AskpassResponse(pub Option<String>);
 
+/// Whether the prompt should be rendered with secret (masked) input.
+///
+/// OpenSSH leaves `SSH_ASKPASS_PROMPT` unset for host-key confirmations, so
+/// the type defaults to `Secret`; we fall back to a prompt-text heuristic for
+/// the "(yes/no/[fingerprint])" case.
+pub fn is_secret_prompt(req: &AskpassRequest) -> bool {
+    match req.prompt_type {
+        PromptType::Confirm | PromptType::Info => false,
+        PromptType::Secret => !req.prompt.contains("(yes/no/[fingerprint])"),
+    }
+}
+
 /// Write a length-prefixed bincode message to a sync writer.
 pub fn write_msg(w: &mut impl Write, msg: &impl Serialize) -> std::io::Result<()> {
     let data = bincode::serialize(msg).map_err(std::io::Error::other)?;
@@ -65,5 +77,132 @@ pub mod tokio {
         let mut buf = vec![0u8; len];
         r.read_exact(&mut buf).await?;
         bincode::deserialize(&buf).map_err(std::io::Error::other)
+    }
+}
+
+/// Provides askpass prompts. Symmetric across host and agent: each side has
+/// a concrete implementation (Tauri-backed UI in the host, a `Remote` proxy
+/// over RPC in the agent), and both the askpass listener and the
+/// `API_HOST_ASKPASS` dispatcher consume the same trait object.
+#[async_trait::async_trait]
+pub trait AskpassProvider: Send + Sync {
+    async fn prompt(&self, req: AskpassRequest) -> AskpassResponse;
+}
+
+/// `AskpassProvider` implementation that proxies prompts back to the host
+/// via the `API_HOST_ASKPASS` reverse RPC. Used by the agent.
+pub struct Remote {
+    communicator: std::sync::Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+}
+
+impl Remote {
+    pub fn new(
+        communicator: std::sync::Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+    ) -> Self {
+        Self { communicator }
+    }
+}
+
+#[async_trait::async_trait]
+impl AskpassProvider for Remote {
+    async fn prompt(&self, req: AskpassRequest) -> AskpassResponse {
+        let Some(comm) = self.communicator.get().cloned() else {
+            log::warn!("askpass: host communicator not available");
+            return AskpassResponse(None);
+        };
+        match comm
+            .invoke::<AskpassRequest, AskpassResponse>(crate::api::API_HOST_ASKPASS, &req)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                log::warn!("askpass: host RPC failed: {}", e);
+                AskpassResponse(None)
+            }
+        }
+    }
+}
+
+/// Unix domain socket listener that forwards askpass requests from the
+/// `newt-agent` helper binary (selected via `SSH_ASKPASS=<agent-binary>`
+/// and `NEWT_ASKPASS_SOCK=<socket>`) to an `AskpassProvider`.
+pub mod listener {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use tokio::sync::oneshot;
+
+    use super::{AskpassProvider, AskpassRequest};
+
+    static SOCKET_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    /// Handle for a running askpass listener. Drop to close the listener
+    /// and remove the socket file.
+    pub struct AskpassListener {
+        pub socket_path: PathBuf,
+        shutdown_tx: Option<oneshot::Sender<()>>,
+    }
+
+    impl Drop for AskpassListener {
+        fn drop(&mut self) {
+            if let Some(tx) = self.shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    /// Spawn a Unix domain socket askpass listener that forwards each
+    /// `AskpassRequest` to `provider.prompt()` and writes the response back.
+    pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
+        let nonce = SOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
+        let sock_path = std::env::temp_dir().join(format!(
+            "newt-askpass-{}-{}.sock",
+            std::process::id(),
+            nonce
+        ));
+
+        let _ = std::fs::remove_file(&sock_path);
+
+        let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
+        listener.set_nonblocking(true)?;
+        let listener = tokio::net::UnixListener::from_std(listener)?;
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+        let cleanup_path = sock_path.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    accept = listener.accept() => {
+                        let (stream, _) = match accept {
+                            Ok(conn) => conn,
+                            Err(_) => break,
+                        };
+
+                        let provider = provider.clone();
+                        tokio::spawn(async move {
+                            let (mut reader, mut writer) = stream.into_split();
+
+                            let request: AskpassRequest =
+                                match super::tokio::read_msg(&mut reader).await {
+                                    Ok(r) => r,
+                                    Err(_) => return,
+                                };
+
+                            let response = provider.prompt(request).await;
+                            let _ = super::tokio::write_msg(&mut writer, &response).await;
+                        });
+                    }
+                }
+            }
+
+            let _ = std::fs::remove_file(&cleanup_path);
+        });
+
+        Ok(AskpassListener {
+            socket_path: sock_path,
+            shutdown_tx: Some(shutdown_tx),
+        })
     }
 }

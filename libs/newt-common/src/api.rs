@@ -77,6 +77,9 @@ pub const API_HOST_VFS_RENAME: Api = Api(618);
 pub const API_HOST_VFS_COPY_WITHIN: Api = Api(619);
 pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
 
+// Host UI APIs — invoked by the agent, handled by the Tauri host.
+pub const API_HOST_ASKPASS: Api = Api(624);
+
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
     outbox: Outbox,
@@ -440,6 +443,16 @@ pub struct ReadStream {
 
 pub type PendingVfsReadStreams = Arc<parking_lot::Mutex<HashMap<StreamId, ReadStream>>>;
 
+/// Askpass configuration used by SFTP (and any future SSH-spawning VFS).
+#[derive(Clone)]
+pub struct SftpAskpass {
+    /// Path to the agent binary to set as `SSH_ASKPASS` (its
+    /// `NEWT_ASKPASS_SOCK` mode connects to the listener spawned for
+    /// `provider`).
+    pub askpass_binary: std::path::PathBuf,
+    pub provider: Arc<dyn crate::askpass::AskpassProvider>,
+}
+
 pub struct VfsRegistryManager {
     registry: Arc<VfsRegistry>,
     /// When set, allows mounting a Remote VFS that proxies calls back to
@@ -447,6 +460,9 @@ pub struct VfsRegistryManager {
     host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
     /// Shared map for routing read-chunk notifications to the correct stream.
     pending_read_streams: PendingVfsReadStreams,
+    /// SFTP askpass configuration. When `None`, SFTP mounts inherit the
+    /// process environment with no special password handling.
+    sftp_askpass: Option<SftpAskpass>,
 }
 
 impl VfsRegistryManager {
@@ -455,6 +471,7 @@ impl VfsRegistryManager {
             registry,
             host_communicator: Arc::new(std::sync::OnceLock::new()),
             pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            sftp_askpass: None,
         }
     }
 
@@ -467,7 +484,13 @@ impl VfsRegistryManager {
             registry,
             host_communicator,
             pending_read_streams,
+            sftp_askpass: None,
         }
+    }
+
+    pub fn with_sftp_askpass(mut self, askpass: SftpAskpass) -> Self {
+        self.sftp_askpass = Some(askpass);
+        self
     }
 }
 
@@ -558,7 +581,8 @@ impl VfsManager for VfsRegistryManager {
             }
             MountRequest::Sftp { host } => {
                 log::info!("mounting SFTP VFS for host={}", host);
-                let vfs = Arc::new(crate::vfs::SftpVfs::connect(&host).await?);
+                let vfs =
+                    Arc::new(crate::vfs::SftpVfs::connect(&host, self.sftp_askpass.clone()).await?);
                 let mount_meta = vfs.mount_meta();
                 let type_name = vfs.descriptor().type_name().to_string();
                 let vfs_id = self.registry.mount(vfs);

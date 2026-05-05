@@ -3,11 +3,13 @@ use std::sync::Arc;
 use log::info;
 use newt_common::{
     Error,
+    agent_resolver::{AgentResolver, CurrentExeAgentResolver},
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        PendingVfsReadStreams, ShellServiceDispatcher, TerminalDispatcher, VfsMountDispatcher,
-        VfsReadChunkDispatcher, VfsRegistryManager,
+        PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
+        VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
     },
+    askpass,
     filesystem::LocalShellService,
     hot_paths,
     operation::OperationContext,
@@ -113,11 +115,28 @@ async fn run_agent() -> Result<(), Error> {
 
     // OnceLock for the host communicator — set after the RPC loop starts,
     // allows RemoteVfs to call back to the host.
-    let host_communicator = Arc::new(std::sync::OnceLock::new());
+    let host_communicator: Arc<std::sync::OnceLock<Communicator>> =
+        Arc::new(std::sync::OnceLock::new());
 
     // Shared map for routing read-chunk notifications from the host to
     // the correct RemoteVfs read stream.
     let pending_read_streams: PendingVfsReadStreams = Default::default();
+
+    let resolver = CurrentExeAgentResolver::new();
+    let askpass_binary = resolver.find_local_agent_binary()?;
+
+    let askpass_provider: Arc<dyn askpass::AskpassProvider> =
+        Arc::new(askpass::Remote::new(host_communicator.clone()));
+
+    let vfs_manager = VfsRegistryManager::new_with_host_communicator(
+        registry.clone(),
+        host_communicator.clone(),
+        pending_read_streams.clone(),
+    )
+    .with_sftp_askpass(SftpAskpass {
+        askpass_binary,
+        provider: askpass_provider,
+    });
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
@@ -126,13 +145,7 @@ async fn run_agent() -> Result<(), Error> {
             registry.clone(),
         )))
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
-        .chain(VfsMountDispatcher::new(
-            VfsRegistryManager::new_with_host_communicator(
-                registry.clone(),
-                host_communicator.clone(),
-                pending_read_streams.clone(),
-            ),
-        ))
+        .chain(VfsMountDispatcher::new(vfs_manager))
         .chain(VfsReadChunkDispatcher::new(pending_read_streams))
         .chain(HotPathsDispatcher::new(hot_paths::Local::new()));
 

@@ -33,7 +33,8 @@ use self::session::Session;
 use self::terminal::Terminal;
 
 pub use self::session::{
-    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, ssh_transport_cmd,
+    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, TauriAgentResolver,
+    ssh_transport_cmd,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -491,6 +492,56 @@ pub struct AskpassPrompt {
 #[derive(Clone)]
 pub struct AskpassState(pub Arc<RwLock<Option<AskpassPrompt>>>);
 
+/// Host-side `AskpassProvider`: shows the prompt in the UI by writing to
+/// `MainWindowState.askpass`, and waits on a oneshot fed by the
+/// `askpass_respond` Tauri command.
+pub struct TauriAskpassProvider {
+    state: AskpassState,
+    response_slot: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
+    publisher: Arc<crate::common::UpdatePublisher<MainWindowState>>,
+}
+
+impl TauriAskpassProvider {
+    pub fn new(
+        state: AskpassState,
+        response_slot: Arc<
+            parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>,
+        >,
+        publisher: Arc<crate::common::UpdatePublisher<MainWindowState>>,
+    ) -> Self {
+        Self {
+            state,
+            response_slot,
+            publisher,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl newt_common::askpass::AskpassProvider for TauriAskpassProvider {
+    async fn prompt(
+        &self,
+        req: newt_common::askpass::AskpassRequest,
+    ) -> newt_common::askpass::AskpassResponse {
+        let is_secret = newt_common::askpass::is_secret_prompt(&req);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.state.0.write() = Some(AskpassPrompt {
+            prompt: req.prompt,
+            is_secret,
+        });
+        *self.response_slot.lock() = Some(tx);
+        let _ = self.publisher.publish();
+
+        let result = rx.await.unwrap_or(None);
+
+        *self.state.0.write() = None;
+        *self.response_slot.lock() = None;
+        let _ = self.publisher.publish();
+
+        newt_common::askpass::AskpassResponse(result)
+    }
+}
+
 impl Default for AskpassState {
     fn default() -> Self {
         Self(Arc::new(RwLock::new(None)))
@@ -778,38 +829,19 @@ impl MainWindowContext {
         }
     }
 
-    pub async fn connect(&self, agent_resolver: &AgentResolver) -> Result<(), Error> {
+    pub async fn connect(&self, agent_resolver: &dyn AgentResolver) -> Result<(), Error> {
         let state = &self.inner.main_window_state;
         let publisher = &self.inner.publisher;
         let session_slot = &self.inner.session;
         let askpass_state = &state.askpass;
         let askpass_response_slot = &self.inner.askpass_response;
 
-        let askpass_callback = {
-            let askpass_state = askpass_state.clone();
-            let askpass_response_slot = askpass_response_slot.clone();
-            let publisher = publisher.clone();
-            move |prompt: String, is_secret: bool| {
-                let askpass_state = askpass_state.clone();
-                let askpass_response_slot = askpass_response_slot.clone();
-                let publisher = publisher.clone();
-                Box::pin(async move {
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    *askpass_state.0.write() = Some(AskpassPrompt { prompt, is_secret });
-                    *askpass_response_slot.lock() = Some(tx);
-                    let _ = publisher.publish();
-
-                    let result = rx.await.unwrap_or(None);
-
-                    *askpass_state.0.write() = None;
-                    *askpass_response_slot.lock() = None;
-                    let _ = publisher.publish();
-
-                    result
-                })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
-            }
-        };
+        let askpass_provider: Arc<dyn newt_common::askpass::AskpassProvider> =
+            Arc::new(TauriAskpassProvider::new(
+                askpass_state.clone(),
+                askpass_response_slot.clone(),
+                publisher.clone(),
+            ));
 
         session::connect(
             &self.inner.connection_target,
@@ -822,7 +854,7 @@ impl MainWindowContext {
                 state.connection_status.set_connecting(msg);
                 let _ = publisher.publish();
             },
-            askpass_callback,
+            askpass_provider,
             self.clone(),
         )
         .await
