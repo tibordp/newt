@@ -577,9 +577,13 @@ impl Pane {
     }
 
     pub async fn refresh(&self, expected_path: Option<VfsPath>, force: bool) -> Result<(), Error> {
-        let Some(expected_path) = expected_path else {
-            return self.navigate(".").await;
-        };
+        // Watcher-driven refreshes pass an `expected_path` they captured
+        // before the event arrived; if the user has since navigated away we
+        // skip below via the `self.path() == expected_path` check. Caller-
+        // driven "refresh whatever you're on" (e.g. window focus) passes
+        // None — fall back to current path so the auto_refresh check below
+        // still applies.
+        let expected_path = expected_path.unwrap_or_else(|| self.path());
 
         // Skip auto-refresh for VFS types that don't support it (e.g. S3, SFTP, archives)
         if !force
