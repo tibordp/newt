@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useCallback,
   memo,
+  Fragment,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -13,7 +14,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { safeCommand, safeCommandSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
-import { Breadcrumb, VfsTarget } from "../lib/types";
+import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
 import {
   File,
@@ -327,6 +328,236 @@ function VfsSelector({
   );
 }
 
+/// Pick the next index in `entries` starting from `from`, stepping by `dir`
+/// (-1 or +1), skipping entries with is_alive=false. Returns the original
+/// `from` if no live entry exists in that direction.
+function stepHistoryIndex(
+  entries: HistoryEntryView[],
+  from: number,
+  dir: -1 | 1,
+): number {
+  let i = from + dir;
+  while (i >= 0 && i < entries.length) {
+    if (entries[i].is_alive) return i;
+    i += dir;
+  }
+  return from;
+}
+
+/// Quantize a past timestamp into a coarse bucket label, computed relative to
+/// `now`. The cutoffs are logarithmic — fine near now, coarse far away — so
+/// the eye doesn't have to track an exact age, just a rough "when".
+function historyBucketLabel(timestampMs: number, nowMs: number): string {
+  const ageSec = Math.max(0, Math.floor((nowMs - timestampMs) / 1000));
+  if (ageSec < 60) return "just now";
+  const ageMin = Math.floor(ageSec / 60);
+  if (ageMin < 3) return "a minute ago";
+  if (ageMin < 8) return "5 minutes ago";
+  if (ageMin < 23) return "15 minutes ago";
+  if (ageMin < 45) return "30 minutes ago";
+  const ageHour = Math.floor(ageMin / 60);
+  if (ageHour < 2) return "1 hour ago";
+  if (ageHour < 4) return "2 hours ago";
+  if (ageHour < 9) return "6 hours ago";
+
+  // Use calendar-day boundaries below this; "earlier today" / "yesterday" /
+  // weekday names read more naturally than "12 hours ago" / "30 hours ago".
+  const now = new Date(nowMs);
+  const then = new Date(timestampMs);
+  const startOf = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOf(now) - startOf(then)) / 86_400_000);
+  if (dayDiff <= 0) return "earlier today";
+  if (dayDiff === 1) return "yesterday";
+  if (dayDiff < 7) {
+    const weekdays = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    return weekdays[then.getDay()];
+  }
+  if (dayDiff < 14) return "last week";
+  if (dayDiff < 30) return `${Math.floor(dayDiff / 7)} weeks ago`;
+  if (dayDiff < 60) return "last month";
+  return "older";
+}
+
+function HistoryNavigator({
+  entries,
+  currentIndex,
+  initialDirection,
+  paneHandle,
+}: {
+  entries: HistoryEntryView[];
+  currentIndex: number;
+  initialDirection: -1 | 1;
+  paneHandle: number;
+}) {
+  // Compute initial preview: step once in the requested direction, skipping
+  // dead entries. If there's nothing live in that direction, stay on current
+  // (the overlay still opens but committing is a no-op).
+  const [previewIndex, setPreviewIndex] = useState(() =>
+    stepHistoryIndex(entries, currentIndex, initialDirection),
+  );
+
+  // Freeze "now" at modal-open time so bucket labels don't tick while the
+  // overlay is open. The overlay is short-lived; if it's stale by a minute,
+  // who cares — the user can reopen.
+  const [openedAt] = useState(() => Date.now());
+  const bucketLabels = useMemo(
+    () => entries.map((e) => historyBucketLabel(e.arrived_at, openedAt)),
+    [entries, openedAt],
+  );
+
+  // Track whether the user committed (Alt up / click) vs aborted (Esc /
+  // outside-click). On commit, we send navigate_history. On abort, just
+  // close. A ref avoids stale closures inside listeners.
+  const committedRef = useRef(false);
+
+  const commit = useCallback(
+    (target: number) => {
+      committedRef.current = true;
+      if (target === currentIndex) {
+        safeCommand("close_modal");
+      } else {
+        safeCommand("navigate_history", {
+          paneHandle,
+          targetIndex: target,
+        });
+      }
+    },
+    [currentIndex, paneHandle],
+  );
+
+  const abort = useCallback(() => {
+    committedRef.current = true;
+    safeCommand("close_modal");
+  }, []);
+
+  // Keep the previewed item visible when stepping through a long history.
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = overlayRef.current?.querySelector<HTMLElement>(
+      `[data-history-index="${previewIndex}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [previewIndex]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        abort();
+      } else if (
+        // Alt+Left = back (older) = down in this layout (greater index)
+        (e.key === "ArrowLeft" && e.altKey) ||
+        e.key === "ArrowDown"
+      ) {
+        e.preventDefault();
+        setPreviewIndex((i) => stepHistoryIndex(entries, i, 1));
+      } else if (
+        // Alt+Right = forward (newer) = up in this layout (lesser index)
+        (e.key === "ArrowRight" && e.altKey) ||
+        e.key === "ArrowUp"
+      ) {
+        e.preventDefault();
+        setPreviewIndex((i) => stepHistoryIndex(entries, i, -1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        // Use the latest preview via functional setState read.
+        setPreviewIndex((i) => {
+          commit(i);
+          return i;
+        });
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Alt up commits whatever is currently previewed (alt-tab style).
+      if (e.key === "Alt") {
+        e.preventDefault();
+        setPreviewIndex((i) => {
+          commit(i);
+          return i;
+        });
+      }
+    };
+    const onBlur = () => {
+      if (!committedRef.current) abort();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [entries, abort, commit]);
+
+  return (
+    <div
+      className={`${menuStyles.content} ${styles.historyOverlay}`}
+      onMouseDown={(e) => {
+        // Clicks inside the overlay must not bubble up to the pane focus
+        // handler (which would close the modal via focus shift).
+        e.stopPropagation();
+      }}
+    >
+      <div className={styles.historyHeader}>History</div>
+      <div
+        ref={overlayRef}
+        className={styles.historyList}
+        role="listbox"
+        aria-label="History"
+      >
+        {entries.map((entry, i) => {
+          const isCurrent = i === currentIndex;
+          const isPreviewed = i === previewIndex;
+          const bucket = bucketLabels[i];
+          const isBucketBoundary = i === 0 || bucketLabels[i - 1] !== bucket;
+          return (
+            <Fragment key={i}>
+              {isBucketBoundary && (
+                <div className={styles.historyBucket}>{bucket}</div>
+              )}
+              <div
+                data-history-index={i}
+                className={`${menuStyles.item} ${styles.historyItem} ${
+                  isCurrent ? styles.historyItemCurrent : ""
+                } ${isPreviewed ? styles.historyItemPreviewed : ""}`}
+                data-disabled={entry.is_alive ? undefined : ""}
+                role="option"
+                aria-selected={isPreviewed}
+                onMouseEnter={() => {
+                  if (entry.is_alive) setPreviewIndex(i);
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!entry.is_alive) return;
+                  commit(i);
+                }}
+              >
+                <span className={styles.historyPath}>{entry.display_path}</span>
+                {isCurrent && (
+                  <span className={styles.historyCurrentTag}>current</span>
+                )}
+                {!entry.is_alive && (
+                  <span className={styles.historyDeadTag}>unmounted</span>
+                )}
+              </div>
+            </Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FilterInput({
   value,
   filterMode,
@@ -477,6 +708,15 @@ function PaneInner(
     modal?.type === "select_vfs" && modal?.context?.pane_handle === paneHandle;
   const vfsTargets: VfsTarget[] =
     (isVfsSelectorOpen && modal?.data?.targets) || [];
+  const isHistoryNavigatorOpen =
+    modal?.type === "history_navigator" &&
+    modal?.context?.pane_handle === paneHandle;
+  const historyEntries: HistoryEntryView[] =
+    (isHistoryNavigatorOpen && modal?.data?.entries) || [];
+  const historyCurrentIndex: number =
+    (isHistoryNavigatorOpen && modal?.data?.current_index) || 0;
+  const historyInitialDirection: -1 | 1 =
+    isHistoryNavigatorOpen && modal?.data?.initial_direction === 1 ? 1 : -1;
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
@@ -551,7 +791,7 @@ function PaneInner(
 
   useEffect(() => {
     if (active && !modalOpen) {
-      if (!isVfsSelectorOpen) {
+      if (!isVfsSelectorOpen && !isHistoryNavigatorOpen) {
         if (filter != null) {
           inputRef.current?.focus();
         } else {
@@ -562,7 +802,15 @@ function PaneInner(
       inputRef.current?.blur();
       containerRef.current?.blur();
     }
-  }, [active, path, filter, filter_mode, modalOpen, isVfsSelectorOpen]);
+  }, [
+    active,
+    path,
+    filter,
+    filter_mode,
+    modalOpen,
+    isVfsSelectorOpen,
+    isHistoryNavigatorOpen,
+  ]);
 
   // --- Drag-to-select logic ---
 
@@ -1278,23 +1526,33 @@ function PaneInner(
           }
         }}
       />
-      <div className={styles.header}>
-        <VfsSelector
-          vfsDisplayName={vfs_display_name}
-          vfsTargets={vfsTargets}
-          paneHandle={paneHandle}
-          activeVfsId={path.vfs_id}
-          open={isVfsSelectorOpen}
-        />
-        <div className={styles.headerPath}>
-          <PathBreadcrumbs
-            breadcrumbs={breadcrumbs}
+      <div className={styles.headerArea}>
+        <div className={styles.header}>
+          <VfsSelector
+            vfsDisplayName={vfs_display_name}
+            vfsTargets={vfsTargets}
             paneHandle={paneHandle}
-            displayPath={props.display_path}
+            activeVfsId={path.vfs_id}
+            open={isVfsSelectorOpen}
           />
+          <div className={styles.headerPath}>
+            <PathBreadcrumbs
+              breadcrumbs={breadcrumbs}
+              paneHandle={paneHandle}
+              displayPath={props.display_path}
+            />
+          </div>
+          {fs_stats?.available_bytes !== undefined && (
+            <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
+          )}
         </div>
-        {fs_stats?.available_bytes !== undefined && (
-          <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
+        {isHistoryNavigatorOpen && (
+          <HistoryNavigator
+            entries={historyEntries}
+            currentIndex={historyCurrentIndex}
+            initialDirection={historyInitialDirection}
+            paneHandle={paneHandle}
+          />
         )}
       </div>
       <div className={styles.tableHeader} ref={tableHeaderRef}>

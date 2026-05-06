@@ -728,6 +728,19 @@ pub async fn cmd_navigate_forward(
 }
 
 #[tauri::command]
+pub async fn navigate_history(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    target_index: usize,
+) -> Result<(), Error> {
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_history(target_index).await
+    })
+    .await
+}
+
+#[tauri::command]
 async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
     let info = ctx.file_reader()?.file_details(path).await?;
     Ok(info)
@@ -1185,6 +1198,18 @@ pub fn dialog(
                 "select_vfs" => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
+                "history_back" | "history_forward" => {
+                    let pane = pane.unwrap();
+                    let (entries, current_index) = pane.history_entries();
+                    // The list is ordered forward-on-top, back-on-bottom (see
+                    // Pane::history_entries). So alt+left (back) steps DOWN
+                    // (+1 list index) and alt+right (forward) steps UP (-1).
+                    ModalDataKind::HistoryNavigator {
+                        entries,
+                        current_index,
+                        initial_direction: if dialog == "history_back" { 1 } else { -1 },
+                    }
+                }
                 "command_palette" => ModalDataKind::CommandPalette {
                     category_filter: None,
                 },
@@ -2257,6 +2282,8 @@ cmd_dialog!(cmd_copy, "copy");
 cmd_dialog!(cmd_move, "move");
 cmd_dialog!(cmd_connect_remote, "connect_remote");
 cmd_dialog!(cmd_select_vfs, "select_vfs");
+cmd_dialog!(cmd_history_back, "history_back");
+cmd_dialog!(cmd_history_forward, "history_forward");
 cmd_dialog!(cmd_quick_connect, "quick_connect");
 cmd_dialog!(cmd_mount_s3, "mount_s3");
 cmd_dialog!(cmd_mount_sftp, "mount_sftp");
@@ -2399,6 +2426,9 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         cmd_follow_symlink,
         cmd_navigate_back,
         cmd_navigate_forward,
+        cmd_history_back,
+        cmd_history_forward,
+        navigate_history,
         cmd_as_other_pane,
         cmd_open_in_left_pane,
         cmd_open_in_right_pane,

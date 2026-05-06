@@ -375,6 +375,14 @@ pub enum ModalDataKind {
     SelectVfs {
         targets: Vec<VfsTarget>,
     },
+    HistoryNavigator {
+        entries: Vec<pane::HistoryEntryView>,
+        current_index: usize,
+        /// Direction of the keypress that opened the overlay: -1 for back,
+        /// +1 for forward. The overlay uses this to set the initial preview
+        /// (one step in that direction, skipping dead entries).
+        initial_direction: i32,
+    },
     CommandPalette {
         #[serde(skip_serializing_if = "Option::is_none")]
         category_filter: Option<String>,

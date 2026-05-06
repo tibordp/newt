@@ -76,12 +76,40 @@ pub struct PaneStats {
 struct HistoryEntry {
     path: VfsPath,
     focused: Option<String>,
+    /// Pre-formatted human-readable path (e.g. "s3://bucket/foo"), captured
+    /// at push time so we can still display the entry meaningfully if the
+    /// VFS is later unmounted (the descriptor needed to format `path` would
+    /// be gone by then).
+    display_path: String,
+    /// Pre-resolved VFS display name, captured at push time for the same
+    /// reason as `display_path`.
+    vfs_display_name: String,
+    /// When the user originally arrived at this path. Preserved across
+    /// re-visits via back/forward — we don't bump it when popping a snapshot
+    /// off a stack and landing on it again. This makes the visual order of
+    /// the combined history monotonic in time.
+    arrived_at: std::time::SystemTime,
 }
 
 #[derive(Default)]
 struct NavigationHistory {
     back: Vec<HistoryEntry>,
     forward: Vec<HistoryEntry>,
+}
+
+/// Frontend-visible view of a single history entry. Sent via the
+/// HistoryNavigator modal. `is_alive` reflects whether the entry's VFS is
+/// currently mounted; the overlay uses this to grey out & skip dead entries.
+/// `arrived_at` is the user's original arrival time at this path expressed
+/// as Unix milliseconds; the overlay groups adjacent entries into time
+/// buckets using these values.
+#[derive(Clone, serde::Serialize)]
+pub struct HistoryEntryView {
+    pub path: VfsPath,
+    pub vfs_display_name: String,
+    pub display_path: String,
+    pub is_alive: bool,
+    pub arrived_at: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -94,6 +122,10 @@ enum NavigationKind {
     Back,
     /// Forward navigation. Caller already popped from `forward`. On landing: push old snapshot to back.
     Forward,
+    /// History overlay jump. Caller pre-arranged the stacks to land at the target;
+    /// commit_history does nothing on landing (and the caller restores the stacks
+    /// on NotLanded/Err).
+    HistoryJump,
 }
 
 #[must_use = "callers may need to know whether the displayed path actually changed"]
@@ -120,6 +152,10 @@ pub struct Pane {
     cancellation_token: Mutex<Option<CancellationToken>>,
     vfs_info: Arc<dyn VfsInfo>,
     history: Mutex<NavigationHistory>,
+    /// When the user arrived at the currently-displayed path. Captured into
+    /// each HistoryEntry pushed onto a stack so the overlay can group entries
+    /// by time bucket. Reset to `now()` whenever a navigation lands.
+    current_arrived_at: Mutex<std::time::SystemTime>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
 }
 
@@ -173,6 +209,7 @@ impl Pane {
             event_tx,
             vfs_info,
             history: Mutex::new(NavigationHistory::default()),
+            current_arrived_at: Mutex::new(std::time::SystemTime::now()),
         }
     }
 
@@ -240,7 +277,7 @@ impl Pane {
         }
         let mut history = self.history.lock();
         match kind {
-            NavigationKind::Refresh => {}
+            NavigationKind::Refresh | NavigationKind::HistoryJump => {}
             NavigationKind::Fresh => {
                 history.back.push(old_snapshot.clone());
                 history.forward.clear();
@@ -569,6 +606,9 @@ impl Pane {
         HistoryEntry {
             path: view_state.path.clone(),
             focused: view_state.focused.clone(),
+            display_path: view_state.display_path.clone(),
+            vfs_display_name: view_state.vfs_display_name.clone(),
+            arrived_at: *self.current_arrived_at.lock(),
         }
     }
 
@@ -580,9 +620,13 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
-            .await
-            .map(|_| ())
+        let outcome = self
+            .navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
+            .await?;
+        if outcome == NavigationOutcome::Landed {
+            *self.current_arrived_at.lock() = std::time::SystemTime::now();
+        }
+        Ok(())
     }
 
     /// Resolve a relative path against a VfsPath, crossing VFS boundaries
@@ -653,9 +697,155 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
-            .await
-            .map(|_| ())
+        let outcome = self
+            .navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
+            .await?;
+        if outcome == NavigationOutcome::Landed {
+            *self.current_arrived_at.lock() = std::time::SystemTime::now();
+        }
+        Ok(())
+    }
+
+    /// Build a flat view of the history for the overlay UI. Forward (redo)
+    /// entries on top, back (undo) entries below — current sits between them.
+    /// Within each section, entries closest to current are nearest current in
+    /// the list:
+    ///
+    ///   list[0]                          = furthest forward (forward[0])
+    ///   list[forward.len() - 1]          = closest forward  (forward.last())
+    ///   list[forward.len()]              = current  (== `current_index`)
+    ///   list[forward.len() + 1]          = closest back     (back.last())
+    ///   list[forward.len() + back.len()] = furthest back    (back[0])
+    pub fn history_entries(&self) -> (Vec<HistoryEntryView>, usize) {
+        let history = self.history.lock();
+        let current = self.snapshot();
+
+        let mut entries = Vec::with_capacity(history.back.len() + history.forward.len() + 1);
+        // Forward section: forward[0] (furthest future) at top, forward.last()
+        // (closest future) just above current.
+        for entry in history.forward.iter() {
+            entries.push(self.entry_view(entry));
+        }
+        let current_index = entries.len();
+        entries.push(self.entry_view(&current));
+        // Back section: back.last() (closest past) just below current,
+        // back[0] (furthest past) at the very bottom.
+        for entry in history.back.iter().rev() {
+            entries.push(self.entry_view(entry));
+        }
+        (entries, current_index)
+    }
+
+    fn entry_view(&self, entry: &HistoryEntry) -> HistoryEntryView {
+        use newt_common::ToUnix;
+        // Prefer the formatted strings captured at push time so unmounted
+        // VFSes still render meaningfully. The descriptor lookup only
+        // determines whether the entry is still navigable.
+        let is_alive = self.vfs_info.descriptor(entry.path.vfs_id).is_some();
+        HistoryEntryView {
+            path: entry.path.clone(),
+            vfs_display_name: entry.vfs_display_name.clone(),
+            display_path: entry.display_path.clone(),
+            is_alive,
+            arrived_at: entry.arrived_at.to_unix(),
+        }
+    }
+
+    /// Move entries between back/forward so that the entry at `target_index`
+    /// in the combined view becomes the navigation target. Returns the target
+    /// HistoryEntry, or None if `target_index` already refers to the current
+    /// position. Caller is responsible for restoring stacks if the resulting
+    /// navigation does not land.
+    ///
+    /// In the combined view, forward entries occupy `[0, current_index)` and
+    /// back entries occupy `(current_index, ..]`, so `target_index <
+    /// current_index` means going forward, and `>` means going back.
+    fn rearrange_history_to_index(&self, target_index: usize) -> Option<HistoryEntry> {
+        let mut history = self.history.lock();
+        let current_index = history.forward.len();
+        if target_index == current_index {
+            return None;
+        }
+        let snap = self.snapshot();
+
+        if target_index < current_index {
+            // Forward navigation: pop entries from forward, push to back.
+            let n = current_index - target_index;
+            history.back.push(snap);
+            let mut popped: Vec<HistoryEntry> = (0..n)
+                .map(|_| {
+                    history
+                        .forward
+                        .pop()
+                        .expect("forward depth was just measured")
+                })
+                .collect();
+            // popped[n - 1] is the deepest entry from forward — that's the target.
+            let target = popped.pop().expect("n > 0");
+            for entry in popped {
+                history.back.push(entry);
+            }
+            Some(target)
+        } else {
+            // Back navigation: pop entries from back, push to forward.
+            let n = target_index - current_index;
+            history.forward.push(snap);
+            let mut popped: Vec<HistoryEntry> = (0..n)
+                .map(|_| history.back.pop().expect("back depth was just measured"))
+                .collect();
+            let target = popped.pop().expect("n > 0");
+            for entry in popped {
+                history.forward.push(entry);
+            }
+            Some(target)
+        }
+    }
+
+    /// Jump directly to the entry at `target_index` in the combined history
+    /// view, rearranging back/forward stacks accordingly. If the navigation
+    /// fails to land, the stacks are restored to their pre-call state.
+    pub async fn navigate_history(&self, target_index: usize) -> Result<(), Error> {
+        self.cancel();
+        let mut changes_sender = self.navigation_mutex.lock().await;
+
+        let backup = {
+            let h = self.history.lock();
+            (h.back.clone(), h.forward.clone())
+        };
+
+        let target = match self.rearrange_history_to_index(target_index) {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+        let target_path = target.path.clone();
+        let focused = target.focused;
+        let arrived_at = target.arrived_at;
+
+        let result = self
+            .navigate_impl(
+                target_path,
+                NavigationKind::HistoryJump,
+                &mut changes_sender,
+            )
+            .await;
+        drop(changes_sender);
+
+        match &result {
+            Ok(NavigationOutcome::Landed) => {
+                // Preserve the original arrival time of the entry we landed
+                // on, so its position in the history timeline is stable.
+                *self.current_arrived_at.lock() = arrived_at;
+                if let Some(name) = focused {
+                    self.view_state_mut().focus(name);
+                }
+            }
+            Ok(NavigationOutcome::NotLanded) | Err(_) => {
+                let mut h = self.history.lock();
+                h.back = backup.0;
+                h.forward = backup.1;
+            }
+        }
+        result.map(|_| ())
     }
 
     /// Pop one entry from `back` and navigate to it. If the navigation never
@@ -668,6 +858,7 @@ impl Pane {
         };
         let focused = popped.focused.clone();
         let target_path = popped.path.clone();
+        let arrived_at = popped.arrived_at;
 
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
@@ -678,6 +869,7 @@ impl Pane {
 
         match &result {
             Ok(NavigationOutcome::Landed) => {
+                *self.current_arrived_at.lock() = arrived_at;
                 if let Some(name) = focused {
                     self.view_state_mut().focus(name);
                 }
@@ -698,6 +890,7 @@ impl Pane {
         };
         let focused = popped.focused.clone();
         let target_path = popped.path.clone();
+        let arrived_at = popped.arrived_at;
 
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
@@ -708,6 +901,7 @@ impl Pane {
 
         match &result {
             Ok(NavigationOutcome::Landed) => {
+                *self.current_arrived_at.lock() = arrived_at;
                 if let Some(name) = focused {
                     self.view_state_mut().focus(name);
                 }

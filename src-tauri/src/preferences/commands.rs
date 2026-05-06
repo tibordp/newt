@@ -203,7 +203,10 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Navigate Back".into(),
             short_name: Some("Back".into()),
             category: "Navigation".into(),
-            default_key: Some("alt+left".into()),
+            // Default keybinding moved to history_back, which opens the
+            // overlay; this command remains available via the command palette
+            // and the mouse back button (XButton1) for instant single-step nav.
+            default_key: None,
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },
@@ -211,6 +214,24 @@ pub fn default_commands() -> Vec<CommandDef> {
             id: "navigate_forward".into(),
             name: "Navigate Forward".into(),
             short_name: Some("Forward".into()),
+            category: "Navigation".into(),
+            default_key: None,
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "history_back".into(),
+            name: "History Navigator (Back)".into(),
+            short_name: None,
+            category: "Navigation".into(),
+            default_key: Some("alt+left".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "history_forward".into(),
+            name: "History Navigator (Forward)".into(),
+            short_name: None,
             category: "Navigation".into(),
             default_key: Some("alt+right".into()),
             default_when: Some("pane_focused".into()),

@@ -14,7 +14,7 @@ import dialogStyles from "./Dialog.module.scss";
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 // Modal types not rendered by this router (handled elsewhere, e.g. VfsSelector dropdown)
-const EXCLUDED_MODAL_TYPES = ["select_vfs"];
+const EXCLUDED_MODAL_TYPES = ["select_vfs", "history_navigator"];
 
 export default function ModalRouter({
   state,

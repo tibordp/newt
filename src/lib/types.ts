@@ -15,3 +15,12 @@ export type VfsTarget = {
   label: string | null;
   mount_dialog: string | null;
 };
+
+export type HistoryEntryView = {
+  path: VfsPath;
+  vfs_display_name: string;
+  display_path: string;
+  is_alive: boolean;
+  /// Unix milliseconds — when the user originally arrived at this path.
+  arrived_at: number;
+};
