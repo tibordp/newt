@@ -72,6 +72,7 @@ pub struct PaneStats {
     pub total_count: Option<usize>,
 }
 
+#[derive(Clone)]
 struct HistoryEntry {
     path: VfsPath,
     focused: Option<String>,
@@ -81,6 +82,29 @@ struct HistoryEntry {
 struct NavigationHistory {
     back: Vec<HistoryEntry>,
     forward: Vec<HistoryEntry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NavigationKind {
+    /// Silent in-place reload. No history mutation, no view churn.
+    Refresh,
+    /// Fresh user-initiated navigation. On landing: push old snapshot to back, clear forward.
+    Fresh,
+    /// Back navigation. Caller already popped from `back`. On landing: push old snapshot to forward.
+    Back,
+    /// Forward navigation. Caller already popped from `forward`. On landing: push old snapshot to back.
+    Forward,
+}
+
+#[must_use = "callers may need to know whether the displayed path actually changed"]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavigationOutcome {
+    /// The pane's displayed path changed to the new target (at least partially).
+    /// History was mutated to reflect this.
+    Landed,
+    /// The pane's displayed path never changed (cancelled or errored before any
+    /// batch landed). History was not mutated.
+    NotLanded,
 }
 
 pub struct Pane {
@@ -199,26 +223,47 @@ impl Pane {
         self.file_list.read().clone()
     }
 
+    /// Mutate the navigation history stacks at the moment the user lands on
+    /// the new path. `old_snapshot` is the pre-navigation view state captured
+    /// before any mutation. `new_path` is what the user is now seeing.
+    ///
+    /// This must run *before* acquiring `view_state` to maintain
+    /// history → view_state lock ordering.
+    fn commit_history(
+        &self,
+        kind: NavigationKind,
+        old_snapshot: &HistoryEntry,
+        new_path: &VfsPath,
+    ) {
+        if old_snapshot.path.path.as_os_str().is_empty() || old_snapshot.path == *new_path {
+            return;
+        }
+        let mut history = self.history.lock();
+        match kind {
+            NavigationKind::Refresh => {}
+            NavigationKind::Fresh => {
+                history.back.push(old_snapshot.clone());
+                history.forward.clear();
+            }
+            NavigationKind::Back => {
+                history.forward.push(old_snapshot.clone());
+            }
+            NavigationKind::Forward => {
+                history.back.push(old_snapshot.clone());
+            }
+        }
+    }
+
     async fn navigate_impl(
         &self,
         target: VfsPath,
-        silent: bool,
-        skip_history: bool,
+        kind: NavigationKind,
         changes_sender: &mut tokio::sync::watch::Sender<()>,
-    ) -> Result<(), Error> {
-        debug!(
-            "navigate_impl: target={:?} silent={} skip_history={}",
-            target, silent, skip_history
-        );
+    ) -> Result<NavigationOutcome, Error> {
+        let silent = matches!(kind, NavigationKind::Refresh);
+        debug!("navigate_impl: target={:?} kind={:?}", target, kind);
 
-        if !skip_history {
-            let entry = self.snapshot();
-            if !entry.path.path.as_os_str().is_empty() && entry.path != target {
-                let mut history = self.history.lock();
-                history.back.push(entry);
-                history.forward.clear();
-            }
-        }
+        let old_snapshot = self.snapshot();
 
         let prefs = self.preferences.load();
         let old_file_list = {
@@ -276,6 +321,7 @@ impl Pane {
         let mut first_batch = true;
         let mut last_publish = Instant::now();
         let mut dirty = false;
+        let mut landed = false;
         let throttle = Duration::from_millis(100);
 
         let result = loop {
@@ -305,8 +351,15 @@ impl Pane {
                     accumulated.extend(file_list.files().iter().cloned());
                     if !silent {
                         // On first batch: clear pending_path, set loading=true,
-                        // and reset filter/selection/focus for the new directory
+                        // and reset filter/selection/focus for the new directory.
+                        // This is the landing point — commit history here.
                         if first_batch {
+                            if !landed
+                                && let Some(bp) = batch_path.as_ref()
+                            {
+                                self.commit_history(kind, &old_snapshot, bp);
+                                landed = true;
+                            }
                             let mut ws = self.view_state_mut();
                             ws.pending_path = batch_path.clone();
                             ws.loading = true;
@@ -364,17 +417,17 @@ impl Pane {
                 ws.partial = dirty;
                 self.update_display(&mut ws);
 
+                let outcome = if landed {
+                    NavigationOutcome::Landed
+                } else {
+                    NavigationOutcome::NotLanded
+                };
                 return match e {
-                    Error::Cancelled => Ok(()),
+                    Error::Cancelled => Ok(outcome),
                     e => Err(e),
                 };
             }
         };
-
-        let mut ws = self.view_state_mut();
-
-        let mut file_list = self.file_list.write();
-        *file_list = new_file_list.clone();
 
         let has_path_changed = old_file_list.path() != new_file_list.path();
         debug!(
@@ -383,6 +436,20 @@ impl Pane {
             new_file_list.path(),
             has_path_changed
         );
+
+        // Final-swap landing point: if streaming never landed (no batches), commit
+        // history now if the path changed. Must run before taking view_state to
+        // preserve history → view_state lock ordering.
+        if has_path_changed && !landed {
+            self.commit_history(kind, &old_snapshot, new_file_list.path());
+            landed = true;
+        }
+
+        let mut ws = self.view_state_mut();
+
+        let mut file_list = self.file_list.write();
+        *file_list = new_file_list.clone();
+
         let display_options = self.display_options.0.read().clone();
 
         ws.pending_path = None;
@@ -419,7 +486,11 @@ impl Pane {
             }
         }
 
-        Ok(())
+        Ok(if landed {
+            NavigationOutcome::Landed
+        } else {
+            NavigationOutcome::NotLanded
+        })
     }
 
     pub fn cancel(&self) {
@@ -485,8 +556,9 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         if self.refresh_queue.fetch_sub(1, Ordering::SeqCst) == 1 && self.path() == expected_path {
-            self.navigate_impl(expected_path, true, true, &mut changes_sender)
-                .await?;
+            self.navigate_impl(expected_path, NavigationKind::Refresh, &mut changes_sender)
+                .await
+                .map(|_| ())?;
         }
 
         Ok(())
@@ -508,8 +580,9 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, false, &mut changes_sender)
+        self.navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
             .await
+            .map(|_| ())
     }
 
     /// Resolve a relative path against a VfsPath, crossing VFS boundaries
@@ -580,52 +653,70 @@ impl Pane {
         self.cancel();
 
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target, false, false, &mut changes_sender)
+        self.navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
             .await
+            .map(|_| ())
     }
 
+    /// Pop one entry from `back` and navigate to it. If the navigation never
+    /// lands (cancelled or errored before any batch arrived), the popped
+    /// entry is restored — history reflects what the user actually saw.
     pub async fn navigate_back(&self) -> Result<(), Error> {
-        let target = {
-            let mut history = self.history.lock();
-            let entry = match history.back.pop() {
-                Some(e) => e,
-                None => return Ok(()),
-            };
-            history.forward.push(self.snapshot());
-            entry
+        let popped = match self.history.lock().back.pop() {
+            Some(e) => e,
+            None => return Ok(()),
         };
-        let focused = target.focused.clone();
+        let focused = popped.focused.clone();
+        let target_path = popped.path.clone();
 
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target.path, false, true, &mut changes_sender)
-            .await?;
-        if let Some(name) = focused {
-            self.view_state_mut().focus(name);
+        let result = self
+            .navigate_impl(target_path, NavigationKind::Back, &mut changes_sender)
+            .await;
+        drop(changes_sender);
+
+        match &result {
+            Ok(NavigationOutcome::Landed) => {
+                if let Some(name) = focused {
+                    self.view_state_mut().focus(name);
+                }
+            }
+            Ok(NavigationOutcome::NotLanded) | Err(_) => {
+                // Pre-landing cancel/error: the displayed path never changed.
+                // Restore the popped entry so the user can retry.
+                self.history.lock().back.push(popped);
+            }
         }
-        Ok(())
+        result.map(|_| ())
     }
 
     pub async fn navigate_forward(&self) -> Result<(), Error> {
-        let target = {
-            let mut history = self.history.lock();
-            let entry = match history.forward.pop() {
-                Some(e) => e,
-                None => return Ok(()),
-            };
-            history.back.push(self.snapshot());
-            entry
+        let popped = match self.history.lock().forward.pop() {
+            Some(e) => e,
+            None => return Ok(()),
         };
-        let focused = target.focused.clone();
+        let focused = popped.focused.clone();
+        let target_path = popped.path.clone();
 
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
-        self.navigate_impl(target.path, false, true, &mut changes_sender)
-            .await?;
-        if let Some(name) = focused {
-            self.view_state_mut().focus(name);
+        let result = self
+            .navigate_impl(target_path, NavigationKind::Forward, &mut changes_sender)
+            .await;
+        drop(changes_sender);
+
+        match &result {
+            Ok(NavigationOutcome::Landed) => {
+                if let Some(name) = focused {
+                    self.view_state_mut().focus(name);
+                }
+            }
+            Ok(NavigationOutcome::NotLanded) | Err(_) => {
+                self.history.lock().forward.push(popped);
+            }
         }
-        Ok(())
+        result.map(|_| ())
     }
 
     /// If the selection is empty, returns the focused file.
