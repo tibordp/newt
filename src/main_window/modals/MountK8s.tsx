@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { tryCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { useAsyncAction } from "./useAsyncAction";
+import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
 
 type MountK8sProps = CommonDialogProps & {
@@ -16,12 +18,16 @@ export default function MountK8s({
   const [k8sContext, setK8sContext] = useState(k8s_context);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    await safeCommand("mount_k8s", {
+  const { pending, error, run } = useAsyncAction(() =>
+    tryCommand("mount_k8s", {
       paneHandle: context?.pane_handle,
       context: k8sContext,
-    });
+    }),
+  );
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    run();
   }
 
   useEffect(() => {
@@ -55,17 +61,19 @@ export default function MountK8s({
               autoFocus
               autoComplete="off"
               placeholder="default: current context"
+              disabled={pending}
             />
           </div>
+          <DialogError error={error} />
         </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
+        <button type="button" onClick={cancel} disabled={pending}>
           Cancel
         </button>
-        <button type="submit" className="suggested">
+        <DialogSubmitButton pending={pending} pendingLabel="Connecting…">
           Mount
-        </button>
+        </DialogSubmitButton>
       </div>
     </form>
   );

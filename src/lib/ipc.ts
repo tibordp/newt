@@ -19,6 +19,22 @@ export const safeCommand = async (
   }
 };
 
+// Invoke a Tauri command and return its error as a string instead of toasting.
+// Use this when the caller wants to render the error inline (e.g. inside a
+// dialog) rather than as a popup. Returns null on success, the error message
+// on failure.
+export const tryCommand = async (
+  command: string,
+  args: object = {},
+): Promise<string | null> => {
+  try {
+    await invoke(command, { ...args });
+    return null;
+  } catch (e) {
+    return String(e);
+  }
+};
+
 export const safeCommandSilent = async (
   command: string,
   args: object = {},

@@ -1,0 +1,28 @@
+.spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: var(--space-2);
+  vertical-align: -0.1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: dialog-spin 0.75s linear infinite;
+}
+
+@keyframes dialog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error {
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

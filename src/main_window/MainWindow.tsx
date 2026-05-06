@@ -7,6 +7,7 @@ import {
   type FormEvent,
 } from "react";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
 import ConnectionLog from "./ConnectionLog";
@@ -44,9 +45,15 @@ const ASKPASS_DIALOG_STYLE = {
   maxWidth: "80%",
 };
 
-function respond(response: string | null) {
+function sendAskpassResponse(response: string | null) {
   invoke("askpass_respond", { response }).catch(console.error);
 }
+
+const preventAskpassAutoFocus = (e: Event) => {
+  // Let our autoFocus on the input win over Radix focusing Dialog.Content.
+  e.preventDefault();
+};
+const preventAskpassInteractOutside = (e: Event) => e.preventDefault();
 
 function AskpassDialog({
   prompt,
@@ -57,50 +64,79 @@ function AskpassDialog({
 }) {
   const [value, setValue] = useState("");
   const isConfirm = !isSecret && prompt.includes("(yes/no/[fingerprint])");
+  // Guard against double-respond: ESC fires onOpenChange(false) which routes
+  // through cancel(); the buttons call respond() directly. Both paths cause
+  // the askpass state to clear, so we must only send one response per prompt.
+  const respondedRef = useRef(false);
+
+  const respond = useCallback((response: string | null) => {
+    if (respondedRef.current) return;
+    respondedRef.current = true;
+    sendAskpassResponse(response);
+  }, []);
 
   const handleSubmit = useCallback(
     (e: FormEvent) => {
       e.preventDefault();
       respond(value || (isConfirm ? "yes" : value));
     },
-    [value, isConfirm],
+    [value, isConfirm, respond],
   );
 
+  const cancel = useCallback(() => {
+    respond(isConfirm ? "no" : null);
+  }, [isConfirm, respond]);
+
   return (
-    <div className={dialogStyles.dialogContent} style={ASKPASS_DIALOG_STYLE}>
-      <form onSubmit={handleSubmit}>
-        <div className={dialogStyles.dialogContents}>
-          <h2 className={dialogStyles.dialogTitle}>
-            {isConfirm
-              ? "Host Key Verification"
-              : isSecret
-                ? "Authentication"
-                : "SSH"}
-          </h2>
-          <label style={{ whiteSpace: "pre-wrap", marginBottom: "0.5em" }}>
-            {prompt}
-          </label>
-          <input
-            type={isSecret ? "password" : "text"}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            autoFocus
-            size={40}
-          />
-        </div>
-        <div className={dialogStyles.dialogButtons}>
-          <button
-            type="button"
-            onClick={() => respond(isConfirm ? "no" : null)}
-          >
-            {isConfirm ? "No" : "Cancel"}
-          </button>
-          <button type="submit" className="suggested">
-            {isConfirm ? "Yes" : "OK"}
-          </button>
-        </div>
-      </form>
-    </div>
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        // Fires for ESC and (defensively) outside-click — never from our own
+        // controlled `open` prop. Treat as cancellation; the prompt stays
+        // visible until the backend clears the askpass state and unmounts us.
+        if (!open) cancel();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Content
+          className={dialogStyles.dialogContent}
+          style={ASKPASS_DIALOG_STYLE}
+          onOpenAutoFocus={preventAskpassAutoFocus}
+          onPointerDownOutside={preventAskpassInteractOutside}
+          onInteractOutside={preventAskpassInteractOutside}
+        >
+          <form onSubmit={handleSubmit}>
+            <div className={dialogStyles.dialogContents}>
+              <Dialog.Title className={dialogStyles.dialogTitle}>
+                {isConfirm
+                  ? "Host Key Verification"
+                  : isSecret
+                    ? "Authentication"
+                    : "SSH"}
+              </Dialog.Title>
+              <label style={{ whiteSpace: "pre-wrap", marginBottom: "0.5em" }}>
+                {prompt}
+              </label>
+              <input
+                type={isSecret ? "password" : "text"}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                autoFocus
+                size={40}
+              />
+            </div>
+            <div className={dialogStyles.dialogButtons}>
+              <button type="button" onClick={cancel}>
+                {isConfirm ? "No" : "Cancel"}
+              </button>
+              <button type="submit" className="suggested">
+                {isConfirm ? "Yes" : "OK"}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { tryCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { useAsyncAction } from "./useAsyncAction";
+import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
 
 type CredentialMode = "default" | "iam_user" | "assume_role" | "profile";
@@ -33,7 +35,6 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
   const [saveProfile, setSaveProfile] = useState(false);
   const [connectionNameEdited, setConnectionNameEdited] = useState(false);
   const [connectionName, setConnectionName] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
   // Auto-generate connection name from fields until user manually edits it
   const suggestedName = bucket
@@ -74,13 +75,9 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
     }
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSubmitting(true);
-
+  const { pending, error, run } = useAsyncAction(async () => {
     const credentials = buildCredentials();
 
-    // Save as connection profile if requested
     const finalName = displayedConnectionName;
     if (saveProfile && finalName) {
       try {
@@ -112,24 +109,24 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
       }
     }
 
-    try {
-      await safeCommand("mount_s3", {
-        paneHandle: context?.pane_handle,
-        region: region || null,
-        bucket: bucket || null,
-        credentials,
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    return tryCommand("mount_s3", {
+      paneHandle: context?.pane_handle,
+      region: region || null,
+      bucket: bucket || null,
+      credentials,
+    });
+  });
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    run();
   }
 
   const canSubmit =
-    !submitting &&
-    (credentialMode === "default" ||
-      credentialMode === "profile" ||
-      (credentialMode === "iam_user" && accessKeyId && secretAccessKey) ||
-      (credentialMode === "assume_role" && roleArn));
+    credentialMode === "default" ||
+    credentialMode === "profile" ||
+    (credentialMode === "iam_user" && accessKeyId && secretAccessKey) ||
+    (credentialMode === "assume_role" && !!roleArn);
 
   return (
     <form onSubmit={onSubmit}>
@@ -301,15 +298,20 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
               />
             )}
           </div>
+          <DialogError error={error} />
         </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
+        <button type="button" onClick={cancel} disabled={pending}>
           Cancel
         </button>
-        <button type="submit" className="suggested" disabled={!canSubmit}>
-          {submitting ? "Connecting..." : "Mount"}
-        </button>
+        <DialogSubmitButton
+          pending={pending}
+          pendingLabel="Connecting…"
+          disabled={!canSubmit}
+        >
+          Mount
+        </DialogSubmitButton>
       </div>
     </form>
   );

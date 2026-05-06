@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { safeCommand } from "../../lib/ipc";
+import { safeCommand, tryCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
+import { useAsyncAction } from "./useAsyncAction";
+import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
 
 type ConnectRemoteProps = CommonDialogProps & {
@@ -15,9 +17,7 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
   const [connectionName, setConnectionName] = useState(host);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-
+  const { pending, error, run } = useAsyncAction(async () => {
     if (saveProfile && connectionName) {
       try {
         const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -34,9 +34,15 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
         console.error("Failed to save connection profile:", err);
       }
     }
-
-    await safeCommand("connect_remote", { host: newHost });
+    const err = await tryCommand("connect_remote", { host: newHost });
+    if (err) return err;
     await safeCommand("close_modal");
+    return null;
+  });
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    run();
   }
 
   useEffect(() => {
@@ -70,6 +76,7 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
               size={40}
               autoFocus
               autoComplete="off"
+              disabled={pending}
             />
           </div>
           <div>
@@ -85,6 +92,7 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
                 type="checkbox"
                 checked={saveProfile}
                 onChange={(e) => setSaveProfile(e.target.checked)}
+                disabled={pending}
               />
               Save as connection profile
             </label>
@@ -97,18 +105,24 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
                 size={30}
                 style={{ marginTop: "var(--space-2)" }}
                 autoComplete="off"
+                disabled={pending}
               />
             )}
           </div>
+          <DialogError error={error} />
         </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
+        <button type="button" onClick={cancel} disabled={pending}>
           Cancel
         </button>
-        <button type="submit" className="suggested" disabled={!newHost}>
+        <DialogSubmitButton
+          pending={pending}
+          pendingLabel="Connecting…"
+          disabled={!newHost}
+        >
           Connect
-        </button>
+        </DialogSubmitButton>
       </div>
     </form>
   );
