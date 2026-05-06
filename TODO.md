@@ -19,7 +19,7 @@ Internally `ConnectionTarget::Remote` already accepts an arbitrary `transport_cm
 
 ## Bug fixes and strengthening
 
-- Remount VFS when navigating to it from history - save mount data in history
+- Auto-remount VFSes when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 - Persist column widths across sessions (today they only persist for the lifetime of the session)
 
 ## Compute dir sizes recursively (with caching)

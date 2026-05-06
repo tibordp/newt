@@ -219,7 +219,7 @@ The default browser context menu is suppressed in the main window (but not in th
 ### Focus Preservation
 
 - When navigating to a new directory, the first file is focused by default.
-- When navigating **back** (Alt+Left), the previously focused file is restored.
+- When navigating **back** (Alt+Left, mouse back button), the previously focused file is restored from the popped history entry.
 - When exiting an archive VFS via `..`, the archive file itself is focused in the parent directory.
 - On refresh (e.g., after file system changes), existing selection and focus are preserved if the files still exist.
 - Selection state survives filter changes in Filter mode (but not in Quick Search mode).
@@ -1316,12 +1316,23 @@ Path resolution priority: First checks if any mounted VFS claims the path (e.g.,
 
 ### Navigation History
 
-Each pane maintains its own navigation history (path + focused filename):
+Each pane maintains its own navigation history. Each entry stores the path, the focused filename, the formatted display path (preserved so unmounted-VFS entries still render meaningfully), and the original arrival timestamp (preserved across re-visits — back/forward into an old entry doesn't bump it).
 
-- **Back** (Alt+Left or Mouse Back): Return to the previous directory. The previously focused file is restored.
-- **Forward** (Alt+Right or Mouse Forward): Go forward after going back.
+**Single-step navigation:**
+- **Back** (Mouse XButton1, command palette): Return to the previous directory.
+- **Forward** (Mouse XButton2, command palette): Re-visit a directory you backed out of.
 
-History entries store both the path and the focused filename, so navigating back restores your exact cursor position.
+**History overlay** (Alt+Left / Alt+Right, alt-tab style):
+
+Holding Alt and pressing Left or Right opens a floating overlay anchored under the path bar that shows the pane's full back/forward timeline. Forward (redo) entries appear above the current entry, back (undo) entries below; closest entries are nearest current in the list.
+
+- **Tap-and-release** behaves like a single-step back/forward: opens the overlay pre-stepped one entry in the requested direction, releases commits, net effect is one navigation step.
+- **Hold and step**: Alt+Left/Right or ArrowDown/Up moves the preview through the timeline, skipping unreachable entries (e.g. unmounted VFS mounts). Mouse hover updates the preview. Mouse click commits to the hovered entry.
+- **Release Alt** commits the previewed entry. **Esc** or losing window focus aborts.
+- The current entry is shown in bold with a "current" badge. Unmounted-VFS entries are dimmed with an "unmounted" tag and cannot be navigated to, but remain visible for context.
+- Entries are grouped by time bucket (just now / 5m / 15m / 30m / 1h / 2h / 6h / earlier today / yesterday / weekday / last week / N weeks / older) with quiet section dividers between buckets. Buckets are computed at modal open and don't tick while the overlay is open.
+
+**Robustness**: History stack mutation happens at the moment the displayed path actually changes (the first batch arrives during streaming, or the final swap if no streaming), not at the start of navigation. A back-press to an unreachable target — unmounted VFS, deleted directory, permission revoked — that errors before any batch lands leaves the history stack untouched, so the user can simply press Back again. Stacks are also restored if a multi-step history jump fails to land.
 
 ### Open in Left/Right Pane (Ctrl+Left / Ctrl+Right)
 
@@ -1361,8 +1372,8 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Tab | Switch panes | Pane focused |
 | Shift+Enter | Follow symlink | Pane focused |
 | Mod+L | Navigate (Go To...) | Pane focused |
-| Alt+Left | Navigate back | Pane focused |
-| Alt+Right | Navigate forward | Pane focused |
+| Alt+Left | History overlay (back direction) — tap for single back step, hold + step + release to commit | Pane focused |
+| Alt+Right | History overlay (forward direction) — tap for single forward step, hold + step + release to commit | Pane focused |
 | Ctrl+Left | Open in left pane | Pane focused |
 | Ctrl+Right | Open in right pane | Pane focused |
 | Mod+. | Copy pane path to other pane | Pane focused |
