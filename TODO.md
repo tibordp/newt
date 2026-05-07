@@ -21,6 +21,7 @@ Internally `ConnectionTarget::Remote` already accepts an arbitrary `transport_cm
 
 - Auto-remount VFSes when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 - Persist column widths across sessions (today they only persist for the lifetime of the session)
+- open_read_async in tar VFS reads everything to memory. We need to provide a AsyncRead implementing struct that wraps the read_engine in iluvatar's sans-io core directly.
 
 ## Compute dir sizes recursively (with caching)
 
