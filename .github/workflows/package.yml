@@ -5,7 +5,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ─── Stage 1: Build agent binaries ───
@@ -26,7 +25,7 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -49,7 +48,7 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
         run: make agents/${{ matrix.target }}/newt-agent
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: agent-${{ matrix.target }}
           path: agents/${{ matrix.target }}/
@@ -61,14 +60,14 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: yarn
       - run: yarn install --frozen-lockfile
       - run: yarn build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: frontend-dist
           path: dist/
@@ -77,7 +76,7 @@ jobs:
         run: |
           VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           echo "$VERSION" > version.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-metadata
           path: version.txt
@@ -155,7 +154,7 @@ jobs:
       - name: Install system dependencies
         run: ${{ matrix.install_deps }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         run: |
@@ -163,7 +162,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo registry + build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -174,18 +173,18 @@ jobs:
             cargo-${{ matrix.distro }}-
 
       - name: Download frontend
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: dist/
 
       - name: Download build metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-metadata
 
       - name: Download agent artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: agent-*
           path: agents/
@@ -240,7 +239,7 @@ jobs:
           export VERSION=$(cat version.txt)
           packaging/arch/build-pkg.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: package-${{ matrix.distro }}
           path: |
@@ -256,7 +255,7 @@ jobs:
     runs-on: macos-latest
     needs: [agent, frontend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -264,12 +263,12 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
       - name: Download frontend
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: dist/
       - name: Download agent artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: agent-*
           path: agents/
@@ -287,7 +286,7 @@ jobs:
           chmod +x */newt-agent
       - name: Build Tauri app
         run: cargo tauri build --bundles dmg --config '{"build":{"beforeBuildCommand":""}}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: package-macos-aarch64
           path: target/release/bundle/dmg/*.dmg
