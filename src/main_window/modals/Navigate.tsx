@@ -2,16 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeCommand } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
-import { VfsPath } from "../../lib/types";
 import dialogStyles from "./Dialog.module.scss";
 
 type NavigateProps = CommonDialogProps & {
-  path: VfsPath;
   display_path: string;
 };
 
 export default function Navigate({
-  path,
   display_path,
   cancel,
   context,

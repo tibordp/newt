@@ -1220,7 +1220,7 @@ function PaneInner(
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
-    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
+    const { noModifiers, insertKey } = modifiers(e);
 
     if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
@@ -1278,7 +1278,7 @@ function PaneInner(
   }, [focused]);
 
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
-    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
+    const { noModifiers } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...
@@ -1300,7 +1300,7 @@ function PaneInner(
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
-    const { isMac, noModifiers, ctrlOrMeta, insertKey } = modifiers(e);
+    const { noModifiers } = modifiers(e);
 
     if (onKeyDownCommon(e)) {
       // ...

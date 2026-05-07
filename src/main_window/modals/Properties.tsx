@@ -267,7 +267,6 @@ export default function Properties({
     // Show definite bits; indeterminate bits shown as "?"
     const chars = [];
     for (const shift of [9, 6, 3, 0]) {
-      const mask = 0o7 << shift;
       const set = (modeSet >> shift) & 0o7;
       const clear = (modeClear >> shift) & 0o7;
       if ((set | clear) === 0o7) {

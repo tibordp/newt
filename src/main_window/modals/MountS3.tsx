@@ -19,8 +19,6 @@ type S3Credentials = {
   external_id?: string;
 };
 
-const KEYCHAIN_KEY = "s3-credentials";
-
 export default function MountS3({ cancel, context }: CommonDialogProps) {
   const [region, setRegion] = useState("");
   const [bucket, setBucket] = useState("");

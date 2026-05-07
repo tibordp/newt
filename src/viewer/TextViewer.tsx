@@ -445,9 +445,6 @@ export function TextViewer({
         lineStartByte,
         lineEndByte,
       );
-      const lineText = new TextDecoder("utf-8", { fatal: false }).decode(
-        lineBytes,
-      );
       const prefixBytes = match.offset - lineStartByte;
       // Count characters in the prefix bytes
       const prefixText = new TextDecoder("utf-8", { fatal: false }).decode(

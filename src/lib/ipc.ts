@@ -3,7 +3,7 @@ import { message } from "@tauri-apps/plugin-dialog";
 import { createContext, useEffect, useRef, useState } from "react";
 import { Event } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { enablePatches, applyPatches, Patch } from "immer";
+import { applyPatches, Patch } from "immer";
 
 export const safeCommand = async (
   command: string,
