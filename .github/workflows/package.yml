@@ -38,7 +38,7 @@ jobs:
       # cargo-zigbuild supports the newer llvm-ar behavior.
       - name: Install zig
         if: contains(matrix.target, 'linux-musl')
-        uses: goto-bus-stop/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.15.1
       - name: Install cargo-zigbuild
