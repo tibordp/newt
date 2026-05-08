@@ -238,8 +238,12 @@ pub struct UserCommandEntry {
     pub key: Option<String>,
     #[serde(default)]
     pub terminal: bool,
+    /// Run-context filter — which file selection state allows this command
+    /// to appear in the palette / be invoked. One of "file", "directory",
+    /// "selection", or absent (= any). NOT to be confused with `[[bind]].when`,
+    /// which is the keybinding *dispatch* context.
     #[serde(default)]
-    pub when: Option<String>,
+    pub applies_to: Option<String>,
 }
 
 /// A single `[[bookmark]]` entry in the TOML file.

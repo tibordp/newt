@@ -17,7 +17,14 @@ export type CommandInfo = {
   shortcut?: string;
   shortcut_display: string[];
   needs_pane: boolean;
+  /// Keybinding dispatch context (pane_focused / terminal_focused / undefined = global).
   when?: string;
+  /// User-command run filter (file / directory / selection / undefined = any).
+  /// Only set on user commands.
+  applies_to?: string;
+  default_key?: string;
+  default_when?: string;
+  user_overridden: boolean;
 };
 
 export type AppPreferences = {
@@ -48,7 +55,8 @@ export type UserCommandEntry = {
   run: string;
   key?: string;
   terminal: boolean;
-  when?: string;
+  /// Run-context filter (file / directory / selection / undefined = any).
+  applies_to?: string;
 };
 
 export type PreferencesState = {

@@ -1,5 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+  autocorrect / autocapitalize / spellcheck are inherited by descendant
+  inputs and textareas. Disabling them at the root keeps macOS WebKit from
+  silently mangling typed paths, regex patterns, and shell commands the way
+  Linux WebKit (which doesn't apply these by default) leaves alone. Each
+  field is free to opt back in by setting the attribute explicitly.
+-->
+<html lang="en" autocorrect="off" autocapitalize="off" spellcheck="false">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/icon.png" />

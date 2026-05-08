@@ -9,11 +9,11 @@ import styles from "./CommandPalette.module.scss";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
-function matchesWhenCondition(
-  command: { when?: string },
+function matchesAppliesToCondition(
+  command: { applies_to?: string },
   state: MainWindowState | null,
 ): boolean {
-  if (!command.when || command.when === "any") return true;
+  if (!command.applies_to || command.applies_to === "any") return true;
   if (!state || !state.panes) return true;
 
   const pane = state.panes[state.display_options.active_pane];
@@ -23,7 +23,7 @@ function matchesWhenCondition(
     ? pane.file_window.items.find((f) => f.name === pane.focused)
     : undefined;
 
-  switch (command.when) {
+  switch (command.applies_to) {
     case "file":
       return !!focused && !focused.is_dir;
     case "directory":
@@ -71,7 +71,7 @@ export default function CommandPalette({
         // Category filter (e.g. F9 → "User" only)
         (!categoryFilter || command.category === categoryFilter) &&
         // When condition filtering for user commands
-        matchesWhenCondition(command, state),
+        matchesAppliesToCondition(command, state),
     );
     ret.sort((a, b) => a.score - b.score);
     return ret.map(({ command }) => command);

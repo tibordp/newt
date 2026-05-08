@@ -2,9 +2,9 @@
   position: fixed;
   inset: 0;
   margin: auto;
-  width: 780px;
+  width: 960px;
   max-width: 90%;
-  height: 600px;
+  height: 720px;
   max-height: 85%;
   background: var(--color-bg);
   border-radius: var(--radius-lg);
@@ -239,7 +239,6 @@
 
 .commandForm {
   padding: var(--space-5) 0;
-  border-bottom: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -259,15 +258,31 @@
   align-items: flex-end;
 }
 
-.checkboxLabel {
-  flex-direction: row !important;
+// Mirrors sibling labels (Key, Applies to): an empty top "label-text" slot
+// keeps the column heights matching, then a row containing the checkbox + its
+// text sized to input height so the checkbox lands at the inputs' centre.
+.checkboxSpacer {
+  visibility: hidden;
+}
+
+.checkboxRow {
+  display: flex;
   align-items: center;
-  gap: var(--space-2) !important;
+  gap: var(--space-2);
+  min-height: calc(1em + 2 * var(--space-4) + 2px);
+  color: var(--color-fg);
 }
 
 .commandFormActions {
   display: flex;
   gap: var(--space-3);
+  align-items: center;
+}
+
+.commandFormPrimary {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
 }
 
 .templateHelp {
@@ -324,6 +339,10 @@
     background: var(--color-surface);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
+    font-family:
+      ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    font-size: 0.85em;
+    color: var(--color-fg);
   }
 }
 
@@ -442,4 +461,216 @@
 
 .transferSpacer {
   height: var(--space-3);
+}
+
+// -- Keybindings editor --
+
+.kbRowModified td:first-child {
+  font-weight: 500;
+}
+
+.kbModifiedDot {
+  color: var(--color-accent);
+  margin-left: var(--space-2);
+  font-size: 1.2em;
+  line-height: 1;
+}
+
+.kbRowActions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%; // shrink to content
+
+  // Compact buttons for in-table actions: same look as global buttons
+  // (background, border, focus ring, hover) but tighter so the row stays
+  // a single line of text-height.
+  button {
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.9em;
+  }
+
+  button + button {
+    margin-left: var(--space-2);
+  }
+}
+
+.kbRowEditing {
+  background: var(--color-selected-bg);
+
+  &:hover {
+    background: var(--color-selected-bg);
+  }
+
+  td {
+    border-bottom-color: transparent;
+  }
+}
+
+.kbDetailRow {
+  td {
+    padding-top: 0;
+    padding-bottom: var(--space-3);
+    background: var(--color-selected-bg);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  &:hover td {
+    background: var(--color-selected-bg);
+  }
+}
+
+.keyCapture,
+.keyCaptureActive {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 200px;
+  padding: var(--space-3) var(--space-3);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-sm);
+  cursor: text;
+  color: var(--color-fg);
+  outline: none;
+  box-sizing: border-box;
+  font-size: 0.9em;
+
+  &:focus {
+    outline: var(--focus-ring);
+    outline-offset: -1px;
+  }
+}
+
+.keyCaptureActive {
+  composes: keyCapture;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+// "regular" variant — matches the height/padding of standard text inputs
+// from _base.scss so it sits flush alongside <input>/<select> in forms.
+.keyCaptureRegular {
+  padding: var(--space-4);
+  font-size: inherit;
+  border-radius: var(--radius-md);
+}
+
+.keyCapturePlaceholder {
+  color: var(--color-fg-muted);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.keyCaptureClear {
+  background: none;
+  border: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0 4px;
+
+  &:hover {
+    color: var(--color-fg);
+  }
+}
+
+// -- User command summary --
+
+.userCmdEntry {
+  border-bottom: 1px solid var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.userCmdRow {
+  display: flex;
+  align-items: center;
+  padding: var(--space-5) 0;
+
+  .settingControl {
+    margin-left: var(--space-7);
+  }
+}
+
+.userCmdHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.userCmdShortcut {
+  flex-shrink: 0;
+}
+
+.userCmdCode {
+  display: block;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 7em;
+  overflow: auto;
+  color: var(--color-fg);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.userCmdCodeEmpty {
+  composes: userCmdCode;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
+
+.userCmdTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.userCmdTag {
+  font-size: 0.8em;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kbBannerWarn,
+.kbBannerError {
+  font-size: 0.85em;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  line-height: 1.4;
+
+  button {
+    padding: var(--space-2) var(--space-4);
+    font-size: inherit;
+  }
+}
+
+.kbBannerWarn {
+  background: var(--color-warning-bg, rgba(220, 140, 0, 0.12));
+  color: var(--color-fg);
+}
+
+.kbBannerError {
+  background: var(--color-danger-bg, rgba(204, 51, 51, 0.12));
+  color: var(--color-fg);
 }

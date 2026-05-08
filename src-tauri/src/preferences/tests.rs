@@ -293,3 +293,285 @@ fn deep_merge_table_nested() {
     assert_eq!(inner["x"].as_integer(), Some(1)); // preserved
     assert_eq!(inner["y"].as_integer(), Some(20)); // overridden
 }
+
+// ---------------------------------------------------------------------------
+// apply_set_keybinding
+// ---------------------------------------------------------------------------
+
+fn parse_binds(toml_str: &str) -> Vec<(String, String, Option<String>)> {
+    let doc: toml_edit::DocumentMut = toml_str.parse().expect("valid toml");
+    let arr = match doc.get("bind").and_then(|i| i.as_array_of_tables()) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .map(|t| {
+            (
+                t.get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                t.get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                t.get("when").and_then(|v| v.as_str()).map(String::from),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn apply_set_keybinding_remap_writes_disable_and_new() {
+    // Built-in `select_all` defaults to ctrl+a / pane_focused. Remap to ctrl+shift+a.
+    let out = apply_set_keybinding(
+        "",
+        "select_all",
+        Some("ctrl+shift+a".into()),
+        Some("pane_focused".into()),
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let binds = parse_binds(&out);
+    assert_eq!(
+        binds,
+        vec![
+            ("ctrl+a".into(), "-".into(), Some("pane_focused".into())),
+            (
+                "ctrl+shift+a".into(),
+                "select_all".into(),
+                Some("pane_focused".into())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn apply_set_keybinding_back_to_default_clears_overrides() {
+    // Existing override in file. Setting back to default should leave file empty.
+    let initial = r#"
+[[bind]]
+key = "ctrl+a"
+command = "-"
+when = "pane_focused"
+
+[[bind]]
+key = "ctrl+shift+a"
+command = "select_all"
+when = "pane_focused"
+"#;
+    let out = apply_set_keybinding(
+        initial,
+        "select_all",
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    assert!(parse_binds(&out).is_empty(), "got: {}", out);
+}
+
+#[test]
+fn apply_set_keybinding_unbind_writes_only_disable() {
+    let out = apply_set_keybinding(
+        "",
+        "select_all",
+        None,
+        None,
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let binds = parse_binds(&out);
+    assert_eq!(
+        binds,
+        vec![("ctrl+a".into(), "-".into(), Some("pane_focused".into()))]
+    );
+}
+
+#[test]
+fn apply_set_keybinding_no_default_is_pure_add() {
+    // navigate_back has no default key. Bind to alt+x.
+    let out = apply_set_keybinding(
+        "",
+        "navigate_back",
+        Some("alt+x".into()),
+        Some("pane_focused".into()),
+        None,
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let binds = parse_binds(&out);
+    assert_eq!(
+        binds,
+        vec![(
+            "alt+x".into(),
+            "navigate_back".into(),
+            Some("pane_focused".into())
+        )]
+    );
+}
+
+#[test]
+fn apply_set_keybinding_idempotent_on_repeated_remap() {
+    // Repeated remap to the same key should produce identical output.
+    let first = apply_set_keybinding(
+        "",
+        "select_all",
+        Some("ctrl+shift+a".into()),
+        Some("pane_focused".into()),
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let second = apply_set_keybinding(
+        &first,
+        "select_all",
+        Some("ctrl+shift+a".into()),
+        Some("pane_focused".into()),
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    assert_eq!(parse_binds(&first), parse_binds(&second));
+}
+
+// ---------------------------------------------------------------------------
+// apply_reset_keybinding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apply_reset_keybinding_removes_overrides() {
+    let initial = r#"
+[[bind]]
+key = "ctrl+a"
+command = "-"
+when = "pane_focused"
+
+[[bind]]
+key = "ctrl+shift+a"
+command = "select_all"
+when = "pane_focused"
+"#;
+    let out = apply_reset_keybinding(
+        initial,
+        "select_all",
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    assert!(parse_binds(&out).is_empty());
+}
+
+#[test]
+fn apply_reset_keybinding_evicts_squatter_in_bind() {
+    // Another command holds select_all's default slot via [[bind]]. Reset
+    // should reclaim it.
+    let initial = r#"
+[[bind]]
+key = "ctrl+a"
+command = "some_other_cmd"
+when = "pane_focused"
+"#;
+    let out = apply_reset_keybinding(
+        initial,
+        "select_all",
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    assert!(parse_binds(&out).is_empty(), "got: {}", out);
+}
+
+#[test]
+fn apply_reset_keybinding_evicts_user_command_squatter() {
+    // A user command has stolen select_all's default key. Reset should
+    // clear the user command's `key` field.
+    let initial = r#"
+[[command]]
+title = "My Cmd"
+run = "echo hi"
+key = "ctrl+a"
+applies_to = "file"
+"#;
+    let out = apply_reset_keybinding(
+        initial,
+        "select_all",
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let arr = doc["command"].as_array_of_tables().unwrap();
+    let cmd = arr.get(0).unwrap();
+    assert!(
+        cmd.get("key").is_none(),
+        "key should be cleared. got: {}",
+        out
+    );
+    // applies_to must be preserved.
+    assert_eq!(cmd.get("applies_to").and_then(|v| v.as_str()), Some("file"));
+    // title and run preserved too.
+    assert_eq!(cmd.get("title").and_then(|v| v.as_str()), Some("My Cmd"));
+}
+
+#[test]
+fn apply_reset_keybinding_preserves_unrelated_binds() {
+    let initial = r#"
+[[bind]]
+key = "ctrl+a"
+command = "-"
+when = "pane_focused"
+
+[[bind]]
+key = "ctrl+b"
+command = "delete_selected"
+when = "pane_focused"
+"#;
+    let out = apply_reset_keybinding(
+        initial,
+        "select_all",
+        Some("ctrl+a".into()),
+        Some("pane_focused".into()),
+    )
+    .unwrap();
+    let binds = parse_binds(&out);
+    assert_eq!(
+        binds,
+        vec![(
+            "ctrl+b".into(),
+            "delete_selected".into(),
+            Some("pane_focused".into())
+        )]
+    );
+}
+
+#[test]
+fn apply_reset_keybinding_no_default_is_noop_for_squatter_check() {
+    // Command with no default — reset should still drop entries mentioning
+    // it but not touch unrelated bindings.
+    let initial = r#"
+[[bind]]
+key = "alt+x"
+command = "navigate_back"
+when = "pane_focused"
+
+[[bind]]
+key = "ctrl+b"
+command = "delete_selected"
+when = "pane_focused"
+"#;
+    let out = apply_reset_keybinding(initial, "navigate_back", None, Some("pane_focused".into()))
+        .unwrap();
+    let binds = parse_binds(&out);
+    assert_eq!(
+        binds,
+        vec![(
+            "ctrl+b".into(),
+            "delete_selected".into(),
+            Some("pane_focused".into())
+        )]
+    );
+}

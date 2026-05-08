@@ -2163,6 +2163,34 @@ pub fn get_preferences_schema(
 }
 
 #[tauri::command]
+pub fn set_command_keybinding(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    command_id: String,
+    new_key: Option<String>,
+    new_when: Option<String>,
+) -> Result<(), Error> {
+    let prefs = global_ctx.preferences();
+    prefs
+        .set_command_keybinding(&command_id, new_key, new_when)
+        .map_err(Error::Custom)?;
+    prefs.reload();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_command_keybinding(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    command_id: String,
+) -> Result<(), Error> {
+    let prefs = global_ctx.preferences();
+    prefs
+        .reset_command_keybinding(&command_id)
+        .map_err(Error::Custom)?;
+    prefs.reload();
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(), Error> {
     let path = global_ctx.preferences().settings_file_path();
     // Create the file with defaults if it doesn't exist
@@ -2389,6 +2417,8 @@ pub fn create_handler() -> Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync + 'stat
         update_preference,
         reset_preference,
         get_preferences_schema,
+        set_command_keybinding,
+        reset_command_keybinding,
         open_config_file,
         // Hot paths
         get_hot_paths,

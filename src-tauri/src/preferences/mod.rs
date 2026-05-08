@@ -45,8 +45,29 @@ pub struct CommandInfo {
     pub shortcut: Option<String>,
     pub shortcut_display: Vec<String>,
     pub needs_pane: bool,
+    /// Keybinding *dispatch context* (`pane_focused` / `terminal_focused` /
+    /// unset = global). For user commands this is hard-coded to
+    /// `pane_focused`. For built-ins it reflects the resolved binding's
+    /// `when`. Distinct from `applies_to`, which is the user-command
+    /// run-filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+    /// User-command run filter (`file` / `directory` / `selection` / unset =
+    /// any). Only set for user commands; always `None` for built-ins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applies_to: Option<String>,
+    /// The compiled-in default key for this command, if any. Useful for the
+    /// keybindings editor to display "Default: …" hints and offer Reset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_key: Option<String>,
+    /// The compiled-in default dispatch context for this command, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_when: Option<String>,
+    /// True when the resolved keybinding for this command differs from its
+    /// compiled-in default (either remapped by the user, disabled, or its
+    /// default slot has been usurped by another command). Only meaningful
+    /// for built-ins; always `false` for user commands.
+    pub user_overridden: bool,
 }
 
 /// A cheaply-cloneable handle for reading the current `AppPreferences`.
@@ -308,8 +329,8 @@ impl PreferencesManager {
         if entry.terminal {
             table.insert("terminal", toml_edit::value(true));
         }
-        if let Some(ref when) = entry.when {
-            table.insert("when", toml_edit::value(when.as_str()));
+        if let Some(ref applies) = entry.applies_to {
+            table.insert("applies_to", toml_edit::value(applies.as_str()));
         }
         table.set_implicit(true);
 
@@ -389,11 +410,11 @@ impl PreferencesManager {
         if entry.terminal {
             table.insert("terminal", toml_edit::value(true));
         }
-        if let Some(ref when) = entry.when
-            && !when.is_empty()
-            && when != "any"
+        if let Some(ref applies) = entry.applies_to
+            && !applies.is_empty()
+            && applies != "any"
         {
-            table.insert("when", toml_edit::value(when.as_str()));
+            table.insert("applies_to", toml_edit::value(applies.as_str()));
         }
         table.set_implicit(true);
 
@@ -422,6 +443,116 @@ impl PreferencesManager {
         std::fs::write(&file_path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
+        Ok(())
+    }
+
+    /// Atomically set the keybinding for a built-in command. Removes any
+    /// existing user `[[bind]]` entries that mention this command (or that
+    /// disable its default via `command = "-"`), then optionally adds a
+    /// disable-default entry and the new binding.
+    ///
+    /// `new_key` of `None` means "unbind" — the resulting state is that the
+    /// command has no shortcut at all (default suppressed if any, no override).
+    ///
+    /// `new_when` is the keybinding *dispatch context* (`pane_focused` /
+    /// `terminal_focused` / unset = global). For user commands the dispatch
+    /// context is hard-coded to `pane_focused` and this parameter is ignored
+    /// — only the `key` field is touched. The user command's `applies_to`
+    /// run-filter is left alone.
+    pub fn set_command_keybinding(
+        &self,
+        command_id: &str,
+        new_key: Option<String>,
+        new_when: Option<String>,
+    ) -> Result<(), String> {
+        // User commands store their key in the [[command]] entry, not [[bind]].
+        // Only the `key` field is updated — `applies_to` is unrelated to
+        // keybindings and must not be touched here.
+        if let Some(idx_str) = command_id.strip_prefix("user_command_") {
+            let idx: usize = idx_str
+                .parse()
+                .map_err(|_| format!("Invalid user command id: {}", command_id))?;
+            let _ = new_when; // dispatch context is implicit (pane_focused)
+            return self.set_user_command_key(idx, new_key);
+        }
+
+        let defaults = commands::default_commands();
+        let def = defaults
+            .iter()
+            .find(|d| d.id == command_id)
+            .ok_or_else(|| format!("Unknown command: {}", command_id))?;
+        let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
+        let default_when = def.default_when.clone();
+
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let new_content = apply_set_keybinding(
+            &content,
+            command_id,
+            new_key,
+            new_when,
+            default_key,
+            default_when,
+        )?;
+        std::fs::write(&file_path, new_content)
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        Ok(())
+    }
+
+    /// Reset a command's keybinding to its compiled-in default by removing
+    /// any user `[[bind]]` entries referencing it (including disable entries
+    /// that target its default key+when).
+    pub fn reset_command_keybinding(&self, command_id: &str) -> Result<(), String> {
+        if command_id.starts_with("user_command_") {
+            // For user commands, "reset" means clear the key field.
+            return self.set_command_keybinding(command_id, None, None);
+        }
+
+        let defaults = commands::default_commands();
+        let def = defaults
+            .iter()
+            .find(|d| d.id == command_id)
+            .ok_or_else(|| format!("Unknown command: {}", command_id))?;
+        let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
+        let default_when = def.default_when.clone();
+
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let new_content = apply_reset_keybinding(&content, command_id, default_key, default_when)?;
+        std::fs::write(&file_path, new_content)
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        Ok(())
+    }
+
+    /// Update only the `key` field on a user command entry. The `applies_to`
+    /// run-filter and other fields are left intact. To edit those, use
+    /// `update_user_command`.
+    fn set_user_command_key(&self, index: usize, new_key: Option<String>) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+        let arr = doc
+            .get_mut("command")
+            .and_then(|i| i.as_array_of_tables_mut())
+            .ok_or_else(|| "No [[command]] array in settings.toml".to_string())?;
+        let entry = arr
+            .get_mut(index)
+            .ok_or_else(|| format!("User command index {} out of range", index))?;
+
+        match new_key {
+            Some(k) if !k.is_empty() => {
+                entry.insert("key", toml_edit::value(expand_mod(&k)));
+            }
+            _ => {
+                entry.remove("key");
+            }
+        }
+
+        std::fs::write(&file_path, doc.to_string())
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         Ok(())
     }
 
@@ -606,14 +737,20 @@ impl PreferencesManager {
         let mut commands: Vec<CommandInfo> = command_defs
             .iter()
             .map(|def| {
-                let shortcut = resolved_bindings
-                    .iter()
-                    .find(|b| b.command == def.id)
-                    .map(|b| b.key.clone());
+                let resolved = resolved_bindings.iter().find(|b| b.command == def.id);
+                let shortcut = resolved.map(|b| b.key.clone());
+                let when = resolved.and_then(|b| b.when.clone());
                 let shortcut_display = shortcut
                     .as_ref()
                     .map(|k| render_shortcut(k))
                     .unwrap_or_default();
+                let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
+                // The when-clause comparison only matters when there is a
+                // resolved shortcut. A command without a default key (e.g.
+                // navigate_back) has shortcut=None, when=None and a
+                // default_when of pane_focused — that's not an override.
+                let user_overridden = shortcut != default_key
+                    || (shortcut.is_some() && when.as_deref() != def.default_when.as_deref());
                 CommandInfo {
                     id: def.id.clone(),
                     name: def.name.clone(),
@@ -622,7 +759,11 @@ impl PreferencesManager {
                     shortcut,
                     shortcut_display,
                     needs_pane: def.needs_pane,
-                    when: None,
+                    when,
+                    applies_to: None,
+                    default_key,
+                    default_when: def.default_when.clone(),
+                    user_overridden,
                 }
             })
             .collect();
@@ -630,10 +771,8 @@ impl PreferencesManager {
         // Add user commands as CommandInfo entries
         for (i, uc) in user_commands.iter().enumerate() {
             let cmd_id = format!("user_command_{}", i);
-            let shortcut = resolved_bindings
-                .iter()
-                .find(|b| b.command == cmd_id)
-                .map(|b| b.key.clone());
+            let resolved = resolved_bindings.iter().find(|b| b.command == cmd_id);
+            let shortcut = resolved.map(|b| b.key.clone());
             let shortcut_display = shortcut
                 .as_ref()
                 .map(|k| render_shortcut(k))
@@ -647,7 +786,17 @@ impl PreferencesManager {
                 shortcut,
                 shortcut_display,
                 needs_pane: true,
-                when: uc.when.clone(),
+                // User-command keybindings always dispatch in `pane_focused`
+                // context; this is enforced in `resolve_bindings` above.
+                when: resolved.and_then(|b| b.when.clone()),
+                applies_to: uc.applies_to.clone(),
+                default_key: None,
+                // Intrinsic dispatch context — the keybindings tab falls back
+                // to this for the "When" column when no key is bound, so the
+                // displayed context doesn't flip between "Global" and "Pane
+                // focused" based on whether a shortcut exists.
+                default_when: Some("pane_focused".to_string()),
+                user_overridden: false,
             });
         }
 
@@ -838,6 +987,172 @@ fn render_shortcut(key: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// Pure transformation that powers `set_command_keybinding` for built-in
+/// commands. Takes the existing `settings.toml` body, the command id, the
+/// new `(key, when)` pair (None = unbind), and the compiled-in default
+/// `(default_key, default_when)`. Returns the rewritten body. Doesn't touch
+/// the filesystem — extracted so it's unit-testable.
+fn apply_set_keybinding(
+    content: &str,
+    command_id: &str,
+    new_key: Option<String>,
+    new_when: Option<String>,
+    default_key: Option<String>,
+    default_when: Option<String>,
+) -> Result<String, String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+    // Rebuild [[bind]] dropping entries that mention this command or that
+    // disable its default via `command = "-"` (we'll re-emit either as needed
+    // below, but never both).
+    let mut rebuilt: Vec<toml_edit::Table> = Vec::new();
+    if let Some(arr) = doc.get_mut("bind").and_then(|i| i.as_array_of_tables_mut()) {
+        for t in arr.iter() {
+            let cmd = t.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            let key = t
+                .get("key")
+                .and_then(|v| v.as_str())
+                .map(expand_mod)
+                .unwrap_or_default();
+            let when = t
+                .get("when")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let mentions_self = cmd == command_id;
+            let disables_our_default =
+                cmd == "-" && default_key.as_deref() == Some(key.as_str()) && when == default_when;
+            if mentions_self || disables_our_default {
+                continue;
+            }
+            rebuilt.push(t.clone());
+        }
+    }
+
+    let normalized_new_key = new_key.as_deref().map(expand_mod);
+
+    // If the new key+when matches the compiled-in default exactly, no
+    // [[bind]] entries are needed for this command — leave the slate clean.
+    let is_back_to_default = normalized_new_key == default_key && new_when == default_when;
+
+    if !is_back_to_default {
+        // Suppress the default via a `command = "-"` entry, unless the new
+        // binding lands on the exact same key+when (in which case the new
+        // binding overrides the default in place).
+        if let Some(dk) = &default_key {
+            let new_collides_with_default =
+                normalized_new_key.as_deref() == Some(dk.as_str()) && new_when == default_when;
+            if !new_collides_with_default {
+                let mut t = toml_edit::Table::new();
+                t.insert("key", toml_edit::value(dk.as_str()));
+                t.insert("command", toml_edit::value("-"));
+                if let Some(w) = &default_when {
+                    t.insert("when", toml_edit::value(w.as_str()));
+                }
+                t.set_implicit(true);
+                rebuilt.push(t);
+            }
+        }
+
+        if let Some(k) = &normalized_new_key {
+            let mut t = toml_edit::Table::new();
+            t.insert("key", toml_edit::value(k.as_str()));
+            t.insert("command", toml_edit::value(command_id));
+            if let Some(w) = &new_when {
+                t.insert("when", toml_edit::value(w.as_str()));
+            }
+            t.set_implicit(true);
+            rebuilt.push(t);
+        }
+    }
+
+    doc.remove("bind");
+    if !rebuilt.is_empty() {
+        let mut arr = toml_edit::ArrayOfTables::new();
+        for t in rebuilt {
+            arr.push(t);
+        }
+        doc.insert("bind", toml_edit::Item::ArrayOfTables(arr));
+    }
+
+    Ok(doc.to_string())
+}
+
+/// Pure transformation that powers `reset_command_keybinding` for built-in
+/// commands. Removes user `[[bind]]` entries mentioning the command or
+/// occupying its default `(key, when)` slot, and clears the `key` field
+/// of any `[[command]]` user-command entry currently squatting on that
+/// slot. Symmetric reclamation — see callers for the rationale.
+fn apply_reset_keybinding(
+    content: &str,
+    command_id: &str,
+    default_key: Option<String>,
+    default_when: Option<String>,
+) -> Result<String, String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+    // Pass 1: rebuild [[bind]] dropping entries that mention this command,
+    // or that occupy its default slot for any other command (including the
+    // `-` disable marker).
+    if let Some(arr) = doc.get_mut("bind").and_then(|i| i.as_array_of_tables_mut()) {
+        let mut keep: Vec<toml_edit::Table> = Vec::new();
+        for t in arr.iter() {
+            let cmd = t.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            let key = t
+                .get("key")
+                .and_then(|v| v.as_str())
+                .map(expand_mod)
+                .unwrap_or_default();
+            let when = t
+                .get("when")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let mentions_self = cmd == command_id;
+            let occupies_default_slot =
+                default_key.as_deref() == Some(key.as_str()) && when == default_when;
+            if mentions_self || occupies_default_slot {
+                continue;
+            }
+            keep.push(t.clone());
+        }
+        doc.remove("bind");
+        if !keep.is_empty() {
+            let mut new_arr = toml_edit::ArrayOfTables::new();
+            for t in keep {
+                new_arr.push(t);
+            }
+            doc.insert("bind", toml_edit::Item::ArrayOfTables(new_arr));
+        }
+    }
+
+    // Pass 2: clear the `key` field of any [[command]] entry currently bound
+    // to the default key. User-command keybindings always dispatch in
+    // `pane_focused` context (see `resolve_bindings`), so this only matters
+    // when our default's when is `pane_focused`.
+    if default_when.as_deref() == Some("pane_focused")
+        && let Some(dk) = &default_key
+        && let Some(arr) = doc
+            .get_mut("command")
+            .and_then(|i| i.as_array_of_tables_mut())
+    {
+        for t in arr.iter_mut() {
+            let k = t
+                .get("key")
+                .and_then(|v| v.as_str())
+                .map(expand_mod)
+                .unwrap_or_default();
+            if k == *dk {
+                t.remove("key");
+            }
+        }
+    }
+
+    Ok(doc.to_string())
 }
 
 fn json_to_toml_edit_value(value: &serde_json::Value) -> Result<toml_edit::Value, String> {

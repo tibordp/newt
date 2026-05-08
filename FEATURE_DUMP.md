@@ -690,6 +690,7 @@ Terminal colors follow the system/app theme:
 - **Copy**: Ctrl+Shift+C (or Cmd+C on macOS) copies the terminal selection to the system clipboard.
 - **Paste**: Ctrl+Shift+V on Linux/Windows, Cmd+V on macOS. The terminal reads the clipboard via `navigator.clipboard.readText()` and writes it into the PTY (an explicit handler is needed on macOS because Cmd+V is not delivered to the webview without an Edit menu — see below).
 - **macOS Edit menu**: Main, viewer, and editor windows include a native Edit submenu with Undo / Redo / Cut / Copy / Paste / Select All entries. Without this menu, macOS silently swallows Cmd+V/C/X/A before they reach the webview, so this is required for clipboard shortcuts to work in any text input.
+- **Input assist disabled globally**: `index.html` sets `autocorrect="off" autocapitalize="off" spellcheck="false"` on `<html>`, which inherits to every `<input>` and `<textarea>`. macOS WebKit otherwise applies these by default and silently mangles typed paths, regex patterns, and shell commands; Linux WebKit doesn't, so this normalises behaviour across platforms.
 - **Selection**: Highlight text with the mouse to select. Text is selectable by default.
 
 ### Terminal Lifecycle
@@ -1011,11 +1012,10 @@ Fuzzy-searchable list of all available commands.
 - **Fuzzy matching**: Same algorithm as Hot Paths.
 - **Context filtering**:
   - Commands with `needs_pane = true` are hidden when no pane is focused.
-  - Commands with a `when` condition are evaluated against current state:
+  - User commands with an `applies_to` run filter are evaluated against current state:
     - `"file"`: Only if focused item is a regular file.
     - `"directory"`: Only if focused item is a directory.
     - `"selection"`: Only if files are selected, or a non-`..` file is focused.
-    - `"pane_focused"`: Only if a file pane has focus.
   - Self-referencing commands (`command_palette`, `hot_paths`, `user_commands`) are excluded.
 - **Display**: Each entry shows the command name (with search matches highlighted), category badge (e.g., "User" for user commands), and keyboard shortcut (rendered with platform-specific symbols: ⌘ on macOS, Ctrl elsewhere).
 - **Keyboard**: Arrow keys, Page Up/Down, Home/End to navigate. Enter to execute. Escape to close. Wraps around (loop).
@@ -1036,9 +1036,9 @@ Custom commands defined in `settings.toml` via `[[command]]` entries. Managed vi
 [[command]]
 title = "Archive Selection"
 run = "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') | map('shell_quote') | join(' ') }}"
-key = "alt+z"         # Optional keyboard shortcut
-terminal = true       # true = run in terminal tab, false = run as background operation
-when = "selection"    # Optional: "any", "file", "directory", "selection"
+key = "alt+z"             # Optional keyboard shortcut
+terminal = true           # true = run in terminal tab, false = run as background operation
+applies_to = "selection"  # Optional run filter: "file", "directory", "selection" (omit = any)
 ```
 
 ### Template Engine (Minijinja / Jinja2)
@@ -1193,15 +1193,24 @@ Available in debug builds only. Provides:
 - **Crash (throw error)**: Tests the ErrorBoundary by throwing a React error.
 
 **Keybindings tab**:
-- Table listing all commands with their current shortcut and `when` condition.
-- Search/filter by command name, ID, or shortcut.
+- Table listing every command (built-in + user) with its current shortcut and dispatch context. The "When" column shows the command's intrinsic dispatch context (e.g. "Pane focused"), independent of whether a key is currently bound.
+- Search/filter by command name, ID, shortcut, or context.
 - Shortcuts rendered with platform-specific symbols (⌘ on macOS, Ctrl elsewhere).
+- **Inline editor**: Click Edit (or double-click a row) to swap the shortcut cell into a key-capture input in place — no row expansion. Press a combination to record it; Escape cancels recording; the × clears.
+- **Live conflict detection** as you record:
+  - **Hard conflict** (same key + same dispatch context for another command) blocks Save and shows an "Already used by …" banner with an Override button. Override only *acknowledges* the conflict — it doesn't save until you press Save.
+  - **Soft warning** when the same key is used in a different/overlapping context.
+  - **Validation** rejects modifier-only combos.
+- **Action buttons** (in edit mode): Save (primary), Cancel, Reset (always shown when the command has a default — disabled when already at default, otherwise restores the compiled-in default key).
+- **Reset is bidirectional**: if a different command currently squats on the row's default key+context — including a user command holding it via `[[command]].key` — Reset evicts the squatter so the default reasserts. The squatter's other fields (title/run/applies_to) are preserved.
+- **Modified indicator**: a small accent dot next to commands whose resolved binding differs from the compiled-in default.
 
 **Commands tab**:
-- List of user-defined commands showing title, run script (monospace code block), key, when condition, and terminal flag.
-- Edit and Delete buttons per command.
-- Edit form: title (text), run (textarea, monospace), key (text, placeholder "e.g. alt+z"), when (dropdown: Any/File/Directory/Selection), terminal (checkbox).
-- Expandable template reference panel showing variables, filters, and functions with examples.
+- List of user-defined commands. Each row shows the title and shortcut in a header line (shortcut right-aligned, matching the Keybindings tab), the run script in a monospace `<pre>` block (text-selectable, with `max-height` and internal scroll for long scripts), and small uppercase tags below for `applies to …` and `terminal`.
+- Edit button per row. Delete is reachable inside the edit form (one extra click of friction protects against misclicks).
+- **Edit mode**: the row is replaced by a form (title, run textarea, Key — same KeyCaptureInput as the Keybindings tab in `regular` size, Applies to — Any focused item / Files only / Directories only / Selection, Run in terminal). Conflict detection runs against all bindings (built-in + user). Action bar: Delete on the far left, Cancel + Save on the far right (Save is the rightmost primary action).
+- **Add Command** button stays visible while editing an existing command.
+- Expandable template reference panel showing variables, filters, and functions, with example commands rendered as the same kind of `<pre>` blocks used in row view.
 
 ### Keybinding System
 
@@ -1221,12 +1230,12 @@ key = "f8"
 command = "-"  # Disables the default F8 = delete binding
 ```
 
-**`when` conditions**: Gate when a binding is active:
-- (omitted or `"any"`) → Always available.
+**`when` conditions** on `[[bind]]` entries gate the *dispatch context* — which input focus state allows the binding to fire:
+- (omitted) → Global; the binding fires regardless of focus.
 - `"pane_focused"` → Only when a file pane has focus.
-- `"file"` → Only when focused item is a regular file.
-- `"directory"` → Only when focused item is a directory.
-- `"selection"` → Only when files are selected (or a non-`..` file is focused).
+- `"terminal_focused"` → Only when the terminal has focus.
+
+Not to be confused with `applies_to` on `[[command]]` entries, which is a *run filter* gating whether a user command appears in the palette / can be invoked at all (`"file"`, `"directory"`, `"selection"`, or omitted = any). The two concepts share neither schema location nor accepted values.
 
 **Shortcut display**: Rendered with platform symbols:
 - `ctrl` → "Ctrl"
