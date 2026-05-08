@@ -211,7 +211,10 @@ impl Vfs for LocalVfs {
                     let metadata = entry.metadata()?;
                     let file_type = metadata.file_type();
 
-                    let name = entry.file_name().into_string().unwrap();
+                    // Best-effort UTF-8 conversion: a non-UTF-8 filename will
+                    // round-trip through replacement chars, but we'd rather
+                    // surface it than panic mid-listing.
+                    let name = entry.file_name().to_string_lossy().into_owned();
                     let mut is_dir = file_type.is_dir();
 
                     let symlink_target = if file_type.is_symlink() {

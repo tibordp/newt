@@ -276,9 +276,21 @@ impl SftpVfs {
             child.id()
         );
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let mut stderr = child.stderr.take().unwrap();
+        // We always spawn the child with piped stdio just above, so these
+        // takes are infallible — but use structured errors anyway so a
+        // future caller that forgets the piped() doesn't panic.
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::custom("sftp: child stdin not piped"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::custom("sftp: child stdout not piped"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| Error::custom("sftp: child stderr not piped"))?;
 
         // Race the SFTP handshake against the ssh process exiting.
         // If ssh exits first (auth failure, bad host, etc.), we read stderr

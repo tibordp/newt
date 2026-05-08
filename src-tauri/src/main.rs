@@ -281,11 +281,18 @@ fn main() {
             // Remote/Elevated: `init` command triggers connect asynchronously.
             if matches!(ct, ConnectionTarget::Local) {
                 let agent_resolver = global_ctx.agent_resolver();
-                tauri::async_runtime::block_on(ctx.connect(agent_resolver)).unwrap();
-
-                // Pre-warm viewer and editor windows
-                cmd::prewarm_viewer(app.handle(), &ctx, "main");
-                cmd::prewarm_editor(app.handle(), &ctx, "main");
+                // If the local connect fails, log and degrade rather than
+                // killing the process: the frontend's `init` command will
+                // also try to connect once the webview loads, which is the
+                // path that handles errors visibly.
+                if let Err(e) = tauri::async_runtime::block_on(ctx.connect(agent_resolver)) {
+                    log::error!("local connect failed during setup: {}", e);
+                    ctx.set_connection_failed(e.to_string());
+                } else {
+                    // Pre-warm viewer and editor windows
+                    cmd::prewarm_viewer(app.handle(), &ctx, "main");
+                    cmd::prewarm_editor(app.handle(), &ctx, "main");
+                }
             }
 
             Ok(())

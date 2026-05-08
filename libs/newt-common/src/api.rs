@@ -80,6 +80,33 @@ pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);
 
+// ---------------------------------------------------------------------------
+// bincode helpers — propagate decode/encode failures as structured errors so
+// a malformed payload (deliberately bad agent, version skew, …) doesn't crash
+// the whole process.
+// ---------------------------------------------------------------------------
+
+fn decode<'a, T: serde::Deserialize<'a>>(req: &'a [u8]) -> Result<T, Error> {
+    bincode::deserialize(req).map_err(|e| Error::custom(format!("RPC decode: {}", e)))
+}
+
+fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, Error> {
+    bincode::serialize(value).map_err(|e| Error::custom(format!("RPC encode: {}", e)))
+}
+
+/// Best-effort encode used by streaming notifications: there's no Result to
+/// propagate from a spawned task, so failures (which never happen in
+/// practice for these types) are logged and the notification is dropped.
+fn try_encode<T: serde::Serialize>(value: &T) -> Option<Vec<u8>> {
+    match bincode::serialize(value) {
+        Ok(bytes) => Some(bytes),
+        Err(e) => {
+            log::error!("RPC streaming encode: {}", e);
+            None
+        }
+    }
+}
+
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
     outbox: Outbox,
@@ -99,20 +126,20 @@ impl Dispatcher for FilesystemDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_POLL_CHANGES => {
-                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = decode(&req[..])?;
                 let ret = self.filesystem.poll_changes(path).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_LIST_FILES => {
-                let args: (VfsPath, ListFilesOptions) = bincode::deserialize(&req[..]).unwrap();
+                let args: (VfsPath, ListFilesOptions) = decode(&req[..])?;
                 let ret = self.filesystem.list_files(args.0, args.1, None).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_LIST_FILES_STREAMING => {
                 let (path, opts, stream_id): (VfsPath, ListFilesOptions, StreamId) =
-                    bincode::deserialize(&req[..]).unwrap();
+                    decode(&req[..])?;
 
                 let (batch_tx, mut batch_rx) = tokio::sync::mpsc::channel::<FileList>(
                     crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
@@ -122,10 +149,11 @@ impl Dispatcher for FilesystemDispatcher {
                 let outbox = self.outbox.clone();
                 let forwarder = tokio::spawn(async move {
                     while let Some(file_list) = batch_rx.recv().await {
-                        let bytes = bincode::serialize(&(stream_id, file_list)).unwrap();
-                        let _ = outbox
-                            .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
-                            .await;
+                        if let Some(bytes) = try_encode(&(stream_id, file_list)) {
+                            let _ = outbox
+                                .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
+                                .await;
+                        }
                     }
                 });
 
@@ -134,26 +162,25 @@ impl Dispatcher for FilesystemDispatcher {
                 // Ensure all batch notifications are sent before returning the response
                 let _ = forwarder.await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_RENAME => {
-                let (old_path, new_path): (VfsPath, VfsPath) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (old_path, new_path): (VfsPath, VfsPath) = decode(&req[..])?;
                 let ret = self.filesystem.rename(old_path, new_path).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TOUCH => {
-                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = decode(&req[..])?;
                 let ret = self.filesystem.touch(path).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_CREATE_DIRECTORY => {
-                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = decode(&req[..])?;
                 let ret = self.filesystem.create_directory(path).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -183,9 +210,9 @@ impl Dispatcher for ShellServiceDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_SHELL_EXPAND => {
-                let input: String = bincode::deserialize(&req[..]).unwrap();
+                let input: String = decode(&req[..])?;
                 let ret = self.shell_service.shell_expand(input).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -215,46 +242,41 @@ impl Dispatcher for TerminalDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_TERMINAL_CREATE => {
-                let options: crate::terminal::TerminalOptions =
-                    bincode::deserialize(&req[..]).unwrap();
+                let options: crate::terminal::TerminalOptions = decode(&req[..])?;
                 let ret = self.terminal.create(options).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TERMINAL_KILL => {
-                let handle: crate::terminal::TerminalHandle =
-                    bincode::deserialize(&req[..]).unwrap();
+                let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
                 let ret = self.terminal.kill(handle).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TERMINAL_RESIZE => {
                 let (handle, cols, rows): (crate::terminal::TerminalHandle, u16, u16) =
-                    bincode::deserialize(&req[..]).unwrap();
+                    decode(&req[..])?;
                 let ret = self.terminal.resize(handle, cols, rows).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TERMINAL_INPUT => {
-                let (handle, input): (crate::terminal::TerminalHandle, Vec<u8>) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (handle, input): (crate::terminal::TerminalHandle, Vec<u8>) = decode(&req[..])?;
                 let ret = self.terminal.input(handle, input).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TERMINAL_READ => {
-                let handle: crate::terminal::TerminalHandle =
-                    bincode::deserialize(&req[..]).unwrap();
+                let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
                 let ret = self.terminal.read(handle).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_TERMINAL_WAIT => {
-                let handle: crate::terminal::TerminalHandle =
-                    bincode::deserialize(&req[..]).unwrap();
+                let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
                 let ret = self.terminal.wait(handle).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -284,29 +306,28 @@ impl Dispatcher for FileReaderDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_FILE_DETAILS => {
-                let path: VfsPath = bincode::deserialize(&req[..]).unwrap();
+                let path: VfsPath = decode(&req[..])?;
                 let ret = self.file_reader.file_details(path).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_READ_RANGE => {
-                let (path, offset, length): (VfsPath, u64, u64) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (path, offset, length): (VfsPath, u64, u64) = decode(&req[..])?;
                 let ret = self.file_reader.read_range(path, offset, length).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_READ_FILE => {
-                let (path, max_size): (VfsPath, u64) = bincode::deserialize(&req[..]).unwrap();
+                let (path, max_size): (VfsPath, u64) = decode(&req[..])?;
                 let ret = self.file_reader.read_file(path, max_size).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_WRITE_FILE => {
-                let (path, data): (VfsPath, Vec<u8>) = bincode::deserialize(&req[..]).unwrap();
+                let (path, data): (VfsPath, Vec<u8>) = decode(&req[..])?;
                 let ret = self.file_reader.write_file(path, data).await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_FIND_IN_FILE => {
                 let (path, offset, pattern, max_length): (
@@ -314,13 +335,13 @@ impl Dispatcher for FileReaderDispatcher {
                     u64,
                     crate::file_reader::SearchPattern,
                     u64,
-                ) = bincode::deserialize(&req[..]).unwrap();
+                ) = decode(&req[..])?;
                 let ret = self
                     .file_reader
                     .find_in_file(path, offset, pattern, max_length)
                     .await;
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -356,7 +377,7 @@ impl Dispatcher for OperationDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         match api {
             API_START_OPERATION => {
-                let request: StartOperationRequest = bincode::deserialize(&req[..]).unwrap();
+                let request: StartOperationRequest = decode(&req[..])?;
                 let handle = OperationHandle {
                     cancel: CancellationToken::new(),
                     issue_resolvers: Arc::new(Mutex::new(HashMap::new())),
@@ -378,10 +399,11 @@ impl Dispatcher for OperationDispatcher {
                 let outbox_for_bridge = outbox.clone();
                 tokio::spawn(async move {
                     while let Some(progress) = progress_rx.recv().await {
-                        let bytes = bincode::serialize(&progress).unwrap();
-                        let _ = outbox_for_bridge
-                            .send(Message::Notify(API_OPERATION_PROGRESS, bytes.into()))
-                            .await;
+                        if let Some(bytes) = try_encode(&progress) {
+                            let _ = outbox_for_bridge
+                                .send(Message::Notify(API_OPERATION_PROGRESS, bytes.into()))
+                                .await;
+                        }
                     }
                 });
 
@@ -401,19 +423,19 @@ impl Dispatcher for OperationDispatcher {
                 });
 
                 let ret: Result<(), Error> = Ok(());
-                Ok(Some(bincode::serialize(&ret).unwrap().into()))
+                Ok(Some(encode(&ret)?.into()))
             }
             API_CANCEL_OPERATION => {
-                let id: OperationId = bincode::deserialize(&req[..]).unwrap();
+                let id: OperationId = decode(&req[..])?;
                 if let Some(handle) = self.operations.lock().get(&id) {
                     handle.cancel.cancel();
                 }
 
                 let ret: Result<(), Error> = Ok(());
-                Ok(Some(bincode::serialize(&ret).unwrap().into()))
+                Ok(Some(encode(&ret)?.into()))
             }
             API_RESOLVE_ISSUE => {
-                let request: ResolveIssueRequest = bincode::deserialize(&req[..]).unwrap();
+                let request: ResolveIssueRequest = decode(&req[..])?;
                 if let Some(handle) = self.operations.lock().get(&request.operation_id)
                     && let Some(sender) = handle.issue_resolvers.lock().remove(&request.issue_id)
                 {
@@ -421,7 +443,7 @@ impl Dispatcher for OperationDispatcher {
                 }
 
                 let ret: Result<(), Error> = Ok(());
-                Ok(Some(bincode::serialize(&ret).unwrap().into()))
+                Ok(Some(encode(&ret)?.into()))
             }
             _ => Ok(None),
         }
@@ -592,14 +614,14 @@ impl Dispatcher for VfsMountDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_MOUNT_VFS => {
-                let request: MountRequest = bincode::deserialize(&req[..]).unwrap();
+                let request: MountRequest = decode(&req[..])?;
                 let ret = self.vfs_manager.mount(request).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_UNMOUNT_VFS => {
-                let vfs_id: VfsId = bincode::deserialize(&req[..]).unwrap();
+                let vfs_id: VfsId = decode(&req[..])?;
                 let ret = self.vfs_manager.unmount(vfs_id).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -629,9 +651,9 @@ impl Dispatcher for HotPathsDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
         let ret = match api {
             API_SYSTEM_HOT_PATHS => {
-                let _: () = bincode::deserialize(&req[..]).unwrap();
+                let _: () = decode(&req[..])?;
                 let ret = self.provider.system_hot_paths().await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -689,23 +711,22 @@ impl Dispatcher for VfsDispatcher {
 
         let ret = match api {
             API_HOST_VFS_LIST_FILES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.list_files(&path, None).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_POLL_CHANGES => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.poll_changes(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_FS_STATS => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.fs_stats(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_OPEN_READ_ASYNC => {
-                let (path, stream_id): (PathBuf, StreamId) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (path, stream_id): (PathBuf, StreamId) = decode(&req[..])?;
                 let descriptor = self.vfs.descriptor();
                 let outbox = self.outbox.clone();
 
@@ -720,17 +741,19 @@ impl Dispatcher for VfsDispatcher {
                             break;
                         }
                         let chunk = buf[..n].to_vec();
-                        let bytes = bincode::serialize(&(stream_id, seq, chunk)).unwrap();
-                        let _ = outbox
-                            .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
-                            .await;
+                        if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
+                            let _ = outbox
+                                .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                                .await;
+                        }
                         seq += 1;
                     }
                     // Send empty sentinel to signal EOF.
-                    let bytes = bincode::serialize(&(stream_id, seq, Vec::<u8>::new())).unwrap();
-                    let _ = outbox
-                        .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
-                        .await;
+                    if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
+                        let _ = outbox
+                            .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                            .await;
+                    }
                     Ok(())
                 } else if descriptor.can_read_sync() {
                     let mut reader = self.vfs.open_read_sync(&path).await?;
@@ -745,20 +768,21 @@ impl Dispatcher for VfsDispatcher {
                                 break;
                             }
                             let chunk = buf[..n].to_vec();
-                            let bytes = bincode::serialize(&(stream_id, seq, chunk)).unwrap();
+                            if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
+                                let _ = outbox.blocking_send_low(Message::Notify(
+                                    API_HOST_VFS_READ_CHUNK,
+                                    bytes.into(),
+                                ));
+                            }
+                            seq += 1;
+                        }
+                        // Send empty sentinel to signal EOF.
+                        if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
                             let _ = outbox.blocking_send_low(Message::Notify(
                                 API_HOST_VFS_READ_CHUNK,
                                 bytes.into(),
                             ));
-                            seq += 1;
                         }
-                        // Send empty sentinel to signal EOF.
-                        let bytes =
-                            bincode::serialize(&(stream_id, seq, Vec::<u8>::new())).unwrap();
-                        let _ = outbox.blocking_send_low(Message::Notify(
-                            API_HOST_VFS_READ_CHUNK,
-                            bytes.into(),
-                        ));
                         Ok::<(), Error>(())
                     })
                     .await?
@@ -766,26 +790,25 @@ impl Dispatcher for VfsDispatcher {
                     Err(Error::not_supported())
                 };
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_READ_RANGE => {
-                let (path, offset, length): (PathBuf, u64, u64) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (path, offset, length): (PathBuf, u64, u64) = decode(&req[..])?;
                 let ret = self.vfs.read_range(&path, offset, length).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_FILE_DETAILS => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.file_details(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_FILE_INFO => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.file_info(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_OVERWRITE_ASYNC_BEGIN => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let descriptor = self.vfs.descriptor();
 
                 let ret: Result<StreamId, Error> = if descriptor.can_overwrite_async() {
@@ -856,10 +879,10 @@ impl Dispatcher for VfsDispatcher {
                     Err(Error::not_supported())
                 };
 
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_OVERWRITE_ASYNC_FINISH => {
-                let stream_id: StreamId = bincode::deserialize(&req[..]).unwrap();
+                let stream_id: StreamId = decode(&req[..])?;
                 // The sentinel (empty chunk) already closed the data channel.
                 // Wait for the writer task to finish and propagate its result.
                 let handle = self.write_task_handles.lock().remove(&stream_id);
@@ -873,73 +896,72 @@ impl Dispatcher for VfsDispatcher {
                         Ok(())
                     }
                 };
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_CREATE_DIRECTORY => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.create_directory(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_CREATE_SYMLINK => {
-                let (link, target): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let (link, target): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.create_symlink(&link, &target).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_TOUCH => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.touch(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_TRUNCATE => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.truncate(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_REMOVE_FILE => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_file(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_REMOVE_DIR => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_dir(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_REMOVE_TREE => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_tree(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_GET_METADATA => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.get_metadata(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_SET_METADATA => {
-                let (path, meta): (PathBuf, crate::vfs::VfsMetadata) =
-                    bincode::deserialize(&req[..]).unwrap();
+                let (path, meta): (PathBuf, crate::vfs::VfsMetadata) = decode(&req[..])?;
                 let ret = self.vfs.set_metadata(&path, &meta).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_AVAILABLE_SPACE => {
-                let path: PathBuf = bincode::deserialize(&req[..]).unwrap();
+                let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.available_space(&path).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_RENAME => {
-                let (from, to): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let (from, to): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.rename(&from, &to).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_COPY_WITHIN => {
-                let (from, to): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let (from, to): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.copy_within(&from, &to).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             API_HOST_VFS_HARD_LINK => {
-                let (link, target): (PathBuf, PathBuf) = bincode::deserialize(&req[..]).unwrap();
+                let (link, target): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.hard_link(&link, &target).await;
-                bincode::serialize(&ret).unwrap()
+                encode(&ret)?
             }
             _ => return Ok(None),
         };
@@ -949,8 +971,7 @@ impl Dispatcher for VfsDispatcher {
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
         if api == API_HOST_VFS_WRITE_CHUNK {
-            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) =
-                bincode::deserialize(&req[..]).unwrap();
+            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) = decode(&req[..])?;
 
             let tx = {
                 let mut sessions = self.write_sessions.lock();
@@ -1012,8 +1033,7 @@ impl Dispatcher for VfsReadChunkDispatcher {
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
         if api == API_HOST_VFS_READ_CHUNK {
-            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) =
-                bincode::deserialize(&req[..]).unwrap();
+            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) = decode(&req[..])?;
 
             let tx = {
                 let mut streams = self.pending_read_streams.lock();

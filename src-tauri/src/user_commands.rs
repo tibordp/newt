@@ -83,7 +83,7 @@ fn setup_template_env(
     env: &mut minijinja::Environment<'_>,
     prompt_responses: Option<Vec<String>>,
     confirm_responses: Option<Vec<bool>>,
-    collected: Option<std::sync::Arc<std::sync::Mutex<CollectedInputs>>>,
+    collected: Option<std::sync::Arc<parking_lot::Mutex<CollectedInputs>>>,
 ) {
     // Filters
     env.add_filter("shell_quote", |value: String| -> String {
@@ -150,7 +150,6 @@ fn setup_template_env(
             move |label: String, default: Option<String>| -> String {
                 collected
                     .lock()
-                    .unwrap()
                     .prompts
                     .push(crate::main_window::UserCommandPrompt {
                         label,
@@ -170,7 +169,7 @@ fn setup_template_env(
     } else if let Some(ref collected) = collected {
         let collected = collected.clone();
         env.add_function("confirm", move |message: String| -> bool {
-            collected.lock().unwrap().confirms.push(message);
+            collected.lock().confirms.push(message);
             true
         });
     }
@@ -240,7 +239,7 @@ fn render_template(
     let (file_value, file_objects, dir, hostname, env_obj) =
         build_template_context(pane_path, effective_files);
 
-    let collected = std::sync::Arc::new(std::sync::Mutex::new(CollectedInputs::default()));
+    let collected = std::sync::Arc::new(parking_lot::Mutex::new(CollectedInputs::default()));
     let is_scanning = prompt_responses.is_none();
 
     let mut env = minijinja::Environment::new();
@@ -274,9 +273,8 @@ fn render_template(
         .map_err(|e| Error::Custom(format!("template render error: {}", e)))?;
 
     let inputs = std::sync::Arc::try_unwrap(collected)
-        .unwrap_or_else(|arc| std::sync::Mutex::new(arc.lock().unwrap().clone()))
-        .into_inner()
-        .unwrap();
+        .unwrap_or_else(|arc| parking_lot::Mutex::new(arc.lock().clone()))
+        .into_inner();
 
     Ok((rendered, inputs))
 }
