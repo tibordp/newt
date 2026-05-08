@@ -305,6 +305,10 @@ impl OperationsClient for Remote {
 
 // --- SyncProgressSender: cloneable, movable into spawn_blocking ---
 
+/// Minimum interval between progress/scanning notifications. The host
+/// throttles UI updates anyway; sending more is wasted work.
+const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[derive(Clone)]
 struct SyncProgressSender {
     id: OperationId,
@@ -320,7 +324,7 @@ impl SyncProgressSender {
     fn maybe_send_progress(&self, bytes_done: u64, items_done: u64, current_item: &str) {
         let now = std::time::Instant::now();
         let mut last = self.last_report.lock();
-        if now.duration_since(*last).as_millis() >= 100 {
+        if now.duration_since(*last) >= PROGRESS_THROTTLE {
             *last = now;
             drop(last);
             self.send(OperationProgress::Progress {
@@ -335,7 +339,7 @@ impl SyncProgressSender {
     fn maybe_send_scanning(&self, items_found: u64, bytes_found: u64) {
         let now = std::time::Instant::now();
         let mut last = self.last_report.lock();
-        if now.duration_since(*last).as_millis() >= 100 {
+        if now.duration_since(*last) >= PROGRESS_THROTTLE {
             *last = now;
             drop(last);
             self.send(OperationProgress::Scanning {

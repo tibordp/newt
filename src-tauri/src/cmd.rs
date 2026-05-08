@@ -1,3 +1,12 @@
+/// Default size for newly-created viewer windows (file viewer, F3).
+const VIEWER_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
+
+/// Default size for newly-created editor windows (F4).
+const EDITOR_WINDOW_SIZE: (f64, f64) = (900.0, 700.0);
+
+/// All POSIX permission bits (setuid/setgid/sticky + rwx for u/g/o).
+const MODE_MASK: u32 = 0o7777;
+
 use newt_common::file_reader::FileChunk;
 use newt_common::file_reader::FileDetails;
 use newt_common::operation::{
@@ -352,7 +361,7 @@ pub async fn cmd_open_in_right_pane(
 }
 
 /// Create a pre-warmed hidden viewer window for a main window.
-pub fn prewarm_viewer(
+pub(crate) fn prewarm_viewer(
     app_handle: &tauri::AppHandle,
     main_ctx: &MainWindowContext,
     main_label: &str,
@@ -372,7 +381,7 @@ pub fn prewarm_viewer(
         tauri::WebviewUrl::App("/viewer".into()),
     )
     .title("Viewer")
-    .inner_size(1100.0, 800.0)
+    .inner_size(VIEWER_WINDOW_SIZE.0, VIEWER_WINDOW_SIZE.1)
     .center()
     .visible(false)
     .build()
@@ -385,7 +394,7 @@ pub fn prewarm_viewer(
 }
 
 /// Create a pre-warmed hidden editor window for a main window.
-pub fn prewarm_editor(
+pub(crate) fn prewarm_editor(
     app_handle: &tauri::AppHandle,
     main_ctx: &MainWindowContext,
     main_label: &str,
@@ -404,7 +413,7 @@ pub fn prewarm_editor(
         tauri::WebviewUrl::App("/editor".into()),
     )
     .title("Editor")
-    .inner_size(900.0, 700.0)
+    .inner_size(EDITOR_WINDOW_SIZE.0, EDITOR_WINDOW_SIZE.1)
     .center()
     .visible(false)
     .build()
@@ -467,7 +476,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         .title(format!("{} - Viewer", path_display))
         .center()
         .focused(true)
-        .inner_size(1100.0, 800.0)
+        .inner_size(VIEWER_WINDOW_SIZE.0, VIEWER_WINDOW_SIZE.1)
         .build()
         .unwrap();
 
@@ -521,7 +530,7 @@ fn open_editor_window(ctx: &MainWindowContext, full_path: &VfsPath) -> Result<()
         .title(format!("{} - Editor", path_display))
         .center()
         .focused(true)
-        .inner_size(900.0, 700.0)
+        .inner_size(EDITOR_WINDOW_SIZE.0, EDITOR_WINDOW_SIZE.1)
         .build()
         .unwrap();
 
@@ -1014,7 +1023,7 @@ pub fn dialog(
                         is_symlink: false,
                         symlink_target: None,
                         mode_set: mode.unwrap_or(0),
-                        mode_clear: mode.map(|m| !m & 0o7777).unwrap_or(0),
+                        mode_clear: mode.map(|m| !m & MODE_MASK).unwrap_or(0),
                         has_mode: mode.is_some(),
                         owner: dir_entry.and_then(|f| f.user.clone()),
                         group: dir_entry.and_then(|f| f.group.clone()),
@@ -1079,11 +1088,11 @@ pub fn dialog(
                     // Bits in neither are indeterminate (mixed).
                     let has_mode = files.iter().any(|f| f.mode.is_some());
                     let (mode_set, mode_clear) = if has_mode {
-                        let all_set = files.iter().fold(0o7777u32, |acc, f| {
+                        let all_set = files.iter().fold(MODE_MASK, |acc, f| {
                             acc & f.mode.as_ref().map(|m| m.0).unwrap_or(0)
                         });
-                        let all_clear = files.iter().fold(0o7777u32, |acc, f| {
-                            acc & !f.mode.as_ref().map(|m| m.0).unwrap_or(0) & 0o7777
+                        let all_clear = files.iter().fold(MODE_MASK, |acc, f| {
+                            acc & !f.mode.as_ref().map(|m| m.0).unwrap_or(0) & MODE_MASK
                         });
                         (all_set, all_clear)
                     } else {
@@ -1771,6 +1780,41 @@ pub async fn start_copy_move(
     start_operation(ctx, request).await
 }
 
+/// Mount a VFS, then close the originating modal and navigate `pane_handle`
+/// to the new mount root.
+async fn mount_and_navigate(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    request: MountRequest,
+) -> Result<(), Error> {
+    // Log the variant discriminant only — the S3 variant carries credentials,
+    // and Debug-formatting the whole request would leak them into logs.
+    let kind = match &request {
+        MountRequest::S3 { .. } => "s3",
+        MountRequest::Sftp { .. } => "sftp",
+        MountRequest::Kubernetes { .. } => "k8s",
+        MountRequest::Archive { .. } => "archive",
+        MountRequest::Remote => "remote",
+    };
+    log::info!("cmd: mount {} pane={:?}", kind, pane_handle);
+    let response = ctx.mount_vfs(request).await.inspect_err(|e| {
+        log::error!("cmd: mount {} failed: {}", kind, e);
+    })?;
+    log::info!(
+        "cmd: mount {} succeeded, vfs_id={:?}",
+        kind,
+        response.vfs_id
+    );
+    let vfs_path = VfsPath::new(response.vfs_id, "/");
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn mount_s3(
     ctx: MainWindowContext,
@@ -1779,20 +1823,15 @@ pub async fn mount_s3(
     bucket: Option<String>,
     credentials: newt_common::vfs::S3Credentials,
 ) -> Result<(), Error> {
-    let response = ctx
-        .mount_vfs(MountRequest::S3 {
+    mount_and_navigate(
+        ctx,
+        pane_handle,
+        MountRequest::S3 {
             region,
             bucket,
             credentials,
-        })
-        .await?;
-    let vfs_path = VfsPath::new(response.vfs_id, "/");
-
-    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-        gs.close_modal();
-        pane.navigate_to(vfs_path).await?;
-        Ok(())
-    })
+        },
+    )
     .await
 }
 
@@ -1802,23 +1841,7 @@ pub async fn mount_sftp(
     pane_handle: PaneHandle,
     host: String,
 ) -> Result<(), Error> {
-    log::info!("cmd: mount_sftp host={} pane={:?}", host, pane_handle);
-    let response = ctx
-        .mount_vfs(MountRequest::Sftp { host: host.clone() })
-        .await
-        .map_err(|e| {
-            log::error!("cmd: mount_sftp failed for host={}: {}", host, e);
-            e
-        })?;
-    log::info!("cmd: mount_sftp succeeded, vfs_id={:?}", response.vfs_id);
-    let vfs_path = VfsPath::new(response.vfs_id, "/");
-
-    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-        gs.close_modal();
-        pane.navigate_to(vfs_path).await?;
-        Ok(())
-    })
-    .await
+    mount_and_navigate(ctx, pane_handle, MountRequest::Sftp { host }).await
 }
 
 #[tauri::command]
@@ -1827,25 +1850,7 @@ pub async fn mount_k8s(
     pane_handle: PaneHandle,
     context: String,
 ) -> Result<(), Error> {
-    log::info!("cmd: mount_k8s context={} pane={:?}", context, pane_handle);
-    let response = ctx
-        .mount_vfs(MountRequest::Kubernetes {
-            context: context.clone(),
-        })
-        .await
-        .map_err(|e| {
-            log::error!("cmd: mount_k8s failed for context={}: {}", context, e);
-            e
-        })?;
-    log::info!("cmd: mount_k8s succeeded, vfs_id={:?}", response.vfs_id);
-    let vfs_path = VfsPath::new(response.vfs_id, "/");
-
-    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-        gs.close_modal();
-        pane.navigate_to(vfs_path).await?;
-        Ok(())
-    })
-    .await
+    mount_and_navigate(ctx, pane_handle, MountRequest::Kubernetes { context }).await
 }
 
 #[tauri::command]
@@ -1878,6 +1883,16 @@ pub async fn switch_vfs(
     .await
 }
 
+/// Redirect any pane on `vfs_id` back to the local root, then unmount.
+async fn redirect_and_unmount(ctx: &MainWindowContext, vfs_id: VfsId) -> Result<(), Error> {
+    for pane in ctx.panes().all() {
+        if pane.path().vfs_id == vfs_id {
+            pane.navigate_to(VfsPath::root("/")).await?;
+        }
+    }
+    ctx.unmount_vfs(vfs_id).await
+}
+
 #[tauri::command]
 pub async fn cmd_unmount_vfs(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx
@@ -1889,14 +1904,7 @@ pub async fn cmd_unmount_vfs(ctx: MainWindowContext, pane_handle: PaneHandle) ->
         return Ok(());
     }
 
-    // Navigate any panes using this VFS back to local root
-    for pane in ctx.panes().all() {
-        if pane.path().vfs_id == vfs_id {
-            pane.navigate_to(VfsPath::root("/")).await?;
-        }
-    }
-
-    ctx.unmount_vfs(vfs_id).await?;
+    redirect_and_unmount(&ctx, vfs_id).await?;
     let _ = ctx.publish();
     Ok(())
 }
@@ -1907,14 +1915,7 @@ pub async fn unmount_vfs(
     pane_handle: PaneHandle,
     vfs_id: VfsId,
 ) -> Result<(), Error> {
-    // Navigate any panes using this VFS back to local root
-    for pane in ctx.panes().all() {
-        if pane.path().vfs_id == vfs_id {
-            pane.navigate_to(VfsPath::root("/")).await?;
-        }
-    }
-
-    ctx.unmount_vfs(vfs_id).await?;
+    redirect_and_unmount(&ctx, vfs_id).await?;
 
     // Close the modal (VFS selector dropdown) and refresh
     ctx.with_pane_update(pane_handle, |gs, _pane| {

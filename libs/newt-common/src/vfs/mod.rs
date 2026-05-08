@@ -789,10 +789,16 @@ impl FileReader for VfsRegistryFileReader {
 
 const SEARCH_CHUNK_SIZE: usize = 256 * 1024;
 
+/// Maximum bytes carried over between search chunks for regex patterns. The
+/// regex engine has no way to bound match length up front, so we have to
+/// guess; 64 KiB covers any realistic regex while keeping the per-chunk
+/// re-scan small.
+const REGEX_OVERLAP_LIMIT: usize = 64 * 1024;
+
 fn compute_overlap(pattern: &SearchPattern) -> usize {
     match pattern {
         SearchPattern::Literal(pat) => pat.len().saturating_sub(1),
-        SearchPattern::Regex(_) => std::cmp::min(65536, SEARCH_CHUNK_SIZE / 2),
+        SearchPattern::Regex(_) => std::cmp::min(REGEX_OVERLAP_LIMIT, SEARCH_CHUNK_SIZE / 2),
     }
 }
 

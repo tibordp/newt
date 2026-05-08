@@ -2,6 +2,9 @@ pub mod pane;
 pub mod session;
 pub mod terminal;
 
+/// Default size for newly-created main windows.
+const MAIN_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
+
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
@@ -1314,7 +1317,7 @@ pub fn spawn_main_window(
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into()))
             .title(&window_title)
             .resizable(true)
-            .inner_size(1100.0, 800.0)
+            .inner_size(MAIN_WINDOW_SIZE.0, MAIN_WINDOW_SIZE.1)
             .theme(theme)
             .build()?;
 

@@ -19,6 +19,17 @@ use super::{
     VfsSpaceInfo,
 };
 
+/// Bytes read from a file head when sniffing for a MIME type without an
+/// extension match. Bigger reads catch more formats but cost more I/O per
+/// directory listing entry; 8 KiB is enough for every magic-number signature
+/// in `mimetype-detector` while staying inside one filesystem block.
+const MIME_SNIFF_BUFFER_SIZE: usize = 8192;
+
+/// Files-per-batch streamed to the host during a directory listing. Smaller
+/// batches reduce first-paint latency on huge directories; larger batches
+/// reduce IPC overhead. 500 lands in the sweet spot for both.
+const LIST_FILES_BATCH_SIZE: usize = 500;
+
 // ---------------------------------------------------------------------------
 // LocalVfsDescriptor
 // ---------------------------------------------------------------------------
@@ -169,7 +180,7 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking({
             let cache = self.fs_cache.clone();
             move || -> Result<Vec<File>, Error> {
-                const BATCH_SIZE: usize = 500;
+                const BATCH_SIZE: usize = LIST_FILES_BATCH_SIZE;
 
                 let mut ret = Vec::new();
                 let mut batch = Vec::new();
@@ -341,7 +352,7 @@ impl Vfs for LocalVfs {
                     from_extension
                 } else {
                     let file = std::fs::File::open(&path)?;
-                    let mut buf = vec![0u8; 8192.min(size as usize)];
+                    let mut buf = vec![0u8; MIME_SNIFF_BUFFER_SIZE.min(size as usize)];
                     let mut reader = std::io::BufReader::new(file);
                     let n = reader.read(&mut buf)?;
                     let header = &buf[..n];
