@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { invoke } from "@tauri-apps/api/core";
 import { safeCommand } from "../../lib/ipc";
+import { Cmd, Dialog as DialogKind } from "../../lib/ipcCommands";
 import { MainWindowState } from "../types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
@@ -82,9 +83,9 @@ export default function QuickConnect({
     invoke("cmd_delete_connection", { id })
       .then(() => {
         // Re-open to refresh the list
-        safeCommand("dialog", {
+        safeCommand(Cmd.dialog, {
           paneHandle: paneHandle ?? 0,
-          dialog: "quick_connect",
+          dialog: DialogKind.QuickConnect,
         });
       })
       .catch(console.error);

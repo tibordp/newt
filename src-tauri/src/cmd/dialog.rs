@@ -4,35 +4,68 @@ use super::{MODE_MASK, usergroup_id};
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle};
 
+/// Every dialog the host can open. Serialized as snake_case so the frontend
+/// can keep sending string literals like `"navigate"` / `"mount_s3"` over
+/// IPC — but a typo on either side now fails to compile rather than producing
+/// `Error::Custom("unknown dialog: …")` at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogKind {
+    Navigate,
+    CreateDirectory,
+    CreateFile,
+    CreateAndEdit,
+    DirectoryProperties,
+    Properties,
+    Rename,
+    Copy,
+    Move,
+    ConnectRemote,
+    MountSftp,
+    MountS3,
+    MountK8s,
+    QuickConnect,
+    SelectVfs,
+    HistoryBack,
+    HistoryForward,
+    CommandPalette,
+    UserCommands,
+    HotPaths,
+    Settings,
+    Debug,
+    ConnectionLog,
+    About,
+}
+
 #[tauri::command]
 pub fn dialog(
     ctx: MainWindowContext,
-    dialog: String,
+    dialog: DialogKind,
     pane_handle: Option<PaneHandle>,
 ) -> Result<(), Error> {
     ctx.with_update(|gs| {
         let pane = pane_handle.map(|h| gs.panes.get(h).unwrap());
         let mut modal_state = gs.modal.0.write();
         *modal_state = Some(ModalData {
-            kind: match &dialog[..] {
-                "navigate" => {
+            kind: match dialog {
+                DialogKind::Navigate => {
                     let pane = pane.unwrap();
                     let path = pane.path();
                     let display_path = ctx.format_vfs_path(&path);
                     ModalDataKind::Navigate { path, display_path }
                 }
-                "create_directory" => ModalDataKind::CreateDirectory {
+                DialogKind::CreateDirectory => ModalDataKind::CreateDirectory {
                     path: pane.unwrap().path(),
                 },
-                "create_file" => ModalDataKind::CreateFile {
+                DialogKind::CreateFile => ModalDataKind::CreateFile {
                     path: pane.unwrap().path(),
                     open_editor: false,
                 },
-                "create_and_edit" => ModalDataKind::CreateFile {
+                DialogKind::CreateAndEdit => ModalDataKind::CreateFile {
                     path: pane.unwrap().path(),
                     open_editor: true,
                 },
-                "directory_properties" => {
+                DialogKind::DirectoryProperties => {
                     let pane = pane.unwrap();
                     let pane_path = pane.path();
                     let file_list = pane.file_list();
@@ -72,7 +105,7 @@ pub fn dialog(
                         created: dir_entry.and_then(|f| f.created),
                     }
                 }
-                "properties" => {
+                DialogKind::Properties => {
                     let pane = pane.unwrap();
                     let paths = pane.get_effective_selection();
                     if paths.is_empty() {
@@ -188,7 +221,7 @@ pub fn dialog(
                         created,
                     }
                 }
-                "rename" => {
+                DialogKind::Rename => {
                     let pane = pane.unwrap();
                     let name = match pane.view_state().focused {
                         Some(ref selected) => selected.clone(),
@@ -199,7 +232,7 @@ pub fn dialog(
                         name,
                     }
                 }
-                "copy" | "move" => {
+                DialogKind::Copy | DialogKind::Move => {
                     let pane = pane.unwrap();
                     let sources = pane.get_effective_selection();
                     if sources.is_empty() {
@@ -217,24 +250,29 @@ pub fn dialog(
                         format!("{} items", sources.len())
                     };
                     ModalDataKind::CopyMove {
-                        kind: dialog.clone(),
+                        // Frontend distinguishes copy/move by this string.
+                        kind: match dialog {
+                            DialogKind::Copy => "copy".to_string(),
+                            DialogKind::Move => "move".to_string(),
+                            _ => unreachable!(),
+                        },
                         sources,
                         destination,
                         display_destination,
                         summary,
                     }
                 }
-                "connect_remote" => ModalDataKind::ConnectRemote {
+                DialogKind::ConnectRemote => ModalDataKind::ConnectRemote {
                     host: String::new(),
                 },
-                "mount_sftp" => ModalDataKind::MountSftp {
+                DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),
                 },
-                "mount_s3" => ModalDataKind::MountS3,
-                "mount_k8s" => ModalDataKind::MountK8s {
+                DialogKind::MountS3 => ModalDataKind::MountS3,
+                DialogKind::MountK8s => ModalDataKind::MountK8s {
                     k8s_context: String::new(),
                 },
-                "quick_connect" => {
+                DialogKind::QuickConnect => {
                     let app_handle = ctx.window().app_handle().clone();
                     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
@@ -242,10 +280,10 @@ pub fn dialog(
                         connections: crate::connections::list_connections(&config_dir),
                     }
                 }
-                "select_vfs" => ModalDataKind::SelectVfs {
+                DialogKind::SelectVfs => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
-                "history_back" | "history_forward" => {
+                DialogKind::HistoryBack | DialogKind::HistoryForward => {
                     let pane = pane.unwrap();
                     let (entries, current_index) = pane.history_entries();
                     // The list is ordered forward-on-top, back-on-bottom (see
@@ -254,18 +292,22 @@ pub fn dialog(
                     ModalDataKind::HistoryNavigator {
                         entries,
                         current_index,
-                        initial_direction: if dialog == "history_back" { 1 } else { -1 },
+                        initial_direction: if dialog == DialogKind::HistoryBack {
+                            1
+                        } else {
+                            -1
+                        },
                     }
                 }
-                "command_palette" => ModalDataKind::CommandPalette {
+                DialogKind::CommandPalette => ModalDataKind::CommandPalette {
                     category_filter: None,
                 },
-                "user_commands" => ModalDataKind::CommandPalette {
+                DialogKind::UserCommands => ModalDataKind::CommandPalette {
                     category_filter: Some("User".to_string()),
                 },
-                "hot_paths" => ModalDataKind::HotPaths,
-                "settings" => ModalDataKind::Settings,
-                "debug" => {
+                DialogKind::HotPaths => ModalDataKind::HotPaths,
+                DialogKind::Settings => ModalDataKind::Settings,
+                DialogKind::Debug => {
                     if !cfg!(debug_assertions) {
                         return Err(Error::Custom(
                             "debug dialog is only available in debug builds".into(),
@@ -273,14 +315,13 @@ pub fn dialog(
                     }
                     ModalDataKind::Debug
                 }
-                "connection_log" => ModalDataKind::ConnectionLog,
-                "about" => ModalDataKind::About {
+                DialogKind::ConnectionLog => ModalDataKind::ConnectionLog,
+                DialogKind::About => ModalDataKind::About {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     git_revision: option_env!("NEWT_GIT_REVISION").map(|s| s.to_string()),
                     build_date: option_env!("NEWT_BUILD_DATE").map(|s| s.to_string()),
                     target_triple: env!("NEWT_TARGET_TRIPLE").to_string(),
                 },
-                _ => return Err(Error::Custom(format!("unknown dialog: {}", dialog))),
             },
             context: ModalContext { pane_handle },
         });
@@ -301,32 +342,32 @@ macro_rules! cmd_dialog {
     ($name:ident, $dialog:expr) => {
         #[tauri::command]
         pub fn $name(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-            dialog(ctx, $dialog.to_string(), Some(pane_handle))
+            dialog(ctx, $dialog, Some(pane_handle))
         }
     };
 }
 
-cmd_dialog!(cmd_rename, "rename");
-cmd_dialog!(cmd_properties, "properties");
-cmd_dialog!(cmd_directory_properties, "directory_properties");
-cmd_dialog!(cmd_create_directory, "create_directory");
-cmd_dialog!(cmd_create_file, "create_file");
-cmd_dialog!(cmd_create_and_edit, "create_and_edit");
-cmd_dialog!(cmd_navigate, "navigate");
-cmd_dialog!(cmd_copy, "copy");
-cmd_dialog!(cmd_move, "move");
-cmd_dialog!(cmd_connect_remote, "connect_remote");
-cmd_dialog!(cmd_select_vfs, "select_vfs");
-cmd_dialog!(cmd_history_back, "history_back");
-cmd_dialog!(cmd_history_forward, "history_forward");
-cmd_dialog!(cmd_quick_connect, "quick_connect");
-cmd_dialog!(cmd_mount_s3, "mount_s3");
-cmd_dialog!(cmd_mount_sftp, "mount_sftp");
-cmd_dialog!(cmd_mount_k8s, "mount_k8s");
-cmd_dialog!(cmd_command_palette, "command_palette");
-cmd_dialog!(cmd_user_commands, "user_commands");
-cmd_dialog!(cmd_hot_paths, "hot_paths");
-cmd_dialog!(cmd_open_settings, "settings");
-cmd_dialog!(cmd_debug, "debug");
-cmd_dialog!(cmd_connection_log, "connection_log");
-cmd_dialog!(cmd_about, "about");
+cmd_dialog!(cmd_rename, DialogKind::Rename);
+cmd_dialog!(cmd_properties, DialogKind::Properties);
+cmd_dialog!(cmd_directory_properties, DialogKind::DirectoryProperties);
+cmd_dialog!(cmd_create_directory, DialogKind::CreateDirectory);
+cmd_dialog!(cmd_create_file, DialogKind::CreateFile);
+cmd_dialog!(cmd_create_and_edit, DialogKind::CreateAndEdit);
+cmd_dialog!(cmd_navigate, DialogKind::Navigate);
+cmd_dialog!(cmd_copy, DialogKind::Copy);
+cmd_dialog!(cmd_move, DialogKind::Move);
+cmd_dialog!(cmd_connect_remote, DialogKind::ConnectRemote);
+cmd_dialog!(cmd_select_vfs, DialogKind::SelectVfs);
+cmd_dialog!(cmd_history_back, DialogKind::HistoryBack);
+cmd_dialog!(cmd_history_forward, DialogKind::HistoryForward);
+cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
+cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
+cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
+cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
+cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
+cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
+cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);
+cmd_dialog!(cmd_open_settings, DialogKind::Settings);
+cmd_dialog!(cmd_debug, DialogKind::Debug);
+cmd_dialog!(cmd_connection_log, DialogKind::ConnectionLog);
+cmd_dialog!(cmd_about, DialogKind::About);

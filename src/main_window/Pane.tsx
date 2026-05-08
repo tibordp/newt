@@ -13,6 +13,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { safeCommand, safeCommandSilent } from "../lib/ipc";
+import { Cmd, Dialog } from "../lib/ipcCommands";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
@@ -65,7 +66,10 @@ function PathBreadcrumbs(props: {
               onClick={(e) => {
                 e.preventDefault();
                 if (i === breadcrumbs.length - 1) {
-                  safeCommand("dialog", { paneHandle, dialog: "navigate" });
+                  safeCommand(Cmd.dialog, {
+                    paneHandle,
+                    dialog: Dialog.Navigate,
+                  });
                 } else {
                   safeCommand("navigate", {
                     paneHandle,
@@ -243,7 +247,7 @@ function VfsSelector({
           tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
-            safeCommand("dialog", { paneHandle, dialog: "select_vfs" });
+            safeCommand(Cmd.dialog, { paneHandle, dialog: Dialog.SelectVfs });
           }}
           onMouseDown={(e) => {
             // Activate this pane without letting the .pane onClick steal focus later
@@ -282,7 +286,7 @@ function VfsSelector({
                   e.preventDefault();
                   if (target.vfs_id == null && target.mount_dialog) {
                     openingDialogRef.current = true;
-                    safeCommand("dialog", {
+                    safeCommand(Cmd.dialog, {
                       paneHandle,
                       dialog: target.mount_dialog,
                     });
