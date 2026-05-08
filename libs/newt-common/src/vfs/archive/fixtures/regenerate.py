@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Regenerate tar test fixtures used by TarArchiveVfs tests.
+"""Regenerate archive test fixtures used by TarArchiveVfs / ZipArchiveVfs tests.
 
-Produces deterministic `simple.tar` and `simple.tar.gz` so the bytes
-committed to the repo are reproducible. Run from this directory:
+Produces deterministic `simple.tar`, `simple.tar.gz` and `encrypted.zip`
+so the bytes committed to the repo are reproducible. Run from this
+directory:
 
     uv run --no-project python regenerate.py
 
-Layout produced:
+Tar layout:
 
     hello.txt            -> b"hello world\\n"
     dir/nested.txt       -> b"nested content\\n"
@@ -14,11 +15,23 @@ Layout produced:
                             streaming (>= one VFS_READ_CHUNK_SIZE = 64 KiB).
     links/hard.txt       -> hardlink to hello.txt
     links/soft.txt       -> symlink to ../hello.txt
+
+Zip layout (`encrypted.zip`, password "secret"):
+
+    plain.txt            -> b"unencrypted\\n"   (not encrypted)
+    secret.txt           -> b"top secret\\n"   (ZipCrypto-encrypted)
+
+Built via the system `zip` CLI (uses ZipCrypto, which the rust `zip`
+crate reads without the `aes-crypto` feature).
 """
 
 import gzip
 import io
+import os
+import shutil
+import subprocess
 import tarfile
+import tempfile
 from pathlib import Path
 
 OUT_DIR = Path(__file__).parent
@@ -64,6 +77,40 @@ def build() -> bytes:
     return buf.getvalue()
 
 
+def build_encrypted_zip(out: Path) -> None:
+    """Build encrypted.zip via the system `zip` CLI.
+
+    Two entries: `plain.txt` (cleartext) and `secret.txt` (ZipCrypto
+    encrypted with password "secret"). `zip -P` applies the password to
+    files added on that invocation, which is why we add them in two
+    steps.
+    """
+    zip_bin = shutil.which("zip")
+    if not zip_bin:
+        raise RuntimeError("`zip` not found on PATH; cannot regenerate encrypted.zip")
+
+    if out.exists():
+        out.unlink()
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        (tdp / "plain.txt").write_bytes(b"unencrypted\n")
+        (tdp / "secret.txt").write_bytes(b"top secret\n")
+
+        # Add cleartext entry.
+        subprocess.run(
+            [zip_bin, "-X", "-q", "-j", str(out), str(tdp / "plain.txt")],
+            check=True,
+            env={**os.environ, "TZ": "UTC"},
+        )
+        # Add encrypted entry.
+        subprocess.run(
+            [zip_bin, "-X", "-q", "-j", "-P", "secret", str(out), str(tdp / "secret.txt")],
+            check=True,
+            env={**os.environ, "TZ": "UTC"},
+        )
+
+
 def main() -> None:
     data = build()
     (OUT_DIR / "simple.tar").write_bytes(data)
@@ -75,6 +122,8 @@ def main() -> None:
             gz.write(data)
         finally:
             gz.close()
+
+    build_encrypted_zip(OUT_DIR / "encrypted.zip")
 
 
 if __name__ == "__main__":

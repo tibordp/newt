@@ -540,6 +540,14 @@ impl newt_common::askpass::AskpassProvider for TauriAskpassProvider {
         *self.response_slot.lock() = Some(tx);
         let _ = self.publisher.publish();
 
+        // Askpass prompts can fire from background work triggered in
+        // any window (e.g. F3 viewer reading an encrypted ZIP entry),
+        // but the dialog is rendered in the main window. Pull the main
+        // window forward so the user can actually see and answer it.
+        let window = self.publisher.window();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+
         let result = rx.await.unwrap_or(None);
 
         *self.state.0.write() = None;

@@ -828,6 +828,8 @@ Mount and browse archive files as virtual read-only filesystems.
 **ZIP indexing** (one-shot):
 - The complete index is built before displaying. ZIP files allow random access, so individual files are extracted on demand.
 
+**Encrypted ZIP archives**: The ZIP central directory is always cleartext, so mount and listing always succeed even for encrypted archives — you can browse the entry tree without unlocking anything. The password prompt happens lazily, the first time an encrypted entry is read: the standard askpass UI (same dialog used for SSH/SFTP) is shown, and a working password is cached for subsequent reads. Both ZipCrypto and AE2 (AES) encryption are supported. Wrong passwords re-prompt with an "Incorrect password" hint; dismissing the prompt returns a Cancelled error for that read but does not lock you out — the next read re-prompts. Cleartext entries are always readable without prompting, even in mixed-encryption archives. If individual entries use different keys, the cached password is replaced when a later entry needs a new one.
+
 **Navigation out of archives**:
 - Pressing `..` at the archive root exits the archive and returns to the parent directory containing the archive file.
 - The archive filename itself is focused after exiting.

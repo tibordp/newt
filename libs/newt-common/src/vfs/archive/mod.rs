@@ -1,17 +1,61 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::filesystem::{File, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
-use super::{Breadcrumb, DisplayPathMatch};
+use super::{Breadcrumb, DisplayPathMatch, Vfs, VfsPath};
 
 mod tar;
 mod zip;
 
 pub use self::tar::TarArchiveVfs;
 pub use self::zip::ZipArchiveVfs;
+
+/// Build an archive VFS from a `MountRequest::Archive`. Resolves the
+/// upstream VFS holding the archive bytes via the registry and picks
+/// `ZipArchiveVfs` or `TarArchiveVfs` based on the file extension. The
+/// archive's display path (origin rendered through the upstream's
+/// `format_path`) is stamped into `mount_meta` so the mounted VFS keeps
+/// a stable label even after the origin is unmounted.
+///
+/// For ZIP archives the mount itself never prompts: the central
+/// directory is always cleartext, so listing always works. The askpass
+/// provider is plumbed into the mounted VFS so reading an encrypted
+/// entry can prompt lazily and cache the password for subsequent reads.
+pub async fn mount(
+    origin: VfsPath,
+    ctx: &crate::api::MountContext<'_>,
+) -> Result<Arc<dyn Vfs>, Error> {
+    log::info!("mounting archive VFS for origin={}", origin);
+    let (upstream_vfs, archive_path) = ctx.registry.resolve(&origin)?;
+
+    let upstream_desc = upstream_vfs.descriptor();
+    let upstream_meta = upstream_vfs.mount_meta();
+    let display_path = upstream_desc.format_path(&archive_path, &upstream_meta);
+    let mount_meta = display_path.clone().into_bytes();
+
+    let vfs: Arc<dyn Vfs> = if is_zip_name(&archive_path.to_string_lossy()) {
+        Arc::new(ZipArchiveVfs::new(
+            upstream_vfs,
+            archive_path,
+            origin,
+            mount_meta,
+            display_path,
+            ctx.askpass_provider.cloned(),
+        ))
+    } else {
+        Arc::new(TarArchiveVfs::new(
+            upstream_vfs,
+            archive_path,
+            origin,
+            mount_meta,
+        ))
+    };
+    Ok(vfs)
+}
 
 fn not_found(msg: impl Into<String>) -> Error {
     Error {
@@ -439,9 +483,6 @@ fn ensure_ancestors(
 // ---------------------------------------------------------------------------
 
 use std::io::{Seek, SeekFrom};
-use std::sync::Arc;
-
-use super::Vfs;
 
 /// Adapter that implements `Read + Seek` by calling `upstream.read_range()`
 /// via `Handle::block_on()`. Designed to be used inside `spawn_blocking`.

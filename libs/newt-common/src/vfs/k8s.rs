@@ -198,6 +198,16 @@ pub struct K8sVfs {
 }
 
 impl K8sVfs {
+    /// Build a `K8sVfs` from a `MountRequest::Kubernetes` payload.
+    pub async fn mount(
+        context: String,
+        _ctx: &crate::api::MountContext<'_>,
+    ) -> Result<std::sync::Arc<dyn super::Vfs>, Error> {
+        log::info!("mounting Kubernetes VFS for context={}", context);
+        let vfs = Self::connect(&context).await?;
+        Ok(std::sync::Arc::new(vfs))
+    }
+
     /// Connect to a Kubernetes cluster. If `context` is empty, the current
     /// kubeconfig default context is used.
     pub async fn connect(context: &str) -> Result<Self, Error> {

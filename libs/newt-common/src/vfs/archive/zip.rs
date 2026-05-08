@@ -113,6 +113,10 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
 static ZIP_ARCHIVE_VFS_DESCRIPTOR: ZipArchiveVfsDescriptor = ZipArchiveVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&ZIP_ARCHIVE_VFS_DESCRIPTOR));
 
+#[cfg(test)]
+#[path = "zip_tests.rs"]
+mod zip_tests;
+
 // ---------------------------------------------------------------------------
 // ZipArchiveVfs
 // ---------------------------------------------------------------------------
@@ -122,6 +126,26 @@ pub struct ZipArchiveVfs {
     archive_path: PathBuf,
     origin: VfsPath,
     mount_meta: Vec<u8>,
+    /// Pretty rendering of the archive's origin path, used in askpass
+    /// prompts when an encrypted entry needs unlocking.
+    display_path: String,
+    /// Optional askpass provider used to prompt for the archive password
+    /// the first time an encrypted entry is read. Without this, reads of
+    /// encrypted entries fail with `PermissionDenied`.
+    askpass: Option<Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Cached password for encrypted entries. Filled on first successful
+    /// decrypt. The ZIP spec allows different passwords per entry; we
+    /// remember the most recently successful one and re-prompt if it
+    /// fails on a later entry.
+    password: tokio::sync::Mutex<Option<Vec<u8>>>,
+    /// Bumped every time the user dismisses an unlock prompt. Pending
+    /// reads that started before the dismissal observe a higher
+    /// generation than the one they captured at entry and bail out with
+    /// `Cancelled` instead of opening a fresh prompt — so dismissing a
+    /// single dialog cancels the whole "batch" of concurrent reads (e.g.
+    /// the chunked range reads the file viewer fans out on F3) rather
+    /// than queueing N more prompts behind it.
+    dismiss_gen: std::sync::atomic::AtomicU64,
     index: tokio::sync::OnceCell<(ZipIndex, DirectoryTree)>,
 }
 
@@ -134,6 +158,7 @@ struct ZipEntry {
     raw_name: String,
     size: u64,
     is_dir: bool,
+    is_encrypted: bool,
     mode: Option<u32>,
     mtime: Option<u64>,
 }
@@ -144,12 +169,18 @@ impl ZipArchiveVfs {
         archive_path: PathBuf,
         origin: VfsPath,
         mount_meta: Vec<u8>,
+        display_path: String,
+        askpass: Option<Arc<dyn crate::askpass::AskpassProvider>>,
     ) -> Self {
         Self {
             upstream,
             archive_path,
             origin,
             mount_meta,
+            display_path,
+            askpass,
+            password: tokio::sync::Mutex::new(None),
+            dismiss_gen: std::sync::atomic::AtomicU64::new(0),
             index: tokio::sync::OnceCell::new(),
         }
     }
@@ -195,9 +226,114 @@ impl ZipArchiveVfs {
             .await
     }
 
-    /// Extract a file from the ZIP using a fresh RangeReadAdapter. Runs in
-    /// spawn_blocking since the zip crate is sync-only.
-    async fn extract_zip_file(&self, path_in_archive: String) -> Result<Vec<u8>, Error> {
+    /// Extract an entry from the ZIP. Cleartext entries take a fast
+    /// path; encrypted entries try the cached password first, and on
+    /// `PermissionDenied` prompt the user (via the configured askpass)
+    /// until a working password is supplied or the prompt is cancelled.
+    /// A successfully-validated password is cached for future reads.
+    ///
+    /// Concurrency: the prompt-and-validate phase is serialised by the
+    /// password mutex. To prevent N concurrent reads from all queueing
+    /// up their own prompts after the user dismisses one of them, we
+    /// snapshot a "dismiss generation" before queueing and bail out if
+    /// it has advanced by the time we hold the lock — a fresh read
+    /// (started after the dismissal) sees the new generation and is
+    /// allowed to prompt.
+    async fn extract_zip_file(
+        &self,
+        path_in_archive: String,
+        encrypted: bool,
+    ) -> Result<Vec<u8>, Error> {
+        use std::sync::atomic::Ordering;
+
+        if !encrypted {
+            return self.spawn_extract(path_in_archive, None).await;
+        }
+
+        // Snapshot the dismissal counter at task entry — *before* any
+        // lock or prompt. This pins our "birth time" relative to
+        // dismissal events: peers that increment the counter while
+        // we're queued on the prompt lock will then make our post-lock
+        // check trip and we'll bail instead of opening a fresh prompt.
+        // (Capturing it later — e.g. just before the slow-path lock —
+        // races with the dismissal-and-release sequence and lets a
+        // queued task think it was born after the dismissal.)
+        let my_gen = self.dismiss_gen.load(Ordering::Acquire);
+
+        // Fast path: try the currently-cached password without serialising
+        // on the prompt lock once the archive has been unlocked.
+        let cached_at_start = self.password.lock().await.clone();
+        if let Some(pw) = cached_at_start {
+            match self.spawn_extract(path_in_archive.clone(), Some(pw)).await {
+                Ok(buf) => return Ok(buf),
+                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        let mut guard = self.password.lock().await;
+
+        if self.dismiss_gen.load(Ordering::Acquire) > my_gen {
+            // A peer dismissed an unlock prompt while we were queued.
+            // Treat the whole batch as cancelled rather than queueing N
+            // more prompts behind theirs.
+            return Err(Error::cancelled());
+        }
+
+        // Did a peer set a (different) password while we waited?
+        if let Some(pw) = guard.clone() {
+            match self.spawn_extract(path_in_archive.clone(), Some(pw)).await {
+                Ok(buf) => return Ok(buf),
+                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        let askpass = self.askpass.as_ref().ok_or_else(|| Error {
+            kind: crate::ErrorKind::PermissionDenied,
+            message: format!(
+                "ZIP archive {} entry is encrypted, but no askpass provider is configured",
+                self.display_path
+            ),
+        })?;
+        let mut prompt = format!("Password for archive {}:", self.display_path);
+        loop {
+            let resp = askpass
+                .prompt(crate::askpass::AskpassRequest {
+                    prompt_type: crate::askpass::PromptType::Secret,
+                    prompt: prompt.clone(),
+                })
+                .await;
+            let Some(s) = resp.0 else {
+                self.dismiss_gen.fetch_add(1, Ordering::Release);
+                return Err(Error::cancelled());
+            };
+            let bytes = s.into_bytes();
+            match self
+                .spawn_extract(path_in_archive.clone(), Some(bytes.clone()))
+                .await
+            {
+                Ok(buf) => {
+                    *guard = Some(bytes);
+                    return Ok(buf);
+                }
+                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {
+                    prompt = format!(
+                        "Incorrect password — try again. Password for archive {}:",
+                        self.display_path
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Run a one-shot ZIP extraction inside `spawn_blocking`.
+    async fn spawn_extract(
+        &self,
+        path_in_archive: String,
+        password: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, Error> {
         let details = self.upstream.file_details(&self.archive_path).await?;
         let file_size = details.size;
         let handle = tokio::runtime::Handle::current();
@@ -214,15 +350,36 @@ impl ZipArchiveVfs {
             };
             let mut zip = zip::ZipArchive::new(adapter)
                 .map_err(|e| Error::custom(format!("failed to open ZIP: {}", e)))?;
-            let mut entry = zip
-                .by_name(&path_in_archive)
-                .map_err(|e| not_found(format!("file not found in ZIP: {}", e)))?;
+            let mut entry = match password {
+                Some(pw) => zip
+                    .by_name_decrypt(&path_in_archive, &pw)
+                    .map_err(map_zip_error)?,
+                None => zip.by_name(&path_in_archive).map_err(map_zip_error)?,
+            };
             let mut buf = Vec::with_capacity(entry.size() as usize);
             std::io::Read::read_to_end(&mut entry, &mut buf)?;
             Ok(buf)
         })
         .await
         .map_err(|e| Error::custom(format!("ZIP extraction task panicked: {}", e)))?
+    }
+}
+
+/// Map a `zip::result::ZipError` to our `Error`, distinguishing missing
+/// entries, password problems, and everything else.
+fn map_zip_error(e: zip::result::ZipError) -> Error {
+    use zip::result::ZipError;
+    match e {
+        ZipError::FileNotFound => not_found("file not found in ZIP"),
+        ZipError::InvalidPassword => Error {
+            kind: crate::ErrorKind::PermissionDenied,
+            message: "incorrect password for ZIP entry".into(),
+        },
+        ZipError::UnsupportedArchive(msg) if msg == ZipError::PASSWORD_REQUIRED => Error {
+            kind: crate::ErrorKind::PermissionDenied,
+            message: "ZIP entry requires a password".into(),
+        },
+        other => Error::custom(format!("ZIP extraction failed: {}", other)),
     }
 }
 
@@ -261,6 +418,7 @@ fn build_zip_index(
         let size = entry.size();
         let unix_mode = entry.unix_mode();
         let mtime = zip_mtime(&entry);
+        let is_encrypted = entry.encrypted();
 
         let entry_path = PathBuf::from(path);
         let parent = entry_path
@@ -307,6 +465,7 @@ fn build_zip_index(
                     raw_name: raw_name.clone(),
                     size,
                     is_dir,
+                    is_encrypted,
                     mode: unix_mode,
                     mtime,
                 },
@@ -327,6 +486,7 @@ fn build_zip_index(
                 raw_name: raw_name.clone(),
                 size,
                 is_dir,
+                is_encrypted,
                 mode: unix_mode,
                 mtime,
             },
@@ -405,7 +565,9 @@ impl Vfs for ZipArchiveVfs {
             .entries
             .get(path_str.as_ref())
             .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
-        let data = self.extract_zip_file(entry.raw_name.clone()).await?;
+        let data = self
+            .extract_zip_file(entry.raw_name.clone(), entry.is_encrypted)
+            .await?;
         Ok(Box::new(std::io::Cursor::new(data)))
     }
 
@@ -420,7 +582,9 @@ impl Vfs for ZipArchiveVfs {
             .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
         let total_size = entry.size;
 
-        let data = self.extract_zip_file(entry.raw_name.clone()).await?;
+        let data = self
+            .extract_zip_file(entry.raw_name.clone(), entry.is_encrypted)
+            .await?;
         let start = (offset as usize).min(data.len());
         let end = ((offset + length) as usize).min(data.len());
 

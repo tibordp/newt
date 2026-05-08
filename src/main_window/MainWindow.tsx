@@ -160,7 +160,7 @@ function App() {
       : null;
 
   const modalType = remoteState?.modal?.type;
-  const modalOpen = !!modalType || !!foregroundOp;
+  const modalOpen = !!modalType || !!foregroundOp || !!remoteState?.askpass;
 
   // Build the binding lookup map from resolved preferences
   const bindingMap = useMemo(
@@ -173,7 +173,7 @@ function App() {
       if (!remoteState || !preferences) return;
 
       // Don't intercept shortcuts while a modal dialog is open.
-      if (remoteState.modal) return;
+      if (remoteState.modal || remoteState.askpass) return;
 
       const normalizedKey = normalizeKeyEvent(e);
       if (!normalizedKey) return;

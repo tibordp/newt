@@ -443,6 +443,20 @@ pub struct ReadStream {
 
 pub type PendingVfsReadStreams = Arc<parking_lot::Mutex<HashMap<StreamId, ReadStream>>>;
 
+/// Shared state passed to per-VFS `mount` helpers. Bundles the registry
+/// (needed by archive mounts to resolve their upstream), the host
+/// communicator and pending-stream map (needed by the Remote VFS), the
+/// SFTP askpass configuration (binary path + provider, used by SFTP),
+/// and a generic askpass provider (used by encrypted-archive mounts).
+/// Any VFS may ignore fields it doesn't need.
+pub struct MountContext<'a> {
+    pub registry: &'a VfsRegistry,
+    pub host_communicator: &'a std::sync::OnceLock<crate::rpc::Communicator>,
+    pub pending_read_streams: &'a PendingVfsReadStreams,
+    pub sftp_askpass: Option<&'a SftpAskpass>,
+    pub askpass_provider: Option<&'a Arc<dyn crate::askpass::AskpassProvider>>,
+}
+
 /// Askpass configuration used by SFTP (and any future SSH-spawning VFS).
 #[derive(Clone)]
 pub struct SftpAskpass {
@@ -463,6 +477,11 @@ pub struct VfsRegistryManager {
     /// SFTP askpass configuration. When `None`, SFTP mounts inherit the
     /// process environment with no special password handling.
     sftp_askpass: Option<SftpAskpass>,
+    /// Generic askpass provider used for prompts that aren't tied to
+    /// SFTP's `SSH_ASKPASS` plumbing — currently encrypted-archive
+    /// passwords. When set with `with_sftp_askpass`, this is also
+    /// populated from the SFTP askpass's provider.
+    askpass_provider: Option<Arc<dyn crate::askpass::AskpassProvider>>,
 }
 
 impl VfsRegistryManager {
@@ -472,6 +491,7 @@ impl VfsRegistryManager {
             host_communicator: Arc::new(std::sync::OnceLock::new()),
             pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             sftp_askpass: None,
+            askpass_provider: None,
         }
     }
 
@@ -485,11 +505,25 @@ impl VfsRegistryManager {
             host_communicator,
             pending_read_streams,
             sftp_askpass: None,
+            askpass_provider: None,
         }
     }
 
     pub fn with_sftp_askpass(mut self, askpass: SftpAskpass) -> Self {
+        // Mirror the provider into the generic slot so encrypted-archive
+        // mounts get an askpass for free wherever SFTP already has one.
+        if self.askpass_provider.is_none() {
+            self.askpass_provider = Some(askpass.provider.clone());
+        }
         self.sftp_askpass = Some(askpass);
+        self
+    }
+
+    pub fn with_askpass_provider(
+        mut self,
+        provider: Arc<dyn crate::askpass::AskpassProvider>,
+    ) -> Self {
+        self.askpass_provider = Some(provider);
         self
     }
 }
@@ -497,180 +531,40 @@ impl VfsRegistryManager {
 #[async_trait::async_trait]
 impl VfsManager for VfsRegistryManager {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
-        match request {
+        let ctx = MountContext {
+            registry: &self.registry,
+            host_communicator: &self.host_communicator,
+            pending_read_streams: &self.pending_read_streams,
+            sftp_askpass: self.sftp_askpass.as_ref(),
+            askpass_provider: self.askpass_provider.as_ref(),
+        };
+
+        let vfs: Arc<dyn Vfs> = match request {
             MountRequest::S3 {
                 region,
                 bucket,
                 credentials,
-            } => {
-                let region =
-                    aws_config::Region::new(region.unwrap_or_else(|| "us-east-1".to_string()));
-
-                let mut config_loader = aws_config::from_env().region(region.clone());
-
-                // Custom endpoint for S3-compatible services
-                if let Some(ref endpoint) = credentials.endpoint_url {
-                    config_loader = config_loader.endpoint_url(endpoint);
-                }
-
-                // Use explicit profile if specified
-                if let Some(ref profile) = credentials.profile {
-                    config_loader = config_loader.profile_name(profile);
-                }
-
-                // Use explicit IAM credentials if provided
-                if let (Some(access_key), Some(secret_key)) =
-                    (&credentials.access_key_id, &credentials.secret_access_key)
-                {
-                    let creds = aws_sdk_s3::config::Credentials::new(
-                        access_key,
-                        secret_key,
-                        credentials.session_token.clone(),
-                        None,
-                        "newt-explicit",
-                    );
-                    config_loader = config_loader.credentials_provider(creds);
-                }
-
-                let mut sdk_config = config_loader.load().await;
-
-                // AssumeRole: use the resolved credentials to assume a role,
-                // then rebuild the config with the temporary credentials.
-                if let Some(ref role_arn) = credentials.role_arn {
-                    let sts_client = aws_sdk_sts::Client::new(&sdk_config);
-                    let mut assume = sts_client
-                        .assume_role()
-                        .role_arn(role_arn)
-                        .role_session_name("newt-session");
-                    if let Some(ref ext_id) = credentials.external_id {
-                        assume = assume.external_id(ext_id);
-                    }
-                    let resp = assume.send().await.map_err(|e| Error {
-                        kind: crate::ErrorKind::Other,
-                        message: format!("AssumeRole failed: {}", e),
-                    })?;
-                    let sts_creds = resp.credentials().ok_or_else(|| Error {
-                        kind: crate::ErrorKind::Other,
-                        message: "AssumeRole returned no credentials".into(),
-                    })?;
-                    let temp_creds = aws_sdk_s3::config::Credentials::new(
-                        sts_creds.access_key_id(),
-                        sts_creds.secret_access_key(),
-                        Some(sts_creds.session_token().to_string()),
-                        None,
-                        "newt-assume-role",
-                    );
-                    sdk_config = aws_config::from_env()
-                        .region(region)
-                        .credentials_provider(temp_creds)
-                        .load()
-                        .await;
-                }
-
-                let client = aws_sdk_s3::Client::new(&sdk_config);
-                let vfs = Arc::new(crate::vfs::S3Vfs::new(client, sdk_config, bucket));
-                let mount_meta = vfs.mount_meta();
-                let type_name = vfs.descriptor().type_name().to_string();
-                let vfs_id = self.registry.mount(vfs);
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                    origin: None,
-                })
-            }
-            MountRequest::Sftp { host } => {
-                log::info!("mounting SFTP VFS for host={}", host);
-                let vfs =
-                    Arc::new(crate::vfs::SftpVfs::connect(&host, self.sftp_askpass.clone()).await?);
-                let mount_meta = vfs.mount_meta();
-                let type_name = vfs.descriptor().type_name().to_string();
-                let vfs_id = self.registry.mount(vfs);
-                log::info!("mounted SFTP VFS for host={} as vfs_id={:?}", host, vfs_id);
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                    origin: None,
-                })
-            }
+            } => crate::vfs::S3Vfs::mount(region, bucket, credentials, &ctx).await?,
+            MountRequest::Sftp { host } => crate::vfs::SftpVfs::mount(host, &ctx).await?,
             MountRequest::Kubernetes { context } => {
-                log::info!("mounting Kubernetes VFS for context={}", context);
-                let vfs = Arc::new(crate::vfs::K8sVfs::connect(&context).await?);
-                let mount_meta = vfs.mount_meta();
-                let type_name = vfs.descriptor().type_name().to_string();
-                let vfs_id = self.registry.mount(vfs);
-                log::info!(
-                    "mounted Kubernetes VFS for context={} as vfs_id={:?}",
-                    context,
-                    vfs_id
-                );
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                    origin: None,
-                })
+                crate::vfs::K8sVfs::mount(context, &ctx).await?
             }
-            MountRequest::Remote => {
-                let communicator = self
-                    .host_communicator
-                    .get()
-                    .ok_or_else(|| Error::custom("host communicator not available"))?
-                    .clone();
-                let vfs = Arc::new(crate::vfs::RemoteVfs::new(
-                    communicator,
-                    self.pending_read_streams.clone(),
-                ));
-                let mount_meta = vfs.mount_meta();
-                let type_name = vfs.descriptor().type_name().to_string();
-                let vfs_id = self.registry.mount(vfs);
-                log::info!("mounted remote VFS as vfs_id={:?}", vfs_id);
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                    origin: None,
-                })
-            }
-            MountRequest::Archive { origin } => {
-                log::info!("mounting archive VFS for origin={}", origin);
-                let (upstream_vfs, archive_path) = self.registry.resolve(&origin)?;
+            MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
+            MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
+        };
 
-                // Compute display path for mount_meta
-                let upstream_desc = upstream_vfs.descriptor();
-                let upstream_meta = upstream_vfs.mount_meta();
-                let display_path = upstream_desc.format_path(&archive_path, &upstream_meta);
-                let mount_meta = display_path.into_bytes();
+        let mount_meta = vfs.mount_meta();
+        let type_name = vfs.descriptor().type_name().to_string();
+        let origin = vfs.origin().cloned();
+        let vfs_id = self.registry.mount(vfs);
+        log::info!("mounted {} VFS as vfs_id={:?}", type_name, vfs_id);
 
-                let vfs: Arc<dyn crate::vfs::Vfs> =
-                    if crate::vfs::is_zip_name(&archive_path.to_string_lossy()) {
-                        Arc::new(crate::vfs::ZipArchiveVfs::new(
-                            upstream_vfs,
-                            archive_path,
-                            origin.clone(),
-                            mount_meta.clone(),
-                        ))
-                    } else {
-                        Arc::new(crate::vfs::TarArchiveVfs::new(
-                            upstream_vfs,
-                            archive_path,
-                            origin.clone(),
-                            mount_meta.clone(),
-                        ))
-                    };
-
-                let type_name = vfs.descriptor().type_name().to_string();
-                let vfs_id = self.registry.mount(vfs);
-                log::info!("mounted archive VFS as vfs_id={:?}", vfs_id);
-                Ok(MountResponse {
-                    vfs_id,
-                    type_name,
-                    mount_meta,
-                    origin: Some(origin),
-                })
-            }
-        }
+        Ok(MountResponse {
+            vfs_id,
+            type_name,
+            mount_meta,
+            origin,
+        })
     }
 
     async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {

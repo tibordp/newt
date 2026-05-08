@@ -119,6 +119,23 @@ pub struct RemoteVfs {
 }
 
 impl RemoteVfs {
+    /// Build a `RemoteVfs` from a `MountRequest::Remote`. Pulls the host
+    /// communicator (set up at session start by the agent) and the
+    /// shared pending-stream map out of the mount context.
+    pub fn mount(
+        ctx: &crate::api::MountContext<'_>,
+    ) -> Result<std::sync::Arc<dyn super::Vfs>, crate::Error> {
+        let communicator = ctx
+            .host_communicator
+            .get()
+            .ok_or_else(|| crate::Error::custom("host communicator not available"))?
+            .clone();
+        Ok(std::sync::Arc::new(Self::new(
+            communicator,
+            ctx.pending_read_streams.clone(),
+        )))
+    }
+
     pub fn new(communicator: Communicator, pending_read_streams: PendingVfsReadStreams) -> Self {
         Self {
             communicator,

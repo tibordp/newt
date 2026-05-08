@@ -671,6 +671,7 @@ fn create_local_services(
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
     sftp_askpass: Option<newt_common::api::SftpAskpass>,
+    askpass_provider: Arc<dyn AskpassProvider>,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
@@ -695,7 +696,8 @@ fn create_local_services(
         fs: Arc::new(VfsRegistryFs::new(registry.clone())),
         shell_service: Arc::new(LocalShellService),
         vfs_manager: Arc::new({
-            let mgr = VfsRegistryManager::new(registry.clone());
+            let mgr =
+                VfsRegistryManager::new(registry.clone()).with_askpass_provider(askpass_provider);
             if let Some(askpass) = sftp_askpass {
                 mgr.with_sftp_askpass(askpass)
             } else {
@@ -1062,8 +1064,13 @@ pub(super) async fn connect(
                     None
                 }
             };
-            let services =
-                create_local_services(&state.operations, publisher, &preferences, sftp_askpass);
+            let services = create_local_services(
+                &state.operations,
+                publisher,
+                &preferences,
+                sftp_askpass,
+                askpass_provider.clone(),
+            );
             (services, StderrLog::default(), None)
         }
         ConnectionTarget::Remote { transport_cmd } => {

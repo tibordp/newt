@@ -186,6 +186,17 @@ const SYMLINK_RESOLVE_CONCURRENCY: usize = 16;
 const LIST_BATCH_SIZE: usize = 200;
 
 impl SftpVfs {
+    /// Build an `SftpVfs` from a `MountRequest::Sftp` payload, picking
+    /// up the askpass binary/provider from `ctx`.
+    pub async fn mount(
+        host: String,
+        ctx: &crate::api::MountContext<'_>,
+    ) -> Result<std::sync::Arc<dyn Vfs>, Error> {
+        info!("mounting SFTP VFS for host={}", host);
+        let vfs = Self::connect(&host, ctx.sftp_askpass.cloned()).await?;
+        Ok(std::sync::Arc::new(vfs))
+    }
+
     pub async fn connect(
         host: &str,
         askpass: Option<crate::api::SftpAskpass>,

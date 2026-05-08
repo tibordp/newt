@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use log::{debug, info, warn};
 use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
+use crate::api::MountContext;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats};
+use crate::vfs::S3Credentials;
 use crate::{Error, ToUnix};
 
 use super::{
@@ -210,6 +213,82 @@ pub struct S3Vfs {
 }
 
 impl S3Vfs {
+    /// Build an `S3Vfs` from a `MountRequest::S3` payload. Resolves
+    /// region/profile/credentials, optionally performs an AssumeRole
+    /// round-trip, and constructs the SDK client.
+    pub async fn mount(
+        region: Option<String>,
+        bucket: Option<String>,
+        credentials: S3Credentials,
+        _ctx: &MountContext<'_>,
+    ) -> Result<Arc<dyn Vfs>, Error> {
+        let region = aws_config::Region::new(region.unwrap_or_else(|| "us-east-1".to_string()));
+
+        let mut config_loader = aws_config::from_env().region(region.clone());
+
+        // Custom endpoint for S3-compatible services
+        if let Some(ref endpoint) = credentials.endpoint_url {
+            config_loader = config_loader.endpoint_url(endpoint);
+        }
+
+        // Use explicit profile if specified
+        if let Some(ref profile) = credentials.profile {
+            config_loader = config_loader.profile_name(profile);
+        }
+
+        // Use explicit IAM credentials if provided
+        if let (Some(access_key), Some(secret_key)) =
+            (&credentials.access_key_id, &credentials.secret_access_key)
+        {
+            let creds = aws_sdk_s3::config::Credentials::new(
+                access_key,
+                secret_key,
+                credentials.session_token.clone(),
+                None,
+                "newt-explicit",
+            );
+            config_loader = config_loader.credentials_provider(creds);
+        }
+
+        let mut sdk_config = config_loader.load().await;
+
+        // AssumeRole: use the resolved credentials to assume a role,
+        // then rebuild the config with the temporary credentials.
+        if let Some(ref role_arn) = credentials.role_arn {
+            let sts_client = aws_sdk_sts::Client::new(&sdk_config);
+            let mut assume = sts_client
+                .assume_role()
+                .role_arn(role_arn)
+                .role_session_name("newt-session");
+            if let Some(ref ext_id) = credentials.external_id {
+                assume = assume.external_id(ext_id);
+            }
+            let resp = assume.send().await.map_err(|e| Error {
+                kind: crate::ErrorKind::Other,
+                message: format!("AssumeRole failed: {}", e),
+            })?;
+            let sts_creds = resp.credentials().ok_or_else(|| Error {
+                kind: crate::ErrorKind::Other,
+                message: "AssumeRole returned no credentials".into(),
+            })?;
+            let temp_creds = aws_sdk_s3::config::Credentials::new(
+                sts_creds.access_key_id(),
+                sts_creds.secret_access_key(),
+                Some(sts_creds.session_token().to_string()),
+                None,
+                "newt-assume-role",
+            );
+            sdk_config = aws_config::from_env()
+                .region(region)
+                .credentials_provider(temp_creds)
+                .load()
+                .await;
+        }
+
+        let client = aws_sdk_s3::Client::new(&sdk_config);
+        Ok(Arc::new(S3Vfs::new(client, sdk_config, bucket)))
+    }
+
     pub fn new(
         default_client: aws_sdk_s3::Client,
         sdk_config: aws_config::SdkConfig,
