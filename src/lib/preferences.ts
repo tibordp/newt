@@ -31,6 +31,8 @@ export type AppPreferences = {
   appearance: {
     show_hidden: boolean;
     show_command_bar: boolean;
+    show_pane_header: boolean;
+    show_pane_status: boolean;
     theme: "system" | "light" | "dark";
     columns: string[];
   };

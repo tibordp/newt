@@ -32,6 +32,12 @@ pub struct AppearancePreferences {
     /// Show the F-key command bar at the bottom of the window.
     #[schemars(title = "Show Command Bar")]
     pub show_command_bar: bool,
+    /// Show the top bar (path breadcrumbs, VFS selector, free space) on each pane.
+    #[schemars(title = "Show Pane Header")]
+    pub show_pane_header: bool,
+    /// Show the status bar (file/directory counts, selection size) at the bottom of each pane.
+    #[schemars(title = "Show Pane Status Bar")]
+    pub show_pane_status: bool,
     /// Color theme: "system" follows OS preference, or force "light" / "dark".
     #[schemars(title = "Theme")]
     pub theme: ThemeMode,
@@ -65,6 +71,8 @@ impl Default for AppearancePreferences {
             show_hidden: false,
             folders_first: true,
             show_command_bar: true,
+            show_pane_header: true,
+            show_pane_status: true,
             theme: ThemeMode::default(),
             columns: vec![
                 "name".into(),

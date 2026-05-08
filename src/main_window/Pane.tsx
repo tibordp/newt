@@ -1527,25 +1527,37 @@ function PaneInner(
         }}
       />
       <div className={styles.headerArea}>
-        <div className={styles.header}>
-          <VfsSelector
-            vfsDisplayName={vfs_display_name}
-            vfsTargets={vfsTargets}
-            paneHandle={paneHandle}
-            activeVfsId={path.vfs_id}
-            open={isVfsSelectorOpen}
-          />
-          <div className={styles.headerPath}>
-            <PathBreadcrumbs
-              breadcrumbs={breadcrumbs}
+        {preferences?.settings.appearance.show_pane_header !== false ? (
+          <div className={styles.header}>
+            <VfsSelector
+              vfsDisplayName={vfs_display_name}
+              vfsTargets={vfsTargets}
               paneHandle={paneHandle}
-              displayPath={props.display_path}
+              activeVfsId={path.vfs_id}
+              open={isVfsSelectorOpen}
+            />
+            <div className={styles.headerPath}>
+              <PathBreadcrumbs
+                breadcrumbs={breadcrumbs}
+                paneHandle={paneHandle}
+                displayPath={props.display_path}
+              />
+            </div>
+            {fs_stats?.available_bytes !== undefined && (
+              <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
+            )}
+          </div>
+        ) : (
+          <div className={styles.hiddenAnchor} aria-hidden>
+            <VfsSelector
+              vfsDisplayName={vfs_display_name}
+              vfsTargets={vfsTargets}
+              paneHandle={paneHandle}
+              activeVfsId={path.vfs_id}
+              open={isVfsSelectorOpen}
             />
           </div>
-          {fs_stats?.available_bytes !== undefined && (
-            <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
-          )}
-        </div>
+        )}
         {isHistoryNavigatorOpen && (
           <HistoryNavigator
             entries={historyEntries}
@@ -1622,38 +1634,41 @@ function PaneInner(
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
-      <div className={styles.statusbar}>
-        {showSpinner && "Loading file list..."}
-        {!showSpinner && loading && (
-          <>
-            Loading... ({(stats.file_count + stats.dir_count).toLocaleString()}{" "}
-            items so far)
-          </>
-        )}
-        {!showSpinner &&
-          !loading &&
-          stats.selected_file_count + stats.selected_dir_count > 0 && (
+      {preferences?.settings.appearance.show_pane_status !== false && (
+        <div className={styles.statusbar}>
+          {showSpinner && "Loading file list..."}
+          {!showSpinner && loading && (
             <>
-              {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
-              directories selected, {stats.selected_bytes.toLocaleString()}{" "}
-              bytes total
-              {stats.total_count != null &&
-                ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+              Loading... (
+              {(stats.file_count + stats.dir_count).toLocaleString()} items so
+              far)
             </>
           )}
-        {!showSpinner &&
-          !loading &&
-          stats.selected_file_count + stats.selected_dir_count === 0 && (
-            <>
-              {stats.file_count} files, {stats.dir_count} directories
-              {stats.total_count != null &&
-                ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
-            </>
+          {!showSpinner &&
+            !loading &&
+            stats.selected_file_count + stats.selected_dir_count > 0 && (
+              <>
+                {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
+                directories selected, {stats.selected_bytes.toLocaleString()}{" "}
+                bytes total
+                {stats.total_count != null &&
+                  ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+              </>
+            )}
+          {!showSpinner &&
+            !loading &&
+            stats.selected_file_count + stats.selected_dir_count === 0 && (
+              <>
+                {stats.file_count} files, {stats.dir_count} directories
+                {stats.total_count != null &&
+                  ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+              </>
+            )}
+          {!showSpinner && !loading && partial && (
+            <span className={styles.partial}> (partial)</span>
           )}
-        {!showSpinner && !loading && partial && (
-          <span className={styles.partial}> (partial)</span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
