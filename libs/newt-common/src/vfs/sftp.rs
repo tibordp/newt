@@ -15,8 +15,8 @@ use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
 use super::{
-    Breadcrumb, DisplayPathMatch, MountRequest, RegisteredDescriptor, Vfs, VfsAsyncWriter,
-    VfsChangeNotifier, VfsDescriptor, VfsMetadata,
+    Breadcrumb, DisplayPathMatch, MountRequest, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs,
+    VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor, VfsMetadata,
 };
 
 // ---------------------------------------------------------------------------
@@ -737,7 +737,7 @@ impl Vfs for SftpVfs {
         let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, Error>>(4);
         tokio::spawn(async move {
             let mut file = file;
-            const CHUNK_SIZE: u32 = 64 * 1024;
+            const CHUNK_SIZE: u32 = VFS_READ_CHUNK_SIZE as u32;
             loop {
                 match file.read(CHUNK_SIZE, bytes::BytesMut::new()).await {
                     Ok(Some(data)) if !data.is_empty() => {
@@ -947,7 +947,7 @@ impl SftpVfs {
             file.seek(std::io::SeekFrom::Start(offset)).await?;
         }
 
-        const CHUNK_SIZE: u32 = 65536;
+        const CHUNK_SIZE: u32 = VFS_READ_CHUNK_SIZE as u32;
         let mut data = Vec::with_capacity(to_read);
         while data.len() < to_read {
             let remaining = (to_read - data.len()).min(CHUNK_SIZE as usize) as u32;

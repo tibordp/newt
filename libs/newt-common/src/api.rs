@@ -754,7 +754,7 @@ impl Dispatcher for HotPathsDispatcher {
 // VfsDispatcher — handles API_HOST_VFS_* invoke requests from the agent
 // ---------------------------------------------------------------------------
 
-const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
+use crate::vfs::VFS_READ_CHUNK_SIZE;
 
 struct WriteSession {
     tx: tokio::sync::mpsc::Sender<Vec<u8>>,

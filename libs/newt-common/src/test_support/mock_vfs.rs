@@ -405,6 +405,9 @@ impl Vfs for MockVfs {
         offset: u64,
         length: u64,
     ) -> Result<crate::file_reader::FileChunk, crate::Error> {
+        if let Some(e) = self.check_failure(path, "read_range") {
+            return Err(e);
+        }
         match self.entries.lock().get(path) {
             Some(MockEntry::File { content, .. }) => {
                 let start = offset as usize;

@@ -35,6 +35,14 @@ use crate::file_reader::{FileChunk, FileDetails, FileReader, SearchMatch, Search
 use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
 use crate::rpc::Communicator;
 
+/// Default chunk size for VFS read/copy buffers and streaming channels.
+///
+/// Used by file copy loops, async-read bridge tasks, the RPC dispatcher
+/// chunking host→agent reads, and archive/SFTP streaming readers. 64 KiB
+/// is large enough to amortise syscall/RPC overhead without holding much
+/// memory per in-flight chunk.
+pub const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
+
 // ---------------------------------------------------------------------------
 // VfsId
 // ---------------------------------------------------------------------------

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use log::info;
 use tokio::io::AsyncRead;
@@ -13,7 +15,8 @@ use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
 
 use super::super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
+    VfsPath,
 };
 use super::{
     DirectoryTree, SNAPSHOT_INTERVAL, archive_breadcrumbs, archive_format_path,
@@ -116,6 +119,14 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
 
 static TAR_ARCHIVE_VFS_DESCRIPTOR: TarArchiveVfsDescriptor = TarArchiveVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&TAR_ARCHIVE_VFS_DESCRIPTOR));
+
+#[cfg(test)]
+#[path = "tar_tests.rs"]
+mod tar_tests;
+
+/// Bounded buffering between the iluvatar drive task and the AsyncRead consumer.
+/// Each slot holds one decompressed chunk (≤64 KiB).
+const STREAM_CHANNEL_CAPACITY: usize = 4;
 
 // ---------------------------------------------------------------------------
 // TarArchiveVfs — shared indexing state
@@ -258,7 +269,7 @@ impl TarArchiveVfs {
                 match engine.step() {
                     iluvatar::EngineRequest::NeedInput => {
                         let chunk = upstream
-                            .read_range(&archive_path, position, 64 * 1024)
+                            .read_range(&archive_path, position, VFS_READ_CHUNK_SIZE as u64)
                             .await?;
                         if chunk.data.is_empty() {
                             engine.signal_eof();
@@ -328,7 +339,7 @@ impl TarArchiveVfs {
         let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
             .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
 
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         let mut last_snapshot = std::time::Instant::now();
         let mut last_snapshot_entries = 0usize;
 
@@ -454,7 +465,7 @@ impl TarArchiveVfs {
         .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
 
         let mut output = Vec::new();
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         let mut position: u64 = 0;
         loop {
             match engine.step() {
@@ -670,9 +681,105 @@ impl Vfs for TarArchiveVfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let index = self.wait_for_index().await?;
-        let (archive_path, _entry) = self.resolve_for_read(index, path)?;
-        let data = self.drive_read_engine(&archive_path, None).await?;
-        Ok(Box::new(std::io::Cursor::new(data)))
+        let (archive_path_in_index, _entry) = self.resolve_for_read(index, path)?;
+
+        // Construct the engine eagerly so any setup error (file not found,
+        // unknown compression, etc.) is reported synchronously to the caller
+        // rather than swallowed by the streaming task.
+        let mut engine = iluvatar::ReadEngine::new(index, &archive_path_in_index)
+            .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
+
+        let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(STREAM_CHANNEL_CAPACITY);
+        let upstream = self.upstream.clone();
+        let archive_file_path = self.archive_path.clone();
+        let cancel = self.state.cancel.clone();
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+            let mut position: u64 = 0;
+            loop {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                match engine.step() {
+                    iluvatar::EngineRequest::NeedInput => {
+                        match upstream
+                            .read_range(&archive_file_path, position, buf.len() as u64)
+                            .await
+                        {
+                            Ok(chunk) => {
+                                if chunk.data.is_empty() {
+                                    engine.signal_eof();
+                                } else {
+                                    position += chunk.data.len() as u64;
+                                    engine.provide_data(&chunk.data);
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx
+                                    .send(Err(std::io::Error::other(format!(
+                                        "upstream read error: {}",
+                                        e
+                                    ))))
+                                    .await;
+                                return;
+                            }
+                        }
+                    }
+                    iluvatar::EngineRequest::SeekAndRead { offset, len } => {
+                        position = offset;
+                        match upstream
+                            .read_range(&archive_file_path, position, len as u64)
+                            .await
+                        {
+                            Ok(chunk) => {
+                                if chunk.data.is_empty() {
+                                    engine.signal_eof();
+                                } else {
+                                    position += chunk.data.len() as u64;
+                                    engine.provide_data(&chunk.data);
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx
+                                    .send(Err(std::io::Error::other(format!(
+                                        "upstream read error: {}",
+                                        e
+                                    ))))
+                                    .await;
+                                return;
+                            }
+                        }
+                    }
+                    iluvatar::EngineRequest::OutputReady => loop {
+                        let n = engine.read_output(&mut buf);
+                        if n == 0 {
+                            break;
+                        }
+                        if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
+                            // Consumer dropped — abort.
+                            return;
+                        }
+                    },
+                    iluvatar::EngineRequest::Done => return,
+                    iluvatar::EngineRequest::Error(e) => {
+                        let _ = tx
+                            .send(Err(std::io::Error::other(format!(
+                                "read engine error: {}",
+                                e
+                            ))))
+                            .await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        Ok(Box::new(TarStreamingReader {
+            rx,
+            current: Vec::new(),
+            offset: 0,
+        }))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
@@ -689,5 +796,52 @@ impl Vfs for TarArchiveVfs {
             offset,
             total_size,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TarStreamingReader — turns an mpsc stream of decompressed chunks into AsyncRead.
+//
+// The engine drive task feeds `Ok(Vec<u8>)` chunks for output, `Err(...)` for
+// any failure (upstream or decompression), and closes the channel to signal EOF.
+// ---------------------------------------------------------------------------
+
+struct TarStreamingReader {
+    rx: mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    current: Vec<u8>,
+    offset: usize,
+}
+
+impl AsyncRead for TarStreamingReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.offset < self.current.len() {
+            let remaining = &self.current[self.offset..];
+            let n = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..n]);
+            self.offset += n;
+            return Poll::Ready(Ok(()));
+        }
+
+        match self.rx.poll_recv(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                let n = chunk.len().min(buf.remaining());
+                buf.put_slice(&chunk[..n]);
+                if n < chunk.len() {
+                    self.current = chunk;
+                    self.offset = n;
+                } else {
+                    self.current = Vec::new();
+                    self.offset = 0;
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
+            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

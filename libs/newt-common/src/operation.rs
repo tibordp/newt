@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::rpc::Communicator;
-use crate::vfs::{Vfs, VfsDescriptor, VfsPath, VfsRegistry};
+use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
 pub type OperationId = u64;
 pub type IssueId = u64;
@@ -832,7 +832,7 @@ fn copy_bytes_sync(
     items_done: u64,
     display: &str,
 ) -> Result<(), crate::Error> {
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = [0u8; VFS_READ_CHUNK_SIZE];
 
     loop {
         if cancel.is_cancelled() {
@@ -864,7 +864,7 @@ async fn copy_bytes_async(
 ) -> Result<(), crate::Error> {
     use tokio::io::AsyncReadExt;
 
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = [0u8; VFS_READ_CHUNK_SIZE];
 
     loop {
         if cancel.is_cancelled() {
@@ -991,7 +991,7 @@ async fn copy_single_file(
         let cancel2 = cancel.clone();
         tokio::task::spawn_blocking(move || {
             let mut reader = sync_reader;
-            let mut buf = vec![0u8; 64 * 1024];
+            let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
             loop {
                 if cancel2.is_cancelled() {
                     let _ = tx.blocking_send(Err(crate::Error::cancelled()));
@@ -1059,7 +1059,7 @@ async fn copy_single_file(
         });
 
         use tokio::io::AsyncReadExt;
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         loop {
             if cancel2.is_cancelled() {
                 drop(tx);
