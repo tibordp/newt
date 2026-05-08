@@ -52,6 +52,12 @@ Each pane is an independent file browser with its own path, selection, filter, s
   - Archives: origin path + inner path, e.g., `/home/user/file.tar.gz/dir/subdir`
 - **Free space indicator**: Shows available disk space (e.g., "123.4 GB free") when the filesystem reports stats. Only visible for VFS types that support `fs_stats` (local filesystem).
 
+The whole header can be hidden via the `appearance.show_pane_header` preference (default: on). When hidden, the VFS selector trigger stays mounted in an off-screen anchor so its keyboard shortcut still opens the dropdown anchored to the top of the pane.
+
+### Pane Status Bar
+
+Bottom strip on each pane showing loading state, the current file's full display path, file/directory counts, total size of selection or directory, and a "(partial)" marker when the listing is windowed. Toggled by the `appearance.show_pane_status` preference (default: on).
+
 ### File List
 
 Server-side windowed list with 22px fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
@@ -1129,6 +1135,8 @@ profile = "work"  # Optional: loads ~/.config/newt/profiles/work.toml overlay
 show_hidden = false         # Show files starting with "."
 folders_first = true        # Directories before files in sort order
 show_command_bar = true     # Show F-key bar at bottom of window
+show_pane_header = true     # Show breadcrumb / VFS selector / free-space header per pane
+show_pane_status = true     # Show file count / selection size status bar per pane
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
 

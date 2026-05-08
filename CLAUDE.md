@@ -76,7 +76,7 @@ When a task or direction is unclear — especially around architecture or design
 
 ## Git Commits
 
-When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated.
+When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: tick off / delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added).
 
 Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any and fix the issues surface.
 
