@@ -11,8 +11,8 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
-import { commands } from "../lib/bindings";
-import { safe, safeSilent, safeCommand } from "../lib/ipc";
+import { commands, type Result } from "../lib/bindings";
+import { safe, safeSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
@@ -717,10 +717,19 @@ function PaneInner(
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
-  const command = (cmd: string, args: object = {}, also_when_busy = false) => {
-    if (also_when_busy || !isBusy) {
-      safeCommand(cmd, { paneHandle, ...args });
-    }
+  // Run a typed command, but skip it while the pane is in a "busy" state
+  // (waiting on the first listing of a navigated-to path). `alsoWhenBusy`
+  // overrides the guard for the few commands that should always fire
+  // (Escape's cancel/clear-filter, the directory-up nav).
+  //
+  // Takes a thunk because invoking `commands.X(...)` already sends the IPC —
+  // the guard has to gate construction of the promise, not just the safe()
+  // wrap.
+  const guarded = <T,>(
+    factory: () => Promise<Result<T, string>>,
+    alsoWhenBusy = false,
+  ) => {
+    if (alsoWhenBusy || !isBusy) safe(factory());
   };
 
   const preferences = usePreferences();
@@ -1208,7 +1217,7 @@ function PaneInner(
   );
 
   const relativeJump = (delta: number, withSelection?: boolean) => {
-    command("relative_jump", { offset: delta, withSelection: !!withSelection });
+    guarded(() => commands.relativeJump(paneHandle, delta, !!withSelection));
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
@@ -1238,12 +1247,10 @@ function PaneInner(
     } else if (e.key == "Tab" && noModifiers) {
       safe(commands.focus(1 - paneHandle, null));
     } else if (e.key == "Escape" && noModifiers) {
-      command("cancel", {}, true);
-      command("set_filter", { filter: null });
+      guarded(() => commands.cancel(paneHandle), true);
+      guarded(() => commands.setFilter(paneHandle, null, null));
     } else if (e.key == insertKey && noModifiers) {
-      command("toggle_selected", {
-        focusNext: true,
-      });
+      guarded(() => commands.toggleSelected(paneHandle, null, true));
     } else {
       return false;
     }
@@ -1277,9 +1284,9 @@ function PaneInner(
     } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       openContextMenu();
     } else if (e.key == "Backspace" && noModifiers) {
-      command("navigate", { path: "..", exact: true }, true);
+      guarded(() => commands.navigate(paneHandle, "..", true), true);
     } else if (e.key == "/" && noModifiers) {
-      command("set_filter", { filter: "", mode: "filter" });
+      guarded(() => commands.setFilter(paneHandle, "", "filter"));
       inputRef.current?.focus();
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
@@ -1297,16 +1304,20 @@ function PaneInner(
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "/" && noModifiers && filter_mode === "quick_search") {
-      command("set_filter", { filter: filter || "", mode: "filter" });
+      guarded(() => commands.setFilter(paneHandle, filter || "", "filter"));
     } else if (
       filter_mode === "quick_search" &&
       e.key == "ArrowLeft" &&
       noModifiers
     ) {
-      if (filter !== null && filter.length > 0) {
-        command("set_filter", {
-          filter: focused!.substring(0, filter.length - 1),
-        });
+      if (filter !== null && focused && filter.length > 0) {
+        guarded(() =>
+          commands.setFilter(
+            paneHandle,
+            focused.substring(0, filter.length - 1),
+            null,
+          ),
+        );
       }
     } else if (
       filter_mode === "quick_search" &&
@@ -1314,9 +1325,13 @@ function PaneInner(
       noModifiers
     ) {
       if (filter !== null && focused && filter.length < focused.length) {
-        command("set_filter", {
-          filter: focused.substring(0, filter.length + 1),
-        });
+        guarded(() =>
+          commands.setFilter(
+            paneHandle,
+            focused.substring(0, filter.length + 1),
+            null,
+          ),
+        );
       }
     } else {
       return;
@@ -1484,14 +1499,14 @@ function PaneInner(
       ref={paneRef}
       className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
       data-pane-handle={paneHandle}
-      onClick={() => command("focus")}
+      onClick={() => guarded(() => commands.focus(paneHandle, null))}
       onMouseDown={(e) => {
         if (e.button === 3) {
           e.preventDefault();
-          command("cmd_navigate_back");
+          guarded(() => commands.cmdNavigateBack(paneHandle));
         } else if (e.button === 4) {
           e.preventDefault();
-          command("cmd_navigate_forward");
+          guarded(() => commands.cmdNavigateForward(paneHandle));
         }
       }}
     >
@@ -1500,10 +1515,12 @@ function PaneInner(
         filterMode={filter_mode}
         inputRef={inputRef}
         onKeyDown={onkeydownFilter}
-        onChange={(value) => command("set_filter", { filter: value })}
+        onChange={(value) =>
+          guarded(() => commands.setFilter(paneHandle, value, null))
+        }
         onFocus={() => {
           if (filter != null) {
-            command("set_filter", { filter: filter });
+            guarded(() => commands.setFilter(paneHandle, filter, null));
           }
         }}
       />
@@ -1557,9 +1574,14 @@ function PaneInner(
               sorting={sorting}
               column={column}
               onSort={(key, asc) => {
-                command("set_sorting", {
-                  sorting: { key, asc },
-                });
+                guarded(() =>
+                  commands.setSorting(paneHandle, {
+                    key: key as Parameters<
+                      typeof commands.setSorting
+                    >[1]["key"],
+                    asc,
+                  }),
+                );
               }}
             />
           ))}

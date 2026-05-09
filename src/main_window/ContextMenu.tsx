@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import * as CM from "@radix-ui/react-context-menu";
-import { safeCommand } from "../lib/ipc";
+
+import { commands as ipc } from "../lib/bindings";
+import { safe } from "../lib/ipc";
 import { usePreferences, CommandInfo } from "../lib/preferences";
 import styles from "./Menu.module.scss";
 
@@ -25,7 +27,6 @@ export function FileContextMenuContent({
   isParentDir,
 }: FileContextMenuProps) {
   const commands = useCommands();
-  const cmd = (command: string) => safeCommand(command, { paneHandle });
 
   return (
     <CM.Portal>
@@ -33,7 +34,7 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_open")}
+          onSelect={() => safe(ipc.cmdOpen(paneHandle))}
         >
           Open
           <Shortcut commands={commands} id="open" />
@@ -41,7 +42,7 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_view")}
+          onSelect={() => safe(ipc.cmdView(paneHandle))}
         >
           View
           <Shortcut commands={commands} id="view" />
@@ -49,14 +50,14 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_edit")}
+          onSelect={() => safe(ipc.cmdEdit(paneHandle))}
         >
           Edit
           <Shortcut commands={commands} id="edit" />
         </CM.Item>
         <CM.Item
           className={styles.item}
-          onSelect={() => cmd("cmd_copy_to_clipboard")}
+          onSelect={() => safe(ipc.cmdCopyToClipboard(paneHandle))}
         >
           Copy Path
           <Shortcut commands={commands} id="copy_to_clipboard" />
@@ -67,7 +68,7 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_rename")}
+          onSelect={() => safe(ipc.cmdRename(paneHandle))}
         >
           Rename
           <Shortcut commands={commands} id="rename" />
@@ -75,7 +76,7 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_delete_selected")}
+          onSelect={() => safe(ipc.cmdDeleteSelected(paneHandle))}
         >
           Delete
           <Shortcut commands={commands} id="delete_selected" />
@@ -85,7 +86,7 @@ export function FileContextMenuContent({
 
         <CM.Item
           className={styles.item}
-          onSelect={() => cmd("cmd_send_to_terminal")}
+          onSelect={() => safe(ipc.cmdSendToTerminal(paneHandle))}
         >
           Open in Terminal
           <Shortcut commands={commands} id="send_to_terminal" />
@@ -93,7 +94,7 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => cmd("cmd_properties")}
+          onSelect={() => safe(ipc.cmdProperties(paneHandle))}
         >
           Properties
           <Shortcut commands={commands} id="properties" />
@@ -113,7 +114,6 @@ export function PaneContextMenuContent({
   isHostLocal,
 }: PaneContextMenuProps) {
   const commands = useCommands();
-  const cmd = (command: string) => safeCommand(command, { paneHandle });
 
   return (
     <CM.Portal>
@@ -122,7 +122,7 @@ export function PaneContextMenuContent({
           <>
             <CM.Item
               className={styles.item}
-              onSelect={() => cmd("cmd_open_folder")}
+              onSelect={() => safe(ipc.cmdOpenFolder(paneHandle))}
             >
               Open in Default App
               <Shortcut commands={commands} id="open_folder" />
@@ -133,14 +133,14 @@ export function PaneContextMenuContent({
 
         <CM.Item
           className={styles.item}
-          onSelect={() => cmd("cmd_create_directory")}
+          onSelect={() => safe(ipc.cmdCreateDirectory(paneHandle))}
         >
           New Directory
           <Shortcut commands={commands} id="create_directory" />
         </CM.Item>
         <CM.Item
           className={styles.item}
-          onSelect={() => cmd("cmd_create_file")}
+          onSelect={() => safe(ipc.cmdCreateFile(paneHandle))}
         >
           New File
           <Shortcut commands={commands} id="create_file" />
@@ -150,7 +150,7 @@ export function PaneContextMenuContent({
 
         <CM.Item
           className={styles.item}
-          onSelect={() => cmd("cmd_directory_properties")}
+          onSelect={() => safe(ipc.cmdDirectoryProperties(paneHandle))}
         >
           Directory Properties
         </CM.Item>
