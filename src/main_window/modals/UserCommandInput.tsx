@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 
@@ -50,12 +51,14 @@ export default function UserCommandInput({
   }
 
   function submit(overrideConfirms?: boolean[]) {
-    invoke("execute_user_command", {
-      paneHandle: context?.pane_handle,
-      index: command_index,
-      promptResponses: promptValues,
-      confirmResponses: overrideConfirms ?? confirmValues,
-    });
+    safe(
+      commands.executeUserCommand(
+        context?.pane_handle ?? 0,
+        command_index,
+        promptValues,
+        overrideConfirms ?? confirmValues,
+      ),
+    );
   }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

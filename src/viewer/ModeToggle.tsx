@@ -1,6 +1,7 @@
 import styles from "./Viewer.module.scss";
-import { safeCommand } from "../lib/ipc";
+import { safe } from "../lib/ipc";
 import type { ViewerMode } from "./helpers";
+import { commands } from "../lib/bindings";
 
 interface ModeToggleProps {
   currentMode: ViewerMode;
@@ -43,7 +44,7 @@ export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
           key={mode}
           tabIndex={-1}
           className={`${styles.modeToggleBtn} ${mode === currentMode ? styles.modeToggleBtnActive : ""}`}
-          onClick={() => safeCommand("set_viewer_mode", { mode })}
+          onClick={() => safe(commands.setViewerMode(mode))}
         >
           {label}
         </button>

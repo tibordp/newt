@@ -3,6 +3,7 @@ import { executeCommandById } from "../lib/commands";
 import { PreferencesState } from "../lib/preferences";
 import { MainWindowState } from "./types";
 import styles from "./CommandBar.module.scss";
+import { commands } from "../lib/bindings";
 
 /** Commands to show in the bar, in display order. */
 const BAR_COMMANDS = [

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type CreateFileProps = CommonDialogProps & {
   path: VfsPath;
@@ -20,12 +21,9 @@ export default function CreateFile({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    safeCommand("touch_file", {
-      paneHandle: context?.pane_handle,
-      path,
-      name,
-      openEditor: open_editor,
-    });
+    safe(
+      commands.touchFile(context?.pane_handle ?? null, path, name, open_editor),
+    );
   }
 
   return (

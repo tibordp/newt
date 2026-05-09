@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import type { MainWindowState } from "../types";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./ConnectionLogDialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
@@ -45,7 +46,7 @@ export default function ConnectionLogContent({
       <div className={dialogStyles.dialogButtons}>
         <button
           type="button"
-          onClick={() => safeCommand("close_modal")}
+          onClick={() => safe(commands.closeModal())}
           autoFocus
         >
           Close

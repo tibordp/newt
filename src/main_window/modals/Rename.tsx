@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type RenameProps = CommonDialogProps & {
   base_path: VfsPath;
@@ -21,12 +22,9 @@ export default function Rename({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    safeCommand("rename", {
-      paneHandle: context?.pane_handle,
-      basePath: base_path,
-      oldName: name,
-      newName: newName,
-    });
+    safe(
+      commands.rename(context?.pane_handle ?? null, base_path, name, newName),
+    );
   }
 
   useEffect(() => {

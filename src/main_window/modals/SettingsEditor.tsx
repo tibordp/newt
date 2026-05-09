@@ -1,14 +1,14 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
 
-import { safeCommand } from "../../lib/ipc";
+import { safe, unwrap } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
 import styles from "./SettingsEditor.module.scss";
 import { CommandsEditor } from "./settings/CommandsEditor";
 import { KeybindingsEditor } from "./settings/KeybindingsEditor";
 import { CustomWidget, SettingControl } from "./settings/SettingControls";
 import { extractSettings } from "./settings/schema";
+import { commands } from "../../lib/bindings";
 
 type Tab = "settings" | "keybindings" | "commands";
 
@@ -53,7 +53,7 @@ export default function SettingsEditor({
 
   const onUpdate = async (key: string, value: any) => {
     try {
-      await invoke("update_preference", { key, value });
+      await unwrap(commands.updatePreference(key, value));
     } catch (e) {
       console.error("Failed to update preference:", e);
     }
@@ -61,7 +61,7 @@ export default function SettingsEditor({
 
   const onReset = async (key: string) => {
     try {
-      await invoke("reset_preference", { key });
+      await unwrap(commands.resetPreference(key));
     } catch (e) {
       console.error("Failed to reset preference:", e);
     }
@@ -205,10 +205,10 @@ export default function SettingsEditor({
         )}
       </div>
       <div className={styles.footer}>
-        <button onClick={() => safeCommand("open_config_file")}>
+        <button onClick={() => safe(commands.openConfigFile())}>
           Open Settings File
         </button>
-        <button onClick={() => safeCommand("close_modal")}>Close</button>
+        <button onClick={() => safe(commands.closeModal())}>Close</button>
       </div>
     </Dialog.Content>
   );

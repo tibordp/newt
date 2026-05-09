@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { safeCommand } from "../lib/ipc";
+import { safe } from "../lib/ipc";
 import * as Dialog from "@radix-ui/react-dialog";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
+import { commands } from "../lib/bindings";
 
 export type IssueAction = "skip" | "overwrite" | "retry";
 
@@ -157,12 +158,7 @@ function IssueResolution({
 
   const resolve = useCallback(
     (action: IssueAction) => {
-      safeCommand("resolve_issue", {
-        operationId: op.id,
-        issueId: issue.issue_id,
-        action,
-        applyToAll,
-      });
+      safe(commands.resolveIssue(op.id, issue.issue_id, action, applyToAll));
     },
     [op.id, issue.issue_id, applyToAll],
   );
@@ -211,9 +207,7 @@ function OperationRow({ op }: { op: OperationState }) {
   return (
     <div
       className={styles.operationRow}
-      onClick={() =>
-        safeCommand("foreground_operation", { operationId: op.id })
-      }
+      onClick={() => safe(commands.foregroundOperation(op.id))}
     >
       <div className={styles.operationInfo}>
         <span className={styles.operationKind}>{op.kind}</span>
@@ -254,20 +248,12 @@ function OperationRow({ op }: { op: OperationState }) {
         onClick={(e) => e.stopPropagation()}
       >
         {isActive && (
-          <button
-            onClick={() =>
-              safeCommand("cancel_operation", { operationId: op.id })
-            }
-          >
+          <button onClick={() => safe(commands.cancelOperation(op.id))}>
             Cancel
           </button>
         )}
         {isFinished && (
-          <button
-            onClick={() =>
-              safeCommand("dismiss_operation", { operationId: op.id })
-            }
-          >
+          <button onClick={() => safe(commands.dismissOperation(op.id))}>
             Dismiss
           </button>
         )}
@@ -286,7 +272,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
   const isWaiting = op.status === "waiting_for_input" && op.issue;
 
   const backgroundOp = useCallback(() => {
-    safeCommand("background_operation", { operationId: op.id });
+    safe(commands.backgroundOperation(op.id));
   }, [op.id]);
 
   const fraction = progressFraction(op);
@@ -373,11 +359,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
           <div className={modalStyles.footer}>
             {isActive && (
               <>
-                <button
-                  onClick={() =>
-                    safeCommand("cancel_operation", { operationId: op.id })
-                  }
-                >
+                <button onClick={() => safe(commands.cancelOperation(op.id))}>
                   Cancel
                 </button>
                 <button className="suggested" autoFocus onClick={backgroundOp}>
@@ -390,9 +372,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
               op.status === "cancelled") && (
               <button
                 autoFocus
-                onClick={() =>
-                  safeCommand("dismiss_operation", { operationId: op.id })
-                }
+                onClick={() => safe(commands.dismissOperation(op.id))}
               >
                 Close
               </button>

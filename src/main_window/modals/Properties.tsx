@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./Properties.module.scss";
@@ -286,15 +287,17 @@ export default function Properties({
   const isDirty = modeChanged || ownerChanged || groupChanged;
 
   function onApply() {
-    safeCommand("set_metadata", {
-      paneHandle: context?.pane_handle,
-      paths,
-      modeSet,
-      modeClear,
-      uid: ownerChanged ? parseOwnerId(ownerEdit.value) : null,
-      gid: groupChanged ? parseOwnerId(groupEdit.value) : null,
-      recursive,
-    });
+    safe(
+      commands.setMetadata(
+        context?.pane_handle ?? null,
+        paths,
+        modeSet,
+        modeClear,
+        ownerChanged ? parseOwnerId(ownerEdit.value) : null,
+        groupChanged ? parseOwnerId(groupEdit.value) : null,
+        recursive,
+      ),
+    );
   }
 
   const typeLabel = is_symlink

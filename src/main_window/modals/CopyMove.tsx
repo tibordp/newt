@@ -1,10 +1,11 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { VfsPath } from "../../lib/types";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./CopyMove.module.scss";
+import { commands } from "../../lib/bindings";
 
 type CopyMoveProps = CommonDialogProps & {
   kind: string;
@@ -34,17 +35,14 @@ export default function CopyMove({
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    safeCommand("start_copy_move", {
-      kind,
-      sources,
-      destination,
-      options: {
+    safe(
+      commands.startCopyMove(kind, sources, destination, {
         preserve_timestamps: preserveTimestamps,
         preserve_owner: preserveOwner,
         preserve_group: preserveGroup,
         create_symlink: createSymlink,
-      },
-    });
+      }),
+    );
   }
 
   return (

@@ -1,5 +1,4 @@
-import { safeCommand } from "../../lib/ipc";
-
+import { safe } from "../../lib/ipc";
 import About from "./About";
 import Confirm from "./Confirm";
 import ConnectRemote from "./ConnectRemote";
@@ -14,6 +13,7 @@ import Properties from "./Properties";
 import Rename from "./Rename";
 import Debug from "./Debug";
 import UserCommandInput from "./UserCommandInput";
+import { commands } from "../../lib/bindings";
 
 export type ModalState = {
   type: string;
@@ -33,7 +33,7 @@ export type CommonDialogProps = {
 export function ModalContent({ state }: { state: ModalState | null }) {
   const commonProps = {
     cancel: () => {
-      safeCommand("close_modal");
+      safe(commands.closeModal());
     },
     context: state?.context,
   };

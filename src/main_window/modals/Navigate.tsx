@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type NavigateProps = CommonDialogProps & {
   display_path: string;
@@ -18,11 +19,7 @@ export default function Navigate({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    safeCommand("navigate", {
-      paneHandle: context?.pane_handle,
-      path: newPath,
-      exact: false,
-    });
+    safe(commands.navigate(context?.pane_handle ?? 0, newPath, false));
   }
 
   useEffect(() => {

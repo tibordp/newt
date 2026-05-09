@@ -1,5 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+import { commands } from "../lib/bindings";
+import { safeSilent, unwrap } from "../lib/ipc";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -31,7 +33,7 @@ self.MonacoEnvironment = {
 loader.config({ monaco });
 
 import styles from "./Editor.module.scss";
-import { safeCommand, useRemoteState } from "../lib/ipc";
+import { useRemoteState, safe } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -222,7 +224,7 @@ function Editor() {
   useEffect(() => {
     if (!displayPath) return;
     const title = `${dirty ? "* " : ""}${displayPath} - Editor`;
-    invoke("set_window_title", { title }).catch(console.error);
+    safeSilent(commands.setWindowTitle(title));
   }, [displayPath, dirty]);
 
   // Load file when file path becomes available
@@ -236,20 +238,13 @@ function Editor() {
     (async () => {
       try {
         // Get file info for language detection
-        const info: FileInfo = await invoke("file_details", {
-          path: filePath,
-        });
+        const info = (await unwrap(commands.fileDetails(filePath))) as FileInfo;
         setFileSize(info.size);
         const detectedLang = detectLanguage(displayPath, info.mime_type);
-        invoke("set_editor_language", { language: detectedLang }).catch(
-          () => {},
-        );
+        safeSilent(commands.setEditorLanguage(detectedLang));
 
         // Read the entire file (with size limit enforced server-side)
-        const data: number[] = await invoke("read_file", {
-          path: filePath,
-          maxSize: MAX_FILE_SIZE,
-        });
+        const data = await unwrap(commands.readFile(filePath, MAX_FILE_SIZE));
         const decoder = new TextDecoder("utf-8", { fatal: false });
         const text = decoder.decode(new Uint8Array(data));
 
@@ -273,14 +268,14 @@ function Editor() {
   // Save handler
   const save = useCallback(async () => {
     const ed = editorRef.current;
-    if (!ed) return;
+    if (!ed || !filePath) return;
 
     setSaving(true);
     try {
       const text = ed.getValue();
       const encoder = new TextEncoder();
       const data = Array.from(encoder.encode(text));
-      await invoke("write_file", { path: filePath, data });
+      await unwrap(commands.writeFile(filePath, data));
       setDirty(false);
       setFileSize(data.length);
     } catch (e: unknown) {
@@ -299,7 +294,7 @@ function Editor() {
       );
       if (!ok) return;
     }
-    safeCommand("destroy_window");
+    safe(commands.destroyWindow());
   }, []);
 
   // Intercept window close when dirty

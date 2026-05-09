@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { invoke } from "@tauri-apps/api/core";
-import { safeCommand, tryCommand } from "../../lib/ipc";
+import { safe, safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type ConnectRemoteProps = CommonDialogProps & {
   host: string;
@@ -19,24 +19,22 @@ export default function ConnectRemote({ host, cancel }: ConnectRemoteProps) {
 
   const { pending, error, run } = useAsyncAction(async () => {
     if (saveProfile && connectionName) {
-      try {
-        const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-        await invoke("cmd_save_connection", {
-          profile: {
+      const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      await safeSilent(
+        commands.cmdSaveConnection(
+          {
             id,
             name: connectionName,
             type: "remote",
             host: newHost,
           },
-          secret: null,
-        });
-      } catch (err) {
-        console.error("Failed to save connection profile:", err);
-      }
+          null,
+        ),
+      );
     }
-    const err = await tryCommand("connect_remote", { host: newHost });
+    const err = await tryRun(commands.connectRemote(newHost));
     if (err) return err;
-    await safeCommand("close_modal");
+    await safe(commands.closeModal());
     return null;
   });
 

@@ -8,12 +8,11 @@ import {
   memo,
   Fragment,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { commands } from "../lib/bindings";
-import { safeCommand, safeCommandSilent } from "../lib/ipc";
+import { safe, safeSilent, safeCommand } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import { ModalState } from "./modals/ModalContent";
@@ -68,11 +67,7 @@ function PathBreadcrumbs(props: {
                 if (i === breadcrumbs.length - 1) {
                   commands.dialog("navigate", paneHandle);
                 } else {
-                  safeCommand("navigate", {
-                    paneHandle,
-                    path: crumb.nav_path,
-                    exact: true,
-                  });
+                  safe(commands.navigate(paneHandle, crumb.nav_path, true));
                 }
               }}
             >
@@ -233,7 +228,7 @@ function VfsSelector({
     <DropdownMenu.Root
       open={open}
       onOpenChange={(v) => {
-        if (!v && !openingDialogRef.current) safeCommand("close_modal");
+        if (!v && !openingDialogRef.current) safe(commands.closeModal());
         openingDialogRef.current = false;
       }}
     >
@@ -249,7 +244,7 @@ function VfsSelector({
           onMouseDown={(e) => {
             // Activate this pane without letting the .pane onClick steal focus later
             e.stopPropagation();
-            safeCommandSilent("focus", { paneHandle });
+            safeSilent(commands.focus(paneHandle, null));
           }}
         >
           {vfsDisplayName} &#x25BE;
@@ -291,11 +286,13 @@ function VfsSelector({
                       paneHandle,
                     );
                   } else {
-                    safeCommand("switch_vfs", {
-                      paneHandle,
-                      vfsId: target.vfs_id,
-                      typeName: target.type_name,
-                    });
+                    safe(
+                      commands.switchVfs(
+                        paneHandle,
+                        target.vfs_id,
+                        target.type_name,
+                      ),
+                    );
                   }
                 }}
               >
@@ -313,10 +310,9 @@ function VfsSelector({
                     className={menuStyles.itemDismiss}
                     onClick={(e) => {
                       e.stopPropagation();
-                      safeCommand("unmount_vfs", {
-                        paneHandle,
-                        vfsId: target.vfs_id,
-                      });
+                      if (target.vfs_id !== null) {
+                        safe(commands.unmountVfs(paneHandle, target.vfs_id));
+                      }
                     }}
                     tabIndex={-1}
                   >
@@ -427,12 +423,9 @@ function HistoryNavigator({
     (target: number) => {
       committedRef.current = true;
       if (target === currentIndex) {
-        safeCommand("close_modal");
+        safe(commands.closeModal());
       } else {
-        safeCommand("navigate_history", {
-          paneHandle,
-          targetIndex: target,
-        });
+        safe(commands.navigateHistory(paneHandle, target));
       }
     },
     [currentIndex, paneHandle],
@@ -440,7 +433,7 @@ function HistoryNavigator({
 
   const abort = useCallback(() => {
     committedRef.current = true;
-    safeCommand("close_modal");
+    safe(commands.closeModal());
   }, []);
 
   // Keep the previewed item visible when stepping through a long history.
@@ -820,12 +813,14 @@ function PaneInner(
 
   const sendDragSelection = useCallback(
     (drag: DragState, startIdx: number, endIdx: number) => {
-      safeCommandSilent("set_selection_by_indices", {
-        paneHandle,
-        start: startIdx,
-        end: endIdx,
-        additive: drag.mode === "ctrl",
-      });
+      safeSilent(
+        commands.setSelectionByIndices(
+          paneHandle,
+          startIdx,
+          endIdx,
+          drag.mode === "ctrl",
+        ),
+      );
     },
     [paneHandle],
   );
@@ -930,7 +925,7 @@ function PaneInner(
           clearInterval(drag.scrollIntervalId);
         if (drag.active) {
           suppressClickRef.current = true;
-          safeCommandSilent("end_drag_selection", { paneHandle });
+          safeSilent(commands.endDragSelection(paneHandle));
         }
         hideDragRect();
         dragRef.current = null;
@@ -964,7 +959,7 @@ function PaneInner(
         suppressClickRef.current = true;
         // Finalize the drag so the next Ctrl+drag snapshots the
         // accumulated selection as its new base.
-        safeCommandSilent("end_drag_selection", { paneHandle });
+        safeSilent(commands.endDragSelection(paneHandle));
       }
       hideDragRect();
       dragRef.current = null;
@@ -1014,12 +1009,9 @@ function PaneInner(
         "li[data-name]",
       ) as HTMLElement | null;
       if (li?.dataset.name) {
-        safeCommandSilent("focus", {
-          paneHandle,
-          filename: li.dataset.name,
-        });
+        safeSilent(commands.focus(paneHandle, li.dataset.name));
       } else {
-        safeCommandSilent("focus", { paneHandle });
+        safeSilent(commands.focus(paneHandle, null));
       }
 
       const rect = container.getBoundingClientRect();
@@ -1057,7 +1049,7 @@ function PaneInner(
       if (!fileName || fileName === "..") return;
 
       if (!e.shiftKey) {
-        safeCommandSilent("focus", { paneHandle, filename: fileName });
+        safeSilent(commands.focus(paneHandle, fileName));
       }
 
       e.preventDefault();
@@ -1093,7 +1085,7 @@ function PaneInner(
       // Detect mouseup that happened outside the window
       if (e.buttons === 0) {
         if (dnd.active) {
-          safeCommandSilent("cancel_dnd");
+          safeSilent(commands.cancelDnd());
           suppressClickRef.current = true;
         }
         cleanupDnd();
@@ -1124,7 +1116,7 @@ function PaneInner(
           ghost.style.display = "flex";
         }
 
-        safeCommandSilent("start_dnd", { paneHandle, files: dnd.files });
+        safeSilent(commands.startDnd(paneHandle, dnd.files));
       }
 
       // Position ghost
@@ -1163,7 +1155,7 @@ function PaneInner(
 
       const target = resolveDropTarget(e.clientX, e.clientY);
       if (!target) {
-        safeCommandSilent("cancel_dnd");
+        safeSilent(commands.cancelDnd());
         return;
       }
 
@@ -1180,15 +1172,11 @@ function PaneInner(
 
       // Same pane requires a directory target (otherwise it's a no-op)
       if (isSamePane && !subdirectory) {
-        safeCommandSilent("cancel_dnd");
+        safeSilent(commands.cancelDnd());
         return;
       }
 
-      safeCommand("execute_dnd", {
-        destinationPane: target.paneHandle,
-        subdirectory,
-        isMove: e.shiftKey,
-      });
+      safe(commands.executeDnd(target.paneHandle, subdirectory, e.shiftKey));
     };
 
     document.addEventListener("mousemove", onDndMouseMove);
@@ -1204,7 +1192,7 @@ function PaneInner(
     const dnd = dndRef.current;
     if (dnd?.active) {
       cleanupDnd();
-      safeCommandSilent("cancel_dnd");
+      safeSilent(commands.cancelDnd());
     }
     dndRef.current = null;
   }, [path]);
@@ -1214,7 +1202,7 @@ function PaneInner(
   const onOpen = useCallback(
     (file: File) => {
       if (!file) return;
-      safeCommand("enter", { paneHandle });
+      safe(commands.enter(paneHandle));
     },
     [paneHandle],
   );
@@ -1248,7 +1236,7 @@ function PaneInner(
       const focusedFile = file_window.items[focusedIndex - file_window.offset];
       if (focusedFile) onOpen(focusedFile);
     } else if (e.key == "Tab" && noModifiers) {
-      invoke("focus", { paneHandle: 1 - paneHandle });
+      safe(commands.focus(1 - paneHandle, null));
     } else if (e.key == "Escape" && noModifiers) {
       command("cancel", {}, true);
       command("set_filter", { filter: null });
@@ -1345,17 +1333,12 @@ function PaneInner(
       }
       // Focus is handled by mouseDown (both <ul> and DnD handlers).
       // onClick only handles modifier-key actions.
+      const name = e.currentTarget.dataset.name;
+      if (!name) return;
       if (e.ctrlKey) {
-        safeCommand("toggle_selected", {
-          paneHandle,
-          filename: e.currentTarget.dataset.name,
-          focusNext: false,
-        });
+        safe(commands.toggleSelected(paneHandle, name, false));
       } else if (e.shiftKey) {
-        safeCommand("select_range", {
-          paneHandle,
-          filename: e.currentTarget.dataset.name,
-        });
+        safe(commands.selectRange(paneHandle, name));
       }
     },
     [paneHandle],
@@ -1385,7 +1368,7 @@ function PaneInner(
 
       // If right-clicked file is not in the selection, focus it (clearing selection)
       if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
-        safeCommandSilent("focus", { paneHandle, filename: fileName });
+        safeSilent(commands.focus(paneHandle, fileName));
       }
     },
     [paneHandle],
@@ -1400,11 +1383,7 @@ function PaneInner(
       const firstVisible = Math.floor(container.scrollTop / ITEM_SIZE);
       const visibleCount = Math.ceil(container.clientHeight / ITEM_SIZE);
       lastViewportReportRef.current = [firstVisible, visibleCount, -1];
-      safeCommandSilent("set_viewport", {
-        paneHandle,
-        firstVisible,
-        visibleCount,
-      });
+      safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
     }
   }, [path, paneHandle]);
 
@@ -1451,11 +1430,7 @@ function PaneInner(
       return;
     }
     lastViewportReportRef.current = [firstVisible, visibleCount, fw.offset];
-    safeCommandSilent("set_viewport", {
-      paneHandle,
-      firstVisible,
-      visibleCount,
-    });
+    safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
   };
 
   const widthPrefix = `pane-${paneHandle}-column-`;
@@ -1484,11 +1459,13 @@ function PaneInner(
       const target = resolveDropTarget(x, y);
       clearDropHighlights();
       if (paths?.length) {
-        safeCommand("external_drop", {
-          paneHandle,
-          subdirectory: target?.subdirectory ?? null,
-          paths,
-        });
+        safe(
+          commands.externalDrop(
+            paneHandle,
+            target?.subdirectory ?? null,
+            paths,
+          ),
+        );
       }
     };
 

@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
 
+import { commands as ipc } from "../../../lib/bindings";
+import { unwrap, safeSilent } from "../../../lib/ipc";
 import {
   CommandInfo,
   ResolvedBinding,
@@ -84,12 +85,9 @@ export function CommandsEditor({
       // resolution order, and the user can later Reset either side to
       // reclaim — Reset is symmetric and explicit.
       if (isAdding) {
-        await invoke("add_user_command_entry", { entry: editForm });
+        await unwrap(ipc.addUserCommandEntry(editForm));
       } else if (editingIndex !== null) {
-        await invoke("update_user_command_entry", {
-          index: editingIndex,
-          entry: editForm,
-        });
+        await unwrap(ipc.updateUserCommandEntry(editingIndex, editForm));
       }
       setEditingIndex(null);
       setIsAdding(false);
@@ -100,13 +98,9 @@ export function CommandsEditor({
   };
 
   const removeCommand = async (index: number) => {
-    try {
-      await invoke("remove_user_command_entry", { index });
-      if (editingIndex === index) {
-        setEditingIndex(null);
-      }
-    } catch (e) {
-      console.error("Failed to remove command:", e);
+    await safeSilent(ipc.removeUserCommandEntry(index));
+    if (editingIndex === index) {
+      setEditingIndex(null);
     }
   };
 

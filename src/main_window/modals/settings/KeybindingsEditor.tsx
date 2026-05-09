@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { Fragment, useMemo, useState } from "react";
 
+import { commands as ipc } from "../../../lib/bindings";
+import { unwrap, safeSilent } from "../../../lib/ipc";
 import { CommandInfo, ResolvedBinding } from "../../../lib/preferences";
 import styles from "../SettingsEditor.module.scss";
 import {
@@ -75,11 +76,13 @@ export function KeybindingsEditor({
       // We do NOT pre-clear conflicting bindings: the new binding wins by
       // resolution order and the loser's row visibly shows as shadowed. To
       // reclaim, the user can Reset either side — Reset is symmetric.
-      await invoke("set_command_keybinding", {
-        commandId: edit.commandId,
-        newKey: edit.key || null,
-        newWhen: cmd.default_when ?? cmd.when ?? null,
-      });
+      await unwrap(
+        ipc.setCommandKeybinding(
+          edit.commandId,
+          edit.key || null,
+          cmd.default_when ?? cmd.when ?? null,
+        ),
+      );
       setEdit(null);
       setError(null);
     } catch (e: any) {
@@ -88,11 +91,7 @@ export function KeybindingsEditor({
   };
 
   const reset = async (cmd: CommandInfo) => {
-    try {
-      await invoke("reset_command_keybinding", { commandId: cmd.id });
-    } catch (e) {
-      console.error("Failed to reset keybinding:", e);
-    }
+    await safeSilent(ipc.resetCommandKeybinding(cmd.id));
   };
 
   return (

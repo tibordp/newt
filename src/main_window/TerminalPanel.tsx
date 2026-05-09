@@ -1,4 +1,5 @@
-import { safeCommandSilent } from "../lib/ipc";
+import { commands } from "../lib/bindings";
+import { safeSilent } from "../lib/ipc";
 import Terminal from "./Terminal";
 import styles from "./TerminalPanel.module.scss";
 import type { Terminal as TerminalType } from "./types";
@@ -23,9 +24,7 @@ export default function TerminalPanel({
           <button
             key={term.handle}
             className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""} ${term.defunct ? styles.defunct : ""}`}
-            onClick={() =>
-              safeCommandSilent("activate_terminal", { handle: term.handle })
-            }
+            onClick={() => safeSilent(commands.activateTerminal(term.handle))}
           >
             <span>
               Terminal {i + 1}
@@ -35,7 +34,7 @@ export default function TerminalPanel({
               className={styles.tabClose}
               onClick={(e) => {
                 e.stopPropagation();
-                safeCommandSilent("close_terminal", { handle: term.handle });
+                safeSilent(commands.closeTerminal(term.handle));
               }}
             >
               ×
@@ -44,7 +43,7 @@ export default function TerminalPanel({
         ))}
         <button
           className={styles.addButton}
-          onClick={() => safeCommandSilent("create_terminal")}
+          onClick={() => safeSilent(commands.cmdCreateTerminal(0))}
           title="New Terminal"
         >
           +

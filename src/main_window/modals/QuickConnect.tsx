@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { invoke } from "@tauri-apps/api/core";
 import { commands } from "../../lib/bindings";
-import { safeCommand } from "../../lib/ipc";
+import { safe, safeSilent } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
@@ -67,10 +66,12 @@ export default function QuickConnect({
 
   const onSelect = (value: string) => {
     if (pendingDelete !== null) return;
-    safeCommand("connect_profile", {
-      paneHandle: paneHandle ?? 0,
-      id: value,
-    });
+    safe(
+      commands.connectProfile(
+        typeof paneHandle === "number" ? paneHandle : 0,
+        value,
+      ),
+    );
   };
 
   const requestDelete = (id: string, e?: React.MouseEvent) => {
@@ -80,15 +81,13 @@ export default function QuickConnect({
   };
 
   const confirmDelete = (id: string) => {
-    invoke("cmd_delete_connection", { id })
-      .then(() => {
-        // Re-open to refresh the list
-        commands.dialog(
-          "quick_connect",
-          typeof paneHandle === "number" ? paneHandle : null,
-        );
-      })
-      .catch(console.error);
+    safeSilent(commands.cmdDeleteConnection(id)).then(() => {
+      // Re-open to refresh the list
+      commands.dialog(
+        "quick_connect",
+        typeof paneHandle === "number" ? paneHandle : null,
+      );
+    });
     setPendingDelete(null);
   };
 

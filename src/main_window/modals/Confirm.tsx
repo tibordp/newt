@@ -1,7 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type ConfirmProps = CommonDialogProps & {
   message: string;
@@ -9,7 +10,7 @@ type ConfirmProps = CommonDialogProps & {
 
 export default function Confirm({ message, cancel }: ConfirmProps) {
   function onConfirm() {
-    safeCommand("confirm_action");
+    safe(commands.confirmAction());
   }
 
   return (

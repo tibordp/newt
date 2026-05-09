@@ -4,12 +4,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import {
   TerminalData,
   registerTerminalDataHandler,
-  safeCommandSilent,
+  safeSilent,
 } from "../lib/ipc";
 import "@xterm/xterm/css/xterm.css";
 import styles from "./Terminal.module.scss";
 
 import type { ITheme } from "@xterm/xterm";
+import { commands } from "../lib/bindings";
 
 const lightTheme: ITheme = {
   background: "#ffffff",
@@ -120,7 +121,7 @@ export default function Terminal({
       }
       // Defunct terminal: Enter closes it
       if (defunctRef.current && e.key === "Enter") {
-        safeCommandSilent("close_terminal", { handle });
+        safeSilent(commands.closeTerminal(handle));
         return false;
       }
       // Ctrl+` — toggle terminal panel
@@ -147,17 +148,13 @@ export default function Terminal({
 
     const onUserInput = (data: string) => {
       const binaryData = new TextEncoder().encode(data);
-      safeCommandSilent("terminal_write", { handle, data: [...binaryData] });
+      safeSilent(commands.terminalWrite(handle, [...binaryData]));
     };
 
     term.onBinary(onUserInput);
     term.onData(onUserInput);
     term.onResize((size) => {
-      safeCommandSilent("terminal_resize", {
-        handle,
-        rows: size.rows,
-        cols: size.cols,
-      });
+      safeSilent(commands.terminalResize(handle, size.rows, size.cols));
     });
 
     const fitAddon = new FitAddon();
@@ -213,7 +210,7 @@ export default function Terminal({
         className={styles.terminal}
         ref={ref}
         tabIndex={-1}
-        onFocus={() => safeCommandSilent("terminal_focus", { handle })}
+        onFocus={() => safeSilent(commands.terminalFocus(handle))}
       />
     </div>
   );

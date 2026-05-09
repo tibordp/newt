@@ -1,23 +1,15 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import * as Dialog from "@radix-ui/react-dialog";
-import { tryCommand } from "../../lib/ipc";
+import { safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type CredentialMode = "default" | "iam_user" | "assume_role" | "profile";
 
-type S3Credentials = {
-  access_key_id?: string;
-  secret_access_key?: string;
-  session_token?: string;
-  profile?: string;
-  endpoint_url?: string;
-  role_arn?: string;
-  external_id?: string;
-};
+import type { S3Credentials } from "../../lib/bindings";
 
 export default function MountS3({ cancel, context }: CommonDialogProps) {
   const [region, setRegion] = useState("");
@@ -48,25 +40,31 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
 
   function buildCredentials(): S3Credentials {
     const base: S3Credentials = {
-      endpoint_url: endpointUrl || undefined,
+      access_key_id: null,
+      secret_access_key: null,
+      session_token: null,
+      profile: null,
+      endpoint_url: endpointUrl || null,
+      role_arn: null,
+      external_id: null,
     };
     switch (credentialMode) {
       case "iam_user":
         return {
           ...base,
-          access_key_id: accessKeyId || undefined,
-          secret_access_key: secretAccessKey || undefined,
+          access_key_id: accessKeyId || null,
+          secret_access_key: secretAccessKey || null,
         };
       case "assume_role":
         return {
           ...base,
-          role_arn: roleArn || undefined,
-          external_id: externalId || undefined,
+          role_arn: roleArn || null,
+          external_id: externalId || null,
         };
       case "profile":
         return {
           ...base,
-          profile: awsProfileName || undefined,
+          profile: awsProfileName || null,
         };
       default:
         return base;
@@ -78,41 +76,41 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
 
     const finalName = displayedConnectionName;
     if (saveProfile && finalName) {
-      try {
-        const id = finalName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-        const secret =
-          credentialMode === "iam_user" && accessKeyId && secretAccessKey
-            ? JSON.stringify({
-                access_key_id: accessKeyId,
-                secret_access_key: secretAccessKey,
-              })
-            : undefined;
-        await invoke("cmd_save_connection", {
-          profile: {
+      const id = finalName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const secret =
+        credentialMode === "iam_user" && accessKeyId && secretAccessKey
+          ? JSON.stringify({
+              access_key_id: accessKeyId,
+              secret_access_key: secretAccessKey,
+            })
+          : null;
+      await safeSilent(
+        commands.cmdSaveConnection(
+          {
             id,
             name: finalName,
             type: "s3",
-            region: region || undefined,
-            bucket: bucket || undefined,
-            endpoint_url: endpointUrl || undefined,
+            region: region || null,
+            bucket: bucket || null,
+            endpoint_url: endpointUrl || null,
             credential_mode: credentialMode,
-            profile: awsProfileName || undefined,
-            role_arn: roleArn || undefined,
-            external_id: externalId || undefined,
+            profile: awsProfileName || null,
+            role_arn: roleArn || null,
+            external_id: externalId || null,
           },
-          secret: secret ?? null,
-        });
-      } catch (err) {
-        console.error("Failed to save connection profile:", err);
-      }
+          secret,
+        ),
+      );
     }
 
-    return tryCommand("mount_s3", {
-      paneHandle: context?.pane_handle,
-      region: region || null,
-      bucket: bucket || null,
-      credentials,
-    });
+    return tryRun(
+      commands.mountS3(
+        context?.pane_handle ?? 0,
+        region || null,
+        bucket || null,
+        credentials,
+      ),
+    );
   });
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

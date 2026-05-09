@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { tryCommand } from "../../lib/ipc";
+import { tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type MountK8sProps = CommonDialogProps & {
   k8s_context: string;
@@ -19,10 +20,7 @@ export default function MountK8s({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { pending, error, run } = useAsyncAction(() =>
-    tryCommand("mount_k8s", {
-      paneHandle: context?.pane_handle,
-      context: k8sContext,
-    }),
+    tryRun(commands.mountK8s(context?.pane_handle ?? 0, k8sContext)),
   );
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { invoke } from "@tauri-apps/api/core";
-import { tryCommand } from "../../lib/ipc";
+import { safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 type MountSftpProps = CommonDialogProps & {
   host: string;
@@ -19,25 +19,20 @@ export default function MountSftp({ host, cancel, context }: MountSftpProps) {
 
   const { pending, error, run } = useAsyncAction(async () => {
     if (saveProfile && connectionName) {
-      try {
-        const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-        await invoke("cmd_save_connection", {
-          profile: {
+      const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      await safeSilent(
+        commands.cmdSaveConnection(
+          {
             id,
             name: connectionName,
             type: "sftp",
             host: newHost,
           },
-          secret: null,
-        });
-      } catch (err) {
-        console.error("Failed to save connection profile:", err);
-      }
+          null,
+        ),
+      );
     }
-    return tryCommand("mount_sftp", {
-      paneHandle: context?.pane_handle,
-      host: newHost,
-    });
+    return tryRun(commands.mountSftp(context?.pane_handle ?? 0, newHost));
   });
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {

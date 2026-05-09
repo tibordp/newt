@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Event } from "@tauri-apps/api/event";
+import { commands } from "../lib/bindings";
 
 export type ResolvedBinding = {
   key: string;

@@ -13,7 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import styles from "./Viewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
-import { safeCommand } from "../lib/ipc";
+import { safe } from "../lib/ipc";
 import { GoToBar } from "./GoToDialog";
 import { SearchBar } from "./SearchBar";
 import {
@@ -27,6 +27,7 @@ import {
   type VfsPath,
 } from "./helpers";
 import { ModeToggle } from "./ModeToggle";
+import { commands } from "../lib/bindings";
 
 interface TextPosition {
   line: number;
@@ -397,12 +398,9 @@ export function TextViewer({
     if (!range) return;
     const [startByte, endByte] = range;
     if (endByte <= startByte) return;
-    safeCommand("copy_viewer_range", {
-      path: vfsPath,
-      offset: startByte,
-      length: endByte - startByte,
-      format: "text",
-    });
+    safe(
+      commands.copyViewerRange(vfsPath, startByte, endByte - startByte, "text"),
+    );
   }, [vfsPath, selectionByteRange]);
 
   const selectAll = useCallback(() => {
