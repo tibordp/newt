@@ -80,6 +80,19 @@ fn notify_round_trip() {
 }
 
 #[test]
+fn signal_round_trip() {
+    let payload = Bytes::from_static(b"keystroke");
+    let decoded = round_trip(Message::Signal(Api(103), payload.clone()));
+    match decoded {
+        Message::Signal(api, data) => {
+            assert_eq!(api, Api(103));
+            assert_eq!(data, payload);
+        }
+        other => panic!("expected Signal, got {:?}", other),
+    }
+}
+
+#[test]
 fn empty_payload_invoke_request() {
     let decoded = round_trip(Message::InvokeRequest(Api(0), RequestId(0), Bytes::new()));
     match decoded {
@@ -241,6 +254,7 @@ fn message_priority_classification() {
     assert!(Message::InvokeCancel(RequestId(0)).is_high_priority());
     assert!(!Message::InvokeResponse(RequestId(0), Bytes::new()).is_high_priority());
     assert!(!Message::Notify(Api(0), Bytes::new()).is_high_priority());
+    assert!(Message::Signal(Api(0), Bytes::new()).is_high_priority());
 }
 
 // --- Outbox priority tests ---

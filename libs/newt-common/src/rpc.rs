@@ -31,13 +31,20 @@ pub enum Message {
     InvokeResponse(RequestId, bytes::Bytes),
     InvokeCancel(RequestId),
     Notify(Api, bytes::Bytes),
+    /// Like `Notify` but on the high-priority outbox lane. Use for small,
+    /// interactive fire-and-forget messages (e.g. terminal keystrokes) that
+    /// must not be queued behind bulk `Notify` streams.
+    Signal(Api, bytes::Bytes),
 }
 
 impl Message {
     fn is_high_priority(&self) -> bool {
         matches!(
             self,
-            Message::Ping(_) | Message::InvokeRequest(..) | Message::InvokeCancel(_)
+            Message::Ping(_)
+                | Message::InvokeRequest(..)
+                | Message::InvokeCancel(_)
+                | Message::Signal(..)
         )
     }
 }
@@ -233,6 +240,22 @@ impl tokio_util::codec::Decoder for MessageCodec {
 
                 Ok(Some(Message::Notify(Api(api), slice)))
             }
+            5 => {
+                if src.len() < 1 + 2 {
+                    return Ok(None);
+                }
+                let api = (&src[1..3]).read_u16::<NetworkEndian>().unwrap();
+                let len = (&src[3..7]).read_u32::<NetworkEndian>().unwrap() as usize;
+
+                if src.len() < 7 + len {
+                    src.reserve(7 + len - src.len());
+                    return Ok(None);
+                }
+                let slice = Bytes::copy_from_slice(&src[7..7 + len]);
+                src.advance(7 + len);
+
+                Ok(Some(Message::Signal(Api(api), slice)))
+            }
             _ => Err(Error::custom("invalid message kind")),
         }
     }
@@ -271,6 +294,13 @@ impl tokio_util::codec::Encoder<Message> for MessageCodec {
             Message::Notify(api, data) => {
                 dst.reserve(1 + 2 + 4 + data.len());
                 dst.put_u8(4);
+                dst.put_u16(api.0);
+                dst.put_u32(data.len() as u32);
+                dst.put_slice(&data);
+            }
+            Message::Signal(api, data) => {
+                dst.reserve(1 + 2 + 4 + data.len());
+                dst.put_u8(5);
                 dst.put_u16(api.0);
                 dst.put_u32(data.len() as u32);
                 dst.put_slice(&data);
@@ -415,13 +445,16 @@ impl CommunicatorInner {
                             let _ = sender.send(payload);
                         }
                     }
-                    Message::Notify(api, payload) => {
-                        // Notifications are processed inline (not spawned) to
-                        // guarantee ordering with respect to subsequent
-                        // invoke responses/requests.  This is critical for
-                        // streaming protocols (read/write chunks) where the
-                        // invoke that follows the notification stream must
-                        // not be processed before all chunk notifications.
+                    Message::Notify(api, payload) | Message::Signal(api, payload) => {
+                        // Notifications and signals are processed inline (not
+                        // spawned) to guarantee ordering with respect to
+                        // subsequent invoke responses/requests.  This is
+                        // critical for streaming protocols (read/write chunks)
+                        // where the invoke that follows the notification
+                        // stream must not be processed before all chunk
+                        // notifications.  The Notify/Signal split exists
+                        // purely to assign different outbox QoS lanes on the
+                        // sender; the receiver treats them identically.
                         match self.dispatcher.notify(api, payload).await {
                             Ok(true) => {}
                             Ok(false) => {
@@ -554,6 +587,26 @@ impl Communicator {
             .outbox
             .send(message)
             .await
+            .map_err(|_| Error::connection())?;
+
+        Ok(())
+    }
+
+    /// Like [`notify`], but uses the high-priority outbox lane. For small,
+    /// interactive fire-and-forget messages (e.g. terminal keystrokes) that
+    /// must not be queued behind bulk `notify` streams. Never blocks on
+    /// backpressure since the high-priority lane is unbounded.
+    pub fn signal<Req>(&self, api: Api, req: &Req) -> Result<(), Error>
+    where
+        Req: serde::Serialize + std::fmt::Debug,
+    {
+        let bytes =
+            bincode::serialize(req).map_err(|e| Error::custom(format!("RPC encode: {}", e)))?;
+
+        let message = Message::Signal(api, bytes.into());
+        self.0
+            .outbox
+            .send_high(message)
             .map_err(|_| Error::connection())?;
 
         Ok(())

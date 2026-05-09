@@ -256,19 +256,6 @@ impl Dispatcher for TerminalDispatcher {
 
                 encode(&ret)?
             }
-            API_TERMINAL_RESIZE => {
-                let (handle, cols, rows): (crate::terminal::TerminalHandle, u16, u16) =
-                    decode(&req[..])?;
-                let ret = self.terminal.resize(handle, cols, rows).await;
-
-                encode(&ret)?
-            }
-            API_TERMINAL_INPUT => {
-                let (handle, input): (crate::terminal::TerminalHandle, Vec<u8>) = decode(&req[..])?;
-                let ret = self.terminal.input(handle, input).await;
-
-                encode(&ret)?
-            }
             API_TERMINAL_READ => {
                 let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
                 let ret = self.terminal.read(handle).await;
@@ -287,8 +274,25 @@ impl Dispatcher for TerminalDispatcher {
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        Ok(false)
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        match api {
+            API_TERMINAL_INPUT => {
+                let (handle, input): (crate::terminal::TerminalHandle, Vec<u8>) = decode(&req[..])?;
+                if let Err(e) = self.terminal.input(handle, input).await {
+                    log::error!("terminal input failed: {}", e);
+                }
+                Ok(true)
+            }
+            API_TERMINAL_RESIZE => {
+                let (handle, cols, rows): (crate::terminal::TerminalHandle, u16, u16) =
+                    decode(&req[..])?;
+                if let Err(e) = self.terminal.resize(handle, cols, rows).await {
+                    log::error!("terminal resize failed: {}", e);
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 }
 

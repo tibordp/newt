@@ -271,20 +271,19 @@ impl TerminalClient for Remote {
     }
 
     async fn resize(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(crate::api::API_TERMINAL_RESIZE, &(handle, rows, cols))
-            .await?;
-
-        Ok(ret?)
+        // Fire-and-forget on the high-priority outbox lane, same as `input`.
+        // Resize ordering relative to keystrokes is preserved because both go
+        // through the FIFO high-priority queue.
+        self.communicator
+            .signal(crate::api::API_TERMINAL_RESIZE, &(handle, rows, cols))
     }
     async fn input(&self, handle: TerminalHandle, data: Vec<u8>) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(crate::api::API_TERMINAL_INPUT, &(handle, data))
-            .await?;
-
-        Ok(ret?)
+        // Fire-and-forget on the high-priority outbox lane: keystrokes must
+        // not be queued behind bulk `notify` streams (e.g. VFS write chunks),
+        // and the frontend has no use for an ack — loss is observed via the
+        // absence of echoed output.
+        self.communicator
+            .signal(crate::api::API_TERMINAL_INPUT, &(handle, data))
     }
     async fn read(&self, handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
         let ret: Result<Option<Vec<u8>>, Error> = self

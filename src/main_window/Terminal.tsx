@@ -146,9 +146,17 @@ export default function Terminal({
       },
     );
 
+    // Serialize keystroke dispatch on a single promise chain so concurrent
+    // Tauri command tasks can't race to enqueue on the RPC outbox out of
+    // order. The backend's `terminal_write` returns as soon as the bytes are
+    // either written to the local PTY or enqueued on the high-priority RPC
+    // lane (no wire RTT), so chaining doesn't cost pipelining.
+    let writeChain: Promise<unknown> = Promise.resolve();
     const onUserInput = (data: string) => {
       const binaryData = new TextEncoder().encode(data);
-      safeSilent(commands.terminalWrite(handle, [...binaryData]));
+      writeChain = writeChain.then(() =>
+        safeSilent(commands.terminalWrite(handle, [...binaryData])),
+      );
     };
 
     term.onBinary(onUserInput);
