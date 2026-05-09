@@ -86,6 +86,7 @@ pub(crate) fn prewarm_editor(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     if pane.is_focused_dir() {
@@ -184,6 +185,7 @@ pub(crate) fn open_editor_window(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     if pane.is_focused_dir() {
@@ -198,6 +200,7 @@ pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_new_window(
     webview: tauri::Webview,
     _pane_handle: PaneHandle,
@@ -211,6 +214,7 @@ pub async fn cmd_new_window(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
     ctx.disconnect_for_reconnect().await;
 
@@ -226,6 +230,7 @@ pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(), Error> {
     crate::main_window::spawn_main_window(
         webview.app_handle(),
@@ -239,6 +244,7 @@ pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(),
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_elevated(
     webview: tauri::Webview,
     _pane_handle: PaneHandle,
@@ -253,6 +259,7 @@ pub async fn cmd_open_elevated(
 
 #[cfg(not(target_os = "linux"))]
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
     Err(Error::Custom(
         "Elevated mode is only supported on Linux".into(),
@@ -260,18 +267,21 @@ pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn close_window(window: Window) -> Result<(), Error> {
     window.close()?;
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn destroy_window(window: Window) -> Result<(), Error> {
     window.destroy()?;
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_window_title(webview_window: WebviewWindow, title: String) -> Result<(), Error> {
     // NOTE: set_title doesn't visually update on Wayland (upstream Tauri/GTK bug).
     // Works on X11 and macOS. Keeping it so it works where it can.
@@ -280,12 +290,14 @@ pub fn set_window_title(webview_window: WebviewWindow, title: String) -> Result<
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.window().close()?;
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
     webview
         .set_zoom(factor)

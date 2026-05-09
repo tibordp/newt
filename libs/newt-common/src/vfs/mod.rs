@@ -48,7 +48,18 @@ pub const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
 // ---------------------------------------------------------------------------
 
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    specta::Type,
 )]
 pub struct VfsId(pub u32);
 
@@ -66,7 +77,7 @@ impl std::fmt::Display for VfsId {
 // VfsPath
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 pub struct VfsPath {
     pub vfs_id: VfsId,
     pub path: PathBuf,
@@ -266,7 +277,7 @@ pub fn all_descriptors() -> impl Iterator<Item = &'static dyn VfsDescriptor> {
 // VfsMetadata — for metadata preservation in copy
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct VfsMetadata {
     pub permissions: Option<u32>,
     pub uid: Option<u32>,
@@ -827,7 +838,7 @@ fn compile_regex(pattern: &SearchPattern) -> Result<Option<regex::bytes::Regex>,
 // Mount/unmount RPC types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct S3Credentials {
     /// AWS access key ID (IAM user or assumed role).
     pub access_key_id: Option<String>,
@@ -847,7 +858,7 @@ pub struct S3Credentials {
     pub external_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub enum MountRequest {
     S3 {
         region: Option<String>,

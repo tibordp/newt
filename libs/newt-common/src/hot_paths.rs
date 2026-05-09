@@ -4,7 +4,7 @@ use crate::Error;
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, specta::Type)]
 pub enum HotPathCategory {
     UserBookmark,
     StandardFolder,
@@ -13,7 +13,7 @@ pub enum HotPathCategory {
     RecentFolder,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct HotPathEntry {
     pub path: VfsPath,
     pub name: Option<String>,

@@ -5,6 +5,7 @@ use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_preferences(
     global_ctx: tauri::State<'_, GlobalContext>,
 ) -> Result<crate::preferences::ResolvedPreferences, Error> {
@@ -12,6 +13,7 @@ pub fn get_preferences(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn update_preference(
     global_ctx: tauri::State<'_, GlobalContext>,
     key: String,
@@ -26,6 +28,7 @@ pub fn update_preference(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn reset_preference(
     global_ctx: tauri::State<'_, GlobalContext>,
     key: String,
@@ -37,6 +40,7 @@ pub fn reset_preference(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_preferences_schema(
     global_ctx: tauri::State<'_, GlobalContext>,
 ) -> Result<serde_json::Value, Error> {
@@ -44,6 +48,7 @@ pub fn get_preferences_schema(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_command_keybinding(
     global_ctx: tauri::State<'_, GlobalContext>,
     command_id: String,
@@ -59,6 +64,7 @@ pub fn set_command_keybinding(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn reset_command_keybinding(
     global_ctx: tauri::State<'_, GlobalContext>,
     command_id: String,
@@ -72,6 +78,7 @@ pub fn reset_command_keybinding(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(), Error> {
     let path = global_ctx.preferences().settings_file_path();
     // Create the file with defaults if it doesn't exist
@@ -90,6 +97,7 @@ pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_hot_paths(
     ctx: MainWindowContext,
     global_ctx: tauri::State<'_, GlobalContext>,
@@ -125,6 +133,7 @@ pub async fn get_hot_paths(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn add_bookmark(
     global_ctx: tauri::State<'_, GlobalContext>,
     path: String,
@@ -137,6 +146,7 @@ pub fn add_bookmark(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn remove_bookmark(
     global_ctx: tauri::State<'_, GlobalContext>,
     path: String,
@@ -148,6 +158,7 @@ pub fn remove_bookmark(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();
@@ -168,6 +179,7 @@ pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_open_config_file(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();

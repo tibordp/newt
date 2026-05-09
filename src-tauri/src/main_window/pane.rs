@@ -31,7 +31,7 @@ use super::DisplayOptions;
 use super::DisplayOptionsInner;
 use super::MainWindowState;
 
-#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum SortingKey {
     #[default]
@@ -46,7 +46,7 @@ pub enum SortingKey {
     Created,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct Sorting {
     pub key: SortingKey,
     pub asc: bool,
@@ -1016,7 +1016,9 @@ fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
         .then_with(|| a.cmp(b))
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterMode {
     #[default]

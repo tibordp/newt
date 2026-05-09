@@ -16,15 +16,17 @@ use crate::vfs::{VfsId, VfsPath};
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 pub struct StreamId(pub u64);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ListFilesOptions {
     pub strict: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum UserGroup {
     Name(String),
@@ -62,10 +64,11 @@ impl PartialOrd for UserGroup {
     serde::Serialize,
     serde::Deserialize,
     Hash,
+    specta::Type,
 )]
 pub struct Mode(pub u32);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
@@ -81,7 +84,7 @@ pub struct File {
     pub created: Option<i64>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FsStats {
     free_bytes: u64,
     available_bytes: u64,
@@ -99,7 +102,7 @@ impl From<nix::sys::statvfs::Statvfs> for FsStats {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileList {
     path: VfsPath,
     fs_stats: Option<FsStats>,

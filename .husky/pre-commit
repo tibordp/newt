@@ -7,3 +7,11 @@ git diff --name-only -- '*.rs' | if read -r; then
   exit 1
 fi
 cargo clippy --workspace -- -D warnings
+
+# Regenerate tauri-specta TS bindings; fail if they drift from what's staged.
+cargo test -p newt --quiet export_typescript_bindings >/dev/null
+git diff --name-only -- src/lib/bindings.ts | if read -r; then
+  echo "src/lib/bindings.ts is out of date — please re-stage:"
+  echo "  src/lib/bindings.ts"
+  exit 1
+fi

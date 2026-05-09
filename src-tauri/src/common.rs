@@ -39,6 +39,17 @@ impl serde::Serialize for Error {
     }
 }
 
+// Error is wire-encoded as a plain string (see Serialize above), so as far as
+// the frontend is concerned it's just a string. Tell specta the same.
+impl specta::Type for Error {
+    fn inline(
+        _type_collection: &mut specta::TypeCollection,
+        _generics: specta::Generics<'_>,
+    ) -> specta::datatype::DataType {
+        String::inline(_type_collection, _generics)
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum PatchKey {

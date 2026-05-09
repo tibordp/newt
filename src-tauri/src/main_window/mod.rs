@@ -40,7 +40,7 @@ pub use self::session::{
     ssh_transport_cmd,
 };
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DisplayOptionsInner {
     pub show_hidden: bool,
     pub active_pane: PaneHandle,
@@ -85,6 +85,7 @@ impl serde::Serialize for DisplayOptions {
     Copy,
     serde::Serialize,
     serde::Deserialize,
+    specta::Type,
 )]
 pub struct PaneHandle(usize);
 
@@ -448,7 +449,7 @@ impl serde::Serialize for ModalState {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DndFile {
     pub name: String,
     pub is_dir: bool,
@@ -811,6 +812,15 @@ impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
 
         s.main_window(&window)
             .ok_or_else(|| tauri::ipc::InvokeError::from("window not yet initialized"))
+    }
+}
+
+// `MainWindowContext` is server-side state (resolved via `CommandArg` from
+// `GlobalContext.main_windows`), not a value the frontend supplies. Tell
+// specta to skip it so it doesn't appear in the generated TS signatures.
+impl specta::function::FunctionArg for MainWindowContext {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::datatype::DataType> {
+        None
     }
 }
 

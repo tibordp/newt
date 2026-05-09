@@ -5,6 +5,7 @@ use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_send_to_terminal(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -44,6 +45,7 @@ pub async fn cmd_send_to_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn terminal_write(
     ctx: MainWindowContext,
     handle: TerminalHandle,
@@ -59,6 +61,7 @@ pub async fn terminal_write(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn terminal_resize(
     ctx: MainWindowContext,
     handle: TerminalHandle,
@@ -75,6 +78,7 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn terminal_focus(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|gs| {
         let mut opts = gs.display_options.0.write();
@@ -86,6 +90,7 @@ pub fn terminal_focus(ctx: MainWindowContext, handle: TerminalHandle) -> Result<
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_create_terminal(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
@@ -99,6 +104,7 @@ pub async fn cmd_create_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         c.terminals.remove(handle);
@@ -115,6 +121,7 @@ pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_toggle_terminal_panel(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
@@ -154,6 +161,7 @@ pub async fn cmd_toggle_terminal_panel(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let mut opts = c.display_options.0.write();
@@ -164,6 +172,7 @@ pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_focus_panes(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let mut opts = c.display_options.0.write();
@@ -173,6 +182,7 @@ pub fn cmd_focus_panes(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_focus_terminal(
     ctx: MainWindowContext,
     _pane_handle: PaneHandle,
@@ -198,6 +208,7 @@ pub async fn cmd_focus_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_next_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let handles = c.terminals.handles_sorted();
@@ -216,6 +227,7 @@ pub fn cmd_next_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Re
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_prev_terminal(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         let handles = c.terminals.handles_sorted();

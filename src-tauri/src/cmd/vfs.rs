@@ -39,6 +39,7 @@ async fn mount_and_navigate(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mount_s3(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -59,6 +60,7 @@ pub async fn mount_s3(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mount_sftp(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -68,6 +70,7 @@ pub async fn mount_sftp(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mount_k8s(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -77,6 +80,7 @@ pub async fn mount_k8s(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn switch_vfs(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -117,6 +121,7 @@ async fn redirect_and_unmount(ctx: &MainWindowContext, vfs_id: VfsId) -> Result<
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_unmount_vfs(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx
         .panes()
@@ -133,6 +138,7 @@ pub async fn cmd_unmount_vfs(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn unmount_vfs(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,

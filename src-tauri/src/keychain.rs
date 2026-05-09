@@ -7,6 +7,7 @@ fn entry(key: &str) -> Result<keyring::Entry, Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn keychain_get(key: String) -> Result<Option<String>, Error> {
     let entry = entry(&key)?;
     match entry.get_password() {
@@ -17,6 +18,7 @@ pub fn keychain_get(key: String) -> Result<Option<String>, Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn keychain_set(key: String, value: String) -> Result<(), Error> {
     let entry = entry(&key)?;
     entry
@@ -25,6 +27,7 @@ pub fn keychain_set(key: String, value: String) -> Result<(), Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn keychain_delete(key: String) -> Result<(), Error> {
     let entry = entry(&key)?;
     match entry.delete_credential() {

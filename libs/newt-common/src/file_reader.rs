@@ -13,19 +13,19 @@ pub fn guess_mime_type(path: &Path) -> Option<String> {
         .map(|m| m.essence_str().to_string())
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub enum SearchPattern {
     Literal(Vec<u8>),
     Regex(String),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct SearchMatch {
     pub offset: u64,
     pub length: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileDetails {
     pub size: u64,
     pub mime_type: Option<String>,
@@ -40,7 +40,7 @@ pub struct FileDetails {
     pub created: Option<i64>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileChunk {
     pub data: Vec<u8>,
     pub offset: u64,

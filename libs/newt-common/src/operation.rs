@@ -17,7 +17,7 @@ pub type IssueId = u64;
 
 // --- Issue Resolution Types ---
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, specta::Type)]
 pub enum IssueKind {
     AlreadyExists,
     PermissionDenied,
@@ -25,14 +25,14 @@ pub enum IssueKind {
     Other(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub enum IssueAction {
     Skip,
     Overwrite,
     Retry,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct OperationIssue {
     pub issue_id: IssueId,
     pub kind: IssueKind,
@@ -41,13 +41,13 @@ pub struct OperationIssue {
     pub actions: Vec<IssueAction>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct IssueResponse {
     pub action: IssueAction,
     pub apply_to_all: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct ResolveIssueRequest {
     pub operation_id: OperationId,
     pub issue_id: IssueId,
@@ -56,7 +56,7 @@ pub struct ResolveIssueRequest {
 
 // --- Copy Options ---
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, specta::Type)]
 pub struct CopyOptions {
     pub preserve_timestamps: bool,
     pub preserve_owner: bool,
@@ -66,7 +66,7 @@ pub struct CopyOptions {
 
 // --- Operation Request ---
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub enum OperationRequest {
     Copy {
         sources: Vec<VfsPath>,
@@ -99,7 +99,7 @@ pub enum OperationRequest {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct StartOperationRequest {
     pub id: OperationId,
     pub request: OperationRequest,
@@ -107,7 +107,7 @@ pub struct StartOperationRequest {
 
 // --- Progress ---
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub enum OperationProgress {
     /// Sent during the scanning/planning phase with running totals.
     Scanning {

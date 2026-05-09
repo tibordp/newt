@@ -25,3 +25,6 @@ dist-ssr
 
 src-tauri/
 target/
+
+# tauri-specta emits its own formatting; prettier would fight the regenerator.
+src/lib/bindings.ts

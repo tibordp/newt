@@ -23,16 +23,18 @@ const PTY_READ_BUFFER_SIZE: usize = 1024;
 /// long-standing convention and is enough for every reasonable passwd entry.
 const PASSWD_BUFFER_SIZE: usize = 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 pub struct TerminalHandle(pub u32);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ExitStatus {
     pub code: Option<i32>,
     pub signal: Option<i32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, specta::Type)]
 pub struct TerminalOptions {
     pub working_dir: Option<PathBuf>,
     pub command: Option<String>,

@@ -6,6 +6,7 @@ use crate::main_window::pane::{FilterMode, Sorting};
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 #[tauri::command]
+#[specta::specta]
 pub fn cancel(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.cancel();
@@ -14,6 +15,7 @@ pub fn cancel(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Err
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn navigate(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -58,6 +60,7 @@ pub async fn navigate(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn focus(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -74,6 +77,7 @@ pub fn focus(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_sorting(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -87,6 +91,7 @@ pub fn set_sorting(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn toggle_selected(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -100,6 +105,7 @@ pub fn toggle_selected(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn select_range(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -112,6 +118,7 @@ pub fn select_range(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().select_all();
@@ -120,6 +127,7 @@ pub fn cmd_select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().deselect_all();
@@ -128,6 +136,7 @@ pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn end_drag_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     pane.view_state_mut().end_drag_selection();
@@ -135,6 +144,7 @@ pub fn end_drag_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Re
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_selection_by_indices(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -150,6 +160,7 @@ pub fn set_selection_by_indices(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_selection(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -164,6 +175,7 @@ pub fn set_selection(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn relative_jump(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -177,6 +189,7 @@ pub fn relative_jump(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_viewport(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -195,6 +208,7 @@ pub fn set_viewport(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_filter(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -212,6 +226,7 @@ pub fn set_filter(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_as_other_pane(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -263,6 +278,7 @@ pub async fn cmd_open_in_other_pane(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_in_left_pane(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -271,6 +287,7 @@ pub async fn cmd_open_in_left_pane(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_in_right_pane(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -279,6 +296,7 @@ pub async fn cmd_open_in_right_pane(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let file = match pane.get_focused_file_info() {
@@ -347,11 +365,13 @@ async fn download_and_open(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     enter(ctx, pane_handle).await
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_archive(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -377,6 +397,7 @@ pub async fn cmd_open_archive(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_follow_symlink(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -407,6 +428,7 @@ pub async fn cmd_follow_symlink(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let full_path = pane.path();
@@ -419,6 +441,7 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_navigate_back(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -431,6 +454,7 @@ pub async fn cmd_navigate_back(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_navigate_forward(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -442,6 +466,7 @@ pub async fn cmd_navigate_forward(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn navigate_history(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -455,6 +480,7 @@ pub async fn navigate_history(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
         c.toggle_hidden();
@@ -463,6 +489,7 @@ pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Re
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
 
@@ -485,6 +512,7 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_paste_from_clipboard(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -518,6 +546,7 @@ pub async fn cmd_paste_from_clipboard(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_refresh(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     pane.refresh(None, true).await?;

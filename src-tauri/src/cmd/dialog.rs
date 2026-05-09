@@ -8,7 +8,7 @@ use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKi
 /// can keep sending string literals like `"navigate"` / `"mount_s3"` over
 /// IPC — but a typo on either side now fails to compile rather than producing
 /// `Error::Custom("unknown dialog: …")` at runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DialogKind {
     Navigate,
@@ -23,6 +23,10 @@ pub enum DialogKind {
     ConnectRemote,
     MountSftp,
     MountS3,
+    // specta's snake_case tokenizer splits at digits ("K8s" → "k_8s"), but
+    // serde's keeps it joined; pin both ends to the wire format.
+    #[serde(rename = "mount_k8s")]
+    #[specta(rename = "mount_k8s")]
     MountK8s,
     QuickConnect,
     SelectVfs,
@@ -38,6 +42,7 @@ pub enum DialogKind {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn dialog(
     ctx: MainWindowContext,
     dialog: DialogKind,
@@ -341,6 +346,7 @@ pub fn dialog(
 macro_rules! cmd_dialog {
     ($name:ident, $dialog:expr) => {
         #[tauri::command]
+        #[specta::specta]
         pub fn $name(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
             dialog(ctx, $dialog, Some(pane_handle))
         }

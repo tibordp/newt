@@ -5,6 +5,7 @@ use crate::common::Error;
 use crate::main_window::{DndData, DndFile, MainWindowContext, PaneHandle};
 
 #[tauri::command]
+#[specta::specta]
 pub fn start_dnd(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -20,6 +21,7 @@ pub fn start_dnd(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cancel_dnd(ctx: MainWindowContext) -> Result<(), Error> {
     ctx.with_update(|gs| {
         *gs.dnd.0.write() = None;
@@ -28,6 +30,7 @@ pub fn cancel_dnd(ctx: MainWindowContext) -> Result<(), Error> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn execute_dnd(
     ctx: MainWindowContext,
     destination_pane: PaneHandle,
@@ -84,6 +87,7 @@ pub async fn execute_dnd(
 /// The dropped paths are host-local, so we need the host-local VFS to
 /// construct VfsPaths from them.
 #[tauri::command]
+#[specta::specta]
 pub async fn external_drop(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,

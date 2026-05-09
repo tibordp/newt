@@ -108,6 +108,13 @@ impl<'de> CommandArg<'de, Wry> for ViewerWindowContext {
     }
 }
 
+// Server-side state — see the same impl on `MainWindowContext`.
+impl specta::function::FunctionArg for ViewerWindowContext {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::datatype::DataType> {
+        None
+    }
+}
+
 /// Create a ViewerWindow with UpdatePublisher but no menu.
 /// Used both for pre-warming and direct creation.
 pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
@@ -279,12 +286,14 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str, mode: &str) -> Result
 // --- Tauri commands ---
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_viewer_mode(ctx: ViewerWindowContext, mode: String) -> Result<(), Error> {
     ctx.0.set_mode(&mode);
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
     ctx.0.publish_full();
     Ok(())
@@ -293,6 +302,7 @@ pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
 /// Copy a byte range from a file to the system clipboard.
 /// `format`: "text" (UTF-8), "hex" (space-separated hex), "ascii" (printable ASCII).
 #[tauri::command]
+#[specta::specta]
 pub async fn copy_viewer_range(
     ctx: MainWindowContext,
     path: VfsPath,
@@ -348,6 +358,7 @@ pub async fn copy_viewer_range(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn find_in_viewer(
     ctx: MainWindowContext,
     path: VfsPath,

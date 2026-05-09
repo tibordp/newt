@@ -14,6 +14,7 @@ use crate::main_window::{
 };
 
 #[tauri::command]
+#[specta::specta]
 pub async fn create_directory(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
@@ -38,6 +39,7 @@ pub async fn create_directory(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn touch_file(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
@@ -69,6 +71,7 @@ pub async fn touch_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cmd_delete_selected(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
@@ -113,6 +116,7 @@ pub async fn cmd_delete_selected(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn rename(
     ctx: MainWindowContext,
     pane_handle: Option<PaneHandle>,
@@ -139,6 +143,7 @@ pub async fn rename(
 }
 
 #[tauri::command]
+#[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub async fn set_metadata(
     ctx: MainWindowContext,
@@ -172,6 +177,7 @@ pub async fn set_metadata(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn start_operation(
     ctx: MainWindowContext,
     request: OperationRequest,
@@ -258,6 +264,7 @@ pub async fn start_operation(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cancel_operation(
     ctx: MainWindowContext,
     operation_id: OperationId,
@@ -269,6 +276,7 @@ pub async fn cancel_operation(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn resolve_issue(
     ctx: MainWindowContext,
     operation_id: OperationId,
@@ -297,6 +305,7 @@ pub async fn resolve_issue(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn dismiss_operation(ctx: MainWindowContext, operation_id: OperationId) -> Result<(), Error> {
     {
         let mut ops = ctx.operations().state.write();
@@ -320,6 +329,7 @@ pub fn dismiss_operation(ctx: MainWindowContext, operation_id: OperationId) -> R
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn background_operation(
     ctx: MainWindowContext,
     operation_id: OperationId,
@@ -335,6 +345,7 @@ pub fn background_operation(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn foreground_operation(
     ctx: MainWindowContext,
     operation_id: OperationId,
@@ -350,6 +361,7 @@ pub fn foreground_operation(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn start_copy_move(
     ctx: MainWindowContext,
     kind: String,
@@ -380,6 +392,7 @@ pub async fn start_copy_move(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn confirm_action(ctx: MainWindowContext) -> Result<(), Error> {
     let action = ctx.with_update(|gs| {
         let modal = gs.modal.0.read().clone();
@@ -410,12 +423,14 @@ pub async fn confirm_action(ctx: MainWindowContext) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 pub async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
     let info = ctx.file_reader()?.file_details(path).await?;
     Ok(info)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn read_file_range(
     ctx: MainWindowContext,
     path: VfsPath,
@@ -427,6 +442,7 @@ pub async fn read_file_range(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn read_file(
     ctx: MainWindowContext,
     path: VfsPath,
@@ -437,6 +453,7 @@ pub async fn read_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
     ctx.file_reader()?.write_file(path, data).await?;
     Ok(())

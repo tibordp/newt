@@ -388,6 +388,7 @@ async fn execute_rendered(
 // --- Tauri commands ---
 
 #[tauri::command]
+#[specta::specta]
 pub async fn run_user_command(
     ctx: MainWindowContext,
     global_ctx: tauri::State<'_, GlobalContext>,
@@ -438,6 +439,7 @@ pub async fn run_user_command(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn execute_user_command(
     ctx: MainWindowContext,
     global_ctx: tauri::State<'_, GlobalContext>,
@@ -484,6 +486,7 @@ pub async fn execute_user_command(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn add_user_command_entry(
     global_ctx: tauri::State<'_, GlobalContext>,
     entry: crate::preferences::schema::UserCommandEntry,
@@ -495,6 +498,7 @@ pub fn add_user_command_entry(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn remove_user_command_entry(
     global_ctx: tauri::State<'_, GlobalContext>,
     index: usize,
@@ -506,6 +510,7 @@ pub fn remove_user_command_entry(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn update_user_command_entry(
     global_ctx: tauri::State<'_, GlobalContext>,
     index: usize,
