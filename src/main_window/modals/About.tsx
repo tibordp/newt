@@ -1,15 +1,10 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import appIcon from "../../assets/icon.png";
 
-type AboutProps = CommonDialogProps & {
-  version: string;
-  git_revision?: string;
-  build_date?: string;
-  target_triple: string;
-};
+type AboutProps = CommonDialogProps & ModalDataOf<"about">;
 
 const NEWT_FACTS = [
   "Newts can regenerate lost limbs, eyes, and even parts of their heart.",

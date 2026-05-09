@@ -19,6 +19,17 @@ use super::{
     VfsSpaceInfo,
 };
 
+/// Bytes read from a file head when sniffing for a MIME type without an
+/// extension match. Bigger reads catch more formats but cost more I/O per
+/// directory listing entry; 8 KiB is enough for every magic-number signature
+/// in `mimetype-detector` while staying inside one filesystem block.
+const MIME_SNIFF_BUFFER_SIZE: usize = 8192;
+
+/// Files-per-batch streamed to the host during a directory listing. Smaller
+/// batches reduce first-paint latency on huge directories; larger batches
+/// reduce IPC overhead. 500 lands in the sweet spot for both.
+const LIST_FILES_BATCH_SIZE: usize = 500;
+
 // ---------------------------------------------------------------------------
 // LocalVfsDescriptor
 // ---------------------------------------------------------------------------
@@ -169,7 +180,7 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking({
             let cache = self.fs_cache.clone();
             move || -> Result<Vec<File>, Error> {
-                const BATCH_SIZE: usize = 500;
+                const BATCH_SIZE: usize = LIST_FILES_BATCH_SIZE;
 
                 let mut ret = Vec::new();
                 let mut batch = Vec::new();
@@ -200,7 +211,14 @@ impl Vfs for LocalVfs {
                     let metadata = entry.metadata()?;
                     let file_type = metadata.file_type();
 
-                    let name = entry.file_name().into_string().unwrap();
+                    // Best-effort UTF-8 conversion: a non-UTF-8 filename gets
+                    // U+FFFD replacement chars. The entry shows up in the UI
+                    // but file ops on it (rename / delete / touch / etc.) will
+                    // fail with NotFound — when the frontend echoes the name
+                    // back, `path.join(&name)` builds a path with the
+                    // replacements that doesn't exist on disk. Acceptable
+                    // trade-off vs. panicking the entire listing.
+                    let name = entry.file_name().to_string_lossy().into_owned();
                     let mut is_dir = file_type.is_dir();
 
                     let symlink_target = if file_type.is_symlink() {
@@ -341,7 +359,7 @@ impl Vfs for LocalVfs {
                     from_extension
                 } else {
                     let file = std::fs::File::open(&path)?;
-                    let mut buf = vec![0u8; 8192.min(size as usize)];
+                    let mut buf = vec![0u8; MIME_SNIFF_BUFFER_SIZE.min(size as usize)];
                     let mut reader = std::io::BufReader::new(file);
                     let n = reader.read(&mut buf)?;
                     let header = &buf[..n];

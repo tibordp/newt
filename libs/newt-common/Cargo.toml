@@ -40,6 +40,7 @@ openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
 iluvatar = { version = "0.1.1", features = ["tokio"] }
 blake3 = "1"
+specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 quick-xml = "0.37"

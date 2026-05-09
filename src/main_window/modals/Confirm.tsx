@@ -1,15 +1,14 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 
-type ConfirmProps = CommonDialogProps & {
-  message: string;
-};
+type ConfirmProps = CommonDialogProps & ModalDataOf<"confirm">;
 
 export default function Confirm({ message, cancel }: ConfirmProps) {
   function onConfirm() {
-    safeCommand("confirm_action");
+    safe(commands.confirmAction());
   }
 
   return (

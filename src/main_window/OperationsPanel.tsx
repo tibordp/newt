@@ -1,41 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { safeCommand } from "../lib/ipc";
 import * as Dialog from "@radix-ui/react-dialog";
+
+import { commands } from "../lib/bindings";
+import type { IssueAction, OperationState } from "../lib/bindings";
+import { safe } from "../lib/ipc";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
 
-export type IssueAction = "skip" | "overwrite" | "retry";
-
-export type OperationIssue = {
-  issue_id: number;
-  kind: string;
-  message: string;
-  detail: string | null;
-  actions: IssueAction[];
-};
-
-export type OperationState = {
-  id: number;
-  kind: string;
-  description: string;
-  total_bytes: number | null;
-  total_items: number | null;
-  bytes_done: number;
-  items_done: number;
-  current_item: string;
-  status:
-    | "scanning"
-    | "running"
-    | "completed"
-    | "failed"
-    | "cancelled"
-    | "waiting_for_input";
-  error: string | null;
-  issue: OperationIssue | null;
-  backgrounded: boolean;
-  scanning_items: number | null;
-  scanning_bytes: number | null;
-};
+export type { IssueAction, OperationState };
 
 export function progressFraction(op: OperationState): number {
   if (op.status === "scanning") return 0;
@@ -157,12 +129,7 @@ function IssueResolution({
 
   const resolve = useCallback(
     (action: IssueAction) => {
-      safeCommand("resolve_issue", {
-        operationId: op.id,
-        issueId: issue.issue_id,
-        action,
-        applyToAll,
-      });
+      safe(commands.resolveIssue(op.id, issue.issue_id, action, applyToAll));
     },
     [op.id, issue.issue_id, applyToAll],
   );
@@ -211,9 +178,7 @@ function OperationRow({ op }: { op: OperationState }) {
   return (
     <div
       className={styles.operationRow}
-      onClick={() =>
-        safeCommand("foreground_operation", { operationId: op.id })
-      }
+      onClick={() => safe(commands.foregroundOperation(op.id))}
     >
       <div className={styles.operationInfo}>
         <span className={styles.operationKind}>{op.kind}</span>
@@ -254,20 +219,12 @@ function OperationRow({ op }: { op: OperationState }) {
         onClick={(e) => e.stopPropagation()}
       >
         {isActive && (
-          <button
-            onClick={() =>
-              safeCommand("cancel_operation", { operationId: op.id })
-            }
-          >
+          <button onClick={() => safe(commands.cancelOperation(op.id))}>
             Cancel
           </button>
         )}
         {isFinished && (
-          <button
-            onClick={() =>
-              safeCommand("dismiss_operation", { operationId: op.id })
-            }
-          >
+          <button onClick={() => safe(commands.dismissOperation(op.id))}>
             Dismiss
           </button>
         )}
@@ -286,7 +243,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
   const isWaiting = op.status === "waiting_for_input" && op.issue;
 
   const backgroundOp = useCallback(() => {
-    safeCommand("background_operation", { operationId: op.id });
+    safe(commands.backgroundOperation(op.id));
   }, [op.id]);
 
   const fraction = progressFraction(op);
@@ -373,11 +330,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
           <div className={modalStyles.footer}>
             {isActive && (
               <>
-                <button
-                  onClick={() =>
-                    safeCommand("cancel_operation", { operationId: op.id })
-                  }
-                >
+                <button onClick={() => safe(commands.cancelOperation(op.id))}>
                   Cancel
                 </button>
                 <button className="suggested" autoFocus onClick={backgroundOp}>
@@ -390,9 +343,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
               op.status === "cancelled") && (
               <button
                 autoFocus
-                onClick={() =>
-                  safeCommand("dismiss_operation", { operationId: op.id })
-                }
+                onClick={() => safe(commands.dismissOperation(op.id))}
               >
                 Close
               </button>

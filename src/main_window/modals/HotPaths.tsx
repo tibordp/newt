@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { invoke } from "@tauri-apps/api/core";
-import { safeCommand } from "../../lib/ipc";
+import { safe, safeSilent } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { VfsPath } from "../../lib/types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
+import { commands } from "../../lib/bindings";
 
 type HotPathCategory =
   | "UserBookmark"
@@ -61,9 +61,10 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
 
   // Fetch hot paths on mount
   useEffect(() => {
-    invoke<HotPathEntry[]>("get_hot_paths")
-      .then(setEntries)
-      .catch(console.error)
+    safeSilent(commands.getHotPaths())
+      .then((paths) => {
+        if (paths) setEntries(paths as HotPathEntry[]);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -103,11 +104,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
     const entry = group.items[parseInt(idxStr, 10)];
     if (!entry) return;
 
-    safeCommand("navigate", {
-      paneHandle: paneHandle || 0,
-      path: entry.path.path,
-      exact: false,
-    });
+    safe(commands.navigate(paneHandle || 0, entry.path.path, false));
   };
 
   const requestDelete = (entry: HotPathEntry, e?: React.MouseEvent) => {
@@ -117,16 +114,14 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
   };
 
   const confirmDelete = (path: string) => {
-    invoke("remove_bookmark", { path })
-      .then(() => {
-        setEntries((prev) =>
-          prev.filter(
-            (e) => !(e.path.path === path && e.category === "UserBookmark"),
-          ),
-        );
-        setPendingDelete(null);
-      })
-      .catch(console.error);
+    safeSilent(commands.removeBookmark(path)).then(() => {
+      setEntries((prev) =>
+        prev.filter(
+          (e) => !(e.path.path === path && e.category === "UserBookmark"),
+        ),
+      );
+      setPendingDelete(null);
+    });
   };
 
   const cancelDelete = () => {

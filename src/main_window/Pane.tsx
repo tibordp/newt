@@ -8,14 +8,14 @@ import {
   memo,
   Fragment,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
-import { safeCommand, safeCommandSilent } from "../lib/ipc";
+import { commands, type Result } from "../lib/bindings";
+import { safe, safeSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
-import { ModalState } from "./modals/ModalContent";
+import type { ModalData } from "../lib/bindings";
 import {
   File,
   ColumnDef,
@@ -65,13 +65,9 @@ function PathBreadcrumbs(props: {
               onClick={(e) => {
                 e.preventDefault();
                 if (i === breadcrumbs.length - 1) {
-                  safeCommand("dialog", { paneHandle, dialog: "navigate" });
+                  commands.dialog("navigate", paneHandle);
                 } else {
-                  safeCommand("navigate", {
-                    paneHandle,
-                    path: crumb.nav_path,
-                    exact: true,
-                  });
+                  safe(commands.navigate(paneHandle, crumb.nav_path, true));
                 }
               }}
             >
@@ -232,7 +228,7 @@ function VfsSelector({
     <DropdownMenu.Root
       open={open}
       onOpenChange={(v) => {
-        if (!v && !openingDialogRef.current) safeCommand("close_modal");
+        if (!v && !openingDialogRef.current) safe(commands.closeModal());
         openingDialogRef.current = false;
       }}
     >
@@ -243,12 +239,12 @@ function VfsSelector({
           tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
-            safeCommand("dialog", { paneHandle, dialog: "select_vfs" });
+            commands.dialog("select_vfs", paneHandle);
           }}
           onMouseDown={(e) => {
             // Activate this pane without letting the .pane onClick steal focus later
             e.stopPropagation();
-            safeCommandSilent("focus", { paneHandle });
+            safeSilent(commands.focus(paneHandle, null));
           }}
         >
           {vfsDisplayName} &#x25BE;
@@ -282,16 +278,21 @@ function VfsSelector({
                   e.preventDefault();
                   if (target.vfs_id == null && target.mount_dialog) {
                     openingDialogRef.current = true;
-                    safeCommand("dialog", {
+                    commands.dialog(
+                      target.mount_dialog as
+                        | "mount_s3"
+                        | "mount_sftp"
+                        | "mount_k8s",
                       paneHandle,
-                      dialog: target.mount_dialog,
-                    });
+                    );
                   } else {
-                    safeCommand("switch_vfs", {
-                      paneHandle,
-                      vfsId: target.vfs_id,
-                      typeName: target.type_name,
-                    });
+                    safe(
+                      commands.switchVfs(
+                        paneHandle,
+                        target.vfs_id,
+                        target.type_name,
+                      ),
+                    );
                   }
                 }}
               >
@@ -309,10 +310,9 @@ function VfsSelector({
                     className={menuStyles.itemDismiss}
                     onClick={(e) => {
                       e.stopPropagation();
-                      safeCommand("unmount_vfs", {
-                        paneHandle,
-                        vfsId: target.vfs_id,
-                      });
+                      if (target.vfs_id !== null) {
+                        safe(commands.unmountVfs(paneHandle, target.vfs_id));
+                      }
                     }}
                     tabIndex={-1}
                   >
@@ -423,12 +423,9 @@ function HistoryNavigator({
     (target: number) => {
       committedRef.current = true;
       if (target === currentIndex) {
-        safeCommand("close_modal");
+        safe(commands.closeModal());
       } else {
-        safeCommand("navigate_history", {
-          paneHandle,
-          targetIndex: target,
-        });
+        safe(commands.navigateHistory(paneHandle, target));
       }
     },
     [currentIndex, paneHandle],
@@ -436,7 +433,7 @@ function HistoryNavigator({
 
   const abort = useCallback(() => {
     committedRef.current = true;
-    safeCommand("close_modal");
+    safe(commands.closeModal());
   }, []);
 
   // Keep the previewed item visible when stepping through a long history.
@@ -680,7 +677,7 @@ function PaneInner(
     paneHandle: number;
     active: boolean;
     modalOpen: boolean;
-    modal?: ModalState;
+    modal?: ModalData;
   },
 ) {
   const {
@@ -720,10 +717,19 @@ function PaneInner(
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
-  const command = (cmd: string, args: object = {}, also_when_busy = false) => {
-    if (also_when_busy || !isBusy) {
-      safeCommand(cmd, { paneHandle, ...args });
-    }
+  // Run a typed command, but skip it while the pane is in a "busy" state
+  // (waiting on the first listing of a navigated-to path). `alsoWhenBusy`
+  // overrides the guard for the few commands that should always fire
+  // (Escape's cancel/clear-filter, the directory-up nav).
+  //
+  // Takes a thunk because invoking `commands.X(...)` already sends the IPC —
+  // the guard has to gate construction of the promise, not just the safe()
+  // wrap.
+  const guarded = <T,>(
+    factory: () => Promise<Result<T, string>>,
+    alsoWhenBusy = false,
+  ) => {
+    if (alsoWhenBusy || !isBusy) safe(factory());
   };
 
   const preferences = usePreferences();
@@ -816,12 +822,14 @@ function PaneInner(
 
   const sendDragSelection = useCallback(
     (drag: DragState, startIdx: number, endIdx: number) => {
-      safeCommandSilent("set_selection_by_indices", {
-        paneHandle,
-        start: startIdx,
-        end: endIdx,
-        additive: drag.mode === "ctrl",
-      });
+      safeSilent(
+        commands.setSelectionByIndices(
+          paneHandle,
+          startIdx,
+          endIdx,
+          drag.mode === "ctrl",
+        ),
+      );
     },
     [paneHandle],
   );
@@ -926,7 +934,7 @@ function PaneInner(
           clearInterval(drag.scrollIntervalId);
         if (drag.active) {
           suppressClickRef.current = true;
-          safeCommandSilent("end_drag_selection", { paneHandle });
+          safeSilent(commands.endDragSelection(paneHandle));
         }
         hideDragRect();
         dragRef.current = null;
@@ -960,7 +968,7 @@ function PaneInner(
         suppressClickRef.current = true;
         // Finalize the drag so the next Ctrl+drag snapshots the
         // accumulated selection as its new base.
-        safeCommandSilent("end_drag_selection", { paneHandle });
+        safeSilent(commands.endDragSelection(paneHandle));
       }
       hideDragRect();
       dragRef.current = null;
@@ -1010,12 +1018,9 @@ function PaneInner(
         "li[data-name]",
       ) as HTMLElement | null;
       if (li?.dataset.name) {
-        safeCommandSilent("focus", {
-          paneHandle,
-          filename: li.dataset.name,
-        });
+        safeSilent(commands.focus(paneHandle, li.dataset.name));
       } else {
-        safeCommandSilent("focus", { paneHandle });
+        safeSilent(commands.focus(paneHandle, null));
       }
 
       const rect = container.getBoundingClientRect();
@@ -1053,7 +1058,7 @@ function PaneInner(
       if (!fileName || fileName === "..") return;
 
       if (!e.shiftKey) {
-        safeCommandSilent("focus", { paneHandle, filename: fileName });
+        safeSilent(commands.focus(paneHandle, fileName));
       }
 
       e.preventDefault();
@@ -1089,7 +1094,7 @@ function PaneInner(
       // Detect mouseup that happened outside the window
       if (e.buttons === 0) {
         if (dnd.active) {
-          safeCommandSilent("cancel_dnd");
+          safeSilent(commands.cancelDnd());
           suppressClickRef.current = true;
         }
         cleanupDnd();
@@ -1120,7 +1125,7 @@ function PaneInner(
           ghost.style.display = "flex";
         }
 
-        safeCommandSilent("start_dnd", { paneHandle, files: dnd.files });
+        safeSilent(commands.startDnd(paneHandle, dnd.files));
       }
 
       // Position ghost
@@ -1159,7 +1164,7 @@ function PaneInner(
 
       const target = resolveDropTarget(e.clientX, e.clientY);
       if (!target) {
-        safeCommandSilent("cancel_dnd");
+        safeSilent(commands.cancelDnd());
         return;
       }
 
@@ -1176,15 +1181,11 @@ function PaneInner(
 
       // Same pane requires a directory target (otherwise it's a no-op)
       if (isSamePane && !subdirectory) {
-        safeCommandSilent("cancel_dnd");
+        safeSilent(commands.cancelDnd());
         return;
       }
 
-      safeCommand("execute_dnd", {
-        destinationPane: target.paneHandle,
-        subdirectory,
-        isMove: e.shiftKey,
-      });
+      safe(commands.executeDnd(target.paneHandle, subdirectory, e.shiftKey));
     };
 
     document.addEventListener("mousemove", onDndMouseMove);
@@ -1200,7 +1201,7 @@ function PaneInner(
     const dnd = dndRef.current;
     if (dnd?.active) {
       cleanupDnd();
-      safeCommandSilent("cancel_dnd");
+      safeSilent(commands.cancelDnd());
     }
     dndRef.current = null;
   }, [path]);
@@ -1210,13 +1211,13 @@ function PaneInner(
   const onOpen = useCallback(
     (file: File) => {
       if (!file) return;
-      safeCommand("enter", { paneHandle });
+      safe(commands.enter(paneHandle));
     },
     [paneHandle],
   );
 
   const relativeJump = (delta: number, withSelection?: boolean) => {
-    command("relative_jump", { offset: delta, withSelection: !!withSelection });
+    guarded(() => commands.relativeJump(paneHandle, delta, !!withSelection));
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
@@ -1244,14 +1245,12 @@ function PaneInner(
       const focusedFile = file_window.items[focusedIndex - file_window.offset];
       if (focusedFile) onOpen(focusedFile);
     } else if (e.key == "Tab" && noModifiers) {
-      invoke("focus", { paneHandle: 1 - paneHandle });
+      safe(commands.focus(1 - paneHandle, null));
     } else if (e.key == "Escape" && noModifiers) {
-      command("cancel", {}, true);
-      command("set_filter", { filter: null });
+      guarded(() => commands.cancel(paneHandle), true);
+      guarded(() => commands.setFilter(paneHandle, null, null));
     } else if (e.key == insertKey && noModifiers) {
-      command("toggle_selected", {
-        focusNext: true,
-      });
+      guarded(() => commands.toggleSelected(paneHandle, null, true));
     } else {
       return false;
     }
@@ -1285,9 +1284,9 @@ function PaneInner(
     } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       openContextMenu();
     } else if (e.key == "Backspace" && noModifiers) {
-      command("navigate", { path: "..", exact: true }, true);
+      guarded(() => commands.navigate(paneHandle, "..", true), true);
     } else if (e.key == "/" && noModifiers) {
-      command("set_filter", { filter: "", mode: "filter" });
+      guarded(() => commands.setFilter(paneHandle, "", "filter"));
       inputRef.current?.focus();
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
@@ -1305,16 +1304,20 @@ function PaneInner(
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "/" && noModifiers && filter_mode === "quick_search") {
-      command("set_filter", { filter: filter || "", mode: "filter" });
+      guarded(() => commands.setFilter(paneHandle, filter || "", "filter"));
     } else if (
       filter_mode === "quick_search" &&
       e.key == "ArrowLeft" &&
       noModifiers
     ) {
-      if (filter !== null && filter.length > 0) {
-        command("set_filter", {
-          filter: focused!.substring(0, filter.length - 1),
-        });
+      if (filter !== null && focused && filter.length > 0) {
+        guarded(() =>
+          commands.setFilter(
+            paneHandle,
+            focused.substring(0, filter.length - 1),
+            null,
+          ),
+        );
       }
     } else if (
       filter_mode === "quick_search" &&
@@ -1322,9 +1325,13 @@ function PaneInner(
       noModifiers
     ) {
       if (filter !== null && focused && filter.length < focused.length) {
-        command("set_filter", {
-          filter: focused.substring(0, filter.length + 1),
-        });
+        guarded(() =>
+          commands.setFilter(
+            paneHandle,
+            focused.substring(0, filter.length + 1),
+            null,
+          ),
+        );
       }
     } else {
       return;
@@ -1341,17 +1348,12 @@ function PaneInner(
       }
       // Focus is handled by mouseDown (both <ul> and DnD handlers).
       // onClick only handles modifier-key actions.
+      const name = e.currentTarget.dataset.name;
+      if (!name) return;
       if (e.ctrlKey) {
-        safeCommand("toggle_selected", {
-          paneHandle,
-          filename: e.currentTarget.dataset.name,
-          focusNext: false,
-        });
+        safe(commands.toggleSelected(paneHandle, name, false));
       } else if (e.shiftKey) {
-        safeCommand("select_range", {
-          paneHandle,
-          filename: e.currentTarget.dataset.name,
-        });
+        safe(commands.selectRange(paneHandle, name));
       }
     },
     [paneHandle],
@@ -1381,7 +1383,7 @@ function PaneInner(
 
       // If right-clicked file is not in the selection, focus it (clearing selection)
       if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
-        safeCommandSilent("focus", { paneHandle, filename: fileName });
+        safeSilent(commands.focus(paneHandle, fileName));
       }
     },
     [paneHandle],
@@ -1396,11 +1398,7 @@ function PaneInner(
       const firstVisible = Math.floor(container.scrollTop / ITEM_SIZE);
       const visibleCount = Math.ceil(container.clientHeight / ITEM_SIZE);
       lastViewportReportRef.current = [firstVisible, visibleCount, -1];
-      safeCommandSilent("set_viewport", {
-        paneHandle,
-        firstVisible,
-        visibleCount,
-      });
+      safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
     }
   }, [path, paneHandle]);
 
@@ -1447,11 +1445,7 @@ function PaneInner(
       return;
     }
     lastViewportReportRef.current = [firstVisible, visibleCount, fw.offset];
-    safeCommandSilent("set_viewport", {
-      paneHandle,
-      firstVisible,
-      visibleCount,
-    });
+    safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
   };
 
   const widthPrefix = `pane-${paneHandle}-column-`;
@@ -1480,11 +1474,13 @@ function PaneInner(
       const target = resolveDropTarget(x, y);
       clearDropHighlights();
       if (paths?.length) {
-        safeCommand("external_drop", {
-          paneHandle,
-          subdirectory: target?.subdirectory ?? null,
-          paths,
-        });
+        safe(
+          commands.externalDrop(
+            paneHandle,
+            target?.subdirectory ?? null,
+            paths,
+          ),
+        );
       }
     };
 
@@ -1503,14 +1499,14 @@ function PaneInner(
       ref={paneRef}
       className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
       data-pane-handle={paneHandle}
-      onClick={() => command("focus")}
+      onClick={() => guarded(() => commands.focus(paneHandle, null))}
       onMouseDown={(e) => {
         if (e.button === 3) {
           e.preventDefault();
-          command("cmd_navigate_back");
+          guarded(() => commands.cmdNavigateBack(paneHandle));
         } else if (e.button === 4) {
           e.preventDefault();
-          command("cmd_navigate_forward");
+          guarded(() => commands.cmdNavigateForward(paneHandle));
         }
       }}
     >
@@ -1519,15 +1515,17 @@ function PaneInner(
         filterMode={filter_mode}
         inputRef={inputRef}
         onKeyDown={onkeydownFilter}
-        onChange={(value) => command("set_filter", { filter: value })}
+        onChange={(value) =>
+          guarded(() => commands.setFilter(paneHandle, value, null))
+        }
         onFocus={() => {
           if (filter != null) {
-            command("set_filter", { filter: filter });
+            guarded(() => commands.setFilter(paneHandle, filter, null));
           }
         }}
       />
       <div className={styles.headerArea}>
-        {preferences?.settings.appearance.show_pane_header !== false ? (
+        {preferences?.settings.appearance?.show_pane_header !== false ? (
           <div className={styles.header}>
             <VfsSelector
               vfsDisplayName={vfs_display_name}
@@ -1576,9 +1574,14 @@ function PaneInner(
               sorting={sorting}
               column={column}
               onSort={(key, asc) => {
-                command("set_sorting", {
-                  sorting: { key, asc },
-                });
+                guarded(() =>
+                  commands.setSorting(paneHandle, {
+                    key: key as Parameters<
+                      typeof commands.setSorting
+                    >[1]["key"],
+                    asc,
+                  }),
+                );
               }}
             />
           ))}
@@ -1634,7 +1637,7 @@ function PaneInner(
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
-      {preferences?.settings.appearance.show_pane_status !== false && (
+      {preferences?.settings.appearance?.show_pane_status !== false && (
         <div className={styles.statusbar}>
           {showSpinner && "Loading file list..."}
           {!showSpinner && loading && (

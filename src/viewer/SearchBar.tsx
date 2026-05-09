@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
+import { commands, type SearchMatch } from "../lib/bindings";
+import { unwrap } from "../lib/ipc";
 import styles from "./Viewer.module.scss";
 import type { VfsPath } from "./helpers";
 
-interface SearchMatch {
-  offset: number;
-  length: number;
-}
+export type { SearchMatch };
 
 type SearchMode = "text" | "hex";
 
@@ -99,12 +97,9 @@ export function SearchBar({
 
       try {
         const maxLength = fileSize > 0 ? fileSize : 1024 * 1024 * 1024;
-        const result: SearchMatch | null = await invoke("find_in_viewer", {
-          path: vfsPath,
-          offset: fromOffset,
-          pattern,
-          maxLength,
-        });
+        const result = (await unwrap(
+          commands.findInViewer(vfsPath, fromOffset, pattern, maxLength),
+        )) as SearchMatch | null;
 
         if (result) {
           lastMatchRef.current = result;
@@ -112,15 +107,9 @@ export function SearchBar({
           onMatch(result);
           setStatus(null);
         } else if (fromOffset > 0) {
-          const wrapResult: SearchMatch | null = await invoke(
-            "find_in_viewer",
-            {
-              path: vfsPath,
-              offset: 0,
-              pattern,
-              maxLength: fromOffset,
-            },
-          );
+          const wrapResult = (await unwrap(
+            commands.findInViewer(vfsPath, 0, pattern, fromOffset),
+          )) as SearchMatch | null;
           if (wrapResult) {
             lastMatchRef.current = wrapResult;
             searchOffsetRef.current = wrapResult.offset + 1;

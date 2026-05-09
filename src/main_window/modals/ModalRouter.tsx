@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
+import { safe } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { PreferencesState } from "../../lib/preferences";
 import CommandPaletteContent from "./CommandPalette";
@@ -10,6 +10,7 @@ import QuickConnectContent from "./QuickConnect";
 import SettingsEditorContent from "./SettingsEditor";
 import { ModalContent } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
+import { commands } from "../../lib/bindings";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
@@ -26,7 +27,7 @@ export default function ModalRouter({
   const modalType = state?.modal?.type;
   const isOpen = !!modalType && !EXCLUDED_MODAL_TYPES.includes(modalType);
 
-  const closeModal = useCallback(() => safeCommand("close_modal"), []);
+  const closeModal = useCallback(() => safe(commands.closeModal()), []);
 
   function renderContent() {
     switch (modalType) {

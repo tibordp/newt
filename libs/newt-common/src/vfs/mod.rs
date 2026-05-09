@@ -48,7 +48,18 @@ pub const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
 // ---------------------------------------------------------------------------
 
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    specta::Type,
 )]
 pub struct VfsId(pub u32);
 
@@ -66,7 +77,7 @@ impl std::fmt::Display for VfsId {
 // VfsPath
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 pub struct VfsPath {
     pub vfs_id: VfsId,
     pub path: PathBuf,
@@ -136,7 +147,7 @@ impl std::fmt::Display for VfsPath {
 // Breadcrumb — a segment in a display path
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct Breadcrumb {
     pub label: String,
     pub nav_path: String,
@@ -266,7 +277,7 @@ pub fn all_descriptors() -> impl Iterator<Item = &'static dyn VfsDescriptor> {
 // VfsMetadata — for metadata preservation in copy
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct VfsMetadata {
     pub permissions: Option<u32>,
     pub uid: Option<u32>,
@@ -789,10 +800,16 @@ impl FileReader for VfsRegistryFileReader {
 
 const SEARCH_CHUNK_SIZE: usize = 256 * 1024;
 
+/// Maximum bytes carried over between search chunks for regex patterns. The
+/// regex engine has no way to bound match length up front, so we have to
+/// guess; 64 KiB covers any realistic regex while keeping the per-chunk
+/// re-scan small.
+const REGEX_OVERLAP_LIMIT: usize = 64 * 1024;
+
 fn compute_overlap(pattern: &SearchPattern) -> usize {
     match pattern {
         SearchPattern::Literal(pat) => pat.len().saturating_sub(1),
-        SearchPattern::Regex(_) => std::cmp::min(65536, SEARCH_CHUNK_SIZE / 2),
+        SearchPattern::Regex(_) => std::cmp::min(REGEX_OVERLAP_LIMIT, SEARCH_CHUNK_SIZE / 2),
     }
 }
 
@@ -821,7 +838,7 @@ fn compile_regex(pattern: &SearchPattern) -> Result<Option<regex::bytes::Regex>,
 // Mount/unmount RPC types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct S3Credentials {
     /// AWS access key ID (IAM user or assumed role).
     pub access_key_id: Option<String>,
@@ -841,7 +858,7 @@ pub struct S3Credentials {
     pub external_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub enum MountRequest {
     S3 {
         region: Option<String>,

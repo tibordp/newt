@@ -8,7 +8,8 @@ const Editor = React.lazy(() => import("./editor/Editor"));
 
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles/globals.scss";
-import { safeCommand } from "./lib/ipc";
+import { safe } from "./lib/ipc";
+import { commands } from "./lib/bindings";
 
 // --- React app ---
 
@@ -60,7 +61,7 @@ function App({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     //document.body.style.zoom = zoom.toString();
-    safeCommand("zoom", { factor: zoom });
+    safe(commands.zoom(zoom));
   }, [zoom]);
 
   useEffect(() => {

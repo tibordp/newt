@@ -440,7 +440,8 @@ impl TarArchiveVfs {
             let target_str = target_normalized.to_string_lossy();
             let target_entry = index_get(index, &target_str)
                 .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
-            let target_path = index_path_str(index, &target_str).unwrap();
+            let target_path = index_path_str(index, &target_str)
+                .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
             return Ok((target_path, target_entry));
         }
 

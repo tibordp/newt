@@ -75,7 +75,7 @@ pub fn ssh_transport_cmd(host: &str) -> Vec<String> {
 // ConnectionStatus (serialized to the frontend via MainWindowState)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ConnectionStatus {
     Connecting { message: String, log: Vec<String> },

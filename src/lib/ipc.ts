@@ -5,6 +5,85 @@ import { Event } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyPatches, Patch } from "immer";
 
+import type { Result } from "./bindings";
+
+/// Settle a typed `commands.X(...)` promise into `{ ok: T } | { err: string }`.
+/// tauri-specta's generated commands return `Result<T, string>` on user
+/// errors but RE-THROW `Error` instances (transport failure, webview gone,
+/// etc.). Both helpers here funnel through this so the wrappers below have
+/// a single error-handling surface.
+async function settle<T>(
+  promise: Promise<Result<T, string>>,
+): Promise<{ ok: T } | { err: string }> {
+  try {
+    const result = await promise;
+    if (result.status === "error") return { err: result.error };
+    return { ok: result.data };
+  } catch (e) {
+    return {
+      err: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/// Wrap a typed `commands.X(...)` call: on error, show a popup; return the
+/// data on success or `null` on failure. Use for fire-and-handle: call sites
+/// that don't otherwise inspect the return.
+export const safe = async <T>(
+  promise: Promise<Result<T, string>>,
+): Promise<T | null> => {
+  const r = await settle(promise);
+  if ("err" in r) {
+    await message(r.err, { kind: "error", title: "Error" });
+    return null;
+  }
+  return r.ok;
+};
+
+/// Wrap a typed `commands.X(...)` call and return its error as a string
+/// instead of popping up a toast. Use this when the caller wants to render
+/// the error inline (e.g. inside a dialog form). Returns `null` on success.
+export const tryRun = async <T>(
+  promise: Promise<Result<T, string>>,
+): Promise<string | null> => {
+  const r = await settle(promise);
+  return "err" in r ? r.err : null;
+};
+
+/// Wrap a typed `commands.X(...)` call: on error, log and return `null`. Use
+/// for non-critical commands where the user shouldn't be interrupted.
+export const safeSilent = async <T>(
+  promise: Promise<Result<T, string>>,
+): Promise<T | null> => {
+  const r = await settle(promise);
+  if ("err" in r) {
+    console.error(r.err);
+    return null;
+  }
+  return r.ok;
+};
+
+/// Unwrap a typed `commands.X(...)` call: throw on error, return data on
+/// success. Use when the caller needs the data and is happy to let an
+/// outer try/catch handle the error.
+export const unwrap = async <T>(
+  promise: Promise<Result<T, string>>,
+): Promise<T> => {
+  const r = await settle(promise);
+  if ("err" in r) throw new Error(r.err);
+  return r.ok;
+};
+
+// ---------------------------------------------------------------------------
+// Dynamic-name escape hatches.
+//
+// Prefer the typed `commands.X(...)` + `safe(...)` wrappers above. These
+// stringly-typed shims exist for the few call sites that compute the command
+// name at runtime — the command palette's `cmd_<id>` dispatch, the per-pane
+// context menus that take a command-name prop, etc. — where TS can't
+// statically narrow the args anyway.
+// ---------------------------------------------------------------------------
+
 export const safeCommand = async (
   command: string,
   args: object = {},
@@ -12,17 +91,10 @@ export const safeCommand = async (
   try {
     await invoke(command, { ...args });
   } catch (e) {
-    await message(String(e), {
-      kind: "error",
-      title: "Error",
-    });
+    await message(String(e), { kind: "error", title: "Error" });
   }
 };
 
-// Invoke a Tauri command and return its error as a string instead of toasting.
-// Use this when the caller wants to render the error inline (e.g. inside a
-// dialog) rather than as a popup. Returns null on success, the error message
-// on failure.
 export const tryCommand = async (
   command: string,
   args: object = {},

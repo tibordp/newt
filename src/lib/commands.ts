@@ -1,5 +1,6 @@
 import { MainWindowState } from "../main_window/types";
-import { safeCommand } from "./ipc";
+import { commands } from "./bindings";
+import { safe, safeCommand } from "./ipc";
 import { PreferencesState, ResolvedBinding } from "./preferences";
 
 /// Execute a command by its ID. Dispatches to the corresponding cmd_* Tauri
@@ -9,7 +10,7 @@ export const executeCommandById = (
   commandId: string,
   state: MainWindowState,
   prefs: PreferencesState,
-): Promise<void> | null => {
+): Promise<unknown> | null => {
   const commandInfo = prefs.commands.find((c) => c.id === commandId);
   if (!commandInfo) return null;
 
@@ -21,7 +22,7 @@ export const executeCommandById = (
   // User commands dispatch to run_user_command instead of cmd_<id>
   if (commandId.startsWith("user_command_")) {
     const index = parseInt(commandId.replace("user_command_", ""), 10);
-    return safeCommand("run_user_command", { paneHandle, index });
+    return safe(commands.runUserCommand(paneHandle, index));
   }
 
   return safeCommand("cmd_" + commandId, { paneHandle });

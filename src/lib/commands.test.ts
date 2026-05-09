@@ -106,7 +106,7 @@ describe("buildBindingMap", () => {
 
   it("maps single binding", () => {
     const bindings: ResolvedBinding[] = [
-      { key: "ctrl+a", command: "select_all" },
+      { key: "ctrl+a", command: "select_all", when: null },
     ];
     const map = buildBindingMap(bindings);
     expect(map.get("ctrl+a")).toHaveLength(1);
@@ -115,7 +115,7 @@ describe("buildBindingMap", () => {
 
   it("groups multiple bindings with same key", () => {
     const bindings: ResolvedBinding[] = [
-      { key: "ctrl+a", command: "cmd1" },
+      { key: "ctrl+a", command: "cmd1", when: null },
       { key: "ctrl+a", command: "cmd2", when: "pane_focused" },
     ];
     const map = buildBindingMap(bindings);
@@ -124,8 +124,8 @@ describe("buildBindingMap", () => {
 
   it("separates different keys", () => {
     const bindings: ResolvedBinding[] = [
-      { key: "ctrl+a", command: "cmd1" },
-      { key: "ctrl+b", command: "cmd2" },
+      { key: "ctrl+a", command: "cmd1", when: null },
+      { key: "ctrl+b", command: "cmd2", when: null },
     ];
     const map = buildBindingMap(bindings);
     expect(map.get("ctrl+a")).toHaveLength(1);

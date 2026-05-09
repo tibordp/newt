@@ -37,7 +37,7 @@ pub use self::session::{
     ssh_transport_cmd,
 };
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DisplayOptionsInner {
     pub show_hidden: bool,
     pub active_pane: PaneHandle,
@@ -82,6 +82,7 @@ impl serde::Serialize for DisplayOptions {
     Copy,
     serde::Serialize,
     serde::Deserialize,
+    specta::Type,
 )]
 pub struct PaneHandle(usize);
 
@@ -208,7 +209,7 @@ impl serde::Serialize for Terminals {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
     Scanning,
@@ -219,16 +220,15 @@ pub enum OperationStatus {
     WaitingForInput,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationIssueInfo {
     pub issue_id: u64,
-    pub kind: String,
     pub message: String,
     pub detail: Option<String>,
-    pub actions: Vec<String>,
+    pub actions: Vec<newt_common::operation::IssueAction>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationState {
     pub id: OperationId,
     pub kind: String,
@@ -303,13 +303,13 @@ impl serde::Serialize for Operations {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConfirmAction {
     DeleteSelected { paths: Vec<VfsPath> },
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory {
@@ -366,6 +366,10 @@ pub enum ModalDataKind {
         host: String,
     },
     MountS3,
+    // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
+    // the wire format serde emits.
+    #[serde(rename = "mount_k8s")]
+    #[specta(rename = "mount_k8s")]
     MountK8s {
         k8s_context: String,
     },
@@ -409,18 +413,18 @@ pub enum ModalDataKind {
     },
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct UserCommandPrompt {
     pub label: String,
     pub default: String,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ModalContext {
     pub pane_handle: Option<PaneHandle>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ModalData {
     #[serde(flatten)]
     pub kind: ModalDataKind,
@@ -445,13 +449,13 @@ impl serde::Serialize for ModalState {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DndFile {
     pub name: String,
     pub is_dir: bool,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct DndData {
     pub source_pane: PaneHandle,
     pub files: Vec<DndFile>,
@@ -475,7 +479,7 @@ impl serde::Serialize for DndState {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct VfsTarget {
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
@@ -491,7 +495,7 @@ pub struct VfsTarget {
 // Askpass — SSH password / host-key prompts via SSH_ASKPASS
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct AskpassPrompt {
     pub prompt: String,
     pub is_secret: bool,
@@ -747,20 +751,9 @@ pub(crate) fn apply_operation_progress(
                 op.status = OperationStatus::WaitingForInput;
                 op.issue = Some(OperationIssueInfo {
                     issue_id: issue.issue_id,
-                    kind: format!("{:?}", issue.kind),
                     message: issue.message,
                     detail: issue.detail,
-                    actions: issue
-                        .actions
-                        .iter()
-                        .map(|a| match a {
-                            newt_common::operation::IssueAction::Skip => "skip".to_string(),
-                            newt_common::operation::IssueAction::Overwrite => {
-                                "overwrite".to_string()
-                            }
-                            newt_common::operation::IssueAction::Retry => "retry".to_string(),
-                        })
-                        .collect(),
+                    actions: issue.actions,
                 });
             }
         }
@@ -808,6 +801,15 @@ impl<'de> tauri::ipc::CommandArg<'de, Wry> for MainWindowContext {
 
         s.main_window(&window)
             .ok_or_else(|| tauri::ipc::InvokeError::from("window not yet initialized"))
+    }
+}
+
+// `MainWindowContext` is server-side state (resolved via `CommandArg` from
+// `GlobalContext.main_windows`), not a value the frontend supplies. Tell
+// specta to skip it so it doesn't appear in the generated TS signatures.
+impl specta::function::FunctionArg for MainWindowContext {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::datatype::DataType> {
+        None
     }
 }
 

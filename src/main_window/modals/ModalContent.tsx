@@ -1,39 +1,42 @@
-import { safeCommand } from "../../lib/ipc";
-
+import {
+  commands,
+  type ModalContext,
+  type ModalData,
+} from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
 import About from "./About";
 import Confirm from "./Confirm";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
+import Debug from "./Debug";
 import MountK8s from "./MountK8s";
 import MountS3 from "./MountS3";
 import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
-import Debug from "./Debug";
 import UserCommandInput from "./UserCommandInput";
 
-export type ModalState = {
-  type: string;
-  data: any;
-  context: Context;
-};
-
-export type Context = {
-  pane_handle?: number;
-};
+export type { ModalContext, ModalData };
 
 export type CommonDialogProps = {
   cancel: () => void;
-  context?: Context;
+  context?: ModalContext;
 };
 
-export function ModalContent({ state }: { state: ModalState | null }) {
-  const commonProps = {
+/// Extract the `data` payload of a specific modal variant. Dialog components
+/// use this so their props track the codegen `ModalData` discriminated union
+/// without duplicating field shapes.
+export type ModalDataOf<
+  K extends Extract<ModalData, { data: unknown }>["type"],
+> = Extract<ModalData, { type: K; data: unknown }>["data"];
+
+export function ModalContent({ state }: { state: ModalData | null }) {
+  const commonProps: CommonDialogProps = {
     cancel: () => {
-      safeCommand("close_modal");
+      safe(commands.closeModal());
     },
     context: state?.context,
   };

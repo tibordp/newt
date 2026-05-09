@@ -16,9 +16,13 @@ import dialogStyles from "./modals/Dialog.module.scss";
 import { enablePatches } from "immer";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { invoke } from "@tauri-apps/api/core";
-import { TerminalData, useRemoteState, useTerminalData } from "../lib/ipc";
-
+import { commands } from "../lib/bindings";
+import {
+  TerminalData,
+  safeSilent,
+  useRemoteState,
+  useTerminalData,
+} from "../lib/ipc";
 import {
   normalizeKeyEvent,
   buildBindingMap,
@@ -46,7 +50,7 @@ const ASKPASS_DIALOG_STYLE = {
 };
 
 function sendAskpassResponse(response: string | null) {
-  invoke("askpass_respond", { response }).catch(console.error);
+  safeSilent(commands.askpassRespond(response));
 }
 
 const preventAskpassAutoFocus = (e: Event) => {
@@ -150,7 +154,7 @@ function App() {
   useEffect(() => {
     if (!initCalled.current) {
       initCalled.current = true;
-      invoke("init").catch(console.error);
+      safeSilent(commands.init());
     }
   }, []);
 
@@ -371,7 +375,7 @@ function App() {
                   foregroundOperationId={foregroundOp?.id}
                 />
               )}
-              {preferences?.settings.appearance.show_command_bar && (
+              {preferences?.settings.appearance?.show_command_bar && (
                 <CommandBar state={remoteState} preferences={preferences} />
               )}
             </>
@@ -400,7 +404,7 @@ function App() {
               {remoteState.connection_status.error}{" "}
               <button
                 className="connection-retry"
-                onClick={() => invoke("reconnect").catch(console.error)}
+                onClick={() => safeSilent(commands.reconnect())}
               >
                 Reconnect
               </button>

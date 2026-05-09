@@ -136,6 +136,13 @@ impl<'de> CommandArg<'de, Wry> for EditorWindowContext {
     }
 }
 
+// Server-side state — see the same impl on `MainWindowContext`.
+impl specta::function::FunctionArg for EditorWindowContext {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::datatype::DataType> {
+        None
+    }
+}
+
 /// Create an EditorWindow with UpdatePublisher but no menu.
 pub fn create_editor_window(window: &WebviewWindow) -> Arc<EditorWindow> {
     let state = EditorState {
@@ -321,18 +328,21 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
 // --- Tauri commands ---
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_editor_language(ctx: EditorWindowContext, language: String) -> Result<(), Error> {
     ctx.0.set_language(&language);
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_editor_wrap(ctx: EditorWindowContext, wrap: bool) -> Result<(), Error> {
     ctx.0.set_word_wrap(wrap);
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn ping_editor(ctx: EditorWindowContext) -> Result<(), Error> {
     ctx.0.publish_full();
     Ok(())

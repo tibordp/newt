@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import styles from "./Viewer.module.scss";
-import { safeCommand, useRemoteState } from "../lib/ipc";
+import { commands } from "../lib/bindings";
+import { useRemoteState, safe, unwrap } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 import {
   CHUNK_SIZE,
@@ -67,11 +67,11 @@ function Viewer() {
 
     (async () => {
       try {
-        const fi: FileInfo = await invoke("file_details", { path: filePath });
+        const fi = (await unwrap(commands.fileDetails(filePath))) as FileInfo;
         setInfo(fi);
         const mode = detectAutoMode(fi.mime_type);
         setAutoMode(mode);
-        safeCommand("set_viewer_mode", { mode });
+        safe(commands.setViewerMode(mode));
       } catch (e: any) {
         setError(e.toString());
         await message(e.toString(), { kind: "error", title: "Error" });
@@ -89,13 +89,13 @@ function Viewer() {
     if (!info || currentMode !== "hex") return;
     if (chunkCache.current.has(0)) return;
 
+    if (!filePath) return;
+    const fp = filePath;
     (async () => {
       try {
-        const chunk: FileChunk = await invoke("read_file_range", {
-          path: filePath,
-          offset: 0,
-          length: CHUNK_SIZE,
-        });
+        const chunk = (await unwrap(
+          commands.readFileRange(fp, 0, CHUNK_SIZE),
+        )) as FileChunk;
         chunkCache.current.set(0, new Uint8Array(chunk.data));
       } catch (e: any) {
         console.error("Failed to preload first chunk", e);
@@ -106,14 +106,13 @@ function Viewer() {
 
   const loadChunk = useCallback(
     async (chunkIndex: number) => {
+      if (!filePath) return;
       if (chunkCache.current.has(chunkIndex)) return;
       const offset = chunkIndex * CHUNK_SIZE;
       try {
-        const chunk: FileChunk = await invoke("read_file_range", {
-          path: filePath,
-          offset,
-          length: CHUNK_SIZE,
-        });
+        const chunk = (await unwrap(
+          commands.readFileRange(filePath, offset, CHUNK_SIZE),
+        )) as FileChunk;
         chunkCache.current.set(chunkIndex, new Uint8Array(chunk.data));
       } catch (e: any) {
         console.error("Failed to load chunk", chunkIndex, e);
@@ -128,14 +127,12 @@ function Viewer() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        safeCommand("close_window");
+        safe(commands.closeWindow());
         e.preventDefault();
       } else if (e.key === "F3" && currentMode) {
         e.preventDefault();
         const resolved = autoMode ?? currentMode;
-        safeCommand("set_viewer_mode", {
-          mode: getAlternateMode(currentMode, resolved),
-        });
+        safe(commands.setViewerMode(getAlternateMode(currentMode, resolved)));
       }
     };
     window.addEventListener("keydown", handler);

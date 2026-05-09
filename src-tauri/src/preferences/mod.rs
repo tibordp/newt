@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 /// The fully-resolved preferences state pushed to the frontend.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedPreferences {
     pub settings: AppPreferences,
     pub schema: serde_json::Value,
@@ -27,7 +27,7 @@ pub struct ResolvedPreferences {
 }
 
 /// A resolved keybinding after `mod+` expansion and cascading.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedBinding {
     pub key: String,
     pub command: String,
@@ -35,7 +35,7 @@ pub struct ResolvedBinding {
 }
 
 /// Command metadata for the command palette.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct CommandInfo {
     pub id: String,
     pub name: String,

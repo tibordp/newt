@@ -248,7 +248,17 @@ fn main() {
         ConnectionTarget::Local
     };
 
-    let handler = cmd::create_handler();
+    let specta_builder = cmd::create_specta_builder();
+
+    // In debug builds, regenerate `src/lib/bindings.ts` from the Rust command
+    // registry on every startup. CI fails if the committed bindings drift.
+    #[cfg(debug_assertions)]
+    if let Err(e) = specta_builder.export(cmd::typescript_export_config(), cmd::BINDINGS_PATH) {
+        log::warn!("failed to export tauri-specta bindings: {}", e);
+    }
+
+    let inner_handler = specta_builder.invoke_handler();
+    let handler = cmd::wrap_with_modal_close_middleware(inner_handler);
     let handler = Box::new(move |i: Invoke<Wry>| -> bool {
         let start = std::time::Instant::now();
         let cmd = i.message.command().to_string();
@@ -281,11 +291,18 @@ fn main() {
             // Remote/Elevated: `init` command triggers connect asynchronously.
             if matches!(ct, ConnectionTarget::Local) {
                 let agent_resolver = global_ctx.agent_resolver();
-                tauri::async_runtime::block_on(ctx.connect(agent_resolver)).unwrap();
-
-                // Pre-warm viewer and editor windows
-                cmd::prewarm_viewer(app.handle(), &ctx, "main");
-                cmd::prewarm_editor(app.handle(), &ctx, "main");
+                // If the local connect fails, log and degrade rather than
+                // killing the process: the frontend's `init` command will
+                // also try to connect once the webview loads, which is the
+                // path that handles errors visibly.
+                if let Err(e) = tauri::async_runtime::block_on(ctx.connect(agent_resolver)) {
+                    log::error!("local connect failed during setup: {}", e);
+                    ctx.set_connection_failed(e.to_string());
+                } else {
+                    // Pre-warm viewer and editor windows
+                    cmd::prewarm_viewer(app.handle(), &ctx, "main");
+                    cmd::prewarm_editor(app.handle(), &ctx, "main");
+                }
             }
 
             Ok(())

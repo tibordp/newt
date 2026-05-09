@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Serde defaults ensure every field has a compiled-in default. The JSON Schema
 /// is derived via `schemars` so the frontend settings editor can be generated
 /// automatically.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct AppPreferences {
     #[serde(default)]
@@ -20,7 +20,7 @@ pub struct AppPreferences {
     pub hot_paths: HotPathsPreferences,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct AppearancePreferences {
     /// Show hidden files by default when opening a new window.
@@ -46,7 +46,7 @@ pub struct AppearancePreferences {
     pub columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     #[default]
@@ -87,7 +87,7 @@ impl Default for AppearancePreferences {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct DefaultSort {
     pub key: DefaultSortKey,
@@ -103,7 +103,7 @@ impl Default for DefaultSort {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultSortKey {
     #[default]
@@ -115,7 +115,7 @@ pub enum DefaultSortKey {
     Created,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct BehaviorPreferences {
     /// Ask for confirmation before deleting files.
@@ -154,7 +154,7 @@ impl Default for BehaviorPreferences {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct HotPathsPreferences {
     /// Show standard folders (Home, Downloads, Documents, etc.)
@@ -188,17 +188,20 @@ fn default_toml_table() -> toml::Value {
 
 /// Raw TOML file structure — settings plus optional profile name and keybinding
 /// overrides.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct SettingsFile {
     /// Active profile name (loads `profiles/<name>.toml` on top).
     pub profile: Option<String>,
 
     #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub appearance: toml::Value,
     #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub behavior: toml::Value,
     #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub hot_paths: toml::Value,
 
     /// Keybinding override entries.
@@ -229,7 +232,7 @@ impl Default for SettingsFile {
 }
 
 /// A single `[[bind]]` entry in the TOML file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct KeybindingEntry {
     pub key: String,
     pub command: String,
@@ -238,7 +241,7 @@ pub struct KeybindingEntry {
 }
 
 /// A single `[[command]]` entry in the TOML file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct UserCommandEntry {
     pub title: String,
     pub run: String,
@@ -255,7 +258,7 @@ pub struct UserCommandEntry {
 }
 
 /// A single `[[bookmark]]` entry in the TOML file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct BookmarkEntry {
     pub path: String,
     #[serde(default)]

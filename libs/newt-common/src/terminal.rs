@@ -15,16 +15,26 @@ use log::{debug, error, info};
 
 use crate::{Error, rpc::Communicator};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// Bytes read in one PTY pull. Matches a typical terminal flush; bigger
+/// reads block emitting until they fill, smaller reads waste syscalls.
+const PTY_READ_BUFFER_SIZE: usize = 1024;
+
+/// Buffer size for `getpwuid_r`. POSIX gives no upper bound; 1 KiB is the
+/// long-standing convention and is enough for every reasonable passwd entry.
+const PASSWD_BUFFER_SIZE: usize = 1024;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 pub struct TerminalHandle(pub u32);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ExitStatus {
     pub code: Option<i32>,
     pub signal: Option<i32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, specta::Type)]
 pub struct TerminalOptions {
     pub working_dir: Option<PathBuf>,
     pub command: Option<String>,
@@ -203,7 +213,7 @@ impl TerminalClient for Local {
             .cloned()
             .ok_or_else(|| Error::custom("terminal not found"))?;
 
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; PTY_READ_BUFFER_SIZE];
         let len = terminal.pty_read.lock().await.read(&mut buf).await?;
 
         if len > 0 {
@@ -306,7 +316,7 @@ struct Passwd<'a> {
 /// # Unsafety
 ///
 /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
-fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>, Error> {
+fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error> {
     // Create zeroed passwd struct.
     let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
 
@@ -355,7 +365,7 @@ impl ShellUser {
     /// look for shell, username, longname, and home dir in the respective environment variables
     /// before falling back on looking in to `passwd`.
     fn from_env() -> Result<Self, Error> {
-        let mut buf = [0; 1024];
+        let mut buf = [0; PASSWD_BUFFER_SIZE];
         let pw = get_pw_entry(&mut buf);
 
         let user = match std::env::var("USER") {

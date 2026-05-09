@@ -7,7 +7,7 @@ use crate::common::Error;
 
 /// A saved connection profile. Secrets are stored in the system keychain,
 /// not in this struct or the connections file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ConnectionProfile {
     pub id: String,
     pub name: String,
@@ -15,7 +15,7 @@ pub struct ConnectionProfile {
     pub kind: ConnectionKind,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
     S3 {
@@ -47,7 +47,7 @@ fn default_credential_mode() -> String {
     "default".to_string()
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 struct ConnectionsFile {
     #[serde(default, rename = "connection")]
     connections: Vec<ConnectionProfile>,
@@ -168,6 +168,7 @@ pub fn build_mount_request(
 // --- Tauri commands ---
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_list_connections(
     global_ctx: tauri::State<'_, crate::GlobalContext>,
 ) -> Result<Vec<ConnectionProfile>, Error> {
@@ -176,6 +177,7 @@ pub fn cmd_list_connections(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_save_connection(
     global_ctx: tauri::State<'_, crate::GlobalContext>,
     profile: ConnectionProfile,
@@ -190,6 +192,7 @@ pub fn cmd_save_connection(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_delete_connection(
     global_ctx: tauri::State<'_, crate::GlobalContext>,
     id: String,
@@ -201,11 +204,13 @@ pub fn cmd_delete_connection(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn cmd_get_connection_secret(id: String) -> Result<Option<String>, Error> {
     get_connection_secret(&id)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn connect_profile(
     ctx: crate::main_window::MainWindowContext,
     pane_handle: crate::main_window::PaneHandle,

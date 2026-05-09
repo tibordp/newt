@@ -523,7 +523,8 @@ impl Communicator {
         Resp: for<'de> serde::Deserialize<'de> + std::fmt::Debug,
     {
         let id = RequestId(self.0.request_id.fetch_add(1, Ordering::SeqCst));
-        let bytes = bincode::serialize(req).unwrap();
+        let bytes =
+            bincode::serialize(req).map_err(|e| Error::custom(format!("RPC encode: {}", e)))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.0.response.lock().insert(id, tx);
@@ -538,14 +539,15 @@ impl Communicator {
         let resp = rx.await.map_err(|_| Error::connection())?;
 
         std::mem::forget(guard);
-        Ok(bincode::deserialize(&resp[..]).unwrap())
+        bincode::deserialize(&resp[..]).map_err(|e| Error::custom(format!("RPC decode: {}", e)))
     }
 
     pub async fn notify<Req>(&self, api: Api, req: &Req) -> Result<(), Error>
     where
         Req: serde::Serialize + std::fmt::Debug,
     {
-        let bytes = bincode::serialize(req).unwrap();
+        let bytes =
+            bincode::serialize(req).map_err(|e| Error::custom(format!("RPC encode: {}", e)))?;
 
         let message = Message::Notify(api, bytes.into());
         self.0

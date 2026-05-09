@@ -1,13 +1,11 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safeCommand } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
-import { VfsPath } from "../../lib/types";
+import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 
-type CreateDirectoryProps = CommonDialogProps & {
-  path: VfsPath;
-};
+type CreateDirectoryProps = CommonDialogProps & ModalDataOf<"create_directory">;
 
 export default function CreateDirectory({
   path,
@@ -18,11 +16,7 @@ export default function CreateDirectory({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    safeCommand("create_directory", {
-      paneHandle: context?.pane_handle,
-      path,
-      name,
-    });
+    safe(commands.createDirectory(context?.pane_handle ?? null, path, name));
   }
 
   return (

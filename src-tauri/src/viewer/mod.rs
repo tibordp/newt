@@ -11,17 +11,67 @@ use crate::GlobalContext;
 use crate::common::{Error, UpdatePublisher};
 use crate::main_window::MainWindowContext;
 
-const MODES: &[(&str, &str)] = &[
-    ("text", "Text"),
-    ("hex", "Hex"),
-    ("image", "Image"),
-    ("audio", "Audio"),
-    ("video", "Video"),
-    ("pdf", "PDF"),
-];
+/// Display mode for the file viewer. Wire format is snake_case to match
+/// the strings the frontend uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerMode {
+    Text,
+    Hex,
+    Image,
+    Audio,
+    Video,
+    Pdf,
+}
+
+impl ViewerMode {
+    /// Stable identifier used in menu item ids — matches the serde rename.
+    fn id(self) -> &'static str {
+        match self {
+            ViewerMode::Text => "text",
+            ViewerMode::Hex => "hex",
+            ViewerMode::Image => "image",
+            ViewerMode::Audio => "audio",
+            ViewerMode::Video => "video",
+            ViewerMode::Pdf => "pdf",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ViewerMode::Text => "Text",
+            ViewerMode::Hex => "Hex",
+            ViewerMode::Image => "Image",
+            ViewerMode::Audio => "Audio",
+            ViewerMode::Video => "Video",
+            ViewerMode::Pdf => "PDF",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "text" => ViewerMode::Text,
+            "hex" => ViewerMode::Hex,
+            "image" => ViewerMode::Image,
+            "audio" => ViewerMode::Audio,
+            "video" => ViewerMode::Video,
+            "pdf" => ViewerMode::Pdf,
+            _ => return None,
+        })
+    }
+
+    const ALL: [ViewerMode; 6] = [
+        ViewerMode::Text,
+        ViewerMode::Hex,
+        ViewerMode::Image,
+        ViewerMode::Audio,
+        ViewerMode::Video,
+        ViewerMode::Pdf,
+    ];
+}
 
 pub struct ViewerState {
-    mode: RwLock<String>,
+    mode: RwLock<ViewerMode>,
     file_path: RwLock<Option<VfsPath>>,
     display_path: RwLock<Option<String>>,
     file_server_base: RwLock<Option<String>>,
@@ -53,12 +103,12 @@ impl ViewerWindow {
         *state.display_path.write() = Some(display_path);
         *state.file_server_base.write() = Some(file_server_base);
         // Reset mode for new file
-        *state.mode.write() = "text".to_string();
+        *state.mode.write() = ViewerMode::Text;
         let _ = self.publisher.publish_full();
     }
 
-    pub fn set_mode(&self, mode: &str) {
-        *self.publisher.state().mode.write() = mode.to_string();
+    pub fn set_mode(&self, mode: ViewerMode) {
+        *self.publisher.state().mode.write() = mode;
         self.rebuild_menu(mode);
         let _ = self.publisher.publish_full();
     }
@@ -67,7 +117,7 @@ impl ViewerWindow {
         let _ = self.publisher.publish_full();
     }
 
-    fn rebuild_menu(&self, active_mode: &str) {
+    fn rebuild_menu(&self, active_mode: ViewerMode) {
         let window_guard = self.window.read();
         let prefix_guard = self.prefix.read();
         let (window, prefix) = match (window_guard.as_ref(), prefix_guard.as_ref()) {
@@ -108,11 +158,18 @@ impl<'de> CommandArg<'de, Wry> for ViewerWindowContext {
     }
 }
 
+// Server-side state — see the same impl on `MainWindowContext`.
+impl specta::function::FunctionArg for ViewerWindowContext {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::datatype::DataType> {
+        None
+    }
+}
+
 /// Create a ViewerWindow with UpdatePublisher but no menu.
 /// Used both for pre-warming and direct creation.
 pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
     let state = ViewerState {
-        mode: RwLock::new("text".to_string()),
+        mode: RwLock::new(ViewerMode::Text),
         file_path: RwLock::new(None),
         display_path: RwLock::new(None),
         file_server_base: RwLock::new(None),
@@ -136,8 +193,8 @@ pub fn activate_viewer_window(
 ) -> Result<(), Error> {
     let prefix = format!("viewer_{}_", label);
     let close_id = format!("{}close", prefix);
-    let current_mode = viewer.publisher.state().mode.read().clone();
-    let menu = build_menu(app_handle, &prefix, &current_mode)?;
+    let current_mode = *viewer.publisher.state().mode.read();
+    let menu = build_menu(app_handle, &prefix, current_mode)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -182,9 +239,8 @@ pub fn activate_viewer_window(
             Some(v) => v,
             None => return,
         };
-        let mode = match suffix.strip_prefix("mode_") {
-            Some(m) => m,
-            None => return,
+        let Some(mode) = suffix.strip_prefix("mode_").and_then(ViewerMode::from_id) else {
+            return;
         };
         viewer.set_mode(mode);
     });
@@ -192,21 +248,25 @@ pub fn activate_viewer_window(
     Ok(())
 }
 
-fn has_edit_menu(mode: &str) -> bool {
-    matches!(mode, "text" | "hex")
+fn has_edit_menu(mode: ViewerMode) -> bool {
+    matches!(mode, ViewerMode::Text | ViewerMode::Hex)
 }
 
-fn build_menu(app_handle: &tauri::AppHandle, prefix: &str, mode: &str) -> Result<Menu<Wry>, Error> {
+fn build_menu(
+    app_handle: &tauri::AppHandle,
+    prefix: &str,
+    mode: ViewerMode,
+) -> Result<Menu<Wry>, Error> {
     // Use a checked CheckMenuItem for the active mode, plain MenuItem for the rest.
     // This avoids showing empty checkbox indicators (visible on some GTK themes).
     let mut mode_items: Vec<Box<dyn tauri::menu::IsMenuItem<Wry>>> = Vec::new();
-    for (id, label) in MODES {
-        let menu_id = format!("{}mode_{}", prefix, id);
-        if *id == mode {
+    for &m in &ViewerMode::ALL {
+        let menu_id = format!("{}mode_{}", prefix, m.id());
+        if m == mode {
             mode_items.push(Box::new(CheckMenuItem::with_id(
                 app_handle,
                 &menu_id,
-                *label,
+                m.label(),
                 true,
                 true,
                 None::<&str>,
@@ -215,7 +275,7 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str, mode: &str) -> Result
             mode_items.push(Box::new(MenuItem::with_id(
                 app_handle,
                 &menu_id,
-                *label,
+                m.label(),
                 true,
                 None::<&str>,
             )?));
@@ -279,26 +339,40 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str, mode: &str) -> Result
 // --- Tauri commands ---
 
 #[tauri::command]
-pub fn set_viewer_mode(ctx: ViewerWindowContext, mode: String) -> Result<(), Error> {
-    ctx.0.set_mode(&mode);
+#[specta::specta]
+pub fn set_viewer_mode(ctx: ViewerWindowContext, mode: ViewerMode) -> Result<(), Error> {
+    ctx.0.set_mode(mode);
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
     ctx.0.publish_full();
     Ok(())
 }
 
+/// How to render a byte range when copying to the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyFormat {
+    /// UTF-8 lossy decode of the bytes.
+    Text,
+    /// Space-separated uppercase hex (`AB CD EF`).
+    Hex,
+    /// Printable ASCII (0x20–0x7e); other bytes become `.`.
+    Ascii,
+}
+
 /// Copy a byte range from a file to the system clipboard.
-/// `format`: "text" (UTF-8), "hex" (space-separated hex), "ascii" (printable ASCII).
 #[tauri::command]
+#[specta::specta]
 pub async fn copy_viewer_range(
     ctx: MainWindowContext,
     path: VfsPath,
     offset: u64,
     length: u64,
-    format: String,
+    format: CopyFormat,
 ) -> Result<(), Error> {
     const MAX_COPY_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
     if length > MAX_COPY_BYTES {
@@ -324,13 +398,13 @@ pub async fn copy_viewer_range(
         buf.extend_from_slice(&chunk.data);
     }
 
-    let text = match format.as_str() {
-        "hex" => buf
+    let text = match format {
+        CopyFormat::Hex => buf
             .iter()
             .map(|b| format!("{:02X}", b))
             .collect::<Vec<_>>()
             .join(" "),
-        "ascii" => buf
+        CopyFormat::Ascii => buf
             .iter()
             .map(|&b| {
                 if (0x20..=0x7e).contains(&b) {
@@ -340,7 +414,7 @@ pub async fn copy_viewer_range(
                 }
             })
             .collect(),
-        _ => String::from_utf8_lossy(&buf).into_owned(),
+        CopyFormat::Text => String::from_utf8_lossy(&buf).into_owned(),
     };
 
     ctx.clipboard().set_text(text)?;
@@ -348,6 +422,7 @@ pub async fn copy_viewer_range(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn find_in_viewer(
     ctx: MainWindowContext,
     path: VfsPath,

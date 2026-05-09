@@ -1,16 +1,17 @@
 import { Fragment, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { safeCommand } from "../../lib/ipc";
+import { safe, safeCommand } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
 import { MainWindowState } from "../types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./CommandPalette.module.scss";
+import { commands } from "../../lib/bindings";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function matchesAppliesToCondition(
-  command: { applies_to?: string },
+  command: { applies_to?: string | null },
   state: MainWindowState | null,
 ): boolean {
   if (!command.applies_to || command.applies_to === "any") return true;
@@ -45,7 +46,7 @@ export default function CommandPalette({
 }: {
   preferences: PreferencesState | null;
   state: MainWindowState | null;
-  categoryFilter?: string;
+  categoryFilter?: string | null;
 }) {
   const [filter, setFilter] = useState("");
 
@@ -84,10 +85,7 @@ export default function CommandPalette({
 
     if (command.id.startsWith("user_command_")) {
       const cmdIndex = parseInt(command.id.replace("user_command_", ""), 10);
-      safeCommand("run_user_command", {
-        paneHandle: paneHandle || 0,
-        index: cmdIndex,
-      });
+      safe(commands.runUserCommand(paneHandle || 0, cmdIndex));
     } else {
       safeCommand("cmd_" + command.id, {
         paneHandle: paneHandle || 0,
