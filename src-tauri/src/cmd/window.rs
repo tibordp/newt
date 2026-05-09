@@ -18,14 +18,9 @@ fn build_child_window(
     title: &str,
     size: (f64, f64),
     visible: bool,
-) -> (String, tauri::WebviewWindow) {
+) -> Result<(String, tauri::WebviewWindow), Error> {
     let label = uuid::Uuid::new_v4().to_string();
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
-
-    global_ctx
-        .main_windows
-        .lock()
-        .insert(label.clone(), parent_ctx.clone());
 
     let mut builder =
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App(url.into()))
@@ -39,8 +34,16 @@ fn build_child_window(
         builder = builder.visible(false);
     }
 
-    let window = builder.build().unwrap();
-    (label, window)
+    // Register the parent context only after the window builds successfully —
+    // otherwise a build failure would leave a stale entry in `main_windows`
+    // that no `WindowEvent::Destroyed` ever cleans up. The webview hasn't
+    // started loading at this point, so no IPC has fired yet.
+    let window = builder.build()?;
+    global_ctx
+        .main_windows
+        .lock()
+        .insert(label.clone(), parent_ctx.clone());
+    Ok((label, window))
 }
 
 /// Create a pre-warmed hidden viewer window for a main window.
@@ -49,14 +52,20 @@ pub(crate) fn prewarm_viewer(
     main_ctx: &MainWindowContext,
     main_label: &str,
 ) {
-    let (label, window) = build_child_window(
+    let (label, window) = match build_child_window(
         app_handle,
         main_ctx,
         "/viewer",
         "Viewer",
         VIEWER_WINDOW_SIZE,
         false,
-    );
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::error!("pre-warm viewer for {}: build failed: {}", main_label, e);
+            return;
+        }
+    };
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
     let viewer = crate::viewer::create_viewer_window(&window);
     global_ctx.register_viewer_window(&label, crate::viewer::ViewerWindowContext(viewer));
@@ -70,14 +79,20 @@ pub(crate) fn prewarm_editor(
     main_ctx: &MainWindowContext,
     main_label: &str,
 ) {
-    let (label, window) = build_child_window(
+    let (label, window) = match build_child_window(
         app_handle,
         main_ctx,
         "/editor",
         "Editor",
         EDITOR_WINDOW_SIZE,
         false,
-    );
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::error!("pre-warm editor for {}: build failed: {}", main_label, e);
+            return;
+        }
+    };
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
     let editor = crate::editor::create_editor_window(&window);
     global_ctx.register_editor_window(&label, crate::editor::EditorWindowContext(editor));
@@ -126,7 +141,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
             &title,
             VIEWER_WINDOW_SIZE,
             true,
-        );
+        )?;
         let viewer = crate::viewer::create_viewer_window(&window);
         viewer.set_file(full_path, path_display, file_server_base);
         crate::viewer::activate_viewer_window(&app_handle, &label, &window, &viewer)?;
@@ -171,7 +186,7 @@ pub(crate) fn open_editor_window(
             &title,
             EDITOR_WINDOW_SIZE,
             true,
-        );
+        )?;
         let editor = crate::editor::create_editor_window(&window);
         editor.set_file(full_path.clone(), path_display);
         crate::editor::activate_editor_window(&app_handle, &label, &window, &editor)?;

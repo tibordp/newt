@@ -80,15 +80,16 @@ export default function QuickConnect({
     setPendingDelete(id);
   };
 
-  const confirmDelete = (id: string) => {
-    safeSilent(commands.cmdDeleteConnection(id)).then(() => {
-      // Re-open to refresh the list
+  const confirmDelete = async (id: string) => {
+    setPendingDelete(null);
+    await safeSilent(commands.cmdDeleteConnection(id));
+    // Re-open to refresh the list
+    await safeSilent(
       commands.dialog(
         "quick_connect",
         typeof paneHandle === "number" ? paneHandle : null,
-      );
-    });
-    setPendingDelete(null);
+      ),
+    );
   };
 
   const cancelDelete = () => setPendingDelete(null);

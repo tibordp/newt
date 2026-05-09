@@ -7,18 +7,37 @@ import { applyPatches, Patch } from "immer";
 
 import type { Result } from "./bindings";
 
+/// Settle a typed `commands.X(...)` promise into `{ ok: T } | { err: string }`.
+/// tauri-specta's generated commands return `Result<T, string>` on user
+/// errors but RE-THROW `Error` instances (transport failure, webview gone,
+/// etc.). Both helpers here funnel through this so the wrappers below have
+/// a single error-handling surface.
+async function settle<T>(
+  promise: Promise<Result<T, string>>,
+): Promise<{ ok: T } | { err: string }> {
+  try {
+    const result = await promise;
+    if (result.status === "error") return { err: result.error };
+    return { ok: result.data };
+  } catch (e) {
+    return {
+      err: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 /// Wrap a typed `commands.X(...)` call: on error, show a popup; return the
 /// data on success or `null` on failure. Use for fire-and-handle: call sites
 /// that don't otherwise inspect the return.
 export const safe = async <T>(
   promise: Promise<Result<T, string>>,
 ): Promise<T | null> => {
-  const result = await promise;
-  if (result.status === "error") {
-    await message(result.error, { kind: "error", title: "Error" });
+  const r = await settle(promise);
+  if ("err" in r) {
+    await message(r.err, { kind: "error", title: "Error" });
     return null;
   }
-  return result.data;
+  return r.ok;
 };
 
 /// Wrap a typed `commands.X(...)` call and return its error as a string
@@ -27,8 +46,8 @@ export const safe = async <T>(
 export const tryRun = async <T>(
   promise: Promise<Result<T, string>>,
 ): Promise<string | null> => {
-  const result = await promise;
-  return result.status === "error" ? result.error : null;
+  const r = await settle(promise);
+  return "err" in r ? r.err : null;
 };
 
 /// Wrap a typed `commands.X(...)` call: on error, log and return `null`. Use
@@ -36,12 +55,12 @@ export const tryRun = async <T>(
 export const safeSilent = async <T>(
   promise: Promise<Result<T, string>>,
 ): Promise<T | null> => {
-  const result = await promise;
-  if (result.status === "error") {
-    console.error(result.error);
+  const r = await settle(promise);
+  if ("err" in r) {
+    console.error(r.err);
     return null;
   }
-  return result.data;
+  return r.ok;
 };
 
 /// Unwrap a typed `commands.X(...)` call: throw on error, return data on
@@ -50,9 +69,9 @@ export const safeSilent = async <T>(
 export const unwrap = async <T>(
   promise: Promise<Result<T, string>>,
 ): Promise<T> => {
-  const result = await promise;
-  if (result.status === "error") throw new Error(result.error);
-  return result.data;
+  const r = await settle(promise);
+  if ("err" in r) throw new Error(r.err);
+  return r.ok;
 };
 
 // ---------------------------------------------------------------------------

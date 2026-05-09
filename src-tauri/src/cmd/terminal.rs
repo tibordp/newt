@@ -54,7 +54,7 @@ pub async fn terminal_write(
     let term = ctx
         .terminals()
         .get(handle)
-        .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
+        .ok_or_else(|| Error::Custom("terminal does not exist".into()))?;
     term.input(data).await?;
 
     Ok(())
@@ -71,7 +71,7 @@ pub async fn terminal_resize(
     let term = ctx
         .terminals()
         .get(handle)
-        .ok_or_else(|| Error::Custom("terminal does not exit".into()))?;
+        .ok_or_else(|| Error::Custom("terminal does not exist".into()))?;
     term.resize(rows, cols).await?;
 
     Ok(())
