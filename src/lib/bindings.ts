@@ -331,9 +331,8 @@ async pingViewer() : Promise<Result<null, string>> {
 },
 /**
  * Copy a byte range from a file to the system clipboard.
- * `format`: "text" (UTF-8), "hex" (space-separated hex), "ascii" (printable ASCII).
  */
-async copyViewerRange(path: VfsPath, offset: number, length: number, format: string) : Promise<Result<null, string>> {
+async copyViewerRange(path: VfsPath, offset: number, length: number, format: CopyFormat) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("copy_viewer_range", { path, offset, length, format }) };
 } catch (e) {
@@ -1261,6 +1260,22 @@ export type ConfirmAction = { type: "delete_selected"; paths: VfsPath[] }
  */
 export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "remote"; host: string } | { type: "sftp"; host: string }) & { id: string; name: string }
 export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
+/**
+ * How to render a byte range when copying to the clipboard.
+ */
+export type CopyFormat = 
+/**
+ * UTF-8 lossy decode of the bytes.
+ */
+"text" | 
+/**
+ * Space-separated uppercase hex (`AB CD EF`).
+ */
+"hex" | 
+/**
+ * Printable ASCII (0x20–0x7e); other bytes become `.`.
+ */
+"ascii"
 export type CopyOptions = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean; create_symlink: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"

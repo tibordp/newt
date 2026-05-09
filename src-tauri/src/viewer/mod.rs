@@ -354,8 +354,19 @@ pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
     Ok(())
 }
 
+/// How to render a byte range when copying to the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyFormat {
+    /// UTF-8 lossy decode of the bytes.
+    Text,
+    /// Space-separated uppercase hex (`AB CD EF`).
+    Hex,
+    /// Printable ASCII (0x20–0x7e); other bytes become `.`.
+    Ascii,
+}
+
 /// Copy a byte range from a file to the system clipboard.
-/// `format`: "text" (UTF-8), "hex" (space-separated hex), "ascii" (printable ASCII).
 #[tauri::command]
 #[specta::specta]
 pub async fn copy_viewer_range(
@@ -363,7 +374,7 @@ pub async fn copy_viewer_range(
     path: VfsPath,
     offset: u64,
     length: u64,
-    format: String,
+    format: CopyFormat,
 ) -> Result<(), Error> {
     const MAX_COPY_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
     if length > MAX_COPY_BYTES {
@@ -389,13 +400,13 @@ pub async fn copy_viewer_range(
         buf.extend_from_slice(&chunk.data);
     }
 
-    let text = match format.as_str() {
-        "hex" => buf
+    let text = match format {
+        CopyFormat::Hex => buf
             .iter()
             .map(|b| format!("{:02X}", b))
             .collect::<Vec<_>>()
             .join(" "),
-        "ascii" => buf
+        CopyFormat::Ascii => buf
             .iter()
             .map(|&b| {
                 if (0x20..=0x7e).contains(&b) {
@@ -405,7 +416,7 @@ pub async fn copy_viewer_range(
                 }
             })
             .collect(),
-        _ => String::from_utf8_lossy(&buf).into_owned(),
+        CopyFormat::Text => String::from_utf8_lossy(&buf).into_owned(),
     };
 
     ctx.clipboard().set_text(text)?;
