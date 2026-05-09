@@ -281,21 +281,14 @@ pub async fn resolve_issue(
     ctx: MainWindowContext,
     operation_id: OperationId,
     issue_id: u64,
-    action: String,
+    action: IssueAction,
     apply_to_all: bool,
 ) -> Result<(), Error> {
-    let issue_action = match action.as_str() {
-        "skip" => IssueAction::Skip,
-        "overwrite" => IssueAction::Overwrite,
-        "retry" => IssueAction::Retry,
-        _ => return Err(Error::Custom(format!("unknown action: {}", action))),
-    };
-
     let req = ResolveIssueRequest {
         operation_id,
         issue_id,
         response: IssueResponse {
-            action: issue_action,
+            action,
             apply_to_all,
         },
     };

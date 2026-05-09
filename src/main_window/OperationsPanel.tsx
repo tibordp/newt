@@ -2,16 +2,12 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import { commands } from "../lib/bindings";
-import type { OperationState } from "../lib/bindings";
+import type { IssueAction, OperationState } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
 
-export type { OperationState };
-
-/// Possible user actions on an issue. Mirrors the strings emitted in the
-/// `actions` array of `OperationIssueInfo` (server-side `IssueAction` enum).
-export type IssueAction = "skip" | "overwrite" | "retry";
+export type { IssueAction, OperationState };
 
 export function progressFraction(op: OperationState): number {
   if (op.status === "scanning") return 0;
@@ -146,7 +142,7 @@ function IssueResolution({
         {issue.message}
       </span>
       <div className={classNameOverrides?.issueActions ?? styles.issueActions}>
-        {(issue.actions as IssueAction[]).map((action, i) => (
+        {issue.actions.map((action, i) => (
           <button
             key={action}
             autoFocus={i === 0}

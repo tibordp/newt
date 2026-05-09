@@ -25,7 +25,8 @@ pub enum IssueKind {
     Other(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "snake_case")]
 pub enum IssueAction {
     Skip,
     Overwrite,
@@ -442,8 +443,8 @@ impl ProgressReporter {
         actions: Vec<IssueAction>,
     ) -> Result<IssueAction, crate::Error> {
         // Check sticky resolutions first
-        if let Some(action) = self.sticky_resolutions.get(&kind) {
-            return Ok(action.clone());
+        if let Some(&action) = self.sticky_resolutions.get(&kind) {
+            return Ok(action);
         }
 
         let issue_id = self.next_issue_id.fetch_add(1, Ordering::SeqCst);
@@ -467,8 +468,7 @@ impl ProgressReporter {
                 match result {
                     Ok(response) => {
                         if response.apply_to_all {
-                            self.sticky_resolutions
-                                .insert(kind, response.action.clone());
+                            self.sticky_resolutions.insert(kind, response.action);
                         }
                         Ok(response.action)
                     }

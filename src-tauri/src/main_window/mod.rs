@@ -229,7 +229,7 @@ pub struct OperationIssueInfo {
     pub kind: String,
     pub message: String,
     pub detail: Option<String>,
-    pub actions: Vec<String>,
+    pub actions: Vec<newt_common::operation::IssueAction>,
 }
 
 #[derive(Clone, serde::Serialize, specta::Type)]
@@ -758,17 +758,7 @@ pub(crate) fn apply_operation_progress(
                     kind: format!("{:?}", issue.kind),
                     message: issue.message,
                     detail: issue.detail,
-                    actions: issue
-                        .actions
-                        .iter()
-                        .map(|a| match a {
-                            newt_common::operation::IssueAction::Skip => "skip".to_string(),
-                            newt_common::operation::IssueAction::Overwrite => {
-                                "overwrite".to_string()
-                            }
-                            newt_common::operation::IssueAction::Retry => "retry".to_string(),
-                        })
-                        .collect(),
+                    actions: issue.actions,
                 });
             }
         }

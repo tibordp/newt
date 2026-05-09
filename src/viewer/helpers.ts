@@ -54,7 +54,8 @@ export function isPdfMime(mime: string | null): boolean {
   return mime === "application/pdf";
 }
 
-export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf";
+export type { ViewerMode } from "../lib/bindings";
+import type { ViewerMode } from "../lib/bindings";
 
 export function detectAutoMode(mime: string | null): ViewerMode {
   if (isVideoMime(mime)) return "video";

@@ -249,7 +249,7 @@ async cancelOperation(operationId: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async resolveIssue(operationId: number, issueId: number, action: string, applyToAll: boolean) : Promise<Result<null, string>> {
+async resolveIssue(operationId: number, issueId: number, action: IssueAction, applyToAll: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("resolve_issue", { operationId, issueId, action, applyToAll }) };
 } catch (e) {
@@ -313,7 +313,7 @@ async writeFile(path: VfsPath, data: number[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async setViewerMode(mode: string) : Promise<Result<null, string>> {
+async setViewerMode(mode: ViewerMode) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_viewer_mode", { mode }) };
 } catch (e) {
@@ -1308,6 +1308,7 @@ mounts: boolean;
  * Show recently visited folders
  */
 recent_folders: boolean }
+export type IssueAction = "skip" | "overwrite" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type ModalContext = { pane_handle: PaneHandle | null }
 export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
@@ -1373,7 +1374,7 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  */
 initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
 export type Mode = number
-export type OperationIssueInfo = { issue_id: number; kind: string; message: string; detail: string | null; actions: string[] }
+export type OperationIssueInfo = { issue_id: number; kind: string; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
 /**
  * Bits to force ON (applied as `old_mode | mode_set`)
@@ -1465,6 +1466,11 @@ label: string | null;
  * If None and vfs_id is None, the type supports auto-mount.
  */
 mount_dialog: string | null }
+/**
+ * Display mode for the file viewer. Wire format is snake_case to match
+ * the strings the frontend uses.
+ */
+export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf"
 
 /** tauri-specta globals **/
 
