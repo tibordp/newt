@@ -15,7 +15,7 @@ import { commands, type Result } from "../lib/bindings";
 import { safe, safeSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
-import { ModalState } from "./modals/ModalContent";
+import type { ModalData } from "../lib/bindings";
 import {
   File,
   ColumnDef,
@@ -677,7 +677,7 @@ function PaneInner(
     paneHandle: number;
     active: boolean;
     modalOpen: boolean;
-    modal?: ModalState;
+    modal?: ModalData;
   },
 ) {
   const {
@@ -1525,7 +1525,7 @@ function PaneInner(
         }}
       />
       <div className={styles.headerArea}>
-        {preferences?.settings.appearance.show_pane_header !== false ? (
+        {preferences?.settings.appearance?.show_pane_header !== false ? (
           <div className={styles.header}>
             <VfsSelector
               vfsDisplayName={vfs_display_name}
@@ -1637,7 +1637,7 @@ function PaneInner(
         </ContextMenu.Root>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} />
-      {preferences?.settings.appearance.show_pane_status !== false && (
+      {preferences?.settings.appearance?.show_pane_status !== false && (
         <div className={styles.statusbar}>
           {showSpinner && "Loading file list..."}
           {!showSpinner && loading && (

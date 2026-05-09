@@ -212,7 +212,7 @@ impl serde::Serialize for Terminals {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
     Scanning,
@@ -223,7 +223,7 @@ pub enum OperationStatus {
     WaitingForInput,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationIssueInfo {
     pub issue_id: u64,
     pub kind: String,
@@ -232,7 +232,7 @@ pub struct OperationIssueInfo {
     pub actions: Vec<String>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationState {
     pub id: OperationId,
     pub kind: String,
@@ -307,13 +307,13 @@ impl serde::Serialize for Operations {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConfirmAction {
     DeleteSelected { paths: Vec<VfsPath> },
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
     CreateDirectory {
@@ -370,6 +370,10 @@ pub enum ModalDataKind {
         host: String,
     },
     MountS3,
+    // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
+    // the wire format serde emits.
+    #[serde(rename = "mount_k8s")]
+    #[specta(rename = "mount_k8s")]
     MountK8s {
         k8s_context: String,
     },
@@ -413,18 +417,18 @@ pub enum ModalDataKind {
     },
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
 pub struct UserCommandPrompt {
     pub label: String,
     pub default: String,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ModalContext {
     pub pane_handle: Option<PaneHandle>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ModalData {
     #[serde(flatten)]
     pub kind: ModalDataKind,
@@ -455,7 +459,7 @@ pub struct DndFile {
     pub is_dir: bool,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct DndData {
     pub source_pane: PaneHandle,
     pub files: Vec<DndFile>,
@@ -479,7 +483,7 @@ impl serde::Serialize for DndState {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct VfsTarget {
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
@@ -495,7 +499,7 @@ pub struct VfsTarget {
 // Askpass — SSH password / host-key prompts via SSH_ASKPASS
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct AskpassPrompt {
     pub prompt: String,
     pub is_secret: bool,

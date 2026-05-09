@@ -147,7 +147,7 @@ impl std::fmt::Display for VfsPath {
 // Breadcrumb — a segment in a display path
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct Breadcrumb {
     pub label: String,
     pub nav_path: String,

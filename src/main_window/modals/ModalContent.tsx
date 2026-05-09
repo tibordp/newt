@@ -1,3 +1,8 @@
+import {
+  commands,
+  type ModalContext,
+  type ModalData,
+} from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import About from "./About";
 import Confirm from "./Confirm";
@@ -5,33 +10,24 @@ import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
+import Debug from "./Debug";
 import MountK8s from "./MountK8s";
 import MountS3 from "./MountS3";
 import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
-import Debug from "./Debug";
 import UserCommandInput from "./UserCommandInput";
-import { commands } from "../../lib/bindings";
 
-export type ModalState = {
-  type: string;
-  data: any;
-  context: Context;
-};
-
-export type Context = {
-  pane_handle?: number;
-};
+export type { ModalContext, ModalData };
 
 export type CommonDialogProps = {
   cancel: () => void;
-  context?: Context;
+  context?: ModalContext;
 };
 
-export function ModalContent({ state }: { state: ModalState | null }) {
-  const commonProps = {
+export function ModalContent({ state }: { state: ModalData | null }) {
+  const commonProps: CommonDialogProps = {
     cancel: () => {
       safe(commands.closeModal());
     },

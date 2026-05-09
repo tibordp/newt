@@ -1187,6 +1187,7 @@ theme: ThemeMode;
  * Visible columns and their order.
  */
 columns: string[] }
+export type AskpassPrompt = { prompt: string; is_secret: boolean }
 export type BehaviorPreferences = { 
 /**
  * Ask for confirmation before deleting files.
@@ -1219,6 +1220,7 @@ default_sort: DefaultSort }
  * A single `[[bookmark]]` entry in the TOML file.
  */
 export type BookmarkEntry = { path: string; name?: string | null }
+export type Breadcrumb = { label: string; nav_path: string }
 /**
  * Command metadata for the command palette.
  */
@@ -1252,11 +1254,13 @@ default_when?: string | null;
  * for built-ins; always `false` for user commands.
  */
 user_overridden: boolean }
+export type ConfirmAction = { type: "delete_selected"; paths: VfsPath[] }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,
  * not in this struct or the connections file.
  */
 export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "remote"; host: string } | { type: "sftp"; host: string }) & { id: string; name: string }
+export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
 export type CopyOptions = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean; create_symlink: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
@@ -1267,10 +1271,24 @@ export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "acces
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
 export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
+export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
+export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
 export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
+export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[] }
 export type FilterMode = "quick_search" | "filter"
+export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number }
+/**
+ * Frontend-visible view of a single history entry. Sent via the
+ * HistoryNavigator modal. `is_alive` reflects whether the entry's VFS is
+ * currently mounted; the overlay uses this to grey out & skip dead entries.
+ * `arrived_at` is the user's original arrival time at this path expressed
+ * as Unix milliseconds; the overlay groups adjacent entries into time
+ * buckets using these values.
+ */
+export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
 export type HotPathEntry = { path: VfsPath; name: string | null; category: HotPathCategory }
 export type HotPathsPreferences = { 
@@ -1291,7 +1309,71 @@ mounts: boolean;
  */
 recent_folders: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type ModalContext = { pane_handle: PaneHandle | null }
+export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+/**
+ * Whether the VFS supports metadata changes (chmod/chown)
+ */
+can_set_metadata: boolean; 
+/**
+ * Bits that are ON in all selected files
+ */
+mode_set: number; 
+/**
+ * Bits that are OFF in all selected files
+ */
+mode_clear: number; 
+/**
+ * Whether any file has a mode at all
+ */
+has_mode: boolean; owner: UserGroup | null; group: UserGroup | null; 
+/**
+ * Owner UID (resolved from name if needed)
+ */
+owner_id: number | null; 
+/**
+ * Group GID (resolved from name if needed)
+ */
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+/**
+ * Direction of the keypress that opened the overlay: -1 for back,
+ * +1 for forward. The overlay uses this to set the initial preview
+ * (one step in that direction, skipping dead entries).
+ */
+initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
+export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+/**
+ * Whether the VFS supports metadata changes (chmod/chown)
+ */
+can_set_metadata: boolean; 
+/**
+ * Bits that are ON in all selected files
+ */
+mode_set: number; 
+/**
+ * Bits that are OFF in all selected files
+ */
+mode_clear: number; 
+/**
+ * Whether any file has a mode at all
+ */
+has_mode: boolean; owner: UserGroup | null; group: UserGroup | null; 
+/**
+ * Owner UID (resolved from name if needed)
+ */
+owner_id: number | null; 
+/**
+ * Group GID (resolved from name if needed)
+ */
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+/**
+ * Direction of the keypress that opened the overlay: -1 for back,
+ * +1 for forward. The overlay uses this to set the initial preview
+ * (one step in that direction, skipping dead entries).
+ */
+initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
 export type Mode = number
+export type OperationIssueInfo = { issue_id: number; kind: string; message: string; detail: string | null; actions: string[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
 /**
  * Bits to force ON (applied as `old_mode | mode_set`)
@@ -1301,6 +1383,12 @@ mode_set: number;
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
 mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; working_dir: string | null } }
+export type OperationState = { id: number; kind: string; description: string; total_bytes: number | null; total_items: number | null; bytes_done: number; items_done: number; current_item: string; status: OperationStatus; error: string | null; issue: OperationIssueInfo | null; backgrounded: boolean; 
+/**
+ * Running totals from the scanning/planning phase.
+ */
+scanning_items: number | null; scanning_bytes: number | null }
+export type OperationStatus = "scanning" | "running" | "completed" | "failed" | "cancelled" | "waiting_for_input"
 export type PaneHandle = number
 /**
  * A resolved keybinding after `mod+` expansion and cascading.
@@ -1363,9 +1451,20 @@ export type UserCommandEntry = { title: string; run: string; key?: string | null
  * which is the keybinding *dispatch* context.
  */
 applies_to?: string | null }
+export type UserCommandPrompt = { label: string; default: string }
 export type UserGroup = { name: string } | { id: number }
 export type VfsId = number
 export type VfsPath = { vfs_id: VfsId; path: string }
+export type VfsTarget = { vfs_id: VfsId | null; type_name: string; display_name: string; 
+/**
+ * Human-readable label for a mounted instance (e.g. hostname for SFTP).
+ */
+label: string | null; 
+/**
+ * Dialog to open when user selects this unmounted VFS type.
+ * If None and vfs_id is None, the type supports auto-mount.
+ */
+mount_dialog: string | null }
 
 /** tauri-specta globals **/
 

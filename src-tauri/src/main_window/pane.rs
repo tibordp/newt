@@ -61,7 +61,7 @@ impl Default for Sorting {
     }
 }
 
-#[derive(Default, Clone, serde::Serialize)]
+#[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct PaneStats {
     pub file_count: usize,
     pub dir_count: usize,
@@ -103,7 +103,7 @@ struct NavigationHistory {
 /// `arrived_at` is the user's original arrival time at this path expressed
 /// as Unix milliseconds; the overlay groups adjacent entries into time
 /// buckets using these values.
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 pub struct HistoryEntryView {
     pub path: VfsPath,
     pub vfs_display_name: String,
@@ -1027,7 +1027,7 @@ pub enum FilterMode {
 }
 
 /// A windowed slice of the file list sent to the frontend.
-#[derive(Default, Clone, serde::Serialize)]
+#[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct FileWindow {
     /// The files in the current window.
     pub items: Vec<File>,
@@ -1038,7 +1038,7 @@ pub struct FileWindow {
 }
 
 /// View model for a pane.
-#[derive(Default, Clone, serde::Serialize)]
+#[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct PaneViewState {
     pub path: VfsPath,
     pub pending_path: Option<VfsPath>,

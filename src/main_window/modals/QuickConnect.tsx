@@ -1,25 +1,19 @@
 import { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { commands } from "../../lib/bindings";
+
+import { commands, type ConnectionProfile } from "../../lib/bindings";
 import { safe, safeSilent } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
-
-type ConnectionProfile = {
-  id: string;
-  name: string;
-  type: string;
-  [key: string]: unknown;
-};
 
 type QuickConnectProps = {
   connections: ConnectionProfile[];
   state: MainWindowState | null;
 };
 
-const TYPE_LABELS: Record<string, string> = {
+const TYPE_LABELS: Record<ConnectionProfile["type"], string> = {
   s3: "S3",
   sftp: "SFTP",
   remote: "Remote",
@@ -29,18 +23,24 @@ const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function subtitle(c: ConnectionProfile): string {
   const parts = [TYPE_LABELS[c.type] || c.type];
-  if (c.bucket) parts.push(String(c.bucket));
-  if (c.host) parts.push(String(c.host));
-  if (c.region) parts.push(String(c.region));
-  if (c.endpoint_url) parts.push(String(c.endpoint_url));
+  if (c.type === "s3") {
+    if (c.bucket) parts.push(c.bucket);
+    if (c.region) parts.push(c.region);
+    if (c.endpoint_url) parts.push(c.endpoint_url);
+  } else {
+    parts.push(c.host);
+  }
   return parts.join(" \u2014 ");
 }
 
 function searchableText(c: ConnectionProfile): string {
-  return [c.name, c.id, c.bucket, c.host, c.region, c.endpoint_url]
-    .filter(Boolean)
-    .map(String)
-    .join(" ");
+  const fields: (string | null | undefined)[] = [c.name, c.id];
+  if (c.type === "s3") {
+    fields.push(c.bucket, c.region, c.endpoint_url);
+  } else {
+    fields.push(c.host);
+  }
+  return fields.filter(Boolean).join(" ");
 }
 
 export default function QuickConnect({

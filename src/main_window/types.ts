@@ -1,31 +1,26 @@
 import { ReactElement } from "react";
-import { Breadcrumb, VfsPath } from "../lib/types";
-import { ModalState } from "./modals/ModalContent";
-import { OperationState } from "./OperationsPanel";
 
-export type { OperationState };
+import type {
+  AskpassPrompt,
+  Breadcrumb,
+  ConnectionStatus,
+  DndData,
+  DndFile,
+  File,
+  FilterMode,
+  FsStats,
+  ModalData,
+  OperationState,
+  PaneHandle,
+  Sorting,
+  TerminalHandle,
+  VfsPath,
+} from "../lib/bindings";
 
-export type File = {
-  name: string;
-  size?: number;
-  is_dir: boolean;
-  is_symlink: boolean;
-  symlink_target: string | null;
-  is_hidden: boolean;
-  user: {
-    name?: string;
-    id?: number;
-  } | null;
-  group: {
-    name?: string;
-    id?: number;
-  } | null;
-  mode: number | null;
-  modified: number | null;
-  accessed: number | null;
-  created: number | null;
-};
+export type { File, FilterMode, FsStats, Sorting } from "../lib/bindings";
+export type { OperationState } from "./OperationsPanel";
 
+/// Per-row context passed to column renderers.
 export type FileRowContext = {
   isFocused: boolean;
   filter: string | null;
@@ -46,17 +41,6 @@ export type SubcolumnDef = {
   style?: React.CSSProperties;
 };
 
-export type Sorting = {
-  key: string;
-  asc: boolean;
-};
-
-export type FsStats = {
-  available_bytes: number;
-  free_bytes: number;
-  total_bytes: number;
-};
-
 export type PaneStats = {
   file_count: number;
   dir_count: number;
@@ -66,8 +50,6 @@ export type PaneStats = {
   selected_bytes: number;
   total_count?: number;
 };
-
-export type FilterMode = "quick_search" | "filter";
 
 export type FileWindow = {
   items: File[];
@@ -98,37 +80,21 @@ export type PaneState = {
 
 export type DisplayOptions = {
   show_hidden: boolean;
-  active_pane: number;
+  active_pane: PaneHandle;
   panes_focused: boolean;
-  active_terminal?: number;
+  active_terminal?: TerminalHandle;
   terminal_panel_visible: boolean;
 };
 
 export type Terminal = {
-  handle: number;
+  handle: TerminalHandle;
   defunct: boolean;
 };
 
-export type DndFileInfo = {
-  name: string;
-  is_dir: boolean;
-};
-
-export type DndState = {
-  source_pane: number;
-  files: DndFileInfo[];
-};
-
-export type ConnectionStatus =
-  | { status: "connecting"; message: string; log: string[] }
-  | { status: "connected"; log: string[] }
-  | { status: "disconnected"; log: string[]; error: string }
-  | { status: "failed"; log: string[]; error: string };
-
-export type AskpassPrompt = {
-  prompt: string;
-  is_secret: boolean;
-};
+/// Local DnD info kept by the source pane while a drag is in flight.
+/// Mirrors the codegen `DndFile` shape but kept separately so the local code
+/// doesn't drift when DndFile gains optional fields.
+export type DndFileInfo = DndFile;
 
 export type MainWindowState = {
   connection_status: ConnectionStatus;
@@ -136,8 +102,8 @@ export type MainWindowState = {
   panes: PaneState[];
   terminals: Terminal[];
   display_options: DisplayOptions;
-  modal?: ModalState;
-  dnd?: DndState;
+  modal?: ModalData;
+  dnd?: DndData;
   operations: Record<string, OperationState>;
   window_title: string;
   foreground_operation_id?: number;

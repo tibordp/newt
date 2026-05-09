@@ -194,7 +194,9 @@ export const allColumns: ColumnDef[] = [
         sortKey: "user",
       },
     ],
-    render: (info) => <>{info.user?.name || info.user?.id}</>,
+    render: (info) => (
+      <>{info.user && ("name" in info.user ? info.user.name : info.user.id)}</>
+    ),
   },
   {
     align: "left",
@@ -206,7 +208,11 @@ export const allColumns: ColumnDef[] = [
         sortKey: "group",
       },
     ],
-    render: (info) => <>{info.group?.name || info.group?.id}</>,
+    render: (info) => (
+      <>
+        {info.group && ("name" in info.group ? info.group.name : info.group.id)}
+      </>
+    ),
   },
   {
     align: "left",

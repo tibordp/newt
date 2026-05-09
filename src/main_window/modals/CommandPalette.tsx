@@ -11,7 +11,7 @@ import { commands } from "../../lib/bindings";
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function matchesAppliesToCondition(
-  command: { applies_to?: string },
+  command: { applies_to?: string | null },
   state: MainWindowState | null,
 ): boolean {
   if (!command.applies_to || command.applies_to === "any") return true;
@@ -46,7 +46,7 @@ export default function CommandPalette({
 }: {
   preferences: PreferencesState | null;
   state: MainWindowState | null;
-  categoryFilter?: string;
+  categoryFilter?: string | null;
 }) {
   const [filter, setFilter] = useState("");
 

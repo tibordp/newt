@@ -375,7 +375,7 @@ function App() {
                   foregroundOperationId={foregroundOp?.id}
                 />
               )}
-              {preferences?.settings.appearance.show_command_bar && (
+              {preferences?.settings.appearance?.show_command_bar && (
                 <CommandBar state={remoteState} preferences={preferences} />
               )}
             </>

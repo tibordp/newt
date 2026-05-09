@@ -6,8 +6,8 @@ import appIcon from "../../assets/icon.png";
 
 type AboutProps = CommonDialogProps & {
   version: string;
-  git_revision?: string;
-  build_date?: string;
+  git_revision: string | null;
+  build_date: string | null;
   target_triple: string;
 };
 

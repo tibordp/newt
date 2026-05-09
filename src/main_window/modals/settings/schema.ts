@@ -36,7 +36,10 @@ export function resolveSchema(root: any, node: any): any {
 
 export function extractSettings(preferences: PreferencesState): SettingDef[] {
   const settings: SettingDef[] = [];
-  const schema = preferences.schema;
+  // schema is `JsonValue` from the bindings (the raw JSON Schema as
+  // serde_json::Value); we walk it dynamically, so the `any` cast at the
+  // boundary is intentional.
+  const schema = preferences.schema as any;
   const values = preferences.settings;
 
   if (!schema?.properties) return settings;

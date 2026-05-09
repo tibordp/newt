@@ -1,14 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { commands } from "../lib/bindings";
+import { commands, type SearchMatch } from "../lib/bindings";
 import { unwrap } from "../lib/ipc";
 import styles from "./Viewer.module.scss";
 import type { VfsPath } from "./helpers";
 
-interface SearchMatch {
-  offset: number;
-  length: number;
-}
+export type { SearchMatch };
 
 type SearchMode = "text" | "hex";
 

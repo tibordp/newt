@@ -1,18 +1,5 @@
 export type { VfsPath } from "../lib/types";
-
-export interface FileInfo {
-  size: number;
-  mime_type: string | null;
-  is_dir: boolean;
-  is_symlink: boolean;
-  symlink_target: string | null;
-  user: unknown;
-  group: unknown;
-  mode: unknown;
-  modified: number | null;
-  accessed: number | null;
-  created: number | null;
-}
+export type { FileChunk, FileDetails as FileInfo } from "../lib/bindings";
 
 export const TEXT_MIME_PREFIXES = ["text/"];
 export const TEXT_MIME_TYPES = new Set([
@@ -76,12 +63,6 @@ export function detectAutoMode(mime: string | null): ViewerMode {
   if (isImageMime(mime)) return "image";
   if (isTextMime(mime)) return "text";
   return "hex";
-}
-
-export interface FileChunk {
-  data: number[];
-  offset: number;
-  total_size: number;
 }
 
 export const CHUNK_SIZE = 128 * 1024;
