@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
-import { VfsPath } from "../../lib/types";
-import dialogStyles from "./Dialog.module.scss";
 import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
+import dialogStyles from "./Dialog.module.scss";
 
-type RenameProps = CommonDialogProps & {
-  base_path: VfsPath;
-  name: string;
-};
+type RenameProps = CommonDialogProps & ModalDataOf<"rename">;
 
 export default function Rename({
   base_path,

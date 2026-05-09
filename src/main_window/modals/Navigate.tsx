@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
 import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
+import dialogStyles from "./Dialog.module.scss";
 
-type NavigateProps = CommonDialogProps & {
-  display_path: string;
-};
+type NavigateProps = CommonDialogProps & ModalDataOf<"navigate">;
 
 export default function Navigate({
   display_path,

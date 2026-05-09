@@ -1,15 +1,11 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
-import { VfsPath } from "../../lib/types";
-import dialogStyles from "./Dialog.module.scss";
 import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
+import dialogStyles from "./Dialog.module.scss";
 
-type CreateFileProps = CommonDialogProps & {
-  path: VfsPath;
-  open_editor: boolean;
-};
+type CreateFileProps = CommonDialogProps & ModalDataOf<"create_file">;
 
 export default function CreateFile({
   path,

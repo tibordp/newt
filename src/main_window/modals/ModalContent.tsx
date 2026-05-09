@@ -26,6 +26,13 @@ export type CommonDialogProps = {
   context?: ModalContext;
 };
 
+/// Extract the `data` payload of a specific modal variant. Dialog components
+/// use this so their props track the codegen `ModalData` discriminated union
+/// without duplicating field shapes.
+export type ModalDataOf<
+  K extends Extract<ModalData, { data: unknown }>["type"],
+> = Extract<ModalData, { type: K; data: unknown }>["data"];
+
 export function ModalContent({ state }: { state: ModalData | null }) {
   const commonProps: CommonDialogProps = {
     cancel: () => {

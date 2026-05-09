@@ -2,9 +2,6 @@ pub mod pane;
 pub mod session;
 pub mod terminal;
 
-/// Default size for newly-created main windows.
-const MAIN_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
-
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
@@ -226,7 +223,6 @@ pub enum OperationStatus {
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationIssueInfo {
     pub issue_id: u64,
-    pub kind: String,
     pub message: String,
     pub detail: Option<String>,
     pub actions: Vec<newt_common::operation::IssueAction>,
@@ -755,7 +751,6 @@ pub(crate) fn apply_operation_progress(
                 op.status = OperationStatus::WaitingForInput;
                 op.issue = Some(OperationIssueInfo {
                     issue_id: issue.issue_id,
-                    kind: format!("{:?}", issue.kind),
                     message: issue.message,
                     detail: issue.detail,
                     actions: issue.actions,
@@ -1321,7 +1316,7 @@ pub fn spawn_main_window(
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into()))
             .title(&window_title)
             .resizable(true)
-            .inner_size(MAIN_WINDOW_SIZE.0, MAIN_WINDOW_SIZE.1)
+            .inner_size(1100.0, 800.0)
             .theme(theme)
             .build()?;
 

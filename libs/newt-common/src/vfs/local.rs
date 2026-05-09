@@ -211,9 +211,13 @@ impl Vfs for LocalVfs {
                     let metadata = entry.metadata()?;
                     let file_type = metadata.file_type();
 
-                    // Best-effort UTF-8 conversion: a non-UTF-8 filename will
-                    // round-trip through replacement chars, but we'd rather
-                    // surface it than panic mid-listing.
+                    // Best-effort UTF-8 conversion: a non-UTF-8 filename gets
+                    // U+FFFD replacement chars. The entry shows up in the UI
+                    // but file ops on it (rename / delete / touch / etc.) will
+                    // fail with NotFound — when the frontend echoes the name
+                    // back, `path.join(&name)` builds a path with the
+                    // replacements that doesn't exist on disk. Acceptable
+                    // trade-off vs. panicking the entire listing.
                     let name = entry.file_name().to_string_lossy().into_owned();
                     let mut is_dir = file_type.is_dir();
 

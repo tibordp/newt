@@ -2,20 +2,11 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 
-type Prompt = {
-  label: string;
-  default: string;
-};
-
-type UserCommandInputProps = CommonDialogProps & {
-  command_index: number;
-  command_title: string;
-  prompts: Prompt[];
-  confirms: string[];
-};
+type UserCommandInputProps = CommonDialogProps &
+  ModalDataOf<"user_command_input">;
 
 export default function UserCommandInput({
   command_index,

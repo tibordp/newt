@@ -60,16 +60,14 @@ impl ViewerMode {
         })
     }
 
-    fn all() -> &'static [ViewerMode] {
-        &[
-            ViewerMode::Text,
-            ViewerMode::Hex,
-            ViewerMode::Image,
-            ViewerMode::Audio,
-            ViewerMode::Video,
-            ViewerMode::Pdf,
-        ]
-    }
+    const ALL: [ViewerMode; 6] = [
+        ViewerMode::Text,
+        ViewerMode::Hex,
+        ViewerMode::Image,
+        ViewerMode::Audio,
+        ViewerMode::Video,
+        ViewerMode::Pdf,
+    ];
 }
 
 pub struct ViewerState {
@@ -262,7 +260,7 @@ fn build_menu(
     // Use a checked CheckMenuItem for the active mode, plain MenuItem for the rest.
     // This avoids showing empty checkbox indicators (visible on some GTK themes).
     let mut mode_items: Vec<Box<dyn tauri::menu::IsMenuItem<Wry>>> = Vec::new();
-    for &m in ViewerMode::all() {
+    for &m in &ViewerMode::ALL {
         let menu_id = format!("{}mode_{}", prefix, m.id());
         if m == mode {
             mode_items.push(Box::new(CheckMenuItem::with_id(

@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { commands } from "../../lib/bindings";
 import { tryRun } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
-import { commands } from "../../lib/bindings";
 
-type MountK8sProps = CommonDialogProps & {
-  k8s_context: string;
-};
+type MountK8sProps = CommonDialogProps & ModalDataOf<"mount_k8s">;
 
 export default function MountK8s({
   k8s_context,

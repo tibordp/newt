@@ -1,19 +1,12 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
-import { VfsPath } from "../../lib/types";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./CopyMove.module.scss";
-import { commands } from "../../lib/bindings";
 
-type CopyMoveProps = CommonDialogProps & {
-  kind: string;
-  sources: VfsPath[];
-  destination: VfsPath;
-  display_destination: string;
-  summary: string;
-};
+type CopyMoveProps = CommonDialogProps & ModalDataOf<"copy_move">;
 
 export default function CopyMove({
   kind,

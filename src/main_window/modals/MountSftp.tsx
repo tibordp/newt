@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { commands } from "../../lib/bindings";
 import { safeSilent, tryRun } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import { useAsyncAction } from "./useAsyncAction";
 import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
-import { commands } from "../../lib/bindings";
 
-type MountSftpProps = CommonDialogProps & {
-  host: string;
-};
+type MountSftpProps = CommonDialogProps & ModalDataOf<"mount_sftp">;
 
 export default function MountSftp({ host, cancel, context }: MountSftpProps) {
   const [newHost, setNewHost] = useState(host);

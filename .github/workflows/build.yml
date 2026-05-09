@@ -54,3 +54,7 @@ jobs:
         run: cargo build --all-targets
       - name: Test
         run: cargo test --all-targets
+      - name: tauri-specta bindings up to date
+        # The export_typescript_bindings test (run above) regenerates
+        # src/lib/bindings.ts. Fail the build if the committed copy drifts.
+        run: git diff --exit-code -- src/lib/bindings.ts

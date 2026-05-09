@@ -1,33 +1,15 @@
 import { useState, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { commands } from "../../lib/bindings";
+import { commands, type UserGroup } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./Properties.module.scss";
 
-type PropertiesProps = CommonDialogProps & {
-  paths: { vfs_id: number; path: string }[];
-  name: string;
-  size: number | null;
-  is_dir: boolean;
-  is_symlink: boolean;
-  symlink_target: string | null;
-  can_set_metadata: boolean;
-  mode_set: number;
-  mode_clear: number;
-  has_mode: boolean;
-  owner: { name: string } | { id: number } | null;
-  group: { name: string } | { id: number } | null;
-  owner_id: number | null;
-  group_id: number | null;
-  modified: number | null;
-  accessed: number | null;
-  created: number | null;
-};
+type PropertiesProps = CommonDialogProps & ModalDataOf<"properties">;
 
 function formatUserGroup(
-  ug: { name: string } | { id: number } | null,
+  ug: UserGroup | null,
   id: number | null,
   isSingle: boolean,
 ): string {

@@ -1389,7 +1389,7 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  */
 initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
 export type Mode = number
-export type OperationIssueInfo = { issue_id: number; kind: string; message: string; detail: string | null; actions: IssueAction[] }
+export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
 /**
  * Bits to force ON (applied as `old_mode | mode_set`)
