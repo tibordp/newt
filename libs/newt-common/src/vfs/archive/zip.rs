@@ -449,6 +449,8 @@ fn build_zip_index(
             modified: mtime.and_then(mtime_to_i64),
             accessed: None,
             created: None,
+            key: None,
+            source: None,
         };
 
         if is_dir && seen_dirs.contains(&entry_path) {

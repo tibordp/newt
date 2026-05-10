@@ -1031,6 +1031,29 @@ async mountK8s(paneHandle: PaneHandle, context: string) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Submit handler for the search dialog. Builds a `SearchVfs` rooted at
+ * `root` with the supplied parameters and navigates the pane to its
+ * mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
+ * `content_*` together optionally specify a content match (one of
+ * literal substring or regex). Empty strings are treated as "not set".
+ */
+async mountSearch(paneHandle: PaneHandle, root: VfsPath, namePattern: string | null, contentPattern: string | null, contentIsRegex: boolean, caseSensitive: boolean, followSymlinks: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mount_search", { paneHandle, root, namePattern, contentPattern, contentIsRegex, caseSensitive, followSymlinks }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdStartSearch(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_start_search", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdHotPaths(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_hot_paths", { paneHandle }) };
@@ -1314,11 +1337,26 @@ export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "acces
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
-export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
+export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
+/**
+ * Directory-scoped identifier. When `None`, `name` is used as the
+ * identifier — the common case. Set explicitly by synthetic VFSes
+ * (e.g. flat search results, where `name` is the basename for display
+ * but multiple entries can share it). See `File::key()`.
+ */
+key?: string | null; 
+/**
+ * Underlying source path for entries that are virtual references to a
+ * real file in another VFS — e.g. a search result. Frontend uses this
+ * for the "where from" secondary display; backend treats it as
+ * informational (the operative redirect is in `VfsRegistry`, see
+ * `Vfs::redirect_target`).
+ */
+source?: VfsPath | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
 export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[] }
@@ -1379,7 +1417,21 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+/**
+ * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
+ * rooted at `path`. The pane navigates to the mount root on submit.
+ */
+{ type: "search"; data: { 
+/**
+ * Search root, captured from the source pane at dialog-open time.
+ */
+path: VfsPath; 
+/**
+ * Pre-rendered display label for the root (so the dialog can
+ * show "Search in /home/foo" without re-resolving).
+ */
+display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1418,7 +1470,21 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+/**
+ * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
+ * rooted at `path`. The pane navigates to the mount root on submit.
+ */
+{ type: "search"; data: { 
+/**
+ * Search root, captured from the source pane at dialog-open time.
+ */
+path: VfsPath; 
+/**
+ * Pre-rendered display label for the root (so the dialog can
+ * show "Search in /home/foo" without re-resolving).
+ */
+display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview

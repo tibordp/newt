@@ -23,6 +23,7 @@ pub enum DialogKind {
     ConnectRemote,
     MountSftp,
     MountS3,
+    Search,
     // specta's snake_case tokenizer splits at digits ("K8s" → "k_8s"), but
     // serde's keeps it joined; pin both ends to the wire format.
     #[serde(rename = "mount_k8s")]
@@ -113,10 +114,18 @@ pub fn dialog(
                 }
                 DialogKind::Properties => {
                     let pane = pane.unwrap();
-                    let paths = pane.get_effective_selection();
+                    // Display the real underlying paths in the properties
+                    // dialog; for a SearchVfs entry the user expects to see
+                    // where the file actually lives. The op execution path
+                    // will redo dereferencing on its own (registry layer).
+                    let paths = pane.get_effective_selection_dereferenced();
                     if paths.is_empty() {
                         return Ok(());
                     }
+                    // We still need to look up the entries' display info
+                    // (size, mode, ...) by their *in-pane* identity — not
+                    // the dereferenced paths.
+                    let display_paths = pane.get_effective_selection();
 
                     let can_set_metadata = ctx
                         .vfs_info()
@@ -124,12 +133,15 @@ pub fn dialog(
                         .and_then(|vi| vi.descriptor(pane.path().vfs_id))
                         .is_some_and(|(d, _)| d.can_set_metadata());
 
-                    let file_list = pane.file_list();
-                    let files: Vec<&newt_common::filesystem::File> = paths
+                    // Look up entries by *in-pane* identity (key) rather
+                    // than basename — flat search results may share names.
+                    let view_state = pane.view_state();
+                    let view_files = view_state.files();
+                    let files: Vec<&newt_common::filesystem::File> = display_paths
                         .iter()
                         .filter_map(|p| {
-                            let name = p.file_name()?.to_string_lossy().to_string();
-                            file_list.files().iter().find(|f| f.name == name)
+                            let key = p.file_name()?.to_string_lossy().to_string();
+                            view_files.iter().find(|f| f.key() == key)
                         })
                         .collect();
 
@@ -240,7 +252,10 @@ pub fn dialog(
                 }
                 DialogKind::Copy | DialogKind::Move => {
                     let pane = pane.unwrap();
-                    let sources = pane.get_effective_selection();
+                    // Op runner derefs at the registry layer too, but
+                    // emitting deref'd paths here keeps the confirmation
+                    // copy showing where the bytes actually come from.
+                    let sources = pane.get_effective_selection_dereferenced();
                     if sources.is_empty() {
                         return Ok(());
                     }
@@ -275,6 +290,12 @@ pub fn dialog(
                     host: String::new(),
                 },
                 DialogKind::MountS3 => ModalDataKind::MountS3,
+                DialogKind::Search => {
+                    let pane = pane.unwrap();
+                    let path = pane.path();
+                    let display_path = ctx.format_vfs_path(&path);
+                    ModalDataKind::Search { path, display_path }
+                }
                 DialogKind::MountK8s => ModalDataKind::MountK8s {
                     k8s_context: String::new(),
                 },
@@ -373,6 +394,7 @@ cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
 cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
 cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
+cmd_dialog!(cmd_start_search, DialogKind::Search);
 cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
 cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
 cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);

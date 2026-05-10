@@ -366,6 +366,15 @@ pub enum ModalDataKind {
         host: String,
     },
     MountS3,
+    /// Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
+    /// rooted at `path`. The pane navigates to the mount root on submit.
+    Search {
+        /// Search root, captured from the source pane at dialog-open time.
+        path: VfsPath,
+        /// Pre-rendered display label for the root (so the dialog can
+        /// show "Search in /home/foo" without re-resolving).
+        display_path: String,
+    },
     // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
     // the wire format serde emits.
     #[serde(rename = "mount_k8s")]

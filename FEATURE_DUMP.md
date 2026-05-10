@@ -889,6 +889,27 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 **VFS ID rewriting**: Batch streaming results from `list_files` have their VFS IDs rewritten from the local root to the remote VFS ID before being forwarded to the UI.
 
+### Recursive Search (Find in Folder, Alt+F7)
+
+A search becomes a mounted VFS — results show up as a flat directory the user can browse, select, open, copy, delete using every existing pane affordance.
+
+**Opening**: From any pane, press Alt+F7 (or run "Find in Folder…" from the command palette). The dialog is rooted at the current pane's directory and offers:
+
+- **Name**: optional glob (`*.rs`, `Cargo.*`, …). Empty = match every name.
+- **Content**: optional substring (or regex, when the checkbox is set). Files larger than 10 MiB are skipped from content matching but still surface on name match.
+- **Case-sensitive**: applies to both name glob and content search.
+- **Follow symlinks**: off by default (avoids loops and double-counting).
+
+Submitting mounts a `SearchVfs` and navigates the active pane to its root. The walker runs in the background; matches stream into the pane as they're found, with the secondary "where from" hint inline next to each filename.
+
+**Behavior**:
+- **Flat list, with paths shown.** Identically-named matches sort/select independently — entries are keyed by their relative path under the search root, not basename.
+- **`..` does not unwind into the search root.** Search results live in their own addressable space; leaving the search is via history (Alt+Left).
+- **Operations are transparent.** Open, view, edit, rename, delete, copy/move, drag-out — every action targets the underlying real file. The display still shows the basename + source-path hint, but the bytes the operation touches are the source file's bytes.
+- **Walker boundaries.** Walks within a single VFS; mounted child VFSes (archives, etc.) are *not* descended into. OS-level mounts (bind mounts, autofs, network shares) look like ordinary directories and are traversed.
+- **Cancellation.** Unmounting the SearchVfs (via the VFS selector × button) cancels the walker promptly.
+- **Deferred for v1**: in-place param refinement (re-run with new pattern), tree-view toggle, native search inside archives / S3 / SFTP, `.gitignore` honoring.
+
 ### VFS Selector Dialog (Mod+Shift+L)
 
 - Lists all currently **mounted** VFS instances (with VFS ID, type, and mount label).

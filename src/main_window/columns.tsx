@@ -66,6 +66,17 @@ function FileName({
     </div>
   );
 
+  // Search results carry a `source` (real underlying path); render the
+  // parent directory inline as a "where from" hint so the user can tell
+  // identically-named matches apart at a glance.
+  const sourceParent =
+    info.source &&
+    (() => {
+      const p = info.source.path as unknown as string;
+      const i = p.lastIndexOf("/");
+      return i > 0 ? p.substring(0, i) : "/";
+    })();
+
   return (
     <div
       className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${
@@ -75,6 +86,9 @@ function FileName({
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
         {nameElement}
+        {sourceParent && (
+          <span className={styles.sourceHint}> ({sourceParent})</span>
+        )}
       </div>
     </div>
   );

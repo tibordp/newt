@@ -653,6 +653,8 @@ impl K8sVfs {
                     modified: None,
                     accessed: None,
                     created: None,
+                    key: None,
+                    source: None,
                 });
             }
         }
@@ -705,6 +707,8 @@ fn dotdot_entry() -> File {
         modified: None,
         accessed: None,
         created: None,
+        key: None,
+        source: None,
     }
 }
 
@@ -722,6 +726,8 @@ fn dir_entry(name: &str) -> File {
         modified: None,
         accessed: None,
         created: None,
+        key: None,
+        source: None,
     }
 }
 
@@ -739,6 +745,8 @@ fn yaml_file_entry(name: &str) -> File {
         modified: None,
         accessed: None,
         created: None,
+        key: None,
+        source: None,
     }
 }
 

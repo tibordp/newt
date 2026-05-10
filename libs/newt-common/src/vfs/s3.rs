@@ -433,6 +433,8 @@ impl S3Vfs {
                 modified: None,
                 accessed: None,
                 created,
+                key: None,
+                source: None,
             });
         }
 
@@ -479,6 +481,8 @@ impl S3Vfs {
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             });
         }
 
@@ -529,6 +533,8 @@ impl S3Vfs {
                             modified: None,
                             accessed: None,
                             created: None,
+                            key: None,
+                            source: None,
                         });
                     }
                 }
@@ -566,6 +572,8 @@ impl S3Vfs {
                         modified,
                         accessed: None,
                         created: None,
+                        key: None,
+                        source: None,
                     });
                 }
             }
@@ -667,6 +675,8 @@ impl Vfs for S3Vfs {
             modified,
             accessed: None,
             created: None,
+            key: None,
+            source: None,
         })
     }
 

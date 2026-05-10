@@ -1038,13 +1038,69 @@ impl Pane {
         view_state.focused.as_ref().map(|s| view_state.path.join(s))
     }
 
+    /// Like `get_focused_file`, but dereferences synthetic-VFS entries
+    /// (e.g. flat search results) to their underlying source path. For
+    /// real filesystem entries this returns the same `VfsPath` as
+    /// `get_focused_file` since `source` is unset.
+    ///
+    /// Use at cmd-layer sites that explicitly intend to operate on the
+    /// real file (open with system handler, navigate the *other* pane to
+    /// where the file actually lives, mount-archive on the real path,
+    /// reveal-in-finder, clipboard, …).
+    pub fn get_focused_source(&self) -> Option<VfsPath> {
+        let view_state = self.view_state.read();
+        let focused = view_state.focused.as_ref()?;
+        let file = view_state.files.iter().find(|f| f.key() == focused)?;
+        Some(
+            file.source
+                .clone()
+                .unwrap_or_else(|| view_state.path.join(focused)),
+        )
+    }
+
+    /// Like `get_effective_selection`, but dereferences synthetic-VFS
+    /// entries to their underlying source paths. See `get_focused_source`.
+    pub fn get_effective_selection_dereferenced(&self) -> Vec<VfsPath> {
+        let view_state = self.view_state.read();
+
+        let lookup_source = |key: &str| -> VfsPath {
+            view_state
+                .files
+                .iter()
+                .find(|f| f.key() == key)
+                .and_then(|f| f.source.clone())
+                .unwrap_or_else(|| view_state.path.join(key))
+        };
+
+        if view_state.all_selected.is_empty() {
+            view_state
+                .focused
+                .iter()
+                .map(|s| lookup_source(s))
+                .collect()
+        } else if view_state.filter_mode == FilterMode::Filter {
+            view_state
+                .all_selected
+                .iter()
+                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
+                .map(|s| lookup_source(s))
+                .collect()
+        } else {
+            view_state
+                .all_selected
+                .iter()
+                .map(|s| lookup_source(s))
+                .collect()
+        }
+    }
+
     pub fn get_focused_file_info(&self) -> Option<newt_common::filesystem::File> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state
             .files
             .iter()
-            .find(|f| f.name == *focused)
+            .find(|f| f.key() == focused)
             .cloned()
     }
 
@@ -1054,7 +1110,7 @@ impl Pane {
         view_state
             .files
             .iter()
-            .find(|f| f.name == *focused)
+            .find(|f| f.key() == focused)
             .and_then(|f| f.symlink_target.clone())
     }
 
@@ -1073,7 +1129,7 @@ impl Pane {
         view_state
             .files
             .iter()
-            .find(|f| f.name == *focused)
+            .find(|f| f.key() == focused)
             .is_some_and(|f| f.is_dir)
     }
 }
@@ -1171,6 +1227,13 @@ pub struct PaneViewState {
 }
 
 impl PaneViewState {
+    /// Read-only access to the (sorted, filtered) file list. Cmd-layer
+    /// helpers reach through this to look up `source` for synthetic-VFS
+    /// dereferencing.
+    pub fn files(&self) -> &[File] {
+        &self.files
+    }
+
     fn recompute_stats(&mut self) {
         let mut stats = PaneStats::default();
         for f in &self.files {
@@ -1183,7 +1246,7 @@ impl PaneViewState {
                 stats.file_count += 1;
                 stats.bytes += f.size.unwrap_or(0);
             }
-            if self.all_selected.contains(&f.name) {
+            if self.all_selected.contains(f.key()) {
                 if f.is_dir {
                     stats.selected_dir_count += 1;
                 } else {
@@ -1284,8 +1347,8 @@ impl PaneViewState {
             .file_window
             .items
             .iter()
-            .filter(|f| self.all_selected.contains(&f.name))
-            .map(|f| f.name.clone())
+            .filter(|f| self.all_selected.contains(f.key()))
+            .map(|f| f.key().to_string())
             .collect();
     }
 
@@ -1342,7 +1405,7 @@ impl PaneViewState {
             .files
             .iter()
             .enumerate()
-            .map(|(index, file)| (file.name.clone(), index))
+            .map(|(index, file)| (file.key().to_string(), index))
             .collect();
         self.file_generation += 1;
     }
@@ -1350,9 +1413,9 @@ impl PaneViewState {
     fn update_focus(&mut self) {
         if self.filter_mode == FilterMode::Filter {
             // In filter mode, retain selection based on all files (not just visible ones)
-            let all_names: HashSet<&str> = self.all_files.iter().map(|f| f.name.as_str()).collect();
+            let all_keys: HashSet<&str> = self.all_files.iter().map(|f| f.key()).collect();
             self.all_selected
-                .retain(|name| all_names.contains(name.as_str()));
+                .retain(|name| all_keys.contains(name.as_str()));
         } else {
             self.all_selected
                 .retain(|name| self.file_lookup.contains_key(name));
@@ -1370,7 +1433,7 @@ impl PaneViewState {
                 .focused_index
                 .unwrap_or(0)
                 .min(self.files.len().saturating_sub(1));
-            self.focused = self.files.get(index).map(|f| f.name.clone());
+            self.focused = self.files.get(index).map(|f| f.key().to_string());
         }
     }
 
@@ -1404,7 +1467,7 @@ impl PaneViewState {
                 .files
                 .iter()
                 .enumerate()
-                .map(|(index, file)| (file.name.clone(), index))
+                .map(|(index, file)| (file.key().to_string(), index))
                 .collect();
             self.file_generation += 1;
         }
@@ -1439,7 +1502,7 @@ impl PaneViewState {
             .files
             .iter()
             .enumerate()
-            .map(|(index, file)| (file.name.clone(), index))
+            .map(|(index, file)| (file.key().to_string(), index))
             .collect();
         self.file_generation += 1;
 
@@ -1449,7 +1512,7 @@ impl PaneViewState {
             .as_ref()
             .is_none_or(|name| !self.file_lookup.contains_key(name))
         {
-            self.focused = self.files.first().map(|f| f.name.clone());
+            self.focused = self.files.first().map(|f| f.key().to_string());
         }
     }
 
@@ -1554,7 +1617,7 @@ impl PaneViewState {
         };
 
         for i in start_index.min(end_index)..=start_index.max(end_index) {
-            self.all_selected.insert(self.files[i].name.clone());
+            self.all_selected.insert(self.files[i].key().to_string());
         }
         self.all_selected.remove("..");
 
@@ -1566,6 +1629,7 @@ impl PaneViewState {
         self.drag_base = None;
         self.clear_quick_search();
         self.all_selected = self.file_lookup.keys().cloned().collect();
+        // ".." is its own key (unset → falls back to name) so this still works.
         self.all_selected.remove("..");
         self.recompute_stats();
     }
@@ -1600,7 +1664,7 @@ impl PaneViewState {
         if lo <= hi {
             for i in lo..=hi {
                 if self.files[i].name != ".." {
-                    selected.insert(self.files[i].name.clone());
+                    selected.insert(self.files[i].key().to_string());
                 }
             }
         }
@@ -1649,7 +1713,7 @@ impl PaneViewState {
                 // Search in the down direction first
                 for f in self.files.iter().skip(start_index) {
                     if new_filter.is_match(&f.name) {
-                        self.focused = Some(f.name.clone());
+                        self.focused = Some(f.key().to_string());
                         self.filter = Some(filter);
                         self.filter_regex = Some(new_filter);
                         self.recompute_stats();
@@ -1660,7 +1724,7 @@ impl PaneViewState {
                 // Then search in the up direction
                 for f in self.files.iter().take(start_index).rev() {
                     if new_filter.is_match(&f.name) {
-                        self.focused = Some(f.name.clone());
+                        self.focused = Some(f.key().to_string());
                         self.filter = Some(filter);
                         self.filter_regex = Some(new_filter);
                         self.recompute_stats();
@@ -1699,7 +1763,7 @@ impl PaneViewState {
         let mut i = new_index;
         if with_selection {
             self.all_selected
-                .insert(self.files[new_index as usize].name.clone());
+                .insert(self.files[new_index as usize].key().to_string());
         }
         self.all_selected.remove("..");
 
@@ -1719,7 +1783,7 @@ impl PaneViewState {
             }
         }
 
-        self.focused = Some(self.files[new_index as usize].name.clone());
+        self.focused = Some(self.files[new_index as usize].key().to_string());
         if with_selection {
             self.recompute_stats();
         } else {

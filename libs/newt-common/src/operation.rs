@@ -1145,6 +1145,13 @@ async fn execute_copy(
     is_move: bool,
     items_done_offset: u64,
 ) -> Result<(), crate::Error> {
+    // Follow any redirect_target hooks (e.g. flat search results) so the
+    // copy operates on the underlying real files, not on the synthetic
+    // SearchVfs paths the user clicked.
+    let mut sources = sources;
+    for s in sources.iter_mut() {
+        *s = context.registry.dereference(s).await;
+    }
     let first_source = sources
         .first()
         .ok_or_else(|| crate::Error::custom("no sources provided"))?;
@@ -1647,6 +1654,12 @@ async fn execute_set_metadata(
         recursive
     );
 
+    // Follow redirect_target so chmod from a SearchVfs hits the real files.
+    let mut paths = paths;
+    for p in paths.iter_mut() {
+        *p = context.registry.dereference(p).await;
+    }
+
     // Collect all entries to process
     let mut all_entries: Vec<(Arc<dyn Vfs>, PathBuf, String)> = Vec::new();
 
@@ -1774,6 +1787,12 @@ async fn execute_delete(
 ) -> Result<(), crate::Error> {
     debug!("execute_delete: {} paths", paths.len());
 
+    // Follow redirect_target so deletes from a SearchVfs hit the real files.
+    let mut paths = paths;
+    for p in paths.iter_mut() {
+        *p = context.registry.dereference(p).await;
+    }
+
     // Phase 1: Scan — collect all entries into a flat list so we know the
     // real total before we start deleting.
     let mut all_entries: Vec<ResolvedDeleteEntry> = Vec::new();
@@ -1889,6 +1908,11 @@ async fn execute_move(
     options: CopyOptions,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
+    // Follow redirect_target so moves from a SearchVfs operate on real files.
+    let mut sources = sources;
+    for s in sources.iter_mut() {
+        *s = context.registry.dereference(s).await;
+    }
     let src_vfs_id = sources
         .first()
         .ok_or_else(|| crate::Error::custom("no sources provided"))?

@@ -3,6 +3,7 @@ pub mod k8s;
 pub mod local;
 pub mod remote;
 pub mod s3;
+pub mod search;
 pub mod sftp;
 
 #[cfg(test)]
@@ -14,6 +15,9 @@ pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
+pub use search::{
+    SEARCH_VFS_DESCRIPTOR, SearchParams, SearchStatus, SearchVfs, SearchVfsDescriptor,
+};
 pub use sftp::SftpVfs;
 
 use std::collections::HashMap;
@@ -424,6 +428,19 @@ pub trait Vfs: Send + Sync {
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error>;
 
+    /// Optional redirect: a synthetic VFS (e.g. flat search results) maps
+    /// its in-vfs paths to real `VfsPath`s in another VFS. The registry
+    /// consults this in `dereference` and rewrites every leaf op (read,
+    /// write, rename, delete, metadata, ...) to hit the underlying file.
+    /// `list_files` is the deliberate exception — listing must still hit
+    /// the synthetic VFS itself to return the result set.
+    ///
+    /// Default returns `None` for "no redirect".
+    async fn redirect_target(&self, path: &Path) -> Option<VfsPath> {
+        let _ = path;
+        None
+    }
+
     /// Revalidate this VFS's cached state against its underlying source.
     /// Called by the host's navigation layer when a pane is about to land
     /// on a path inside this VFS that wasn't its previous location — so a
@@ -588,6 +605,21 @@ impl VfsRegistry {
         Ok((vfs, vfs_path.path.clone()))
     }
 
+    /// Follow `Vfs::redirect_target` once: if the VFS at `vfs_path.vfs_id`
+    /// reports a redirect for `vfs_path.path`, return the source path; else
+    /// return the input unchanged. Used by `VfsRegistryFs` and
+    /// `VfsRegistryFileReader` to make leaf operations transparent across
+    /// synthetic VFSes (flat search results, etc.).
+    pub async fn dereference(&self, vfs_path: &VfsPath) -> VfsPath {
+        let Some(vfs) = self.get(vfs_path.vfs_id) else {
+            return vfs_path.clone();
+        };
+        match vfs.redirect_target(&vfs_path.path).await {
+            Some(target) => target,
+            None => vfs_path.clone(),
+        }
+    }
+
     pub fn mount(&self, vfs: Arc<dyn Vfs>) -> VfsId {
         let id = VfsId(self.next_id.fetch_add(1, Ordering::SeqCst));
         info!("vfs: mount id={} type={}", id, vfs.descriptor().type_name());
@@ -695,6 +727,9 @@ impl Filesystem for VfsRegistryFs {
 
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
         debug!("vfs_registry_fs: rename {} -> {}", old_path, new_path);
+        // Deref the source side. `new_path` is a freshly-constructed target
+        // path supplied by the caller; only the *source* can be a redirect.
+        let old_path = self.registry.dereference(&old_path).await;
         if old_path.vfs_id != new_path.vfs_id {
             return Err(Error::custom("cannot rename across VFS boundaries"));
         }
@@ -708,12 +743,14 @@ impl Filesystem for VfsRegistryFs {
 
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         debug!("vfs_registry_fs: touch {}", path);
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.touch(&local_path).await
     }
 
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         debug!("vfs_registry_fs: create_directory {}", path);
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.create_directory(&local_path).await
     }
@@ -751,6 +788,7 @@ impl VfsRegistryFileReader {
 #[async_trait::async_trait]
 impl FileReader for VfsRegistryFileReader {
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.file_details(&local_path).await
     }
@@ -761,11 +799,13 @@ impl FileReader for VfsRegistryFileReader {
         offset: u64,
         length: u64,
     ) -> Result<FileChunk, Error> {
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.read_range(&local_path, offset, length).await
     }
 
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         let details = vfs.file_details(&local_path).await?;
         if details.size > max_size {
@@ -792,6 +832,7 @@ impl FileReader for VfsRegistryFileReader {
     }
 
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+        let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         let descriptor = vfs.descriptor();
         if descriptor.can_overwrite_sync() {
@@ -940,6 +981,10 @@ pub enum MountRequest {
     },
     Archive {
         origin: VfsPath,
+    },
+    Search {
+        root: VfsPath,
+        params: search::SearchParams,
     },
     Remote,
 }

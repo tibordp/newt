@@ -253,7 +253,7 @@ pub async fn cmd_open_in_other_pane(
 
     let mut target_path = match file.name.as_str() {
         ".." => pane_path.parent().unwrap_or(pane_path),
-        _ => match pane.get_focused_file() {
+        _ => match pane.get_focused_source() {
             Some(s) => s,
             None => return Ok(()),
         },
@@ -304,16 +304,36 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
         None => return Ok(()),
     };
 
-    if file.name == ".." || file.is_dir {
+    if file.name == ".." {
         return navigate(ctx, pane_handle, &file.name, true).await;
+    }
+
+    if file.is_dir {
+        // Directory entries from a synthetic VFS (e.g. a flat search hit
+        // that happens to be a directory) should land on the *real*
+        // directory in the underlying source VFS, not the in-search path.
+        match pane.get_focused_source() {
+            Some(target) => {
+                drop(pane);
+                return ctx
+                    .with_pane_update_async(pane_handle, |gs, pane| async move {
+                        gs.close_modal();
+                        pane.navigate_to(target).await?;
+                        Ok(())
+                    })
+                    .await;
+            }
+            None => return Ok(()),
+        }
     }
 
     if newt_common::vfs::is_archive_name(&file.name) {
         return cmd_open_archive(ctx, pane_handle).await;
     }
 
-    // Default: open with system handler
-    let full_path = match pane.get_focused_file() {
+    // Default: open with system handler. Use the dereferenced path so
+    // search results open the real underlying file.
+    let full_path = match pane.get_focused_source() {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -377,7 +397,8 @@ pub async fn cmd_open_archive(
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let origin = match pane.get_focused_file() {
+    // Mount on the *real* archive path, not the in-SearchVfs alias.
+    let origin = match pane.get_focused_source() {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -407,18 +428,25 @@ pub async fn cmd_follow_symlink(
         Some(t) => t,
         None => return Ok(()),
     };
+    // For search results, the symlink target is interpreted relative to
+    // the underlying file's real parent directory, not the SearchVfs root.
+    let source_parent = pane
+        .get_focused_source()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| pane.path());
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
         let resolved = if target.is_absolute() {
-            target
+            VfsPath::new(source_parent.vfs_id, target)
         } else {
-            pane.path().path.join(&target)
+            VfsPath::new(source_parent.vfs_id, source_parent.path.join(&target))
         };
-        let parent = resolved.parent().unwrap_or(&resolved).to_path_buf();
+        let parent = resolved.parent().unwrap_or_else(|| resolved.clone());
         let filename = resolved
+            .path
             .file_name()
             .map(|n: &std::ffi::OsStr| n.to_string_lossy().to_string());
-        pane.navigate(&parent).await?;
+        pane.navigate_to(parent).await?;
         if let Some(name) = filename {
             pane.view_state_mut().focus(name);
         }
@@ -532,7 +560,11 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     const LINE_ENDING: &str = "\n";
 
     let mut text = String::new();
-    for (idx, line) in pane.get_effective_selection().into_iter().enumerate() {
+    for (idx, line) in pane
+        .get_effective_selection_dereferenced()
+        .into_iter()
+        .enumerate()
+    {
         if idx != 0 {
             text.push_str(LINE_ENDING);
         }

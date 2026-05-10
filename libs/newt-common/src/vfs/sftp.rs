@@ -530,6 +530,8 @@ fn metadata_to_file(
             .accessed()
             .map(|t| sftp_time_to_system_time(t).to_unix()),
         created: None,
+        key: None,
+        source: None,
     }
 }
 
@@ -615,6 +617,8 @@ impl Vfs for SftpVfs {
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             };
             files.push(dotdot.clone());
             batch.push(dotdot);

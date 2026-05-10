@@ -250,6 +250,8 @@ impl DirectoryTree {
             modified: None,
             accessed: None,
             created: None,
+            key: None,
+            source: None,
         }];
         for entry in entries {
             let mut file = entry.clone();
@@ -471,6 +473,8 @@ fn ensure_ancestors(
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             });
         }
     }
@@ -622,6 +626,8 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
             modified: mtime_to_i64(entry.mtime),
             accessed: None,
             created: None,
+            key: None,
+            source: None,
         };
 
         if is_dir && seen_dirs.contains(&entry_path) {

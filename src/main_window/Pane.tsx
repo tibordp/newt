@@ -159,7 +159,7 @@ const FileRow = memo(
     const ctx: FileRowContext = { isFocused, filter, filterMode };
     return (
       <li
-        data-name={row.name}
+        data-name={row.key ?? row.name}
         data-is-dir={row.is_dir ? "true" : undefined}
         className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
         onClick={onClick}
@@ -183,6 +183,8 @@ const FileRow = memo(
   },
   (prev, next) =>
     prev.row.name === next.row.name &&
+    prev.row.key === next.row.key &&
+    prev.row.source === next.row.source &&
     prev.row.size === next.row.size &&
     prev.row.modified === next.row.modified &&
     prev.row.mode === next.row.mode &&
@@ -833,15 +835,21 @@ function PaneInner(
 
       const fw = fileWindowRef.current;
       const currentSelected = selectedLookupRef.current;
+      const fileKey = (f: File) => f.key ?? f.name;
       const filesToDrag = currentSelected.has(fileName)
-        ? fw.items.filter((f) => currentSelected.has(f.name) && f.name !== "..")
-        : [fw.items.find((f) => f.name === fileName)!];
+        ? fw.items.filter(
+            (f) => currentSelected.has(fileKey(f)) && f.name !== "..",
+          )
+        : [fw.items.find((f) => fileKey(f) === fileName)!];
 
       dndRef.current = {
         active: false,
         startX: e.clientX,
         startY: e.clientY,
-        files: filesToDrag.map((f) => ({ name: f.name, is_dir: f.is_dir })),
+        files: filesToDrag.map((f) => ({
+          name: fileKey(f),
+          is_dir: f.is_dir,
+        })),
       };
     },
     [paneHandle],
@@ -1369,14 +1377,15 @@ function PaneInner(
             >
               <div style={topSpacerStyle} />
               {file_window.items.map((row) => {
-                const isFocused = active && row.name === focused;
+                const rowKey = row.key ?? row.name;
+                const isFocused = active && rowKey === focused;
                 return (
                   <FileRow
-                    key={row.name}
+                    key={rowKey}
                     row={row}
                     columns={columns}
                     isFocused={isFocused}
-                    isSelected={selectedLookup.has(row.name)}
+                    isSelected={selectedLookup.has(rowKey)}
                     filter={isFocused ? filter : null}
                     filterMode={filter_mode}
                     widthPrefix={widthPrefix}

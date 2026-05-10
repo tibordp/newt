@@ -37,7 +37,7 @@ pub async fn execute_dnd(
     subdirectory: Option<String>,
     is_move: bool,
 ) -> Result<OperationId, Error> {
-    let (source_path, dest_path, dnd_files) = ctx.with_update(|gs| {
+    let (sources, dest_path) = ctx.with_update(|gs| {
         let dnd_data = gs
             .dnd
             .0
@@ -54,17 +54,31 @@ pub async fn execute_dnd(
             .get(destination_pane)
             .ok_or_else(|| Error::Custom("destination pane not found".into()))?;
 
-        Ok((source_pane.path(), dest_pane.path(), dnd_data.files))
+        let source_path = source_pane.path();
+        // Deref via the source pane's view of each entry so dragging from
+        // a SearchVfs operates on the real underlying files.
+        let view_state = source_pane.view_state();
+        let sources: Vec<VfsPath> = dnd_data
+            .files
+            .iter()
+            .map(|f| {
+                view_state
+                    .files()
+                    .iter()
+                    .find(|file| file.key() == f.name)
+                    .and_then(|file| file.source.clone())
+                    .unwrap_or_else(|| source_path.join(&f.name))
+            })
+            .collect();
+        drop(view_state);
+
+        Ok((sources, dest_pane.path()))
     })?;
 
     let destination = match subdirectory {
         Some(sub) => dest_path.join(&sub),
         None => dest_path,
     };
-    let sources: Vec<VfsPath> = dnd_files
-        .iter()
-        .map(|f| source_path.join(&f.name))
-        .collect();
 
     let request = if is_move {
         OperationRequest::Move {

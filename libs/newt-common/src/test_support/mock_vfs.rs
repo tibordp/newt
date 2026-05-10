@@ -317,6 +317,8 @@ impl MockVfs {
                     modified: None,
                     accessed: None,
                     created: None,
+                    key: None,
+                    source: None,
                 });
             }
         }
@@ -509,6 +511,8 @@ impl Vfs for MockVfs {
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             }),
             Some(MockEntry::Directory { mode, uid, gid }) => Ok(File {
                 name,
@@ -523,6 +527,8 @@ impl Vfs for MockVfs {
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             }),
             Some(MockEntry::Symlink { target }) => Ok(File {
                 name,
@@ -537,6 +543,8 @@ impl Vfs for MockVfs {
                 modified: None,
                 accessed: None,
                 created: None,
+                key: None,
+                source: None,
             }),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,

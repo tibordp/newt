@@ -586,6 +586,18 @@ impl VfsManager for VfsRegistryManager {
             }
             MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
+            MountRequest::Search { root, params } => {
+                // Content matching needs a FileReader; the natural one
+                // here is the registry-backed reader so search inside a
+                // SearchVfs's source automatically follows future
+                // redirects (defensive — for v1 the source is always
+                // the local filesystem etc., but the trait is the same).
+                let file_reader: std::sync::Arc<dyn crate::file_reader::FileReader> =
+                    std::sync::Arc::new(crate::vfs::VfsRegistryFileReader::new(
+                        self.registry.clone(),
+                    ));
+                crate::vfs::search::mount(root, params, file_reader, &ctx).await?
+            }
         };
 
         let mount_meta = vfs.mount_meta();

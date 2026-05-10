@@ -294,6 +294,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
             vfs::cmd_unmount_vfs,
             vfs::mount_sftp,
             vfs::mount_k8s,
+            vfs::mount_search,
+            dialog::cmd_start_search,
             dialog::cmd_hot_paths,
             preferences::cmd_add_bookmark,
             preferences::cmd_open_config_file,

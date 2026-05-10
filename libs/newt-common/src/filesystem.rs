@@ -68,7 +68,7 @@ impl PartialOrd for UserGroup {
 )]
 pub struct Mode(pub u32);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
@@ -82,6 +82,30 @@ pub struct File {
     pub modified: Option<i64>,
     pub accessed: Option<i64>,
     pub created: Option<i64>,
+    /// Directory-scoped identifier. When `None`, `name` is used as the
+    /// identifier — the common case. Set explicitly by synthetic VFSes
+    /// (e.g. flat search results, where `name` is the basename for display
+    /// but multiple entries can share it). See `File::key()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Underlying source path for entries that are virtual references to a
+    /// real file in another VFS — e.g. a search result. Frontend uses this
+    /// for the "where from" secondary display; backend treats it as
+    /// informational (the operative redirect is in `VfsRegistry`, see
+    /// `Vfs::redirect_target`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<VfsPath>,
+}
+
+impl File {
+    /// Directory-scoped identifier. Falls back to `name` when `key` is unset,
+    /// which is the case for every "real" filesystem entry. Synthetic VFSes
+    /// (e.g. search results) set `key` explicitly so identity (selection,
+    /// focus, joining into a `VfsPath`) is independent of the displayed
+    /// `name`, which need not be unique.
+    pub fn key(&self) -> &str {
+        self.key.as_deref().unwrap_or(&self.name)
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]

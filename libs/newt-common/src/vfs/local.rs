@@ -201,6 +201,8 @@ impl Vfs for LocalVfs {
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
+                        key: None,
+                        source: None,
                     };
                     batch.push(file.clone());
                     ret.push(file);
@@ -245,6 +247,8 @@ impl Vfs for LocalVfs {
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
+                        key: None,
+                        source: None,
                     };
                     batch.push(file.clone());
                     ret.push(file);
@@ -465,6 +469,8 @@ impl Vfs for LocalVfs {
                 modified: meta.modified().map(|t| t.to_unix()).ok(),
                 accessed: meta.accessed().map(|t| t.to_unix()).ok(),
                 created: meta.created().map(|t| t.to_unix()).ok(),
+                key: None,
+                source: None,
             })
         })
         .await?

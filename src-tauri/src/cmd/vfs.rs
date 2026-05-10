@@ -1,4 +1,5 @@
-use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor};
+use newt_common::file_reader::SearchPattern;
+use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor, search::SearchParams};
 
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};
@@ -17,6 +18,7 @@ async fn mount_and_navigate(
         MountRequest::Sftp { .. } => "sftp",
         MountRequest::Kubernetes { .. } => "k8s",
         MountRequest::Archive { .. } => "archive",
+        MountRequest::Search { .. } => "search",
         MountRequest::Remote => "remote",
     };
     log::info!("cmd: mount {} pane={:?}", kind, pane_handle);
@@ -77,6 +79,54 @@ pub async fn mount_k8s(
     context: String,
 ) -> Result<(), Error> {
     mount_and_navigate(ctx, pane_handle, MountRequest::Kubernetes { context }).await
+}
+
+/// Submit handler for the search dialog. Builds a `SearchVfs` rooted at
+/// `root` with the supplied parameters and navigates the pane to its
+/// mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
+/// `content_*` together optionally specify a content match (one of
+/// literal substring or regex). Empty strings are treated as "not set".
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn mount_search(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    root: VfsPath,
+    name_pattern: Option<String>,
+    content_pattern: Option<String>,
+    content_is_regex: bool,
+    case_sensitive: bool,
+    follow_symlinks: bool,
+) -> Result<(), Error> {
+    let name_pattern = name_pattern.filter(|s| !s.is_empty());
+    let content_pattern = content_pattern.filter(|s| !s.is_empty()).map(|s| {
+        if content_is_regex {
+            // Regex case-insensitivity is encoded inline rather than via a
+            // separate flag; wrap in `(?i)` when the dialog says so.
+            if case_sensitive {
+                SearchPattern::Regex(s)
+            } else {
+                SearchPattern::Regex(format!("(?i){}", s))
+            }
+        } else if case_sensitive {
+            SearchPattern::Literal(s.into_bytes())
+        } else {
+            // Case-insensitive literal — turn it into a regex with `(?i)`
+            // and escape regex metacharacters.
+            SearchPattern::Regex(format!("(?i){}", regex::escape(&s)))
+        }
+    });
+
+    let params = SearchParams {
+        name_pattern,
+        content_pattern,
+        case_sensitive,
+        follow_symlinks,
+        ..SearchParams::default()
+    };
+
+    mount_and_navigate(ctx, pane_handle, MountRequest::Search { root, params }).await
 }
 
 #[tauri::command]

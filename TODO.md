@@ -11,8 +11,6 @@ Internally `ConnectionTarget::Remote` already accepts an arbitrary `transport_cm
 - A way to specify a custom transport command from the UI / connection profile (the profile schema today is SSH/S3-only).
 - A transport-agnostic mechanism for password / host-key prompts (the askpass plumbing assumes ssh's env-var protocol).
 
-## Recursive file search
-
 ## Archive packing and unpacking
 
 (as an operation, not a VFS)

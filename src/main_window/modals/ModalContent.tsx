@@ -17,6 +17,7 @@ import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
+import SearchDialog from "./Search";
 import UserCommandInput from "./UserCommandInput";
 
 export type { ModalContext, ModalData };
@@ -60,6 +61,8 @@ export function ModalContent({ state }: { state: ModalData | null }) {
       return <MountSftp {...state.data} {...commonProps} />;
     case "mount_k8s":
       return <MountK8s {...state.data} {...commonProps} />;
+    case "search":
+      return <SearchDialog {...state.data} {...commonProps} />;
     case "confirm":
       return <Confirm {...state.data} {...commonProps} />;
     case "properties":
