@@ -1,0 +1,140 @@
+// Hidden trigger anchor — the dropdown anchors to this; the dialog is
+// keyboard-launched only so it has no visible click target. The anchor is
+// stretched across the pane's header area (minus a small margin on each
+// side) so Radix's `--radix-dropdown-menu-trigger-width` matches the
+// width we want for `.content`.
+.anchor {
+  display: block;
+  position: absolute;
+  // Pin to the bottom of the header area so the dropdown opens just below
+  // the path bar (covering column headers), matching the original overlay.
+  top: 100%;
+  left: 5px;
+  right: 5px;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+// Sizing for the dropdown content. Menu.module.scss `.content` supplies the
+// border / background / shadow; this just bounds the box and lays out a
+// scrollable list with a sticky header.
+.content {
+  // Match the trigger anchor's width so the dropdown sits within the pane,
+  // with the same 5px margin on each side as the original overlay.
+  width: var(--radix-dropdown-menu-trigger-width);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.header {
+  padding: 8px 10px 6px;
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-fg-muted);
+  flex-shrink: 0;
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+
+.bucket {
+  // Quieter than .header — these are inline navigational furniture, not
+  // section titles.
+  padding: 6px 6px 2px;
+  font-size: 0.75em;
+  color: var(--color-fg-muted);
+  user-select: none;
+}
+
+.item {
+  // Compact rows — long lists scan more easily when each row is shorter.
+  white-space: nowrap;
+  height: 24px;
+  min-height: 24px;
+  box-sizing: border-box;
+  padding: 0 6px;
+}
+
+.itemPreviewed {
+  background: var(--color-accent) !important;
+  color: var(--color-accent-fg) !important;
+}
+
+.itemCurrent {
+  font-weight: bold;
+}
+
+.path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deadTag {
+  flex-shrink: 0;
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-fg-muted);
+  margin-left: var(--space-2);
+}
+
+.currentTag {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-border);
+  color: var(--color-fg-muted);
+}
+
+.itemPreviewed .currentTag {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-accent-fg);
+}
+
+.deleteButton {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  // Menu rows whose VFS is unmounted set `data-disabled`, which kills
+  // pointer-events on everything inside via Menu.module.scss. Override so
+  // the user can still prune dead history entries — that's the main reason
+  // this button exists on dead rows in the first place.
+  pointer-events: auto;
+
+  &:hover {
+    background: var(--color-bg-elevated, rgba(0, 0, 0, 0.1));
+    color: var(--color-fg);
+  }
+}
+
+.itemPreviewed .deleteButton {
+  color: var(--color-accent-fg);
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}

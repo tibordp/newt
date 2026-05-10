@@ -240,6 +240,15 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         true
     }
 
+    /// Whether this VFS implements `Vfs::revalidate`. The navigation layer
+    /// uses this to skip the call (and its RPC round-trip in remote
+    /// sessions) for VFSes that hold no cached external state — e.g. the
+    /// local filesystem. VFSes that override `revalidate` should also
+    /// return `true` here.
+    fn can_revalidate(&self) -> bool {
+        false
+    }
+
     // --- Display ---
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb>;
@@ -376,6 +385,21 @@ pub trait VfsAsyncWriter: Send {
     async fn finish(self: Box<Self>) -> Result<(), Error>;
 }
 
+/// Outcome of a `Vfs::revalidate` pass. Conveyed back to the navigation
+/// layer so it can decide whether to treat any local caches as stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RevalidationOutcome {
+    /// The VFS's cached state is current; nothing was rebuilt. Navigation
+    /// can rely on previously-observed structure.
+    Fresh,
+    /// The VFS detected drift and rebuilt internal state in place. The
+    /// VFS identity (`VfsId`, `mount_meta`, `origin`) is preserved, but
+    /// any cached file listings / annotations / sizes the host or enrichers
+    /// kept across the previous and current visit must be considered
+    /// stale.
+    Refreshed,
+}
+
 // ---------------------------------------------------------------------------
 // Vfs trait
 // ---------------------------------------------------------------------------
@@ -399,6 +423,31 @@ pub trait Vfs: Send + Sync {
     ) -> Result<Vec<File>, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error>;
+
+    /// Revalidate this VFS's cached state against its underlying source.
+    /// Called by the host's navigation layer when a pane is about to land
+    /// on a path inside this VFS that wasn't its previous location — so a
+    /// VFS that caches external state (an archive's central directory, an
+    /// SFTP connection, etc.) can detect drift and rebuild that state
+    /// without losing the mount's identity (`VfsId`, `mount_meta`,
+    /// `origin`).
+    ///
+    /// VFSes that have something to do here must also override
+    /// `VfsDescriptor::can_revalidate` so the navigation layer knows to
+    /// dispatch the call (and pay the RPC round-trip in remote sessions).
+    /// The default implementation returns `not_supported`, which the
+    /// navigation layer treats as a programming error if it ever fires:
+    /// reaching it means a descriptor advertised the capability while the
+    /// `Vfs` impl didn't follow through.
+    ///
+    /// Returning `Refreshed` is an instruction to navigation-layer caches
+    /// (file listings, enricher results) to treat any prior data for this
+    /// VFS as stale; the next `list_files` will reflect the rebuilt
+    /// state. Returning `Err` aborts the navigation; the pane is left at
+    /// its previous path.
+    async fn revalidate(&self) -> Result<RevalidationOutcome, Error> {
+        Err(Error::not_supported())
+    }
 
     // --- Read ---
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
@@ -667,6 +716,21 @@ impl Filesystem for VfsRegistryFs {
         debug!("vfs_registry_fs: create_directory {}", path);
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.create_directory(&local_path).await
+    }
+
+    async fn revalidate(&self, vfs_id: VfsId) -> Result<RevalidationOutcome, Error> {
+        let vfs = self
+            .registry
+            .get(vfs_id)
+            .ok_or_else(|| Error::custom(format!("unknown VFS id: {}", vfs_id)))?;
+        // Mirror the descriptor capability gate: if the VFS doesn't claim
+        // to support revalidation, treat it as a no-op rather than dispatching
+        // and getting a `not_supported` back. This is the host-local short-
+        // circuit; remote callers gate on the descriptor *before* the RPC.
+        if !vfs.descriptor().can_revalidate() {
+            return Ok(RevalidationOutcome::Fresh);
+        }
+        vfs.revalidate().await
     }
 }
 

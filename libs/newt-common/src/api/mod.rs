@@ -26,6 +26,7 @@ pub const API_TOUCH: Api = Api(5);
 pub const API_SHELL_EXPAND: Api = Api(6);
 pub const API_LIST_FILES_STREAMING: Api = Api(7);
 pub const API_LIST_FILES_BATCH: Api = Api(8);
+pub const API_REVALIDATE: Api = Api(9);
 
 pub const API_START_OPERATION: Api = Api(200);
 pub const API_CANCEL_OPERATION: Api = Api(201);
@@ -183,6 +184,11 @@ impl Dispatcher for FilesystemDispatcher {
                 let path: VfsPath = decode(&req[..])?;
                 let ret = self.filesystem.create_directory(path).await;
 
+                encode(&ret)?
+            }
+            API_REVALIDATE => {
+                let vfs_id: VfsId = decode(&req[..])?;
+                let ret = self.filesystem.revalidate(vfs_id).await;
                 encode(&ret)?
             }
             _ => return Ok(None),

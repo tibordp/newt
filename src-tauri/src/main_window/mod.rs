@@ -386,6 +386,12 @@ pub enum ModalDataKind {
         /// +1 for forward. The overlay uses this to set the initial preview
         /// (one step in that direction, skipping dead entries).
         initial_direction: i32,
+        /// When true, the overlay is opened as a persistent dialog: it stays
+        /// open until explicitly dismissed (Esc / outside-click), Alt-up does
+        /// not commit, blur does not abort, and per-entry delete buttons are
+        /// shown. When false, the overlay behaves alt-tab style (the default
+        /// alt-held mode).
+        persistent: bool,
     },
     CommandPalette {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1131,6 +1137,36 @@ impl MainWindowContext {
         &self,
         request: newt_common::vfs::MountRequest,
     ) -> Result<newt_common::vfs::MountResponse, Error> {
+        // Archive dedup: if there's already a mount with the same origin,
+        // reuse it. With history-anchored auto-unmount, an archive the
+        // user navigates back into is almost always still mounted; this
+        // makes a re-entry a registry lookup rather than a re-mount, and
+        // also coalesces things like clicking the same archive twice. Race
+        // window between concurrent mounts of the same origin is left
+        // alone — worst case is what we have today (two mounts), and
+        // single-user UX rarely produces concurrent calls.
+        //
+        // Staleness is handled separately by `Vfs::revalidate`, called by
+        // the navigation layer when a pane re-enters this VFS.
+        if let newt_common::vfs::MountRequest::Archive { origin } = &request
+            && let Some(existing) = self.with_session(|s| {
+                s.mounted_vfs.read().iter().find_map(|(_, info)| {
+                    if info.origin.as_ref() == Some(origin) {
+                        Some(newt_common::vfs::MountResponse {
+                            vfs_id: info.vfs_id,
+                            type_name: info.descriptor.type_name().into(),
+                            mount_meta: info.mount_meta.clone(),
+                            origin: info.origin.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+            })?
+        {
+            return Ok(existing);
+        }
+
         let vfs_manager = self.with_session(|s| s.vfs_manager.clone())?;
         let response = vfs_manager.mount(request).await?;
         let descriptor = lookup_descriptor(&response.type_name)
@@ -1200,9 +1236,22 @@ impl MainWindowContext {
     }
 
     pub(super) async fn cleanup_stale_archive_mounts(&self) -> Result<(), Error> {
-        // Collect VFS IDs currently in use by any pane
-        let pane_vfs_ids: std::collections::HashSet<VfsId> =
-            self.panes().all().iter().map(|p| p.path().vfs_id).collect();
+        // Collect VFS IDs currently in use by any pane — both the pane's
+        // current path and any path reachable via back/forward history.
+        // Anchoring on history (rather than just the current path) means
+        // navigating back into an archive doesn't fail with "unmounted"
+        // when the user had stepped outside it; the mount stays alive as
+        // long as it's reachable via the history of either pane.
+        let pane_vfs_ids: std::collections::HashSet<VfsId> = self
+            .panes()
+            .all()
+            .iter()
+            .flat_map(|p| {
+                let mut ids = p.history_vfs_ids();
+                ids.push(p.path().vfs_id);
+                ids
+            })
+            .collect();
 
         // A VFS is "in use" if a pane references it, or if another in-use VFS
         // has it as its origin (transitively). This prevents unmounting a parent

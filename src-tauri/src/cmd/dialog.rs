@@ -32,6 +32,7 @@ pub enum DialogKind {
     SelectVfs,
     HistoryBack,
     HistoryForward,
+    History,
     CommandPalette,
     UserCommands,
     HotPaths,
@@ -288,7 +289,7 @@ pub fn dialog(
                 DialogKind::SelectVfs => ModalDataKind::SelectVfs {
                     targets: ctx.compute_vfs_targets()?,
                 },
-                DialogKind::HistoryBack | DialogKind::HistoryForward => {
+                DialogKind::HistoryBack | DialogKind::HistoryForward | DialogKind::History => {
                     let pane = pane.unwrap();
                     let (entries, current_index) = pane.history_entries();
                     // The list is ordered forward-on-top, back-on-bottom (see
@@ -297,11 +298,12 @@ pub fn dialog(
                     ModalDataKind::HistoryNavigator {
                         entries,
                         current_index,
-                        initial_direction: if dialog == DialogKind::HistoryBack {
-                            1
-                        } else {
+                        initial_direction: if dialog == DialogKind::HistoryForward {
                             -1
+                        } else {
+                            1
                         },
+                        persistent: dialog == DialogKind::History,
                     }
                 }
                 DialogKind::CommandPalette => ModalDataKind::CommandPalette {
@@ -366,6 +368,7 @@ cmd_dialog!(cmd_connect_remote, DialogKind::ConnectRemote);
 cmd_dialog!(cmd_select_vfs, DialogKind::SelectVfs);
 cmd_dialog!(cmd_history_back, DialogKind::HistoryBack);
 cmd_dialog!(cmd_history_forward, DialogKind::HistoryForward);
+cmd_dialog!(cmd_history, DialogKind::History);
 cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
 cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);

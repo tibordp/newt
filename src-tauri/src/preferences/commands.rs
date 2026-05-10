@@ -200,10 +200,10 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "navigate_back".into(),
-            name: "Navigate Back".into(),
+            name: "Go Back".into(),
             short_name: Some("Back".into()),
             category: "Navigation".into(),
-            // Default keybinding moved to history_back, which opens the
+            // Default keybinding lives on history_back, which opens the
             // overlay; this command remains available via the command palette
             // and the mouse back button (XButton1) for instant single-step nav.
             default_key: None,
@@ -212,7 +212,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "navigate_forward".into(),
-            name: "Navigate Forward".into(),
+            name: "Go Forward".into(),
             short_name: Some("Forward".into()),
             category: "Navigation".into(),
             default_key: None,
@@ -221,7 +221,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "history_back".into(),
-            name: "History Navigator (Back)".into(),
+            name: "Back...".into(),
             short_name: None,
             category: "Navigation".into(),
             default_key: Some("alt+left".into()),
@@ -230,10 +230,19 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "history_forward".into(),
-            name: "History Navigator (Forward)".into(),
+            name: "Forward...".into(),
             short_name: None,
             category: "Navigation".into(),
             default_key: Some("alt+right".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "history".into(),
+            name: "Show History...".into(),
+            short_name: Some("History".into()),
+            category: "Navigation".into(),
+            default_key: Some("mod+y".into()),
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },
@@ -340,7 +349,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         }
         CommandDef {
             id: "select_vfs".into(),
-            name: "Select Filesystem".into(),
+            name: "Select Filesystem...".into(),
             short_name: Some("VFS".into()),
             category: "Navigation".into(),
             default_key: Some("mod+shift+l".into()),
@@ -349,7 +358,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "mount_s3".into(),
-            name: "Mount S3".into(),
+            name: "Mount S3...".into(),
             short_name: None,
             category: "Navigation".into(),
             default_key: None,
@@ -439,7 +448,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "open_settings".into(),
-            name: "Open Settings".into(),
+            name: "Settings...".into(),
             short_name: Some("Settings".into()),
             category: "File".into(),
             default_key: Some("mod+,".into()),
@@ -448,7 +457,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "command_palette".into(),
-            name: "Command Palette".into(),
+            name: "Command Palette...".into(),
             short_name: Some("CmdPalette".into()),
             category: "View".into(),
             default_key: Some("mod+shift+p".into()),
@@ -457,7 +466,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "hot_paths".into(),
-            name: "Hot Paths".into(),
+            name: "Hot Paths...".into(),
             short_name: None,
             category: "Navigation".into(),
             default_key: Some("mod+p".into()),
@@ -466,7 +475,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "user_commands".into(),
-            name: "User Commands".into(),
+            name: "User Commands...".into(),
             short_name: None,
             category: "View".into(),
             default_key: Some("f9".into()),
@@ -484,7 +493,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "connection_log".into(),
-            name: "Connection Log".into(),
+            name: "Connection Log...".into(),
             short_name: None,
             category: "View".into(),
             default_key: None,
@@ -494,7 +503,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         @if(cfg!(debug_assertions)) {
             CommandDef {
                 id: "debug".into(),
-                name: "Debug".into(),
+                name: "Debug...".into(),
                 short_name: None,
                 category: "View".into(),
                 default_key: None,
@@ -504,7 +513,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         }
         CommandDef {
             id: "about".into(),
-            name: "About Newt".into(),
+            name: "About Newt...".into(),
             short_name: Some("About".into()),
             category: "Help".into(),
             default_key: None,

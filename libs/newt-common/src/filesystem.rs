@@ -234,6 +234,20 @@ pub trait Filesystem: Send + Sync {
     async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
+
+    /// Revalidate the VFS identified by `vfs_id`. The navigation layer
+    /// calls this when a pane is about to land on a path inside `vfs_id`
+    /// after having been outside of it, giving the VFS a chance to detect
+    /// drift and rebuild internal state without losing mount identity.
+    ///
+    /// Callers should consult `VfsDescriptor::can_revalidate` first and
+    /// skip the call entirely for VFSes that don't need it (e.g. local
+    /// FS) — this avoids an RPC round-trip in remote sessions for the
+    /// common case.
+    async fn revalidate(
+        &self,
+        vfs_id: crate::vfs::VfsId,
+    ) -> Result<crate::vfs::RevalidationOutcome, Error>;
 }
 
 pub struct Slow<T: Filesystem>(T);
@@ -285,6 +299,13 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.create_directory(path).await
+    }
+    async fn revalidate(
+        &self,
+        vfs_id: crate::vfs::VfsId,
+    ) -> Result<crate::vfs::RevalidationOutcome, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.revalidate(vfs_id).await
     }
 }
 
@@ -401,6 +422,17 @@ impl Filesystem for Remote {
             .await?;
 
         Ok(ret?)
+    }
+
+    async fn revalidate(
+        &self,
+        vfs_id: crate::vfs::VfsId,
+    ) -> Result<crate::vfs::RevalidationOutcome, Error> {
+        let ret: Result<crate::vfs::RevalidationOutcome, Error> = self
+            .communicator
+            .invoke(crate::api::API_REVALIDATE, &vfs_id)
+            .await?;
+        ret
     }
 }
 

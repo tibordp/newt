@@ -404,6 +404,20 @@ impl Filesystem for HairpinFs {
     async fn create_directory(&self, path: VfsPath) -> Result<(), newt_common::Error> {
         self.inner.create_directory(path).await
     }
+
+    async fn revalidate(
+        &self,
+        vfs_id: VfsId,
+    ) -> Result<newt_common::vfs::RevalidationOutcome, newt_common::Error> {
+        if vfs_id == self.remote_vfs_id {
+            // The hairpin VFS is a hand-back of the host's local FS to
+            // the remote agent — local FS doesn't cache external state,
+            // so revalidation is trivially fresh.
+            Ok(newt_common::vfs::RevalidationOutcome::Fresh)
+        } else {
+            self.inner.revalidate(vfs_id).await
+        }
+    }
 }
 
 struct HairpinFileReader {

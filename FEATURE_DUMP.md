@@ -1149,6 +1149,7 @@ keep_finished_operations = false  # Keep completed/cancelled ops in panel
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
 expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
 default_sort = { key = "name", ascending = true }
+history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
 
 [hot_paths]
 standard_folders = true     # Show Home, Downloads, Documents, etc.
@@ -1341,15 +1342,19 @@ Each pane maintains its own navigation history. Each entry stores the path, the 
 - **Back** (Mouse XButton1, command palette): Return to the previous directory.
 - **Forward** (Mouse XButton2, command palette): Re-visit a directory you backed out of.
 
-**History overlay** (Alt+Left / Alt+Right, alt-tab style):
+**History dialog** (Alt+Left / Alt+Right, Mod+Y):
 
-Holding Alt and pressing Left or Right opens a floating overlay anchored under the path bar that shows the pane's full back/forward timeline. Forward (redo) entries appear above the current entry, back (undo) entries below; closest entries are nearest current in the list.
+A single dialog showing the pane's full back/forward timeline. Forward (redo) entries appear above the current entry, back (undo) entries below; closest entries are nearest current in the list.
 
-- **Tap-and-release** behaves like a single-step back/forward: opens the overlay pre-stepped one entry in the requested direction, releases commits, net effect is one navigation step.
-- **Hold and step**: Alt+Left/Right or ArrowDown/Up moves the preview through the timeline, skipping unreachable entries (e.g. unmounted VFS mounts). Mouse hover updates the preview. Mouse click commits to the hovered entry.
-- **Release Alt** commits the previewed entry. **Esc** or losing window focus aborts.
+- **Alt+Left / Alt+Right** open the dialog alt-tab style: pre-stepped one entry in the requested direction, with **Alt-up committing** the previewed entry. Tap-and-release is therefore equivalent to single-step back/forward; hold-and-step lets the user scan further before releasing.
+- **Mod+Y** opens the same dialog persistent: Alt-up does nothing, the dialog stays until dismissed (Esc / outside-click). Each non-current entry has an inline "×" button that removes that entry from the pane's history (the list updates in place — the user can keep deleting). Useful for grooming a long history or evicting an entry that's anchoring an archive mount the user wants to drop.
+- **In both modes**: Alt+Left/Right or ArrowDown/Up moves the preview, skipping unreachable entries (e.g. unmounted VFS mounts). Mouse hover updates the preview. **Enter** or mouse click commits.
 - The current entry is shown in bold with a "current" badge. Unmounted-VFS entries are dimmed with an "unmounted" tag and cannot be navigated to, but remain visible for context.
-- Entries are grouped by time bucket (just now / 5m / 15m / 30m / 1h / 2h / 6h / earlier today / yesterday / weekday / last week / N weeks / older) with quiet section dividers between buckets. Buckets are computed at modal open and don't tick while the overlay is open.
+- Entries are grouped by time bucket (just now / 5m / 15m / 30m / 1h / 2h / 6h / earlier today / yesterday / weekday / last week / N weeks / older) with quiet section dividers between buckets. Buckets are computed at dialog open and don't tick while it's open.
+
+**Retention**: Each pane's history is bounded by the `behavior.history_retention` preference (default 200, set to 0 for unlimited). When the cap is reached, the oldest entries roll out as new ones are pushed.
+
+**Archive mount lifetime**: Archive VFS mounts are kept alive as long as either pane can navigate to a path inside them via back/forward history (not just when the current path is inside the mount). Stepping out of an archive no longer eagerly unmounts it, so back-navigation re-enters it cleanly. Mounts only become unreachable — and are then auto-unmounted — when every history entry referencing them has rolled out, been manually deleted, or had its forward branch truncated by a divergent navigation.
 
 **Robustness**: History stack mutation happens at the moment the displayed path actually changes (the first batch arrives during streaming, or the final swap if no streaming), not at the start of navigation. A back-press to an unreachable target — unmounted VFS, deleted directory, permission revoked — that errors before any batch lands leaves the history stack untouched, so the user can simply press Back again. Stacks are also restored if a multi-step history jump fails to land.
 

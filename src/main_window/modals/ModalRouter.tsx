@@ -14,7 +14,10 @@ import { commands } from "../../lib/bindings";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
-// Modal types not rendered by this router (handled elsewhere, e.g. VfsSelector dropdown)
+// Modal types not rendered by this router. These are anchored per-pane
+// (rendered inline by Pane via Radix DropdownMenu): the VFS selector and
+// the history navigator. They each have their own outside-click /
+// dismissal behavior driven by Radix.
 const EXCLUDED_MODAL_TYPES = ["select_vfs", "history_navigator"];
 
 export default function ModalRouter({

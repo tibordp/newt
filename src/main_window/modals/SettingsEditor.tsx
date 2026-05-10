@@ -156,16 +156,24 @@ export default function SettingsEditor({
                   <div className={styles.settingInfo}>
                     <div className={styles.settingLabel}>
                       {setting.title}
-                      {setting.modified && (
-                        <button
-                          type="button"
-                          className={styles.resetButton}
-                          onClick={() => onReset(setting.key)}
-                          title="Reset to default"
-                        >
-                          Reset
-                        </button>
-                      )}
+                      {/* Always render so the row's height stays
+                          constant when modified flips on/off — visibility
+                          rather than display preserves the slot. */}
+                      <button
+                        type="button"
+                        className={styles.resetButton}
+                        onClick={() => onReset(setting.key)}
+                        title="Reset to default"
+                        style={
+                          setting.modified
+                            ? undefined
+                            : { visibility: "hidden" }
+                        }
+                        tabIndex={setting.modified ? 0 : -1}
+                        aria-hidden={!setting.modified}
+                      >
+                        Reset
+                      </button>
                     </div>
                     {setting.description && (
                       <div className={styles.settingDescription}>

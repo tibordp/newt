@@ -817,9 +817,31 @@ async cmdHistoryForward(paneHandle: PaneHandle) : Promise<Result<null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async cmdHistory(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_history", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async navigateHistory(paneHandle: PaneHandle, targetIndex: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("navigate_history", { paneHandle, targetIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove an entry from a pane's navigation history. Used by the persistent
+ * history dialog (the alt-tab overlay shows entries read-only). The
+ * modal is *not* closed — the dialog state is refreshed in place by
+ * rebuilding the entries list, so the user can keep deleting.
+ */
+async deleteHistoryEntry(paneHandle: PaneHandle, targetIndex: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_history_entry", { paneHandle, targetIndex }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1214,7 +1236,14 @@ expose_local_fs: boolean;
 /**
  * Default sort order for new panes.
  */
-default_sort: DefaultSort }
+default_sort: DefaultSort; 
+/**
+ * Maximum number of entries kept in each pane's navigation history.
+ * `0` means unlimited (entries accumulate for the lifetime of the
+ * session). When the cap is reached, the oldest entries roll out as
+ * new ones are pushed.
+ */
+history_retention: number }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */
@@ -1285,7 +1314,7 @@ export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "acces
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
@@ -1356,7 +1385,15 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * +1 for forward. The overlay uses this to set the initial preview
  * (one step in that direction, skipping dead entries).
  */
-initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
+initial_direction: number; 
+/**
+ * When true, the overlay is opened as a persistent dialog: it stays
+ * open until explicitly dismissed (Esc / outside-click), Alt-up does
+ * not commit, blur does not abort, and per-entry delete buttons are
+ * shown. When false, the overlay behaves alt-tab style (the default
+ * alt-held mode).
+ */
+persistent: boolean } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
@@ -1387,7 +1424,15 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * +1 for forward. The overlay uses this to set the initial preview
  * (one step in that direction, skipping dead entries).
  */
-initial_direction: number } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
+initial_direction: number; 
+/**
+ * When true, the overlay is opened as a persistent dialog: it stays
+ * open until explicitly dismissed (Esc / outside-click), Alt-up does
+ * not commit, blur does not abort, and per-entry delete buttons are
+ * shown. When false, the overlay behaves alt-tab style (the default
+ * alt-held mode).
+ */
+persistent: boolean } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
 export type Mode = number
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 

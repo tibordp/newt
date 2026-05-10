@@ -139,6 +139,12 @@ pub struct BehaviorPreferences {
     /// Default sort order for new panes.
     #[schemars(title = "Default Sort")]
     pub default_sort: DefaultSort,
+    /// Maximum number of entries kept in each pane's navigation history.
+    /// `0` means unlimited (entries accumulate for the lifetime of the
+    /// session). When the cap is reached, the oldest entries roll out as
+    /// new ones are pushed.
+    #[schemars(title = "History Retention", range(min = 0, max = 100000))]
+    pub history_retention: u32,
 }
 
 impl Default for BehaviorPreferences {
@@ -150,6 +156,7 @@ impl Default for BehaviorPreferences {
             quick_search: true,
             expose_local_fs: false,
             default_sort: DefaultSort::default(),
+            history_retention: 200,
         }
     }
 }

@@ -6,7 +6,7 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::{Breadcrumb, VfsPath};
+use newt_common::vfs::{Breadcrumb, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -289,6 +289,21 @@ impl Pane {
                 history.back.push(old_snapshot.clone());
             }
         }
+        // Enforce history retention. The combined view is back + current +
+        // forward, so cap that total. 0 = unlimited.
+        let limit = self.preferences.load().behavior.history_retention as usize;
+        if limit > 0 {
+            // current is implicit (not in either stack), so we account for it.
+            while history.back.len() + history.forward.len() + 1 > limit {
+                if !history.back.is_empty() {
+                    history.back.remove(0);
+                } else if !history.forward.is_empty() {
+                    history.forward.remove(0);
+                } else {
+                    break;
+                }
+            }
+        }
     }
 
     async fn navigate_impl(
@@ -301,6 +316,32 @@ impl Pane {
         debug!("navigate_impl: target={:?} kind={:?}", target, kind);
 
         let old_snapshot = self.snapshot();
+
+        // If the navigation crosses a VFS boundary into the target, give
+        // that VFS a chance to revalidate cached external state (e.g. an
+        // archive's central directory if the underlying file changed
+        // externally). Skipped for same-VFS navigation, refresh, and any
+        // VFS whose descriptor doesn't advertise revalidation — that
+        // covers the local FS (the common case) without paying for an
+        // RPC round-trip in remote sessions.
+        if !matches!(kind, NavigationKind::Refresh)
+            && target.vfs_id != old_snapshot.path.vfs_id
+            && self
+                .vfs_info
+                .descriptor(target.vfs_id)
+                .is_some_and(|(d, _)| d.can_revalidate())
+        {
+            match self.fs.revalidate(target.vfs_id).await {
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(
+                        "navigate_impl: revalidate({}) failed: {}; aborting navigation",
+                        target.vfs_id, e
+                    );
+                    return Err(e.into());
+                }
+            }
+        }
 
         let prefs = self.preferences.load();
         let old_file_list = {
@@ -708,6 +749,49 @@ impl Pane {
             *self.current_arrived_at.lock() = std::time::SystemTime::now();
         }
         Ok(())
+    }
+
+    /// Return the set of VFS ids referenced by any entry in this pane's
+    /// history (back + forward stacks). The currently-displayed path is
+    /// *not* included — callers that also want the current VFS id can
+    /// fold `self.path().vfs_id` in. Used by archive auto-unmount to
+    /// keep mounts alive as long as they remain reachable via back/forward.
+    pub fn history_vfs_ids(&self) -> Vec<VfsId> {
+        let history = self.history.lock();
+        history
+            .back
+            .iter()
+            .chain(history.forward.iter())
+            .map(|e| e.path.vfs_id)
+            .collect()
+    }
+
+    /// Remove the history entry at `target_index` in the combined view.
+    /// The current entry cannot be removed; this is a no-op for the
+    /// current index.
+    pub fn delete_history_entry(&self, target_index: usize) {
+        let mut history = self.history.lock();
+        let current_index = history.forward.len();
+        if target_index == current_index {
+            return;
+        }
+        if target_index < current_index {
+            // Forward section. forward[0] is at list[0]; forward.last() is
+            // at list[current_index - 1]. So forward index = (current_index - 1) - target_index.
+            let fi = current_index - 1 - target_index;
+            if fi < history.forward.len() {
+                history.forward.remove(fi);
+            }
+        } else {
+            // Back section. back.last() is at list[current_index + 1];
+            // back[0] is at list[current_index + back.len()]. So back index
+            // = back.len() - (target_index - current_index).
+            let offset = target_index - current_index;
+            if offset > 0 && offset <= history.back.len() {
+                let bi = history.back.len() - offset;
+                history.back.remove(bi);
+            }
+        }
     }
 
     /// Build a flat view of the history for the overlay UI. Forward (redo)

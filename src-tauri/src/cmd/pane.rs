@@ -479,6 +479,39 @@ pub async fn navigate_history(
     .await
 }
 
+/// Remove an entry from a pane's navigation history. Used by the persistent
+/// history dialog (the alt-tab overlay shows entries read-only). The
+/// modal is *not* closed — the dialog state is refreshed in place by
+/// rebuilding the entries list, so the user can keep deleting.
+#[tauri::command]
+#[specta::specta]
+pub fn delete_history_entry(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    target_index: usize,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        let pane = gs.panes.get(pane_handle).unwrap();
+        pane.delete_history_entry(target_index);
+
+        // Rebuild the modal data so the dialog re-renders without the
+        // deleted entry. Preserve persistent flag and initial_direction.
+        let mut modal = gs.modal.0.write();
+        if let Some(ref mut data) = *modal
+            && let crate::main_window::ModalDataKind::HistoryNavigator {
+                entries,
+                current_index,
+                ..
+            } = &mut data.kind
+        {
+            let (new_entries, new_current_index) = pane.history_entries();
+            *entries = new_entries;
+            *current_index = new_current_index;
+        }
+        Ok(())
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
