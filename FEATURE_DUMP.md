@@ -374,8 +374,10 @@ When a copy, move, or delete operation runs, it's tracked in the **Operations Pa
 
 **Foreground modal** (default for new operations):
 - Large overlay showing operation kind, description, progress bar, percentage, the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
-- **Cancel** button: Stops the operation. Partially copied files are left as-is.
+- **Cancel** button (rightmost): Stops the operation. Partially copied files are left as-is.
 - **Background** button: Minimizes the operation to the compact panel, freeing the UI for other work.
+- **Esc** maps to Cancel, **click-outside** maps to Background. This is a deliberate asymmetry from the rest of the app where Esc and click-out are symmetric: the progress modal isn't a form being canceled — it's destructive work in flight, and Esc is the panic-cancel reflex (an accidental click-out cancelling a long copy is annoying-but-redoable; an accidental Esc backgrounding a runaway delete is silent destruction).
+- **Show Next Operation** (F10): cycles foreground through all ops by id — backgrounds the current and surfaces the next, wrapping. Useful when multiple ops are running simultaneously.
 
 **Background panel** (compact list):
 - Shows all backgrounded operations as a compact list.
@@ -1478,6 +1480,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+, | Settings | Any |
 | Mod+Shift+P | Command palette | Any |
 | F9 | User commands palette | Pane focused |
+| F10 | Show Next Operation (cycle foreground op) | Any |
 | Shift+F10 / Menu | Context menu | Pane focused |
 
 ### Window

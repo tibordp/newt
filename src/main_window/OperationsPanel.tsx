@@ -116,6 +116,12 @@ export const ACTION_LABELS: Record<IssueAction, string> = {
 function IssueResolution({
   op,
   classNameOverrides,
+  // When rendered inside the foregrounded Dialog, the first action button
+  // gets autoFocus and the buttons sit in the natural Tab order — that's
+  // the focus-trapped modal UX. When rendered inline inside an
+  // OperationRow, neither should happen: focus must stay on the active
+  // pane and the buttons must not be Tab stops.
+  inModal = false,
 }: {
   op: OperationState;
   classNameOverrides?: {
@@ -123,6 +129,7 @@ function IssueResolution({
     issueMessage?: string;
     issueActions?: string;
   };
+  inModal?: boolean;
 }) {
   const [applyToAll, setApplyToAll] = useState(false);
   const issue = op.issue!;
@@ -145,15 +152,25 @@ function IssueResolution({
         {issue.actions.map((action, i) => (
           <button
             key={action}
-            autoFocus={i === 0}
-            onClick={() => resolve(action)}
+            autoFocus={inModal && i === 0}
+            tabIndex={inModal ? 0 : -1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              resolve(action);
+            }}
           >
             {ACTION_LABELS[action] || action}
           </button>
         ))}
-        <label className={styles.applyToAll}>
+        <label
+          className={styles.applyToAll}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => e.stopPropagation()}
+        >
           <input
             type="checkbox"
+            tabIndex={inModal ? 0 : -1}
             checked={applyToAll}
             onChange={(e) => setApplyToAll(e.target.checked)}
           />
@@ -214,17 +231,26 @@ function OperationRow({ op }: { op: OperationState }) {
         </div>
       )}
 
-      <div
-        className={styles.operationActions}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className={styles.operationActions}>
         {isActive && (
-          <button onClick={() => safe(commands.cancelOperation(op.id))}>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              safe(commands.cancelOperation(op.id));
+            }}
+          >
             Cancel
           </button>
         )}
         {isFinished && (
-          <button onClick={() => safe(commands.dismissOperation(op.id))}>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              safe(commands.dismissOperation(op.id));
+            }}
+          >
             Dismiss
           </button>
         )}
@@ -246,6 +272,10 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
     safe(commands.backgroundOperation(op.id));
   }, [op.id]);
 
+  const cancelOp = useCallback(() => {
+    safe(commands.cancelOperation(op.id));
+  }, [op.id]);
+
   const fraction = progressFraction(op);
   const progress = formatProgress(op);
 
@@ -253,6 +283,11 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
     <Dialog.Root
       open
       onOpenChange={(open) => {
+        // Click-out / programmatic close: background. Esc is intercepted
+        // separately below and routes to cancel — that's the panic-cancel
+        // reflex (Esc gets me out of a runaway destructive op fast),
+        // while click-out stays forgiving (accidental clicks shouldn't
+        // throw away work).
         if (!open) backgroundOp();
       }}
     >
@@ -260,6 +295,13 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
         <Dialog.Content
           className={modalStyles.content}
           onCloseAutoFocus={preventAutoFocus}
+          onEscapeKeyDown={(e) => {
+            if (isActive) {
+              e.preventDefault(); // keep the modal open; let the op
+              // transition to Cancelled and surface the Close button.
+              cancelOp();
+            }
+          }}
         >
           <Dialog.Title className={modalStyles.header}>
             <span className={modalStyles.kind}>{op.kind}</span>
@@ -270,6 +312,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
             {isWaiting ? (
               <IssueResolution
                 op={op}
+                inModal
                 classNameOverrides={{
                   issueResolution: `${styles.issueResolution} ${modalStyles.bodyIssueResolution}`,
                   issueMessage: `${styles.issueMessage} ${modalStyles.bodyIssueMessage}`,
@@ -330,12 +373,8 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
           <div className={modalStyles.footer}>
             {isActive && (
               <>
-                <button onClick={() => safe(commands.cancelOperation(op.id))}>
-                  Cancel
-                </button>
-                <button className="suggested" autoFocus onClick={backgroundOp}>
-                  Background
-                </button>
+                <button onClick={backgroundOp}>Background</button>
+                <button onClick={cancelOp}>Cancel</button>
               </>
             )}
             {(op.status === "completed" ||

@@ -220,6 +220,10 @@ pub async fn start_operation(
         OperationRequest::RunCommand { command, .. } => {
             ("command".to_string(), format!("Running: {}", command))
         }
+        OperationRequest::DebugSleep { duration_seconds } => (
+            "debug_sleep".to_string(),
+            format!("Debug sleep ({}s)", duration_seconds),
+        ),
     };
 
     // Insert initial operation state
@@ -353,6 +357,54 @@ pub fn foreground_operation(
     Ok(())
 }
 
+/// Show the next operation in foreground, cycling by op id. If an op is
+/// currently foregrounded, send it to the background first and surface the
+/// next one (wrapping). If none is foregrounded, surface the oldest
+/// backgrounded op. No-op when no operations exist.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_show_next_operation(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    {
+        let mut ops = ctx.operations().state.write();
+        let mut ids: Vec<OperationId> = ops.keys().copied().collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        ids.sort();
+
+        let current_foreground = ids
+            .iter()
+            .copied()
+            .find(|id| ops.get(id).is_some_and(|op| !op.backgrounded));
+
+        let next_id = match current_foreground {
+            Some(current) => {
+                let idx = ids.iter().position(|&id| id == current).unwrap();
+                ids[(idx + 1) % ids.len()]
+            }
+            None => ids[0],
+        };
+
+        if Some(next_id) == current_foreground {
+            return Ok(()); // single op; nothing to cycle to
+        }
+
+        if let Some(current) = current_foreground
+            && let Some(op) = ops.get_mut(&current)
+        {
+            op.backgrounded = true;
+        }
+        if let Some(op) = ops.get_mut(&next_id) {
+            op.backgrounded = false;
+        }
+    }
+    ctx.publish()?;
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn start_copy_move(
@@ -450,4 +502,15 @@ pub async fn read_file(
 pub async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
     ctx.file_reader()?.write_file(path, data).await?;
     Ok(())
+}
+
+/// Kick off a synthetic long-running operation. Reachable only from the
+/// Debug modal, itself unavailable outside `debug_assertions` builds.
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_debug_run_test_operation(
+    ctx: MainWindowContext,
+    duration_seconds: u64,
+) -> Result<OperationId, Error> {
+    start_operation(ctx, OperationRequest::DebugSleep { duration_seconds }).await
 }

@@ -1100,9 +1100,35 @@ async cmdDeleteSelected(paneHandle: PaneHandle) : Promise<Result<null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Show the next operation in foreground, cycling by op id. If an op is
+ * currently foregrounded, send it to the background first and surface the
+ * next one (wrapping). If none is foregrounded, surface the oldest
+ * backgrounded op. No-op when no operations exist.
+ */
+async cmdShowNextOperation(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_show_next_operation", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdDebug(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_debug", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kick off a synthetic long-running operation. Reachable only from the
+ * Debug modal, itself unavailable outside `debug_assertions` builds.
+ */
+async cmdDebugRunTestOperation(durationSeconds: number) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_debug_run_test_operation", { durationSeconds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1522,7 +1548,15 @@ mode_set: number;
 /**
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
-mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; working_dir: string | null } }
+mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; working_dir: string | null } } | 
+/**
+ * Synthetic long-running operation for manual testing of the progress
+ * UI — scan phase, prepared totals, ticking progress, and completion.
+ * Exposed only from the Debug modal in debug builds; kept here
+ * unconditionally so the wire format stays identical across debug
+ * and release builds.
+ */
+{ DebugSleep: { duration_seconds: number } }
 export type OperationState = { id: number; kind: string; description: string; total_bytes: number | null; total_items: number | null; bytes_done: number; items_done: number; current_item: string; status: OperationStatus; error: string | null; issue: OperationIssueInfo | null; backgrounded: boolean; 
 /**
  * Running totals from the scanning/planning phase.

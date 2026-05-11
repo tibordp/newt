@@ -92,7 +92,7 @@ export default function CopyMove({
         <button type="button" onClick={cancel}>
           Cancel
         </button>
-        <button type="submit" className="suggested">
+        <button type="submit" className="suggested" autoFocus>
           {title}
         </button>
       </div>

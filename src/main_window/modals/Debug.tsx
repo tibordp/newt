@@ -1,6 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { CommonDialogProps } from "./ModalContent";
+import { commands } from "../../lib/bindings";
+import { safeSilent } from "../../lib/ipc";
 import dialogStyles from "./Dialog.module.scss";
 import React from "react";
 
@@ -23,6 +25,7 @@ export default function Debug({ cancel }: CommonDialogProps) {
         >
           <button
             type="button"
+            autoFocus
             onClick={() => invoke("plugin:webview|internal_toggle_devtools")}
           >
             Toggle DevTools
@@ -33,6 +36,15 @@ export default function Debug({ cancel }: CommonDialogProps) {
           <button type="button" onClick={() => setCrashed(true)}>
             Crash (throw error)
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              safeSilent(commands.cmdDebugRunTestOperation(60));
+              cancel();
+            }}
+          >
+            Run test operation (1m)
+          </button>
         </div>
         {crashed &&
           (() => {
@@ -42,7 +54,7 @@ export default function Debug({ cancel }: CommonDialogProps) {
           })()}
       </div>
       <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel} autoFocus>
+        <button type="button" onClick={cancel}>
           Close
         </button>
       </div>

@@ -52,6 +52,20 @@ body {
   }
 }
 
+// WebKit paint-cache workaround (reproduced on both WKWebView and
+// webkit2gtk — engine-wide, not platform-specific). Allotment's splitView sets
+// `position: relative` + `overflow: hidden`, which together establish a
+// stacking + clipping context whose contents get rendered at a stale
+// offset after the wrapper resizes (manifests as a 4px gap between the
+// pane status bars and the OperationsPanel when it appears). Demoting
+// the splitView to static positioning kills the stacking context and
+// the artifact with it; the absolute-positioned panes inside re-anchor
+// to `.container` (the next positioned ancestor), which sits at the
+// same origin so coordinates are preserved.
+.split-view {
+  position: static !important;
+}
+
 .connection-status {
   position: absolute;
   bottom: 0;

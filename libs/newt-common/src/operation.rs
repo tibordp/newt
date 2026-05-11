@@ -98,6 +98,14 @@ pub enum OperationRequest {
         command: String,
         working_dir: Option<PathBuf>,
     },
+    /// Synthetic long-running operation for manual testing of the progress
+    /// UI — scan phase, prepared totals, ticking progress, and completion.
+    /// Exposed only from the Debug modal in debug builds; kept here
+    /// unconditionally so the wire format stays identical across debug
+    /// and release builds.
+    DebugSleep {
+        duration_seconds: u64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
@@ -561,6 +569,94 @@ async fn execute_run_command(
     }
 }
 
+// --- Debug sleep (manual-testing fixture) ---
+
+async fn execute_debug_sleep(
+    reporter: &mut ProgressReporter,
+    duration_seconds: u64,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    // Synthetic numbers chosen so the progress bar visibly moves and bytes-
+    // per-second readouts land in a familiar range.
+    const TOTAL_ITEMS: u64 = 1_000;
+    const BYTES_PER_ITEM: u64 = 1024 * 1024;
+    let total_bytes = TOTAL_ITEMS * BYTES_PER_ITEM;
+
+    // Split the budget: ~15% scanning, the rest doing "work".
+    let scan_ms = (duration_seconds * 1000 * 15) / 100;
+    let work_ms = duration_seconds * 1000 - scan_ms;
+
+    // Scan phase — ramp items_found / bytes_found up to the totals.
+    let scan_ticks: u64 = 50;
+    let scan_tick_ms = scan_ms.max(1) / scan_ticks.max(1);
+    for i in 1..=scan_ticks {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        let items_found = TOTAL_ITEMS * i / scan_ticks;
+        let bytes_found = total_bytes * i / scan_ticks;
+        reporter.maybe_send_scanning(items_found, bytes_found);
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(scan_tick_ms)) => {}
+            _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
+        }
+    }
+
+    reporter.send_prepared(total_bytes, TOTAL_ITEMS);
+
+    // Work phase — tick once per simulated item. Raise a synthetic
+    // AlreadyExists conflict at four points so the issue-resolution UI
+    // (and the apply-to-all checkbox) can be exercised: pick Overwrite/Skip
+    // and tick the box on the first one and the remaining three should
+    // resolve automatically via sticky resolutions.
+    let conflict_at: [u64; 4] = [
+        TOTAL_ITEMS / 5,
+        2 * TOTAL_ITEMS / 5,
+        3 * TOTAL_ITEMS / 5,
+        4 * TOTAL_ITEMS / 5,
+    ];
+    let work_tick_ms = work_ms.max(1) / TOTAL_ITEMS.max(1);
+    let mut bytes_done = 0u64;
+    for i in 1..=TOTAL_ITEMS {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+
+        if conflict_at.contains(&i) {
+            match reporter
+                .raise_issue(
+                    IssueKind::AlreadyExists,
+                    format!("synthetic item {} already exists at destination", i),
+                    Some(format!(
+                        "(debug fixture) tick #{} of {} — pick Skip/Overwrite/Retry; tick \"apply to all\" to make the remaining synthetic conflicts resolve automatically",
+                        conflict_at.iter().position(|&n| n == i).unwrap() + 1,
+                        conflict_at.len(),
+                    )),
+                    vec![
+                        IssueAction::Skip,
+                        IssueAction::Overwrite,
+                        IssueAction::Retry,
+                    ],
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        bytes_done += BYTES_PER_ITEM;
+        let display = format!("synthetic item {} of {}", i, TOTAL_ITEMS);
+        reporter.maybe_send_progress(bytes_done, i, &display);
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(work_tick_ms)) => {}
+            _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
+        }
+    }
+
+    Ok(())
+}
+
 // --- Entry point ---
 
 pub async fn execute_operation(
@@ -650,6 +746,9 @@ pub async fn execute_operation(
                 cancel.clone(),
             )
             .await
+        }
+        OperationRequest::DebugSleep { duration_seconds } => {
+            execute_debug_sleep(&mut reporter, duration_seconds, cancel.clone()).await
         }
     };
 

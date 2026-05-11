@@ -301,7 +301,9 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::cmd_open_config_file,
             pane::cmd_refresh,
             operations::cmd_delete_selected,
+            operations::cmd_show_next_operation,
             dialog::cmd_debug,
+            operations::cmd_debug_run_test_operation,
             dialog::cmd_connection_log,
             dialog::cmd_about,
             // Keychain

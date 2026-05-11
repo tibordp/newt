@@ -24,6 +24,8 @@ export default function TerminalPanel({
           <button
             key={term.handle}
             className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""} ${term.defunct ? styles.defunct : ""}`}
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => safeSilent(commands.activateTerminal(term.handle))}
           >
             <span>
@@ -43,6 +45,8 @@ export default function TerminalPanel({
         ))}
         <button
           className={styles.addButton}
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => safeSilent(commands.cmdCreateTerminal(0))}
           title="New Terminal"
         >

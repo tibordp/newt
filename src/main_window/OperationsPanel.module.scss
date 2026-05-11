@@ -96,6 +96,12 @@
 
 .operationActions {
   flex-shrink: 0;
+  // Anchor to the right edge of the row regardless of how wide
+  // .operationProgress is, so the Cancel/Dismiss button doesn't jitter
+  // horizontally as the progress text (item count, ETA) changes width.
+  // The issue-resolution case already grows to fill via `flex: 1` on
+  // .issueResolution, so this only kicks in for the non-issue rows.
+  margin-left: auto;
 
   button {
     padding: 2px 8px;
