@@ -24,7 +24,6 @@ const NEWT_FACTS = [
 export default function About({
   version,
   git_revision,
-  build_date,
   target_triple,
   cancel,
 }: AboutProps) {
@@ -89,7 +88,6 @@ export default function About({
             }}
           >
             <div>{versionLine}</div>
-            {build_date && <div>Built {build_date}</div>}
             <div>{target_triple}</div>
           </div>
           <div

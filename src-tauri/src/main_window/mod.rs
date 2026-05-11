@@ -489,7 +489,6 @@ pub enum ModalDataKind {
     About {
         version: String,
         git_revision: Option<String>,
-        build_date: Option<String>,
         target_triple: String,
     },
 }
@@ -865,6 +864,11 @@ struct MainWindowContextInner {
     preferences: crate::preferences::PreferencesHandle,
     connection_target: ConnectionTarget,
     window_title: String,
+    /// Per-pane initial paths from the CLI (`--cwd-left`, `--cwd-right`).
+    /// `None` per slot means "use the connection's default" (cwd locally,
+    /// `~` on remote). Only honoured during the initial connect; subsequent
+    /// reconnects ignore them.
+    initial_pane_paths: [Option<std::path::PathBuf>; 2],
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
     clipboard: RwLock<arboard::Clipboard>,
@@ -903,6 +907,7 @@ impl MainWindowContext {
         connection_target: ConnectionTarget,
         window_title: String,
         preferences: crate::preferences::PreferencesHandle,
+        initial_pane_paths: [Option<std::path::PathBuf>; 2],
     ) -> Self {
         let mut global_state = MainWindowState::new();
         global_state.window_title = window_title.clone();
@@ -922,6 +927,7 @@ impl MainWindowContext {
                 preferences,
                 connection_target,
                 window_title,
+                initial_pane_paths,
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
                 askpass_response: Arc::new(parking_lot::Mutex::new(None)),
                 clipboard: RwLock::new(
@@ -929,6 +935,11 @@ impl MainWindowContext {
                 ),
             }),
         }
+    }
+
+    /// Per-pane initial paths from the CLI; consumed by session::connect.
+    pub fn initial_pane_paths(&self) -> &[Option<std::path::PathBuf>; 2] {
+        &self.inner.initial_pane_paths
     }
 
     pub async fn connect(&self, agent_resolver: &dyn AgentResolver) -> Result<(), Error> {
@@ -1432,6 +1443,7 @@ pub fn spawn_main_window(
     app_handle: &tauri::AppHandle,
     connection_target: ConnectionTarget,
     window_title: String,
+    initial_pane_paths: [Option<std::path::PathBuf>; 2],
 ) -> Result<(WebviewWindow, MainWindowContext), Error> {
     let global_ctx: State<GlobalContext> = app_handle.state();
 
@@ -1466,6 +1478,7 @@ pub fn spawn_main_window(
         connection_target,
         window_title,
         prefs_handle.clone(),
+        initial_pane_paths,
     );
     global_ctx
         .main_windows

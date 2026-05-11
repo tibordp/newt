@@ -21,14 +21,44 @@ use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_duplex::Duplex;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = include_str!(concat!(env!("OUT_DIR"), "/long_version.txt")), about, long_about = None)]
 struct Args {
     /// Whether to use compression
     #[arg(short, long)]
     compression: bool,
+
+    /// Print the compiled target triple and exit. Useful when verifying
+    /// that the right binary made it onto a remote host.
+    #[arg(long)]
+    print_triple: bool,
+
+    /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
+    #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
+    verbose: u8,
+
+    /// Only log errors. Ignored if RUST_LOG is set.
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+/// Apply `-v`/`-q` to the `RUST_LOG` env var if the user hasn't already
+/// set one. The explicit env var always wins.
+fn apply_log_flags(verbose: u8, quiet: bool) {
+    if std::env::var_os("RUST_LOG").is_some() {
+        return;
+    }
+    let level = match (quiet, verbose) {
+        (true, _) => "error",
+        (_, 0) => "info",
+        (_, 1) => "debug",
+        (_, _) => "trace",
+    };
+    // SAFETY: single-threaded startup, before any logger or other env-reader
+    // has spawned.
+    unsafe { std::env::set_var("RUST_LOG", level) };
 }
 
 /// SSH_ASKPASS mode: connect to the parent process via a Unix domain socket,
@@ -90,8 +120,13 @@ fn main() {
 }
 
 async fn run_agent() -> Result<(), Error> {
-    pretty_env_logger::init();
     let args = Args::parse();
+    if args.print_triple {
+        println!("{}", env!("NEWT_TARGET_TRIPLE"));
+        return Ok(());
+    }
+    apply_log_flags(args.verbose, args.quiet);
+    pretty_env_logger::init();
 
     let mut rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(tokio::io::stdin());
     let mut tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(tokio::io::stdout());

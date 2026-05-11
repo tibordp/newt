@@ -47,19 +47,31 @@ fn main() {
         .map(|s| !s.success())
         .unwrap_or(false);
 
-    if let Some(rev) = git_rev {
+    let git_rev_display = git_rev.map(|rev| {
         let suffix = if git_dirty { "+" } else { "" };
-        println!("cargo:rustc-env=NEWT_GIT_REVISION={}{}", rev, suffix);
+        format!("{}{}", rev, suffix)
+    });
+    if let Some(rev) = &git_rev_display {
+        println!("cargo:rustc-env=NEWT_GIT_REVISION={}", rev);
     }
 
-    // Build date (UTC, YYYY-MM-DD)
-    let now = time::OffsetDateTime::now_utc();
-    println!(
-        "cargo:rustc-env=NEWT_BUILD_DATE={:04}-{:02}-{:02}",
-        now.year(),
-        now.month() as u8,
-        now.day()
-    );
+    // Long-form version string used by clap for both `-V` and `--version`.
+    // Mirrors the About dialog so the two stay in sync. Written to a file
+    // (rather than `cargo:rustc-env`) because the cargo directive truncates
+    // at the first newline.
+    let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    let target = std::env::var("TARGET").unwrap();
+    let mut long_version = format!("v{}", pkg_version);
+    if let Some(rev) = &git_rev_display {
+        long_version.push_str(&format!(" ({})", rev));
+    }
+    long_version.push_str(&format!("\n{}", target));
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    std::fs::write(
+        std::path::PathBuf::from(&out_dir).join("long_version.txt"),
+        long_version,
+    )
+    .unwrap();
 
     tauri_build::build()
 }

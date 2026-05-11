@@ -1175,7 +1175,7 @@ pub(super) async fn connect(
     };
 
     // Resolve initial directory for remote connections
-    let initial_dir = if matches!(connection_target, ConnectionTarget::Local) {
+    let default_dir = if matches!(connection_target, ConnectionTarget::Local) {
         services.initial_dir.clone()
     } else {
         services
@@ -1185,6 +1185,25 @@ pub(super) async fn connect(
             .map(VfsPath::root)
             .unwrap_or(services.initial_dir.clone())
     };
+
+    // Per-pane CLI overrides (`--cwd-left`, `--cwd-right`). Passed through
+    // shell_expand so users can write `--cwd-left ~/projects` and have it
+    // resolve correctly on either side of the connection.
+    let mut pane_dirs: [VfsPath; 2] = [default_dir.clone(), default_dir.clone()];
+    for (slot, override_path) in main_window_ctx.initial_pane_paths().iter().enumerate() {
+        if let Some(path) = override_path {
+            let raw = path.to_string_lossy().into_owned();
+            if let Ok(expanded) = services.shell_service.shell_expand(raw).await {
+                pane_dirs[slot] = VfsPath::root(expanded);
+            } else {
+                log::warn!(
+                    "could not resolve --cwd-{} path {:?}; falling back to default",
+                    if slot == 0 { "left" } else { "right" },
+                    path
+                );
+            }
+        }
+    }
 
     // Set up VFS
     let mut initial_mounted = HashMap::new();
@@ -1253,9 +1272,10 @@ pub(super) async fn connect(
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
+    let [left_dir, right_dir] = pane_dirs;
     state.panes.add(super::pane::Pane::new(
         services.fs.clone(),
-        initial_dir.clone(),
+        left_dir,
         state.display_options.clone(),
         preferences.clone(),
         publisher.clone(),
@@ -1264,7 +1284,7 @@ pub(super) async fn connect(
     ));
     state.panes.add(super::pane::Pane::new(
         services.fs.clone(),
-        initial_dir,
+        right_dir,
         state.display_options.clone(),
         preferences,
         publisher.clone(),

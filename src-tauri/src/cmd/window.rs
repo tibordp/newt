@@ -224,6 +224,7 @@ pub async fn cmd_new_window(
         webview.app_handle(),
         ConnectionTarget::Local,
         "Newt".to_string(),
+        [None, None],
     )?;
     Ok(())
 }
@@ -253,6 +254,7 @@ pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(),
             transport_cmd: crate::main_window::ssh_transport_cmd(&host),
         },
         format!("Newt [{}]", host),
+        [None, None],
     )?;
     Ok(())
 }
@@ -268,6 +270,7 @@ pub async fn cmd_open_elevated(
         webview.app_handle(),
         ConnectionTarget::Elevated,
         "Newt [Elevated]".to_string(),
+        [None, None],
     )?;
     Ok(())
 }

@@ -15,7 +15,7 @@ pub mod preferences;
 pub mod user_commands;
 pub mod viewer;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use common::Error;
 use log::debug;
 use log::info;
@@ -34,19 +34,72 @@ use tauri::Wry;
 use tauri::ipc::Invoke;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = include_str!(concat!(env!("OUT_DIR"), "/long_version.txt")), about, long_about = None)]
 struct Args {
     /// Connect to a remote host via SSH (e.g., "user@host")
-    #[arg(long)]
+    #[cfg_attr(target_os = "linux", arg(long, conflicts_with_all = ["elevated", "profile"]))]
+    #[cfg_attr(not(target_os = "linux"), arg(long, conflicts_with = "profile"))]
     connect: Option<String>,
 
-    /// Run with an elevated (root) agent via pkexec
-    #[arg(long)]
+    /// Run with an elevated (root) agent via pkexec (Linux only).
+    #[cfg(target_os = "linux")]
+    #[arg(long, conflicts_with = "profile")]
     elevated: bool,
+
+    /// Open with a saved connection profile (by `name` or `id`). Currently
+    /// supports profiles of type `remote`; for S3/SFTP profiles use Quick
+    /// Connect inside the app.
+    #[arg(long, value_name = "NAME")]
+    profile: Option<String>,
 
     /// Window title suffix (e.g., "user@host" or "Elevated")
     #[arg(long)]
     title: Option<String>,
+
+    /// Override the configuration directory (settings, connections, hot
+    /// paths, history). Defaults to the platform's standard app-config
+    /// location.
+    #[arg(long, value_name = "PATH")]
+    config_dir: Option<std::path::PathBuf>,
+
+    /// Initial path for the left pane (defaults to cwd locally, $HOME on remote).
+    #[arg(long, value_name = "PATH")]
+    cwd_left: Option<std::path::PathBuf>,
+
+    /// Initial path for the right pane (defaults to same as left).
+    #[arg(long, value_name = "PATH")]
+    cwd_right: Option<std::path::PathBuf>,
+
+    /// Print resolved version, config directory, and agent inventory to
+    /// stdout and exit. Useful for "what state is my install in?" debugging.
+    #[arg(long)]
+    print_config: bool,
+
+    /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
+    #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
+    verbose: u8,
+
+    /// Only log errors. Ignored if RUST_LOG is set.
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+/// Apply `-v`/`-q` to the `RUST_LOG` env var if the user hasn't already
+/// set one. The explicit env var always wins so power users can still
+/// dial in per-module filters.
+fn apply_log_flags(verbose: u8, quiet: bool) {
+    if std::env::var_os("RUST_LOG").is_some() {
+        return;
+    }
+    let level = match (quiet, verbose) {
+        (true, _) => "error",
+        (_, 0) => "info",
+        (_, 1) => "debug",
+        (_, _) => "trace",
+    };
+    // SAFETY: single-threaded startup, before any logger or other env-reader
+    // has spawned.
+    unsafe { std::env::set_var("RUST_LOG", level) };
 }
 
 /// A pre-warmed hidden window ready to be activated.
@@ -98,9 +151,16 @@ impl GlobalContext {
             .expect("AgentResolver not initialized")
     }
 
-    pub fn init_preferences(&self, app_handle: &tauri::AppHandle) {
+    pub fn init_preferences(
+        &self,
+        app_handle: &tauri::AppHandle,
+        config_dir_override: Option<std::path::PathBuf>,
+    ) {
         self.preferences
-            .set(preferences::PreferencesManager::new(app_handle))
+            .set(preferences::PreferencesManager::new(
+                app_handle,
+                config_dir_override,
+            ))
             .ok();
     }
 
@@ -233,19 +293,82 @@ pub fn detect_theme() -> Option<tauri::Theme> {
     None
 }
 
+/// Diagnostic dump for `--print-config`. Prints the same identity info the
+/// About dialog shows, plus the resolved configuration directory and the
+/// agent binaries the host has on hand.
+fn print_resolved_config(global_ctx: &GlobalContext) {
+    println!(
+        "{}",
+        include_str!(concat!(env!("OUT_DIR"), "/long_version.txt"))
+    );
+    println!();
+    println!(
+        "Config dir: {}",
+        global_ctx.preferences().config_dir().display()
+    );
+    let agent_hash = global_ctx
+        .agent_resolver()
+        .agent_hash()
+        .unwrap_or_else(|e| format!("(unavailable: {})", e));
+    println!("Agents hash: {}", agent_hash);
+}
+
+/// Resolve a `--profile` argument against the saved-connections store. Only
+/// `remote` profiles map cleanly to a startup `ConnectionTarget`; S3/SFTP
+/// profiles need an existing local session to mount onto, so we point the
+/// user at Quick Connect for those.
+fn resolve_profile(
+    config_dir: &std::path::Path,
+    name: &str,
+) -> Result<(ConnectionTarget, String), Error> {
+    let profile = crate::connections::list_connections(config_dir)
+        .into_iter()
+        .find(|p| p.name == name || p.id == name)
+        .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", name)))?;
+    match &profile.kind {
+        crate::connections::ConnectionKind::Remote { host } => Ok((
+            ConnectionTarget::Remote {
+                transport_cmd: crate::main_window::ssh_transport_cmd(host),
+            },
+            profile.name,
+        )),
+        _ => Err(Error::Custom(format!(
+            "profile '{}' is not a remote profile; open it via Quick Connect inside the app",
+            name
+        ))),
+    }
+}
+
 fn main() {
+    let args = Args::parse();
+    apply_log_flags(args.verbose, args.quiet);
     pretty_env_logger::init();
 
-    let args = Args::parse();
-
-    let connection_target = if let Some(ref host) = args.connect {
-        ConnectionTarget::Remote {
+    // Connection target for the non-profile cases — `--profile` is resolved
+    // inside `setup` once the preferences directory is known.
+    let non_profile_ct: Option<ConnectionTarget> = if let Some(ref host) = args.connect {
+        Some(ConnectionTarget::Remote {
             transport_cmd: crate::main_window::ssh_transport_cmd(host),
-        }
-    } else if args.elevated {
-        ConnectionTarget::Elevated
+        })
     } else {
-        ConnectionTarget::Local
+        #[cfg(target_os = "linux")]
+        {
+            if args.elevated {
+                Some(ConnectionTarget::Elevated)
+            } else if args.profile.is_some() {
+                None
+            } else {
+                Some(ConnectionTarget::Local)
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if args.profile.is_some() {
+                None
+            } else {
+                Some(ConnectionTarget::Local)
+            }
+        }
     };
 
     let specta_builder = cmd::create_specta_builder();
@@ -268,13 +391,14 @@ fn main() {
         result
     });
 
-    let window_title = match args.title {
-        Some(ref t) => format!("Newt [{}]", t),
-        None => "Newt".to_string(),
-    };
-
-    let ct = connection_target.clone();
-    let wt = window_title.clone();
+    let explicit_title = args.title.clone();
+    let profile_arg = args.profile.clone();
+    let config_dir_arg = args.config_dir.clone();
+    let print_config = args.print_config;
+    let initial_pane_paths: [Option<std::path::PathBuf>; 2] = [
+        args.cwd_left.clone(),
+        args.cwd_right.clone().or_else(|| args.cwd_left.clone()),
+    ];
     let global_ctx = GlobalContext::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -283,9 +407,39 @@ fn main() {
         .setup(move |app| {
             let global_ctx: State<GlobalContext> = app.state();
             global_ctx.init_agent_resolver(app.handle());
-            global_ctx.init_preferences(app.handle());
+            global_ctx.init_preferences(app.handle(), config_dir_arg.clone());
 
-            let (_window, ctx) = spawn_main_window(app.handle(), ct.clone(), wt.clone())?;
+            if print_config {
+                print_resolved_config(&global_ctx);
+                app.handle().exit(0);
+                return Ok(());
+            }
+
+            // Resolve `--profile` now that the preferences manager (and thus
+            // the config dir) is available; otherwise use the target picked
+            // out of `--connect` / `--elevated` / default-local above.
+            let (ct, default_title) = match (&profile_arg, &non_profile_ct) {
+                (Some(name), _) => {
+                    let config_dir = global_ctx.preferences().config_dir().to_path_buf();
+                    resolve_profile(&config_dir, name)?
+                }
+                (None, Some(ct)) => (ct.clone(), "Newt".to_string()),
+                (None, None) => {
+                    unreachable!("non_profile_ct is None only when profile_arg is Some")
+                }
+            };
+            let wt = match &explicit_title {
+                Some(t) => format!("Newt [{}]", t),
+                None if default_title == "Newt" => "Newt".to_string(),
+                None => format!("Newt [{}]", default_title),
+            };
+
+            let (_window, ctx) = spawn_main_window(
+                app.handle(),
+                ct.clone(),
+                wt.clone(),
+                initial_pane_paths.clone(),
+            )?;
 
             // Local mode: connect synchronously so state is ready before JS runs.
             // Remote/Elevated: `init` command triggers connect asynchronously.

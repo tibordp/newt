@@ -237,6 +237,7 @@ pub async fn connect_profile(
                     transport_cmd: crate::main_window::ssh_transport_cmd(host),
                 },
                 format!("Newt [{}]", profile.name),
+                [None, None],
             )?;
             ctx.with_update(|gs| {
                 gs.close_modal();

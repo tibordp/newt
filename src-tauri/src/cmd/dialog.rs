@@ -348,7 +348,6 @@ pub fn dialog(
                 DialogKind::About => ModalDataKind::About {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     git_revision: option_env!("NEWT_GIT_REVISION").map(|s| s.to_string()),
-                    build_date: option_env!("NEWT_BUILD_DATE").map(|s| s.to_string()),
                     target_triple: env!("NEWT_TARGET_TRIPLE").to_string(),
                 },
             },

@@ -1484,7 +1484,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
@@ -1537,7 +1537,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
 export type Mode = number
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 

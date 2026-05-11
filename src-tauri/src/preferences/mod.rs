@@ -95,11 +95,13 @@ pub struct PreferencesManager {
 }
 
 impl PreferencesManager {
-    pub fn new(app_handle: &tauri::AppHandle) -> Self {
-        let config_dir = app_handle
-            .path()
-            .app_config_dir()
-            .unwrap_or_else(|_| PathBuf::from("."));
+    pub fn new(app_handle: &tauri::AppHandle, config_dir_override: Option<PathBuf>) -> Self {
+        let config_dir = config_dir_override.unwrap_or_else(|| {
+            app_handle
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+        });
 
         // Ensure config directory exists
         if let Err(e) = std::fs::create_dir_all(&config_dir) {
