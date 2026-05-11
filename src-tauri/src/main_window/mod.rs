@@ -470,7 +470,6 @@ pub enum ModalDataKind {
         persistent: bool,
     },
     CommandPalette {
-        #[serde(skip_serializing_if = "Option::is_none")]
         category_filter: Option<String>,
     },
     HotPaths,

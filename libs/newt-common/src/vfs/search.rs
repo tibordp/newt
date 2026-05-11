@@ -188,6 +188,12 @@ impl VfsDescriptor for SearchVfsDescriptor {
     fn can_revalidate(&self) -> bool {
         false
     }
+    fn can_search(&self) -> bool {
+        // Entries are aliases to files in the source VFS; stacking another
+        // search on top produces duplicate keys and confuses op routing.
+        // cmd+f falls back to the in-pane quick filter instead.
+        false
+    }
     fn can_watch(&self) -> bool {
         // Walker pushes batches through `VfsChangeNotifier`, not through
         // an OS watch; keep this `false` so the navigation layer doesn't

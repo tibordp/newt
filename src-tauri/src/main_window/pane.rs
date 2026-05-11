@@ -1192,7 +1192,6 @@ pub struct FileView {
     /// `file.source` rendered through the source VFS's `format_path`,
     /// when `source` is set and the source VFS is still mounted. `None`
     /// for ordinary entries.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_display: Option<String>,
 }
 
@@ -1706,8 +1705,6 @@ impl PaneViewState {
 
     pub fn set_selection_by_indices(&mut self, start: usize, end: usize, additive: bool) {
         self.clear_quick_search();
-        let lo = start.min(end).min(self.files.len());
-        let hi = start.max(end).min(self.files.len().saturating_sub(1));
 
         // For additive (Ctrl+drag): auto-snapshot the base on first call,
         // then union base + range.
@@ -1720,7 +1717,9 @@ impl PaneViewState {
             HashSet::new()
         };
 
-        if lo <= hi {
+        if let Some(last) = self.files.len().checked_sub(1) {
+            let lo = start.min(end).min(last);
+            let hi = start.max(end).min(last);
             for i in lo..=hi {
                 if self.files[i].name != ".." {
                     selected.insert(self.files[i].key().to_string());

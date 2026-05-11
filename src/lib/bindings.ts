@@ -1046,6 +1046,12 @@ async mountSearch(paneHandle: PaneHandle, root: VfsPath, namePattern: string | n
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * cmd+f. Unlike the other dialog shims this one isn't built with
+ * `cmd_dialog!`: if the active pane's VFS opts out of recursive search
+ * (`VfsDescriptor::can_search`), we transparently fall back to opening
+ * the in-pane quick filter — the same effect as pressing `/`.
+ */
 async cmdStartSearch(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_start_search", { paneHandle }) };
@@ -1275,7 +1281,7 @@ export type Breadcrumb = { label: string; nav_path: string }
 /**
  * Command metadata for the command palette.
  */
-export type CommandInfo = { id: string; name: string; short_name?: string | null; category: string; shortcut: string | null; shortcut_display: string[]; needs_pane: boolean; 
+export type CommandInfo = { id: string; name: string; short_name: string | null; category: string; shortcut: string | null; shortcut_display: string[]; needs_pane: boolean; 
 /**
  * Keybinding *dispatch context* (`pane_focused` / `terminal_focused` /
  * unset = global). For user commands this is hard-coded to
@@ -1283,21 +1289,21 @@ export type CommandInfo = { id: string; name: string; short_name?: string | null
  * `when`. Distinct from `applies_to`, which is the user-command
  * run-filter.
  */
-when?: string | null; 
+when: string | null; 
 /**
  * User-command run filter (`file` / `directory` / `selection` / unset =
  * any). Only set for user commands; always `None` for built-ins.
  */
-applies_to?: string | null; 
+applies_to: string | null; 
 /**
  * The compiled-in default key for this command, if any. Useful for the
  * keybindings editor to display "Default: …" hints and offer Reset.
  */
-default_key?: string | null; 
+default_key: string | null; 
 /**
  * The compiled-in default dispatch context for this command, if any.
  */
-default_when?: string | null; 
+default_when: string | null; 
 /**
  * True when the resolved keybinding for this command differs from its
  * compiled-in default (either remapped by the user, disabled, or its
@@ -1348,7 +1354,7 @@ export type File = { name: string; size: number | null; is_dir: boolean; is_hidd
  * (e.g. flat search results, where `name` is the basename for display
  * but multiple entries can share it). See `File::key()`.
  */
-key?: string | null; 
+key: string | null; 
 /**
  * Underlying source path for entries that are virtual references to a
  * real file in another VFS — e.g. a search result. Frontend uses this
@@ -1356,7 +1362,7 @@ key?: string | null;
  * informational (the operative redirect is in `VfsRegistry`, see
  * `Vfs::redirect_target`).
  */
-source?: VfsPath | null }
+source: VfsPath | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
 export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
@@ -1452,7 +1458,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
@@ -1505,7 +1511,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter?: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; build_date: string | null; target_triple: string } }
 export type Mode = number
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
@@ -1603,7 +1609,7 @@ stage: string;
  * Dominant counter — running count when `total` is `None`,
  * determinate progress when both are set.
  */
-processed?: number | null; total?: number | null; 
+processed: number | null; total: number | null; 
 /**
  * Sidecar values (e.g. `"hits" → "42"`). Surface as
  * `" · key: value"` suffixes. The producer chooses keys; nothing

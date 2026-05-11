@@ -276,6 +276,17 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Whether the recursive-search dialog (cmd+f) makes sense on a pane
+    /// mounted on this VFS. Defaults to `true` — override only for VFSes
+    /// where stacking a fresh search on top is incoherent. The motivating
+    /// case is the search VFS itself: its entries are aliases to files in
+    /// the underlying source, and a nested search produces duplicate keys
+    /// and breaks operation routing. When this returns `false`, the host
+    /// transparently falls back to the in-pane quick filter.
+    fn can_search(&self) -> bool {
+        true
+    }
+
     // --- Display ---
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb>;

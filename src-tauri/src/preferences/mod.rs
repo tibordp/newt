@@ -39,7 +39,6 @@ pub struct ResolvedBinding {
 pub struct CommandInfo {
     pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub short_name: Option<String>,
     pub category: String,
     pub shortcut: Option<String>,
@@ -50,18 +49,14 @@ pub struct CommandInfo {
     /// `pane_focused`. For built-ins it reflects the resolved binding's
     /// `when`. Distinct from `applies_to`, which is the user-command
     /// run-filter.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
     /// User-command run filter (`file` / `directory` / `selection` / unset =
     /// any). Only set for user commands; always `None` for built-ins.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub applies_to: Option<String>,
     /// The compiled-in default key for this command, if any. Useful for the
     /// keybindings editor to display "Default: …" hints and offer Reset.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_key: Option<String>,
     /// The compiled-in default dispatch context for this command, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_when: Option<String>,
     /// True when the resolved keybinding for this command differs from its
     /// compiled-in default (either remapped by the user, disabled, or its

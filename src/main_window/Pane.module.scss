@@ -103,6 +103,14 @@
   }
 }
 
+.emptyPlaceholder {
+  color: var(--color-fg-muted);
+  font-style: italic;
+  user-select: none;
+  pointer-events: none;
+  padding: 8px 12px;
+}
+
 .dragRect {
   display: none;
   position: absolute;

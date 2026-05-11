@@ -807,7 +807,6 @@ function PaneInner(
 
       const container = containerRef.current;
       if (!container) return;
-      if (!fileWindowRef.current.total_count) return;
 
       // Focus the file under cursor (using DOM, not scroll math).
       // This must happen on mouseDown, not onClick, because a tiny drag
@@ -1405,6 +1404,9 @@ function PaneInner(
               onScroll={onScroll}
             >
               <div style={topSpacerStyle} />
+              {!showSpinner && !loading && file_window.total_count === 0 && (
+                <li className={styles.emptyPlaceholder}>Nothing to see here</li>
+              )}
               {file_window.items.map((row) => {
                 const rowKey = row.key ?? row.name;
                 const isFocused = active && rowKey === focused;

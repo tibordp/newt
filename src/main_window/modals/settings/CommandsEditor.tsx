@@ -366,6 +366,15 @@ export function CommandsEditor({
                 </tr>
                 <tr>
                   <td>
+                    <code>{"{{ file.source }}"}</code>
+                  </td>
+                  <td>
+                    Underlying real path for virtual entries (e.g. search hits);
+                    empty for ordinary files
+                  </td>
+                </tr>
+                <tr>
+                  <td>
                     <code>{"{{ file.stem }}"}</code>
                   </td>
                   <td>Filename without extension</td>

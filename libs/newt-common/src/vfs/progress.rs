@@ -35,14 +35,11 @@ pub struct VfsProgress {
     pub stage: String,
     /// Dominant counter — running count when `total` is `None`,
     /// determinate progress when both are set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processed: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
     /// Sidecar values (e.g. `"hits" → "42"`). Surface as
     /// `" · key: value"` suffixes. The producer chooses keys; nothing
     /// in the pipeline parses them.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, String>,
 }
 

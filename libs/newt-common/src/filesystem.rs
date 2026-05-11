@@ -86,14 +86,12 @@ pub struct File {
     /// identifier — the common case. Set explicitly by synthetic VFSes
     /// (e.g. flat search results, where `name` is the basename for display
     /// but multiple entries can share it). See `File::key()`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// Underlying source path for entries that are virtual references to a
     /// real file in another VFS — e.g. a search result. Frontend uses this
     /// for the "where from" secondary display; backend treats it as
     /// informational (the operative redirect is in `VfsRegistry`, see
     /// `Vfs::redirect_target`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<VfsPath>,
 }
 
@@ -135,7 +133,6 @@ pub struct FileList {
     /// intrinsically incomplete (e.g. a SearchVfs whose walker was
     /// cancelled). Surfaces in the pane status bar as `(partial)` and
     /// is sticky across navigations into the same VFS.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     partial: bool,
 }
 

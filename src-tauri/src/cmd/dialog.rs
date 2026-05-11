@@ -2,6 +2,7 @@ use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
 use crate::common::Error;
+use crate::main_window::pane::FilterMode;
 use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle};
 
 /// Every dialog the host can open. Serialized as snake_case so the frontend
@@ -394,7 +395,31 @@ cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
 cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
 cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
-cmd_dialog!(cmd_start_search, DialogKind::Search);
+/// cmd+f. Unlike the other dialog shims this one isn't built with
+/// `cmd_dialog!`: if the active pane's VFS opts out of recursive search
+/// (`VfsDescriptor::can_search`), we transparently fall back to opening
+/// the in-pane quick filter — the same effect as pressing `/`.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let supports_search = ctx.with_pane_update(pane_handle, |_, pane| {
+        Ok(ctx
+            .vfs_info()
+            .ok()
+            .and_then(|vi| vi.descriptor(pane.path().vfs_id))
+            .is_none_or(|(d, _)| d.can_search()))
+    })?;
+
+    if supports_search {
+        dialog(ctx, DialogKind::Search, Some(pane_handle))
+    } else {
+        ctx.with_pane_update(pane_handle, |_, pane| {
+            pane.view_state_mut()
+                .set_filter_with_mode(Some(String::new()), FilterMode::Filter);
+            Ok(())
+        })
+    }
+}
 cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
 cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
 cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);

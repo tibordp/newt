@@ -910,6 +910,7 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
 **Behavior**:
 - **Flat list, with paths shown.** Identically-named matches sort/select independently — entries are keyed by their relative path under the search root, not basename.
 - **`..` does not unwind into the search root.** Search results live in their own addressable space; leaving the search is via history (Alt+Left) or Shift+Enter on a hit.
+- **Mod+F inside a search falls back to the in-pane quick filter.** Nested search would produce duplicate-keyed aliases and break operation routing, so the SearchVfs opts out via `VfsDescriptor::can_search`; the host transparently routes Mod+F to `/` instead. Generalizes to any VFS that overrides `can_search`.
 - **Operations are transparent.** Open, view, edit, rename, delete, copy/move, drag-out — every action targets the underlying real file. The display still shows the basename + source-path hint, but the bytes the operation touches are the source file's bytes.
 - **Walker boundaries.** Walks within a single VFS; mounted child VFSes (archives, etc.) are *not* descended into. OS-level mounts (bind mounts, autofs, network shares) look like ordinary directories and are traversed.
 - **Lifecycle.** SearchVfs is *ephemeral* (see below) — it auto-unmounts as soon as it's no longer reachable from any pane's current path or back/forward history, and it does not show up in the VFS selector dropdown.
@@ -1092,6 +1093,7 @@ If the user declines a `confirm()`, the entire command is aborted.
 | `file` | Object | Currently focused file |
 | `file.name` | String | Filename with extension |
 | `file.path` | String | Full absolute path |
+| `file.source` | String | Underlying real path for virtual entries (e.g. search hits); undefined for ordinary files |
 | `file.stem` | String | Filename without extension |
 | `file.ext` | String | Extension (without dot) |
 | `file.is_dir` | Bool | Is it a directory? |

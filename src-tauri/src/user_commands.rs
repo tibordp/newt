@@ -15,6 +15,10 @@ use crate::main_window::PaneHandle;
 struct FileTemplateObject {
     name: String,
     path: String,
+    /// For virtual entries that alias a real file in another location
+    /// (e.g. a search hit), this is the underlying path. `None` for
+    /// ordinary filesystem entries.
+    source: Option<String>,
     ext: String,
     stem: String,
     is_dir: bool,
@@ -33,6 +37,10 @@ impl minijinja::value::Object for FileTemplateObject {
         match key.as_str()? {
             "name" => Some(minijinja::Value::from(self.name.clone())),
             "path" => Some(minijinja::Value::from(self.path.clone())),
+            "source" => match &self.source {
+                Some(s) => Some(minijinja::Value::from(s.clone())),
+                None => Some(minijinja::Value::from(())),
+            },
             "ext" => Some(minijinja::Value::from(self.ext.clone())),
             "stem" => Some(minijinja::Value::from(self.stem.clone())),
             "is_dir" => Some(minijinja::Value::from(self.is_dir)),
@@ -193,10 +201,18 @@ fn build_template_context(
     let file_objects: Vec<minijinja::Value> = effective_files
         .iter()
         .map(|f| {
-            let path = pane_path.path.join(&f.name);
+            // Use `key()` for the in-VFS path component: for ordinary
+            // entries it equals `name`, for virtual entries (e.g. nested
+            // search hits) it's the unique identifier under the pane root.
+            let path = pane_path.path.join(f.key());
+            let source = f
+                .source
+                .as_ref()
+                .map(|p| p.path.to_string_lossy().to_string());
             minijinja::Value::from_object(FileTemplateObject {
                 name: f.name.clone(),
                 path: path.to_string_lossy().to_string(),
+                source,
                 ext: std::path::Path::new(&f.name)
                     .extension()
                     .map(|e| e.to_string_lossy().to_string())
@@ -279,6 +295,19 @@ fn render_template(
     Ok((rendered, inputs))
 }
 
+/// Extract the per-pane keys for a selection. Each selected `VfsPath`
+/// is constructed as `pane_path.path.join(key)` by the pane layer, so
+/// stripping that prefix recovers the keys. Returning keys (rather than
+/// basenames) preserves identity for synthetic VFSes like search results
+/// where multiple entries can share the same `name`.
+fn selection_keys(pane_path: &VfsPath, selection: &[VfsPath]) -> std::collections::HashSet<String> {
+    selection
+        .iter()
+        .filter_map(|p| p.path.strip_prefix(&pane_path.path).ok())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect()
+}
+
 // --- Execution ---
 
 /// Collect pane context needed for user command template rendering.
@@ -293,16 +322,13 @@ fn collect_pane_context(
     let other_dir = other_pane.path().path.to_string_lossy().to_string();
 
     let selection = pane.get_effective_selection();
-    let selection_names: Vec<String> = selection
-        .iter()
-        .filter_map(|p| p.path.file_name().map(|n| n.to_string_lossy().to_string()))
-        .collect();
+    let selection_keys = selection_keys(&pane_path, &selection);
 
     let file_list = pane.file_list();
     let effective_files: Vec<newt_common::filesystem::File> = file_list
         .files()
         .iter()
-        .filter(|f| selection_names.contains(&f.name))
+        .filter(|f| selection_keys.contains(f.key()))
         .cloned()
         .collect();
 
@@ -520,4 +546,99 @@ pub fn update_user_command_entry(
         .preferences()
         .update_user_command(index, &entry)
         .map_err(Error::Custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use newt_common::filesystem::File;
+    use std::path::PathBuf;
+
+    fn file_with(name: &str, key: Option<&str>, source: Option<VfsPath>) -> File {
+        File {
+            name: name.to_string(),
+            key: key.map(|s| s.to_string()),
+            source,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn template_path_uses_key_for_nested_synthetic_entries() {
+        // Two search hits that share a basename but live in different
+        // subdirectories: their keys disambiguate, names do not.
+        let pane = VfsPath::root(PathBuf::from("/"));
+        let a = file_with(
+            "foo.txt",
+            Some("a/foo.txt"),
+            Some(VfsPath::root(PathBuf::from("/src/a/foo.txt"))),
+        );
+        let b = file_with(
+            "foo.txt",
+            Some("b/foo.txt"),
+            Some(VfsPath::root(PathBuf::from("/src/b/foo.txt"))),
+        );
+        let files = [&a, &b];
+
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let paths: Vec<String> = file_objects
+            .iter()
+            .map(|v| v.get_attr("path").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(paths, vec!["/a/foo.txt", "/b/foo.txt"]);
+    }
+
+    #[test]
+    fn template_source_exposed_when_set() {
+        let pane = VfsPath::root(PathBuf::from("/"));
+        let f = file_with(
+            "foo.txt",
+            Some("a/foo.txt"),
+            Some(VfsPath::root(PathBuf::from("/src/a/foo.txt"))),
+        );
+        let files = [&f];
+
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let source = file_objects[0].get_attr("source").unwrap();
+        assert_eq!(source.as_str(), Some("/src/a/foo.txt"));
+    }
+
+    #[test]
+    fn template_source_undefined_for_ordinary_entries() {
+        let pane = VfsPath::root(PathBuf::from("/home/user"));
+        let f = file_with("foo.txt", None, None);
+        let files = [&f];
+
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let source = file_objects[0].get_attr("source").unwrap();
+        assert!(source.is_none(), "expected None, got {:?}", source);
+    }
+
+    #[test]
+    fn selection_keys_strips_pane_prefix_preserving_subdirs() {
+        // Search-VFS pane at root: selection paths are `/key` and the
+        // key may itself contain subdirectory separators.
+        let pane = VfsPath::root(PathBuf::from("/"));
+        let selection = vec![
+            VfsPath::root(PathBuf::from("/a/foo.txt")),
+            VfsPath::root(PathBuf::from("/b/foo.txt")),
+        ];
+        let keys = selection_keys(&pane, &selection);
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains("a/foo.txt"));
+        assert!(keys.contains("b/foo.txt"));
+    }
+
+    #[test]
+    fn selection_keys_real_filesystem_pane() {
+        let pane = VfsPath::root(PathBuf::from("/home/user"));
+        let selection = vec![
+            VfsPath::root(PathBuf::from("/home/user/foo.txt")),
+            VfsPath::root(PathBuf::from("/home/user/bar.txt")),
+        ];
+        let keys = selection_keys(&pane, &selection);
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains("foo.txt"));
+        assert!(keys.contains("bar.txt"));
+    }
 }
