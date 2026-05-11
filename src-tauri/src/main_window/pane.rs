@@ -179,6 +179,7 @@ impl Pane {
             view_state: RwLock::new({
                 let prefs = preferences.load();
                 PaneViewState {
+                    vfs_info: Some(vfs_info.clone()),
                     sorting: Sorting {
                         key: match prefs.behavior.default_sort.key {
                             crate::preferences::schema::DefaultSortKey::Name => SortingKey::Name,
@@ -489,10 +490,13 @@ impl Pane {
                     *self.file_list.write() = old_file_list;
                 }
 
+                let intrinsic_partial = self.file_list.read().is_partial();
                 let mut ws = self.view_state_mut();
                 ws.pending_path = None;
                 ws.loading = false;
-                ws.partial = dirty;
+                // OR the consumer-side "we got cut off" signal with the
+                // VFS-intrinsic flag (e.g. SearchVfs Cancelled walker).
+                ws.partial = dirty || intrinsic_partial;
                 self.update_display(&mut ws);
 
                 let outcome = if landed {
@@ -532,7 +536,11 @@ impl Pane {
 
         ws.pending_path = None;
         ws.loading = false;
-        ws.partial = false;
+        // VFS-intrinsic partial flag (SearchVfs whose walker was
+        // cancelled, …) takes precedence over the consumer-side
+        // "we navigated away mid-stream" flavor — both render the
+        // same `(partial)` badge.
+        ws.partial = new_file_list.is_partial();
         if has_path_changed {
             let _ = changes_sender.send(());
             if let Some(tx) = &self.event_tx {
@@ -1166,11 +1174,33 @@ pub enum FilterMode {
     Filter,
 }
 
+/// Display projection of `File` for the frontend. Carries everything
+/// `File` does, plus pre-rendered fields the frontend can't easily
+/// derive on its own — currently `source_display`, the source path
+/// formatted through the source VFS's descriptor for synthetic VFS
+/// entries (search results' "where from" hint).
+///
+/// Computing display strings on the descriptor is cheap and stays on
+/// the host process, so we don't carry the extra string across the RPC
+/// boundary; only `File` does. The conversion happens when the pane
+/// builds its window.
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct FileView {
+    #[serde(flatten)]
+    pub file: File,
+    /// Pre-rendered "where from" label — the parent directory of
+    /// `file.source` rendered through the source VFS's `format_path`,
+    /// when `source` is set and the source VFS is still mounted. `None`
+    /// for ordinary entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_display: Option<String>,
+}
+
 /// A windowed slice of the file list sent to the frontend.
 #[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct FileWindow {
-    /// The files in the current window.
-    pub items: Vec<File>,
+    /// The files in the current window, projected for display.
+    pub items: Vec<FileView>,
     /// Index of the first item in `items` within the full sorted/filtered list.
     pub offset: usize,
     /// Total number of files in the full sorted/filtered list.
@@ -1224,6 +1254,12 @@ pub struct PaneViewState {
     /// The generation at which the current window was built.
     #[serde(skip)]
     window_generation: u64,
+    /// Used to project `File` → `FileView` (rendering the synthetic-VFS
+    /// `source` path through the source VFS's descriptor) when the
+    /// frontend window is rebuilt. Optional so PaneViewState can still
+    /// derive `Default` for tests / placeholder values.
+    #[serde(skip)]
+    vfs_info: Option<Arc<dyn VfsInfo>>,
 }
 
 impl PaneViewState {
@@ -1331,13 +1367,36 @@ impl PaneViewState {
             return;
         }
 
+        let items: Vec<FileView> = self.files[start..end]
+            .iter()
+            .map(|f| self.project_file(f))
+            .collect();
         self.file_window = FileWindow {
-            items: self.files[start..end].to_vec(),
+            items,
             offset: start,
             total_count: total,
         };
         self.window_generation = self.file_generation;
         self.recompute_selected_window();
+    }
+
+    /// Render `File` → `FileView`, attaching a frontend-friendly
+    /// "where from" label for entries that carry a `source` (search
+    /// results, etc.). Goes through the source VFS's descriptor so the
+    /// label matches the rest of the app's path formatting (e.g. an
+    /// archive entry shows `/path/to/foo.zip/inner/dir`, not the raw
+    /// archive-internal path).
+    fn project_file(&self, f: &File) -> FileView {
+        let source_display = f.source.as_ref().and_then(|src| {
+            let parent = src.path.parent()?;
+            let info = self.vfs_info.as_ref()?;
+            let (desc, meta) = info.descriptor(src.vfs_id)?;
+            Some(desc.format_path(parent, &meta))
+        });
+        FileView {
+            file: f.clone(),
+            source_display,
+        }
     }
 
     /// Projects all_selected onto the current window so only visible
@@ -1347,8 +1406,8 @@ impl PaneViewState {
             .file_window
             .items
             .iter()
-            .filter(|f| self.all_selected.contains(f.key()))
-            .map(|f| f.key().to_string())
+            .filter(|fv| self.all_selected.contains(fv.file.key()))
+            .map(|fv| fv.file.key().to_string())
             .collect();
     }
 

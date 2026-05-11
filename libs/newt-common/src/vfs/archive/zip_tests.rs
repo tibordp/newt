@@ -93,6 +93,7 @@ struct Harness {
     archive_origin: VfsPath,
     pending_read_streams: crate::api::PendingVfsReadStreams,
     host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
+    progress_reporter: Arc<dyn crate::vfs::ProgressReporter>,
 }
 
 impl Harness {
@@ -114,6 +115,10 @@ impl Harness {
             archive_origin,
             pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             host_communicator: Arc::new(std::sync::OnceLock::new()),
+            progress_reporter: Arc::new(crate::vfs::ScopedReporter::new(
+                Arc::new(crate::vfs::NoopProgressSink),
+                crate::vfs::VfsId(0),
+            )),
         }
     }
 
@@ -124,6 +129,7 @@ impl Harness {
             pending_read_streams: &self.pending_read_streams,
             sftp_askpass: None,
             askpass_provider: askpass,
+            progress_reporter: &self.progress_reporter,
         }
     }
 }
@@ -157,6 +163,7 @@ async fn mount_succeeds_without_askpass_even_for_encrypted_archive() {
         .list_files(Path::new("/"), None)
         .await
         .expect("list_files")
+        .files
         .into_iter()
         .map(|f| f.name)
         .filter(|n| n != "..")

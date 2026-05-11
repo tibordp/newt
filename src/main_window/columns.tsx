@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import iconMapping from "../assets/mapping.json";
-import { File, ColumnDef, Sorting } from "./types";
+import { FileView, ColumnDef, Sorting } from "./types";
 import { modeString } from "./utils";
 import styles from "./Columns.module.scss";
 
@@ -29,7 +29,7 @@ function FileName({
   focused: boolean;
   filter: string | null;
   filterMode: string;
-  info: File;
+  info: FileView;
   displayName: string;
 }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
@@ -66,17 +66,10 @@ function FileName({
     </div>
   );
 
-  // Search results carry a `source` (real underlying path); render the
-  // parent directory inline as a "where from" hint so the user can tell
-  // identically-named matches apart at a glance.
-  const sourceParent =
-    info.source &&
-    (() => {
-      const p = info.source.path as unknown as string;
-      const i = p.lastIndexOf("/");
-      return i > 0 ? p.substring(0, i) : "/";
-    })();
-
+  // Search results carry a pre-rendered `source_display` from the host
+  // (parent directory formatted through the source VFS's descriptor).
+  // Render it inline as a "where from" hint so identically-named matches
+  // are distinguishable at a glance.
   return (
     <div
       className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${
@@ -86,8 +79,8 @@ function FileName({
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>
         {nameElement}
-        {sourceParent && (
-          <span className={styles.sourceHint}> ({sourceParent})</span>
+        {info.source_display && (
+          <span className={styles.sourceHint}> ({info.source_display})</span>
         )}
       </div>
     </div>

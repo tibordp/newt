@@ -592,6 +592,11 @@ struct HostDispatcher {
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     pending_streams: PendingStreams,
     preferences: crate::preferences::PreferencesHandle,
+    /// Shared sink used to apply incoming VFS progress notifications
+    /// from the agent into `MainWindowState.vfs_progress`. Same impl
+    /// the local-mode `VfsRegistryManager` writes to, so the consumer
+    /// side is identical regardless of session mode.
+    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
 }
 
 /// Dispatches `API_HOST_ASKPASS` from the agent to an `AskpassProvider`.
@@ -650,6 +655,14 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
             apply_operation_progress(&self.operations, progress, keep);
             let _ = self.publisher.publish();
             Ok(true)
+        } else if api == newt_common::api::API_VFS_PROGRESS {
+            let (vfs_id, progress): (
+                newt_common::vfs::VfsId,
+                Option<newt_common::vfs::VfsProgress>,
+            ) = bincode::deserialize(&req[..]).unwrap();
+            // Sink does both the state update and the publish.
+            self.progress_sink.report(vfs_id, progress);
+            Ok(true)
         } else if api == API_LIST_FILES_BATCH {
             let (stream_id, file_list): (StreamId, FileList) =
                 bincode::deserialize(&req[..]).unwrap();
@@ -686,6 +699,7 @@ fn create_local_services(
     preferences: &crate::preferences::PreferencesHandle,
     sftp_askpass: Option<newt_common::api::SftpAskpass>,
     askpass_provider: Arc<dyn AskpassProvider>,
+    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
@@ -710,8 +724,9 @@ fn create_local_services(
         fs: Arc::new(VfsRegistryFs::new(registry.clone())),
         shell_service: Arc::new(LocalShellService),
         vfs_manager: Arc::new({
-            let mgr =
-                VfsRegistryManager::new(registry.clone()).with_askpass_provider(askpass_provider);
+            let mgr = VfsRegistryManager::new(registry.clone())
+                .with_askpass_provider(askpass_provider)
+                .with_progress_sink(progress_sink);
             if let Some(askpass) = sftp_askpass {
                 mgr.with_sftp_askpass(askpass)
             } else {
@@ -752,6 +767,7 @@ fn create_rpc_services(
     preferences: &crate::preferences::PreferencesHandle,
     expose_local_fs: bool,
     askpass_provider: Arc<dyn AskpassProvider>,
+    progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
 ) -> (Services, PendingStreams) {
     use newt_common::rpc::DispatcherExt;
 
@@ -762,6 +778,7 @@ fn create_rpc_services(
         publisher: publisher.clone(),
         pending_streams: pending_streams.clone(),
         preferences: preferences.clone(),
+        progress_sink,
     };
     let askpass_dispatcher = HostAskpassDispatcher {
         provider: askpass_provider,
@@ -1078,12 +1095,18 @@ pub(super) async fn connect(
                     None
                 }
             };
+            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+                Arc::new(crate::main_window::LocalProgressSink::new(
+                    state.vfs_progress.clone(),
+                    publisher.clone(),
+                ));
             let services = create_local_services(
                 &state.operations,
                 publisher,
                 &preferences,
                 sftp_askpass,
                 askpass_provider.clone(),
+                progress_sink,
             );
             (services, StderrLog::default(), None)
         }
@@ -1104,6 +1127,11 @@ pub(super) async fn connect(
             .await?;
             conn_log.log("Setting up RPC services...");
             let expose_local_fs = preferences.load().behavior.expose_local_fs;
+            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+                Arc::new(crate::main_window::LocalProgressSink::new(
+                    state.vfs_progress.clone(),
+                    publisher.clone(),
+                ));
             let (services, _) = create_rpc_services(
                 conn.stream,
                 &state.operations,
@@ -1111,6 +1139,7 @@ pub(super) async fn connect(
                 &preferences,
                 expose_local_fs,
                 askpass_provider.clone(),
+                progress_sink,
             );
             conn_log.log("Connected");
             (
@@ -1122,6 +1151,11 @@ pub(super) async fn connect(
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
             let conn = spawn_elevated(agent_resolver).await?;
+            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+                Arc::new(crate::main_window::LocalProgressSink::new(
+                    state.vfs_progress.clone(),
+                    publisher.clone(),
+                ));
             let (services, _) = create_rpc_services(
                 conn.stream,
                 &state.operations,
@@ -1129,6 +1163,7 @@ pub(super) async fn connect(
                 &preferences,
                 false,
                 askpass_provider.clone(),
+                progress_sink,
             );
             let stderr_log = StderrLog::default();
             (
@@ -1256,8 +1291,8 @@ pub(super) async fn connect(
             while let Some(event) = event_rx.recv().await {
                 match event {
                     super::MainWindowEvent::PaneNavigated => {
-                        if let Err(e) = ctx.cleanup_stale_archive_mounts().await {
-                            log::warn!("failed to cleanup stale archive mounts: {}", e);
+                        if let Err(e) = ctx.cleanup_stale_ephemeral_mounts().await {
+                            log::warn!("failed to cleanup stale ephemeral mounts: {}", e);
                         }
                     }
                 }

@@ -15,6 +15,7 @@ import type {
   Sorting,
   TerminalHandle,
   VfsPath,
+  VfsProgress,
 } from "../lib/bindings";
 
 export type { File, FilterMode, FsStats, Sorting } from "../lib/bindings";
@@ -32,7 +33,7 @@ export type ColumnDef = {
   initialWidth: number;
   subcolumns?: SubcolumnDef[];
   key: string;
-  render: (info: File, ctx: FileRowContext) => ReactElement;
+  render: (info: FileView, ctx: FileRowContext) => ReactElement;
 };
 
 export type SubcolumnDef = {
@@ -51,8 +52,15 @@ export type PaneStats = {
   total_count?: number;
 };
 
+/// Display projection of `File` produced by the host: same fields as
+/// `File`, with `source_display` pre-rendered through the source VFS's
+/// descriptor for synthetic-VFS entries (search results, …).
+export type FileView = File & {
+  source_display?: string;
+};
+
 export type FileWindow = {
-  items: File[];
+  items: FileView[];
   offset: number;
   total_count: number;
 };
@@ -107,4 +115,7 @@ export type MainWindowState = {
   operations: Record<string, OperationState>;
   window_title: string;
   foreground_operation_id?: number;
+  /// VFS-keyed background progress (e.g. SearchVfs walker status). Keys
+  /// are stringified VfsIds.
+  vfs_progress: Record<string, VfsProgress>;
 };

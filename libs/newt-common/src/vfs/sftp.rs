@@ -551,7 +551,7 @@ impl Vfs for SftpVfs {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::VfsFileList, Error> {
         debug!("sftp: list_files {}", path.display());
         self.check_alive()?;
 
@@ -631,7 +631,7 @@ impl Vfs for SftpVfs {
                 if let Some(ref tx) = batch_tx {
                     if tx.send(std::mem::take(&mut batch)).await.is_err() {
                         // Receiver dropped — caller cancelled the listing.
-                        return Ok(files);
+                        return Ok(files.into());
                     }
                 } else {
                     batch.clear();
@@ -645,7 +645,7 @@ impl Vfs for SftpVfs {
             let _ = tx.send(batch).await;
         }
 
-        Ok(files)
+        Ok(files.into())
     }
 
     async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {

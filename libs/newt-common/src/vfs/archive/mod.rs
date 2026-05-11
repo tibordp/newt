@@ -45,6 +45,7 @@ pub async fn mount(
             mount_meta,
             display_path,
             ctx.askpass_provider.cloned(),
+            ctx.progress_reporter.clone(),
         ))
     } else {
         Arc::new(TarArchiveVfs::new(
@@ -52,6 +53,7 @@ pub async fn mount(
             archive_path,
             origin,
             mount_meta,
+            ctx.progress_reporter.clone(),
         ))
     };
     Ok(vfs)

@@ -1,6 +1,8 @@
 pub mod archive;
+pub mod background_job;
 pub mod k8s;
 pub mod local;
+pub mod progress;
 pub mod remote;
 pub mod s3;
 pub mod search;
@@ -11,13 +13,16 @@ pub mod sftp;
 mod tests;
 
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
+pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
+pub use progress::{
+    NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
+    VfsProgressSink,
+};
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
-pub use search::{
-    SEARCH_VFS_DESCRIPTOR, SearchParams, SearchStatus, SearchVfs, SearchVfsDescriptor,
-};
+pub use search::{SEARCH_VFS_DESCRIPTOR, SearchParams, SearchVfs, SearchVfsDescriptor};
 pub use sftp::SftpVfs;
 
 use std::collections::HashMap;
@@ -237,6 +242,24 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Whether this VFS is "ephemeral" — short-lived, scoped to a single
+    /// user action, and not something the user would want to navigate
+    /// back to from a fresh selector (e.g. an archive mount tied to a
+    /// specific origin file, or a search VFS whose params are baked in
+    /// at mount time). Two consequences:
+    ///
+    /// 1. Auto-cleanup: the main window unmounts ephemeral VFSes that
+    ///    no pane references — directly *or* via back/forward history.
+    /// 2. UI: the VFS selector hides ephemeral mounts (they're reachable
+    ///    via history; surfacing them as switchable destinations would
+    ///    just be noise).
+    ///
+    /// Defaults to `false`. Override to `true` for synthetic / origin-
+    /// derived VFSes.
+    fn is_ephemeral(&self) -> bool {
+        false
+    }
+
     /// Whether panes on this VFS should auto-refresh on window focus.
     /// Defaults to true (suitable for local/remote filesystems). Override
     /// to false for VFSes where listing is expensive (S3, SFTP, archives).
@@ -408,6 +431,29 @@ pub enum RevalidationOutcome {
 // Vfs trait
 // ---------------------------------------------------------------------------
 
+/// Return value of `Vfs::list_files`. Carries the entries plus a
+/// `partial` bit that the VFS sets when the listing it served is
+/// intrinsically incomplete — e.g. a SearchVfs whose walker was
+/// cancelled before reaching `Done`. The flag persists across
+/// navigations to the same VFS, so a re-visit to a Cancelled search
+/// still shows the partial state correctly. `VfsRegistryFs::list_files`
+/// hoists the bit onto the registry-level `FileList` for consumer-side
+/// rendering.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct VfsFileList {
+    pub files: Vec<File>,
+    pub partial: bool,
+}
+
+impl From<Vec<File>> for VfsFileList {
+    fn from(files: Vec<File>) -> Self {
+        Self {
+            files,
+            partial: false,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Vfs: Send + Sync {
     // --- Descriptor ---
@@ -424,7 +470,7 @@ pub trait Vfs: Send + Sync {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error>;
+    ) -> Result<VfsFileList, Error>;
     async fn poll_changes(&self, path: &Path) -> Result<(), Error>;
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error>;
 
@@ -620,10 +666,28 @@ impl VfsRegistry {
         }
     }
 
-    pub fn mount(&self, vfs: Arc<dyn Vfs>) -> VfsId {
-        let id = VfsId(self.next_id.fetch_add(1, Ordering::SeqCst));
+    /// Reserve a fresh `VfsId` without inserting anything. Used by the
+    /// manager when a VFS needs to know its id at construction time —
+    /// allocate first, hand the id to the VFS (via a scoped progress
+    /// reporter etc.), then `insert`.
+    pub fn allocate_id(&self) -> VfsId {
+        VfsId(self.next_id.fetch_add(1, Ordering::SeqCst))
+    }
+
+    /// Insert a freshly-constructed VFS under a previously-allocated id.
+    /// Panics if the id is already taken (programmer error — allocate
+    /// always returns a fresh id).
+    pub fn insert(&self, id: VfsId, vfs: Arc<dyn Vfs>) {
         info!("vfs: mount id={} type={}", id, vfs.descriptor().type_name());
-        self.vfs_map.write().insert(id, vfs);
+        let prev = self.vfs_map.write().insert(id, vfs);
+        assert!(prev.is_none(), "vfs_id {} already taken", id);
+    }
+
+    /// Convenience: allocate + insert in one shot. Use when the VFS
+    /// doesn't need to know its id at construction.
+    pub fn mount(&self, vfs: Arc<dyn Vfs>) -> VfsId {
+        let id = self.allocate_id();
+        self.insert(id, vfs);
         id
     }
 
@@ -692,15 +756,16 @@ impl Filesystem for VfsRegistryFs {
             };
 
             match vfs.list_files(&local_path, inner_tx).await {
-                Ok(files) => {
+                Ok(result) => {
                     if let Some(h) = forwarder {
                         let _ = h.await;
                     }
                     return Ok(FileList::new(
                         VfsPath::new(vfs_id, local_path),
-                        files,
+                        result.files,
                         fs_stats,
-                    ));
+                    )
+                    .with_partial(result.partial));
                 }
                 Err(e)
                     if matches!(

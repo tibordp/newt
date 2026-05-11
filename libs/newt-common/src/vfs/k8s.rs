@@ -768,15 +768,15 @@ impl Vfs for K8sVfs {
         &self,
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::VfsFileList, Error> {
         debug!("k8s: list_files {}", path.display());
 
-        match self.resolve_path(path) {
-            PathResolution::Root => Ok(vec![dir_entry("cluster"), dir_entry("namespaces")]),
+        let files: Vec<File> = match self.resolve_path(path) {
+            PathResolution::Root => vec![dir_entry("cluster"), dir_entry("namespaces")],
             PathResolution::ClusterRoot => {
                 let mut files = vec![dotdot_entry()];
                 files.extend(self.list_resource_type_dirs(false));
-                Ok(files)
+                files
             }
             PathResolution::NamespaceList => {
                 let output = run_kubectl(
@@ -793,17 +793,17 @@ impl Vfs for K8sVfs {
                 let mut ns_files: Vec<File> = output.split_whitespace().map(dir_entry).collect();
                 ns_files.sort_by(|a, b| a.name.cmp(&b.name));
                 files.extend(ns_files);
-                Ok(files)
+                files
             }
             PathResolution::Namespace(_ns) => {
                 let mut files = vec![dotdot_entry()];
                 files.extend(self.list_resource_type_dirs(true));
-                Ok(files)
+                files
             }
             PathResolution::IntermediateDir { namespaced, prefix } => {
                 let mut files = vec![dotdot_entry()];
                 files.extend(self.list_group_entries(namespaced, &prefix));
-                Ok(files)
+                files
             }
             PathResolution::ResourceList {
                 namespace,
@@ -826,12 +826,13 @@ impl Vfs for K8sVfs {
                     output.split_whitespace().map(yaml_file_entry).collect();
                 res_files.sort_by(|a, b| a.name.cmp(&b.name));
                 files.extend(res_files);
-                Ok(files)
+                files
             }
             PathResolution::Resource { .. } | PathResolution::NotFound => {
-                Err(Error::custom("path not found"))
+                return Err(Error::custom("path not found"));
             }
-        }
+        };
+        Ok(files.into())
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {

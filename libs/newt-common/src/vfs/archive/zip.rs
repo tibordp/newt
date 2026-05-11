@@ -38,6 +38,9 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     fn has_origin(&self) -> bool {
         true
     }
+    fn is_ephemeral(&self) -> bool {
+        true
+    }
     fn auto_refresh(&self) -> bool {
         false
     }
@@ -133,6 +136,11 @@ pub struct ZipArchiveVfs {
     /// the first time an encrypted entry is read. Without this, reads of
     /// encrypted entries fail with `PermissionDenied`.
     askpass: Option<Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Used to emit a one-shot "Indexing ZIP" progress message while
+    /// the central directory is being read. ZIP's central directory
+    /// is at EOF and read in a single pass; there's no meaningful
+    /// mid-parse progress to report.
+    reporter: Arc<dyn super::super::ProgressReporter>,
     /// Cached password for encrypted entries. Filled on first successful
     /// decrypt. The ZIP spec allows different passwords per entry; we
     /// remember the most recently successful one and re-prompt if it
@@ -164,6 +172,7 @@ struct ZipEntry {
 }
 
 impl ZipArchiveVfs {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         upstream: Arc<dyn Vfs>,
         archive_path: PathBuf,
@@ -171,6 +180,7 @@ impl ZipArchiveVfs {
         mount_meta: Vec<u8>,
         display_path: String,
         askpass: Option<Arc<dyn crate::askpass::AskpassProvider>>,
+        reporter: Arc<dyn super::super::ProgressReporter>,
     ) -> Self {
         Self {
             upstream,
@@ -179,6 +189,7 @@ impl ZipArchiveVfs {
             mount_meta,
             display_path,
             askpass,
+            reporter,
             password: tokio::sync::Mutex::new(None),
             dismiss_gen: std::sync::atomic::AtomicU64::new(0),
             index: tokio::sync::OnceCell::new(),
@@ -192,6 +203,23 @@ impl ZipArchiveVfs {
                     "archive: indexing ZIP archive {}",
                     self.archive_path.display()
                 );
+
+                // One-shot progress message; clear on exit.
+                let mut extra = std::collections::BTreeMap::new();
+                extra.insert("path".to_string(), self.display_path.clone());
+                self.reporter.report(Some(super::super::VfsProgress {
+                    stage: "Indexing".into(),
+                    processed: None,
+                    total: None,
+                    extra,
+                }));
+                struct ClearOnDrop<'a>(&'a Arc<dyn super::super::ProgressReporter>);
+                impl Drop for ClearOnDrop<'_> {
+                    fn drop(&mut self) {
+                        self.0.report(None);
+                    }
+                }
+                let _clear = ClearOnDrop(&self.reporter);
 
                 let details = self.upstream.file_details(&self.archive_path).await?;
                 let file_size = details.size;
@@ -516,9 +544,9 @@ impl Vfs for ZipArchiveVfs {
         &self,
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::super::VfsFileList, Error> {
         let (_, tree) = self.ensure_indexed().await?;
-        tree.list(path)
+        Ok(tree.list(path)?.into())
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {

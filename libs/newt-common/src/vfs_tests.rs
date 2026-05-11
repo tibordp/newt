@@ -248,8 +248,8 @@ impl crate::vfs::Vfs for DummyVfs {
         &self,
         _path: &Path,
         _batch_tx: Option<tokio::sync::mpsc::Sender<Vec<crate::filesystem::File>>>,
-    ) -> Result<Vec<crate::filesystem::File>, crate::Error> {
-        Ok(vec![])
+    ) -> Result<crate::vfs::VfsFileList, crate::Error> {
+        Ok(crate::vfs::VfsFileList::default())
     }
     async fn poll_changes(&self, _path: &Path) -> Result<(), crate::Error> {
         Ok(())

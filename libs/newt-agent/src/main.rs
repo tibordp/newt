@@ -128,6 +128,14 @@ async fn run_agent() -> Result<(), Error> {
     let askpass_provider: Arc<dyn askpass::AskpassProvider> =
         Arc::new(askpass::Remote::new(host_communicator.clone()));
 
+    // Progress reports from agent-side VFSes (SearchVfs, …) are
+    // forwarded over the RPC channel via API_VFS_PROGRESS; the host's
+    // LocalProgressSink applies them to MainWindowState. The agent's
+    // sink owns a fire-and-forget mpsc forwarder task spawned when
+    // constructed.
+    let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+        Arc::new(newt_common::vfs::RemoteProgressSink::new(outbox.clone()));
+
     let vfs_manager = VfsRegistryManager::new_with_host_communicator(
         registry.clone(),
         host_communicator.clone(),
@@ -136,7 +144,8 @@ async fn run_agent() -> Result<(), Error> {
     .with_sftp_askpass(SftpAskpass {
         askpass_binary,
         provider: askpass_provider,
-    });
+    })
+    .with_progress_sink(progress_sink);
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))

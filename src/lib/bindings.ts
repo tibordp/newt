@@ -1359,7 +1359,14 @@ key?: string | null;
 source?: VfsPath | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
 export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
-export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[] }
+export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
+/**
+ * Set when the underlying VFS reports that the listing is
+ * intrinsically incomplete (e.g. a SearchVfs whose walker was
+ * cancelled). Surfaces in the pane status bar as `(partial)` and
+ * is sticky across navigations into the same VFS.
+ */
+partial: boolean }
 export type FilterMode = "quick_search" | "filter"
 export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number }
 /**
@@ -1582,6 +1589,27 @@ export type UserCommandPrompt = { label: string; default: string }
 export type UserGroup = { name: string } | { id: number }
 export type VfsId = number
 export type VfsPath = { vfs_id: VfsId; path: string }
+/**
+ * Free-schema progress snapshot. The frontend renders this as a short
+ * inline status line — `"<stage> · <processed>/<total> · <extra>"` —
+ * in the active pane's status bar.
+ */
+export type VfsProgress = { 
+/**
+ * Short verb-phrase like "Searching" or "Indexing".
+ */
+stage: string; 
+/**
+ * Dominant counter — running count when `total` is `None`,
+ * determinate progress when both are set.
+ */
+processed?: number | null; total?: number | null; 
+/**
+ * Sidecar values (e.g. `"hits" → "42"`). Surface as
+ * `" · key: value"` suffixes. The producer chooses keys; nothing
+ * in the pipeline parses them.
+ */
+extra: Partial<{ [key in string]: string }> }
 export type VfsTarget = { vfs_id: VfsId | null; type_name: string; display_name: string; 
 /**
  * Human-readable label for a mounted instance (e.g. hostname for SFTP).

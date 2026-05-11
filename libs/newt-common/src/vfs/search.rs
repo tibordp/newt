@@ -36,11 +36,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
 use crate::file_reader::{FileReader, SearchPattern};
 use crate::filesystem::{File, FsStats};
@@ -92,33 +91,9 @@ impl Default for SearchParams {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SearchStatus
-// ---------------------------------------------------------------------------
-
-const STATUS_RUNNING: u8 = 0;
-const STATUS_DONE: u8 = 1;
-const STATUS_CANCELLED: u8 = 2;
-
-/// Coarse walker state, surfaced to the frontend via `Vfs::status_info`
-/// (currently fed through `mount_meta` since adding a trait method is a
-/// v1 polish detail rather than a load-bearing decision).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchStatus {
-    Running,
-    Done,
-    Cancelled,
-}
-
-impl SearchStatus {
-    fn from_u8(v: u8) -> Self {
-        match v {
-            STATUS_DONE => SearchStatus::Done,
-            STATUS_CANCELLED => SearchStatus::Cancelled,
-            _ => SearchStatus::Running,
-        }
-    }
-}
+// Walker status is tracked by the shared `BackgroundJob` (see
+// `vfs::background_job`); callers query `SearchVfs::status()` which
+// returns a `JobStatus`.
 
 // ---------------------------------------------------------------------------
 // SearchVfsDescriptor
@@ -127,12 +102,62 @@ impl SearchStatus {
 #[derive(Debug)]
 pub struct SearchVfsDescriptor;
 
-/// `mount_meta` carries the human-readable label of the search root
-/// (rendered through the source VFS's `format_path` at mount time) so
-/// the descriptor can render breadcrumbs / display paths even after
-/// the source VFS is unmounted.
-fn mount_meta_label(mount_meta: &[u8]) -> String {
-    String::from_utf8_lossy(mount_meta).into_owned()
+/// `mount_meta` carries everything the descriptor needs to render its
+/// label / breadcrumbs after the source VFS is unmounted: the search
+/// root's pre-formatted display path, plus a one-line summary of the
+/// search params (so the user can tell mounts apart at a glance).
+/// Encoded as bincode so changes to the format don't accidentally
+/// collide with anything path-shaped.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct MountMeta {
+    /// Source root rendered through the source VFS's `format_path` at
+    /// mount time (e.g. `/home/user/projects` or `s3://bucket/prefix`).
+    root_display: String,
+    /// One-line params summary, e.g. `*.rs` or `*.rs · "TODO"`.
+    params_summary: String,
+}
+
+fn encode_mount_meta(meta: &MountMeta) -> Vec<u8> {
+    bincode::serialize(meta).unwrap_or_default()
+}
+
+fn decode_mount_meta(bytes: &[u8]) -> MountMeta {
+    bincode::deserialize(bytes).unwrap_or_else(|_| MountMeta {
+        root_display: String::new(),
+        params_summary: String::new(),
+    })
+}
+
+fn mount_meta_label_full(meta: &MountMeta) -> String {
+    if meta.params_summary.is_empty() {
+        meta.root_display.clone()
+    } else {
+        format!("{} [{}]", meta.root_display, meta.params_summary)
+    }
+}
+
+/// One-line summary of the active search parameters. Goes into
+/// `mount_meta` so the VFS selector / breadcrumbs can show what the
+/// search is actually doing.
+pub(crate) fn summarize_params(params: &SearchParams) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = params.name_pattern.as_deref().filter(|s| !s.is_empty()) {
+        parts.push(name.to_string());
+    }
+    if let Some(content) = &params.content_pattern {
+        let s = match content {
+            SearchPattern::Literal(bytes) => format!("\"{}\"", String::from_utf8_lossy(bytes)),
+            SearchPattern::Regex(r) => format!("/{}/", r),
+        };
+        parts.push(s);
+    }
+    if params.case_sensitive {
+        parts.push("case-sensitive".to_string());
+    }
+    if params.follow_symlinks {
+        parts.push("follow symlinks".to_string());
+    }
+    parts.join(" · ")
 }
 
 impl VfsDescriptor for SearchVfsDescriptor {
@@ -150,6 +175,12 @@ impl VfsDescriptor for SearchVfsDescriptor {
     // escape into the source VFS; leaving the search is via history.
     fn has_origin(&self) -> bool {
         false
+    }
+    fn is_ephemeral(&self) -> bool {
+        // Searches are scoped to one user action with params captured at
+        // mount time — same lifecycle category as archive mounts. Auto-
+        // unmounted when no pane (or pane history) references them.
+        true
     }
     fn auto_refresh(&self) -> bool {
         false
@@ -222,40 +253,33 @@ impl VfsDescriptor for SearchVfsDescriptor {
         false
     }
 
-    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        let label = mount_meta_label(mount_meta);
-        let inner = path.to_string_lossy();
-        let inner = inner.trim_start_matches('/');
-        if inner.is_empty() {
-            format!("Search in {}", label)
-        } else {
-            // SearchVfs is conceptually flat; this branch only fires for
-            // paths constructed by joining pane.path + key (which is
-            // exactly how identity works for selections).
-            format!("Search in {} → {}", label, inner)
-        }
+    fn format_path(&self, _path: &Path, mount_meta: &[u8]) -> String {
+        // SearchVfs is flat — there are no meaningful sub-paths; the
+        // path component is always "/". Render the root + params summary
+        // as a single label. The "Search" prefix is omitted since the
+        // VFS selector already shows that we're inside a search VFS.
+        mount_meta_label_full(&decode_mount_meta(mount_meta))
     }
 
     fn breadcrumbs(&self, _path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        let label = mount_meta_label(mount_meta);
-        vec![
-            Breadcrumb {
-                label: "Search: ".to_string(),
-                nav_path: "/".to_string(),
-            },
-            Breadcrumb {
-                label,
-                nav_path: "/".to_string(),
-            },
-        ]
+        // A single non-navigable crumb showing the search root + params.
+        // No "Search:" prefix here either — the VFS selector adjacent to
+        // the breadcrumbs already conveys that.
+        vec![Breadcrumb {
+            label: mount_meta_label_full(&decode_mount_meta(mount_meta)),
+            nav_path: "/".to_string(),
+        }]
     }
 
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        // SearchVfs paths don't round-trip — refuse all display-path
+        // resolution so the navigate dialog never accidentally drops
+        // the user back into a search.
         None
     }
 
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
-        let s = mount_meta_label(mount_meta);
+        let s = mount_meta_label_full(&decode_mount_meta(mount_meta));
         if s.is_empty() { None } else { Some(s) }
     }
 }
@@ -268,76 +292,70 @@ inventory::submit!(RegisteredDescriptor(&SEARCH_VFS_DESCRIPTOR));
 // ---------------------------------------------------------------------------
 
 /// A search rooted at `search_root` with parameters captured at mount
-/// time. Walker runs in the background; results stream out through
-/// `list_files`'s batch sender and the change notifier.
+/// time. The walker runs only while there's at least one streaming
+/// `list_files` consumer to observe it — lazily spawned on first
+/// consumer, cancelled when the last one goes away. Once the walker
+/// finishes naturally (`Done`) the results are frozen and served to
+/// any future consumers; the cancellation pathway never resumes a
+/// stopped walker (results are partial in that case).
 pub struct SearchVfs {
     mount_meta: Vec<u8>,
     /// Accumulated matches keyed by relative path under `search_root`.
     /// Push-only during the walker's lifetime; never mutated afterwards.
     results: Arc<RwLock<Vec<File>>>,
-    status: Arc<AtomicU8>,
+    /// Lifecycle of the walker task — lazy spawn, consumer counting,
+    /// cancel-on-zero, status tracking. See `vfs::background_job`.
+    job: super::BackgroundJob,
     notifier: VfsChangeNotifier,
-    cancel: CancellationToken,
     /// Best-effort match counter, refreshed atomically as results stream
     /// in. Used by the walker thread to throttle batch publishes.
     hit_count: Arc<AtomicUsize>,
+    /// Walker construction inputs. Kept on `SearchVfs` so we can spawn
+    /// the walker lazily — at construction time we don't yet know if
+    /// anyone will ever observe this search (the navigation that
+    /// triggered the mount could be cancelled before list_files
+    /// runs).
+    source_vfs: Arc<dyn Vfs>,
+    file_reader: Arc<dyn FileReader>,
+    search_root: VfsPath,
+    params: SearchParams,
+    reporter: Arc<dyn super::ProgressReporter>,
 }
 
 impl SearchVfs {
-    /// Mount a search rooted at `search_root` with `params`. Spawns the
-    /// walker immediately. The search is `Running` until the walker
-    /// finishes (`Done`) or is cancelled by `Drop` / unmount.
+    /// Construct a `SearchVfs`. The walker is *not* spawned here — it
+    /// starts on the first streaming `list_files` call. The search is
+    /// `Running` until the walker finishes (`Done`), is cancelled by
+    /// the last consumer going away (`Cancelled`), or is dropped
+    /// (unmount).
     pub fn new(
         source_vfs: Arc<dyn Vfs>,
         file_reader: Arc<dyn FileReader>,
         search_root: VfsPath,
         params: SearchParams,
         mount_meta: Vec<u8>,
+        reporter: Arc<dyn super::ProgressReporter>,
     ) -> Self {
-        let results: Arc<RwLock<Vec<File>>> = Arc::new(RwLock::new(Vec::new()));
-        let status = Arc::new(AtomicU8::new(STATUS_RUNNING));
-        let notifier = VfsChangeNotifier::new();
-        let cancel = CancellationToken::new();
-        let hit_count = Arc::new(AtomicUsize::new(0));
-
-        let walker = Walker {
+        Self {
+            mount_meta,
+            results: Arc::new(RwLock::new(Vec::new())),
+            job: super::BackgroundJob::new(super::RestartPolicy::Sticky),
+            notifier: VfsChangeNotifier::new(),
+            hit_count: Arc::new(AtomicUsize::new(0)),
             source_vfs,
             file_reader,
             search_root,
             params,
-            results: results.clone(),
-            status: status.clone(),
-            notifier: notifier.clone(),
-            cancel: cancel.clone(),
-            hit_count: hit_count.clone(),
-        };
-
-        tokio::spawn(walker.run());
-
-        Self {
-            mount_meta,
-            results,
-            status,
-            notifier,
-            cancel,
-            hit_count,
+            reporter,
         }
     }
 
-    pub fn status(&self) -> SearchStatus {
-        SearchStatus::from_u8(self.status.load(Ordering::Acquire))
+    pub fn status(&self) -> super::JobStatus {
+        self.job.status()
     }
 
     pub fn hit_count(&self) -> usize {
         self.hit_count.load(Ordering::Relaxed)
-    }
-}
-
-impl Drop for SearchVfs {
-    fn drop(&mut self) {
-        // Unmount cancels the walker; results map is dropped with the
-        // SearchVfs itself.
-        self.cancel.cancel();
     }
 }
 
@@ -355,7 +373,7 @@ impl Vfs for SearchVfs {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::VfsFileList, Error> {
         // SearchVfs is flat: only "/" is a valid listing target. Any
         // sub-path is either a synthetic alias the registry already
         // dereferenced past, or junk.
@@ -373,6 +391,26 @@ impl Vfs for SearchVfs {
         // `tx` on completion is what ultimately flips it out of
         // "loading" state.
         if let Some(tx) = batch_tx {
+            // Acquire a consumer slot. The closure spawns the walker
+            // (at most once for this run, per `BackgroundJob`'s lazy
+            // semantics). When the returned `ConsumerGuard` drops and
+            // we were the last consumer, the walker is cancelled.
+            let cancel = self.job.cancel_token();
+            let _consumer = self.job.acquire(|handle| {
+                let walker = Walker {
+                    source_vfs: self.source_vfs.clone(),
+                    file_reader: self.file_reader.clone(),
+                    search_root: self.search_root.clone(),
+                    params: self.params.clone(),
+                    results: self.results.clone(),
+                    notifier: self.notifier.clone(),
+                    hit_count: self.hit_count.clone(),
+                    reporter: self.reporter.clone(),
+                    job: handle,
+                };
+                tokio::spawn(walker.run());
+            });
+
             // The navigation layer accumulates batches by *appending* —
             // see VfsRegistryFs::list_files's caller — so we must emit
             // only the new entries since the last batch, never the full
@@ -398,7 +436,7 @@ impl Vfs for SearchVfs {
                     sent_len = cur_len;
                     continue;
                 }
-                if self.status() != SearchStatus::Running {
+                if self.job.status() != super::JobStatus::Running {
                     break;
                 }
                 // 200ms periodic recheck guards against a race in
@@ -407,7 +445,7 @@ impl Vfs for SearchVfs {
                 // gets lost and the loop stalls.
                 tokio::select! {
                     biased;
-                    _ = self.cancel.cancelled() => break,
+                    _ = cancel.cancelled() => break,
                     _ = self.notifier.watch(Path::new("/")) => {}
                     _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
                 }
@@ -419,10 +457,16 @@ impl Vfs for SearchVfs {
                 let delta: Vec<File> = final_snap[sent_len..].to_vec();
                 let _ = tx.send(delta).await;
             }
-            return Ok(final_snap);
+            return Ok(super::VfsFileList {
+                files: final_snap,
+                partial: self.job.status() == super::JobStatus::Cancelled,
+            });
         }
 
-        Ok(self.results.read().clone())
+        Ok(super::VfsFileList {
+            files: self.results.read().clone(),
+            partial: self.job.status() == super::JobStatus::Cancelled,
+        })
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
@@ -481,24 +525,33 @@ struct Walker {
     search_root: VfsPath,
     params: SearchParams,
     results: Arc<RwLock<Vec<File>>>,
-    status: Arc<AtomicU8>,
     notifier: VfsChangeNotifier,
-    cancel: CancellationToken,
     hit_count: Arc<AtomicUsize>,
+    reporter: Arc<dyn super::ProgressReporter>,
+    job: super::JobHandle,
 }
 
+/// How often the walker emits a progress report, regardless of how
+/// many entries it's scanned in between. Pure-frontend cadence — the
+/// numbers themselves are exact.
+const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
+
 impl Walker {
-    async fn run(self) {
-        let final_status = match self.walk().await {
-            Ok(_) => STATUS_DONE,
-            Err(_) => STATUS_CANCELLED,
-        };
-        self.status.store(final_status, Ordering::Release);
+    async fn run(mut self) {
+        if self.walk().await.is_ok() {
+            // Natural completion — flip the job status to `Done`.
+            // Cancellation flows through `BackgroundJob` already; we
+            // don't need to set anything in the Err arm.
+            self.job.mark_done();
+        }
         // Final wake so any subscribers can publish the closing snapshot.
         self.notifier.notify(Path::new("/"));
+        // Clear any lingering progress entry — frontend sees us as
+        // done.
+        self.reporter.report(None);
     }
 
-    async fn walk(&self) -> Result<(), Error> {
+    async fn walk(&mut self) -> Result<(), Error> {
         // Compile the name matcher once; bail loudly if the user gave us
         // garbage rather than silently matching everything.
         let name_glob = match self.params.name_pattern.as_deref() {
@@ -510,9 +563,31 @@ impl Walker {
         let mut stack: Vec<PathBuf> = vec![self.search_root.path.clone()];
         let vfs_id = self.search_root.vfs_id;
 
+        // Progress accounting. `files_scanned` is the running total of
+        // entries we've actually looked at. The hit count is already
+        // visible to the user via the pane's normal file-count line, so
+        // we don't duplicate it here — we report the running scanned
+        // total and the current directory being walked, which is the
+        // useful "what's it busy with" signal.
+        let mut files_scanned: u64 = 0;
+        let mut last_report = std::time::Instant::now();
+        // Emit an initial zero-count report so the spinner is replaced
+        // by a live status line immediately on mount, before the first
+        // directory is scanned.
+        self.emit_progress(files_scanned, None);
+
         while let Some(dir) = stack.pop() {
-            if self.cancel.is_cancelled() {
+            if self.job.is_cancelled() {
                 return Err(Error::cancelled());
+            }
+
+            // Emit a progress tick whenever we *enter* a new directory,
+            // not only after a fixed number of entries — for searches
+            // that traverse mostly-empty directories the per-entry path
+            // would otherwise rarely update.
+            if last_report.elapsed() >= PROGRESS_THROTTLE {
+                self.emit_progress(files_scanned, Some(&dir));
+                last_report = std::time::Instant::now();
             }
 
             let entries = match self.source_vfs.list_files(&dir, None).await {
@@ -526,12 +601,17 @@ impl Walker {
                 }
             };
 
-            for entry in entries {
-                if self.cancel.is_cancelled() {
+            for entry in entries.files {
+                if self.job.is_cancelled() {
                     return Err(Error::cancelled());
                 }
                 if entry.name == ".." {
                     continue;
+                }
+                files_scanned += 1;
+                if last_report.elapsed() >= PROGRESS_THROTTLE {
+                    self.emit_progress(files_scanned, Some(&dir));
+                    last_report = std::time::Instant::now();
                 }
                 let entry_path = dir.join(&entry.name);
 
@@ -609,6 +689,28 @@ impl Walker {
 
         Ok(())
     }
+
+    /// Build and push a progress snapshot. Cheap — clones the
+    /// `Arc<dyn ProgressReporter>`'s `report` call into whatever sink
+    /// is wired (no-op in tests, host-state mutation in local mode,
+    /// RPC notify in remote mode).
+    fn emit_progress(&self, files_scanned: u64, current_dir: Option<&Path>) {
+        let mut extra = std::collections::BTreeMap::new();
+        if let Some(dir) = current_dir {
+            // Render through the source VFS's descriptor so what the
+            // user sees matches the rest of the app's path formatting
+            // (e.g. `s3://bucket/foo` rather than `/foo`).
+            let desc = self.source_vfs.descriptor();
+            let meta = self.source_vfs.mount_meta();
+            extra.insert("path".to_string(), desc.format_path(dir, &meta));
+        }
+        self.reporter.report(Some(super::VfsProgress {
+            stage: "Searching".into(),
+            processed: Some(files_scanned),
+            total: None,
+            extra,
+        }));
+    }
 }
 
 /// Path under `root` rendered as a forward-slash key. For files at the
@@ -624,8 +726,27 @@ fn relative_key(root: &Path, path: &Path) -> String {
     }
 }
 
+/// Compile the name matcher. A pattern containing any glob meta
+/// (`*`, `?`, `[`) is treated as a glob and must match the *whole*
+/// basename; anything else is treated as a substring and auto-wrapped
+/// to `*pat*`. That matches the "type a fragment, get matches"
+/// expectation set by every Find-in-files UI in the wild, while still
+/// giving full glob power when the user asks for it.
+///
+/// Trade-off: literal `?` / `*` / `[` characters in filenames are no
+/// longer searchable as substrings without escaping (`\?` etc.); we
+/// accept that because filenames containing those characters are
+/// vanishingly rare and the substring ergonomics are worth far more.
 fn compile_glob(pattern: &str, case_sensitive: bool) -> Result<globset::GlobMatcher, Error> {
-    let glob = globset::GlobBuilder::new(pattern)
+    let has_meta = pattern.contains(['*', '?', '[']);
+    let effective = if has_meta {
+        pattern.to_string()
+    } else {
+        // Escape any leftover glob-sensitive bytes (shouldn't be any
+        // after the `has_meta` check, but cheap insurance) and wrap.
+        format!("*{}*", pattern)
+    };
+    let glob = globset::GlobBuilder::new(&effective)
         .case_insensitive(!case_sensitive)
         .literal_separator(false)
         .build()
@@ -648,8 +769,12 @@ pub async fn mount(
 ) -> Result<Arc<dyn Vfs>, Error> {
     let (src_vfs, src_path) = ctx.registry.resolve(&root)?;
     let src_meta = src_vfs.mount_meta();
-    let display = src_vfs.descriptor().format_path(&src_path, &src_meta);
-    let mount_meta = display.into_bytes();
+    let root_display = src_vfs.descriptor().format_path(&src_path, &src_meta);
+    let params_summary = summarize_params(&params);
+    let mount_meta = encode_mount_meta(&MountMeta {
+        root_display,
+        params_summary,
+    });
 
     Ok(Arc::new(SearchVfs::new(
         src_vfs,
@@ -657,5 +782,6 @@ pub async fn mount(
         root,
         params,
         mount_meta,
+        ctx.progress_reporter.clone(),
     )))
 }

@@ -7,6 +7,7 @@ import {
   KeyboardEvent,
 } from "react";
 import { Command } from "cmdk";
+import { useSuppressInitialPointer } from "../../lib/useSuppressInitialPointer";
 
 /**
  * Shared wrapper around cmdk's Command that adds:
@@ -74,6 +75,13 @@ export function Palette({
     [value, externalOnKeyDown, handleValueChange],
   );
 
+  // Suppress pointer-driven selection until the user actually moves the
+  // mouse — without this, opening the palette over an existing cursor
+  // position immediately hover-focuses whichever item lands under it,
+  // which fights keyboard navigation. The window-level `mousemove`
+  // listener flips this to active on the first real movement.
+  const pointerActive = useSuppressInitialPointer();
+
   return (
     <Command
       ref={containerRef}
@@ -82,6 +90,10 @@ export function Palette({
       onValueChange={handleValueChange}
       onKeyDown={handleKeyDown}
       {...props}
+      style={{
+        ...(props.style ?? {}),
+        ...(pointerActive ? null : { pointerEvents: "none" }),
+      }}
     >
       {children}
     </Command>

@@ -191,7 +191,11 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "follow_symlink".into(),
-            name: "Follow Symlink".into(),
+            // Also follows the alias for synthetic-VFS entries (search
+            // results) — i.e. reveals the underlying file in the source
+            // VFS. Same key, same intent: "take me to where this points
+            // to".
+            name: "Follow Symlink / Reveal Source".into(),
             short_name: None,
             category: "Navigation".into(),
             default_key: Some("shift+enter".into()),
@@ -379,7 +383,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Find in Folder...".into(),
             short_name: Some("Find".into()),
             category: "Navigation".into(),
-            default_key: Some("alt+f7".into()),
+            default_key: Some("mod+f".into()),
             default_when: Some("pane_focused".into()),
             needs_pane: true,
         },

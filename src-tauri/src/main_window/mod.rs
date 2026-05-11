@@ -303,6 +303,73 @@ impl serde::Serialize for Operations {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VfsProgressState — host-side mirror of the VFS progress channel
+// ---------------------------------------------------------------------------
+
+/// VfsId-keyed map of progress entries pushed by VFSes (e.g. SearchVfs's
+/// walker). Lives on `MainWindowState`; the frontend reads it for the
+/// pane status bar. Mutated by `LocalProgressSink` from any context;
+/// readers serialize through the inner `RwLock`.
+#[derive(Clone, Default)]
+pub struct VfsProgressState(Arc<RwLock<HashMap<VfsId, newt_common::vfs::VfsProgress>>>);
+
+impl VfsProgressState {
+    pub fn clear_for(&self, vfs_id: VfsId) {
+        self.0.write().remove(&vfs_id);
+    }
+}
+
+impl serde::Serialize for VfsProgressState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        let lock = self.0.read();
+        let mut map = serializer.serialize_map(Some(lock.len()))?;
+        for (k, v) in lock.iter() {
+            map.serialize_entry(&k.to_string(), v)?;
+        }
+        map.end()
+    }
+}
+
+/// Concrete `VfsProgressSink` used on the host: writes into
+/// `VfsProgressState` and triggers a publish so the frontend sees the
+/// update. Used both for local-mode VFSes (which call it directly via a
+/// `ScopedReporter` constructed by the manager) and for remote-mode
+/// VFSes (whose reports arrive over `API_VFS_PROGRESS` and are
+/// forwarded into the same sink by `HostDispatcher::notify`).
+pub struct LocalProgressSink {
+    state: VfsProgressState,
+    publisher: Arc<UpdatePublisher<MainWindowState>>,
+}
+
+impl LocalProgressSink {
+    pub fn new(state: VfsProgressState, publisher: Arc<UpdatePublisher<MainWindowState>>) -> Self {
+        Self { state, publisher }
+    }
+}
+
+impl newt_common::vfs::VfsProgressSink for LocalProgressSink {
+    fn report(&self, vfs_id: VfsId, progress: Option<newt_common::vfs::VfsProgress>) {
+        {
+            let mut map = self.state.0.write();
+            match progress {
+                Some(p) => {
+                    map.insert(vfs_id, p);
+                }
+                None => {
+                    map.remove(&vfs_id);
+                }
+            }
+        }
+        // Publish is best-effort; if it fails (no subscribers) the
+        // next state mutation will resync anyway.
+        let _ = self.publisher.publish();
+    }
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConfirmAction {
@@ -603,6 +670,7 @@ pub struct MainWindowState {
     pub display_options: DisplayOptions,
     pub operations: Operations,
     pub window_title: String,
+    pub vfs_progress: VfsProgressState,
 }
 
 impl serde::Serialize for MainWindowState {
@@ -612,7 +680,7 @@ impl serde::Serialize for MainWindowState {
     {
         use serde::ser::SerializeStruct;
         let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 10)?;
+        let mut s = serializer.serialize_struct("MainWindowState", 11)?;
         s.serialize_field("connection_status", &self.connection_status)?;
         s.serialize_field("askpass", &self.askpass)?;
         s.serialize_field("panes", &self.panes)?;
@@ -623,6 +691,7 @@ impl serde::Serialize for MainWindowState {
         s.serialize_field("operations", &self.operations)?;
         s.serialize_field("window_title", &self.window_title)?;
         s.serialize_field("foreground_operation_id", &foreground_id)?;
+        s.serialize_field("vfs_progress", &self.vfs_progress)?;
         s.end()
     }
 }
@@ -641,6 +710,7 @@ impl MainWindowState {
             display_options,
             operations: Operations::default(),
             window_title: "Newt".to_string(),
+            vfs_progress: VfsProgressState::default(),
         }
     }
 
@@ -1101,6 +1171,14 @@ impl MainWindowContext {
         self.with_session(|s| {
             let mounted = s.mounted_vfs.read();
             for (vfs_id, info) in mounted.iter() {
+                // Ephemeral mounts (archives, searches) are reachable via
+                // navigation history; surfacing them as switch targets
+                // here would clutter the selector with dead-after-the-
+                // fact entries. They auto-unmount when no pane references
+                // them, so they don't accumulate either way.
+                if info.descriptor.is_ephemeral() {
+                    continue;
+                }
                 mounted_types.insert(info.descriptor.type_name());
                 targets.push(VfsTarget {
                     vfs_id: Some(*vfs_id),
@@ -1117,7 +1195,7 @@ impl MainWindowContext {
         })?;
 
         for desc in all_descriptors() {
-            if mounted_types.contains(desc.type_name()) {
+            if mounted_types.contains(desc.type_name()) || desc.is_ephemeral() {
                 continue;
             }
             let mount_dialog = mount_dialog_for(desc.type_name()).map(|s| s.to_string());
@@ -1200,6 +1278,10 @@ impl MainWindowContext {
         self.with_session(|s| {
             s.mounted_vfs.write().remove(&vfs_id);
         })?;
+        // Defensive: clear any progress entry the VFS may have left
+        // behind. A well-behaved VFS sends a final `None`, but we
+        // don't trust that across the RPC boundary.
+        self.inner.main_window_state.vfs_progress.clear_for(vfs_id);
         Ok(())
     }
 
@@ -1244,13 +1326,14 @@ impl MainWindowContext {
         Ok(())
     }
 
-    pub(super) async fn cleanup_stale_archive_mounts(&self) -> Result<(), Error> {
+    pub(super) async fn cleanup_stale_ephemeral_mounts(&self) -> Result<(), Error> {
         // Collect VFS IDs currently in use by any pane — both the pane's
         // current path and any path reachable via back/forward history.
         // Anchoring on history (rather than just the current path) means
-        // navigating back into an archive doesn't fail with "unmounted"
-        // when the user had stepped outside it; the mount stays alive as
-        // long as it's reachable via the history of either pane.
+        // navigating back into an archive (or a search) doesn't fail
+        // with "unmounted" when the user had stepped outside it; the
+        // mount stays alive as long as it's reachable via the history
+        // of either pane.
         let pane_vfs_ids: std::collections::HashSet<VfsId> = self
             .panes()
             .all()
@@ -1262,13 +1345,14 @@ impl MainWindowContext {
             })
             .collect();
 
-        // A VFS is "in use" if a pane references it, or if another in-use VFS
-        // has it as its origin (transitively). This prevents unmounting a parent
-        // archive when a nested child archive is still open.
+        // An ephemeral VFS is "stale" iff no pane references it directly
+        // and no other in-use VFS has it as its (transitive) origin —
+        // the second condition keeps a parent archive alive while a
+        // nested child archive is still open. SearchVfs has no origin
+        // and so the transitive walk is trivially a no-op for it.
         let stale_ids: Vec<VfsId> = self.with_session(|s| {
             let mounted = s.mounted_vfs.read();
 
-            // Expand pane VFS IDs to include all transitive origins
             let mut in_use = pane_vfs_ids.clone();
             let mut queue: Vec<VfsId> = pane_vfs_ids.into_iter().collect();
             while let Some(vfs_id) = queue.pop() {
@@ -1282,13 +1366,13 @@ impl MainWindowContext {
 
             mounted
                 .iter()
-                .filter(|(id, info)| info.origin.is_some() && !in_use.contains(id))
+                .filter(|(id, info)| info.descriptor.is_ephemeral() && !in_use.contains(id))
                 .map(|(id, _)| *id)
                 .collect()
         })?;
 
         for vfs_id in stale_ids {
-            log::info!("unmounting stale archive VFS {:?}", vfs_id);
+            log::info!("unmounting stale ephemeral VFS {:?}", vfs_id);
             self.unmount_vfs(vfs_id).await?;
         }
 

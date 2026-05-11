@@ -45,6 +45,9 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn has_origin(&self) -> bool {
         true
     }
+    fn is_ephemeral(&self) -> bool {
+        true
+    }
     fn auto_refresh(&self) -> bool {
         false
     }
@@ -128,6 +131,30 @@ mod tar_tests;
 /// Each slot holds one decompressed chunk (≤64 KiB).
 const STREAM_CHANNEL_CAPACITY: usize = 4;
 
+/// Emit an indexing-progress snapshot via the supplied reporter.
+/// `entries` is the running count of archive entries discovered so
+/// far; `total_bytes` / `bytes_read` give the determinate ratio so
+/// the frontend can render a real progress bar.
+fn emit_indexing_progress(
+    reporter: &Arc<dyn super::super::ProgressReporter>,
+    entries: u64,
+    total_bytes: u64,
+    bytes_read: u64,
+    archive_label: &str,
+) {
+    let mut extra = std::collections::BTreeMap::new();
+    if entries > 0 {
+        extra.insert("entries".to_string(), entries.to_string());
+    }
+    extra.insert("path".to_string(), archive_label.to_string());
+    reporter.report(Some(super::super::VfsProgress {
+        stage: "Indexing".into(),
+        processed: Some(bytes_read),
+        total: Some(total_bytes),
+        extra,
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // TarArchiveVfs — shared indexing state
 // ---------------------------------------------------------------------------
@@ -142,8 +169,6 @@ struct TarIndexingState {
     error: tokio::sync::OnceCell<String>,
     /// Notified whenever the tree is updated or indexing completes/fails.
     updated: Notify,
-    /// Cancellation token — cancelled on VFS drop to abort indexing.
-    cancel: CancellationToken,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,14 +181,13 @@ pub struct TarArchiveVfs {
     origin: VfsPath,
     mount_meta: Vec<u8>,
     state: Arc<TarIndexingState>,
-    /// Ensures the indexing task is spawned at most once.
-    indexing_started: tokio::sync::OnceCell<()>,
-}
-
-impl Drop for TarArchiveVfs {
-    fn drop(&mut self) {
-        self.state.cancel.cancel();
-    }
+    /// Background-job lifecycle: lazy spawn on first consumer (a
+    /// streaming `list_files` or any in-flight file read), cancellation
+    /// when the last consumer leaves, sticky-Cancelled — the partial
+    /// directory tree remains browsable, and `list_files` reports
+    /// `partial: true` until unmount.
+    job: super::super::BackgroundJob,
+    reporter: Arc<dyn super::super::ProgressReporter>,
 }
 
 impl TarArchiveVfs {
@@ -172,6 +196,7 @@ impl TarArchiveVfs {
         archive_path: PathBuf,
         origin: VfsPath,
         mount_meta: Vec<u8>,
+        reporter: Arc<dyn super::super::ProgressReporter>,
     ) -> Self {
         Self {
             upstream,
@@ -185,31 +210,54 @@ impl TarArchiveVfs {
                 completed_index: tokio::sync::OnceCell::new(),
                 error: tokio::sync::OnceCell::new(),
                 updated: Notify::new(),
-                cancel: CancellationToken::new(),
             }),
-            indexing_started: tokio::sync::OnceCell::new(),
+            // Tar's partial tree is fully usable as a partial listing,
+            // so Sticky: once cancelled, the tree stays as-is and is
+            // served with `partial: true`.
+            job: super::super::BackgroundJob::new(super::super::RestartPolicy::Sticky),
+            reporter,
         }
     }
 
-    /// Spawn the indexing task. Called at most once via `start_indexing`.
-    fn start_indexing(&self) {
+    /// Acquire a consumer slot tied to indexing. Spawns the indexer if
+    /// this is the first consumer for the current run. Held by both
+    /// streaming `list_files` callers and file-read callers (so an
+    /// in-flight read keeps the indexer alive even if the originating
+    /// pane navigated away).
+    fn acquire_indexer(&self) -> super::super::ConsumerGuard {
         let upstream = self.upstream.clone();
         let archive_path = self.archive_path.clone();
         let state = self.state.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = Self::run_indexing(upstream, archive_path, state.clone()).await {
-                log::error!("archive indexing failed: {}", e);
-                let _ = state.error.set(e.to_string());
+        let reporter = self.reporter.clone();
+        self.job.acquire(move |handle| {
+            tokio::spawn(async move {
+                let result = Self::run_indexing(
+                    upstream,
+                    archive_path,
+                    state.clone(),
+                    reporter.clone(),
+                    &handle,
+                )
+                .await;
+                match result {
+                    Ok(()) => handle.mark_done(),
+                    Err(e) => {
+                        log::error!("archive indexing failed: {}", e);
+                        let _ = state.error.set(e.to_string());
+                    }
+                }
                 state.updated.notify_waiters();
-            }
-        });
+                reporter.report(None);
+            });
+        })
     }
 
     async fn run_indexing(
         upstream: Arc<dyn Vfs>,
         archive_path: PathBuf,
         state: Arc<TarIndexingState>,
+        reporter: Arc<dyn super::super::ProgressReporter>,
+        job: &super::super::JobHandle,
     ) -> Result<(), Error> {
         let details = upstream.file_details(&archive_path).await?;
         let file_size = details.size;
@@ -227,11 +275,21 @@ impl TarArchiveVfs {
         if descriptor.can_read_sync() {
             // Sync path: use streaming reader in spawn_blocking
             let reader = upstream.open_read_sync(&archive_path).await?;
-            let cancel = state.cancel.clone();
+            let cancel = job.cancel_token();
             let state_clone = state.clone();
+            let reporter_clone = reporter.clone();
+            let archive_label = archive_path.to_string_lossy().into_owned();
 
             let result = tokio::task::spawn_blocking(move || {
-                Self::drive_indexing_sync(reader, file_size, compression, &cancel, &state_clone)
+                Self::drive_indexing_sync(
+                    reader,
+                    file_size,
+                    compression,
+                    &cancel,
+                    &state_clone,
+                    &reporter_clone,
+                    &archive_label,
+                )
             })
             .await
             .map_err(|e| Error::custom(format!("indexing task panicked: {}", e)))??;
@@ -254,9 +312,13 @@ impl TarArchiveVfs {
             let mut position: u64 = 0;
             let mut last_snapshot = tokio::time::Instant::now();
             let mut last_snapshot_entries = 0usize;
+            let archive_label = archive_path.to_string_lossy().into_owned();
+            // Initial progress report so the spinner is replaced with
+            // a live "Indexing · 0 entries" line immediately on mount.
+            emit_indexing_progress(&reporter, 0, file_size, position, &archive_label);
 
             loop {
-                if state.cancel.is_cancelled() {
+                if job.is_cancelled() {
                     info!("archive: indexing cancelled for {}", archive_path.display());
                     let partial = engine.cancel();
                     let entries: Vec<&iluvatar::IndexEntry> = partial.entries.values().collect();
@@ -303,6 +365,13 @@ impl TarArchiveVfs {
                     let tree = build_directory_tree_from_iluvatar(entries);
                     *state.tree.write() = tree;
                     state.updated.notify_waiters();
+                    emit_indexing_progress(
+                        &reporter,
+                        progress.entries_found as u64,
+                        file_size,
+                        position,
+                        &archive_label,
+                    );
                 }
             }
 
@@ -329,12 +398,15 @@ impl TarArchiveVfs {
 
     /// Drive the IndexingEngine synchronously using a streaming reader.
     /// Called from within spawn_blocking.
+    #[allow(clippy::too_many_arguments)]
     fn drive_indexing_sync(
         mut reader: Box<dyn Read + Send>,
         file_size: u64,
         compression: iluvatar::CompressionFormat,
         cancel: &CancellationToken,
         state: &TarIndexingState,
+        reporter: &Arc<dyn super::super::ProgressReporter>,
+        archive_label: &str,
     ) -> Result<iluvatar::ArchiveIndex, Error> {
         let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
             .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
@@ -342,6 +414,9 @@ impl TarArchiveVfs {
         let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         let mut last_snapshot = std::time::Instant::now();
         let mut last_snapshot_entries = 0usize;
+        let mut bytes_read: u64 = 0;
+        // Initial progress so the spinner is replaced immediately.
+        emit_indexing_progress(reporter, 0, file_size, bytes_read, archive_label);
 
         loop {
             if cancel.is_cancelled() {
@@ -357,6 +432,7 @@ impl TarArchiveVfs {
                     if n == 0 {
                         engine.signal_eof();
                     } else {
+                        bytes_read += n as u64;
                         engine.provide_data(&buf[..n]);
                     }
                 }
@@ -386,34 +462,35 @@ impl TarArchiveVfs {
                 let tree = build_directory_tree_from_iluvatar(entries);
                 *state.tree.write() = tree;
                 state.updated.notify_waiters();
+                emit_indexing_progress(
+                    reporter,
+                    progress.entries_found as u64,
+                    file_size,
+                    bytes_read,
+                    archive_label,
+                );
             }
         }
     }
 
     /// Wait for the completed archive index (needed for file reads).
-    async fn wait_for_index(&self) -> Result<&iluvatar::ArchiveIndex, Error> {
-        // Start indexing if not already started
-        self.start_indexing_once();
+    /// The returned `ConsumerGuard` keeps the indexer alive across this
+    /// call; the caller must hold it for the *entire* downstream use
+    /// of the index — typically by binding it to a local and letting
+    /// it drop with the function scope.
+    async fn wait_for_index(
+        &self,
+    ) -> Result<(&iluvatar::ArchiveIndex, super::super::ConsumerGuard), Error> {
+        let guard = self.acquire_indexer();
 
         loop {
             if let Some(index) = self.state.completed_index.get() {
-                return Ok(index);
+                return Ok((index, guard));
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
             }
             self.state.updated.notified().await;
-        }
-    }
-
-    /// Start indexing exactly once.
-    fn start_indexing_once(&self) {
-        if self.indexing_started.initialized() {
-            return;
-        }
-        // Race-safe: OnceCell set() ensures only one succeeds
-        if self.indexing_started.set(()).is_ok() {
-            self.start_indexing();
         }
     }
 
@@ -456,7 +533,7 @@ impl TarArchiveVfs {
         path_in_archive: &str,
         range: Option<(u64, u64)>,
     ) -> Result<Vec<u8>, Error> {
-        let index = self.wait_for_index().await?;
+        let (index, _guard) = self.wait_for_index().await?;
 
         let mut engine = if let Some((offset, len)) = range {
             iluvatar::ReadEngine::new_range(index, path_in_archive, offset, len)
@@ -534,16 +611,35 @@ impl Vfs for TarArchiveVfs {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
-        self.start_indexing_once();
+    ) -> Result<super::super::VfsFileList, Error> {
+        // Acquire a consumer slot for the indexer. The guard is held
+        // for the entirety of this call — if the navigation that
+        // originated us is cancelled, dropping the guard cancels the
+        // indexer (provided no other consumer is holding one).
+        let _consumer = self.acquire_indexer();
 
-        // If indexing is already complete, return immediately
-        if self.state.completed_index.get().is_some() {
+        // If indexing is already complete (Done), return immediately.
+        // Also honor a previously-cancelled state: the partial tree
+        // remains browsable, but we stamp `partial: true` so the
+        // status bar shows the badge.
+        let job_status = self.job.status();
+        if self.state.completed_index.get().is_some()
+            || job_status == super::super::JobStatus::Cancelled
+        {
             log::debug!(
-                "archive: list_files {} — index ready, returning immediately",
-                path.display()
+                "archive: list_files {} — index ready ({:?}), returning immediately",
+                path.display(),
+                job_status,
             );
-            return self.state.tree.read().list(path);
+            return self
+                .state
+                .tree
+                .read()
+                .list(path)
+                .map(|files| super::super::VfsFileList {
+                    files,
+                    partial: job_status == super::super::JobStatus::Cancelled,
+                });
         }
         if let Some(err) = self.state.error.get() {
             return Err(Error::custom(err.clone()));
@@ -562,7 +658,7 @@ impl Vfs for TarArchiveVfs {
             // Register the notification future BEFORE checking state to avoid races
             let notified = self.state.updated.notified();
 
-            // Check completion/error
+            // Check completion/error/cancellation.
             if self.state.completed_index.get().is_some() {
                 log::debug!(
                     "archive: list_files {} — indexing completed after {} updates",
@@ -573,6 +669,13 @@ impl Vfs for TarArchiveVfs {
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
+            }
+            if self.job.status() == super::super::JobStatus::Cancelled {
+                log::debug!(
+                    "archive: list_files {} — indexer cancelled, returning partial tree",
+                    path.display(),
+                );
+                break;
             }
 
             // Send only NEW files as a delta batch
@@ -612,7 +715,9 @@ impl Vfs for TarArchiveVfs {
             path.display(),
             result.as_ref().map(|f| f.len()).unwrap_or(0)
         );
-        result
+        // Cancelled during the streaming wait → partial; Done → full.
+        let partial = self.job.status() == super::super::JobStatus::Cancelled;
+        result.map(|files| super::super::VfsFileList { files, partial })
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
@@ -625,7 +730,7 @@ impl Vfs for TarArchiveVfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let index = self.wait_for_index().await?;
+        let (index, _guard) = self.wait_for_index().await?;
 
         // Try direct lookup for symlink identity (lstat equivalent).
         // This may return None if the path traverses through a symlink
@@ -673,7 +778,7 @@ impl Vfs for TarArchiveVfs {
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         // Wait for indexing to complete for accurate file info
-        self.wait_for_index().await?;
+        let (_index, _guard) = self.wait_for_index().await?;
         self.state.tree.read().file_info(path)
     }
 
@@ -681,7 +786,7 @@ impl Vfs for TarArchiveVfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
-        let index = self.wait_for_index().await?;
+        let (index, guard) = self.wait_for_index().await?;
         let (archive_path_in_index, _entry) = self.resolve_for_read(index, path)?;
 
         // Construct the engine eagerly so any setup error (file not found,
@@ -693,9 +798,15 @@ impl Vfs for TarArchiveVfs {
         let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(STREAM_CHANNEL_CAPACITY);
         let upstream = self.upstream.clone();
         let archive_file_path = self.archive_path.clone();
-        let cancel = self.state.cancel.clone();
+        // The read holds the consumer guard for its entire lifetime
+        // (moved into the streaming task) — if the navigation that
+        // originated this read is cancelled, the indexer stays alive
+        // until the read completes. The cancel token (sourced from
+        // the same job) makes the read itself abort on VFS unmount.
+        let cancel = self.job.cancel_token();
 
         tokio::spawn(async move {
+            let _indexer_guard = guard;
             let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
             let mut position: u64 = 0;
             loop {
@@ -784,7 +895,7 @@ impl Vfs for TarArchiveVfs {
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let index = self.wait_for_index().await?;
+        let (index, _guard) = self.wait_for_index().await?;
         let (archive_path, entry) = self.resolve_for_read(index, path)?;
         let total_size = entry.size;
 

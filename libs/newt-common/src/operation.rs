@@ -712,6 +712,7 @@ async fn plan_copy(
                 .ok_or_else(|| crate::Error::custom("source has no parent".to_string()))?;
             let file_list = cancellable(cancel, src_vfs.list_files(parent, None)).await?;
             file_list
+                .files
                 .into_iter()
                 .find(|f| f.name == file_name.to_string_lossy().as_ref())
                 .ok_or_else(|| {
@@ -757,14 +758,14 @@ async fn plan_copy(
                                 )
                                 .await?
                             {
-                                IssueOutcome::Skip => break vec![],
+                                IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
                                 IssueOutcome::Retry => continue,
                             }
                         }
                     }
                 };
 
-                for file in &file_list {
+                for file in &file_list.files {
                     if file.name == ".." {
                         continue;
                     }
@@ -1503,6 +1504,7 @@ async fn probe_is_dir(
         Some(name) => {
             let listing = cancellable(cancel, vfs.list_files(parent, None)).await?;
             Ok(listing
+                .files
                 .iter()
                 .find(|f| f.name == name)
                 .is_some_and(|f| f.is_dir && !f.is_symlink))
@@ -1548,14 +1550,14 @@ async fn collect_delete_entries(
                         )
                         .await?
                     {
-                        IssueOutcome::Skip => break vec![],
+                        IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
                         IssueOutcome::Retry => continue,
                     }
                 }
             }
         };
 
-        for file in &file_list {
+        for file in &file_list.files {
             if file.name == ".." {
                 continue;
             }
@@ -1610,14 +1612,14 @@ async fn collect_chmod_entries(
                         )
                         .await?
                     {
-                        IssueOutcome::Skip => break vec![],
+                        IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
                         IssueOutcome::Retry => continue,
                     }
                 }
             }
         };
 
-        for file in &file_list {
+        for file in &file_list.files {
             if file.name == ".." {
                 continue;
             }

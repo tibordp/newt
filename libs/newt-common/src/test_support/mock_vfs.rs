@@ -340,7 +340,7 @@ impl Vfs for MockVfs {
         &self,
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, crate::Error> {
+    ) -> Result<crate::vfs::VfsFileList, crate::Error> {
         if let Some(e) = self.check_failure(path, "list_files") {
             return Err(e);
         }
@@ -355,7 +355,7 @@ impl Vfs for MockVfs {
                 });
             }
         }
-        Ok(self.list_children(path))
+        Ok(self.list_children(path).into())
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), crate::Error> {

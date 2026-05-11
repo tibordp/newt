@@ -17,13 +17,14 @@ import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
 import type { ModalData } from "../lib/bindings";
 import {
-  File,
+  FileView,
   ColumnDef,
   FilterMode,
   PaneState,
   DndFileInfo,
   FileRowContext,
 } from "./types";
+import type { VfsProgress } from "../lib/bindings";
 import { getSiPrefixedNumber } from "./utils";
 import { ColumnHeader, getVisibleColumns } from "./columns";
 import { usePreferences } from "../lib/preferences";
@@ -131,7 +132,7 @@ function getFileIconChar(
 }
 
 type FileRowProps = {
-  row: File;
+  row: FileView;
   columns: ColumnDef[];
   isFocused: boolean;
   isSelected: boolean;
@@ -140,7 +141,7 @@ type FileRowProps = {
   widthPrefix: string;
   onClick: React.MouseEventHandler<HTMLLIElement>;
   onMouseDown: React.MouseEventHandler<HTMLLIElement>;
-  onOpen: (file: File) => void;
+  onOpen: (file: FileView) => void;
 };
 
 const FileRow = memo(
@@ -447,12 +448,39 @@ function highlightDropTarget(
   }
 }
 
+/// Inline progress line for VFS background work (search walker, …).
+/// Pulls the well-known `extra.path` key out as a trailing path
+/// fragment (rendered through ellipsis-friendly CSS) and folds the
+/// rest of the `extra` map alongside the dominant counter.
+function VfsProgressLine({ progress }: { progress: VfsProgress }) {
+  const extra = { ...(progress.extra ?? {}) };
+  const path = extra.path;
+  delete extra.path;
+
+  const parts: string[] = [progress.stage];
+  if (progress.processed != null) {
+    const counter =
+      progress.total != null
+        ? `${progress.processed.toLocaleString()}/${progress.total.toLocaleString()}`
+        : `${progress.processed.toLocaleString()} items`;
+    parts.push(counter);
+  }
+  for (const [key, value] of Object.entries(extra)) {
+    parts.push(`${key}: ${value}`);
+  }
+  if (path) {
+    parts.push(path);
+  }
+  return <>{parts.join(" · ")}</>;
+}
+
 function PaneInner(
   props: PaneState & {
     paneHandle: number;
     active: boolean;
     modalOpen: boolean;
     modal?: ModalData;
+    vfsProgress?: VfsProgress;
   },
 ) {
   const {
@@ -474,6 +502,7 @@ function PaneInner(
     breadcrumbs,
     vfs_display_name,
     modal,
+    vfsProgress,
   } = props;
 
   const isVfsSelectorOpen =
@@ -835,7 +864,7 @@ function PaneInner(
 
       const fw = fileWindowRef.current;
       const currentSelected = selectedLookupRef.current;
-      const fileKey = (f: File) => f.key ?? f.name;
+      const fileKey = (f: FileView) => f.key ?? f.name;
       const filesToDrag = currentSelected.has(fileName)
         ? fw.items.filter(
             (f) => currentSelected.has(fileKey(f)) && f.name !== "..",
@@ -984,7 +1013,7 @@ function PaneInner(
   // --- End DnD logic ---
 
   const onOpen = useCallback(
-    (file: File) => {
+    (file: FileView) => {
       if (!file) return;
       safe(commands.enter(paneHandle));
     },
@@ -1415,37 +1444,45 @@ function PaneInner(
       <div className="dnd-ghost" ref={dndGhostRef} />
       {preferences?.settings.appearance?.show_pane_status !== false && (
         <div className={styles.statusbar}>
-          {showSpinner && "Loading file list..."}
-          {!showSpinner && loading && (
-            <>
-              Loading... (
-              {(stats.file_count + stats.dir_count).toLocaleString()} items so
-              far)
-            </>
-          )}
-          {!showSpinner &&
-            !loading &&
-            stats.selected_file_count + stats.selected_dir_count > 0 && (
+          <div className={styles.statusbarInner}>
+            {showSpinner && "Loading file list..."}
+            {!showSpinner && loading && (
               <>
-                {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
-                directories selected, {stats.selected_bytes.toLocaleString()}{" "}
-                bytes total
-                {stats.total_count != null &&
-                  ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+                Loading... (
+                {(stats.file_count + stats.dir_count).toLocaleString()} items so
+                far)
               </>
             )}
-          {!showSpinner &&
-            !loading &&
-            stats.selected_file_count + stats.selected_dir_count === 0 && (
-              <>
-                {stats.file_count} files, {stats.dir_count} directories
-                {stats.total_count != null &&
-                  ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
-              </>
+            {!showSpinner &&
+              !loading &&
+              stats.selected_file_count + stats.selected_dir_count > 0 && (
+                <>
+                  {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
+                  directories selected, {stats.selected_bytes.toLocaleString()}{" "}
+                  bytes total
+                  {stats.total_count != null &&
+                    ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+                </>
+              )}
+            {!showSpinner &&
+              !loading &&
+              stats.selected_file_count + stats.selected_dir_count === 0 && (
+                <>
+                  {stats.file_count} files, {stats.dir_count} directories
+                  {stats.total_count != null &&
+                    ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
+                </>
+              )}
+            {!showSpinner && !loading && partial && (
+              <span className={styles.partial}> (partial)</span>
             )}
-          {!showSpinner && !loading && partial && (
-            <span className={styles.partial}> (partial)</span>
-          )}
+            {vfsProgress && (
+              <span className={styles.statusbarProgress}>
+                {" · "}
+                <VfsProgressLine progress={vfsProgress} />
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>

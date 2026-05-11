@@ -344,6 +344,11 @@ function App() {
                           {...props}
                           modal={remoteState.modal}
                           modalOpen={modalOpen}
+                          vfsProgress={
+                            remoteState.vfs_progress?.[
+                              String(props.path.vfs_id)
+                            ]
+                          }
                           active={
                             remoteState.display_options.panes_focused &&
                             remoteState.display_options.active_pane === i

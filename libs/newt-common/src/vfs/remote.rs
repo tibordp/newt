@@ -173,8 +173,8 @@ impl Vfs for RemoteVfs {
         &self,
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
-        let ret: Result<Vec<File>, Error> = self
+    ) -> Result<super::VfsFileList, Error> {
+        let ret: Result<super::VfsFileList, Error> = self
             .communicator
             .invoke(API_HOST_VFS_LIST_FILES, &path.to_path_buf())
             .await?;

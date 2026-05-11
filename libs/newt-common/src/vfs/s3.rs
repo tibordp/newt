@@ -614,15 +614,16 @@ impl Vfs for S3Vfs {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::VfsFileList, Error> {
         let (bucket, prefix) = self.parse_path(path);
-        match bucket {
-            None => self.list_buckets(batch_tx).await,
+        let files = match bucket {
+            None => self.list_buckets(batch_tx).await?,
             Some(bucket) => {
                 self.list_objects(&bucket, prefix.as_deref(), batch_tx)
-                    .await
+                    .await?
             }
-        }
+        };
+        Ok(files.into())
     }
 
     async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {

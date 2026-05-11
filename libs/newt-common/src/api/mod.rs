@@ -48,6 +48,7 @@ pub const API_FIND_IN_FILE: Api = Api(304);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
+pub const API_VFS_PROGRESS: Api = Api(402);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
@@ -490,6 +491,11 @@ pub struct MountContext<'a> {
     pub pending_read_streams: &'a PendingVfsReadStreams,
     pub sftp_askpass: Option<&'a SftpAskpass>,
     pub askpass_provider: Option<&'a Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Per-mount progress reporter, scoped to the `VfsId` the manager
+    /// is about to assign to this mount. VFSes that report progress
+    /// (e.g. SearchVfs) clone the inner `Arc` and call `report()`
+    /// without ever needing to know their own id.
+    pub progress_reporter: &'a Arc<dyn crate::vfs::ProgressReporter>,
 }
 
 /// Askpass configuration used by SFTP (and any future SSH-spawning VFS).
@@ -517,6 +523,10 @@ pub struct VfsRegistryManager {
     /// passwords. When set with `with_sftp_askpass`, this is also
     /// populated from the SFTP askpass's provider.
     askpass_provider: Option<Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Sink used to build a per-mount `ScopedReporter`. Defaults to a
+    /// no-op so manager construction outside of a real session (tests,
+    /// agent boot before the outbox is wired, etc.) keeps working.
+    progress_sink: Arc<dyn crate::vfs::VfsProgressSink>,
 }
 
 impl VfsRegistryManager {
@@ -527,6 +537,7 @@ impl VfsRegistryManager {
             pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             sftp_askpass: None,
             askpass_provider: None,
+            progress_sink: Arc::new(crate::vfs::NoopProgressSink),
         }
     }
 
@@ -541,6 +552,7 @@ impl VfsRegistryManager {
             pending_read_streams,
             sftp_askpass: None,
             askpass_provider: None,
+            progress_sink: Arc::new(crate::vfs::NoopProgressSink),
         }
     }
 
@@ -561,17 +573,32 @@ impl VfsRegistryManager {
         self.askpass_provider = Some(provider);
         self
     }
+
+    pub fn with_progress_sink(mut self, sink: Arc<dyn crate::vfs::VfsProgressSink>) -> Self {
+        self.progress_sink = sink;
+        self
+    }
 }
 
 #[async_trait::async_trait]
 impl VfsManager for VfsRegistryManager {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
+        // Allocate the id up front so we can hand the mount a progress
+        // reporter that's already scoped to its final VfsId. The id is
+        // not visible to anyone until we `insert` below, so a mount
+        // that fails (returns Err) leaks nothing — the id just goes
+        // unused.
+        let vfs_id = self.registry.allocate_id();
+        let progress_reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
+            crate::vfs::ScopedReporter::new(self.progress_sink.clone(), vfs_id),
+        );
         let ctx = MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
             pending_read_streams: &self.pending_read_streams,
             sftp_askpass: self.sftp_askpass.as_ref(),
             askpass_provider: self.askpass_provider.as_ref(),
+            progress_reporter: &progress_reporter,
         };
 
         let vfs: Arc<dyn Vfs> = match request {
@@ -603,7 +630,7 @@ impl VfsManager for VfsRegistryManager {
         let mount_meta = vfs.mount_meta();
         let type_name = vfs.descriptor().type_name().to_string();
         let origin = vfs.origin().cloned();
-        let vfs_id = self.registry.mount(vfs);
+        self.registry.insert(vfs_id, vfs);
         log::info!("mounted {} VFS as vfs_id={:?}", type_name, vfs_id);
 
         Ok(MountResponse {

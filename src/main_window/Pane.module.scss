@@ -144,8 +144,20 @@
 .statusbar {
   padding: var(--space-2) var(--space-3);
   background: var(--color-chrome);
+}
+
+// Inner clipping wrapper. Keeping `overflow: hidden` off the flex
+// item itself preserves its `min-height: auto` floor (one line of
+// content); the wrapper clips long text to a single ellipsized line
+// without affecting the parent's flex sizing.
+.statusbarInner {
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.statusbarProgress {
+  color: var(--color-fg-muted);
 }
 
 .pathBreadcrumb {

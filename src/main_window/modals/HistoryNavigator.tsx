@@ -9,6 +9,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { commands, type HistoryEntryView } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
+import { useSuppressInitialPointer } from "../../lib/useSuppressInitialPointer";
 import menuStyles from "../Menu.module.scss";
 import styles from "./HistoryNavigator.module.scss";
 
@@ -157,6 +158,11 @@ export default function HistoryNavigator({
     el?.scrollIntoView({ block: "nearest" });
   }, [previewIndex, open]);
 
+  // Ignore hover until the user actually moves the mouse — prevents
+  // whichever entry happens to sit under the cursor at open time from
+  // hijacking the keyboard's preview selection.
+  const pointerActive = useSuppressInitialPointer();
+
   // Window-level Alt-up commit for the alt-tab style mode. Radix's own
   // keyboard handling on Content covers ArrowUp/ArrowDown/Enter/Esc, but
   // it doesn't know about Alt-up.
@@ -232,6 +238,7 @@ export default function HistoryNavigator({
             className={styles.list}
             role="listbox"
             aria-label="History"
+            style={pointerActive ? undefined : { pointerEvents: "none" }}
           >
             {entries.map((entry, i) => {
               const isCurrent = i === currentIndex;

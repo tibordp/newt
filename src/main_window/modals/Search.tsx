@@ -61,7 +61,9 @@ export default function SearchDialog({
           }}
         >
           <div>
-            <label htmlFor="name-pattern">Name (glob, e.g. *.rs)</label>
+            <label htmlFor="name-pattern">
+              Name (substring; use *, ?, [ for glob — e.g. *.rs)
+            </label>
             <input
               ref={inputRef}
               id="name-pattern"

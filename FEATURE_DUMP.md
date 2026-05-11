@@ -837,7 +837,7 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Nested archives**: Archives can contain other archives. Opening an inner archive creates a new VFS mount with the outer archive as its origin. The cleanup system prevents unmounting a parent archive while a child archive is still open.
 
-**Stale mount cleanup**: Archive mounts are automatically removed when no pane references them (or their child archives).
+**Stale mount cleanup**: Archive mounts are *ephemeral* — automatically removed when no pane's current path or back/forward history references them (or any of their child archives, transitively). The same cleanup machinery handles other ephemeral VFS types (currently SearchVfs) via a shared `is_ephemeral()` descriptor flag.
 
 **Symlink and hard link resolution** (TAR/CPIO): Symlinks and hard links inside the archive are resolved internally. Directory listings show the *target's* size and `is_dir` for symlinks, and reading or viewing a file through a symlink or hard link transparently fetches the target's contents.
 
@@ -889,25 +889,30 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 **VFS ID rewriting**: Batch streaming results from `list_files` have their VFS IDs rewritten from the local root to the remote VFS ID before being forwarded to the UI.
 
-### Recursive Search (Find in Folder, Alt+F7)
+### Recursive Search (Find in Folder, Mod+F)
 
 A search becomes a mounted VFS — results show up as a flat directory the user can browse, select, open, copy, delete using every existing pane affordance.
 
-**Opening**: From any pane, press Alt+F7 (or run "Find in Folder…" from the command palette). The dialog is rooted at the current pane's directory and offers:
+**Opening**: From any pane, press Mod+F (or run "Find in Folder…" from the command palette). The dialog is rooted at the current pane's directory and offers:
 
-- **Name**: optional glob (`*.rs`, `Cargo.*`, …). Empty = match every name.
-- **Content**: optional substring (or regex, when the checkbox is set). Files larger than 10 MiB are skipped from content matching but still surface on name match.
+- **Name**: substring by default — typing `Cargo` matches anything containing `Cargo`. Switches to glob semantics (must match the whole basename) as soon as the pattern contains any of `*`, `?`, `[` — so `*.rs`, `Cargo.*`, etc. behave as expected. Empty = match every entry. Matches both files *and* directories.
+- **Content**: optional substring (or regex, when the checkbox is set). Files larger than 10 MiB are skipped from content matching but still surface on name match. Directories are skipped when a content filter is set (they have no bytes to scan).
 - **Case-sensitive**: applies to both name glob and content search.
 - **Follow symlinks**: off by default (avoids loops and double-counting).
 
-Submitting mounts a `SearchVfs` and navigates the active pane to its root. The walker runs in the background; matches stream into the pane as they're found, with the secondary "where from" hint inline next to each filename.
+Submitting mounts a `SearchVfs` and navigates the active pane to its root. The walker runs in the background; matches stream into the pane as they're found, with the secondary "where from" hint inline next to each filename (formatted through the source VFS's descriptor — so an archive entry shows `/path/to/foo.zip/inner/dir`, not a raw inner-archive path).
+
+**Display & navigation**:
+- The pane's path label and breadcrumb show `<root> [<params summary>]`, e.g. `/home/foo/projects [*.rs · "TODO"]`. No `Search:` prefix — the VFS selector already conveys that.
+- `try_parse_display_path` returns nothing for SearchVfs paths, so the Navigate dialog will never accidentally drop the user back into a search.
+- **Reveal source**: Shift+Enter on a result navigates the pane out of the search to the result's real parent directory in the source VFS, with the file focused. (Same key as Follow Symlink; the alias takes priority when the entry has one.)
 
 **Behavior**:
 - **Flat list, with paths shown.** Identically-named matches sort/select independently — entries are keyed by their relative path under the search root, not basename.
-- **`..` does not unwind into the search root.** Search results live in their own addressable space; leaving the search is via history (Alt+Left).
+- **`..` does not unwind into the search root.** Search results live in their own addressable space; leaving the search is via history (Alt+Left) or Shift+Enter on a hit.
 - **Operations are transparent.** Open, view, edit, rename, delete, copy/move, drag-out — every action targets the underlying real file. The display still shows the basename + source-path hint, but the bytes the operation touches are the source file's bytes.
 - **Walker boundaries.** Walks within a single VFS; mounted child VFSes (archives, etc.) are *not* descended into. OS-level mounts (bind mounts, autofs, network shares) look like ordinary directories and are traversed.
-- **Cancellation.** Unmounting the SearchVfs (via the VFS selector × button) cancels the walker promptly.
+- **Lifecycle.** SearchVfs is *ephemeral* (see below) — it auto-unmounts as soon as it's no longer reachable from any pane's current path or back/forward history, and it does not show up in the VFS selector dropdown.
 - **Deferred for v1**: in-place param refinement (re-run with new pattern), tree-view toggle, native search inside archives / S3 / SFTP, `.gitignore` honoring.
 
 ### VFS Selector Dialog (Mod+Shift+L)
@@ -919,6 +924,7 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
   - Kubernetes: Opens a context input dialog (defaults to current kubectl context).
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
+- **Ephemeral VFSes** (archives, search results) are hidden from the dropdown: they're reachable via navigation history, auto-unmount when no pane references them, and listing them as switch targets would just be noise.
 
 ---
 
@@ -1448,6 +1454,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | / | Enter filter mode | Pane focused |
 | (any printable char) | Start quick search | Pane focused |
 | Escape | Cancel / clear filter | Pane focused |
+| Mod+F | Find in Folder (recursive search) | Pane focused |
 
 ### Terminal
 

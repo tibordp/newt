@@ -174,10 +174,10 @@ impl Vfs for LocalVfs {
         &self,
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<super::VfsFileList, Error> {
         assert!(path.is_absolute());
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking({
+        let files: Vec<File> = tokio::task::spawn_blocking({
             let cache = self.fs_cache.clone();
             move || -> Result<Vec<File>, Error> {
                 const BATCH_SIZE: usize = LIST_FILES_BATCH_SIZE;
@@ -275,7 +275,8 @@ impl Vfs for LocalVfs {
                 Ok(ret)
             }
         })
-        .await?
+        .await??;
+        Ok(files.into())
     }
 
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error> {

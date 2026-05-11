@@ -424,23 +424,36 @@ pub async fn cmd_follow_symlink(
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let target = match pane.get_focused_symlink_target() {
-        Some(t) => t,
-        None => return Ok(()),
-    };
-    // For search results, the symlink target is interpreted relative to
-    // the underlying file's real parent directory, not the SearchVfs root.
-    let source_parent = pane
-        .get_focused_source()
-        .and_then(|p| p.parent())
-        .unwrap_or_else(|| pane.path());
 
-    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        let resolved = if target.is_absolute() {
+    // "Follow" prefers an alias source (synthetic VFS entries — search
+    // results, …) over the entry's own symlink target, since the alias
+    // *is* the destination the user is asking us to reveal. Symlink
+    // following falls through when there's no alias.
+    let resolved: VfsPath = if let Some(source) = pane.get_focused_source()
+        && pane
+            .get_focused_file()
+            .is_some_and(|focused| focused != source)
+    {
+        source
+    } else {
+        let target = match pane.get_focused_symlink_target() {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+        // Symlink targets live in the entry's *real* parent directory,
+        // not in the synthetic VFS root, so deref before joining.
+        let source_parent = pane
+            .get_focused_source()
+            .and_then(|p| p.parent())
+            .unwrap_or_else(|| pane.path());
+        if target.is_absolute() {
             VfsPath::new(source_parent.vfs_id, target)
         } else {
             VfsPath::new(source_parent.vfs_id, source_parent.path.join(&target))
-        };
+        }
+    };
+
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
         let parent = resolved.parent().unwrap_or_else(|| resolved.clone());
         let filename = resolved
             .path

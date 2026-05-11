@@ -37,11 +37,15 @@ fn big_bytes() -> Vec<u8> {
 /// capability per `config`.
 fn mount(bytes: &[u8], path: &str, config: MockVfsConfig) -> Arc<TarArchiveVfs> {
     let upstream = MockVfs::builder().config(config).file(path, bytes).build();
+    let reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
+        crate::vfs::ScopedReporter::new(Arc::new(crate::vfs::NoopProgressSink), VfsId(1)),
+    );
     Arc::new(TarArchiveVfs::new(
         upstream,
         PathBuf::from(path),
         VfsPath::new(VfsId(1), "/"),
         Vec::new(),
+        reporter,
     ))
 }
 
@@ -82,6 +86,7 @@ async fn lists_top_level_entries_sync_upstream() {
         .list_files(Path::new("/"), None)
         .await
         .expect("list_files")
+        .files
         .into_iter()
         .map(|f| f.name)
         .filter(|n| n != "..")
@@ -97,6 +102,7 @@ async fn lists_top_level_entries_async_upstream() {
         .list_files(Path::new("/"), None)
         .await
         .expect("list_files")
+        .files
         .into_iter()
         .map(|f| f.name)
         .filter(|n| n != "..")
@@ -112,6 +118,7 @@ async fn lists_nested_dir() {
         .list_files(Path::new("/dir"), None)
         .await
         .expect("list_files")
+        .files
         .into_iter()
         .map(|f| f.name)
         .filter(|n| n != "..")
@@ -262,11 +269,15 @@ async fn upstream_read_range_failure_during_indexing_surfaces() {
         })
         .build();
 
+    let reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
+        crate::vfs::ScopedReporter::new(Arc::new(crate::vfs::NoopProgressSink), VfsId(1)),
+    );
     let vfs = TarArchiveVfs::new(
         upstream,
         PathBuf::from(ARCHIVE_PATH),
         VfsPath::new(VfsId(1), "/"),
         Vec::new(),
+        reporter,
     );
 
     let err = match vfs.open_read_async(Path::new("/hello.txt")).await {
