@@ -16,31 +16,48 @@ type QuickConnectProps = {
 const TYPE_LABELS: Record<ConnectionProfile["type"], string> = {
   s3: "S3",
   sftp: "SFTP",
-  remote: "Remote",
+  ssh: "SSH",
+  docker: "Docker",
+  podman: "Podman",
+  kube: "Kubernetes",
+  custom: "Custom",
 };
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
+function connectionDetail(c: ConnectionProfile): string {
+  switch (c.type) {
+    case "s3": {
+      const parts: string[] = [];
+      if (c.bucket) parts.push(c.bucket);
+      if (c.region) parts.push(c.region);
+      if (c.endpoint_url) parts.push(c.endpoint_url);
+      return parts.join(" / ");
+    }
+    case "sftp":
+    case "ssh":
+      return c.host;
+    case "docker":
+    case "podman":
+      return c.user ? `${c.user}@${c.container}` : c.container;
+    case "kube": {
+      const ns = c.namespace ? `${c.namespace}/` : "";
+      return c.container ? `${ns}${c.pod}:${c.container}` : `${ns}${c.pod}`;
+    }
+    case "custom":
+      return c.command;
+  }
+}
+
 function subtitle(c: ConnectionProfile): string {
   const parts = [TYPE_LABELS[c.type] || c.type];
-  if (c.type === "s3") {
-    if (c.bucket) parts.push(c.bucket);
-    if (c.region) parts.push(c.region);
-    if (c.endpoint_url) parts.push(c.endpoint_url);
-  } else {
-    parts.push(c.host);
-  }
+  const detail = connectionDetail(c);
+  if (detail) parts.push(detail);
   return parts.join(" \u2014 ");
 }
 
 function searchableText(c: ConnectionProfile): string {
-  const fields: (string | null | undefined)[] = [c.name, c.id];
-  if (c.type === "s3") {
-    fields.push(c.bucket, c.region, c.endpoint_url);
-  } else {
-    fields.push(c.host);
-  }
-  return fields.filter(Boolean).join(" ");
+  return [c.name, c.id, connectionDetail(c)].filter(Boolean).join(" ");
 }
 
 export default function QuickConnect({

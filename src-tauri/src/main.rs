@@ -7,6 +7,7 @@ extern crate objc; // v0.2.7
 pub mod cmd;
 pub mod common;
 pub mod connections;
+pub mod discovery;
 pub mod editor;
 pub mod file_server;
 pub mod keychain;
@@ -36,19 +37,20 @@ use tauri::ipc::Invoke;
 #[derive(Parser, Debug)]
 #[command(author, version = include_str!(concat!(env!("OUT_DIR"), "/long_version.txt")), about, long_about = None)]
 struct Args {
-    /// Connect to a remote host via SSH (e.g., "user@host")
-    #[cfg_attr(target_os = "linux", arg(long, conflicts_with_all = ["elevated", "profile"]))]
-    #[cfg_attr(not(target_os = "linux"), arg(long, conflicts_with = "profile"))]
-    connect: Option<String>,
+    /// Open a session with the given transport. Supported schemes:
+    ///   `local`, `pkexec` (Linux), `ssh:user@host`, `ssh-agent:user@host`,
+    ///   `docker:[user@]<container>` (bootstrapless by default),
+    ///   `docker-bootstrap:[user@]<container>` (cached sh bootstrap),
+    ///   `podman:[user@]<container>`, `podman-bootstrap:[user@]<container>`,
+    ///   `kube:[context/][namespace/]pod[:container]`,
+    ///   `custom:<shell command using $NEWT_BOOTSTRAP>`,
+    ///   `custom-raw:<shell command that already spawns an agent>`.
+    #[arg(long, value_name = "SCHEME:SPEC", conflicts_with = "profile")]
+    target: Option<String>,
 
-    /// Run with an elevated (root) agent via pkexec (Linux only).
-    #[cfg(target_os = "linux")]
-    #[arg(long, conflicts_with = "profile")]
-    elevated: bool,
-
-    /// Open with a saved connection profile (by `name` or `id`). Currently
-    /// supports profiles of type `remote`; for S3/SFTP profiles use Quick
-    /// Connect inside the app.
+    /// Open with a saved connection profile (by `name` or `id`). Spawn-style
+    /// profiles (ssh/docker/podman/kube/custom) open a new window; for S3/SFTP
+    /// profiles use Quick Connect inside the app.
     #[arg(long, value_name = "NAME")]
     profile: Option<String>,
 
@@ -314,9 +316,9 @@ fn print_resolved_config(global_ctx: &GlobalContext) {
 }
 
 /// Resolve a `--profile` argument against the saved-connections store. Only
-/// `remote` profiles map cleanly to a startup `ConnectionTarget`; S3/SFTP
-/// profiles need an existing local session to mount onto, so we point the
-/// user at Quick Connect for those.
+/// spawn-style profiles (ssh/docker/podman/kube/custom) map cleanly to a
+/// startup `ConnectionTarget`; S3/SFTP profiles need an existing local session
+/// to mount onto, so we point the user at Quick Connect for those.
 fn resolve_profile(
     config_dir: &std::path::Path,
     name: &str,
@@ -325,18 +327,133 @@ fn resolve_profile(
         .into_iter()
         .find(|p| p.name == name || p.id == name)
         .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", name)))?;
-    match &profile.kind {
-        crate::connections::ConnectionKind::Remote { host } => Ok((
-            ConnectionTarget::Remote {
-                transport_cmd: crate::main_window::ssh_transport_cmd(host),
-            },
-            profile.name,
-        )),
-        _ => Err(Error::Custom(format!(
-            "profile '{}' is not a remote profile; open it via Quick Connect inside the app",
+    match crate::connections::connection_target_for(&profile.kind) {
+        Some((ct, _label)) => Ok((ct, profile.name)),
+        None => Err(Error::Custom(format!(
+            "profile '{}' is not a spawn-style profile; open it via Quick Connect inside the app",
             name
         ))),
     }
+}
+
+/// Parse a `--target <scheme>:<spec>` argument into a startup `ConnectionTarget`.
+/// See the doc on `Args::target` for the supported schemes.
+fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
+    use crate::connections::{ConnectionKind, connection_target_for};
+
+    // Schemes that take no spec.
+    match s {
+        "local" => return Ok((ConnectionTarget::Local, "Newt".to_string())),
+        "pkexec" => {
+            if cfg!(not(target_os = "linux")) {
+                return Err(Error::Custom("pkexec is only supported on Linux".into()));
+            }
+            return Ok((ConnectionTarget::Elevated, "Elevated".to_string()));
+        }
+        _ => {}
+    }
+
+    let (scheme, spec) = s.split_once(':').ok_or_else(|| {
+        Error::Custom(format!(
+            "--target value {:?} is missing a `:<spec>` (try `ssh:user@host` or `--help`)",
+            s
+        ))
+    })?;
+    if spec.is_empty() {
+        return Err(Error::Custom(format!(
+            "--target=`{}:` is missing its spec",
+            scheme
+        )));
+    }
+
+    let kind = match scheme {
+        "ssh" => ConnectionKind::Ssh {
+            host: spec.to_string(),
+            forward_agent: false,
+        },
+        "ssh-agent" => ConnectionKind::Ssh {
+            host: spec.to_string(),
+            forward_agent: true,
+        },
+        "docker" | "docker-bootstrap" | "podman" | "podman-bootstrap" => {
+            let (user, container) = match spec.split_once('@') {
+                Some((u, c)) if !u.is_empty() && !c.is_empty() => {
+                    (Some(u.to_string()), c.to_string())
+                }
+                _ => (None, spec.to_string()),
+            };
+            // Docker / Podman containers are typically on the local engine —
+            // `cp` + direct exec is fast, has fewer moving parts, and works
+            // for sh-less images. `-bootstrap` opts into the cached sh-based
+            // path (useful when the agent already exists in the container's
+            // cache and you want to skip the re-upload).
+            let bootstrapless = !scheme.ends_with("-bootstrap");
+            if scheme.starts_with("docker") {
+                ConnectionKind::Docker {
+                    container,
+                    user,
+                    bootstrapless,
+                }
+            } else {
+                ConnectionKind::Podman {
+                    container,
+                    user,
+                    bootstrapless,
+                }
+            }
+        }
+        "kube" => parse_kube_spec(spec)?,
+        "custom" => ConnectionKind::Custom {
+            command: spec.to_string(),
+            skip_bootstrap: false,
+        },
+        "custom-raw" => ConnectionKind::Custom {
+            command: spec.to_string(),
+            skip_bootstrap: true,
+        },
+        other => {
+            return Err(Error::Custom(format!(
+                "unknown --target scheme {:?} (expected ssh / ssh-agent / docker / docker-bootstrap / podman / podman-bootstrap / kube / custom / custom-raw / local / pkexec)",
+                other
+            )));
+        }
+    };
+
+    connection_target_for(&kind)
+        .ok_or_else(|| Error::Custom("internal: scheme did not produce a spawn target".into()))
+}
+
+/// Parse the kube spec: `[context/][namespace/]pod[:container]`.
+fn parse_kube_spec(spec: &str) -> Result<crate::connections::ConnectionKind, Error> {
+    let (rest, container) = match spec.split_once(':') {
+        Some((r, c)) if !c.is_empty() => (r, Some(c.to_string())),
+        _ => (spec, None),
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    let (context, namespace, pod) = match segments.as_slice() {
+        [pod] => (None, None, (*pod).to_string()),
+        [ns, pod] => (None, Some((*ns).to_string()), (*pod).to_string()),
+        [ctx, ns, pod] => (
+            Some((*ctx).to_string()),
+            Some((*ns).to_string()),
+            (*pod).to_string(),
+        ),
+        _ => {
+            return Err(Error::Custom(format!(
+                "kube spec {:?} should be `[context/][namespace/]pod[:container]`",
+                spec
+            )));
+        }
+    };
+    if pod.is_empty() {
+        return Err(Error::Custom("kube pod name is empty".into()));
+    }
+    Ok(crate::connections::ConnectionKind::Kube {
+        context,
+        namespace,
+        pod,
+        container,
+    })
 }
 
 fn main() {
@@ -346,29 +463,16 @@ fn main() {
 
     // Connection target for the non-profile cases — `--profile` is resolved
     // inside `setup` once the preferences directory is known.
-    let non_profile_ct: Option<ConnectionTarget> = if let Some(ref host) = args.connect {
-        Some(ConnectionTarget::Remote {
-            transport_cmd: crate::main_window::ssh_transport_cmd(host),
-        })
-    } else {
-        #[cfg(target_os = "linux")]
-        {
-            if args.elevated {
-                Some(ConnectionTarget::Elevated)
-            } else if args.profile.is_some() {
-                None
-            } else {
-                Some(ConnectionTarget::Local)
+    let non_profile: Option<(ConnectionTarget, String)> = match (&args.target, &args.profile) {
+        (Some(spec), _) => match parse_target(spec) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("newt: {}", e);
+                std::process::exit(2);
             }
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            if args.profile.is_some() {
-                None
-            } else {
-                Some(ConnectionTarget::Local)
-            }
-        }
+        },
+        (None, None) => Some((ConnectionTarget::Local, "Newt".to_string())),
+        (None, Some(_)) => None,
     };
 
     let specta_builder = cmd::create_specta_builder();
@@ -417,15 +521,15 @@ fn main() {
 
             // Resolve `--profile` now that the preferences manager (and thus
             // the config dir) is available; otherwise use the target picked
-            // out of `--connect` / `--elevated` / default-local above.
-            let (ct, default_title) = match (&profile_arg, &non_profile_ct) {
+            // out of `--target` / default-local above.
+            let (ct, default_title) = match (&profile_arg, &non_profile) {
                 (Some(name), _) => {
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
                     resolve_profile(&config_dir, name)?
                 }
-                (None, Some(ct)) => (ct.clone(), "Newt".to_string()),
+                (None, Some(pair)) => pair.clone(),
                 (None, None) => {
-                    unreachable!("non_profile_ct is None only when profile_arg is Some")
+                    unreachable!("non_profile is None only when profile_arg is Some")
                 }
             };
             let wt = match &explicit_title {
@@ -552,4 +656,154 @@ fn main() {
         .invoke_handler(handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use crate::connections::ConnectionKind;
+    use crate::main_window::{ConnectionTarget, SpawnSpec};
+
+    fn kind_of(target: &ConnectionTarget) -> &SpawnSpec {
+        match target {
+            ConnectionTarget::Spawn(s) => s,
+            _ => panic!("expected spawn"),
+        }
+    }
+
+    #[test]
+    fn local_scheme() {
+        let (ct, _) = parse_target("local").unwrap();
+        assert!(matches!(ct, ConnectionTarget::Local));
+    }
+
+    #[test]
+    fn ssh_scheme() {
+        let (ct, label) = parse_target("ssh:alice@host.example").unwrap();
+        assert_eq!(label, "alice@host.example");
+        match kind_of(&ct) {
+            SpawnSpec::Bootstrap {
+                transport_cmd,
+                askpass,
+                ..
+            } => {
+                assert!(*askpass);
+                assert_eq!(transport_cmd.first().unwrap(), "ssh");
+                assert!(!transport_cmd.contains(&"-A".to_string()));
+            }
+            _ => panic!("expected bootstrap"),
+        }
+    }
+
+    #[test]
+    fn ssh_agent_scheme() {
+        let (ct, _) = parse_target("ssh-agent:alice@host.example").unwrap();
+        match kind_of(&ct) {
+            SpawnSpec::Bootstrap { transport_cmd, .. } => {
+                assert!(transport_cmd.contains(&"-A".to_string()));
+            }
+            _ => panic!("expected bootstrap"),
+        }
+    }
+
+    #[test]
+    fn docker_scheme_with_user() {
+        let kind = match parse_kube_spec("ns/p:c") {
+            Ok(k) => k,
+            Err(e) => panic!("kube parse failed: {}", e),
+        };
+        assert!(matches!(
+            kind,
+            ConnectionKind::Kube {
+                container: Some(_),
+                namespace: Some(_),
+                context: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn docker_defaults_to_bootstrapless() {
+        let (ct, _) = parse_target("docker:nt").unwrap();
+        assert!(matches!(kind_of(&ct), SpawnSpec::DirectCopy(_)));
+    }
+
+    #[test]
+    fn docker_bootstrap_opts_into_sh_bootstrap() {
+        let (ct, _) = parse_target("docker-bootstrap:nt").unwrap();
+        match kind_of(&ct) {
+            SpawnSpec::Bootstrap { transport_cmd, .. } => {
+                assert_eq!(transport_cmd.first().unwrap(), "docker");
+            }
+            _ => panic!("expected sh bootstrap"),
+        }
+    }
+
+    #[test]
+    fn custom_command() {
+        let (ct, _) = parse_target(r#"custom:ssh foo@bar "$NEWT_BOOTSTRAP""#).unwrap();
+        match kind_of(&ct) {
+            SpawnSpec::CustomShell {
+                command,
+                skip_bootstrap,
+                ..
+            } => {
+                assert_eq!(command, r#"ssh foo@bar "$NEWT_BOOTSTRAP""#);
+                assert!(!skip_bootstrap);
+            }
+            _ => panic!("expected custom shell"),
+        }
+    }
+
+    #[test]
+    fn custom_raw_command() {
+        let (ct, _) = parse_target("custom-raw:my-pre-spawned-agent").unwrap();
+        match kind_of(&ct) {
+            SpawnSpec::CustomShell { skip_bootstrap, .. } => {
+                assert!(skip_bootstrap);
+            }
+            _ => panic!("expected custom shell"),
+        }
+    }
+
+    #[test]
+    fn invalid_scheme() {
+        assert!(parse_target("nope:thing").is_err());
+        assert!(parse_target("ssh:").is_err());
+        assert!(parse_target("nope").is_err());
+    }
+
+    #[test]
+    fn kube_levels() {
+        let k = parse_kube_spec("pod").unwrap();
+        assert!(matches!(
+            k,
+            ConnectionKind::Kube {
+                context: None,
+                namespace: None,
+                ..
+            }
+        ));
+        let k = parse_kube_spec("ns/pod").unwrap();
+        assert!(matches!(
+            k,
+            ConnectionKind::Kube {
+                context: None,
+                namespace: Some(_),
+                container: None,
+                ..
+            }
+        ));
+        let k = parse_kube_spec("ctx/ns/pod:c").unwrap();
+        assert!(matches!(
+            k,
+            ConnectionKind::Kube {
+                context: Some(_),
+                namespace: Some(_),
+                container: Some(_),
+                ..
+            }
+        ));
+    }
 }

@@ -7,9 +7,10 @@ Basic Remote VFS is implemented. Remaining work:
 
 ## Generalized remote session transport
 
-Internally `ConnectionTarget::Remote` already accepts an arbitrary `transport_cmd: Vec<String>`, but every call site builds it as `["ssh", host]`, and `spawn_remote` hardcodes `SSH_ASKPASS` / `SSH_ASKPASS_REQUIRE` env vars that only ssh respects. To support docker exec, kubectl exec, etc., we need:
-- A way to specify a custom transport command from the UI / connection profile (the profile schema today is SSH/S3-only).
-- A transport-agnostic mechanism for password / host-key prompts (the askpass plumbing assumes ssh's env-var protocol).
+Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom (caller-supplied argv) all share the same `SpawnSpec::Bootstrap` path. Docker and Podman additionally support an opt-in `bootstrapless` (`docker cp` / `podman cp`) path for distroless / sh-less containers. Remaining:
+- Host-key prompts and "are you sure you want to add fingerprint" flows for SSH still ride the existing askpass channel; verify the same UX with `StrictHostKeyChecking=accept-new` setups.
+- The bootstrapless flow trusts the daemon's reported OS/arch from `inspect`. If the container runs a foreign-arch userspace under qemu the agent will be the wrong arch; consider a `--print-triple` self-check post-launch.
+- Kubernetes is bootstrap-only (kubectl cp itself needs tar). If we want sh-less k8s pods later we'd need to teach the agent how to be `tar`-injected.
 
 ## Archive packing and unpacking
 

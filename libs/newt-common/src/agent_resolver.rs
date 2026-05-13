@@ -20,6 +20,27 @@ pub fn local_agent_triple() -> String {
     }
 }
 
+/// Map an OS+arch pair (as reported by `uname -s -m` or `docker inspect`) to
+/// our agent target triple. Mirrors the `case` tables in `scripts/bootstrap.sh`
+/// — keep the two in sync. Accepts the common synonyms (`amd64`/`x86_64`,
+/// `arm64`/`aarch64`, `linux`/`Linux`).
+///
+/// Returns `None` for unsupported combinations rather than constructing an
+/// invalid triple, so callers can surface a clean error message.
+pub fn triple_from_os_arch(os: &str, arch: &str) -> Option<String> {
+    let os_part = match os.to_ascii_lowercase().as_str() {
+        "linux" => "unknown-linux-musl",
+        "darwin" | "macos" | "mac" => "apple-darwin",
+        _ => return None,
+    };
+    let arch_part = match arch.to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        _ => return None,
+    };
+    Some(format!("{}-{}", arch_part, os_part))
+}
+
 /// Resolver that only knows how to produce its own running executable. Used
 /// by the agent. A future revision will add an RPC fallback that fetches a
 /// foreign-arch agent binary from the host.
@@ -62,5 +83,36 @@ impl AgentResolver for CurrentExeAgentResolver {
 
     fn find_local_agent_binary(&self) -> Result<PathBuf, Error> {
         Self::current_exe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::triple_from_os_arch;
+
+    #[test]
+    fn known_combinations() {
+        assert_eq!(
+            triple_from_os_arch("linux", "x86_64").as_deref(),
+            Some("x86_64-unknown-linux-musl")
+        );
+        assert_eq!(
+            triple_from_os_arch("linux", "amd64").as_deref(),
+            Some("x86_64-unknown-linux-musl")
+        );
+        assert_eq!(
+            triple_from_os_arch("Linux", "arm64").as_deref(),
+            Some("aarch64-unknown-linux-musl")
+        );
+        assert_eq!(
+            triple_from_os_arch("Darwin", "aarch64").as_deref(),
+            Some("aarch64-apple-darwin")
+        );
+    }
+
+    #[test]
+    fn unknown_combinations() {
+        assert_eq!(triple_from_os_arch("windows", "x86_64"), None);
+        assert_eq!(triple_from_os_arch("linux", "riscv64"), None);
     }
 }

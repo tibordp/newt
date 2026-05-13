@@ -208,7 +208,12 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::editor::set_editor_wrap,
             crate::editor::ping_editor,
             window::reconnect,
-            window::connect_remote,
+            window::connect_target,
+            crate::discovery::discover_ssh_hosts,
+            crate::discovery::discover_docker_containers,
+            crate::discovery::discover_podman_containers,
+            crate::discovery::discover_kube_contexts,
+            crate::discovery::discover_kube_pods,
             vfs::switch_vfs,
             vfs::unmount_vfs,
             // Terminal

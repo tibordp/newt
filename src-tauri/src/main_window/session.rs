@@ -52,23 +52,196 @@ use newt_common::askpass::AskpassProvider;
 
 #[derive(Clone, Debug)]
 pub enum ConnectionTarget {
+    /// No subprocess: services run directly in the Tauri process.
     Local,
-    Remote { transport_cmd: Vec<String> },
+    /// pkexec-elevated agent on the local machine (Linux only).
     Elevated,
+    /// Spawn an agent over an external transport.
+    Spawn(SpawnSpec),
+}
+
+#[derive(Clone, Debug)]
+pub enum SpawnSpec {
+    /// Run `transport_cmd` and append the sh-based `bootstrap.sh` script as its
+    /// final argument. The bootstrap negotiates arch detection, agent caching,
+    /// and upload-if-missing. Requires `sh` + a handful of coreutils on the
+    /// target side; in exchange we get a hash-keyed agent cache.
+    Bootstrap {
+        transport_cmd: Vec<String>,
+        /// Human-readable label, used in log lines and the connection log.
+        label: String,
+        /// Whether this transport supports interactive prompts via SSH_ASKPASS.
+        /// `true` for `ssh` so passwords / passphrases can be forwarded;
+        /// `false` for daemon-mediated transports (docker / kubectl etc.) where
+        /// SSH_ASKPASS is a no-op.
+        askpass: bool,
+        /// `true` if the transport joins its trailing argv elements into a
+        /// single shell command on the far side (this is what `ssh` does, and
+        /// it requires us to shell-quote the bootstrap into one argv element).
+        /// `false` for transports that `execvp` their args directly
+        /// (`docker exec`, `podman exec`, `kubectl exec`, custom), where we
+        /// must pass `sh`, `-c`, `<script>` as three separate argv elements.
+        shell_join: bool,
+    },
+    /// Out-of-band copy: detect the target's architecture, `cp` the agent
+    /// binary in, then exec it directly. No shell on the target side required.
+    /// Re-uploads on every connect (no cache).
+    DirectCopy(DirectCopyPlan),
+    /// User-supplied shell command run locally. The bootstrap script is exposed
+    /// via the `NEWT_BOOTSTRAP` env var; the user references it from inside
+    /// their command (`ssh host "$NEWT_BOOTSTRAP"`, `bash -c "$NEWT_BOOTSTRAP"`,
+    /// etc.). Gives the most control at the cost of needing the user to write
+    /// the splice point themselves.
+    CustomShell {
+        command: String,
+        label: String,
+        /// If true, do not run the bootstrap handshake — assume the command
+        /// produces a running agent on stdin/stdout itself. Default false.
+        skip_bootstrap: bool,
+    },
+}
+
+/// Recipe for a bootstrapless launch. Each command is a fully-resolved argv
+/// except for the `{local}` / `{remote}` / `{agent_path}` placeholders, which
+/// are substituted at spawn time. Keeping these as templates lets us share one
+/// `spawn_direct_copy` implementation across `docker` / `podman`.
+#[derive(Clone, Debug)]
+pub struct DirectCopyPlan {
+    /// Ordered list of arch-detection commands. The trimmed stdout of each
+    /// step is interpolated as `{prev}` into the next; the last step's stdout
+    /// must be a `"<OS>/<Arch>"` line.
+    ///
+    /// (Docker / Podman need two steps — `inspect` the container to get the
+    /// image ID, then `image inspect` to get OS/Arch. The container itself
+    /// doesn't expose `.Os` / `.Architecture` in its template namespace.)
+    pub arch_detect_pipeline: Vec<Vec<String>>,
+    /// Substitute `{local}` (host-side path to agent) and `{remote}`
+    /// (target-side destination path).
+    pub copy_cmd: Vec<String>,
+    /// Substitute `{agent_path}` (target-side path). Stdin/stdout become the
+    /// RPC channel; stderr is logged. Must produce a bidirectional pipe.
+    pub exec_cmd: Vec<String>,
+    pub label: String,
 }
 
 /// Build a `transport_cmd` for an ssh-based remote session, with
 /// application-level keepalive enabled so that idle TCP connections aren't
-/// silently killed by NAT / firewalls / load balancers.
-pub fn ssh_transport_cmd(host: &str) -> Vec<String> {
-    vec![
+/// silently killed by NAT / firewalls / load balancers. When `forward_agent`
+/// is true, also adds `-A` so SSH agent forwarding is enabled.
+pub fn ssh_transport_cmd(host: &str, forward_agent: bool) -> Vec<String> {
+    let mut v = vec![
         "ssh".to_string(),
         "-o".to_string(),
         "ServerAliveInterval=30".to_string(),
         "-o".to_string(),
         "ServerAliveCountMax=3".to_string(),
-        host.to_string(),
-    ]
+    ];
+    if forward_agent {
+        v.push("-A".to_string());
+    }
+    v.push(host.to_string());
+    v
+}
+
+/// `docker exec -i [-u <user>] <container>` — the bootstrap script is appended
+/// as the final argv element by the caller.
+pub fn docker_transport_cmd(container: &str, user: Option<&str>) -> Vec<String> {
+    let mut v = vec!["docker".to_string(), "exec".to_string(), "-i".to_string()];
+    if let Some(u) = user {
+        v.push("-u".to_string());
+        v.push(u.to_string());
+    }
+    v.push(container.to_string());
+    v
+}
+
+/// `podman exec -i [-u <user>] <container>`.
+pub fn podman_transport_cmd(container: &str, user: Option<&str>) -> Vec<String> {
+    let mut v = vec!["podman".to_string(), "exec".to_string(), "-i".to_string()];
+    if let Some(u) = user {
+        v.push("-u".to_string());
+        v.push(u.to_string());
+    }
+    v.push(container.to_string());
+    v
+}
+
+/// `kubectl exec -i [-c=…] <pod> [--context=…] [-n=…] --`.
+///
+/// Global flags (`--context`, `--namespace`) follow the `exec` subcommand
+/// rather than precede `kubectl`, because some kubectl wrappers (notably
+/// orbstack) reject flags before the plugin name.
+pub fn kube_transport_cmd(
+    context: Option<&str>,
+    namespace: Option<&str>,
+    pod: &str,
+    container: Option<&str>,
+) -> Vec<String> {
+    let mut v = vec!["kubectl".to_string(), "exec".to_string(), "-i".to_string()];
+    if let Some(c) = container {
+        v.push(format!("--container={}", c));
+    }
+    v.push(pod.to_string());
+    if let Some(c) = context {
+        v.push(format!("--context={}", c));
+    }
+    if let Some(n) = namespace {
+        v.push(format!("--namespace={}", n));
+    }
+    v.push("--".to_string());
+    v
+}
+
+/// Direct-copy plan for `docker`. `docker inspect` reports OS and architecture
+/// from the image's manifest, which is exactly what we need — no shell in the
+/// container required.
+pub fn docker_direct_copy_plan(container: &str, user: Option<&str>) -> DirectCopyPlan {
+    direct_copy_plan_for("docker", container, user)
+}
+
+/// Same shape as `docker_direct_copy_plan`. `podman cp` / `podman inspect` /
+/// `podman exec` are CLI-compatible with their docker counterparts.
+pub fn podman_direct_copy_plan(container: &str, user: Option<&str>) -> DirectCopyPlan {
+    direct_copy_plan_for("podman", container, user)
+}
+
+fn direct_copy_plan_for(program: &str, container: &str, user: Option<&str>) -> DirectCopyPlan {
+    // Step 1: container → image ID. Step 2: image ID → "<Os>/<Architecture>".
+    // Container JSON doesn't expose Os/Architecture; the underlying image does.
+    let arch_detect_pipeline = vec![
+        vec![
+            program.to_string(),
+            "inspect".to_string(),
+            "--format={{.Image}}".to_string(),
+            container.to_string(),
+        ],
+        vec![
+            program.to_string(),
+            "image".to_string(),
+            "inspect".to_string(),
+            "--format={{.Os}}/{{.Architecture}}".to_string(),
+            "{prev}".to_string(),
+        ],
+    ];
+    let copy_cmd = vec![
+        program.to_string(),
+        "cp".to_string(),
+        "{local}".to_string(),
+        format!("{}:{{remote}}", container),
+    ];
+    let mut exec_cmd = vec![program.to_string(), "exec".to_string(), "-i".to_string()];
+    if let Some(u) = user {
+        exec_cmd.push("-u".to_string());
+        exec_cmd.push(u.to_string());
+    }
+    exec_cmd.push(container.to_string());
+    exec_cmd.push("{agent_path}".to_string());
+    DirectCopyPlan {
+        arch_detect_pipeline,
+        copy_cmd,
+        exec_cmd,
+        label: format!("{}:{}", program, container),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -824,9 +997,14 @@ fn make_stream(
     tokio_duplex::Duplex::new(rx, tx)
 }
 
-/// Spawn SSH + bootstrap script, negotiate agent upload if needed.
-async fn spawn_remote(
+/// Spawn a bootstrap-style transport (SSH / docker exec / kubectl exec / …),
+/// pipe the embedded `bootstrap.sh` into it, and negotiate agent upload.
+/// `enable_askpass` wires up SSH_ASKPASS for transports that may prompt for a
+/// password (SSH); daemon-mediated transports (docker / kubectl etc.) skip it.
+async fn spawn_bootstrap(
     transport_cmd: &[String],
+    enable_askpass: bool,
+    shell_join: bool,
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
     conn_log: &ConnectionLog,
@@ -835,41 +1013,72 @@ async fn spawn_remote(
         .split_first()
         .ok_or_else(|| Error::Custom("empty transport command".into()))?;
 
-    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
-    let escaped = script.replace('\'', "'\\''");
-    let sh_cmd = if let Ok(rust_log) = std::env::var("RUST_LOG") {
+    // The script reads `NEWT_RUST_LOG` from its own environment. Inject the
+    // assignment as the first line of the script body so it survives transport
+    // boundaries that don't propagate env vars (e.g. `docker exec` without `-e`).
+    let mut script_body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
         let escaped_val = rust_log.replace('\'', "'\\''");
-        format!("NEWT_RUST_LOG='{}' sh -c '{}'", escaped_val, escaped)
-    } else {
-        format!("sh -c '{}'", escaped)
-    };
+        script_body = format!("NEWT_RUST_LOG='{}'\n{}", escaped_val, script_body);
+    }
 
-    // Set up askpass via a named Unix domain socket
-    let askpass_binary = agent_resolver.find_local_agent_binary()?;
-    let askpass_listener = newt_common::askpass::listener::spawn(askpass_provider)?;
+    let askpass_listener = if enable_askpass {
+        Some(newt_common::askpass::listener::spawn(askpass_provider)?)
+    } else {
+        None
+    };
+    let askpass_binary = if enable_askpass {
+        Some(agent_resolver.find_local_agent_binary()?)
+    } else {
+        None
+    };
 
     conn_log.log(format!("Spawning: {} {}", program, args.join(" ")));
 
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
-        .arg(&sh_cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env("SSH_ASKPASS", &askpass_binary)
-        .env("SSH_ASKPASS_REQUIRE", "force")
-        .env("NEWT_ASKPASS_SOCK", &askpass_listener.socket_path)
         .kill_on_drop(true);
+    if shell_join {
+        // SSH joins its trailing argv with spaces and re-runs the result inside
+        // a shell on the remote. Quote everything into one argv element so the
+        // remote sees `sh -c '<script>'`.
+        let escaped = script_body.replace('\'', "'\\''");
+        cmd.arg(format!("sh -c '{}'", escaped));
+    } else {
+        // `docker exec` / `podman exec` / `kubectl exec` / custom transports
+        // `execvp` their argv directly. Pass `sh`, `-c`, `<script>` as three
+        // separate elements.
+        cmd.arg("sh").arg("-c").arg(&script_body);
+    }
+    if let (Some(askpass_binary), Some(listener)) = (&askpass_binary, &askpass_listener) {
+        cmd.env("SSH_ASKPASS", askpass_binary)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("NEWT_ASKPASS_SOCK", &listener.socket_path);
+    }
     set_parent_death_signal(&mut cmd);
-    let mut child = cmd.spawn()?;
+    let child = cmd.spawn()?;
+    perform_bootstrap_handshake(child, askpass_listener, agent_resolver, conn_log).await
+}
 
+/// Run the `NEWT:READY` / `NEWT:NEED` negotiation on a freshly-spawned child
+/// whose stdin/stdout will become the RPC channel. Shared between the
+/// argv-appending bootstrap path and the env-var-based custom-shell path.
+async fn perform_bootstrap_handshake(
+    mut child: tokio::process::Child,
+    askpass_listener: Option<newt_common::askpass::listener::AskpassListener>,
+    agent_resolver: &dyn AgentResolver,
+    conn_log: &ConnectionLog,
+) -> Result<ChildConnection, Error> {
     conn_log.log("Process spawned, waiting for bootstrap...");
 
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    // Start reading stderr immediately so SSH logs appear during connection
+    // Start reading stderr immediately so transport logs appear during connection
     spawn_stderr_reader(
         stderr,
         ConnectionLog {
@@ -909,7 +1118,7 @@ async fn spawn_remote(
             stream: make_stream(reader, stdin),
             child,
             stderr: None,
-            _askpass: Some(askpass_listener),
+            _askpass: askpass_listener,
         })
     } else if let Some(need_rest) = status_line.strip_prefix("NEWT:NEED:") {
         // Format: NEWT:NEED:<triple>:<caps> where caps is comma-separated
@@ -961,7 +1170,7 @@ async fn spawn_remote(
             stream: make_stream(reader, stdin),
             child,
             stderr: None,
-            _askpass: Some(askpass_listener),
+            _askpass: askpass_listener,
         })
     } else if let Some(error) = status_line.strip_prefix("NEWT:ERROR:") {
         Err(Error::Custom(format!("remote bootstrap error: {}", error)))
@@ -970,6 +1179,212 @@ async fn spawn_remote(
             "unexpected bootstrap response: {}",
             status_line
         )))
+    }
+}
+
+/// Bootstrapless launch: detect the target architecture via the daemon's
+/// `inspect` command, copy the matching agent binary in with `<engine> cp`, and
+/// exec it directly. Used for distroless / `FROM scratch` containers that have
+/// no shell to run `bootstrap.sh`.
+async fn spawn_direct_copy(
+    plan: &DirectCopyPlan,
+    agent_resolver: &dyn AgentResolver,
+    conn_log: &ConnectionLog,
+) -> Result<ChildConnection, Error> {
+    // 1. Arch detection — run the pipeline; each step's stdout is piped into
+    //    the next as `{prev}`.
+    if plan.arch_detect_pipeline.is_empty() {
+        return Err(Error::Custom("empty arch_detect_pipeline".into()));
+    }
+    let mut prev: String = String::new();
+    for step in &plan.arch_detect_pipeline {
+        let resolved: Vec<String> = step.iter().map(|a| a.replace("{prev}", &prev)).collect();
+        let (prog, args) = resolved
+            .split_first()
+            .ok_or_else(|| Error::Custom("empty arch_detect step".into()))?;
+        conn_log.log(format!(
+            "Detecting target arch: {} {}",
+            prog,
+            args.join(" ")
+        ));
+        let out = tokio::process::Command::new(prog)
+            .args(args)
+            .output()
+            .await
+            .map_err(|e| Error::Custom(format!("arch_detect failed to spawn: {}", e)))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(Error::Custom(format!(
+                "arch detection failed (exit {:?}): {}",
+                out.status.code(),
+                stderr
+            )));
+        }
+        prev = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    }
+    let line = prev.as_str();
+    let (os, arch) = line.split_once('/').ok_or_else(|| {
+        Error::Custom(format!(
+            "could not parse arch_detect output {:?} (expected `<os>/<arch>`)",
+            line
+        ))
+    })?;
+    let triple = newt_common::agent_resolver::triple_from_os_arch(os, arch).ok_or_else(|| {
+        Error::Custom(format!(
+            "unsupported target: os={:?}, arch={:?} (no matching agent triple)",
+            os, arch
+        ))
+    })?;
+    conn_log.log(format!("Target reports {}/{} → {}", os, arch, triple));
+
+    // 2. Resolve local binary.
+    let local_binary = agent_resolver.find_agent_binary(&triple)?;
+    let agent_hash = agent_resolver.agent_hash()?;
+    let remote_path = format!("/tmp/newt-agent-{}", agent_hash);
+
+    // The source binary on disk is typically mode 644 (cargo-zigbuild output,
+    // or unpacked from a tarball that lost the bit). `docker cp` preserves
+    // mode, so a 644 file inside the container can't be exec'd. In the
+    // bootstrap path, `bootstrap.sh` `chmod +x`'s the upload before exec;
+    // bootstrapless has no such hook in the container, so we stage a +x copy
+    // host-side and `docker cp` that.
+    let staged = tempfile::Builder::new()
+        .prefix("newt-agent-")
+        .tempfile()
+        .map_err(|e| Error::Custom(format!("could not create temp file: {}", e)))?;
+    tokio::fs::copy(&local_binary, staged.path())
+        .await
+        .map_err(|e| Error::Custom(format!("could not stage agent for copy: {}", e)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(staged.path(), std::fs::Permissions::from_mode(0o755))
+            .await
+            .map_err(|e| Error::Custom(format!("could not chmod staged agent: {}", e)))?;
+    }
+
+    // 3. Copy. The destination is always /tmp/… in the target.
+    let local_str = staged.path().to_string_lossy().to_string();
+    let copy_argv: Vec<String> = plan
+        .copy_cmd
+        .iter()
+        .map(|a| {
+            a.replace("{local}", &local_str)
+                .replace("{remote}", &remote_path)
+        })
+        .collect();
+    let (copy_program, copy_args) = copy_argv
+        .split_first()
+        .ok_or_else(|| Error::Custom("empty copy_cmd".into()))?;
+    conn_log.log(format!(
+        "Copying agent: {} {}",
+        copy_program,
+        copy_args.join(" ")
+    ));
+    let copy_status = tokio::process::Command::new(copy_program)
+        .args(copy_args)
+        .output()
+        .await
+        .map_err(|e| Error::Custom(format!("cp failed to spawn: {}", e)))?;
+    if !copy_status.status.success() {
+        let stderr = String::from_utf8_lossy(&copy_status.stderr)
+            .trim()
+            .to_string();
+        return Err(Error::Custom(format!(
+            "agent copy failed (exit {:?}): {}",
+            copy_status.status.code(),
+            stderr
+        )));
+    }
+    conn_log.log("Agent copied");
+
+    // 4. Exec.
+    let exec_argv: Vec<String> = plan
+        .exec_cmd
+        .iter()
+        .map(|a| a.replace("{agent_path}", &remote_path))
+        .collect();
+    let (exec_program, exec_args) = exec_argv
+        .split_first()
+        .ok_or_else(|| Error::Custom("empty exec_cmd".into()))?;
+    conn_log.log(format!("Exec: {} {}", exec_program, exec_args.join(" ")));
+    let mut cmd = tokio::process::Command::new(exec_program);
+    cmd.args(exec_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    set_parent_death_signal(&mut cmd);
+    let mut child = cmd.spawn()?;
+
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let stream = make_stream(BufReader::new(stdout), stdin);
+
+    Ok(ChildConnection {
+        child,
+        stream,
+        stderr: Some(stderr),
+        _askpass: None,
+    })
+}
+
+fn spawn_spec_label(spec: &SpawnSpec) -> &str {
+    match spec {
+        SpawnSpec::Bootstrap { label, .. } => label,
+        SpawnSpec::DirectCopy(p) => &p.label,
+        SpawnSpec::CustomShell { label, .. } => label,
+    }
+}
+
+/// Run a user-supplied shell command locally via `sh -c <command>`. The
+/// bootstrap script is exposed as `NEWT_BOOTSTRAP` so the user can splice it
+/// in (`ssh host "$NEWT_BOOTSTRAP"`, `bash -c "$NEWT_BOOTSTRAP"`, etc.).
+///
+/// If `skip_bootstrap` is false (the default), we still run the bootstrap
+/// handshake on the resulting stdin/stdout — so any sane interpolation of
+/// `$NEWT_BOOTSTRAP` Just Works. If true, we hand the pipe directly to RPC,
+/// assuming the user produced a ready agent out of band.
+async fn spawn_custom_shell(
+    command: &str,
+    skip_bootstrap: bool,
+    agent_resolver: &dyn AgentResolver,
+    conn_log: &ConnectionLog,
+) -> Result<ChildConnection, Error> {
+    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
+
+    conn_log.log(format!(
+        "Running custom command (skip_bootstrap={}): sh -c {:?}",
+        skip_bootstrap, command
+    ));
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .env("NEWT_BOOTSTRAP", &script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        cmd.env("NEWT_RUST_LOG", rust_log);
+    }
+    set_parent_death_signal(&mut cmd);
+    let mut child = cmd.spawn()?;
+
+    if skip_bootstrap {
+        // Trust the user — pipe straight to RPC.
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        Ok(ChildConnection {
+            child,
+            stream: make_stream(BufReader::new(stdout), stdin),
+            stderr: Some(stderr),
+            _askpass: None,
+        })
+    } else {
+        perform_bootstrap_handshake(child, None, agent_resolver, conn_log).await
     }
 }
 
@@ -1110,21 +1525,42 @@ pub(super) async fn connect(
             );
             (services, StderrLog::default(), None)
         }
-        ConnectionTarget::Remote { transport_cmd } => {
-            set_status("Connecting to remote host...");
+        ConnectionTarget::Spawn(spec) => {
+            set_status(&format!("Connecting via {}...", spawn_spec_label(spec)));
             let stderr_log = StderrLog::default();
             let conn_log = ConnectionLog {
                 stderr_log: stderr_log.clone(),
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             };
-            let conn = spawn_remote(
-                transport_cmd,
-                agent_resolver,
-                askpass_provider.clone(),
-                &conn_log,
-            )
-            .await?;
+            let conn = match spec {
+                SpawnSpec::Bootstrap {
+                    transport_cmd,
+                    askpass,
+                    shell_join,
+                    ..
+                } => {
+                    spawn_bootstrap(
+                        transport_cmd,
+                        *askpass,
+                        *shell_join,
+                        agent_resolver,
+                        askpass_provider.clone(),
+                        &conn_log,
+                    )
+                    .await?
+                }
+                SpawnSpec::DirectCopy(plan) => {
+                    spawn_direct_copy(plan, agent_resolver, &conn_log).await?
+                }
+                SpawnSpec::CustomShell {
+                    command,
+                    skip_bootstrap,
+                    ..
+                } => {
+                    spawn_custom_shell(command, *skip_bootstrap, agent_resolver, &conn_log).await?
+                }
+            };
             conn_log.log("Setting up RPC services...");
             let expose_local_fs = preferences.load().behavior.expose_local_fs;
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
@@ -1221,7 +1657,7 @@ pub(super) async fn connect(
     // the client-local filesystem from within the remote session.
     // Also set up hairpin diversion so list_files/read/write for the remote
     // VFS are handled locally without round-tripping through the agent.
-    if matches!(connection_target, ConnectionTarget::Remote { .. })
+    if matches!(connection_target, ConnectionTarget::Spawn(_))
         && preferences.load().behavior.expose_local_fs
     {
         match services
@@ -1267,7 +1703,7 @@ pub(super) async fn connect(
 
     let vfs_info: Arc<dyn VfsInfo> = Arc::new(MountedVfsInfoService {
         mounted_vfs: mounted_vfs.clone(),
-        remote_session: matches!(connection_target, ConnectionTarget::Remote { .. }),
+        remote_session: matches!(connection_target, ConnectionTarget::Spawn(_)),
     });
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();

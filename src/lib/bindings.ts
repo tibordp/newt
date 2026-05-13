@@ -380,9 +380,49 @@ async reconnect() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async connectRemote(host: string) : Promise<Result<null, string>> {
+async connectTarget(kind: ConnectionKind) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("connect_remote", { host }) };
+    return { status: "ok", data: await TAURI_INVOKE("connect_target", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverSshHosts() : Promise<Result<DiscoveryResult<SshHostEntry>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_ssh_hosts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverDockerContainers() : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_docker_containers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverPodmanContainers() : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_podman_containers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverKubeContexts() : Promise<Result<DiscoveryResult<string>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_kube_contexts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverKubePods(context: string | null, namespace: string | null) : Promise<Result<DiscoveryResult<KubePodEntry>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_kube_pods", { context, namespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1338,12 +1378,14 @@ default_when: string | null;
  */
 user_overridden: boolean }
 export type ConfirmAction = { type: "delete_selected"; paths: VfsPath[] }
+export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,
  * not in this struct or the connections file.
  */
-export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "remote"; host: string } | { type: "sftp"; host: string }) & { id: string; name: string }
+export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }) & { id: string; name: string }
 export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
+export type ContainerEntry = { id: string; name: string; image: string; state: string }
 /**
  * How to render a byte range when copying to the clipboard.
  */
@@ -1370,6 +1412,12 @@ export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "acces
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
 export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DiscoveryResult<T> = { items: T[]; 
+/**
+ * Best-effort failure note. When present, the dialog should show this
+ * dimmed under the combo-box instead of an empty list.
+ */
+warning?: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
@@ -1431,6 +1479,7 @@ mounts: boolean;
 recent_folders: boolean }
 export type IssueAction = "skip" | "overwrite" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type KubePodEntry = { namespace: string; name: string; containers: string[] }
 export type ModalContext = { pane_handle: PaneHandle | null }
 export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
@@ -1456,7 +1505,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { 
+/**
+ * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
+ * when opened cold from the palette.
+ */
+initial: ConnectionKind } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.
@@ -1509,7 +1563,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { host: string } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { 
+/**
+ * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
+ * when opened cold from the palette.
+ */
+initial: ConnectionKind } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.
@@ -1612,6 +1671,7 @@ export type SearchMatch = { offset: number; length: number }
 export type SearchPattern = { Literal: number[] } | { Regex: string }
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "modified" | "accessed" | "created"
+export type SshHostEntry = { host: string; hostname?: string | null; user?: string | null }
 export type TerminalHandle = number
 export type ThemeMode = "system" | "light" | "dark"
 /**

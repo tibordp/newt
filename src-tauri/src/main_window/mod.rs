@@ -33,8 +33,9 @@ use self::session::Session;
 use self::terminal::Terminal;
 
 pub use self::session::{
-    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, TauriAgentResolver,
-    ssh_transport_cmd,
+    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, DirectCopyPlan, SpawnSpec,
+    TauriAgentResolver, docker_direct_copy_plan, docker_transport_cmd, kube_transport_cmd,
+    podman_direct_copy_plan, podman_transport_cmd, ssh_transport_cmd,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -427,7 +428,9 @@ pub enum ModalDataKind {
         summary: String,
     },
     ConnectRemote {
-        host: String,
+        /// Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
+        /// when opened cold from the palette.
+        initial: crate::connections::ConnectionKind,
     },
     MountSftp {
         host: String,

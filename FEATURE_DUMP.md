@@ -941,12 +941,15 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 **Connection profiles** are saved connection configurations stored in `~/.config/newt/connections.toml`. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Linux Secret Service via `keyring` crate) under the service name `com.newt.credentials`.
 
-**Three profile types**:
+**Profile types**:
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
 - **SFTP**: Host (`user@hostname`).
-- **Remote**: Host (`user@hostname`). Connecting opens a new window.
+- **SSH**: Host (`user@hostname`) + optional `forward_agent` flag (`-A`). Connecting opens a new window.
+- **Docker** / **Podman**: Container name + optional user + `bootstrapless` flag (defaults to true: `docker cp` / `podman cp` + direct exec; disable to use the sh-bootstrap path with hash-keyed caching).
+- **Kube**: kubectl context, namespace, pod, container.
+- **Custom**: Caller-supplied shell command run locally via `sh -c`. The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
 
-Profiles are created via the **Save as connection profile** checkbox in the S3 Mount, SFTP Mount, and Remote Connect dialogs.
+Profiles are created via the **Save as connection profile** checkbox in the S3 Mount, SFTP Mount, and Connect dialogs.
 
 **Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing all saved connection profiles.
 
@@ -957,25 +960,46 @@ Profiles are created via the **Save as connection profile** checkbox in the S3 M
 - **Escape**: Closes the palette.
 - Empty state: "No saved connections. Use the connect or mount dialogs to save one."
 
-### Remote Mode (SSH)
+### Remote Sessions
 
-**Connecting**: Via dialog (Mod+Shift+R) or command line (`newt --connect user@host`). The dialog includes a **Save as connection profile** checkbox.
+Newt opens an agent session over any of these transports. The frontend / IPC layer is identical regardless of transport — only the spawn step differs.
 
-**Bootstrap protocol**:
-1. Newt spawns an SSH process and sends a bootstrap shell script to the remote host.
-2. The script detects the remote platform and architecture (`uname -s`, `uname -m`).
+| Transport | CLI | Notes |
+|---|---|---|
+| Local | (default) | No subprocess; services run in-process. |
+| SSH | `--target=ssh:user@host` | Uses `~/.ssh/config`, askpass for passwords / host keys. |
+| SSH (agent forwarding) | `--target=ssh-agent:user@host` | Adds `-A`. Lets the remote agent's SSH/SFTP invocations reuse host keys. |
+| pkexec | `--target=pkexec` | Linux only. Elevated agent via Polkit. |
+| Docker | `--target=docker:[user@]<container>` | Default: bootstrapless (`docker cp` + direct exec). Local engine, fast transfer, works for sh-less images. |
+| Docker (bootstrap) | `--target=docker-bootstrap:[user@]<container>` | Opt back into the sh bootstrap (hash-keyed agent cache; avoids re-upload on reconnect). |
+| Podman | `--target=podman:[user@]<container>` | Same shape / default as docker. |
+| Podman (bootstrap) | `--target=podman-bootstrap:[user@]<container>` | Same shape as docker-bootstrap. |
+| Kubernetes | `--target=kube:[context/][namespace/]pod[:container]` | `kubectl exec -i`. Bootstrap-only (kubectl cp itself needs tar). |
+| Custom | `--target='custom:<shell command>'` | Runs locally via `sh -c`; bootstrap exposed as `$NEWT_BOOTSTRAP` for the user to splice in (e.g. `ssh host "$NEWT_BOOTSTRAP"`, `bash -c "$NEWT_BOOTSTRAP"`). |
+
+The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. For Docker/Podman/Kube the dialog populates a combo-box with live targets (`docker ps`, `podman ps`, `kubectl get pods`), and for SSH it parses `~/.ssh/config` for host aliases. Discovery is per-dialog ephemeral state — no persistent caching.
+
+**Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
+1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.
+2. The script detects platform and architecture (`uname -s`, `uname -m`).
 3. It checks a cache directory (`~/.cache/newt/`) for a matching `newt-agent` binary (keyed by a blake3 hash of the local agent binary).
-4. If cached and current: Executes immediately (`NEWT:READY`).
-5. If missing or outdated: Requests upload (`NEWT:NEED:triple:caps`). Newt compresses the agent binary with gzip (if remote supports it) and uploads it. The script caches it for future use and cleans up old versions.
-6. The agent enters RPC mode, and all further communication happens over the binary RPC protocol (bincode over stdin/stdout).
+4. If cached: Executes immediately (`NEWT:READY`).
+5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script caches it for future use and cleans up old versions.
+6. The agent enters RPC mode; all further communication is bincode over stdin/stdout.
 
-**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote host. The UI is identical to local mode — the abstraction is transparent. If `behavior.expose_local_fs` is enabled, the client-local filesystem is automatically mounted as a Remote VFS (see VFS section).
+**Bootstrapless (direct-copy) protocol** (Docker / Podman only):
+1. Newt runs `<engine> inspect --format='{{.Os}}/{{.Architecture}}' <container>` and maps the result to an agent target triple.
+2. It runs `<engine> cp <local-agent> <container>:/tmp/newt-agent-<hash>`.
+3. It execs `<engine> exec -i <container> /tmp/newt-agent-<hash>` and uses that pipe as the RPC channel.
+No shell or coreutils in the container required, but every connect re-uploads (no cache).
 
-**Connection logging**: Every step (SSH negotiation, bootstrap progress, agent startup) is logged. The Connection Log dialog shows this log in real-time.
+**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote side. The UI is identical to local mode. If `behavior.expose_local_fs` is enabled, the client-local filesystem is automatically mounted as a Remote VFS (see VFS section).
 
-**SSH stderr**: Captured in a background task and appended to the connection log. Useful for debugging authentication failures.
+**Askpass** is only wired for SSH; daemon-mediated transports (docker / kubectl / podman) skip it since the daemon handles auth out of band.
 
-**Process safety** (Linux): The SSH process has `PR_SET_PDEATHSIG=SIGTERM` set, so if the Tauri process crashes, the remote agent is automatically killed. Prevents zombie processes on the remote host.
+**Connection logging**: Every step (transport launch, bootstrap progress, agent startup) is logged. The Connection Log dialog shows it in real-time. Transport stderr is captured in a background task and appended.
+
+**Process safety** (Linux): Spawned transports run with `PR_SET_PDEATHSIG=SIGTERM`, so if the Tauri process crashes the agent is killed too. Prevents zombies on the remote host.
 
 ### Elevated Mode (pkexec — Linux only)
 

@@ -247,13 +247,16 @@ pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn connect_remote(webview: tauri::Webview, host: String) -> Result<(), Error> {
+pub async fn connect_target(
+    webview: tauri::Webview,
+    kind: crate::connections::ConnectionKind,
+) -> Result<(), Error> {
+    let (target, label) = crate::connections::connection_target_for(&kind)
+        .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
     crate::main_window::spawn_main_window(
         webview.app_handle(),
-        ConnectionTarget::Remote {
-            transport_cmd: crate::main_window::ssh_transport_cmd(&host),
-        },
-        format!("Newt [{}]", host),
+        target,
+        format!("Newt [{}]", label),
         [None, None],
     )?;
     Ok(())

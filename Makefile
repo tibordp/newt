@@ -64,7 +64,7 @@ define linux_rule
 $(DIST)/$(1)/newt-agent: FORCE
 	CARGO_TARGET_DIR=$(call CARGO_TARGET_DIR_FOR,$(1)) cargo zigbuild --release --target $(1) -p newt-agent
 	@mkdir -p $$(dir $$@)
-	cp $(call CARGO_TARGET_DIR_FOR,$(1))/$(1)/release/newt-agent $$@
+	install -m 755 $(call CARGO_TARGET_DIR_FOR,$(1))/$(1)/release/newt-agent $$@
 	$(SHA256) $$@ > $$@.sha256
 endef
 
@@ -74,7 +74,7 @@ define darwin_rule
 $(DIST)/$(1)/newt-agent: FORCE
 	CARGO_TARGET_DIR=$(call CARGO_TARGET_DIR_FOR,$(1)) cargo build --release --target $(1) -p newt-agent
 	@mkdir -p $$(dir $$@)
-	cp $(call CARGO_TARGET_DIR_FOR,$(1))/$(1)/release/newt-agent $$@
+	install -m 755 $(call CARGO_TARGET_DIR_FOR,$(1))/$(1)/release/newt-agent $$@
 	$(SHA256) $$@ > $$@.sha256
 endef
 

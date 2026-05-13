@@ -285,7 +285,10 @@ pub fn dialog(
                     }
                 }
                 DialogKind::ConnectRemote => ModalDataKind::ConnectRemote {
-                    host: String::new(),
+                    initial: crate::connections::ConnectionKind::Ssh {
+                        host: String::new(),
+                        forward_agent: false,
+                    },
                 },
                 DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),
