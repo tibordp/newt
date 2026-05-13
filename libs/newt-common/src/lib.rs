@@ -85,6 +85,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[cfg(unix)]
 impl From<nix::Error> for Error {
     fn from(e: nix::Error) -> Self {
         let kind = match e {
@@ -146,6 +147,7 @@ impl From<openssh_sftp_client::Error> for Error {
     }
 }
 
+#[cfg(unix)]
 impl From<pty_process::Error> for Error {
     fn from(e: pty_process::Error) -> Self {
         Self {

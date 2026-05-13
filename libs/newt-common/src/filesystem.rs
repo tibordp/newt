@@ -113,6 +113,17 @@ pub struct FsStats {
     total_bytes: u64,
 }
 
+impl FsStats {
+    pub fn new(free_bytes: u64, available_bytes: u64, total_bytes: u64) -> Self {
+        Self {
+            free_bytes,
+            available_bytes,
+            total_bytes,
+        }
+    }
+}
+
+#[cfg(unix)]
 impl From<nix::sys::statvfs::Statvfs> for FsStats {
     #[allow(clippy::unnecessary_cast)]
     fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
@@ -226,11 +237,7 @@ impl UidGidCache {
             }
         }
 
-        let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
-        let group = match group {
-            Some(g) => UserGroup::Name(g.name),
-            None => UserGroup::Id(gid),
-        };
+        let group = lookup_group(gid)?;
 
         let mut groups = self.local_groups.write();
         groups.insert(gid, group.clone());
@@ -246,17 +253,43 @@ impl UidGidCache {
             }
         }
 
-        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
-        let user = match user {
-            Some(u) => UserGroup::Name(u.name),
-            None => UserGroup::Id(uid),
-        };
+        let user = lookup_user(uid)?;
 
         let mut users = self.local_users.write();
         users.insert(uid, user.clone());
 
         Ok(user)
     }
+}
+
+#[cfg(unix)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
+    Ok(match group {
+        Some(g) => UserGroup::Name(g.name),
+        None => UserGroup::Id(gid),
+    })
+}
+
+#[cfg(unix)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
+    Ok(match user {
+        Some(u) => UserGroup::Name(u.name),
+        None => UserGroup::Id(uid),
+    })
+}
+
+#[cfg(windows)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    // Windows has no POSIX gid space; the local FS never produces real gids
+    // (`VfsMetadata.gid` is None), so this should be unreachable in practice.
+    Ok(UserGroup::Id(gid))
+}
+
+#[cfg(windows)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    Ok(UserGroup::Id(uid))
 }
 
 #[async_trait::async_trait]
@@ -484,12 +517,36 @@ pub trait ShellService: Send + Sync {
 
 pub struct LocalShellService;
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
     async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
         let expanded =
             tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
+        Ok(expanded)
+    }
+}
+
+#[cfg(windows)]
+#[async_trait::async_trait]
+impl ShellService for LocalShellService {
+    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
+        // Windows has no pwd database, so only the bare `~` / `~/...` form is supported.
+        // `~user/...` is left as-is.
+        let expanded = if input == "~" {
+            dirs::home_dir().ok_or_else(|| Error::custom("could not determine home directory"))?
+        } else if let Some(rest) = input
+            .strip_prefix("~/")
+            .or_else(|| input.strip_prefix("~\\"))
+        {
+            let mut home = dirs::home_dir()
+                .ok_or_else(|| Error::custom("could not determine home directory"))?;
+            home.push(rest);
+            home
+        } else {
+            PathBuf::from(input)
+        };
         Ok(expanded)
     }
 }

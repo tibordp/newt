@@ -440,6 +440,7 @@ impl HotPathsProvider for Remote {
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(uri).ok()?;
     if parsed.scheme() != "file" {

@@ -6,3 +6,9 @@ members = [
     "libs/newt-agent/",
     "libs/newt-common/",
 ]
+# Windows builds only target the main app shell — no agent, no pty-process.
+# Build the agent (Unix-only) explicitly with `cargo build -p newt-agent`.
+default-members = [
+    "src-tauri/",
+    "libs/newt-common/",
+]

@@ -28,9 +28,14 @@ pub async fn cmd_send_to_terminal(
         .get_effective_selection()
         .iter()
         .filter_map(|p| {
+            // `&OsStr` doesn't implement `Into<Quotable>` on Windows (OsStr is
+            // WTF-8, not byte-clean), so funnel through `to_string_lossy`.
+            // Non-UTF-8 names get U+FFFD; acceptable here — terminal use on
+            // Windows local sessions is unsupported, and remote paths are UTF-8.
             p.path
                 .file_name()
-                .map(shell_quote::Bash::quote)
+                .map(|n| n.to_string_lossy().into_owned())
+                .map(|s| shell_quote::Bash::quote(&s))
                 .map(|mut b: Vec<u8>| {
                     b.push(b' ');
                     b

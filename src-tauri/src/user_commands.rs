@@ -8,6 +8,41 @@ use crate::main_window::MainWindowContext;
 use crate::main_window::OperationStatus;
 use crate::main_window::PaneHandle;
 
+#[cfg(unix)]
+fn host_hostname() -> String {
+    nix::unistd::gethostname()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn host_hostname() -> String {
+    use windows_sys::Win32::System::SystemInformation::{
+        ComputerNamePhysicalDnsHostname, GetComputerNameExW,
+    };
+    // Probe size first (call returns 0 + sets `size` to required len when
+    // buffer is too small), then issue the real call.
+    let mut size: u32 = 0;
+    unsafe {
+        GetComputerNameExW(
+            ComputerNamePhysicalDnsHostname,
+            std::ptr::null_mut(),
+            &mut size,
+        );
+    }
+    if size == 0 {
+        return String::new();
+    }
+    let mut buf = vec![0u16; size as usize];
+    let ok =
+        unsafe { GetComputerNameExW(ComputerNamePhysicalDnsHostname, buf.as_mut_ptr(), &mut size) };
+    if ok == 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..size as usize])
+}
+
 // --- Template types ---
 
 /// Template object for file data in minijinja templates.
@@ -233,10 +268,7 @@ fn build_template_context(
         .cloned()
         .unwrap_or(minijinja::Value::UNDEFINED);
 
-    let hostname = nix::unistd::gethostname()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_default();
+    let hostname = host_hostname();
 
     let env_obj = minijinja::Value::from_object(EnvObject);
 

@@ -738,10 +738,40 @@ impl Pane {
             }
         }
 
-        let mut path = PathBuf::from("/");
-        for c in components {
-            path.push(c);
-        }
+        // Rebuild the path. Two flavors:
+        //   * Unix-rooted (`/foo` — every non-local VFS, plus local-on-Unix):
+        //     join components with `/`. Important on Windows: `PathBuf::push`
+        //     uses `\`, which would produce `/home\foo` for remote paths.
+        //   * Windows-prefixed (`C:\foo` — local VFS on Windows): use
+        //     `PathBuf::push`, which correctly inserts `\`.
+        let base_prefix: PathBuf = base
+            .path
+            .components()
+            .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            .collect();
+        let has_drive_prefix = base
+            .path
+            .components()
+            .any(|c| matches!(c, Component::Prefix(_)));
+
+        let path = if has_drive_prefix {
+            let mut p = base_prefix;
+            for c in components {
+                p.push(c);
+            }
+            p
+        } else {
+            // Build with `/` separators regardless of host OS so paths sent
+            // over RPC to a Unix agent are well-formed.
+            let mut s = std::ffi::OsString::from("/");
+            for (i, c) in components.iter().enumerate() {
+                if i > 0 {
+                    s.push("/");
+                }
+                s.push(c);
+            }
+            PathBuf::from(s)
+        };
         VfsPath::new(vfs_id, path)
     }
 

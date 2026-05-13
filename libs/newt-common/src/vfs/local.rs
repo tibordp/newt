@@ -7,11 +7,12 @@ use notify::event::RemoveKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
+#[cfg(unix)]
 use std::os::unix::prelude::MetadataExt;
 use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode};
+use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
 use crate::{Error, ToUnix};
 
 use super::{
@@ -187,7 +188,7 @@ impl Vfs for LocalVfs {
 
                 if let Some(parent) = path.parent() {
                     let metadata = parent.symlink_metadata()?;
-                    let mode = metadata.mode();
+                    let (mode_field, user_field, group_field) = unix_owner_bits(&metadata, &cache);
                     let file = File {
                         name: "..".to_string(),
                         size: None,
@@ -195,9 +196,9 @@ impl Vfs for LocalVfs {
                         is_symlink: metadata.is_symlink(),
                         symlink_target: None,
                         is_hidden: false,
-                        user: cache.user_name(metadata.uid()).ok(),
-                        group: cache.group_name(metadata.gid()).ok(),
-                        mode: Some(Mode(mode)),
+                        user: user_field,
+                        group: group_field,
+                        mode: mode_field,
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -233,7 +234,7 @@ impl Vfs for LocalVfs {
                         None
                     };
 
-                    let mode = metadata.mode();
+                    let (mode_field, user_field, group_field) = unix_owner_bits(&metadata, &cache);
                     let file = File {
                         name: name.clone(),
                         size: (!is_dir).then_some(metadata.len()),
@@ -241,9 +242,9 @@ impl Vfs for LocalVfs {
                         is_symlink: file_type.is_symlink(),
                         symlink_target,
                         is_hidden: name.starts_with('.'),
-                        user: cache.user_name(metadata.uid()).ok(),
-                        group: cache.group_name(metadata.gid()).ok(),
-                        mode: Some(Mode(mode)),
+                        user: user_field,
+                        group: group_field,
+                        mode: mode_field,
                         modified: metadata.modified().map(|t| t.to_unix()).ok(),
                         accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                         created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -281,10 +282,7 @@ impl Vfs for LocalVfs {
 
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error> {
         let path = path.to_path_buf();
-        Ok(tokio::task::spawn_blocking(move || {
-            nix::sys::statvfs::statvfs(&path).ok().map(FsStats::from)
-        })
-        .await?)
+        Ok(tokio::task::spawn_blocking(move || platform_fs_stats(&path)).await?)
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
@@ -353,7 +351,7 @@ impl Vfs for LocalVfs {
 
             let is_dir = meta.is_dir();
             let size = meta.len();
-            let mode = meta.mode();
+            let (mode_field, user_field, group_field) = unix_owner_bits(&meta, &cache);
 
             // MIME detection for files: try extension first, then content sniffing
             let mime_type = if is_dir {
@@ -389,9 +387,9 @@ impl Vfs for LocalVfs {
                 is_dir,
                 is_symlink,
                 symlink_target,
-                user: cache.user_name(meta.uid()).ok(),
-                group: cache.group_name(meta.gid()).ok(),
-                mode: Some(Mode(mode)),
+                user: user_field,
+                group: group_field,
+                mode: mode_field,
                 modified: meta.modified().map(|t| t.to_unix()).ok(),
                 accessed: meta.accessed().map(|t| t.to_unix()).ok(),
                 created: meta.created().map(|t| t.to_unix()).ok(),
@@ -452,7 +450,7 @@ impl Vfs for LocalVfs {
             if is_symlink && let Ok(target_meta) = std::fs::metadata(&path) {
                 is_dir = target_meta.is_dir();
             }
-            let mode = meta.mode();
+            let (mode_field, user_field, group_field) = unix_owner_bits(&meta, &cache);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -464,9 +462,9 @@ impl Vfs for LocalVfs {
                 is_dir,
                 is_symlink,
                 symlink_target,
-                user: cache.user_name(meta.uid()).ok(),
-                group: cache.group_name(meta.gid()).ok(),
-                mode: Some(Mode(mode)),
+                user: user_field,
+                group: group_field,
+                mode: mode_field,
                 modified: meta.modified().map(|t| t.to_unix()).ok(),
                 accessed: meta.accessed().map(|t| t.to_unix()).ok(),
                 created: meta.created().map(|t| t.to_unix()).ok(),
@@ -496,10 +494,15 @@ impl Vfs for LocalVfs {
         let target = target.to_path_buf();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
-            std::os::unix::fs::symlink(&target, &link)?;
+            {
+                std::os::unix::fs::symlink(&target, &link)?;
+                Ok(())
+            }
             #[cfg(not(unix))]
-            return Err(Error::not_supported());
-            Ok(())
+            {
+                let _ = (link, target);
+                Err(Error::not_supported())
+            }
         })
         .await?
     }
@@ -538,12 +541,12 @@ impl Vfs for LocalVfs {
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            use std::os::unix::fs::MetadataExt;
             let meta = std::fs::symlink_metadata(&path)?;
+            let (permissions, uid, gid) = unix_meta_ids(&meta);
             Ok(VfsMetadata {
-                permissions: Some(meta.mode()),
-                uid: Some(meta.uid()),
-                gid: Some(meta.gid()),
+                permissions,
+                uid,
+                gid,
                 atime: meta.accessed().ok(),
                 mtime: meta.modified().ok(),
             })
@@ -568,6 +571,24 @@ impl Vfs for LocalVfs {
                     nix::unistd::chown(&path, uid, gid)?;
                 }
 
+                if meta.atime.is_some() || meta.mtime.is_some() {
+                    let current_meta = std::fs::metadata(&path)?;
+                    let atime = meta.atime.map_or_else(
+                        || filetime::FileTime::from_last_access_time(&current_meta),
+                        filetime::FileTime::from_system_time,
+                    );
+                    let mtime = meta.mtime.map_or_else(
+                        || filetime::FileTime::from_last_modification_time(&current_meta),
+                        filetime::FileTime::from_system_time,
+                    );
+                    filetime::set_file_times(&path, atime, mtime)?;
+                }
+            }
+            #[cfg(windows)]
+            {
+                // Local Windows builds don't surface POSIX mode/uid/gid bits
+                // (`get_metadata` returns them as `None`), so we only honor
+                // atime/mtime — everything else is a no-op.
                 if meta.atime.is_some() || meta.mtime.is_some() {
                     let current_meta = std::fs::metadata(&path)?;
                     let atime = meta.atime.map_or_else(
@@ -607,18 +628,7 @@ impl Vfs for LocalVfs {
 
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let stats = nix::sys::statvfs::statvfs(&path)?;
-            let frag = stats.fragment_size() as u64;
-            Ok(VfsSpaceInfo {
-                total_bytes: Some(stats.blocks() as u64 * frag),
-                used_bytes: Some(
-                    (stats.blocks() as u64).saturating_sub(stats.blocks_free() as u64) * frag,
-                ),
-                available_bytes: Some(stats.blocks_available() as u64 * frag),
-            })
-        })
-        .await?
+        tokio::task::spawn_blocking(move || platform_space_info(&path)).await?
     }
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
@@ -653,4 +663,108 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
     }
+}
+
+// ---------------------------------------------------------------------------
+// Platform-specific helpers
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn unix_owner_bits(
+    meta: &std::fs::Metadata,
+    cache: &Arc<UidGidCache>,
+) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
+    (
+        Some(Mode(meta.mode())),
+        cache.user_name(meta.uid()).ok(),
+        cache.group_name(meta.gid()).ok(),
+    )
+}
+
+#[cfg(windows)]
+fn unix_owner_bits(
+    _meta: &std::fs::Metadata,
+    _cache: &Arc<UidGidCache>,
+) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
+    (None, None, None)
+}
+
+#[cfg(unix)]
+fn unix_meta_ids(meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
+    (Some(meta.mode()), Some(meta.uid()), Some(meta.gid()))
+}
+
+#[cfg(windows)]
+fn unix_meta_ids(_meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
+    (None, None, None)
+}
+
+#[cfg(unix)]
+fn platform_fs_stats(path: &Path) -> Option<FsStats> {
+    nix::sys::statvfs::statvfs(path).ok().map(FsStats::from)
+}
+
+#[cfg(windows)]
+fn platform_fs_stats(path: &Path) -> Option<FsStats> {
+    win_disk_space(path).map(|(total, free, available)| {
+        FsStats::new(
+            /* free_bytes */ free, /* available_bytes */ available,
+            /* total_bytes */ total,
+        )
+    })
+}
+
+#[cfg(unix)]
+fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
+    let stats = nix::sys::statvfs::statvfs(path)?;
+    let frag = stats.fragment_size() as u64;
+    Ok(VfsSpaceInfo {
+        total_bytes: Some(stats.blocks() as u64 * frag),
+        used_bytes: Some((stats.blocks() as u64).saturating_sub(stats.blocks_free() as u64) * frag),
+        available_bytes: Some(stats.blocks_available() as u64 * frag),
+    })
+}
+
+#[cfg(windows)]
+fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
+    match win_disk_space(path) {
+        Some((total, free, available)) => Ok(VfsSpaceInfo {
+            total_bytes: Some(total),
+            used_bytes: Some(total.saturating_sub(free)),
+            available_bytes: Some(available),
+        }),
+        None => Ok(VfsSpaceInfo {
+            total_bytes: None,
+            used_bytes: None,
+            available_bytes: None,
+        }),
+    }
+}
+
+/// Returns `(total_bytes, free_bytes, available_to_caller_bytes)` for the
+/// volume containing `path`. Returns `None` if the Win32 call fails (path
+/// doesn't exist, network share unavailable, etc.).
+#[cfg(windows)]
+fn win_disk_space(path: &Path) -> Option<(u64, u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    // GetDiskFreeSpaceExW accepts any path on the volume; widen + NUL-terminate.
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut free_caller: u64 = 0;
+    let mut total: u64 = 0;
+    let mut total_free: u64 = 0;
+    // SAFETY: All three out-params are valid u64 pointers; `wide` is NUL-terminated.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_caller, &mut total, &mut total_free)
+    };
+    if ok == 0 {
+        return None;
+    }
+    Some((total, total_free, free_caller))
 }

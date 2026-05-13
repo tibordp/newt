@@ -1,26 +1,34 @@
+use std::path::PathBuf;
+
+#[cfg(unix)]
 use std::{
     collections::HashMap,
     ffi::CStr,
     mem::MaybeUninit,
     os::unix::process::ExitStatusExt,
-    path::PathBuf,
     sync::{Arc, atomic::AtomicU32},
 };
 
+#[cfg(unix)]
 use parking_lot::Mutex;
+#[cfg(unix)]
 use pty_process::{OwnedReadPty, OwnedWritePty};
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(unix)]
 use log::{debug, error, info};
 
 use crate::{Error, rpc::Communicator};
 
 /// Bytes read in one PTY pull. Matches a typical terminal flush; bigger
 /// reads block emitting until they fill, smaller reads waste syscalls.
+#[cfg(unix)]
 const PTY_READ_BUFFER_SIZE: usize = 1024;
 
 /// Buffer size for `getpwuid_r`. POSIX gives no upper bound; 1 KiB is the
 /// long-standing convention and is enough for every reasonable passwd entry.
+#[cfg(unix)]
 const PASSWD_BUFFER_SIZE: usize = 1024;
 
 #[derive(
@@ -53,17 +61,20 @@ pub trait TerminalClient: Send + Sync {
     async fn wait(&self, handle: TerminalHandle) -> Result<ExitStatus, Error>;
 }
 
+#[cfg(unix)]
 struct LocalTerminal {
     pty_read: tokio::sync::Mutex<OwnedReadPty>,
     pty_write: tokio::sync::Mutex<OwnedWritePty>,
     child: tokio::sync::Mutex<tokio::process::Child>,
 }
 
+#[cfg(unix)]
 struct LocalInner {
     handle: AtomicU32,
     terminals: Mutex<HashMap<TerminalHandle, Arc<LocalTerminal>>>,
 }
 
+#[cfg(unix)]
 impl LocalInner {
     fn new() -> Self {
         Self {
@@ -73,7 +84,11 @@ impl LocalInner {
     }
 }
 
+#[cfg(unix)]
 pub struct Local(Arc<LocalInner>);
+
+#[cfg(windows)]
+pub struct Local;
 
 impl Default for Local {
     fn default() -> Self {
@@ -81,12 +96,44 @@ impl Default for Local {
     }
 }
 
+#[cfg(unix)]
 impl Local {
     pub fn new() -> Self {
         Self(Arc::new(LocalInner::new()))
     }
 }
 
+#[cfg(windows)]
+impl Local {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(windows)]
+#[async_trait::async_trait]
+impl TerminalClient for Local {
+    async fn create(&self, _options: TerminalOptions) -> Result<TerminalHandle, Error> {
+        Err(Error::not_supported())
+    }
+    async fn kill(&self, _handle: TerminalHandle) -> Result<(), Error> {
+        Err(Error::not_supported())
+    }
+    async fn resize(&self, _handle: TerminalHandle, _rows: u16, _cols: u16) -> Result<(), Error> {
+        Err(Error::not_supported())
+    }
+    async fn input(&self, _handle: TerminalHandle, _data: Vec<u8>) -> Result<(), Error> {
+        Err(Error::not_supported())
+    }
+    async fn read(&self, _handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
+        Err(Error::not_supported())
+    }
+    async fn wait(&self, _handle: TerminalHandle) -> Result<ExitStatus, Error> {
+        Err(Error::not_supported())
+    }
+}
+
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl TerminalClient for Local {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
@@ -303,6 +350,7 @@ impl TerminalClient for Remote {
     }
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct Passwd<'a> {
     name: &'a str,
@@ -315,6 +363,7 @@ struct Passwd<'a> {
 /// # Unsafety
 ///
 /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
+#[cfg(unix)]
 fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error> {
     // Create zeroed passwd struct.
     let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
@@ -354,12 +403,14 @@ fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error>
 }
 
 /// User information that is required for a new shell session.
+#[cfg(unix)]
 struct ShellUser {
     user: String,
     home: String,
     shell: String,
 }
 
+#[cfg(unix)]
 impl ShellUser {
     /// look for shell, username, longname, and home dir in the respective environment variables
     /// before falling back on looking in to `passwd`.

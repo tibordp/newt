@@ -126,6 +126,11 @@ impl AskpassProvider for Remote {
 /// Unix domain socket listener that forwards askpass requests from the
 /// `newt-agent` helper binary (selected via `SSH_ASKPASS=<agent-binary>`
 /// and `NEWT_ASKPASS_SOCK=<socket>`) to an `AskpassProvider`.
+///
+/// Windows builds omit this listener entirely — the askpass flow only fires
+/// when spawning local helper binaries (pkexec/ssh), which isn't a path the
+/// Windows host shell takes.
+#[cfg(unix)]
 pub mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -204,5 +209,28 @@ pub mod listener {
             socket_path: sock_path,
             shutdown_tx: Some(shutdown_tx),
         })
+    }
+}
+
+/// Windows shim: keeps the call sites in `src-tauri` compile-clean. Bootstrap
+/// transports that need askpass (pkexec, SSH-with-prompt) aren't reachable
+/// from the Windows host shell — if someone wires one up anyway, `spawn`
+/// fails fast with `Unsupported`.
+#[cfg(windows)]
+pub mod listener {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::AskpassProvider;
+
+    pub struct AskpassListener {
+        pub socket_path: PathBuf,
+    }
+
+    pub fn spawn(_provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "askpass listener requires Unix domain sockets",
+        ))
     }
 }

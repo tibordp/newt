@@ -568,7 +568,7 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let pane = ctx.panes().get(pane_handle).unwrap();
 
     #[cfg(windows)]
-    const LINE_ENDING: &'static str = "\r\n";
+    const LINE_ENDING: &str = "\r\n";
     #[cfg(not(windows))]
     const LINE_ENDING: &str = "\n";
 

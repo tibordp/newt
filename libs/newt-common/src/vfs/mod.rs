@@ -105,7 +105,7 @@ impl VfsPath {
     pub fn root(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         assert!(
-            path.is_absolute(),
+            is_logical_root(&path),
             "VfsPath must be absolute, got: {path:?}"
         );
         Self {
@@ -117,7 +117,7 @@ impl VfsPath {
     pub fn new(vfs_id: VfsId, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         assert!(
-            path.is_absolute(),
+            is_logical_root(&path),
             "VfsPath must be absolute, got: {path:?}"
         );
         Self { vfs_id, path }
@@ -139,6 +139,29 @@ impl VfsPath {
 
     pub fn file_name(&self) -> Option<&std::ffi::OsStr> {
         self.path.file_name()
+    }
+}
+
+/// A VfsPath's `path` is logical — it lives in the namespace of whichever VFS
+/// owns it, not the host's filesystem. The native check `Path::is_absolute()`
+/// is *host-specific*: on Windows it demands a drive prefix (`C:\…`) and
+/// rejects `/foo`, which is wrong for every non-local VFS we have (every
+/// remote/synthetic VFS uses Unix-style paths). What we actually require is
+/// that the path begins with a root component:
+///
+///   * `RootDir`              → `/foo` (every non-local VFS, plus local on Unix)
+///   * `Prefix` + `RootDir`   → `C:\foo` (local VFS on Windows)
+///
+/// On Unix this is exactly equivalent to `Path::is_absolute()`; on Windows it
+/// additionally accepts the Unix-rooted form, which is the right invariant
+/// for the logical-path role this type plays.
+fn is_logical_root(path: &Path) -> bool {
+    use std::path::Component;
+    let mut comps = path.components();
+    match comps.next() {
+        Some(Component::RootDir) => true,
+        Some(Component::Prefix(_)) => matches!(comps.next(), Some(Component::RootDir)),
+        _ => false,
     }
 }
 

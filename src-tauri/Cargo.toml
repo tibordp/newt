@@ -26,7 +26,6 @@ arboard = "3"
 parking_lot = "0.12"
 treediff = { version = "5", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }
-pty-process = { path = "../libs/pty-process" }
 tokio = { version = "1", features = ["full"] }
 libc = "*"
 shell-quote = "0.7"
@@ -45,17 +44,26 @@ clap = { version = "4", features = ["derive"] }
 axum = "0.8"
 async-compression = { version = "0.4.4", features = ["zstd", "tokio"] }
 blake3 = "1"
-nix = { version = "0.31", features = ["fs", "hostname"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 arc-swap = "1.8.2"
-keyring = { version = "3", features = ["apple-native", "linux-native"] }
+keyring = { version = "3", features = ["apple-native", "linux-native", "windows-native"] }
 minijinja = "2"
 flate2 = "1.1.9"
 tempfile = "3.27.0"
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["fs", "hostname"] }
+pty-process = { path = "../libs/pty-process" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"
