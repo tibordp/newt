@@ -18,6 +18,9 @@ pub struct AppPreferences {
     #[serde(default)]
     #[schemars(title = "Hot Paths")]
     pub hot_paths: HotPathsPreferences,
+    #[serde(default)]
+    #[schemars(title = "Environment")]
+    pub environment: EnvironmentPreferences,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -186,6 +189,36 @@ impl Default for HotPathsPreferences {
             mounts: true,
             recent_folders: true,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct EnvironmentPreferences {
+    /// Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
+    /// where GUI apps don't inherit the user's shell `PATH`, so subprocesses
+    /// like `docker` / `kubectl` / `podman` can't be found at their usual
+    /// install locations. Leading `~` expands to the user's home directory.
+    /// Non-existent entries are silently skipped.
+    #[schemars(title = "Extra PATH Entries")]
+    pub extra_path: Vec<String>,
+}
+
+impl Default for EnvironmentPreferences {
+    fn default() -> Self {
+        // Per-platform defaults aimed at the well-known install locations
+        // for common dev tools. Users can edit / extend in settings.toml.
+        #[cfg(target_os = "macos")]
+        let extra_path = vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
+        #[cfg(target_os = "linux")]
+        let extra_path = vec![
+            "~/.local/bin".into(),
+            "/snap/bin".into(),
+            "/var/lib/flatpak/exports/bin".into(),
+        ];
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let extra_path: Vec<String> = Vec::new();
+        Self { extra_path }
     }
 }
 

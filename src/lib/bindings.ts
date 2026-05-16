@@ -1273,7 +1273,7 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; hot_paths?: HotPathsPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1421,6 +1421,15 @@ warning?: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
+export type EnvironmentPreferences = { 
+/**
+ * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
+ * where GUI apps don't inherit the user's shell `PATH`, so subprocesses
+ * like `docker` / `kubectl` / `podman` can't be found at their usual
+ * install locations. Leading `~` expands to the user's home directory.
+ * Non-existent entries are silently skipped.
+ */
+extra_path: string[] }
 export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
 /**
  * Directory-scoped identifier. When `None`, `name` is used as the
