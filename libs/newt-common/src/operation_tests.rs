@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -8,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::operation::*;
 use crate::test_support::{MockVfs, MockVfsConfig};
+use crate::vfs::path::PathBuf;
 use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
 // ---------------------------------------------------------------------------
@@ -147,11 +147,11 @@ async fn run_operation_cancellable(
 }
 
 fn vfs_path(path: &str) -> VfsPath {
-    VfsPath::root(path)
+    VfsPath::from_wire_str(VfsId::ROOT, path)
 }
 
 fn vfs_path_id(vfs_id: u32, path: &str) -> VfsPath {
-    VfsPath::new(VfsId(vfs_id), path)
+    VfsPath::from_wire_str(VfsId(vfs_id), path)
 }
 
 fn has_completed(events: &[OperationProgress]) -> bool {
@@ -295,7 +295,7 @@ async fn test_delete_error_skip() {
         .file("/a.txt", b"hello")
         .file("/b.txt", b"world")
         .failure(FailureSpec {
-            path: PathBuf::from("/a.txt"),
+            path: PathBuf::from_wire_str("/a.txt"),
             operation: "remove_tree",
             error: crate::Error {
                 kind: crate::ErrorKind::PermissionDenied,
@@ -328,7 +328,7 @@ async fn test_delete_error_retry() {
     let vfs = MockVfs::builder()
         .file("/a.txt", b"hello")
         .failure(FailureSpec {
-            path: PathBuf::from("/a.txt"),
+            path: PathBuf::from_wire_str("/a.txt"),
             operation: "remove_tree",
             error: crate::Error {
                 kind: crate::ErrorKind::Other,
@@ -578,7 +578,7 @@ async fn test_copy_with_symlinks() {
     let snapshot = result.vfs.snapshot();
     let link_entry = snapshot
         .iter()
-        .find(|(p, _)| p == &PathBuf::from("/dst/link"));
+        .find(|(p, _)| p == &PathBuf::from_wire_str("/dst/link"));
     assert_eq!(link_entry.map(|(_, t)| *t), Some("symlink"));
 }
 
@@ -744,7 +744,7 @@ async fn test_copy_create_symlink_option() {
     let snapshot = result.vfs.snapshot();
     let link_entry = snapshot
         .iter()
-        .find(|(p, _)| p == &PathBuf::from("/dst/a.txt"));
+        .find(|(p, _)| p == &PathBuf::from_wire_str("/dst/a.txt"));
     assert_eq!(link_entry.map(|(_, t)| *t), Some("symlink"));
 }
 
@@ -806,7 +806,7 @@ async fn test_move_rename_fails_fallback() {
         .file("/src/a.txt", b"hello")
         .dir("/dst")
         .failure(FailureSpec {
-            path: PathBuf::from("/src/a.txt"),
+            path: PathBuf::from_wire_str("/src/a.txt"),
             operation: "rename",
             error: crate::Error::custom("cross-device link"),
             remaining: None,
@@ -929,7 +929,7 @@ async fn test_move_symlink_not_followed_top_level() {
     let snapshot = result.vfs.snapshot();
     let moved = snapshot
         .iter()
-        .find(|(p, _)| p == &PathBuf::from("/dst/link_to_dir"));
+        .find(|(p, _)| p == &PathBuf::from_wire_str("/dst/link_to_dir"));
     assert_eq!(moved.map(|(_, t)| *t), Some("symlink"));
     // Target must be untouched
     assert!(result.vfs.exists("/target_dir"));
@@ -976,7 +976,7 @@ async fn test_move_symlink_not_followed_inside_dir() {
     let snapshot = result.vfs.snapshot();
     let moved = snapshot
         .iter()
-        .find(|(p, _)| p == &PathBuf::from("/dst/src/link_to_dir"));
+        .find(|(p, _)| p == &PathBuf::from_wire_str("/dst/src/link_to_dir"));
     assert_eq!(moved.map(|(_, t)| *t), Some("symlink"));
     // The target directory contents at /dst/src/ should NOT contain target_dir's children
     assert!(!result.vfs.exists("/dst/src/link_to_dir/precious.txt"));
@@ -1054,7 +1054,7 @@ async fn test_set_permissions_error_skip() {
         .file_with_mode("/a.txt", b"a", 0o644)
         .file_with_mode("/b.txt", b"b", 0o644)
         .failure(FailureSpec {
-            path: PathBuf::from("/a.txt"),
+            path: PathBuf::from_wire_str("/a.txt"),
             operation: "set_metadata",
             error: crate::Error {
                 kind: crate::ErrorKind::PermissionDenied,
@@ -1191,7 +1191,7 @@ async fn test_set_metadata_uid_gid_error_skip() {
         .file_with_owner("/a.txt", b"a", 0o644, 1000, 1000)
         .file_with_owner("/b.txt", b"b", 0o644, 1000, 1000)
         .failure(FailureSpec {
-            path: PathBuf::from("/a.txt"),
+            path: PathBuf::from_wire_str("/a.txt"),
             operation: "set_metadata",
             error: crate::Error {
                 kind: crate::ErrorKind::PermissionDenied,

@@ -1,9 +1,17 @@
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+// The archive index machinery is keyed by Unix-style *relative* path
+// strings. Internally it builds keys via std `PathBuf` with explicit
+// `/`-join workarounds, so it keeps using the std path types. The `Vfs`
+// trait surface speaks our platform-independent `vfs::path::Path`; each
+// trait method converts at the boundary (`path.as_wire_str()`, leading
+// `/` stripped by `normalize_dir_path`).
+use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+
 use crate::filesystem::{File, Mode, UserGroup};
+use crate::vfs::path::{Path, PathBuf};
 use crate::{Error, ErrorKind};
 
 use super::{Breadcrumb, DisplayPathMatch, Vfs, VfsPath};
@@ -34,10 +42,10 @@ pub async fn mount(
 
     let upstream_desc = upstream_vfs.descriptor();
     let upstream_meta = upstream_vfs.mount_meta();
-    let display_path = upstream_desc.format_path(&archive_path, &upstream_meta);
+    let display_path = upstream_desc.format_path(&origin.path, &upstream_meta);
     let mount_meta = display_path.clone().into_bytes();
 
-    let vfs: Arc<dyn Vfs> = if is_zip_name(&archive_path.to_string_lossy()) {
+    let vfs: Arc<dyn Vfs> = if is_zip_name(archive_path.as_wire_str()) {
         Arc::new(ZipArchiveVfs::new(
             upstream_vfs,
             archive_path,
@@ -117,17 +125,19 @@ fn detect_compression_from_name(name: &str) -> iluvatar::CompressionFormat {
 
 fn archive_format_path(path: &Path, mount_meta: &[u8]) -> String {
     let origin_display = String::from_utf8_lossy(mount_meta);
-    let inner = path.to_string_lossy();
-    let inner = inner.trim_start_matches('/');
-    if inner.is_empty() {
+    if path.is_root() {
         origin_display.into_owned()
     } else {
-        format!("{}/{}", origin_display, inner)
+        let inner: Vec<&str> = path.components().collect();
+        format!("{}/{}", origin_display, inner.join("/"))
     }
 }
 
 fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
     let origin_display = String::from_utf8_lossy(mount_meta);
+
+    // Inner archive path segments (no leading slash, no empties).
+    let segments: Vec<&str> = path.components().collect();
 
     // Parse the origin display path into breadcrumbs (e.g. /home/user/file.tar.gz)
     let origin_segments: Vec<&str> = origin_display
@@ -153,7 +163,7 @@ fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
             p.pop();
             p
         };
-        let is_last_overall = i == origin_segments.len() - 1 && path == Path::new("/");
+        let is_last_overall = i == origin_segments.len() - 1 && segments.is_empty();
         crumbs.push(Breadcrumb {
             label: if is_last_overall {
                 seg.to_string()
@@ -165,8 +175,6 @@ fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
     }
 
     // Inner archive path segments
-    let s = path.to_string_lossy();
-    let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
     let mut accumulated = String::new();
     for (i, seg) in segments.iter().enumerate() {
         accumulated.push('/');
@@ -187,16 +195,11 @@ fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
 fn archive_try_parse_display_path(input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
     let origin_display = String::from_utf8_lossy(mount_meta);
     if input == origin_display.as_ref() {
-        return Some(DisplayPathMatch::exact(PathBuf::from("/")));
+        return Some(DisplayPathMatch::exact(PathBuf::root()));
     }
     let rest = input.strip_prefix(origin_display.as_ref())?;
     let rest = rest.strip_prefix('/')?;
-    let path = if rest.is_empty() {
-        PathBuf::from("/")
-    } else {
-        PathBuf::from(format!("/{}", rest))
-    };
-    Some(DisplayPathMatch::exact(path))
+    Some(DisplayPathMatch::exact(PathBuf::from_wire_str(rest)))
 }
 
 fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
@@ -216,11 +219,11 @@ fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
 const MAX_SYMLINK_HOPS: usize = 40;
 
 struct DirectoryTree {
-    dirs: HashMap<PathBuf, Vec<File>>,
+    dirs: HashMap<StdPathBuf, Vec<File>>,
 }
 
 impl DirectoryTree {
-    fn list(&self, path: &Path) -> Result<Vec<File>, Error> {
+    fn list(&self, path: &StdPath) -> Result<Vec<File>, Error> {
         let resolved = self.resolve_path(path, true)?;
         let entries = match self.dirs.get(&resolved) {
             Some(entries) => entries,
@@ -263,13 +266,13 @@ impl DirectoryTree {
         Ok(files)
     }
 
-    fn file_info(&self, path: &Path) -> Result<File, Error> {
+    fn file_info(&self, path: &StdPath) -> Result<File, Error> {
         let normalized = normalize_dir_path(path);
         let resolved = self.resolve_path(&normalized, false)?;
         let mut file = self
             .lookup_entry(&resolved)
             .ok_or_else(|| not_found(format!("file not found: {}", path.display())))?;
-        let parent = resolved.parent().unwrap_or(Path::new(""));
+        let parent = resolved.parent().unwrap_or(StdPath::new(""));
         self.fill_symlink_target_metadata(parent, &mut file);
         Ok(file)
     }
@@ -279,7 +282,7 @@ impl DirectoryTree {
     /// local filesystem VFS. The entry keeps `is_symlink=true` and
     /// `symlink_target` intact.  If resolution fails (broken link), the
     /// original metadata is left unchanged.
-    fn fill_symlink_target_metadata(&self, parent: &Path, file: &mut File) {
+    fn fill_symlink_target_metadata(&self, parent: &StdPath, file: &mut File) {
         if !file.is_symlink {
             return;
         }
@@ -297,7 +300,7 @@ impl DirectoryTree {
     }
 
     /// Look up an entry by its exact normalized path (no symlink resolution).
-    fn lookup_entry(&self, normalized: &Path) -> Option<File> {
+    fn lookup_entry(&self, normalized: &StdPath) -> Option<File> {
         let parent = normalized.parent()?;
         let name = normalized.file_name()?.to_string_lossy();
         let children = self.dirs.get(parent)?;
@@ -308,11 +311,11 @@ impl DirectoryTree {
     ///
     /// If `follow_last` is true, the final component is also followed if it's
     /// a symlink. Returns the resolved normalized path (no leading slash).
-    fn resolve_path(&self, path: &Path, follow_last: bool) -> Result<PathBuf, Error> {
+    fn resolve_path(&self, path: &StdPath, follow_last: bool) -> Result<StdPathBuf, Error> {
         let normalized = normalize_dir_path(path);
         let s = normalized.to_string_lossy();
         if s.is_empty() {
-            return Ok(PathBuf::from(""));
+            return Ok(StdPathBuf::from(""));
         }
         let components: Vec<String> = s
             .split('/')
@@ -327,7 +330,7 @@ impl DirectoryTree {
         components: &[String],
         follow_last: bool,
         hops: usize,
-    ) -> Result<PathBuf, Error> {
+    ) -> Result<StdPathBuf, Error> {
         if hops > MAX_SYMLINK_HOPS {
             return Err(Error {
                 kind: ErrorKind::Other,
@@ -335,14 +338,18 @@ impl DirectoryTree {
             });
         }
 
-        let mut resolved = PathBuf::new();
+        // Build paths as `/`-joined strings rather than via `PathBuf::push`,
+        // which would insert `\` on Windows and break index lookups (archive
+        // entry keys are always stored Unix-style).
+        let mut resolved_parts: Vec<String> = Vec::new();
 
         for (i, component) in components.iter().enumerate() {
             let is_last = i == components.len() - 1;
 
+            let resolved_path: StdPathBuf = StdPathBuf::from(resolved_parts.join("/"));
             let file = self
                 .dirs
-                .get(&resolved)
+                .get(&resolved_path)
                 .and_then(|children| children.iter().find(|f| f.name == *component));
 
             match file {
@@ -351,7 +358,7 @@ impl DirectoryTree {
                         let target_resolved = if target.is_absolute() {
                             normalize_path_dotdot(&normalize_dir_path(target))
                         } else {
-                            let mut base = resolved.clone();
+                            let mut base = StdPathBuf::from(resolved_parts.join("/"));
                             base.push(target.as_path());
                             normalize_path_dotdot(&base)
                         };
@@ -366,38 +373,42 @@ impl DirectoryTree {
                         return self.resolve_components(&remaining, follow_last, hops + 1);
                     }
                     // Symlink with no target — treat as-is
-                    resolved.push(component);
+                    resolved_parts.push(component.clone());
                 }
                 Some(_) => {
-                    resolved.push(component);
+                    resolved_parts.push(component.clone());
                 }
                 None => {
                     // Component not found in tree
-                    resolved.push(component);
-                    return Ok(resolved);
+                    resolved_parts.push(component.clone());
+                    return Ok(StdPathBuf::from(resolved_parts.join("/")));
                 }
             }
         }
 
-        Ok(resolved)
+        Ok(StdPathBuf::from(resolved_parts.join("/")))
     }
 }
 
-fn normalize_dir_path(path: &Path) -> PathBuf {
+fn normalize_dir_path(path: &StdPath) -> StdPathBuf {
     let s = path.to_string_lossy();
     let s = s.trim_start_matches('/');
     let s = s.trim_start_matches("./");
     let s = s.trim_end_matches('/');
-    PathBuf::from(s)
+    StdPathBuf::from(s)
 }
 
 /// Normalize a path by resolving `.` and `..` components.
 /// Absolute paths are treated as relative to the archive root.
-fn normalize_path_dotdot(path: &Path) -> PathBuf {
-    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+///
+/// Builds the result with `/` separators regardless of host OS so that
+/// archive entries can be looked up by their stored (Unix-style) key on
+/// a Windows host without separator mangling.
+fn normalize_path_dotdot(path: &StdPath) -> StdPathBuf {
+    let mut parts: Vec<String> = Vec::new();
     for component in path.components() {
         match component {
-            std::path::Component::Normal(s) => parts.push(s),
+            std::path::Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
             std::path::Component::ParentDir => {
                 parts.pop();
             }
@@ -405,15 +416,11 @@ fn normalize_path_dotdot(path: &Path) -> PathBuf {
             _ => {}
         }
     }
-    if parts.is_empty() {
-        PathBuf::from("")
-    } else {
-        parts.iter().collect()
-    }
+    StdPathBuf::from(parts.join("/"))
 }
 
 /// Convert a normalized PathBuf to a string suitable for index lookups.
-fn normalized_to_string(path: &Path) -> String {
+fn normalized_to_string(path: &StdPath) -> String {
     path.to_string_lossy().into_owned()
 }
 
@@ -448,9 +455,9 @@ fn mtime_to_i64(mtime: u64) -> Option<i64> {
 }
 
 fn ensure_ancestors(
-    dirs: &mut HashMap<PathBuf, Vec<File>>,
-    seen_dirs: &mut std::collections::HashSet<PathBuf>,
-    path: &Path,
+    dirs: &mut HashMap<StdPathBuf, Vec<File>>,
+    seen_dirs: &mut std::collections::HashSet<StdPathBuf>,
+    path: &StdPath,
 ) {
     if seen_dirs.contains(path) {
         return;
@@ -495,6 +502,7 @@ use std::io::{Seek, SeekFrom};
 struct RangeReadAdapter {
     handle: tokio::runtime::Handle,
     upstream: Arc<dyn Vfs>,
+    // Our VFS path: passed straight to the upstream `Vfs::read_range`.
     archive_path: PathBuf,
     file_size: u64,
     position: u64,
@@ -555,11 +563,11 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
         })
         .collect();
 
-    let mut dirs: HashMap<PathBuf, Vec<File>> = HashMap::new();
-    let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
+    let mut seen_dirs: std::collections::HashSet<StdPathBuf> = std::collections::HashSet::new();
 
-    dirs.insert(PathBuf::from(""), Vec::new());
-    seen_dirs.insert(PathBuf::from(""));
+    dirs.insert(StdPathBuf::from(""), Vec::new());
+    seen_dirs.insert(StdPathBuf::from(""));
 
     for entry in &entries {
         let path = entry
@@ -571,7 +579,7 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
             continue;
         }
 
-        let entry_path = PathBuf::from(path);
+        let entry_path = StdPathBuf::from(path);
         let parent = entry_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -618,7 +626,7 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
             is_hidden: name.starts_with('.'),
             is_symlink,
             symlink_target: if is_symlink {
-                entry.link_target.as_ref().map(PathBuf::from)
+                entry.link_target.as_ref().map(StdPathBuf::from)
             } else {
                 None
             },

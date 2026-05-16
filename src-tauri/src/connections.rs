@@ -409,7 +409,7 @@ pub async fn connect_profile(
             .ok_or_else(|| Error::Custom("unsupported connection type".into()))?;
 
         let response = ctx.mount_vfs(request).await?;
-        let vfs_path = newt_common::vfs::VfsPath::new(response.vfs_id, "/");
+        let vfs_path = newt_common::vfs::VfsPath::root(response.vfs_id);
 
         ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
             gs.close_modal();

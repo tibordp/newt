@@ -1688,6 +1688,13 @@ applies_to?: string | null }
 export type UserCommandPrompt = { label: string; default: string }
 export type UserGroup = { name: string } | { id: number }
 export type VfsId = number
+/**
+ * A fully-qualified location: which VFS, and where within it.
+ * 
+ * `specta::Type` is derived: `PathBuf`'s own `Type` impl renders as a
+ * plain `string`, so the generated TS is `{ vfs_id: VfsId; path: string }`
+ * under the named type `VfsPath` — identical to the pre-refactor shape.
+ */
 export type VfsPath = { vfs_id: VfsId; path: string }
 /**
  * Free-schema progress snapshot. The frontend renders this as a short

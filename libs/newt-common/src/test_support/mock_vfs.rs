@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use crate::vfs::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -31,7 +32,9 @@ pub enum MockEntry {
         gid: u32,
     },
     Symlink {
-        target: PathBuf,
+        /// Std path: flows straight into `File::symlink_target` /
+        /// `FileDetails::symlink_target`, which are `std::path::PathBuf`.
+        target: std::path::PathBuf,
     },
 }
 
@@ -160,7 +163,7 @@ impl VfsDescriptor for MockVfsDescriptor {
         false
     }
     fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
-        path.display().to_string()
+        crate::vfs::unix_display_path(path)
     }
     fn breadcrumbs(&self, _path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
         Vec::new()
@@ -176,7 +179,10 @@ impl VfsDescriptor for MockVfsDescriptor {
 
 #[derive(Debug)]
 pub struct MockVfs {
-    entries: Arc<Mutex<BTreeMap<PathBuf, MockEntry>>>,
+    /// Keyed by the canonical wire string of the in-VFS path
+    /// (`Path::as_wire_str`), so lookups are independent of host OS
+    /// separators and round-trip through the VFS path type.
+    entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
     failures: Mutex<Vec<FailureSpec>>,
     descriptor: &'static dyn VfsDescriptor,
 }
@@ -191,7 +197,7 @@ impl MockVfs {
     fn check_failure(&self, path: &Path, operation: &str) -> Option<crate::Error> {
         let mut failures = self.failures.lock();
         for spec in failures.iter_mut() {
-            if spec.path == path && spec.operation == operation {
+            if spec.path == *path && spec.operation == operation {
                 match &mut spec.remaining {
                     None => return Some(spec.error.clone()),
                     Some(0) => continue,
@@ -218,31 +224,34 @@ impl MockVfs {
                     MockEntry::Directory { .. } => "dir",
                     MockEntry::Symlink { .. } => "symlink",
                 };
-                (p.clone(), kind)
+                (PathBuf::from_wire_str(p), kind)
             })
             .collect()
     }
 
     /// Read content of a file. Panics if not a file.
-    pub fn read_content(&self, path: impl AsRef<Path>) -> Vec<u8> {
-        match self.entries.lock().get(path.as_ref()) {
+    pub fn read_content(&self, path: &str) -> Vec<u8> {
+        let key = PathBuf::from_wire_str(path);
+        match self.entries.lock().get(key.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => content.clone(),
-            other => panic!(
-                "read_content: {:?} is {:?}, not a file",
-                path.as_ref(),
-                other
-            ),
+            other => panic!("read_content: {:?} is {:?}, not a file", key, other),
         }
     }
 
     /// Check if path exists.
-    pub fn exists(&self, path: impl AsRef<Path>) -> bool {
-        self.entries.lock().contains_key(path.as_ref())
+    pub fn exists(&self, path: &str) -> bool {
+        self.entries
+            .lock()
+            .contains_key(PathBuf::from_wire_str(path).as_wire_str())
     }
 
     /// Get mode of a file/directory.
-    pub fn get_mode(&self, path: impl AsRef<Path>) -> Option<u32> {
-        match self.entries.lock().get(path.as_ref()) {
+    pub fn get_mode(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
             Some(MockEntry::File { mode, .. }) | Some(MockEntry::Directory { mode, .. }) => {
                 Some(*mode)
             }
@@ -251,8 +260,12 @@ impl MockVfs {
     }
 
     /// Get uid of a file/directory.
-    pub fn get_uid(&self, path: impl AsRef<Path>) -> Option<u32> {
-        match self.entries.lock().get(path.as_ref()) {
+    pub fn get_uid(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
             Some(MockEntry::File { uid, .. }) | Some(MockEntry::Directory { uid, .. }) => {
                 Some(*uid)
             }
@@ -261,8 +274,12 @@ impl MockVfs {
     }
 
     /// Get gid of a file/directory.
-    pub fn get_gid(&self, path: impl AsRef<Path>) -> Option<u32> {
-        match self.entries.lock().get(path.as_ref()) {
+    pub fn get_gid(&self, path: &str) -> Option<u32> {
+        match self
+            .entries
+            .lock()
+            .get(PathBuf::from_wire_str(path).as_wire_str())
+        {
             Some(MockEntry::File { gid, .. }) | Some(MockEntry::Directory { gid, .. }) => {
                 Some(*gid)
             }
@@ -273,9 +290,11 @@ impl MockVfs {
     fn list_children(&self, parent: &Path) -> Vec<File> {
         let entries = self.entries.lock();
         let mut children = Vec::new();
-        for (path, entry) in entries.iter() {
-            if path.parent() == Some(parent) && path != parent {
-                let name = path.file_name().unwrap().to_string_lossy().to_string();
+        for (path_str, entry) in entries.iter() {
+            let path = PathBuf::from_wire_str(path_str);
+            let parent_matches = path.parent().map(Path::as_wire_str) == Some(parent.as_wire_str());
+            if parent_matches && path.as_wire_str() != parent.as_wire_str() {
+                let name = path.file_name().unwrap().to_string();
                 let (is_dir, is_symlink, symlink_target, size, mode, user, group) = match entry {
                     MockEntry::File {
                         content,
@@ -345,13 +364,13 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         // Verify directory exists
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::Directory { .. }) => {}
-            None if path == Path::new("/") => {} // root always exists implicitly
+            None if path.is_root() => {} // root always exists implicitly
             _ => {
                 return Err(crate::Error {
                     kind: crate::ErrorKind::NotFound,
-                    message: format!("directory not found: {}", path.display()),
+                    message: format!("directory not found: {}", path),
                 });
             }
         }
@@ -374,11 +393,11 @@ impl Vfs for MockVfs {
         if let Some(e) = self.check_failure(path, "open_read_sync") {
             return Err(e);
         }
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => Ok(Box::new(Cursor::new(content.clone()))),
             _ => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("file not found: {}", path.display()),
+                message: format!("file not found: {}", path),
             }),
         }
     }
@@ -390,13 +409,13 @@ impl Vfs for MockVfs {
         if let Some(e) = self.check_failure(path, "open_read_async") {
             return Err(e);
         }
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => {
                 Ok(Box::new(std::io::Cursor::new(content.clone())))
             }
             _ => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("file not found: {}", path.display()),
+                message: format!("file not found: {}", path),
             }),
         }
     }
@@ -410,7 +429,7 @@ impl Vfs for MockVfs {
         if let Some(e) = self.check_failure(path, "read_range") {
             return Err(e);
         }
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => {
                 let start = offset as usize;
                 let end = (offset + length) as usize;
@@ -423,7 +442,7 @@ impl Vfs for MockVfs {
             }
             _ => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("file not found: {}", path.display()),
+                message: format!("file not found: {}", path),
             }),
         }
     }
@@ -432,7 +451,7 @@ impl Vfs for MockVfs {
         &self,
         path: &Path,
     ) -> Result<crate::file_reader::FileDetails, crate::Error> {
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File {
                 content,
                 mode,
@@ -479,7 +498,7 @@ impl Vfs for MockVfs {
             }),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             }),
         }
     }
@@ -488,11 +507,8 @@ impl Vfs for MockVfs {
         if let Some(e) = self.check_failure(path, "file_info") {
             return Err(e);
         }
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        match self.entries.lock().get(path) {
+        let name = path.file_name().unwrap_or_default().to_string();
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File {
                 content,
                 mode,
@@ -548,7 +564,7 @@ impl Vfs for MockVfs {
             }),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             }),
         }
     }
@@ -559,7 +575,7 @@ impl Vfs for MockVfs {
         }
         Ok(Box::new(MockWriter {
             buf: Vec::new(),
-            path: path.to_path_buf(),
+            path: path.as_wire_str().to_string(),
             entries: self.entries.clone(),
         }))
     }
@@ -570,7 +586,7 @@ impl Vfs for MockVfs {
         }
         Ok(Box::new(MockWriter {
             buf: Vec::new(),
-            path: path.to_path_buf(),
+            path: path.as_wire_str().to_string(),
             entries: self.entries.clone(),
         }))
     }
@@ -580,14 +596,14 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let mut entries = self.entries.lock();
-        if entries.contains_key(path) {
+        if entries.contains_key(path.as_wire_str()) {
             return Err(crate::Error {
                 kind: crate::ErrorKind::AlreadyExists,
-                message: format!("already exists: {}", path.display()),
+                message: format!("already exists: {}", path),
             });
         }
         entries.insert(
-            path.to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::Directory {
                 mode: 0o755,
                 uid: 1000,
@@ -597,15 +613,15 @@ impl Vfs for MockVfs {
         Ok(())
     }
 
-    async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), crate::Error> {
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), crate::Error> {
         if let Some(e) = self.check_failure(link, "create_symlink") {
             return Err(e);
         }
         let mut entries = self.entries.lock();
         entries.insert(
-            link.to_path_buf(),
+            link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: target.to_path_buf(),
+                target: std::path::PathBuf::from(target),
             },
         );
         Ok(())
@@ -624,18 +640,18 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let mut entries = self.entries.lock();
-        match entries.get(path) {
+        match entries.get(path.as_wire_str()) {
             Some(MockEntry::File { .. }) | Some(MockEntry::Symlink { .. }) => {
-                entries.remove(path);
+                entries.remove(path.as_wire_str());
                 Ok(())
             }
             Some(MockEntry::Directory { .. }) => Err(crate::Error {
                 kind: crate::ErrorKind::IsADirectory,
-                message: format!("is a directory: {}", path.display()),
+                message: format!("is a directory: {}", path),
             }),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             }),
         }
     }
@@ -646,26 +662,28 @@ impl Vfs for MockVfs {
         }
         let mut entries = self.entries.lock();
         // Check that it's a directory
-        match entries.get(path) {
+        match entries.get(path.as_wire_str()) {
             Some(MockEntry::Directory { .. }) => {}
             _ => {
                 return Err(crate::Error {
                     kind: crate::ErrorKind::NotADirectory,
-                    message: format!("not a directory: {}", path.display()),
+                    message: format!("not a directory: {}", path),
                 });
             }
         }
         // Check not empty
-        let has_children = entries
-            .keys()
-            .any(|k| k != path && k.parent() == Some(path));
+        let has_children = entries.keys().any(|k| {
+            let kp = PathBuf::from_wire_str(k);
+            kp.as_wire_str() != path.as_wire_str()
+                && kp.parent().map(Path::as_wire_str) == Some(path.as_wire_str())
+        });
         if has_children {
             return Err(crate::Error {
                 kind: crate::ErrorKind::DirectoryNotEmpty,
-                message: format!("directory not empty: {}", path.display()),
+                message: format!("directory not empty: {}", path),
             });
         }
-        entries.remove(path);
+        entries.remove(path.as_wire_str());
         Ok(())
     }
 
@@ -674,15 +692,15 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let mut entries = self.entries.lock();
-        let to_remove: Vec<PathBuf> = entries
+        let to_remove: Vec<String> = entries
             .keys()
-            .filter(|k| k.starts_with(path))
+            .filter(|k| PathBuf::from_wire_str(k).starts_with(path))
             .cloned()
             .collect();
         if to_remove.is_empty() {
             return Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             });
         }
         for k in to_remove {
@@ -692,7 +710,7 @@ impl Vfs for MockVfs {
     }
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, crate::Error> {
-        match self.entries.lock().get(path) {
+        match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { mode, uid, gid, .. })
             | Some(MockEntry::Directory { mode, uid, gid, .. }) => Ok(VfsMetadata {
                 permissions: Some(*mode),
@@ -703,7 +721,7 @@ impl Vfs for MockVfs {
             Some(MockEntry::Symlink { .. }) => Ok(VfsMetadata::default()),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             }),
         }
     }
@@ -713,7 +731,7 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let mut entries = self.entries.lock();
-        match entries.get_mut(path) {
+        match entries.get_mut(path.as_wire_str()) {
             Some(MockEntry::File { mode, uid, gid, .. })
             | Some(MockEntry::Directory { mode, uid, gid, .. }) => {
                 if let Some(p) = meta.permissions {
@@ -730,7 +748,7 @@ impl Vfs for MockVfs {
             Some(MockEntry::Symlink { .. }) => Ok(()),
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path.display()),
+                message: format!("not found: {}", path),
             }),
         }
     }
@@ -749,22 +767,28 @@ impl Vfs for MockVfs {
         }
         let mut entries = self.entries.lock();
         // Collect all entries under `from` (including `from` itself)
-        let to_move: Vec<(PathBuf, MockEntry)> = entries
+        let to_move: Vec<(String, MockEntry)> = entries
             .iter()
-            .filter(|(k, _)| k.starts_with(from))
+            .filter(|(k, _)| PathBuf::from_wire_str(k).starts_with(from))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if to_move.is_empty() {
             return Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", from.display()),
+                message: format!("not found: {}", from),
             });
         }
-        for (old_path, entry) in &to_move {
-            entries.remove(old_path);
+        for (old_key, entry) in &to_move {
+            entries.remove(old_key);
+            let old_path = PathBuf::from_wire_str(old_key);
             let suffix = old_path.strip_prefix(from).unwrap();
-            let new_path = to.join(suffix);
-            entries.insert(new_path, entry.clone());
+            // Re-root the (possibly empty) suffix under `to`, component-wise
+            // so separators stay canonical.
+            let mut new_path = to.to_owned();
+            for seg in PathBuf::from_wire_str(suffix).components() {
+                new_path.push(seg);
+            }
+            entries.insert(new_path.as_wire_str().to_string(), entry.clone());
         }
         Ok(())
     }
@@ -774,14 +798,14 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let mut entries = self.entries.lock();
-        match entries.get(from).cloned() {
+        match entries.get(from.as_wire_str()).cloned() {
             Some(entry) => {
-                entries.insert(to.to_path_buf(), entry);
+                entries.insert(to.as_wire_str().to_string(), entry);
                 Ok(())
             }
             None => Err(crate::Error {
                 kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", from.display()),
+                message: format!("not found: {}", from),
             }),
         }
     }
@@ -795,11 +819,12 @@ impl Vfs for MockVfs {
 // Writer: captures bytes, writes to entries map on drop (sync) or finish (async)
 // ---------------------------------------------------------------------------
 
-type EntryMap = Arc<Mutex<BTreeMap<PathBuf, MockEntry>>>;
+type EntryMap = Arc<Mutex<BTreeMap<String, MockEntry>>>;
 
 struct MockWriter {
     buf: Vec<u8>,
-    path: PathBuf,
+    /// Canonical wire-string key of the target path.
+    path: String,
     entries: EntryMap,
 }
 
@@ -857,7 +882,7 @@ impl VfsAsyncWriter for MockWriter {
 // ---------------------------------------------------------------------------
 
 pub struct MockVfsBuilder {
-    entries: BTreeMap<PathBuf, MockEntry>,
+    entries: BTreeMap<String, MockEntry>,
     failures: Vec<FailureSpec>,
     config: MockVfsConfig,
 }
@@ -866,7 +891,7 @@ impl MockVfsBuilder {
     pub fn new() -> Self {
         let mut entries = BTreeMap::new();
         entries.insert(
-            PathBuf::from("/"),
+            PathBuf::root().as_wire_str().to_string(),
             MockEntry::Directory {
                 mode: 0o755,
                 uid: 1000,
@@ -885,10 +910,11 @@ impl MockVfsBuilder {
         self
     }
 
-    pub fn dir(mut self, path: impl AsRef<Path>) -> Self {
-        self.ensure_parents(path.as_ref());
+    pub fn dir(mut self, path: &str) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::Directory {
                 mode: 0o755,
                 uid: 1000,
@@ -898,10 +924,11 @@ impl MockVfsBuilder {
         self
     }
 
-    pub fn dir_with_mode(mut self, path: impl AsRef<Path>, mode: u32) -> Self {
-        self.ensure_parents(path.as_ref());
+    pub fn dir_with_mode(mut self, path: &str, mode: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::Directory {
                 mode,
                 uid: 1000,
@@ -911,19 +938,21 @@ impl MockVfsBuilder {
         self
     }
 
-    pub fn dir_with_owner(mut self, path: impl AsRef<Path>, mode: u32, uid: u32, gid: u32) -> Self {
-        self.ensure_parents(path.as_ref());
+    pub fn dir_with_owner(mut self, path: &str, mode: u32, uid: u32, gid: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::Directory { mode, uid, gid },
         );
         self
     }
 
-    pub fn file(mut self, path: impl AsRef<Path>, content: &[u8]) -> Self {
-        self.ensure_parents(path.as_ref());
+    pub fn file(mut self, path: &str, content: &[u8]) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::File {
                 content: content.to_vec(),
                 mode: 0o644,
@@ -934,10 +963,11 @@ impl MockVfsBuilder {
         self
     }
 
-    pub fn file_with_mode(mut self, path: impl AsRef<Path>, content: &[u8], mode: u32) -> Self {
-        self.ensure_parents(path.as_ref());
+    pub fn file_with_mode(mut self, path: &str, content: &[u8], mode: u32) -> Self {
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::File {
                 content: content.to_vec(),
                 mode,
@@ -950,15 +980,16 @@ impl MockVfsBuilder {
 
     pub fn file_with_owner(
         mut self,
-        path: impl AsRef<Path>,
+        path: &str,
         content: &[u8],
         mode: u32,
         uid: u32,
         gid: u32,
     ) -> Self {
-        self.ensure_parents(path.as_ref());
+        let path = PathBuf::from_wire_str(path);
+        self.ensure_parents(&path);
         self.entries.insert(
-            path.as_ref().to_path_buf(),
+            path.as_wire_str().to_string(),
             MockEntry::File {
                 content: content.to_vec(),
                 mode,
@@ -969,12 +1000,13 @@ impl MockVfsBuilder {
         self
     }
 
-    pub fn symlink(mut self, link: impl AsRef<Path>, target: impl AsRef<Path>) -> Self {
-        self.ensure_parents(link.as_ref());
+    pub fn symlink(mut self, link: &str, target: &str) -> Self {
+        let link = PathBuf::from_wire_str(link);
+        self.ensure_parents(&link);
         self.entries.insert(
-            link.as_ref().to_path_buf(),
+            link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: target.as_ref().to_path_buf(),
+                target: std::path::PathBuf::from(target),
             },
         );
         self
@@ -988,11 +1020,11 @@ impl MockVfsBuilder {
     fn ensure_parents(&mut self, path: &Path) {
         let mut current = path.parent();
         while let Some(p) = current {
-            if p == Path::new("/") || self.entries.contains_key(p) {
+            if p.is_root() || self.entries.contains_key(p.as_wire_str()) {
                 break;
             }
             self.entries.insert(
-                p.to_path_buf(),
+                p.as_wire_str().to_string(),
                 MockEntry::Directory {
                     mode: 0o755,
                     uid: 1000,

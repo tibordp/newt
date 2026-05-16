@@ -90,10 +90,7 @@ pub async fn cmd_delete_selected(
         let message = if paths.len() > 1 {
             format!("Delete {} selected files?", paths.len())
         } else {
-            let name = paths[0]
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
+            let name = paths[0].file_name().map(str::to_string).unwrap_or_default();
             format!("Delete {}?", name)
         };
         ctx.with_update(|gs| {

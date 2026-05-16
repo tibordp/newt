@@ -231,7 +231,7 @@ fn build_template_context(
     String,
     minijinja::Value,
 ) {
-    let dir = pane_path.path.to_string_lossy().to_string();
+    let dir = pane_path.path.as_wire_str().to_string();
 
     let file_objects: Vec<minijinja::Value> = effective_files
         .iter()
@@ -239,14 +239,11 @@ fn build_template_context(
             // Use `key()` for the in-VFS path component: for ordinary
             // entries it equals `name`, for virtual entries (e.g. nested
             // search hits) it's the unique identifier under the pane root.
-            let path = pane_path.path.join(f.key());
-            let source = f
-                .source
-                .as_ref()
-                .map(|p| p.path.to_string_lossy().to_string());
+            let path = pane_path.join(f.key()).path.as_wire_str().to_string();
+            let source = f.source.as_ref().map(|p| p.path.as_wire_str().to_string());
             minijinja::Value::from_object(FileTemplateObject {
                 name: f.name.clone(),
-                path: path.to_string_lossy().to_string(),
+                path,
                 source,
                 ext: std::path::Path::new(&f.name)
                     .extension()
@@ -335,8 +332,8 @@ fn render_template(
 fn selection_keys(pane_path: &VfsPath, selection: &[VfsPath]) -> std::collections::HashSet<String> {
     selection
         .iter()
-        .filter_map(|p| p.path.strip_prefix(&pane_path.path).ok())
-        .map(|p| p.to_string_lossy().to_string())
+        .filter_map(|p| p.strip_prefix(pane_path))
+        .map(|tail| tail.to_string())
         .collect()
 }
 
@@ -351,7 +348,7 @@ fn collect_pane_context(
     let pane = ctx.panes().get(pane_handle).unwrap();
     let pane_path = pane.path();
     let other_pane = ctx.with_update(|gs| Ok(gs.other_pane(pane_handle)))?;
-    let other_dir = other_pane.path().path.to_string_lossy().to_string();
+    let other_dir = other_pane.path().path.as_wire_str().to_string();
 
     let selection = pane.get_effective_selection();
     let selection_keys = selection_keys(&pane_path, &selection);
@@ -492,7 +489,7 @@ pub async fn run_user_command(
         gs.close_modal();
         Ok(())
     })?;
-    let pane_dir = pane_path.path.clone();
+    let pane_dir = newt_common::vfs::local::to_native(&pane_path.path);
     execute_rendered(&ctx, &uc.title, rendered, pane_dir, uc.terminal).await
 }
 
@@ -539,7 +536,7 @@ pub async fn execute_user_command(
         Ok(())
     })?;
 
-    let pane_dir = pane_path.path.clone();
+    let pane_dir = newt_common::vfs::local::to_native(&pane_path.path);
     execute_rendered(&ctx, &uc.title, rendered, pane_dir, uc.terminal).await
 }
 
@@ -584,7 +581,6 @@ pub fn update_user_command_entry(
 mod tests {
     use super::*;
     use newt_common::filesystem::File;
-    use std::path::PathBuf;
 
     fn file_with(name: &str, key: Option<&str>, source: Option<VfsPath>) -> File {
         File {
@@ -599,16 +595,22 @@ mod tests {
     fn template_path_uses_key_for_nested_synthetic_entries() {
         // Two search hits that share a basename but live in different
         // subdirectories: their keys disambiguate, names do not.
-        let pane = VfsPath::root(PathBuf::from("/"));
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
         let a = file_with(
             "foo.txt",
             Some("a/foo.txt"),
-            Some(VfsPath::root(PathBuf::from("/src/a/foo.txt"))),
+            Some(VfsPath::from_wire_str(
+                newt_common::vfs::VfsId::ROOT,
+                "/src/a/foo.txt",
+            )),
         );
         let b = file_with(
             "foo.txt",
             Some("b/foo.txt"),
-            Some(VfsPath::root(PathBuf::from("/src/b/foo.txt"))),
+            Some(VfsPath::from_wire_str(
+                newt_common::vfs::VfsId::ROOT,
+                "/src/b/foo.txt",
+            )),
         );
         let files = [&a, &b];
 
@@ -622,11 +624,14 @@ mod tests {
 
     #[test]
     fn template_source_exposed_when_set() {
-        let pane = VfsPath::root(PathBuf::from("/"));
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
         let f = file_with(
             "foo.txt",
             Some("a/foo.txt"),
-            Some(VfsPath::root(PathBuf::from("/src/a/foo.txt"))),
+            Some(VfsPath::from_wire_str(
+                newt_common::vfs::VfsId::ROOT,
+                "/src/a/foo.txt",
+            )),
         );
         let files = [&f];
 
@@ -637,7 +642,7 @@ mod tests {
 
     #[test]
     fn template_source_undefined_for_ordinary_entries() {
-        let pane = VfsPath::root(PathBuf::from("/home/user"));
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
         let f = file_with("foo.txt", None, None);
         let files = [&f];
 
@@ -650,10 +655,10 @@ mod tests {
     fn selection_keys_strips_pane_prefix_preserving_subdirs() {
         // Search-VFS pane at root: selection paths are `/key` and the
         // key may itself contain subdirectory separators.
-        let pane = VfsPath::root(PathBuf::from("/"));
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/");
         let selection = vec![
-            VfsPath::root(PathBuf::from("/a/foo.txt")),
-            VfsPath::root(PathBuf::from("/b/foo.txt")),
+            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/a/foo.txt"),
+            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/b/foo.txt"),
         ];
         let keys = selection_keys(&pane, &selection);
         assert_eq!(keys.len(), 2);
@@ -663,10 +668,10 @@ mod tests {
 
     #[test]
     fn selection_keys_real_filesystem_pane() {
-        let pane = VfsPath::root(PathBuf::from("/home/user"));
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
         let selection = vec![
-            VfsPath::root(PathBuf::from("/home/user/foo.txt")),
-            VfsPath::root(PathBuf::from("/home/user/bar.txt")),
+            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user/foo.txt"),
+            VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user/bar.txt"),
         ];
         let keys = selection_keys(&pane, &selection);
         assert_eq!(keys.len(), 2);

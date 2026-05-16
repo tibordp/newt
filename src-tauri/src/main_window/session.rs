@@ -440,11 +440,13 @@ pub trait VfsInfo: Send + Sync {
         let mut current = path.clone();
         loop {
             if current.vfs_id == VfsId::ROOT {
-                return Some(current.path);
+                // Terminal cwd is fed straight to a process spawn — needs
+                // to be host-native. Use the LocalVfs encoder.
+                return Some(newt_common::vfs::local::to_native(&current.path));
             }
             let origin = self.origin(current.vfs_id)?;
-            let parent = origin.path.parent()?.to_path_buf();
-            current = VfsPath::new(origin.vfs_id, parent);
+            let parent = origin.parent()?;
+            current = parent;
         }
     }
 }
@@ -910,7 +912,10 @@ fn create_local_services(
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
-        initial_dir: VfsPath::root(std::env::current_dir().unwrap()),
+        initial_dir: VfsPath::new(
+            VfsId::ROOT,
+            newt_common::vfs::local::local_path_from_native(&std::env::current_dir().unwrap()),
+        ),
     }
 }
 
@@ -927,7 +932,7 @@ fn create_remote_services(communicator: Communicator, pending_streams: PendingSt
         file_reader: Arc::new(newt_common::file_reader::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator)),
-        initial_dir: VfsPath::root("/"),
+        initial_dir: VfsPath::root(VfsId::ROOT),
     }
 }
 
@@ -1618,7 +1623,12 @@ pub(super) async fn connect(
             .shell_service
             .shell_expand("~".to_string())
             .await
-            .map(VfsPath::root)
+            .map(|p| {
+                VfsPath::new(
+                    VfsId::ROOT,
+                    newt_common::vfs::local::local_path_from_native(&p),
+                )
+            })
             .unwrap_or(services.initial_dir.clone())
     };
 
@@ -1630,7 +1640,10 @@ pub(super) async fn connect(
         if let Some(path) = override_path {
             let raw = path.to_string_lossy().into_owned();
             if let Ok(expanded) = services.shell_service.shell_expand(raw).await {
-                pane_dirs[slot] = VfsPath::root(expanded);
+                pane_dirs[slot] = VfsPath::new(
+                    VfsId::ROOT,
+                    newt_common::vfs::local::local_path_from_native(&expanded),
+                );
             } else {
                 log::warn!(
                     "could not resolve --cwd-{} path {:?}; falling back to default",

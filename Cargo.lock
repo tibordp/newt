@@ -3677,6 +3677,7 @@ dependencies = [
  "quick-xml 0.37.5",
  "regex",
  "serde",
+ "serde_json",
  "specta",
  "thiserror 1.0.69",
  "time",

@@ -123,7 +123,10 @@ pub async fn get_hot_paths(
     // Add user-defined bookmarks from preferences (always included)
     for bm in &prefs.bookmarks {
         entries.push(HotPathEntry {
-            path: VfsPath::root(bm.path.as_str()),
+            path: VfsPath::new(
+                newt_common::vfs::VfsId::ROOT,
+                newt_common::vfs::local::local_path_from_native(std::path::Path::new(&bm.path)),
+            ),
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
         });
@@ -167,10 +170,7 @@ pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
     let path = pane.path();
 
     let path_str = ctx.format_vfs_path(&path);
-    let name = path
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string());
+    let name = path.file_name().map(str::to_string);
 
     global_ctx
         .preferences()

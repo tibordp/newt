@@ -2,6 +2,7 @@ pub mod archive;
 pub mod background_job;
 pub mod k8s;
 pub mod local;
+pub mod path;
 pub mod progress;
 pub mod remote;
 pub mod s3;
@@ -27,7 +28,6 @@ pub use sftp::SftpVfs;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -82,98 +82,51 @@ impl std::fmt::Display for VfsId {
     }
 }
 
+/// `/`-rooted display string for a segment list. Used by the descriptors
+/// of every Unix-path-speaking VFS (SFTP, S3, archives, …) in their
+/// `format_path` impls.
+pub fn unix_display_path(path: &Path) -> String {
+    path.as_wire_str().to_string()
+}
+
+/// Breadcrumb list for a Unix-style path. Each breadcrumb's `nav_path`
+/// is the corresponding prefix as a `/`-rooted string.
+pub fn unix_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
+    let comps: Vec<&str> = path.components().collect();
+    let mut crumbs = Vec::with_capacity(comps.len() + 1);
+    crumbs.push(Breadcrumb {
+        label: "/".to_string(),
+        nav_path: "/".to_string(),
+    });
+    let mut accumulated = String::new();
+    for (i, seg) in comps.iter().enumerate() {
+        accumulated.push('/');
+        accumulated.push_str(seg);
+        let is_last = i == comps.len() - 1;
+        crumbs.push(Breadcrumb {
+            label: if is_last {
+                (*seg).to_string()
+            } else {
+                format!("{}/", seg)
+            },
+            nav_path: accumulated.clone(),
+        });
+    }
+    crumbs
+}
+
 // ---------------------------------------------------------------------------
 // VfsPath
 // ---------------------------------------------------------------------------
+//
+// The type itself lives in `vfs::path`; re-exported here so the public path
+// `newt_common::vfs::VfsPath` stays stable.
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-pub struct VfsPath {
-    pub vfs_id: VfsId,
-    pub path: PathBuf,
-}
-
-impl Default for VfsPath {
-    fn default() -> Self {
-        Self {
-            vfs_id: VfsId::ROOT,
-            path: PathBuf::from("/"),
-        }
-    }
-}
-
-impl VfsPath {
-    pub fn root(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        assert!(
-            is_logical_root(&path),
-            "VfsPath must be absolute, got: {path:?}"
-        );
-        Self {
-            vfs_id: VfsId::ROOT,
-            path,
-        }
-    }
-
-    pub fn new(vfs_id: VfsId, path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        assert!(
-            is_logical_root(&path),
-            "VfsPath must be absolute, got: {path:?}"
-        );
-        Self { vfs_id, path }
-    }
-
-    pub fn join(&self, name: impl AsRef<Path>) -> Self {
-        Self {
-            vfs_id: self.vfs_id,
-            path: self.path.join(name),
-        }
-    }
-
-    pub fn parent(&self) -> Option<Self> {
-        self.path.parent().map(|p| Self {
-            vfs_id: self.vfs_id,
-            path: p.to_path_buf(),
-        })
-    }
-
-    pub fn file_name(&self) -> Option<&std::ffi::OsStr> {
-        self.path.file_name()
-    }
-}
-
-/// A VfsPath's `path` is logical — it lives in the namespace of whichever VFS
-/// owns it, not the host's filesystem. The native check `Path::is_absolute()`
-/// is *host-specific*: on Windows it demands a drive prefix (`C:\…`) and
-/// rejects `/foo`, which is wrong for every non-local VFS we have (every
-/// remote/synthetic VFS uses Unix-style paths). What we actually require is
-/// that the path begins with a root component:
-///
-///   * `RootDir`              → `/foo` (every non-local VFS, plus local on Unix)
-///   * `Prefix` + `RootDir`   → `C:\foo` (local VFS on Windows)
-///
-/// On Unix this is exactly equivalent to `Path::is_absolute()`; on Windows it
-/// additionally accepts the Unix-rooted form, which is the right invariant
-/// for the logical-path role this type plays.
-fn is_logical_root(path: &Path) -> bool {
-    use std::path::Component;
-    let mut comps = path.components();
-    match comps.next() {
-        Some(Component::RootDir) => true,
-        Some(Component::Prefix(_)) => matches!(comps.next(), Some(Component::RootDir)),
-        _ => false,
-    }
-}
-
-impl std::fmt::Display for VfsPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.vfs_id == VfsId::ROOT {
-            write!(f, "{}", self.path.display())
-        } else {
-            write!(f, "vfs://{}:{}", self.vfs_id, self.path.display())
-        }
-    }
-}
+pub use path::VfsPath;
+// Within this module (and the Vfs trait surface) `Path`/`PathBuf` mean the
+// platform-independent VFS path types, never `std::path`. The few places
+// that still need the std types refer to them as `std::path::PathBuf`.
+use path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Breadcrumb — a segment in a display path
@@ -314,6 +267,18 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String;
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb>;
 
+    /// Logical parent of `path` within this VFS, or `None` if the path is
+    /// at a root the user can't navigate above. Consulted by the pane's
+    /// `..`-handler and any code that needs to walk upward. Different
+    /// from `path.parent()` because some VFSes have non-trivial "root"
+    /// boundaries — e.g. the local VFS on Windows refuses to navigate
+    /// above a drive or share root.
+    ///
+    /// Default: pop one component; `None` only when already at the root.
+    fn navigable_parent(&self, path: &Path, _mount_meta: &[u8]) -> Option<PathBuf> {
+        path.parent().map(Path::to_owned)
+    }
+
     /// Try to parse a user-entered display path. Returns the VFS-internal path
     /// if this VFS recognizes the input (e.g., S3 recognizes "s3://...").
     /// Returns None if this VFS doesn't claim the input.
@@ -396,7 +361,7 @@ impl VfsChangeNotifier {
     pub async fn watch(&self, path: &Path) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.watchers.lock().push((id, path.to_path_buf(), tx));
+        self.watchers.lock().push((id, path.to_owned(), tx));
         let _guard = WatcherGuard {
             id,
             watchers: self.watchers.clone(),
@@ -499,6 +464,8 @@ pub trait Vfs: Send + Sync {
         Vec::new()
     }
 
+    // (helpers defined below for impls to use)
+
     // --- Browse ---
     async fn list_files(
         &self,
@@ -591,7 +558,10 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
-    async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), Error> {
+    /// Create a symlink at `link` whose raw contents are `target`.
+    /// `target` is opaque link text (may be relative, may contain `..`)
+    /// — *not* a navigable VFS path — so it's a `&str`, not a `Path`.
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
         let _ = (link, target);
         Err(Error::not_supported())
     }
@@ -686,7 +656,7 @@ impl VfsRegistry {
     }
 
     /// Follow `Vfs::redirect_target` once: if the VFS at `vfs_path.vfs_id`
-    /// reports a redirect for `vfs_path.path`, return the source path; else
+    /// reports a redirect for `vfs_path`, return the source path; else
     /// return the input unchanged. Used by `VfsRegistryFs` and
     /// `VfsRegistryFileReader` to make leaf operations transparent across
     /// synthetic VFSes (flat search results, etc.).
@@ -761,11 +731,14 @@ impl Filesystem for VfsRegistryFs {
         options: ListFilesOptions,
         batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error> {
-        let vfs_id = path.vfs_id;
-        let (vfs, mut local_path) = self.registry.resolve(&path)?;
+        let vfs = self
+            .registry
+            .get(path.vfs_id)
+            .ok_or_else(|| Error::custom(format!("VFS {} not found", path.vfs_id)))?;
+        let mut current = path;
         loop {
             let fs_stats = if vfs.descriptor().can_fs_stats() {
-                vfs.fs_stats(&local_path).await.unwrap_or(None)
+                vfs.fs_stats(&current.path).await.unwrap_or(None)
             } else {
                 None
             };
@@ -774,7 +747,7 @@ impl Filesystem for VfsRegistryFs {
                 let (tx, mut rx) =
                     mpsc::channel::<Vec<File>>(crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
                 let outer_tx = outer_tx.clone();
-                let vfs_path = VfsPath::new(vfs_id, local_path.clone());
+                let vfs_path = current.clone();
                 let fs_stats = fs_stats.clone();
                 let handle = tokio::spawn(async move {
                     while let Some(files) = rx.recv().await {
@@ -789,17 +762,14 @@ impl Filesystem for VfsRegistryFs {
                 (None, None)
             };
 
-            match vfs.list_files(&local_path, inner_tx).await {
+            match vfs.list_files(&current.path, inner_tx).await {
                 Ok(result) => {
                     if let Some(h) = forwarder {
                         let _ = h.await;
                     }
-                    return Ok(FileList::new(
-                        VfsPath::new(vfs_id, local_path),
-                        result.files,
-                        fs_stats,
-                    )
-                    .with_partial(result.partial));
+                    return Ok(
+                        FileList::new(current, result.files, fs_stats).with_partial(result.partial)
+                    );
                 }
                 Err(e)
                     if matches!(
@@ -810,7 +780,7 @@ impl Filesystem for VfsRegistryFs {
                     if let Some(h) = forwarder {
                         let _ = h.await;
                     }
-                    if !local_path.pop() {
+                    if !current.path.pop() {
                         return Err(e);
                     }
                 }

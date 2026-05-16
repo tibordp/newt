@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use log::{debug, info, warn};
@@ -11,6 +10,7 @@ use crate::api::MountContext;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats};
 use crate::vfs::S3Credentials;
+use crate::vfs::path::{Path, PathBuf};
 use crate::{Error, ToUnix};
 
 use super::{
@@ -97,60 +97,30 @@ impl VfsDescriptor for S3VfsDescriptor {
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
         let bucket_prefix = String::from_utf8_lossy(mount_meta);
-        let s = path.to_string_lossy();
-        let s = s.trim_start_matches('/');
+        let s = path.components().collect::<Vec<_>>().join("/");
         if bucket_prefix.is_empty() {
-            // Unscoped: path includes bucket name
             if s.is_empty() {
                 "s3://".to_string()
             } else {
                 format!("s3://{}", s)
             }
+        } else if s.is_empty() {
+            format!("s3://{}/", bucket_prefix)
         } else {
-            // Scoped: prepend bucket to path
-            if s.is_empty() {
-                format!("s3://{}/", bucket_prefix)
-            } else {
-                format!("s3://{}/{}", bucket_prefix, s)
-            }
+            format!("s3://{}/{}", bucket_prefix, s)
         }
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
         let bucket_prefix = String::from_utf8_lossy(mount_meta);
-        let mut crumbs = Vec::new();
-        let s = path.to_string_lossy();
-        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
-
-        if bucket_prefix.is_empty() {
-            // Unscoped: first segment is the bucket
-            crumbs.push(Breadcrumb {
-                label: "s3://".to_string(),
-                nav_path: "/".to_string(),
-            });
-        } else {
-            // Scoped: root breadcrumb shows s3://bucket/
-            crumbs.push(Breadcrumb {
-                label: format!("s3://{}/", bucket_prefix),
-                nav_path: "/".to_string(),
-            });
+        let mut crumbs = super::unix_breadcrumbs(path);
+        if let Some(root) = crumbs.first_mut() {
+            root.label = if bucket_prefix.is_empty() {
+                "s3://".to_string()
+            } else {
+                format!("s3://{}/", bucket_prefix)
+            };
         }
-
-        let mut accumulated = String::new();
-        for (i, seg) in segments.iter().enumerate() {
-            accumulated.push('/');
-            accumulated.push_str(seg);
-            let is_last = i == segments.len() - 1;
-            crumbs.push(Breadcrumb {
-                label: if is_last {
-                    seg.to_string()
-                } else {
-                    format!("{}/", seg)
-                },
-                nav_path: accumulated.clone(),
-            });
-        }
-
         crumbs
     }
 
@@ -169,23 +139,15 @@ impl VfsDescriptor for S3VfsDescriptor {
 
         if bucket_prefix.is_empty() {
             // Unscoped: any s3:// path matches generically
-            let path = if rest.is_empty() {
-                PathBuf::from("/")
-            } else {
-                PathBuf::from(format!("/{}", rest))
-            };
-            Some(DisplayPathMatch::generic(path))
+            Some(DisplayPathMatch::generic(PathBuf::from_wire_str(rest)))
         } else {
             // Scoped: only match if the bucket prefix matches
             let after_bucket = rest
                 .strip_prefix(bucket_prefix.as_ref())
                 .and_then(|s| s.strip_prefix('/').or(Some(s)))?;
-            let path = if after_bucket.is_empty() {
-                PathBuf::from("/")
-            } else {
-                PathBuf::from(format!("/{}", after_bucket))
-            };
-            Some(DisplayPathMatch::exact(path))
+            Some(DisplayPathMatch::exact(PathBuf::from_wire_str(
+                after_bucket,
+            )))
         }
     }
 }
@@ -368,7 +330,7 @@ impl S3Vfs {
     /// `/` → (Some("scoped-bucket"), None)
     /// `/some/prefix/` → (Some("scoped-bucket"), Some("some/prefix/"))
     fn parse_path(&self, path: &Path) -> (Option<String>, Option<String>) {
-        let s = path.to_string_lossy();
+        let s = path.as_wire_str();
         let s = s.trim_start_matches('/');
 
         // When scoped to a bucket, treat the entire path as a prefix within it
@@ -658,10 +620,7 @@ impl Vfs for S3Vfs {
                 .map(|t| t.to_unix())
         });
 
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let name = path.file_name().map(|n| n.to_string()).unwrap_or_default();
 
         Ok(File {
             name,
@@ -700,7 +659,9 @@ impl Vfs for S3Vfs {
             .content_type()
             .map(|s| s.to_string())
             .filter(|s| s != "application/octet-stream")
-            .or_else(|| crate::file_reader::guess_mime_type(path));
+            .or_else(|| {
+                crate::file_reader::guess_mime_type(std::path::Path::new(path.as_wire_str()))
+            });
         let is_dir = key.ends_with('/') && size == 0;
 
         let modified = resp.last_modified().and_then(|d| {
@@ -821,7 +782,7 @@ impl Vfs for S3Vfs {
             part_number: 1,
             completed_parts: Vec::new(),
             notifier: self.notifier.clone(),
-            path: path.to_path_buf(),
+            path: path.to_owned(),
         }))
     }
 

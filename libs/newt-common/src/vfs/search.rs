@@ -34,9 +34,10 @@
 //! tree, `File::Real`/`File::Alias` enum, etc.) and what's deliberately
 //! deferred (in-place param refinement, archive/S3 native search, …).
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::vfs::path::{Path, PathBuf};
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -383,7 +384,7 @@ impl Vfs for SearchVfs {
         // SearchVfs is flat: only "/" is a valid listing target. Any
         // sub-path is either a synthetic alias the registry already
         // dereferenced past, or junk.
-        if path != Path::new("/") {
+        if !path.is_root() {
             return Err(Error {
                 kind: ErrorKind::NotFound,
                 message: "search results live at /".into(),
@@ -432,6 +433,7 @@ impl Vfs for SearchVfs {
             // peek the current snapshot first, *then* arm the notifier.
             // Otherwise a notify that fires between our last read and
             // the next watch() is lost and the loop stalls.
+            let watch_root = PathBuf::root();
             loop {
                 let cur_len = self.results.read().len();
                 if cur_len > sent_len {
@@ -452,7 +454,7 @@ impl Vfs for SearchVfs {
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => break,
-                    _ = self.notifier.watch(Path::new("/")) => {}
+                    _ = self.notifier.watch(&watch_root) => {}
                     _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
                 }
             }
@@ -477,7 +479,7 @@ impl Vfs for SearchVfs {
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
         // Wake whenever new results arrive (or the walker finishes).
-        self.notifier.watch(Path::new("/")).await;
+        self.notifier.watch(&PathBuf::root()).await;
         Ok(())
     }
 
@@ -488,31 +490,26 @@ impl Vfs for SearchVfs {
     async fn redirect_target(&self, path: &Path) -> Option<VfsPath> {
         // Match by key (= relative path under search root). The path we
         // get is the in-vfs path; for entries it's `/<key>`.
-        let key = path.strip_prefix("/").ok()?.to_string_lossy();
+        let key = path.strip_prefix(&PathBuf::root())?;
         if key.is_empty() {
             return None;
         }
-        let key = key.into_owned();
         let results = self.results.read();
         results
             .iter()
-            .find(|f| f.key() == key.as_str())
+            .find(|f| f.key() == key)
             .and_then(|f| f.source.clone())
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let key = path
-            .strip_prefix("/")
-            .map_err(|_| Error {
-                kind: ErrorKind::NotFound,
-                message: "not under search root".into(),
-            })?
-            .to_string_lossy()
-            .into_owned();
+        let key = path.strip_prefix(&PathBuf::root()).ok_or_else(|| Error {
+            kind: ErrorKind::NotFound,
+            message: "not under search root".into(),
+        })?;
         let results = self.results.read();
         results
             .iter()
-            .find(|f| f.key() == key.as_str())
+            .find(|f| f.key() == key)
             .cloned()
             .ok_or_else(|| Error {
                 kind: ErrorKind::NotFound,
@@ -551,7 +548,7 @@ impl Walker {
             self.job.mark_done();
         }
         // Final wake so any subscribers can publish the closing snapshot.
-        self.notifier.notify(Path::new("/"));
+        self.notifier.notify(&PathBuf::root());
         // Clear any lingering progress entry — frontend sees us as
         // done.
         self.reporter.report(None);
@@ -566,6 +563,8 @@ impl Walker {
         };
 
         // Stack-based iterative DFS so we don't have to recurse async.
+        // VFS `PathBuf`s are always `/`-separated regardless of host OS,
+        // so there's no separator-mangling concern.
         let mut stack: Vec<PathBuf> = vec![self.search_root.path.clone()];
         let vfs_id = self.search_root.vfs_id;
 
@@ -582,7 +581,7 @@ impl Walker {
         // directory is scanned.
         self.emit_progress(files_scanned, None);
 
-        while let Some(dir) = stack.pop() {
+        while let Some(dir_path) = stack.pop() {
             if self.job.is_cancelled() {
                 return Err(Error::cancelled());
             }
@@ -592,17 +591,17 @@ impl Walker {
             // that traverse mostly-empty directories the per-entry path
             // would otherwise rarely update.
             if last_report.elapsed() >= PROGRESS_THROTTLE {
-                self.emit_progress(files_scanned, Some(&dir));
+                self.emit_progress(files_scanned, Some(&dir_path));
                 last_report = std::time::Instant::now();
             }
 
-            let entries = match self.source_vfs.list_files(&dir, None).await {
+            let entries = match self.source_vfs.list_files(&dir_path, None).await {
                 Ok(e) => e,
                 Err(e) => {
                     // Log + skip — a single unreadable directory shouldn't
                     // kill the whole walk. (Permission-denied on `/proc/`
                     // is the canonical case.)
-                    log::debug!("search walker: list_files {} failed: {}", dir.display(), e);
+                    log::debug!("search walker: list_files {} failed: {}", dir_path, e);
                     continue;
                 }
             };
@@ -616,20 +615,18 @@ impl Walker {
                 }
                 files_scanned += 1;
                 if last_report.elapsed() >= PROGRESS_THROTTLE {
-                    self.emit_progress(files_scanned, Some(&dir));
+                    self.emit_progress(files_scanned, Some(&dir_path));
                     last_report = std::time::Instant::now();
                 }
-                let entry_path = dir.join(&entry.name);
+                let entry_path = dir_path.join(&entry.name);
 
                 // Recurse into directories. We only descend into entries
                 // that the source VFS reports as directories — child
                 // mount points (archives etc.) live in the registry,
                 // not on the source VFS, and are therefore invisible
                 // here, which is exactly what we want.
-                if entry.is_dir
-                    && !entry_path.starts_with("/proc")
-                    && (self.params.follow_symlinks || !entry.is_symlink)
-                {
+                let is_proc = entry_path.components().next() == Some("proc");
+                if entry.is_dir && !is_proc && (self.params.follow_symlinks || !entry.is_symlink) {
                     stack.push(entry_path.clone());
                 }
 
@@ -666,8 +663,8 @@ impl Walker {
                         Ok(None) => continue,
                         Err(e) => {
                             log::debug!(
-                                "search walker: find_in_file {} failed: {}",
-                                entry_path.display(),
+                                "search walker: find_in_file {:?} failed: {}",
+                                entry_path,
                                 e
                             );
                             continue;
@@ -689,7 +686,7 @@ impl Walker {
                 // Coarse-grained wake. The list_files forwarder snapshots
                 // the full results vector on each wake, so this is fine
                 // even if the walker is much faster than the consumer.
-                self.notifier.notify(Path::new("/"));
+                self.notifier.notify(&PathBuf::root());
             }
         }
 
@@ -702,13 +699,13 @@ impl Walker {
     /// RPC notify in remote mode).
     fn emit_progress(&self, files_scanned: u64, current_dir: Option<&Path>) {
         let mut extra = std::collections::BTreeMap::new();
-        if let Some(dir) = current_dir {
+        if let Some(path) = current_dir {
             // Render through the source VFS's descriptor so what the
             // user sees matches the rest of the app's path formatting
             // (e.g. `s3://bucket/foo` rather than `/foo`).
             let desc = self.source_vfs.descriptor();
             let meta = self.source_vfs.mount_meta();
-            extra.insert("path".to_string(), desc.format_path(dir, &meta));
+            extra.insert("path".to_string(), desc.format_path(path, &meta));
         }
         self.reporter.report(Some(super::VfsProgress {
             stage: "Searching".into(),
@@ -719,17 +716,18 @@ impl Walker {
     }
 }
 
-/// Path under `root` rendered as a forward-slash key. For files at the
-/// root itself this is just the basename; for nested matches this looks
-/// like `subdir/leaf.rs`. Used as the entry's `File::key`.
+/// Segments under `root` rendered as a forward-slash key. For files at
+/// the root itself this is just the basename; for nested matches this
+/// looks like `subdir/leaf.rs`. Used as the entry's `File::key`.
 fn relative_key(root: &Path, path: &Path) -> String {
-    match path.strip_prefix(root) {
-        Ok(rel) => rel.to_string_lossy().into_owned(),
-        // Shouldn't happen — the walker only descends below `root` —
-        // but if it does, fall back to the absolute path so the user
-        // sees something rather than an empty string.
-        Err(_) => path.to_string_lossy().into_owned(),
-    }
+    path.strip_prefix(root)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            // Shouldn't happen — the walker only descends below `root` —
+            // but if it does, fall back to the full path so the user sees
+            // something rather than an empty string.
+            path.as_wire_str().trim_start_matches('/').to_string()
+        })
 }
 
 /// Compile the name matcher. A pattern containing any glob meta
@@ -773,9 +771,9 @@ pub async fn mount(
     file_reader: Arc<dyn FileReader>,
     ctx: &crate::api::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
-    let (src_vfs, src_path) = ctx.registry.resolve(&root)?;
+    let (src_vfs, _) = ctx.registry.resolve(&root)?;
     let src_meta = src_vfs.mount_meta();
-    let root_display = src_vfs.descriptor().format_path(&src_path, &src_meta);
+    let root_display = src_vfs.descriptor().format_path(&root.path, &src_meta);
     let params_summary = summarize_params(&params);
     let mount_meta = encode_mount_meta(&MountMeta {
         root_display,

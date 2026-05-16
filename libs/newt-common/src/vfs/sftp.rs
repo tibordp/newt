@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
@@ -12,7 +11,14 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
+use crate::vfs::path::{Path, PathBuf};
 use crate::{Error, ErrorKind};
+
+/// The sftp client speaks `std::path`. Remote is Unix, so our canonical
+/// wire string *is* the correct remote path.
+fn sftp_path(p: &Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(p.as_wire_str())
+}
 
 use super::{
     Breadcrumb, DisplayPathMatch, MountRequest, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs,
@@ -96,36 +102,16 @@ impl VfsDescriptor for SftpVfsDescriptor {
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
         let host = String::from_utf8_lossy(mount_meta);
-        let s = path.to_string_lossy();
-        format!("sftp://{}{}", host, s)
+        format!("sftp://{}{}", host, super::unix_display_path(path))
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
         let host = String::from_utf8_lossy(mount_meta);
-        let mut crumbs = Vec::new();
-        let s = path.to_string_lossy();
-        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
-
-        crumbs.push(Breadcrumb {
-            label: format!("sftp://{}/", host),
-            nav_path: "/".to_string(),
-        });
-
-        let mut accumulated = String::new();
-        for (i, seg) in segments.iter().enumerate() {
-            accumulated.push('/');
-            accumulated.push_str(seg);
-            let is_last = i == segments.len() - 1;
-            crumbs.push(Breadcrumb {
-                label: if is_last {
-                    seg.to_string()
-                } else {
-                    format!("{}/", seg)
-                },
-                nav_path: accumulated.clone(),
-            });
+        let mut crumbs = super::unix_breadcrumbs(path);
+        // Rewrite the root crumb to show the SFTP host prefix.
+        if let Some(root) = crumbs.first_mut() {
+            root.label = format!("sftp://{}/", host);
         }
-
         crumbs
     }
 
@@ -133,14 +119,10 @@ impl VfsDescriptor for SftpVfsDescriptor {
         let rest = input.strip_prefix("sftp://")?;
         let host = String::from_utf8_lossy(mount_meta);
         let after_host = rest.strip_prefix(host.as_ref())?;
-        let path = if after_host.is_empty() || after_host == "/" {
-            PathBuf::from("/")
-        } else if after_host.starts_with('/') {
-            PathBuf::from(after_host)
-        } else {
+        if !after_host.is_empty() && !after_host.starts_with('/') {
             return None;
-        };
-        Some(DisplayPathMatch::exact(path))
+        }
+        Some(DisplayPathMatch::exact(PathBuf::from_wire_str(after_host)))
     }
 
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
@@ -552,10 +534,10 @@ impl Vfs for SftpVfs {
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::VfsFileList, Error> {
-        debug!("sftp: list_files {}", path.display());
+        debug!("sftp: list_files {}", path);
         self.check_alive()?;
 
-        let dir = self.sftp.fs().open_dir(path).await?;
+        let dir = self.sftp.fs().open_dir(sftp_path(path)).await?;
 
         // Collect raw entries first so we can resolve symlink targets
         // concurrently below. read_dir itself batches multiple entries per
@@ -574,7 +556,7 @@ impl Vfs for SftpVfs {
             }
         }
 
-        let path_owned = path.to_path_buf();
+        let path_owned = path.to_owned();
         let sftp = &self.sftp;
 
         // Resolve symlink targets in parallel (capped). Order is preserved
@@ -582,7 +564,7 @@ impl Vfs for SftpVfs {
         // the directory entries arrived.
         let resolve_stream =
             futures::stream::iter(raw_entries.into_iter().map(move |(name, meta)| {
-                let target_path = path_owned.join(&name);
+                let target_path = sftp_path(&path_owned.join(&name));
                 async move {
                     let is_symlink = meta.file_type().is_some_and(|ft| ft.is_symlink());
                     let follow_meta = if is_symlink {
@@ -601,9 +583,7 @@ impl Vfs for SftpVfs {
 
         // ".." goes first and is included in the first batch so the UI
         // shows it immediately.
-        if let Some(parent) = path.parent()
-            && parent != path
-        {
+        if !path.is_root() {
             let dotdot = File {
                 name: "..".to_string(),
                 size: None,
@@ -658,40 +638,37 @@ impl Vfs for SftpVfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        debug!("sftp: file_info {}", path.display());
+        debug!("sftp: file_info {}", path);
         self.check_alive()?;
         let mut fs = self.sftp.fs();
 
-        let symlink_meta = fs.symlink_metadata(path).await?;
+        let symlink_meta = fs.symlink_metadata(sftp_path(path)).await?;
 
         let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
         let follow_meta = if is_symlink {
-            fs.metadata(path).await.ok()
+            fs.metadata(sftp_path(path)).await.ok()
         } else {
             None
         };
 
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let name = path.file_name().unwrap_or_default().to_string();
 
         Ok(metadata_to_file(name, &symlink_meta, follow_meta.as_ref()))
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        debug!("sftp: file_details {}", path.display());
+        debug!("sftp: file_details {}", path);
         self.check_alive()?;
         let mut fs = self.sftp.fs();
 
-        let symlink_meta = fs.symlink_metadata(path).await?;
+        let symlink_meta = fs.symlink_metadata(sftp_path(path)).await?;
         let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
 
         let (effective_meta, symlink_target) = if is_symlink {
-            let follow = fs.metadata(path).await.ok();
+            let follow = fs.metadata(sftp_path(path)).await.ok();
             let target = fs
-                .read_link(path)
+                .read_link(sftp_path(path))
                 .await
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
@@ -713,7 +690,7 @@ impl Vfs for SftpVfs {
         let mime_type = if is_dir {
             None
         } else {
-            crate::file_reader::guess_mime_type(path)
+            crate::file_reader::guess_mime_type(&sftp_path(path))
         };
 
         Ok(FileDetails {
@@ -721,7 +698,7 @@ impl Vfs for SftpVfs {
             mime_type,
             is_dir,
             is_symlink,
-            symlink_target: symlink_target.map(PathBuf::from),
+            symlink_target: symlink_target.map(std::path::PathBuf::from),
             user: symlink_meta.uid().map(UserGroup::Id),
             group: symlink_meta.gid().map(UserGroup::Id),
             mode,
@@ -738,15 +715,13 @@ impl Vfs for SftpVfs {
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         debug!(
             "sftp: read_range {} offset={} length={}",
-            path.display(),
-            offset,
-            length
+            path, offset, length
         );
         self.check_alive()?;
 
-        let meta = self.sftp.fs().metadata(path).await?;
+        let meta = self.sftp.fs().metadata(sftp_path(path)).await?;
         let total_size = meta.len().unwrap_or(0);
-        let mut file = self.sftp.open(path).await?;
+        let mut file = self.sftp.open(sftp_path(path)).await?;
 
         Self::read_range_from_file(&mut file, offset, length, total_size).await
     }
@@ -755,10 +730,10 @@ impl Vfs for SftpVfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
-        debug!("sftp: open_read_async {}", path.display());
+        debug!("sftp: open_read_async {}", path);
         self.check_alive()?;
 
-        let file = self.sftp.open(path).await?;
+        let file = self.sftp.open(sftp_path(path)).await?;
 
         // Bridge the !Unpin SFTP file into AsyncRead via a channel + task.
         let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, Error>>(4);
@@ -788,7 +763,7 @@ impl Vfs for SftpVfs {
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
-        debug!("sftp: overwrite_async {}", path.display());
+        debug!("sftp: overwrite_async {}", path);
         self.check_alive()?;
         let file = self
             .sftp
@@ -796,78 +771,83 @@ impl Vfs for SftpVfs {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)
+            .open(sftp_path(path))
             .await?;
 
         Ok(Box::new(SftpAsyncWriter {
             file,
             notifier: self.notifier.clone(),
-            path: path.to_path_buf(),
+            path: path.to_owned(),
         }))
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
-        debug!("sftp: create_directory {}", path.display());
+        debug!("sftp: create_directory {}", path);
         self.check_alive()?;
-        self.sftp.fs().create_dir(path).await?;
+        self.sftp.fs().create_dir(sftp_path(path)).await?;
         self.notifier.notify(path);
         Ok(())
     }
 
-    async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        debug!(
-            "sftp: create_symlink {} -> {}",
-            link.display(),
-            target.display()
-        );
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
+        debug!("sftp: create_symlink {} -> {}", link, target);
         self.check_alive()?;
-        self.sftp.fs().symlink(target, link).await?;
+        self.sftp
+            .fs()
+            .symlink(std::path::PathBuf::from(target), sftp_path(link))
+            .await?;
         self.notifier.notify(link);
         Ok(())
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
-        debug!("sftp: remove_file {}", path.display());
+        debug!("sftp: remove_file {}", path);
         self.check_alive()?;
-        self.sftp.fs().remove_file(path).await?;
+        self.sftp.fs().remove_file(sftp_path(path)).await?;
         self.notifier.notify(path);
         Ok(())
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
-        debug!("sftp: remove_dir {}", path.display());
+        debug!("sftp: remove_dir {}", path);
         self.check_alive()?;
-        self.sftp.fs().remove_dir(path).await?;
+        self.sftp.fs().remove_dir(sftp_path(path)).await?;
         self.notifier.notify(path);
         Ok(())
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        debug!("sftp: rename {} -> {}", from.display(), to.display());
+        debug!("sftp: rename {} -> {}", from, to);
         self.check_alive()?;
-        self.sftp.fs().rename(from, to).await?;
+        self.sftp
+            .fs()
+            .rename(sftp_path(from), sftp_path(to))
+            .await?;
         self.notifier.notify(from);
         self.notifier.notify(to);
         Ok(())
     }
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        debug!("sftp: hard_link {} -> {}", link.display(), target.display());
+        debug!("sftp: hard_link {} -> {}", link, target);
         self.check_alive()?;
-        self.sftp.fs().hard_link(target, link).await?;
+        self.sftp
+            .fs()
+            .hard_link(sftp_path(target), sftp_path(link))
+            .await?;
         self.notifier.notify(link);
         Ok(())
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
-        debug!("sftp: touch {}", path.display());
+        debug!("sftp: touch {}", path);
         self.check_alive()?;
         let file = self
             .sftp
             .options()
             .create(true)
             .write(true)
-            .open(path)
+            .open(sftp_path(path))
             .await?;
         file.close().await?;
         self.notifier.notify(path);
@@ -875,14 +855,14 @@ impl Vfs for SftpVfs {
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
-        debug!("sftp: truncate {}", path.display());
+        debug!("sftp: truncate {}", path);
         self.check_alive()?;
         let file = self
             .sftp
             .options()
             .write(true)
             .truncate(true)
-            .open(path)
+            .open(sftp_path(path))
             .await?;
         file.close().await?;
         self.notifier.notify(path);
@@ -890,9 +870,9 @@ impl Vfs for SftpVfs {
     }
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
-        debug!("sftp: get_metadata {}", path.display());
+        debug!("sftp: get_metadata {}", path);
         self.check_alive()?;
-        let meta = self.sftp.fs().symlink_metadata(path).await?;
+        let meta = self.sftp.fs().symlink_metadata(sftp_path(path)).await?;
 
         Ok(VfsMetadata {
             permissions: meta.permissions().map(|p| permissions_to_mode(&p)),
@@ -904,7 +884,7 @@ impl Vfs for SftpVfs {
     }
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
-        debug!("sftp: set_metadata {}", path.display());
+        debug!("sftp: set_metadata {}", path);
         self.check_alive()?;
         let mut fs = self.sftp.fs();
 
@@ -915,7 +895,7 @@ impl Vfs for SftpVfs {
         }
 
         if meta.uid.is_some() || meta.gid.is_some() {
-            let current = fs.symlink_metadata(path).await.ok();
+            let current = fs.symlink_metadata(sftp_path(path)).await.ok();
             let uid = meta
                 .uid
                 .or_else(|| current.as_ref().and_then(|m| m.uid()))
@@ -929,7 +909,7 @@ impl Vfs for SftpVfs {
 
         if meta.atime.is_some() || meta.mtime.is_some() {
             use openssh_sftp_client::UnixTimeStamp;
-            let current = fs.symlink_metadata(path).await.ok();
+            let current = fs.symlink_metadata(sftp_path(path)).await.ok();
             let atime = meta
                 .atime
                 .and_then(|t| UnixTimeStamp::new(t).ok())
@@ -943,7 +923,7 @@ impl Vfs for SftpVfs {
             sftp_meta.time(atime, mtime);
         }
 
-        fs.set_metadata(path, sftp_meta.create()).await?;
+        fs.set_metadata(sftp_path(path), sftp_meta.create()).await?;
         self.notifier.notify(path);
 
         Ok(())

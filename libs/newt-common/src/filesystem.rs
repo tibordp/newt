@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::path::Component;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -187,28 +185,6 @@ impl FileList {
 #[cfg(test)]
 #[path = "filesystem_tests.rs"]
 mod tests;
-
-/// Canonicalize . and .. segments in a path (without following symlinks or
-/// checking whether they exists)
-pub fn resolve(path: &Path) -> PathBuf {
-    assert!(path.is_absolute());
-    let mut ret = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            component => ret.push(component.as_os_str()),
-        }
-    }
-    ret
-}
-
-/// Resolve a VfsPath by canonicalizing its path component.
-pub fn resolve_vfs(vfs_path: &VfsPath) -> VfsPath {
-    VfsPath::new(vfs_path.vfs_id, resolve(&vfs_path.path))
-}
 
 pub struct UidGidCache {
     local_users: RwLock<HashMap<u32, UserGroup>>,

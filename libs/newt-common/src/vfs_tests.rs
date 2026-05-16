@@ -1,11 +1,14 @@
-use std::path::{Path, PathBuf};
-
+use crate::vfs::path::PathBuf;
 use crate::vfs::s3::S3VfsDescriptor;
 use crate::vfs::{DisplayPathPriority, VfsDescriptor};
 
 // ---------------------------------------------------------------------------
 // S3VfsDescriptor — try_parse_display_path
 // ---------------------------------------------------------------------------
+
+fn pb(s: &str) -> PathBuf {
+    PathBuf::from_wire_str(s)
+}
 
 #[test]
 fn s3_unscoped_matches_any_s3_path() {
@@ -15,7 +18,7 @@ fn s3_unscoped_matches_any_s3_path() {
     let m = desc
         .try_parse_display_path("s3://my-bucket/some/key", meta)
         .unwrap();
-    assert_eq!(m.path, PathBuf::from("/my-bucket/some/key"));
+    assert_eq!(m.path, pb("/my-bucket/some/key"));
     assert_eq!(m.priority, DisplayPathPriority::Generic);
 }
 
@@ -23,7 +26,7 @@ fn s3_unscoped_matches_any_s3_path() {
 fn s3_unscoped_root() {
     let desc = S3VfsDescriptor;
     let m = desc.try_parse_display_path("s3://", b"").unwrap();
-    assert_eq!(m.path, PathBuf::from("/"));
+    assert!(m.path.is_root());
     assert_eq!(m.priority, DisplayPathPriority::Generic);
 }
 
@@ -35,7 +38,7 @@ fn s3_scoped_exact_match() {
     let m = desc
         .try_parse_display_path("s3://my-bucket/some/key", meta)
         .unwrap();
-    assert_eq!(m.path, PathBuf::from("/some/key"));
+    assert_eq!(m.path, pb("/some/key"));
     assert_eq!(m.priority, DisplayPathPriority::Exact);
 }
 
@@ -45,7 +48,7 @@ fn s3_scoped_bucket_root_with_slash() {
     let m = desc
         .try_parse_display_path("s3://my-bucket/", b"my-bucket")
         .unwrap();
-    assert_eq!(m.path, PathBuf::from("/"));
+    assert!(m.path.is_root());
 }
 
 #[test]
@@ -54,7 +57,7 @@ fn s3_scoped_bucket_root_without_slash() {
     let m = desc
         .try_parse_display_path("s3://my-bucket", b"my-bucket")
         .unwrap();
-    assert_eq!(m.path, PathBuf::from("/"));
+    assert!(m.path.is_root());
 }
 
 #[test]
@@ -85,7 +88,7 @@ fn s3_non_s3_url_returns_none() {
 fn s3_format_path_scoped_root() {
     let desc = S3VfsDescriptor;
     assert_eq!(
-        desc.format_path(Path::new("/"), b"my-bucket"),
+        desc.format_path(&PathBuf::root(), b"my-bucket"),
         "s3://my-bucket/"
     );
 }
@@ -94,7 +97,7 @@ fn s3_format_path_scoped_root() {
 fn s3_format_path_scoped_key() {
     let desc = S3VfsDescriptor;
     assert_eq!(
-        desc.format_path(Path::new("/some/key"), b"my-bucket"),
+        desc.format_path(&pb("/some/key"), b"my-bucket"),
         "s3://my-bucket/some/key"
     );
 }
@@ -102,16 +105,13 @@ fn s3_format_path_scoped_key() {
 #[test]
 fn s3_format_path_unscoped_root() {
     let desc = S3VfsDescriptor;
-    assert_eq!(desc.format_path(Path::new("/"), b""), "s3://");
+    assert_eq!(desc.format_path(&PathBuf::root(), b""), "s3://");
 }
 
 #[test]
 fn s3_format_path_unscoped_bucket() {
     let desc = S3VfsDescriptor;
-    assert_eq!(
-        desc.format_path(Path::new("/bucket/key"), b""),
-        "s3://bucket/key"
-    );
+    assert_eq!(desc.format_path(&pb("/bucket/key"), b""), "s3://bucket/key");
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ fn s3_format_path_unscoped_bucket() {
 #[test]
 fn s3_breadcrumbs_scoped_root() {
     let desc = S3VfsDescriptor;
-    let crumbs = desc.breadcrumbs(Path::new("/"), b"my-bucket");
+    let crumbs = desc.breadcrumbs(&PathBuf::root(), b"my-bucket");
     assert_eq!(crumbs.len(), 1);
     assert_eq!(crumbs[0].label, "s3://my-bucket/");
     assert_eq!(crumbs[0].nav_path, "/");
@@ -130,7 +130,7 @@ fn s3_breadcrumbs_scoped_root() {
 #[test]
 fn s3_breadcrumbs_scoped_nested() {
     let desc = S3VfsDescriptor;
-    let crumbs = desc.breadcrumbs(Path::new("/a/b/c"), b"my-bucket");
+    let crumbs = desc.breadcrumbs(&pb("/a/b/c"), b"my-bucket");
     assert_eq!(crumbs.len(), 4); // root + a/ + b/ + c
     assert_eq!(crumbs[0].label, "s3://my-bucket/");
     assert_eq!(crumbs[1].label, "a/");
@@ -144,7 +144,7 @@ fn s3_breadcrumbs_scoped_nested() {
 #[test]
 fn s3_breadcrumbs_unscoped_root() {
     let desc = S3VfsDescriptor;
-    let crumbs = desc.breadcrumbs(Path::new("/"), b"");
+    let crumbs = desc.breadcrumbs(&PathBuf::root(), b"");
     assert_eq!(crumbs.len(), 1);
     assert_eq!(crumbs[0].label, "s3://");
 }
@@ -194,35 +194,29 @@ use crate::vfs::{VfsId, VfsPath};
 
 #[test]
 fn vfs_path_display_root() {
-    let p = VfsPath::root("/home/user");
+    let p = VfsPath::from_wire_str(VfsId::ROOT, "/home/user");
     assert_eq!(format!("{}", p), "/home/user");
 }
 
 #[test]
 fn vfs_path_display_non_root() {
-    let p = VfsPath::new(VfsId(5), "/some/path");
+    let p = VfsPath::from_wire_str(VfsId(5), "/some/path");
     assert_eq!(format!("{}", p), "vfs://5:/some/path");
 }
 
 #[test]
 fn vfs_path_join() {
-    let p = VfsPath::root("/home");
+    let p = VfsPath::from_wire_str(VfsId::ROOT, "/home");
     let joined = p.join("user");
-    assert_eq!(joined.path, PathBuf::from("/home/user"));
+    assert_eq!(joined.path, PathBuf::from_wire_str("/home/user"));
     assert_eq!(joined.vfs_id, VfsId::ROOT);
 }
 
 #[test]
 fn vfs_path_parent() {
-    let p = VfsPath::root("/home/user");
+    let p = VfsPath::from_wire_str(VfsId::ROOT, "/home/user");
     let parent = p.parent().unwrap();
-    assert_eq!(parent.path, PathBuf::from("/home"));
-}
-
-#[test]
-#[should_panic(expected = "VfsPath must be absolute")]
-fn vfs_path_rejects_relative() {
-    VfsPath::root("relative/path");
+    assert_eq!(parent.path, PathBuf::from_wire_str("/home"));
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +228,7 @@ fn vfs_path_rejects_relative() {
 // mount/unmount/get.
 
 use crate::vfs::VfsRegistry;
+use crate::vfs::path::Path;
 use std::sync::Arc;
 
 // Minimal mock Vfs for registry tests
@@ -306,6 +301,6 @@ fn registry_cannot_unmount_root() {
 #[test]
 fn registry_resolve_returns_error_for_missing_vfs() {
     let registry = VfsRegistry::with_root(Arc::new(DummyVfs));
-    let result = registry.resolve(&VfsPath::new(VfsId(999), "/"));
+    let result = registry.resolve(&VfsPath::root(VfsId(999)));
     assert!(result.is_err());
 }

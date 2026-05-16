@@ -1,6 +1,8 @@
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 use std::sync::Arc;
+
+use crate::vfs::path::{Path, PathBuf};
 
 use log::{debug, warn};
 use notify::event::RemoveKind;
@@ -104,35 +106,38 @@ impl VfsDescriptor for LocalVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
-        path.to_string_lossy().to_string()
+        local_display_path(path)
     }
 
     fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        let mut crumbs = Vec::new();
-        let s = path.to_string_lossy();
-        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
+        local_breadcrumbs(path)
+    }
 
-        crumbs.push(Breadcrumb {
-            label: "/".to_string(),
-            nav_path: "/".to_string(),
-        });
-
-        let mut accumulated = String::new();
-        for (i, seg) in segments.iter().enumerate() {
-            accumulated.push('/');
-            accumulated.push_str(seg);
-            let is_last = i == segments.len() - 1;
-            crumbs.push(Breadcrumb {
-                label: if is_last {
-                    seg.to_string()
-                } else {
-                    format!("{}/", seg)
-                },
-                nav_path: accumulated.clone(),
-            });
+    fn navigable_parent(&self, path: &Path, _mount_meta: &[u8]) -> Option<PathBuf> {
+        #[cfg(windows)]
+        {
+            // `/?`, `/?/C:`, and `/?/UNC/server/share` are all "roots".
+            // Anything above them isn't a navigable location in our
+            // current model (no "This PC" view, no "shares on server"
+            // view), so refuse to go up past them.
+            let comps: Vec<&str> = path.components().collect();
+            let root_depth = match comps.get(1).copied() {
+                Some("UNC") => 4,
+                Some(_) => 2,
+                None => return None,
+            };
+            if comps.len() <= root_depth {
+                None
+            } else {
+                Some(PathBuf::from_components(
+                    comps[..comps.len() - 1].iter().copied(),
+                ))
+            }
         }
-
-        crumbs
+        #[cfg(not(windows))]
+        {
+            path.parent().map(Path::to_owned)
+        }
     }
 
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
@@ -165,6 +170,195 @@ impl Default for LocalVfs {
     }
 }
 
+/// Render LocalVfs path components into the conventional host display
+/// form.
+///
+/// * Unix: `["Users", "tibor"]` → `/Users/tibor`.
+/// * Windows: strips the `"?"` sentinel — `["?", "C:", "Users", "Tibor"]`
+///   → `C:\Users\Tibor`; `["?", "UNC", "server", "share", "foo"]` →
+///   `\\server\share\foo`.
+fn comps_display(comps: &[&str]) -> String {
+    #[cfg(windows)]
+    {
+        // `[]` and `["?"]` both correspond to the "above any drive/share"
+        // position (`\\?\`). Navigation rules normally prevent landing
+        // here — see `LocalVfsDescriptor::navigable_parent` — but render
+        // something defensively rather than panic.
+        if comps.is_empty() || (comps.len() == 1 && comps[0] == "?") {
+            return String::from(r"\\?\");
+        }
+        match comps[0] {
+            "?" => {
+                if comps.len() >= 2 && comps[1] == "UNC" {
+                    let mut s = String::from(r"\\");
+                    s.push_str(&comps[2..].join(r"\"));
+                    s
+                } else {
+                    let mut s = comps[1].to_string();
+                    if comps.len() > 2 {
+                        s.push('\\');
+                        s.push_str(&comps[2..].join(r"\"));
+                    } else {
+                        // Bare drive root: `C:\`, not `C:`.
+                        s.push('\\');
+                    }
+                    s
+                }
+            }
+            // Defensive fallback for non-sentinel components.
+            _ => comps.join(r"\"),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if comps.is_empty() {
+            String::from("/")
+        } else {
+            format!("/{}", comps.join("/"))
+        }
+    }
+}
+
+/// User-facing rendering of a LocalVfs path. See [`comps_display`].
+pub fn local_display_path(path: &Path) -> String {
+    let comps: Vec<&str> = path.components().collect();
+    comps_display(&comps)
+}
+
+/// Breadcrumbs for a LocalVfs path. Each breadcrumb's `nav_path` is the
+/// display form of the path up to that segment, suitable for the
+/// path-input dialog.
+pub fn local_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
+    #[cfg(windows)]
+    {
+        let comps: Vec<&str> = path.components().collect();
+        if comps.first().copied() != Some("?") {
+            // Defensive — render unstructured components Unix-style.
+            return super::unix_breadcrumbs(path);
+        }
+        let mut crumbs = Vec::new();
+        // Root depth: 2 (`?/C:`) for drives, 4 (`?/UNC/server/share`)
+        // for UNC. The root crumb covers through that point.
+        let root_depth = if comps.get(1).copied() == Some("UNC") {
+            4
+        } else {
+            2
+        };
+        if comps.len() < root_depth {
+            crumbs.push(Breadcrumb {
+                label: comps_display(&comps),
+                nav_path: comps_display(&comps),
+            });
+            return crumbs;
+        }
+        crumbs.push(Breadcrumb {
+            label: comps_display(&comps[..root_depth]),
+            nav_path: comps_display(&comps[..root_depth]),
+        });
+        for i in root_depth..comps.len() {
+            let is_last = i + 1 == comps.len();
+            let label = if is_last {
+                comps[i].to_string()
+            } else {
+                format!("{}\\", comps[i])
+            };
+            crumbs.push(Breadcrumb {
+                label,
+                nav_path: comps_display(&comps[..i + 1]),
+            });
+        }
+        crumbs
+    }
+    #[cfg(not(windows))]
+    {
+        super::unix_breadcrumbs(path)
+    }
+}
+
+/// Render a LocalVfs path into a host-native `std::path::PathBuf` safe to
+/// feed to `std::fs` / `opener` / any Win32 or POSIX consumer.
+///
+/// * Unix: `/foo/bar` → `/foo/bar`.
+/// * Windows: `/?/C:/Users/Tibor` → `\\?\C:\Users\Tibor`;
+///   `/?/UNC/server/share/foo` → `\\?\UNC\server\share\foo`.
+pub fn to_native(path: &Path) -> StdPathBuf {
+    #[cfg(windows)]
+    {
+        let mut s = String::from(r"\\");
+        for (i, c) in path.components().enumerate() {
+            if i > 0 {
+                s.push('\\');
+            }
+            s.push_str(c);
+        }
+        StdPathBuf::from(s)
+    }
+    #[cfg(not(windows))]
+    {
+        StdPathBuf::from(path.as_wire_str())
+    }
+}
+
+/// Decode a host-native `std::path::Path` into LocalVfs path components.
+///
+/// * Unix: walks `Normal` components — `/home/user` → `["home", "user"]`.
+/// * Windows: emits the `"?"` sentinel then drive (`["?", "C:", …]`) or
+///   UNC (`["?", "UNC", "server", "share", …]`) info, then `Normal`
+///   components. Verbatim (`\\?\…`) and conventional forms collapse to
+///   the same components.
+///
+/// Used at the boundary between native-path APIs
+/// (`std::env::current_dir`, `dirs::*`, drag-and-drop) and `VfsPath`.
+pub fn local_path_from_native(path: &StdPath) -> PathBuf {
+    PathBuf::from_components(local_segments_from_native(path))
+}
+
+pub fn local_segments_from_native(path: &StdPath) -> Vec<String> {
+    use std::path::Component;
+
+    let mut segments = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::Normal(s) => segments.push(s.to_string_lossy().into_owned()),
+            Component::Prefix(_prefix) => {
+                #[cfg(windows)]
+                {
+                    use std::path::Prefix;
+                    segments.push("?".to_string());
+                    match _prefix.kind() {
+                        Prefix::Disk(d) | Prefix::VerbatimDisk(d) => {
+                            // `d` is the drive letter byte (e.g. `b'C'`).
+                            segments.push(format!("{}:", char::from(d).to_ascii_uppercase()));
+                        }
+                        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                            segments.push("UNC".to_string());
+                            segments.push(server.to_string_lossy().into_owned());
+                            segments.push(share.to_string_lossy().into_owned());
+                        }
+                        Prefix::Verbatim(seg) => {
+                            // `\\?\<seg>\…` for forms we don't specifically
+                            // recognise (e.g. `Volume{GUID}`). Pass through
+                            // verbatim so volume-GUID paths still work.
+                            segments.push(seg.to_string_lossy().into_owned());
+                        }
+                        Prefix::DeviceNS(_) => {
+                            // `\\.\…` device-namespace paths — outside the
+                            // file-manager scope. Drop the prefix and hope
+                            // the remaining segments are usable.
+                        }
+                    }
+                }
+            }
+            // Drop `RootDir`, `CurDir`, `ParentDir`. Absolute paths land at
+            // `RootDir` after the prefix (if any); `.` and `..` shouldn't
+            // appear in a canonicalised path the caller hands us, and if
+            // they do we drop them since segments are meant to be literal.
+            _ => {}
+        }
+    }
+    segments
+}
+
 #[async_trait::async_trait]
 impl Vfs for LocalVfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
@@ -176,8 +370,7 @@ impl Vfs for LocalVfs {
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::VfsFileList, Error> {
-        assert!(path.is_absolute());
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let files: Vec<File> = tokio::task::spawn_blocking({
             let cache = self.fs_cache.clone();
             move || -> Result<Vec<File>, Error> {
@@ -281,12 +474,12 @@ impl Vfs for LocalVfs {
     }
 
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         Ok(tokio::task::spawn_blocking(move || platform_fs_stats(&path)).await?)
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
 
@@ -330,7 +523,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
@@ -399,7 +592,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             use std::io::{Read, Seek, SeekFrom};
             let mut file = std::fs::File::open(&path)?;
@@ -428,7 +621,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let file =
             tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::from))
                 .await??;
@@ -436,7 +629,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
@@ -476,7 +669,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let file =
             tokio::task::spawn_blocking(move || std::fs::File::create(&path).map_err(Error::from))
                 .await??;
@@ -484,14 +677,14 @@ impl Vfs for LocalVfs {
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path).map_err(Error::from))
             .await?
     }
 
-    async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        let link = link.to_path_buf();
-        let target = target.to_path_buf();
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
+        let link = to_native(link);
+        let target = target.to_string();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
             {
@@ -508,7 +701,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -521,7 +714,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             std::fs::remove_file(&path)?;
             Ok(())
@@ -530,7 +723,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             std::fs::remove_dir(&path)?;
             Ok(())
@@ -539,7 +732,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
             let (permissions, uid, gid) = unix_meta_ids(&meta);
@@ -555,7 +748,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         let meta = meta.clone();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
@@ -608,14 +801,14 @@ impl Vfs for LocalVfs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = from.to_path_buf();
-        let to = to.to_path_buf();
+        let from = to_native(from);
+        let to = to_native(to);
         tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from))
             .await?
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .write(true)
@@ -627,13 +820,13 @@ impl Vfs for LocalVfs {
     }
 
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
-        let path = path.to_path_buf();
+        let path = to_native(path);
         tokio::task::spawn_blocking(move || platform_space_info(&path)).await?
     }
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = from.to_path_buf();
-        let to = to.to_path_buf();
+        let from = to_native(from);
+        let to = to_native(to);
         tokio::task::spawn_blocking(move || {
             // Try FICLONE (instant COW clone) first on Linux
             #[cfg(target_os = "linux")]
@@ -658,8 +851,8 @@ impl Vfs for LocalVfs {
     }
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        let link = link.to_path_buf();
-        let target = target.to_path_buf();
+        let link = to_native(link);
+        let target = to_native(target);
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
     }
@@ -700,12 +893,12 @@ fn unix_meta_ids(_meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option
 }
 
 #[cfg(unix)]
-fn platform_fs_stats(path: &Path) -> Option<FsStats> {
+fn platform_fs_stats(path: &StdPath) -> Option<FsStats> {
     nix::sys::statvfs::statvfs(path).ok().map(FsStats::from)
 }
 
 #[cfg(windows)]
-fn platform_fs_stats(path: &Path) -> Option<FsStats> {
+fn platform_fs_stats(path: &StdPath) -> Option<FsStats> {
     win_disk_space(path).map(|(total, free, available)| {
         FsStats::new(
             /* free_bytes */ free, /* available_bytes */ available,
@@ -715,7 +908,7 @@ fn platform_fs_stats(path: &Path) -> Option<FsStats> {
 }
 
 #[cfg(unix)]
-fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
+fn platform_space_info(path: &StdPath) -> Result<VfsSpaceInfo, Error> {
     let stats = nix::sys::statvfs::statvfs(path)?;
     let frag = stats.fragment_size() as u64;
     Ok(VfsSpaceInfo {
@@ -726,7 +919,7 @@ fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
 }
 
 #[cfg(windows)]
-fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
+fn platform_space_info(path: &StdPath) -> Result<VfsSpaceInfo, Error> {
     match win_disk_space(path) {
         Some((total, free, available)) => Ok(VfsSpaceInfo {
             total_bytes: Some(total),
@@ -745,7 +938,7 @@ fn platform_space_info(path: &Path) -> Result<VfsSpaceInfo, Error> {
 /// volume containing `path`. Returns `None` if the Win32 call fails (path
 /// doesn't exist, network share unavailable, etc.).
 #[cfg(windows)]
-fn win_disk_space(path: &Path) -> Option<(u64, u64, u64)> {
+fn win_disk_space(path: &StdPath) -> Option<(u64, u64, u64)> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 

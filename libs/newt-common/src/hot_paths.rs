@@ -54,7 +54,10 @@ impl HotPathsProvider for Local {
 
 fn make_entry(path: PathBuf, name: Option<String>, category: HotPathCategory) -> HotPathEntry {
     HotPathEntry {
-        path: VfsPath::root(path),
+        path: VfsPath::new(
+            crate::vfs::VfsId::ROOT,
+            crate::vfs::local::local_path_from_native(&path),
+        ),
         name,
         category,
     }

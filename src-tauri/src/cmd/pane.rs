@@ -1,5 +1,6 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
-use newt_common::vfs::{MountRequest, VfsPath};
+use newt_common::vfs::local::{local_path_from_native, to_native};
+use newt_common::vfs::{MountRequest, VfsId, VfsPath};
 
 use crate::common::Error;
 use crate::main_window::pane::{FilterMode, Sorting};
@@ -30,7 +31,7 @@ pub async fn navigate(
             // Try shell expansion (handles ~, env vars, etc.)
             let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
             if expanded.is_absolute() {
-                Some(VfsPath::root(expanded))
+                Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
             } else {
                 // Relative path — will be resolved against the pane's current path
                 None
@@ -265,7 +266,7 @@ pub async fn cmd_open_in_other_pane(
                 origin: target_path.clone(),
             })
             .await?;
-        target_path = VfsPath::new(response.vfs_id, "/");
+        target_path = VfsPath::root(response.vfs_id);
     }
 
     ctx.with_pane_update_async(target, |_gs, pane| async move {
@@ -340,7 +341,7 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
 
     // Open through shell if on local VFS
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(&full_path.path)?;
+        opener::open(to_native(&full_path.path))?;
     } else {
         download_and_open(&ctx, full_path, &file.name).await?;
     }
@@ -362,7 +363,7 @@ async fn download_and_open(
 
     let temp_dir = tempfile::tempdir_in(std::env::temp_dir())?.keep();
     let dest_path = temp_dir.join(filename);
-    let dest_vfs_path = VfsPath::new(host_vfs, temp_dir.to_string_lossy().to_string());
+    let dest_vfs_path = VfsPath::new(host_vfs, local_path_from_native(&temp_dir));
 
     let op_id = super::operations::start_operation(
         ctx.clone(),
@@ -408,7 +409,7 @@ pub async fn cmd_open_archive(
             origin: origin.clone(),
         })
         .await?;
-    let vfs_path = VfsPath::new(response.vfs_id, "/");
+    let vfs_path = VfsPath::root(response.vfs_id);
 
     ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {
         pane.navigate_to(vfs_path).await?;
@@ -446,19 +447,35 @@ pub async fn cmd_follow_symlink(
             .get_focused_source()
             .and_then(|p| p.parent())
             .unwrap_or_else(|| pane.path());
-        if target.is_absolute() {
-            VfsPath::new(source_parent.vfs_id, target)
+        // Symlink targets come in as `PathBuf` because they were read from
+        // an underlying filesystem; map them into segments for the VFS the
+        // source lives in. The local VFS gets the platform-aware decoder
+        // (handles drive prefixes); every other VFS treats the target as a
+        // Unix-style string.
+        let target_path = if source_parent.vfs_id == VfsId::ROOT {
+            local_path_from_native(&target)
         } else {
-            VfsPath::new(source_parent.vfs_id, source_parent.path.join(&target))
+            newt_common::vfs::path::PathBuf::from_components(
+                target
+                    .to_string_lossy()
+                    .split('/')
+                    .filter(|s| !s.is_empty()),
+            )
+        };
+        if target.is_absolute() {
+            VfsPath::new(source_parent.vfs_id, target_path)
+        } else {
+            let mut path = source_parent.path.clone();
+            for comp in target_path.components() {
+                path.push(comp);
+            }
+            VfsPath::new(source_parent.vfs_id, path)
         }
     };
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
         let parent = resolved.parent().unwrap_or_else(|| resolved.clone());
-        let filename = resolved
-            .path
-            .file_name()
-            .map(|n: &std::ffi::OsStr| n.to_string_lossy().to_string());
+        let filename = resolved.file_name().map(str::to_string);
         pane.navigate_to(parent).await?;
         if let Some(name) = filename {
             pane.view_state_mut().focus(name);
@@ -475,7 +492,7 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let full_path = pane.path();
 
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(&full_path.path)?;
+        opener::open(to_native(&full_path.path))?;
     }
 
     Ok(())
@@ -605,7 +622,7 @@ pub async fn cmd_paste_from_clipboard(
     } else {
         let expanded = ctx.shell_service()?.shell_expand(text.to_string()).await?;
         if expanded.is_absolute() {
-            Some(VfsPath::root(expanded))
+            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
         } else {
             None
         }

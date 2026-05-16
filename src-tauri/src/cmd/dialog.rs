@@ -86,10 +86,9 @@ pub fn dialog(
                         .is_some_and(|(d, _)| d.can_set_metadata());
 
                     let name = pane_path
-                        .path
                         .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| pane_path.path.to_string_lossy().to_string());
+                        .map(str::to_string)
+                        .unwrap_or_else(|| pane_path.to_string());
 
                     let mode = dir_entry.and_then(|f| f.mode.as_ref().map(|m| m.0));
 
@@ -141,7 +140,7 @@ pub fn dialog(
                     let files: Vec<&newt_common::filesystem::File> = display_paths
                         .iter()
                         .filter_map(|p| {
-                            let key = p.file_name()?.to_string_lossy().to_string();
+                            let key = p.file_name()?;
                             view_files.iter().find(|f| f.key() == key)
                         })
                         .collect();
@@ -266,7 +265,7 @@ pub fn dialog(
                     let summary = if sources.len() == 1 {
                         sources[0]
                             .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
+                            .map(str::to_string)
                             .unwrap_or_default()
                     } else {
                         format!("{} items", sources.len())

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,6 +9,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::rpc::Communicator;
+use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
 pub type OperationId = u64;
@@ -96,7 +96,7 @@ pub enum OperationRequest {
     },
     RunCommand {
         command: String,
-        working_dir: Option<PathBuf>,
+        working_dir: Option<std::path::PathBuf>,
     },
     /// Synthetic long-running operation for manual testing of the progress
     /// UI — scan phase, prepared totals, ticking progress, and completion.
@@ -157,7 +157,7 @@ pub enum OperationProgress {
 enum CopyEntryKind {
     File,
     Directory,
-    Symlink { target: PathBuf },
+    Symlink { target: String },
 }
 
 struct CopyEntry {
@@ -527,7 +527,7 @@ impl ProgressReporter {
 async fn execute_run_command(
     reporter: &mut ProgressReporter,
     command: &str,
-    working_dir: Option<&Path>,
+    working_dir: Option<&std::path::Path>,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     reporter.send_prepared(0, 0);
@@ -813,10 +813,8 @@ async fn plan_copy(
             file_list
                 .files
                 .into_iter()
-                .find(|f| f.name == file_name.to_string_lossy().as_ref())
-                .ok_or_else(|| {
-                    crate::Error::custom(format!("source not found: {}", source.display()))
-                })?
+                .find(|f| f.name == file_name)
+                .ok_or_else(|| crate::Error::custom(format!("source not found: {}", source)))?
         };
 
         if has_symlinks && file_entry.is_symlink {
@@ -824,7 +822,12 @@ async fn plan_copy(
                 source: source.clone(),
                 dest: dest_base,
                 kind: CopyEntryKind::Symlink {
-                    target: file_entry.symlink_target.clone().unwrap(),
+                    target: file_entry
+                        .symlink_target
+                        .clone()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
                 },
                 size_bytes: 0,
             });
@@ -850,7 +853,7 @@ async fn plan_copy(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    &format!("Error scanning directory {}", src_dir.display()),
+                                    &format!("Error scanning directory {}", src_dir),
                                     None,
                                     cancel,
                                     true,
@@ -876,7 +879,12 @@ async fn plan_copy(
                             source: src_path,
                             dest: dst_path,
                             kind: CopyEntryKind::Symlink {
-                                target: file.symlink_target.clone().unwrap(),
+                                target: file
+                                    .symlink_target
+                                    .clone()
+                                    .unwrap()
+                                    .to_string_lossy()
+                                    .into_owned(),
                             },
                             size_bytes: 0,
                         });
@@ -1007,10 +1015,7 @@ async fn copy_single_file(
 
     // 1. Same-VFS copy_within fast path
     if same_vfs && dst_descriptor.can_copy_within() {
-        debug!(
-            "copy_single_file: trying copy_within for {}",
-            entry.source.display()
-        );
+        debug!("copy_single_file: trying copy_within for {}", entry.source);
         if src_vfs
             .copy_within(&entry.source, &entry.dest)
             .await
@@ -1025,7 +1030,7 @@ async fn copy_single_file(
     if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_sync() {
         debug!(
             "copy_single_file: sync-read + sync-write for {}",
-            entry.source.display()
+            entry.source
         );
         let mut reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_sync(&entry.dest).await?;
@@ -1061,7 +1066,7 @@ async fn copy_single_file(
     if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_async() {
         debug!(
             "copy_single_file: async-read + async-write for {}",
-            entry.source.display()
+            entry.source
         );
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
@@ -1085,7 +1090,7 @@ async fn copy_single_file(
     if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_async() {
         debug!(
             "copy_single_file: sync-read + async-write for {}",
-            entry.source.display()
+            entry.source
         );
         let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
@@ -1131,7 +1136,7 @@ async fn copy_single_file(
     if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_sync() {
         debug!(
             "copy_single_file: async-read + sync-write for {}",
-            entry.source.display()
+            entry.source
         );
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let sync_writer = dst_vfs.overwrite_sync(&entry.dest).await?;
@@ -1298,13 +1303,13 @@ async fn execute_copy(
             ));
         }
         let source = &source_paths[0];
-        let file_name = match source.file_name() {
-            Some(f) => f.to_owned(),
+        let file_name = match sources[0].file_name() {
+            Some(f) => f,
             None => return Err(crate::Error::custom("source has no file name".to_string())),
         };
         let dest = dst_path.join(file_name);
         reporter.send_prepared(0, 1);
-        dst_vfs.create_symlink(&dest, source).await?;
+        dst_vfs.create_symlink(&dest, source.as_wire_str()).await?;
         return Ok(());
     }
 
@@ -1332,9 +1337,8 @@ async fn execute_copy(
         let display = entry
             .dest
             .strip_prefix(&dst_path)
-            .unwrap_or(&entry.dest)
-            .display()
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| entry.dest.as_wire_str().to_string());
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
         // Check for destination conflicts
@@ -1351,10 +1355,7 @@ async fn execute_copy(
                         match reporter
                             .raise_issue(
                                 IssueKind::AlreadyExists,
-                                format!(
-                                    "Cannot replace file with directory: {}",
-                                    entry.dest.display()
-                                ),
+                                format!("Cannot replace file with directory: {}", entry.dest),
                                 None,
                                 vec![IssueAction::Skip],
                             )
@@ -1375,10 +1376,7 @@ async fn execute_copy(
                         match reporter
                             .raise_issue(
                                 IssueKind::AlreadyExists,
-                                format!(
-                                    "Cannot replace directory with file: {}",
-                                    entry.dest.display()
-                                ),
+                                format!("Cannot replace directory with file: {}", entry.dest),
                                 None,
                                 vec![IssueAction::Skip],
                             )
@@ -1397,7 +1395,7 @@ async fn execute_copy(
                         match reporter
                             .raise_issue(
                                 IssueKind::AlreadyExists,
-                                format!("File already exists: {}", entry.dest.display()),
+                                format!("File already exists: {}", entry.dest),
                                 None,
                                 vec![IssueAction::Skip, IssueAction::Overwrite],
                             )
@@ -1444,7 +1442,7 @@ async fn execute_copy(
                 CopyEntryKind::Directory => dst_vfs.create_directory(&entry.dest).await,
                 CopyEntryKind::Symlink { target } => {
                     if dst_descriptor.can_create_symlink() {
-                        dst_vfs.create_symlink(&entry.dest, target).await
+                        dst_vfs.create_symlink(&entry.dest, target.as_str()).await
                     } else {
                         Err(crate::Error::custom(format!(
                             "Cannot create symlink on {}: not supported",
@@ -1478,11 +1476,7 @@ async fn execute_copy(
                         .handle_io_error(
                             e,
                             "Error",
-                            Some(format!(
-                                "{} -> {}",
-                                entry.source.display(),
-                                entry.dest.display()
-                            )),
+                            Some(format!("{} -> {}", entry.source, entry.dest)),
                             &cancel,
                             true,
                         )
@@ -1516,7 +1510,7 @@ async fn execute_copy(
                     match reporter
                         .handle_io_error(
                             e,
-                            &format!("Error removing source {}", entry.source.display()),
+                            &format!("Error removing source {}", entry.source),
                             None,
                             &cancel,
                             true,
@@ -1556,10 +1550,7 @@ async fn execute_copy(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    &format!(
-                                        "Error removing source directory {}",
-                                        entry.source.display()
-                                    ),
+                                    &format!("Error removing source directory {}", entry.source),
                                     None,
                                     &cancel,
                                     true,
@@ -1597,8 +1588,9 @@ async fn probe_is_dir(
         return Ok(vfs.file_info(path).await?.is_dir);
     }
 
-    let parent = path.parent().unwrap_or(Path::new("/"));
-    let file_name = path.file_name().map(|n| n.to_string_lossy().to_string());
+    let root = PathBuf::root();
+    let parent = path.parent().unwrap_or(&root);
+    let file_name = path.file_name();
     match file_name {
         Some(name) => {
             let listing = cancellable(cancel, vfs.list_files(parent, None)).await?;
@@ -1627,7 +1619,7 @@ async fn collect_delete_entries(
 ) -> Result<Vec<DeleteEntry>, crate::Error> {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
-    let mut stack = vec![path.to_path_buf()];
+    let mut stack = vec![path.to_owned()];
 
     while let Some(dir) = stack.pop() {
         if cancel.is_cancelled() {
@@ -1642,7 +1634,7 @@ async fn collect_delete_entries(
                     match reporter
                         .handle_io_error(
                             e,
-                            &format!("Error scanning directory {}", dir.display()),
+                            &format!("Error scanning directory {}", dir),
                             None,
                             cancel,
                             true,
@@ -1688,8 +1680,8 @@ async fn collect_chmod_entries(
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Vec<PathBuf>, crate::Error> {
-    let mut entries = vec![path.to_path_buf()];
-    let mut stack = vec![path.to_path_buf()];
+    let mut entries = vec![path.to_owned()];
+    let mut stack = vec![path.to_owned()];
 
     while let Some(dir) = stack.pop() {
         if cancel.is_cancelled() {
@@ -1704,7 +1696,7 @@ async fn collect_chmod_entries(
                     match reporter
                         .handle_io_error(
                             e,
-                            &format!("Error scanning directory {}", dir.display()),
+                            &format!("Error scanning directory {}", dir),
                             None,
                             cancel,
                             true,
@@ -1777,7 +1769,7 @@ async fn execute_set_metadata(
             if is_dir {
                 let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
                 for entry in entries {
-                    let display = format!("{}:{}", vfs_path.vfs_id, entry.display());
+                    let display = format!("{}:{}", vfs_path.vfs_id, entry);
                     all_entries.push((vfs.clone(), entry, display));
                 }
                 continue;
@@ -1958,7 +1950,7 @@ async fn execute_delete(
             return Err(crate::Error::cancelled());
         }
 
-        let display = entry.path.display().to_string();
+        let display = entry.path.to_string();
         reporter.maybe_send_progress(0, items_done, &display);
 
         let mut retry = true;
@@ -1977,7 +1969,7 @@ async fn execute_delete(
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Error deleting {}", entry.path.display()),
+                        &format!("Error deleting {}", entry.path),
                         None,
                         &cancel,
                         true,
@@ -2039,27 +2031,22 @@ async fn execute_move(
                 return Err(crate::Error::cancelled());
             }
 
-            let file_name = match source.path.file_name() {
+            let file_name = match source.file_name() {
                 Some(f) => f,
                 None => return Err(crate::Error::custom("source has no file name".to_string())),
             };
             let dest_local = dst_path.join(file_name);
+            let source_local = source.path.clone();
 
             // Check for destination conflicts before renaming (rename silently overwrites)
             if let Ok(dest_file) = src_vfs.file_info(&dest_local).await {
-                let source_file = src_vfs.file_info(&source.path).await?;
+                let source_file = src_vfs.file_info(&source_local).await?;
                 if dest_file.is_dir != source_file.is_dir {
                     // Type mismatch (file vs directory) — can only skip
                     let msg = if dest_file.is_dir {
-                        format!(
-                            "Cannot replace directory with file: {}",
-                            dest_local.display()
-                        )
+                        format!("Cannot replace directory with file: {}", dest_local)
                     } else {
-                        format!(
-                            "Cannot replace file with directory: {}",
-                            dest_local.display()
-                        )
+                        format!("Cannot replace file with directory: {}", dest_local)
                     };
                     match reporter
                         .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
@@ -2074,7 +2061,7 @@ async fn execute_move(
                     match reporter
                         .raise_issue(
                             IssueKind::AlreadyExists,
-                            format!("File already exists: {}", dest_local.display()),
+                            format!("File already exists: {}", dest_local),
                             None,
                             vec![IssueAction::Skip, IssueAction::Overwrite],
                         )
@@ -2092,19 +2079,15 @@ async fn execute_move(
                 // (which will fail for non-empty dirs, then fall back to copy+delete)
             }
 
-            match src_vfs.rename(&source.path, &dest_local).await {
+            match src_vfs.rename(&source_local, &dest_local).await {
                 Ok(()) => {
-                    debug!(
-                        "execute_move: renamed {} -> {}",
-                        source.path.display(),
-                        dest_local.display()
-                    );
+                    debug!("execute_move: renamed {} -> {}", source_local, dest_local);
                     renamed_count += 1;
                 }
                 Err(_) => {
                     debug!(
                         "execute_move: rename failed for {}, falling back to copy+delete",
-                        source.path.display()
+                        source_local
                     );
                     // Any rename failure (cross-device, permission, etc.)
                     // falls through to copy+delete
