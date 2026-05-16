@@ -284,7 +284,7 @@ impl serde::Serialize for ConnectionState {
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
 pub use newt_common::agent_resolver::AgentResolver;
-use newt_common::agent_resolver::local_agent_triple;
+use newt_common::agent_resolver::{agent_file_name, local_agent_triple};
 
 /// Host-side resolver. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
@@ -327,24 +327,34 @@ impl AgentResolver for TauriAgentResolver {
         for dir in &self.dirs {
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    let path = entry.path().join("newt-agent");
-                    if path.is_file() {
-                        hasher.update(&std::fs::read(&path)?);
-                        found = true;
+                    let p = entry.path();
+                    // Triple-subdir layout: <dir>/<triple>/newt-agent[.exe]
+                    // (the agent's extension follows the triple's OS, not
+                    // the host's).
+                    if let Some(triple) = p.file_name().and_then(|n| n.to_str()) {
+                        let nested = p.join(agent_file_name(triple));
+                        if nested.is_file() {
+                            hasher.update(&std::fs::read(&nested)?);
+                            found = true;
+                        }
                     }
-                    // Also check flat layout (dir/newt-agent)
-                    let flat = entry.path();
-                    if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
-                        hasher.update(&std::fs::read(&flat)?);
+                    // Flat layout: <dir>/newt-agent[.exe]
+                    if p.is_file()
+                        && p.file_name()
+                            .is_some_and(|n| n == "newt-agent" || n == "newt-agent.exe")
+                    {
+                        hasher.update(&std::fs::read(&p)?);
                         found = true;
                     }
                 }
             }
-            // Flat layout: dir/newt-agent directly
-            let flat = dir.join("newt-agent");
-            if flat.is_file() {
-                hasher.update(&std::fs::read(&flat)?);
-                found = true;
+            // Flat layout, direct: <dir>/newt-agent[.exe]
+            for name in ["newt-agent", "newt-agent.exe"] {
+                let flat = dir.join(name);
+                if flat.is_file() {
+                    hasher.update(&std::fs::read(&flat)?);
+                    found = true;
+                }
             }
         }
 
@@ -359,12 +369,13 @@ impl AgentResolver for TauriAgentResolver {
 
     /// Look up the agent binary for a given target triple.
     fn find_agent_binary(&self, triple: &str) -> Result<std::path::PathBuf, newt_common::Error> {
+        let name = agent_file_name(triple);
         for dir in &self.dirs {
-            let path = dir.join(triple).join("newt-agent");
+            let path = dir.join(triple).join(name);
             if path.exists() {
                 return Ok(path);
             }
-            let path = dir.join("newt-agent");
+            let path = dir.join(name);
             if path.exists() {
                 return Ok(path);
             }

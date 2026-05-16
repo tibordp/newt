@@ -123,13 +123,31 @@ impl AskpassProvider for Remote {
     }
 }
 
-/// Unix domain socket listener that forwards askpass requests from the
-/// `newt-agent` helper binary (selected via `SSH_ASKPASS=<agent-binary>`
-/// and `NEWT_ASKPASS_SOCK=<socket>`) to an `AskpassProvider`.
+/// Per-connection askpass handler shared by the unix (UDS) and windows
+/// (named pipe) listeners: read one length-prefixed `AskpassRequest`,
+/// forward it to `provider.prompt()`, write the `AskpassResponse` back.
+#[cfg(any(unix, windows))]
+async fn serve_askpass_conn<S>(stream: S, provider: std::sync::Arc<dyn AskpassProvider>)
+where
+    S: ::tokio::io::AsyncRead + ::tokio::io::AsyncWrite + Send + 'static,
+{
+    let (mut reader, mut writer) = ::tokio::io::split(stream);
+    let request: AskpassRequest = match self::tokio::read_msg(&mut reader).await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let response = provider.prompt(request).await;
+    let _ = self::tokio::write_msg(&mut writer, &response).await;
+}
+
+/// Askpass listener that forwards requests from the `newt-agent` helper
+/// binary (selected via `SSH_ASKPASS=<agent-binary>` +
+/// `NEWT_ASKPASS_SOCK=<endpoint>`) to an `AskpassProvider`.
 ///
-/// Windows builds omit this listener entirely — the askpass flow only fires
-/// when spawning local helper binaries (pkexec/ssh), which isn't a path the
-/// Windows host shell takes.
+/// Transport is platform-native: a Unix-domain socket on unix, a Windows
+/// named pipe on windows. `socket_path` carries the endpoint either way
+/// (a socket path, or a `\\.\pipe\…` name) and is passed through verbatim
+/// as `NEWT_ASKPASS_SOCK`; the agent's askpass mode dials it back.
 #[cfg(unix)]
 pub mod listener {
     use std::path::PathBuf;
@@ -138,7 +156,7 @@ pub mod listener {
 
     use tokio::sync::oneshot;
 
-    use super::{AskpassProvider, AskpassRequest};
+    use super::AskpassProvider;
 
     static SOCKET_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -184,20 +202,7 @@ pub mod listener {
                             Ok(conn) => conn,
                             Err(_) => break,
                         };
-
-                        let provider = provider.clone();
-                        tokio::spawn(async move {
-                            let (mut reader, mut writer) = stream.into_split();
-
-                            let request: AskpassRequest =
-                                match super::tokio::read_msg(&mut reader).await {
-                                    Ok(r) => r,
-                                    Err(_) => return,
-                                };
-
-                            let response = provider.prompt(request).await;
-                            let _ = super::tokio::write_msg(&mut writer, &response).await;
-                        });
+                        tokio::spawn(super::serve_askpass_conn(stream, provider.clone()));
                     }
                 }
             }
@@ -212,25 +217,76 @@ pub mod listener {
     }
 }
 
-/// Windows shim: keeps the call sites in `src-tauri` compile-clean. Bootstrap
-/// transports that need askpass (pkexec, SSH-with-prompt) aren't reachable
-/// from the Windows host shell — if someone wires one up anyway, `spawn`
-/// fails fast with `Unsupported`.
 #[cfg(windows)]
 pub mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use tokio::net::windows::named_pipe::ServerOptions;
+    use tokio::sync::oneshot;
 
     use super::AskpassProvider;
 
+    static PIPE_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    /// Handle for a running askpass listener. Drop to stop accepting; the
+    /// pipe name is reclaimed by the OS once all instances close.
     pub struct AskpassListener {
         pub socket_path: PathBuf,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     }
 
-    pub fn spawn(_provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "askpass listener requires Unix domain sockets",
-        ))
+    impl Drop for AskpassListener {
+        fn drop(&mut self) {
+            if let Some(tx) = self.shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    /// Spawn a named-pipe askpass listener. Mirrors the unix UDS listener:
+    /// each accepted connection is handed one `AskpassRequest` and replies
+    /// with the `AskpassResponse`.
+    pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
+        let nonce = PIPE_NONCE.fetch_add(1, Ordering::Relaxed);
+        let pipe_name = format!(r"\\.\pipe\newt-askpass-{}-{}", std::process::id(), nonce);
+
+        // Create the first instance synchronously so the name exists before
+        // `spawn` returns — the caller sets it as NEWT_ASKPASS_SOCK and
+        // launches the child immediately, which would otherwise race the
+        // listener task and hit ERROR_FILE_NOT_FOUND.
+        let mut server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)?;
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+        let pipe_name_loop = pipe_name.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    res = server.connect() => {
+                        if res.is_err() {
+                            break;
+                        }
+                        // The connected instance becomes this client's
+                        // stream; stand up the next instance before serving
+                        // so a concurrent client isn't refused.
+                        let connected = server;
+                        server = match ServerOptions::new().create(&pipe_name_loop) {
+                            Ok(s) => s,
+                            Err(_) => break,
+                        };
+                        tokio::spawn(super::serve_askpass_conn(connected, provider.clone()));
+                    }
+                }
+            }
+        });
+
+        Ok(AskpassListener {
+            socket_path: PathBuf::from(pipe_name),
+            shutdown_tx: Some(shutdown_tx),
+        })
     }
 }

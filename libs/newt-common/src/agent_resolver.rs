@@ -18,6 +18,18 @@ pub fn local_agent_triple() -> String {
     }
 }
 
+/// File name of the agent binary for `triple`. Windows targets carry the
+/// `.exe` extension; every other platform does not. Derived from the
+/// *triple's* OS, not the host's — a Windows host bootstrapping a Linux
+/// remote still reads a plain `newt-agent`.
+pub fn agent_file_name(triple: &str) -> &'static str {
+    if triple.contains("windows") {
+        "newt-agent.exe"
+    } else {
+        "newt-agent"
+    }
+}
+
 /// Map an OS+arch pair (as reported by `uname -s -m` or `docker inspect`) to
 /// our agent target triple. Mirrors the `case` tables in `scripts/bootstrap.sh`
 /// — keep the two in sync. Accepts the common synonyms (`amd64`/`x86_64`,
