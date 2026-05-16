@@ -102,7 +102,7 @@ Click a column header to sort ascending by that key; click the same header again
 **Visual indicators**:
 - Selected files: distinct background highlight.
 - Focused (cursor) file: different highlight from selection.
-- Hidden files (starting with `.`): dimmed styling.
+- Hidden files: dimmed styling. Hidden-ness is platform-native — the leading-`.` convention on Unix, the filesystem `HIDDEN`/`SYSTEM` attributes on Windows.
 - Symlinks: special styling (CSS class).
 - `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected.
 

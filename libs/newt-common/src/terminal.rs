@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 #[cfg(unix)]
 use std::{
     collections::HashMap,
@@ -44,7 +42,7 @@ pub struct ExitStatus {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, specta::Type)]
 pub struct TerminalOptions {
-    pub working_dir: Option<PathBuf>,
+    pub working_dir: Option<std::path::PathBuf>,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub env: Option<Vec<(String, String)>>,

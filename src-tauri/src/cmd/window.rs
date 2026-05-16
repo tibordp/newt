@@ -31,7 +31,10 @@ fn build_child_window(
     if visible {
         builder = builder.focused(true);
     } else {
-        builder = builder.visible(false);
+        // Must explicitly drop focus: the builder defaults to focused(true),
+        // and on Windows an invisible-but-focused window still becomes the
+        // foreground window, stealing input from the window we just showed.
+        builder = builder.visible(false).focused(false);
     }
 
     // Register the parent context only after the window builds successfully —
@@ -39,6 +42,7 @@ fn build_child_window(
     // that no `WindowEvent::Destroyed` ever cleans up. The webview hasn't
     // started loading at this point, so no IPC has fired yet.
     let window = builder.build()?;
+    crate::disable_webview_autofill(&window);
     global_ctx
         .main_windows
         .lock()

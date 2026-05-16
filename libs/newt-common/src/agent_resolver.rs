@@ -1,11 +1,9 @@
-use std::path::PathBuf;
-
 use crate::Error;
 
 pub trait AgentResolver: Send + Sync {
     fn agent_hash(&self) -> Result<String, Error>;
-    fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, Error>;
-    fn find_local_agent_binary(&self) -> Result<PathBuf, Error>;
+    fn find_agent_binary(&self, triple: &str) -> Result<std::path::PathBuf, Error>;
+    fn find_local_agent_binary(&self) -> Result<std::path::PathBuf, Error>;
 }
 
 /// The agent triple this binary was compiled for. On Linux we always pair
@@ -51,7 +49,7 @@ impl CurrentExeAgentResolver {
         Self
     }
 
-    fn current_exe() -> Result<PathBuf, Error> {
+    fn current_exe() -> Result<std::path::PathBuf, Error> {
         std::env::current_exe().map_err(Error::from)
     }
 }
@@ -70,7 +68,7 @@ impl AgentResolver for CurrentExeAgentResolver {
         Ok(hash.to_hex()[..16].to_string())
     }
 
-    fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, Error> {
+    fn find_agent_binary(&self, triple: &str) -> Result<std::path::PathBuf, Error> {
         if triple == local_agent_triple() {
             Self::current_exe()
         } else {
@@ -81,7 +79,7 @@ impl AgentResolver for CurrentExeAgentResolver {
         }
     }
 
-    fn find_local_agent_binary(&self) -> Result<PathBuf, Error> {
+    fn find_local_agent_binary(&self) -> Result<std::path::PathBuf, Error> {
         Self::current_exe()
     }
 }

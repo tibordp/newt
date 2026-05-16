@@ -8,7 +8,6 @@ use log::{info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use schema::{AppPreferences, BookmarkEntry, SettingsFile, UserCommandEntry};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -86,7 +85,7 @@ impl PreferencesHandle {
 }
 
 pub struct PreferencesManager {
-    config_dir: PathBuf,
+    config_dir: std::path::PathBuf,
     resolved: Arc<RwLock<ResolvedPreferences>>,
     handle: PreferencesHandle,
     notify_tx: tokio::sync::watch::Sender<()>,
@@ -95,12 +94,15 @@ pub struct PreferencesManager {
 }
 
 impl PreferencesManager {
-    pub fn new(app_handle: &tauri::AppHandle, config_dir_override: Option<PathBuf>) -> Self {
+    pub fn new(
+        app_handle: &tauri::AppHandle,
+        config_dir_override: Option<std::path::PathBuf>,
+    ) -> Self {
         let config_dir = config_dir_override.unwrap_or_else(|| {
             app_handle
                 .path()
                 .app_config_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
         });
 
         // Ensure config directory exists
@@ -149,11 +151,11 @@ impl PreferencesManager {
         self.handle.clone()
     }
 
-    pub fn config_dir(&self) -> &Path {
+    pub fn config_dir(&self) -> &std::path::Path {
         &self.config_dir
     }
 
-    pub fn settings_file_path(&self) -> PathBuf {
+    pub fn settings_file_path(&self) -> std::path::PathBuf {
         self.config_dir.join("settings.toml")
     }
 
@@ -555,7 +557,7 @@ impl PreferencesManager {
 
     fn setup_watcher(
         app_handle: &tauri::AppHandle,
-        config_dir: &Path,
+        config_dir: &std::path::Path,
         resolved: Arc<RwLock<ResolvedPreferences>>,
         settings: Arc<arc_swap::ArcSwap<AppPreferences>>,
         notify_tx: tokio::sync::watch::Sender<()>,
@@ -632,7 +634,7 @@ impl PreferencesManager {
         Some(watcher)
     }
 
-    fn load_and_resolve(config_dir: &Path) -> ResolvedPreferences {
+    fn load_and_resolve(config_dir: &std::path::Path) -> ResolvedPreferences {
         let settings_path = config_dir.join("settings.toml");
         let user_file = Self::load_settings_file(&settings_path);
 
@@ -650,7 +652,7 @@ impl PreferencesManager {
         Self::resolve(user_file, profile_file)
     }
 
-    fn load_settings_file(path: &Path) -> SettingsFile {
+    fn load_settings_file(path: &std::path::Path) -> SettingsFile {
         match std::fs::read_to_string(path) {
             Ok(content) => match toml::from_str(&content) {
                 Ok(file) => file,

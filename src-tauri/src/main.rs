@@ -296,6 +296,34 @@ pub fn detect_theme() -> Option<tauri::Theme> {
     None
 }
 
+/// WebView2 (Edge Chromium) ships autofill: a "saved info" popover appears
+/// over text inputs (path bar, rename dialog, …). `autocomplete="off"` only
+/// partially suppresses it — Chromium ignores it for many field kinds — so
+/// turn the feature off at the WebView2 settings level. No-op if the
+/// installed runtime is too old to expose `ICoreWebView2Settings4`.
+#[cfg(windows)]
+pub(crate) fn disable_webview_autofill(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+    use windows::core::Interface;
+
+    let _ = window.with_webview(|pw| unsafe {
+        let Ok(core) = pw.controller().CoreWebView2() else {
+            return;
+        };
+        let Ok(settings) = core.Settings() else {
+            return;
+        };
+        let Ok(s4) = settings.cast::<ICoreWebView2Settings4>() else {
+            return;
+        };
+        let _ = s4.SetIsGeneralAutofillEnabled(false);
+        let _ = s4.SetIsPasswordAutosaveEnabled(false);
+    });
+}
+
+#[cfg(not(windows))]
+pub(crate) fn disable_webview_autofill(_window: &tauri::WebviewWindow) {}
+
 /// Diagnostic dump for `--print-config`. Prints the same identity info the
 /// About dialog shows, plus the resolved configuration directory and the
 /// agent binaries the host has on hand.

@@ -16,7 +16,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 use std::future::Future;
-use std::path::Path;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -1135,7 +1134,10 @@ impl MainWindowContext {
         &self.inner.main_window_state.terminals
     }
 
-    pub async fn create_terminal(&self, path: Option<&Path>) -> Result<Arc<Terminal>, Error> {
+    pub async fn create_terminal(
+        &self,
+        path: Option<&std::path::Path>,
+    ) -> Result<Arc<Terminal>, Error> {
         let terminal = Terminal::create(self.clone(), self.inner.window.clone(), path).await?;
 
         self.with_update(|s| {
@@ -1296,6 +1298,21 @@ impl MainWindowContext {
         // don't trust that across the RPC boundary.
         self.inner.main_window_state.vfs_progress.clear_for(vfs_id);
         Ok(())
+    }
+
+    /// Fully-qualified path to land on when selecting/mounting `vfs_id`
+    /// (asks the descriptor — see `VfsDescriptor::initial_path`). Falls
+    /// back to the VFS root if the VFS isn't mounted.
+    pub fn vfs_initial_path(&self, vfs_id: VfsId) -> VfsPath {
+        self.with_session(|s| {
+            s.mounted_vfs
+                .read()
+                .get(&vfs_id)
+                .map(|info| VfsPath::new(vfs_id, info.descriptor.initial_path(&info.mount_meta)))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| VfsPath::root(vfs_id))
     }
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
@@ -1475,6 +1492,7 @@ pub fn spawn_main_window(
             .inner_size(1100.0, 800.0)
             .theme(theme)
             .build()?;
+    crate::disable_webview_autofill(&window);
 
     let ctx = MainWindowContext::new(
         window.clone(),

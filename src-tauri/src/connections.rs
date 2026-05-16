@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
 use tauri::Manager;
 
@@ -101,11 +100,11 @@ struct ConnectionsFile {
     connections: Vec<ConnectionProfile>,
 }
 
-fn connections_path(config_dir: &Path) -> PathBuf {
+fn connections_path(config_dir: &std::path::Path) -> std::path::PathBuf {
     config_dir.join("connections.toml")
 }
 
-pub fn list_connections(config_dir: &Path) -> Vec<ConnectionProfile> {
+pub fn list_connections(config_dir: &std::path::Path) -> Vec<ConnectionProfile> {
     let path = connections_path(config_dir);
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -120,7 +119,10 @@ pub fn list_connections(config_dir: &Path) -> Vec<ConnectionProfile> {
     }
 }
 
-pub fn save_connection(config_dir: &Path, profile: ConnectionProfile) -> Result<(), Error> {
+pub fn save_connection(
+    config_dir: &std::path::Path,
+    profile: ConnectionProfile,
+) -> Result<(), Error> {
     let path = connections_path(config_dir);
     let content = std::fs::read_to_string(&path).unwrap_or_default();
     let mut file: ConnectionsFile = toml::from_str(&content).unwrap_or_default();
@@ -137,7 +139,7 @@ pub fn save_connection(config_dir: &Path, profile: ConnectionProfile) -> Result<
     Ok(())
 }
 
-pub fn delete_connection(config_dir: &Path, id: &str) -> Result<(), Error> {
+pub fn delete_connection(config_dir: &std::path::Path, id: &str) -> Result<(), Error> {
     let path = connections_path(config_dir);
     let content = std::fs::read_to_string(&path).unwrap_or_default();
     let mut file: ConnectionsFile = toml::from_str(&content).unwrap_or_default();

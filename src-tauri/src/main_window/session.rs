@@ -12,7 +12,6 @@ use newt_common::vfs::{
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -293,7 +292,7 @@ use newt_common::agent_resolver::local_agent_triple;
 /// 3. Tauri resource dir (`agents/` inside the bundled app)
 /// 4. `agents/` relative fallback (legacy/dev)
 pub struct TauriAgentResolver {
-    dirs: Vec<PathBuf>,
+    dirs: Vec<std::path::PathBuf>,
 }
 
 impl TauriAgentResolver {
@@ -302,18 +301,18 @@ impl TauriAgentResolver {
         let mut dirs = Vec::new();
 
         if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
+            dirs.push(std::path::PathBuf::from(dir));
         }
 
         if let Some(dir) = option_env!("NEWT_SYSTEM_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
+            dirs.push(std::path::PathBuf::from(dir));
         }
 
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
             dirs.push(resource_dir.join("agents"));
         }
 
-        dirs.push(PathBuf::from("agents"));
+        dirs.push(std::path::PathBuf::from("agents"));
 
         Self { dirs }
     }
@@ -359,7 +358,7 @@ impl AgentResolver for TauriAgentResolver {
     }
 
     /// Look up the agent binary for a given target triple.
-    fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, newt_common::Error> {
+    fn find_agent_binary(&self, triple: &str) -> Result<std::path::PathBuf, newt_common::Error> {
         for dir in &self.dirs {
             let path = dir.join(triple).join("newt-agent");
             if path.exists() {
@@ -379,7 +378,7 @@ impl AgentResolver for TauriAgentResolver {
 
     /// Find the agent binary on the local machine (for elevated mode).
     /// Maps the compile-time target to the agent triple (always musl on Linux).
-    fn find_local_agent_binary(&self) -> Result<PathBuf, newt_common::Error> {
+    fn find_local_agent_binary(&self) -> Result<std::path::PathBuf, newt_common::Error> {
         let triple = local_agent_triple();
         self.find_agent_binary(&triple)
     }
@@ -436,7 +435,7 @@ pub trait VfsInfo: Send + Sync {
     /// enclosing directory of the origin file and recurses. For VFSes with
     /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
-    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<PathBuf> {
+    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<std::path::PathBuf> {
         let mut current = path.clone();
         loop {
             if current.vfs_id == VfsId::ROOT {

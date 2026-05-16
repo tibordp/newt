@@ -143,6 +143,31 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         None
     }
+
+    fn initial_path(&self, _mount_meta: &[u8]) -> PathBuf {
+        local_default_root()
+    }
+}
+
+/// Where a freshly-selected local VFS should land.
+///
+/// On Unix the abstract root (`/`) is a real, navigable directory, so we
+/// keep the existing behaviour. On Windows `/` maps to the synthetic
+/// "above any drive" position (`\\?\`), which can't be listed — so fall
+/// back to the user's home directory (always a valid absolute path),
+/// then the process cwd, and only then the (invalid-on-Windows) root as
+/// a last resort.
+#[cfg(unix)]
+fn local_default_root() -> PathBuf {
+    PathBuf::root()
+}
+
+#[cfg(windows)]
+fn local_default_root() -> PathBuf {
+    dirs::home_dir()
+        .or_else(|| std::env::current_dir().ok())
+        .map(|p| local_path_from_native(&p))
+        .unwrap_or_else(PathBuf::root)
 }
 
 pub static LOCAL_VFS_DESCRIPTOR: LocalVfsDescriptor = LocalVfsDescriptor;
@@ -434,7 +459,7 @@ impl Vfs for LocalVfs {
                         is_dir,
                         is_symlink: file_type.is_symlink(),
                         symlink_target,
-                        is_hidden: name.starts_with('.'),
+                        is_hidden: is_hidden(&name, &metadata),
                         user: user_field,
                         group: group_field,
                         mode: mode_field,
@@ -649,7 +674,7 @@ impl Vfs for LocalVfs {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
             Ok(File {
-                is_hidden: name.starts_with('.'),
+                is_hidden: is_hidden(&name, &meta),
                 name,
                 size: (!is_dir).then_some(meta.len()),
                 is_dir,
@@ -880,6 +905,23 @@ fn unix_owner_bits(
     _cache: &Arc<UidGidCache>,
 ) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
     (None, None, None)
+}
+
+/// Whether a directory entry should be treated as hidden.
+///
+/// * Unix: the leading-dot convention.
+/// * Windows: the filesystem `HIDDEN`/`SYSTEM` attributes (the dot
+///   convention is meaningless there; Explorer / Salamander hide both).
+#[cfg(unix)]
+fn is_hidden(name: &str, _meta: &std::fs::Metadata) -> bool {
+    name.starts_with('.')
+}
+
+#[cfg(windows)]
+fn is_hidden(_name: &str, meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+    meta.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0
 }
 
 #[cfg(unix)]

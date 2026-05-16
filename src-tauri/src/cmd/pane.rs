@@ -23,41 +23,46 @@ pub async fn navigate(
     path: &str,
     exact: bool,
 ) -> Result<(), Error> {
-    if !exact {
-        // First try resolving as a VFS display path (handles s3://, etc.)
-        let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
-            Some(vfs_path)
+    // Decode an *absolute* input into a fully-qualified VfsPath here, at
+    // the boundary. Anything that stays `None` is a relative fragment
+    // (`..`, `subdir`) resolved against the pane's current directory.
+    // This is the single place native OS paths are turned into VfsPaths;
+    // the VFS-domain code below the `Pane::navigate` call never sees a
+    // drive letter / separator skew.
+    let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
+        // A VFS display path (s3://, archive, k8s, …).
+        Some(vfs_path)
+    } else if exact {
+        // Verbatim: no shell expansion/fuzzing. A breadcrumb hands us a
+        // native display path (`C:\Users\Tibor`, `/home/x`); `..` and
+        // other relative fragments fall through to relative resolution.
+        let native = std::path::Path::new(path);
+        if native.is_absolute() {
+            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(native)))
         } else {
-            // Try shell expansion (handles ~, env vars, etc.)
-            let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
-            if expanded.is_absolute() {
-                Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
-            } else {
-                // Relative path — will be resolved against the pane's current path
-                None
-            }
-        };
-
-        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-            gs.close_modal();
-            if let Some(target) = resolved {
-                pane.navigate_to(target).await?;
-            } else {
-                // Resolve relative to the pane's current directory
-                pane.navigate(path).await?;
-            }
-            Ok(())
-        })
-        .await
+            None
+        }
     } else {
-        let path = path.to_string();
-        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-            gs.close_modal();
-            pane.navigate(path).await?;
-            Ok(())
-        })
-        .await
-    }
+        // Non-exact: allow shell expansion (~, env vars, …).
+        let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
+        if expanded.is_absolute() {
+            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
+        } else {
+            None
+        }
+    };
+
+    let path = path.to_string();
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        if let Some(target) = resolved {
+            pane.navigate_to(target).await?;
+        } else {
+            pane.navigate(&path).await?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -633,7 +638,7 @@ pub async fn cmd_paste_from_clipboard(
         if let Some(target) = resolved {
             pane.navigate_to(target).await?;
         } else {
-            pane.navigate(text).await?;
+            pane.navigate(&text).await?;
         }
         Ok(())
     })

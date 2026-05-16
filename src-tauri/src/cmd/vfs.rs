@@ -30,7 +30,7 @@ async fn mount_and_navigate(
         kind,
         response.vfs_id
     );
-    let vfs_path = VfsPath::root(response.vfs_id);
+    let vfs_path = ctx.vfs_initial_path(response.vfs_id);
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
@@ -138,7 +138,7 @@ pub async fn switch_vfs(
     type_name: String,
 ) -> Result<(), Error> {
     let vfs_path = if let Some(id) = vfs_id {
-        VfsPath::root(id)
+        ctx.vfs_initial_path(id)
     } else {
         let descriptor = lookup_descriptor(&type_name)
             .ok_or_else(|| Error::Custom(format!("unknown VFS type: {}", type_name)))?;
@@ -149,7 +149,7 @@ pub async fn switch_vfs(
             ))
         })?;
         let response = ctx.mount_vfs(request).await?;
-        VfsPath::root(response.vfs_id)
+        ctx.vfs_initial_path(response.vfs_id)
     };
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
@@ -164,7 +164,7 @@ pub async fn switch_vfs(
 async fn redirect_and_unmount(ctx: &MainWindowContext, vfs_id: VfsId) -> Result<(), Error> {
     for pane in ctx.panes().all() {
         if pane.path().vfs_id == vfs_id {
-            pane.navigate_to(VfsPath::root(VfsId::ROOT)).await?;
+            pane.navigate_to(ctx.vfs_initial_path(VfsId::ROOT)).await?;
         }
     }
     ctx.unmount_vfs(vfs_id).await

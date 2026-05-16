@@ -19,7 +19,6 @@ use crate::main_window::session::VfsInfo;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -665,9 +664,9 @@ impl Pane {
         }
     }
 
-    pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    pub async fn navigate(&self, rel: &str) -> Result<(), Error> {
         let current = self.path();
-        let target = self.resolve_relative(&current, path.as_ref());
+        let target = self.resolve_relative(&current, rel);
 
         // Cancel any pending navigation
         self.cancel();
@@ -682,18 +681,31 @@ impl Pane {
         Ok(())
     }
 
-    /// Resolve a relative path against a VfsPath, crossing VFS boundaries
-    /// when `..` escapes above root on a VFS that has an origin.
-    fn resolve_relative(&self, base: &VfsPath, rel: &Path) -> VfsPath {
-        use std::path::Component;
-
+    /// Resolve a relative path *expression* against a VfsPath, crossing
+    /// VFS boundaries when `..` escapes above root on a VFS that has an
+    /// origin.
+    ///
+    /// `rel` is a relative fragment (`..`, `a/b`) — never an absolute or
+    /// native OS path. Absolute inputs (breadcrumb display paths, typed
+    /// absolute paths) are decoded into a `VfsPath` at the navigate
+    /// boundary (see `cmd::pane::navigate`) and routed through
+    /// `navigate_to`, so they never reach here. We split on `/` and `\`
+    /// ourselves rather than going through `std::path::Component`, whose
+    /// model would — on Windows — fabricate a drive `Prefix` and silently
+    /// corrupt the path. The VFS path domain has no drive/UNC concept.
+    fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
         let mut vfs_id = base.vfs_id;
-        let mut path = base.path.clone();
+        let mut path = if rel.starts_with(['/', '\\']) {
+            // Defensive: an absolute fragment resets to the VFS root.
+            newt_common::vfs::path::PathBuf::root()
+        } else {
+            base.path.clone()
+        };
 
-        for component in rel.components() {
-            match component {
-                Component::CurDir => {}
-                Component::ParentDir => {
+        for seg in rel.split(['/', '\\']) {
+            match seg {
+                "" | "." => {}
+                ".." => {
                     // Ask the descriptor what "up" means — most just pop
                     // one segment, but `LocalVfs` on Windows refuses to
                     // go above a drive/share root.
@@ -713,20 +725,12 @@ impl Pane {
                                 path = origin.path.clone();
                                 // The `..` pops the archive filename itself
                                 path.pop();
-                                continue;
                             }
                             // No origin — clamp at root.
                         }
                     }
                 }
-                Component::Normal(s) => {
-                    path.push(&s.to_string_lossy());
-                }
-                Component::RootDir => {
-                    // Absolute path resets to root of current VFS.
-                    path = newt_common::vfs::path::PathBuf::root();
-                }
-                Component::Prefix(_) => {}
+                seg => path.push(seg),
             }
         }
 
@@ -1100,7 +1104,7 @@ impl Pane {
             .cloned()
     }
 
-    pub fn get_focused_symlink_target(&self) -> Option<PathBuf> {
+    pub fn get_focused_symlink_target(&self) -> Option<std::path::PathBuf> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state

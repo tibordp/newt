@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::Error;
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
@@ -52,7 +50,11 @@ impl HotPathsProvider for Local {
     }
 }
 
-fn make_entry(path: PathBuf, name: Option<String>, category: HotPathCategory) -> HotPathEntry {
+fn make_entry(
+    path: std::path::PathBuf,
+    name: Option<String>,
+    category: HotPathCategory,
+) -> HotPathEntry {
     HotPathEntry {
         path: VfsPath::new(
             crate::vfs::VfsId::ROOT,
@@ -88,7 +90,7 @@ fn collect_system_paths() -> Vec<HotPathEntry> {
 // ---------------------------------------------------------------------------
 
 fn collect_standard_folders(out: &mut Vec<HotPathEntry>) {
-    let pairs: Vec<(&str, Option<PathBuf>)> = vec![
+    let pairs: Vec<(&str, Option<std::path::PathBuf>)> = vec![
         ("Home", dirs::home_dir()),
         ("Desktop", dirs::desktop_dir()),
         ("Downloads", dirs::download_dir()),
@@ -212,7 +214,7 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
             continue;
         }
 
-        let mount_path = PathBuf::from(&mount_point);
+        let mount_path = std::path::PathBuf::from(&mount_point);
 
         // Only include mounts under /media, /run/media, or /mnt
         let dominated = mount_point.starts_with("/media/")
@@ -272,7 +274,7 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
 
     // Extract href + modified from <bookmark> elements and collect parent dirs.
     // We track the most recent modification timestamp per parent directory.
-    let mut dir_timestamps: HashMap<PathBuf, String> = HashMap::new();
+    let mut dir_timestamps: HashMap<std::path::PathBuf, String> = HashMap::new();
     let mut reader = Reader::from_str(&content);
     let mut buf = Vec::new();
 
@@ -318,12 +320,12 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
     }
 
     // Sort by most recent timestamp, take top 20
-    let mut dirs: Vec<(PathBuf, String)> = dir_timestamps.into_iter().collect();
+    let mut dirs: Vec<(std::path::PathBuf, String)> = dir_timestamps.into_iter().collect();
     dirs.sort_by(|a, b| b.1.cmp(&a.1));
     dirs.truncate(20);
 
     // Filter out standard folders (they're already shown under StandardFolder)
-    let standard_dirs: Vec<PathBuf> = [
+    let standard_dirs: Vec<std::path::PathBuf> = [
         dirs::home_dir(),
         dirs::desktop_dir(),
         dirs::download_dir(),
@@ -391,7 +393,7 @@ fn collect_macos_recent_folders(out: &mut Vec<HotPathEntry>) {
     if let Some(plist::Value::Array(arr)) = dict.get("GoToFieldHistory") {
         for val in arr {
             if let Some(s) = val.as_string() {
-                let path = PathBuf::from(s);
+                let path = std::path::PathBuf::from(s);
                 if path.exists() {
                     let name = path.file_name().map(|n| n.to_string_lossy().to_string());
                     out.push(make_entry(path, name, HotPathCategory::RecentFolder));
@@ -444,7 +446,7 @@ impl HotPathsProvider for Remote {
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
-fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     let parsed = url::Url::parse(uri).ok()?;
     if parsed.scheme() != "file" {
         return None;

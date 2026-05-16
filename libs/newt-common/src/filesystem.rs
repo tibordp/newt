@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -73,7 +72,7 @@ pub struct File {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
-    pub symlink_target: Option<PathBuf>,
+    pub symlink_target: Option<std::path::PathBuf>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
@@ -488,7 +487,7 @@ impl Filesystem for Remote {
 
 #[async_trait::async_trait]
 pub trait ShellService: Send + Sync {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error>;
+    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error>;
 }
 
 pub struct LocalShellService;
@@ -496,7 +495,7 @@ pub struct LocalShellService;
 #[cfg(unix)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
+    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
         let expanded =
             tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
@@ -507,7 +506,7 @@ impl ShellService for LocalShellService {
 #[cfg(windows)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
+    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
         // Windows has no pwd database, so only the bare `~` / `~/...` form is supported.
         // `~user/...` is left as-is.
         let expanded = if input == "~" {
@@ -521,7 +520,7 @@ impl ShellService for LocalShellService {
             home.push(rest);
             home
         } else {
-            PathBuf::from(input)
+            std::path::PathBuf::from(input)
         };
         Ok(expanded)
     }
@@ -539,8 +538,8 @@ impl ShellRemote {
 
 #[async_trait::async_trait]
 impl ShellService for ShellRemote {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
-        let ret: Result<PathBuf, Error> = self
+    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
+        let ret: Result<std::path::PathBuf, Error> = self
             .communicator
             .invoke(crate::api::API_SHELL_EXPAND, &input)
             .await?;

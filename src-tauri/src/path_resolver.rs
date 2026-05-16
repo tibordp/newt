@@ -9,14 +9,12 @@
 //! which checks the inherited `PATH` first, then the user-configured
 //! `environment.extra_path` directories as a fallback.
 
-use std::path::{Path, PathBuf};
-
 /// Look up `name` first in the inherited `PATH`, then in `extra_path` as a
 /// fallback. Returns the bare `name` (so the eventual `Command::spawn` fails
 /// with a clean ENOENT) if nothing matches.
-pub fn resolve_program(name: &str, extra_path: &[String]) -> PathBuf {
-    if Path::new(name).is_absolute() || name.contains('/') {
-        return PathBuf::from(name);
+pub fn resolve_program(name: &str, extra_path: &[String]) -> std::path::PathBuf {
+    if std::path::Path::new(name).is_absolute() || name.contains('/') {
+        return std::path::PathBuf::from(name);
     }
 
     if let Some(found) = search_path_env(name) {
@@ -25,16 +23,16 @@ pub fn resolve_program(name: &str, extra_path: &[String]) -> PathBuf {
 
     for dir in extra_path {
         let expanded = expand_tilde(dir);
-        let candidate = Path::new(&expanded).join(name);
+        let candidate = std::path::Path::new(&expanded).join(name);
         if is_executable_file(&candidate) {
             return candidate;
         }
     }
 
-    PathBuf::from(name)
+    std::path::PathBuf::from(name)
 }
 
-fn search_path_env(name: &str) -> Option<PathBuf> {
+fn search_path_env(name: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(name);
@@ -49,7 +47,7 @@ fn expand_tilde(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/")
         && let Some(home) = std::env::var_os("HOME")
     {
-        let mut out = PathBuf::from(home);
+        let mut out = std::path::PathBuf::from(home);
         out.push(rest);
         return out.to_string_lossy().into_owned();
     }
@@ -57,7 +55,7 @@ fn expand_tilde(s: &str) -> String {
 }
 
 #[cfg(unix)]
-fn is_executable_file(p: &Path) -> bool {
+fn is_executable_file(p: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     match std::fs::metadata(p) {
         Ok(m) if m.is_file() => m.permissions().mode() & 0o111 != 0,
@@ -66,7 +64,7 @@ fn is_executable_file(p: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn is_executable_file(p: &Path) -> bool {
+fn is_executable_file(p: &std::path::Path) -> bool {
     p.is_file()
 }
 
@@ -77,7 +75,7 @@ mod tests {
     #[test]
     fn absolute_path_passes_through() {
         let p = resolve_program("/bin/sh", &[]);
-        assert_eq!(p, PathBuf::from("/bin/sh"));
+        assert_eq!(p, std::path::PathBuf::from("/bin/sh"));
     }
 
     #[test]
@@ -94,7 +92,10 @@ mod tests {
         // verify the fallback search order is hit when PATH lookup fails.
         let p = resolve_program("definitely-not-installed-xyzzy", &["/tmp".into()]);
         // No match anywhere — should return the bare name.
-        assert_eq!(p, PathBuf::from("definitely-not-installed-xyzzy"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("definitely-not-installed-xyzzy")
+        );
     }
 
     #[test]
@@ -102,7 +103,12 @@ mod tests {
         // Set a known HOME and check expand_tilde resolves.
         if let Some(home) = std::env::var_os("HOME") {
             let out = expand_tilde("~/foo");
-            let expected: PathBuf = [PathBuf::from(home), PathBuf::from("foo")].iter().collect();
+            let expected: std::path::PathBuf = [
+                std::path::PathBuf::from(home),
+                std::path::PathBuf::from("foo"),
+            ]
+            .iter()
+            .collect();
             assert_eq!(out, expected.to_string_lossy());
         }
     }

@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -69,7 +68,7 @@ impl Terminal {
     pub async fn create(
         context: MainWindowContext,
         window: WebviewWindow,
-        working_dir: Option<&Path>,
+        working_dir: Option<&std::path::Path>,
     ) -> Result<Self, Error> {
         let terminal_client = context.terminal_client()?;
         let handle = terminal_client

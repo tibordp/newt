@@ -64,6 +64,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_SystemInformation",
 ] }
+# Versions pinned to match wry's WebView2 bindings so the controller handed
+# to `WebviewWindow::with_webview` casts to our interface cleanly.
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "*"

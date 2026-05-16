@@ -279,6 +279,16 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         path.parent().map(Path::to_owned)
     }
 
+    /// VFS-internal path to land on when this VFS is freshly selected or
+    /// mounted (VFS selector, post-mount, unmount redirect). Defaults to
+    /// the VFS root, which is correct for every network/archive VFS. The
+    /// local VFS overrides this: its abstract root (`/`) is not a valid
+    /// navigable location on Windows (there is no single filesystem root —
+    /// you need a drive), so it resolves to the user's home / cwd instead.
+    fn initial_path(&self, _mount_meta: &[u8]) -> PathBuf {
+        PathBuf::root()
+    }
+
     /// Try to parse a user-entered display path. Returns the VFS-internal path
     /// if this VFS recognizes the input (e.g., S3 recognizes "s3://...").
     /// Returns None if this VFS doesn't claim the input.
