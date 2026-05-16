@@ -1,9 +1,9 @@
 //! Cross-platform agent build + layout.
 //!
-//! Produces the same `agents/<triple>/newt-agent[.exe]` tree the host
-//! resolver (`TauriAgentResolver`, which searches the cwd-relative
-//! `agents/` dir) consumes — runnable identically on Windows, Linux and
-//! macOS, unlike the Unix-only Makefile it replaces. `cargo xtask agents`.
+//! Builds `newt-agent` per target triple and lays it out as
+//! `agents/<triple>/newt-agent[.exe]` — the tree the host resolver
+//! (`TauriAgentResolver`) loads from the cwd-relative `agents/` dir.
+//! `cargo xtask agents`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};

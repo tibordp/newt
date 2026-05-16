@@ -7,7 +7,7 @@ use newt_common::operation::{OperationContext, OperationProgress, OperationsClie
 use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
-    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, VfsDescriptor, VfsId, VfsManager,
+    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
     VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
 };
 use parking_lot::RwLock;
@@ -1680,14 +1680,23 @@ pub(super) async fn connect(
         }
     }
 
-    // Set up VFS
+    // Set up VFS. The root is a `LocalVfs` — the host's own FS in a local
+    // session, the agent's in a remote one. It isn't mounted via the
+    // registry (so `LocalVfs::mount_meta()` isn't consulted), so stamp the
+    // path style here: the host's own for Local, Unix for any remote
+    // (every agent target in scope is Unix).
+    let root_style = if matches!(connection_target, ConnectionTarget::Spawn(_)) {
+        PathStyle::Unix
+    } else {
+        PathStyle::host()
+    };
     let mut initial_mounted = HashMap::new();
     initial_mounted.insert(
         VfsId::ROOT,
         MountedVfsInfo {
             vfs_id: VfsId::ROOT,
             descriptor: &LOCAL_VFS_DESCRIPTOR,
-            mount_meta: Vec::new(),
+            mount_meta: root_style.encode(),
             origin: None,
         },
     );
@@ -1712,7 +1721,10 @@ pub(super) async fn connect(
                         MountedVfsInfo {
                             vfs_id: resp.vfs_id,
                             descriptor: desc,
-                            mount_meta: resp.mount_meta,
+                            // This VFS surfaces *this host's* local FS into
+                            // the remote session, so it renders in the
+                            // host's path style — not the remote's.
+                            mount_meta: PathStyle::host().encode(),
                             origin: None,
                         },
                     );

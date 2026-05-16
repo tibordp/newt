@@ -3,6 +3,7 @@ pub mod background_job;
 pub mod k8s;
 pub mod local;
 pub mod path;
+pub mod path_style;
 pub mod progress;
 pub mod remote;
 pub mod s3;
@@ -17,6 +18,7 @@ pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
+pub use path_style::PathStyle;
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
     VfsProgressSink,

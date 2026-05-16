@@ -12,9 +12,10 @@ use crate::rpc::Communicator;
 use crate::vfs::path::Path;
 
 use super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsDescriptor,
-    VfsMetadata, VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsAsyncWriter,
+    VfsDescriptor, VfsMetadata, VfsSpaceInfo,
 };
+use crate::vfs::path::PathBuf;
 
 // ---------------------------------------------------------------------------
 // RemoteVfsDescriptor
@@ -88,16 +89,20 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         true
     }
 
-    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
-        // The remote machine is always Unix in our scope, regardless of
-        // host OS. Skip `LocalVfsDescriptor` (which on Windows would
-        // expect the `?`-sentinel encoding) in favour of plain Unix-style
-        // rendering.
-        super::unix_display_path(path)
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
+        // Identical path shape to `LocalVfsDescriptor`; the style is
+        // whatever the proxied end stamped into `mount_meta` (Unix for
+        // every remote in scope, the client's OS for a client-local FS
+        // exposed back into a remote session).
+        super::local::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
     }
 
-    fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        super::unix_breadcrumbs(path)
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        super::local::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
+    }
+
+    fn navigable_parent(&self, path: &Path, mount_meta: &[u8]) -> Option<PathBuf> {
+        super::local::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {

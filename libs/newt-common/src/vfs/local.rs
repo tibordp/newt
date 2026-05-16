@@ -18,7 +18,7 @@ use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
 use crate::{Error, ToUnix};
 
 use super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata,
+    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata,
     VfsSpaceInfo,
 };
 
@@ -105,22 +105,51 @@ impl VfsDescriptor for LocalVfsDescriptor {
         true
     }
 
-    fn format_path(&self, path: &Path, _mount_meta: &[u8]) -> String {
-        local_display_path(path)
+    fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
+        local_display_path(path, PathStyle::from_mount_meta(mount_meta))
     }
 
-    fn breadcrumbs(&self, path: &Path, _mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        local_breadcrumbs(path)
+    fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+        local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
     }
 
-    fn navigable_parent(&self, path: &Path, _mount_meta: &[u8]) -> Option<PathBuf> {
-        #[cfg(windows)]
-        {
+    fn navigable_parent(&self, path: &Path, mount_meta: &[u8]) -> Option<PathBuf> {
+        navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
+    }
+
+    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        None
+    }
+
+    fn initial_path(&self, mount_meta: &[u8]) -> PathBuf {
+        match PathStyle::from_mount_meta(mount_meta) {
+            // `local_default_root` resolves a real host path (home/cwd);
+            // only meaningful when this genuinely is the host's own
+            // Windows FS. A Unix-style mount (incl. every remote root)
+            // lands at `/`, a real navigable directory there.
+            PathStyle::Windows => local_default_root(),
+            PathStyle::Unix => PathBuf::root(),
+        }
+    }
+}
+
+/// Logical parent of a LocalVfs path, honouring Windows drive/share
+/// roots. Shared by `LocalVfsDescriptor` and `RemoteVfsDescriptor` (the
+/// path shape is identical; only the `mount_meta`-derived style differs).
+pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
+    match style {
+        PathStyle::Unix => path.parent().map(Path::to_owned),
+        PathStyle::Windows => {
             // `/?`, `/?/C:`, and `/?/UNC/server/share` are all "roots".
             // Anything above them isn't a navigable location in our
             // current model (no "This PC" view, no "shares on server"
             // view), so refuse to go up past them.
             let comps: Vec<&str> = path.components().collect();
+            // A sentinel-less path isn't a real Windows path; treat it
+            // like Unix rather than misapplying drive-root rules.
+            if comps.first().copied() != Some("?") {
+                return path.parent().map(Path::to_owned);
+            }
             let root_depth = match comps.get(1).copied() {
                 Some("UNC") => 4,
                 Some(_) => 2,
@@ -134,18 +163,6 @@ impl VfsDescriptor for LocalVfsDescriptor {
                 ))
             }
         }
-        #[cfg(not(windows))]
-        {
-            path.parent().map(Path::to_owned)
-        }
-    }
-
-    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
-        None
-    }
-
-    fn initial_path(&self, _mount_meta: &[u8]) -> PathBuf {
-        local_default_root()
     }
 }
 
@@ -202,102 +219,98 @@ impl Default for LocalVfs {
 /// * Windows: strips the `"?"` sentinel — `["?", "C:", "Users", "Tibor"]`
 ///   → `C:\Users\Tibor`; `["?", "UNC", "server", "share", "foo"]` →
 ///   `\\server\share\foo`.
-fn comps_display(comps: &[&str]) -> String {
-    #[cfg(windows)]
-    {
-        // `[]` and `["?"]` both correspond to the "above any drive/share"
-        // position (`\\?\`). Navigation rules normally prevent landing
-        // here — see `LocalVfsDescriptor::navigable_parent` — but render
-        // something defensively rather than panic.
-        if comps.is_empty() || (comps.len() == 1 && comps[0] == "?") {
-            return String::from(r"\\?\");
-        }
-        match comps[0] {
-            "?" => {
-                if comps.len() >= 2 && comps[1] == "UNC" {
-                    let mut s = String::from(r"\\");
-                    s.push_str(&comps[2..].join(r"\"));
-                    s
-                } else {
-                    let mut s = comps[1].to_string();
-                    if comps.len() > 2 {
-                        s.push('\\');
-                        s.push_str(&comps[2..].join(r"\"));
-                    } else {
-                        // Bare drive root: `C:\`, not `C:`.
-                        s.push('\\');
-                    }
-                    s
-                }
+fn comps_display(comps: &[&str], style: PathStyle) -> String {
+    match style {
+        PathStyle::Unix => {
+            if comps.is_empty() {
+                String::from("/")
+            } else {
+                format!("/{}", comps.join("/"))
             }
-            // Defensive fallback for non-sentinel components.
-            _ => comps.join(r"\"),
         }
-    }
-    #[cfg(not(windows))]
-    {
-        if comps.is_empty() {
-            String::from("/")
-        } else {
-            format!("/{}", comps.join("/"))
+        PathStyle::Windows => {
+            // `[]` and `["?"]` both correspond to the "above any
+            // drive/share" position (`\\?\`). Navigation rules normally
+            // prevent landing here — see `navigable_parent` — but render
+            // something defensively rather than panic.
+            if comps.is_empty() || (comps.len() == 1 && comps[0] == "?") {
+                return String::from(r"\\?\");
+            }
+            match comps[0] {
+                "?" => {
+                    if comps.len() >= 2 && comps[1] == "UNC" {
+                        let mut s = String::from(r"\\");
+                        s.push_str(&comps[2..].join(r"\"));
+                        s
+                    } else {
+                        let mut s = comps[1].to_string();
+                        if comps.len() > 2 {
+                            s.push('\\');
+                            s.push_str(&comps[2..].join(r"\"));
+                        } else {
+                            // Bare drive root: `C:\`, not `C:`.
+                            s.push('\\');
+                        }
+                        s
+                    }
+                }
+                // Defensive fallback for non-sentinel components.
+                _ => comps.join(r"\"),
+            }
         }
     }
 }
 
 /// User-facing rendering of a LocalVfs path. See [`comps_display`].
-pub fn local_display_path(path: &Path) -> String {
+pub fn local_display_path(path: &Path, style: PathStyle) -> String {
     let comps: Vec<&str> = path.components().collect();
-    comps_display(&comps)
+    comps_display(&comps, style)
 }
 
 /// Breadcrumbs for a LocalVfs path. Each breadcrumb's `nav_path` is the
 /// display form of the path up to that segment, suitable for the
 /// path-input dialog.
-pub fn local_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
-    #[cfg(windows)]
-    {
-        let comps: Vec<&str> = path.components().collect();
-        if comps.first().copied() != Some("?") {
-            // Defensive — render unstructured components Unix-style.
-            return super::unix_breadcrumbs(path);
-        }
-        let mut crumbs = Vec::new();
-        // Root depth: 2 (`?/C:`) for drives, 4 (`?/UNC/server/share`)
-        // for UNC. The root crumb covers through that point.
-        let root_depth = if comps.get(1).copied() == Some("UNC") {
-            4
-        } else {
-            2
-        };
-        if comps.len() < root_depth {
-            crumbs.push(Breadcrumb {
-                label: comps_display(&comps),
-                nav_path: comps_display(&comps),
-            });
-            return crumbs;
-        }
+pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
+    if style == PathStyle::Unix {
+        return super::unix_breadcrumbs(path);
+    }
+    let comps: Vec<&str> = path.components().collect();
+    if comps.first().copied() != Some("?") {
+        // Defensive — render unstructured components Unix-style.
+        return super::unix_breadcrumbs(path);
+    }
+    let mut crumbs = Vec::new();
+    // Root depth: 2 (`?/C:`) for drives, 4 (`?/UNC/server/share`)
+    // for UNC. The root crumb covers through that point.
+    let root_depth = if comps.get(1).copied() == Some("UNC") {
+        4
+    } else {
+        2
+    };
+    if comps.len() < root_depth {
         crumbs.push(Breadcrumb {
-            label: comps_display(&comps[..root_depth]),
-            nav_path: comps_display(&comps[..root_depth]),
+            label: comps_display(&comps, style),
+            nav_path: comps_display(&comps, style),
         });
-        for i in root_depth..comps.len() {
-            let is_last = i + 1 == comps.len();
-            let label = if is_last {
-                comps[i].to_string()
-            } else {
-                format!("{}\\", comps[i])
-            };
-            crumbs.push(Breadcrumb {
-                label,
-                nav_path: comps_display(&comps[..i + 1]),
-            });
-        }
-        crumbs
+        return crumbs;
     }
-    #[cfg(not(windows))]
-    {
-        super::unix_breadcrumbs(path)
+    crumbs.push(Breadcrumb {
+        label: comps_display(&comps[..root_depth], style),
+        nav_path: comps_display(&comps[..root_depth], style),
+    });
+    for i in root_depth..comps.len() {
+        let is_last = i + 1 == comps.len();
+        let label = if is_last {
+            comps[i].to_string()
+        } else {
+            format!("{}\\", comps[i])
+        };
+        crumbs.push(Breadcrumb {
+            label,
+            nav_path: comps_display(&comps[..i + 1], style),
+        });
     }
+    crumbs
 }
 
 /// Render a LocalVfs path into a host-native `std::path::PathBuf` safe to
@@ -388,6 +401,14 @@ pub fn local_segments_from_native(path: &StdPath) -> Vec<String> {
 impl Vfs for LocalVfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
         &LOCAL_VFS_DESCRIPTOR
+    }
+
+    /// A `LocalVfs` always serves the filesystem of whatever process it
+    /// runs in — the host for a local session / client-local hairpin, the
+    /// agent for a remote session. So its path style is this binary's
+    /// compile-time host style, carried to whichever side renders it.
+    fn mount_meta(&self) -> Vec<u8> {
+        PathStyle::host().encode()
     }
 
     async fn list_files(
