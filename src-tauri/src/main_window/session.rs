@@ -1010,6 +1010,7 @@ async fn spawn_bootstrap(
     transport_cmd: &[String],
     enable_askpass: bool,
     shell_join: bool,
+    extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
     conn_log: &ConnectionLog,
@@ -1017,6 +1018,7 @@ async fn spawn_bootstrap(
     let (program, args) = transport_cmd
         .split_first()
         .ok_or_else(|| Error::Custom("empty transport command".into()))?;
+    let program = crate::path_resolver::resolve_program(program, extra_path);
 
     // The script reads `NEWT_RUST_LOG` from its own environment. Inject the
     // assignment as the first line of the script body so it survives transport
@@ -1038,9 +1040,13 @@ async fn spawn_bootstrap(
         None
     };
 
-    conn_log.log(format!("Spawning: {} {}", program, args.join(" ")));
+    conn_log.log(format!(
+        "Spawning: {} {}",
+        program.display(),
+        args.join(" ")
+    ));
 
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(&program);
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1193,6 +1199,7 @@ async fn perform_bootstrap_handshake(
 /// no shell to run `bootstrap.sh`.
 async fn spawn_direct_copy(
     plan: &DirectCopyPlan,
+    extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     conn_log: &ConnectionLog,
 ) -> Result<ChildConnection, Error> {
@@ -1207,12 +1214,13 @@ async fn spawn_direct_copy(
         let (prog, args) = resolved
             .split_first()
             .ok_or_else(|| Error::Custom("empty arch_detect step".into()))?;
+        let prog = crate::path_resolver::resolve_program(prog, extra_path);
         conn_log.log(format!(
             "Detecting target arch: {} {}",
-            prog,
+            prog.display(),
             args.join(" ")
         ));
-        let out = tokio::process::Command::new(prog)
+        let out = tokio::process::Command::new(&prog)
             .args(args)
             .output()
             .await
@@ -1281,12 +1289,13 @@ async fn spawn_direct_copy(
     let (copy_program, copy_args) = copy_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty copy_cmd".into()))?;
+    let copy_program = crate::path_resolver::resolve_program(copy_program, extra_path);
     conn_log.log(format!(
         "Copying agent: {} {}",
-        copy_program,
+        copy_program.display(),
         copy_args.join(" ")
     ));
-    let copy_status = tokio::process::Command::new(copy_program)
+    let copy_status = tokio::process::Command::new(&copy_program)
         .args(copy_args)
         .output()
         .await
@@ -1312,8 +1321,13 @@ async fn spawn_direct_copy(
     let (exec_program, exec_args) = exec_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty exec_cmd".into()))?;
-    conn_log.log(format!("Exec: {} {}", exec_program, exec_args.join(" ")));
-    let mut cmd = tokio::process::Command::new(exec_program);
+    let exec_program = crate::path_resolver::resolve_program(exec_program, extra_path);
+    conn_log.log(format!(
+        "Exec: {} {}",
+        exec_program.display(),
+        exec_args.join(" ")
+    ));
+    let mut cmd = tokio::process::Command::new(&exec_program);
     cmd.args(exec_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1538,6 +1552,7 @@ pub(super) async fn connect(
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             };
+            let extra_path = preferences.load().environment.extra_path.clone();
             let conn = match spec {
                 SpawnSpec::Bootstrap {
                     transport_cmd,
@@ -1549,6 +1564,7 @@ pub(super) async fn connect(
                         transport_cmd,
                         *askpass,
                         *shell_join,
+                        &extra_path,
                         agent_resolver,
                         askpass_provider.clone(),
                         &conn_log,
@@ -1556,7 +1572,7 @@ pub(super) async fn connect(
                     .await?
                 }
                 SpawnSpec::DirectCopy(plan) => {
-                    spawn_direct_copy(plan, agent_resolver, &conn_log).await?
+                    spawn_direct_copy(plan, &extra_path, agent_resolver, &conn_log).await?
                 }
                 SpawnSpec::CustomShell {
                     command,

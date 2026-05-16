@@ -12,6 +12,7 @@ pub mod editor;
 pub mod file_server;
 pub mod keychain;
 pub mod main_window;
+pub mod path_resolver;
 pub mod preferences;
 pub mod user_commands;
 pub mod viewer;
