@@ -5,9 +5,12 @@ members = [
     "libs/pty-process/",
     "libs/newt-agent/",
     "libs/newt-common/",
+    "xtask/",
 ]
-# Windows builds only target the main app shell — no agent, no pty-process.
-# Build the agent (Unix-only) explicitly with `cargo build -p newt-agent`.
+# Plain `cargo build` builds only the app shell + common lib. The agent is
+# built per-target (incl. both Windows arches) and laid out into `agents/`
+# via `cargo xtask agents`; pty-process is Unix-only; xtask is a build tool.
+# None of those belong in a default host build.
 default-members = [
     "src-tauri/",
     "libs/newt-common/",
