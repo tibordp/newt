@@ -353,12 +353,23 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
 pub fn to_native(path: &Path) -> StdPathBuf {
     #[cfg(windows)]
     {
+        let comps: Vec<&str> = path.components().collect();
         let mut s = String::from(r"\\");
-        for (i, c) in path.components().enumerate() {
+        for (i, c) in comps.iter().enumerate() {
             if i > 0 {
                 s.push('\\');
             }
             s.push_str(c);
+        }
+        // `\\?\C:` / `\\?\UNC\server\share` name the *volume*, not its
+        // root directory — `std::fs` and the change watcher reject those.
+        // The root dir needs a trailing separator (`\\?\C:\`). Deeper
+        // paths must NOT have one.
+        if comps.first() == Some(&"?") {
+            let root_depth = if comps.get(1) == Some(&"UNC") { 4 } else { 2 };
+            if comps.len() == root_depth {
+                s.push('\\');
+            }
         }
         StdPathBuf::from(s)
     }
