@@ -698,7 +698,7 @@ impl Vfs for SftpVfs {
             mime_type,
             is_dir,
             is_symlink,
-            symlink_target: symlink_target.map(std::path::PathBuf::from),
+            symlink_target,
             user: symlink_meta.uid().map(UserGroup::Id),
             group: symlink_meta.gid().map(UserGroup::Id),
             mode,

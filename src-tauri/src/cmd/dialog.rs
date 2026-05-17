@@ -164,10 +164,7 @@ pub fn dialog(
                     let is_dir = files.len() == 1 && files[0].is_dir;
                     let is_symlink = files.len() == 1 && files[0].is_symlink;
                     let symlink_target = if files.len() == 1 {
-                        files[0]
-                            .symlink_target
-                            .as_ref()
-                            .map(|p| p.to_string_lossy().to_string())
+                        files[0].symlink_target.clone()
                     } else {
                         None
                     };

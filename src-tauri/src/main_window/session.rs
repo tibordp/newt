@@ -446,13 +446,15 @@ pub trait VfsInfo: Send + Sync {
     /// enclosing directory of the origin file and recurses. For VFSes with
     /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
-    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<std::path::PathBuf> {
+    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::vfs::path::PathBuf> {
         let mut current = path.clone();
         loop {
             if current.vfs_id == VfsId::ROOT {
-                // Terminal cwd is fed straight to a process spawn — needs
-                // to be host-native. Use the LocalVfs encoder.
-                return Some(newt_common::vfs::local::to_native(&current.path));
+                // Return the VFS path; the terminal client converts it to
+                // a native path on the side that spawns the PTY (the
+                // agent in a remote session), in that OS — no `std::path`
+                // crosses the RPC boundary here.
+                return Some(current.path);
             }
             let origin = self.origin(current.vfs_id)?;
             let parent = origin.parent()?;
@@ -1645,17 +1647,10 @@ pub(super) async fn connect(
     let default_dir = if matches!(connection_target, ConnectionTarget::Local) {
         services.initial_dir.clone()
     } else {
-        services
-            .shell_service
-            .shell_expand("~".to_string())
-            .await
-            .map(|p| {
-                VfsPath::new(
-                    VfsId::ROOT,
-                    newt_common::vfs::local::local_path_from_native(&p),
-                )
-            })
-            .unwrap_or(services.initial_dir.clone())
+        match services.shell_service.shell_expand("~".to_string()).await {
+            Ok(Some(home)) => VfsPath::new(VfsId::ROOT, home),
+            _ => services.initial_dir.clone(),
+        }
     };
 
     // Per-pane CLI overrides (`--cwd-left`, `--cwd-right`). Passed through
@@ -1665,17 +1660,17 @@ pub(super) async fn connect(
     for (slot, override_path) in main_window_ctx.initial_pane_paths().iter().enumerate() {
         if let Some(path) = override_path {
             let raw = path.to_string_lossy().into_owned();
-            if let Ok(expanded) = services.shell_service.shell_expand(raw).await {
-                pane_dirs[slot] = VfsPath::new(
-                    VfsId::ROOT,
-                    newt_common::vfs::local::local_path_from_native(&expanded),
-                );
-            } else {
-                log::warn!(
-                    "could not resolve --cwd-{} path {:?}; falling back to default",
-                    if slot == 0 { "left" } else { "right" },
-                    path
-                );
+            match services.shell_service.shell_expand(raw).await {
+                Ok(Some(expanded)) => {
+                    pane_dirs[slot] = VfsPath::new(VfsId::ROOT, expanded);
+                }
+                _ => {
+                    log::warn!(
+                        "could not resolve --cwd-{} path {:?}; falling back to default",
+                        if slot == 0 { "left" } else { "right" },
+                        path
+                    );
+                }
             }
         }
     }

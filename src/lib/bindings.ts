@@ -1430,7 +1430,14 @@ export type EnvironmentPreferences = {
  * Non-existent entries are silently skipped.
  */
 extra_path: string[] }
-export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
+export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+/**
+ * Raw link target as reported by the source FS. A string, not a path
+ * type: it may be relative (`../x`) or otherwise un-normalizable, and
+ * it crosses the agent↔host RPC boundary — no `std::path` there, its
+ * meaning belongs to the source OS, not the receiver's.
+ */
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
 /**
  * Directory-scoped identifier. When `None`, `name` is used as the
  * identifier — the common case. Set explicitly by synthetic VFSes
@@ -1447,7 +1454,11 @@ key: string | null;
  */
 source: VfsPath | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
-export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
+export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; 
+/**
+ * Raw link target as reported by the source FS (see `File::symlink_target`).
+ */
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
 /**
  * Set when the underlying VFS reports that the listing is
@@ -1616,7 +1627,12 @@ mode_set: number;
 /**
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
-mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; working_dir: string | null } } | 
+mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; 
+/**
+ * VFS path, not `std::path` — crosses RPC; the executor (the
+ * agent in a remote session) converts to native in its own OS.
+ */
+working_dir: string | null } } | 
 /**
  * Synthetic long-running operation for manual testing of the progress
  * UI — scan phase, prepared totals, ticking progress, and completion.

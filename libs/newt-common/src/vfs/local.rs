@@ -319,6 +319,12 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
 /// * Unix: `/foo/bar` → `/foo/bar`.
 /// * Windows: `/?/C:/Users/Tibor` → `\\?\C:\Users\Tibor`;
 ///   `/?/UNC/server/share/foo` → `\\?\UNC\server\share\foo`.
+///
+/// Native (`std::path`) form, so it must only ever run in the process
+/// that owns the files — never across the RPC boundary. A `LocalVfs`
+/// satisfies that: it executes on whichever side physically holds the FS
+/// (the host locally, the agent in a remote session), each compiled for
+/// its own platform.
 pub fn to_native(path: &Path) -> StdPathBuf {
     #[cfg(windows)]
     {
@@ -468,7 +474,9 @@ impl Vfs for LocalVfs {
                         if let Ok(target_metadata) = target_metadata {
                             is_dir = target_metadata.is_dir();
                         }
-                        std::fs::read_link(entry.path()).ok()
+                        std::fs::read_link(entry.path())
+                            .ok()
+                            .map(|t| t.to_string_lossy().into_owned())
                     } else {
                         None
                     };
@@ -577,7 +585,9 @@ impl Vfs for LocalVfs {
             let symlink_meta = std::fs::symlink_metadata(&path)?;
             let is_symlink = symlink_meta.is_symlink();
             let symlink_target = if is_symlink {
-                std::fs::read_link(&path).ok()
+                std::fs::read_link(&path)
+                    .ok()
+                    .map(|t| t.to_string_lossy().into_owned())
             } else {
                 None
             };
@@ -681,7 +691,9 @@ impl Vfs for LocalVfs {
             let meta = std::fs::symlink_metadata(&path)?;
             let is_symlink = meta.is_symlink();
             let symlink_target = if is_symlink {
-                std::fs::read_link(&path).ok()
+                std::fs::read_link(&path)
+                    .ok()
+                    .map(|t| t.to_string_lossy().into_owned())
             } else {
                 None
             };

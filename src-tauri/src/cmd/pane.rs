@@ -43,13 +43,14 @@ pub async fn navigate(
             None
         }
     } else {
-        // Non-exact: allow shell expansion (~, env vars, …).
-        let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
-        if expanded.is_absolute() {
-            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
-        } else {
-            None
-        }
+        // Non-exact: allow shell expansion (~, env vars, …). The decode
+        // to a VFS path happens inside `shell_expand`, on the side the
+        // shell runs (the agent in a remote session); `None` means the
+        // expansion wasn't absolute → resolve relative to the pane.
+        ctx.shell_service()?
+            .shell_expand(path.to_string())
+            .await?
+            .map(|p| VfsPath::new(VfsId::ROOT, p))
     };
 
     let path = path.to_string();
@@ -452,22 +453,18 @@ pub async fn cmd_follow_symlink(
             .get_focused_source()
             .and_then(|p| p.parent())
             .unwrap_or_else(|| pane.path());
-        // Symlink targets come in as `PathBuf` because they were read from
-        // an underlying filesystem; map them into segments for the VFS the
-        // source lives in. The local VFS gets the platform-aware decoder
-        // (handles drive prefixes); every other VFS treats the target as a
-        // Unix-style string.
+        // `target` is the raw link string from the source FS. Map it into
+        // segments for the VFS the source lives in: the local VFS gets the
+        // platform-aware decoder (drive prefixes), every other VFS treats
+        // it as a Unix-style string.
         let target_path = if source_parent.vfs_id == VfsId::ROOT {
-            local_path_from_native(&target)
+            local_path_from_native(std::path::Path::new(&target))
         } else {
             newt_common::vfs::path::PathBuf::from_components(
-                target
-                    .to_string_lossy()
-                    .split('/')
-                    .filter(|s| !s.is_empty()),
+                target.split('/').filter(|s| !s.is_empty()),
             )
         };
-        if target.is_absolute() {
+        if std::path::Path::new(&target).is_absolute() {
             VfsPath::new(source_parent.vfs_id, target_path)
         } else {
             let mut path = source_parent.path.clone();
@@ -625,12 +622,10 @@ pub async fn cmd_paste_from_clipboard(
     let resolved = if let Some(vfs_path) = ctx.resolve_display_path(text) {
         Some(vfs_path)
     } else {
-        let expanded = ctx.shell_service()?.shell_expand(text.to_string()).await?;
-        if expanded.is_absolute() {
-            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(&expanded)))
-        } else {
-            None
-        }
+        ctx.shell_service()?
+            .shell_expand(text.to_string())
+            .await?
+            .map(|p| VfsPath::new(VfsId::ROOT, p))
     };
 
     let text = text.to_string();

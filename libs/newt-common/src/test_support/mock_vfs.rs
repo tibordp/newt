@@ -32,9 +32,9 @@ pub enum MockEntry {
         gid: u32,
     },
     Symlink {
-        /// Std path: flows straight into `File::symlink_target` /
-        /// `FileDetails::symlink_target`, which are `std::path::PathBuf`.
-        target: std::path::PathBuf,
+        /// Raw link target — flows straight into `File::symlink_target` /
+        /// `FileDetails::symlink_target` (both `Option<String>`).
+        target: String,
     },
 }
 
@@ -621,7 +621,7 @@ impl Vfs for MockVfs {
         entries.insert(
             link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: std::path::PathBuf::from(target),
+                target: target.to_string(),
             },
         );
         Ok(())
@@ -1006,7 +1006,7 @@ impl MockVfsBuilder {
         self.entries.insert(
             link.as_wire_str().to_string(),
             MockEntry::Symlink {
-                target: std::path::PathBuf::from(target),
+                target: target.to_string(),
             },
         );
         self

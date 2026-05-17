@@ -1136,7 +1136,7 @@ impl MainWindowContext {
 
     pub async fn create_terminal(
         &self,
-        path: Option<&std::path::Path>,
+        path: Option<&newt_common::vfs::path::Path>,
     ) -> Result<Arc<Terminal>, Error> {
         let terminal = Terminal::create(self.clone(), self.inner.window.clone(), path).await?;
 

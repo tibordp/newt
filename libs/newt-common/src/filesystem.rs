@@ -72,7 +72,11 @@ pub struct File {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
-    pub symlink_target: Option<std::path::PathBuf>,
+    /// Raw link target as reported by the source FS. A string, not a path
+    /// type: it may be relative (`../x`) or otherwise un-normalizable, and
+    /// it crosses the agent↔host RPC boundary — no `std::path` there, its
+    /// meaning belongs to the source OS, not the receiver's.
+    pub symlink_target: Option<String>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
@@ -485,9 +489,24 @@ impl Filesystem for Remote {
 // ShellService — shell expansion (separate from VFS/Filesystem)
 // ---------------------------------------------------------------------------
 
+/// `~`/env expansion of a user-typed path on the shell's filesystem.
+///
+/// Returns a **VFS path**, not `std::path` — the result crosses the RPC
+/// boundary, and the native→VFS decode happens here, on the side the
+/// shell actually runs (the agent in a remote session), in its own OS.
+/// `None` means the expansion isn't an absolute path (caller resolves it
+/// relative to the pane instead).
 #[async_trait::async_trait]
 pub trait ShellService: Send + Sync {
-    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error>;
+    async fn shell_expand(&self, input: String)
+    -> Result<Option<crate::vfs::path::PathBuf>, Error>;
+}
+
+/// Decode an expanded native path into a VFS path, but only if it is
+/// absolute (a relative expansion has no meaningful VFS form here).
+fn expanded_to_vfs(p: &std::path::Path) -> Option<crate::vfs::path::PathBuf> {
+    p.is_absolute()
+        .then(|| crate::vfs::local::local_path_from_native(p))
 }
 
 pub struct LocalShellService;
@@ -495,18 +514,24 @@ pub struct LocalShellService;
 #[cfg(unix)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
         let expanded =
             tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
-        Ok(expanded)
+        Ok(expanded_to_vfs(&expanded))
     }
 }
 
 #[cfg(windows)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
         // Windows has no pwd database, so only the bare `~` / `~/...` form is supported.
         // `~user/...` is left as-is.
         let expanded = if input == "~" {
@@ -522,7 +547,7 @@ impl ShellService for LocalShellService {
         } else {
             std::path::PathBuf::from(input)
         };
-        Ok(expanded)
+        Ok(expanded_to_vfs(&expanded))
     }
 }
 
@@ -538,8 +563,11 @@ impl ShellRemote {
 
 #[async_trait::async_trait]
 impl ShellService for ShellRemote {
-    async fn shell_expand(&self, input: String) -> Result<std::path::PathBuf, Error> {
-        let ret: Result<std::path::PathBuf, Error> = self
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
+        let ret: Result<Option<crate::vfs::path::PathBuf>, Error> = self
             .communicator
             .invoke(crate::api::API_SHELL_EXPAND, &input)
             .await?;

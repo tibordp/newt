@@ -29,7 +29,8 @@ pub struct FileDetails {
     pub mime_type: Option<String>,
     pub is_dir: bool,
     pub is_symlink: bool,
-    pub symlink_target: Option<std::path::PathBuf>,
+    /// Raw link target as reported by the source FS (see `File::symlink_target`).
+    pub symlink_target: Option<String>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,

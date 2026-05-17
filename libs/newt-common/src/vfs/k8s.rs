@@ -608,9 +608,7 @@ impl K8sVfs {
                     is_dir: true,
                     is_hidden: false,
                     is_symlink: true,
-                    symlink_target: Some(std::path::PathBuf::from(
-                        target.as_wire_str().trim_start_matches('/'),
-                    )),
+                    symlink_target: Some(target.as_wire_str().trim_start_matches('/').to_string()),
                     user: None,
                     group: None,
                     mode: None,

@@ -96,7 +96,9 @@ pub enum OperationRequest {
     },
     RunCommand {
         command: String,
-        working_dir: Option<std::path::PathBuf>,
+        /// VFS path, not `std::path` — crosses RPC; the executor (the
+        /// agent in a remote session) converts to native in its own OS.
+        working_dir: Option<crate::vfs::path::PathBuf>,
     },
     /// Synthetic long-running operation for manual testing of the progress
     /// UI — scan phase, prepared totals, ticking progress, and completion.
@@ -527,7 +529,7 @@ impl ProgressReporter {
 async fn execute_run_command(
     reporter: &mut ProgressReporter,
     command: &str,
-    working_dir: Option<&std::path::Path>,
+    working_dir: Option<&crate::vfs::path::Path>,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     reporter.send_prepared(0, 0);
@@ -537,7 +539,9 @@ async fn execute_run_command(
         let mut cmd = tokio::process::Command::new("sh");
         cmd.args(["-c", command]);
         if let Some(dir) = working_dir {
-            cmd.current_dir(dir);
+            // Native conversion happens here — the executor runs where
+            // the FS is (the agent in a remote session).
+            cmd.current_dir(crate::vfs::local::to_native(dir));
         }
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
@@ -822,12 +826,7 @@ async fn plan_copy(
                 source: source.clone(),
                 dest: dest_base,
                 kind: CopyEntryKind::Symlink {
-                    target: file_entry
-                        .symlink_target
-                        .clone()
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
+                    target: file_entry.symlink_target.clone().unwrap(),
                 },
                 size_bytes: 0,
             });
@@ -879,12 +878,7 @@ async fn plan_copy(
                             source: src_path,
                             dest: dst_path,
                             kind: CopyEntryKind::Symlink {
-                                target: file
-                                    .symlink_target
-                                    .clone()
-                                    .unwrap()
-                                    .to_string_lossy()
-                                    .into_owned(),
+                                target: file.symlink_target.clone().unwrap(),
                             },
                             size_bytes: 0,
                         });

@@ -4,7 +4,7 @@ use std::io::Read;
 // strings built on std paths; the `Vfs` surface speaks our
 // `vfs::path::Path`. Convert at each trait-method boundary via
 // `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
-use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+use std::path::Path as StdPath;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -756,7 +756,7 @@ impl Vfs for TarArchiveVfs {
         let is_symlink =
             original_entry.is_some_and(|e| matches!(e.entry_type, iluvatar::EntryType::SymLink));
         let symlink_target = if is_symlink {
-            original_entry.and_then(|e| e.link_target.as_ref().map(StdPathBuf::from))
+            original_entry.and_then(|e| e.link_target.clone())
         } else {
             None
         };

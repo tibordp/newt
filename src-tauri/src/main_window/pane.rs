@@ -1104,7 +1104,7 @@ impl Pane {
             .cloned()
     }
 
-    pub fn get_focused_symlink_target(&self) -> Option<std::path::PathBuf> {
+    pub fn get_focused_symlink_target(&self) -> Option<String> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state

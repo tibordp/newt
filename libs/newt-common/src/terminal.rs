@@ -42,7 +42,10 @@ pub struct ExitStatus {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, specta::Type)]
 pub struct TerminalOptions {
-    pub working_dir: Option<std::path::PathBuf>,
+    /// Cwd as a VFS path, not `std::path` — it crosses the RPC boundary
+    /// and is converted to a native path by the side that spawns the PTY
+    /// (the agent in a remote session), in its own OS.
+    pub working_dir: Option<crate::vfs::path::PathBuf>,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub env: Option<Vec<(String, String)>>,
@@ -170,7 +173,10 @@ impl TerminalClient for Local {
             cmd.kill_on_drop(true);
             if let Some(working_dir) = options.working_dir {
                 debug!("setting working dir: {:?}", working_dir);
-                cmd.current_dir(working_dir);
+                // Convert here — this runs in the process that owns the
+                // FS (the agent in a remote session), so its own OS cfg
+                // is the right one.
+                cmd.current_dir(crate::vfs::local::to_native(&working_dir));
             }
 
             if let Some(env) = options.env {

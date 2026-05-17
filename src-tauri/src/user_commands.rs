@@ -369,7 +369,7 @@ async fn execute_rendered(
     ctx: &MainWindowContext,
     title: &str,
     rendered: String,
-    pane_path: std::path::PathBuf,
+    pane_path: newt_common::vfs::path::PathBuf,
     terminal_mode: bool,
 ) -> Result<(), Error> {
     if terminal_mode {
@@ -489,8 +489,7 @@ pub async fn run_user_command(
         gs.close_modal();
         Ok(())
     })?;
-    let pane_dir = newt_common::vfs::local::to_native(&pane_path.path);
-    execute_rendered(&ctx, &uc.title, rendered, pane_dir, uc.terminal).await
+    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, uc.terminal).await
 }
 
 #[tauri::command]
@@ -536,8 +535,7 @@ pub async fn execute_user_command(
         Ok(())
     })?;
 
-    let pane_dir = newt_common::vfs::local::to_native(&pane_path.path);
-    execute_rendered(&ctx, &uc.title, rendered, pane_dir, uc.terminal).await
+    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, uc.terminal).await
 }
 
 #[tauri::command]

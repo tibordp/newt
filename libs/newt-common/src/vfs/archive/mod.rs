@@ -355,11 +355,14 @@ impl DirectoryTree {
             match file {
                 Some(f) if f.is_symlink && (!is_last || follow_last) => {
                     if let Some(ref target) = f.symlink_target {
+                        // Raw link-target string from the archive; interpret
+                        // it as a path locally for resolution.
+                        let target = StdPath::new(target);
                         let target_resolved = if target.is_absolute() {
                             normalize_path_dotdot(&normalize_dir_path(target))
                         } else {
                             let mut base = StdPathBuf::from(resolved_parts.join("/"));
-                            base.push(target.as_path());
+                            base.push(target);
                             normalize_path_dotdot(&base)
                         };
                         // Resolve target + remaining components together
@@ -626,7 +629,7 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
             is_hidden: name.starts_with('.'),
             is_symlink,
             symlink_target: if is_symlink {
-                entry.link_target.as_ref().map(StdPathBuf::from)
+                entry.link_target.clone()
             } else {
                 None
             },

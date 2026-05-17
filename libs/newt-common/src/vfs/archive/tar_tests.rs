@@ -243,10 +243,7 @@ async fn file_details_reports_symlink_metadata() {
         .await
         .expect("file_details");
     assert!(details.is_symlink);
-    assert_eq!(
-        details.symlink_target.as_deref(),
-        Some(std::path::Path::new("../hello.txt"))
-    );
+    assert_eq!(details.symlink_target.as_deref(), Some("../hello.txt"));
 }
 
 // ---------------------------------------------------------------------------

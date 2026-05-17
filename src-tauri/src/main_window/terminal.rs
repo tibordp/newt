@@ -68,12 +68,12 @@ impl Terminal {
     pub async fn create(
         context: MainWindowContext,
         window: WebviewWindow,
-        working_dir: Option<&std::path::Path>,
+        working_dir: Option<&newt_common::vfs::path::Path>,
     ) -> Result<Self, Error> {
         let terminal_client = context.terminal_client()?;
         let handle = terminal_client
             .create(TerminalOptions {
-                working_dir: working_dir.map(|p| p.to_path_buf()),
+                working_dir: working_dir.map(|p| p.to_owned()),
                 ..Default::default()
             })
             .await?;
