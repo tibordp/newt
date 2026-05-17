@@ -428,9 +428,9 @@ async discoverKubePods(context: string | null, namespace: string | null) : Promi
     else return { status: "error", error: e  as any };
 }
 },
-async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string) : Promise<Result<null, string>> {
+async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string, root: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName }) };
+    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName, root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1744,14 +1744,21 @@ processed: number | null; total: number | null;
 extra: Partial<{ [key in string]: string }> }
 export type VfsTarget = { vfs_id: VfsId | null; type_name: string; display_name: string; 
 /**
- * Human-readable label for a mounted instance (e.g. hostname for SFTP).
+ * Human-readable label for a mounted instance (e.g. hostname for
+ * SFTP, or the drive for a split-root entry).
  */
 label: string | null; 
 /**
  * Dialog to open when user selects this unmounted VFS type.
  * If None and vfs_id is None, the type supports auto-mount.
  */
-mount_dialog: string | null }
+mount_dialog: string | null; 
+/**
+ * Specific root to land on. `Some` only for split-root VFSes
+ * (one target per drive); selecting it navigates straight there
+ * instead of the VFS's default `initial_path`.
+ */
+root: string | null }
 /**
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.

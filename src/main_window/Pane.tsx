@@ -216,12 +216,14 @@ function VfsSelector({
   vfsTargets,
   paneHandle,
   activeVfsId,
+  activePath,
   open,
 }: {
   vfsDisplayName: string;
   vfsTargets: VfsTarget[];
   paneHandle: number;
   activeVfsId: number;
+  activePath: string;
   open: boolean;
 }) {
   // Track when we're opening a mount dialog so we don't steal focus back
@@ -268,11 +270,17 @@ function VfsSelector({
         >
           {vfsTargets.map((target, i) => {
             const isActive =
-              target.vfs_id != null && target.vfs_id === activeVfsId;
+              target.vfs_id != null &&
+              target.vfs_id === activeVfsId &&
+              // For a split-root entry, only the drive containing the
+              // pane's path is the active one.
+              (target.root == null ||
+                activePath === target.root ||
+                activePath.startsWith(target.root + "/"));
             const icon = VFS_ICONS[target.type_name];
             return (
               <DropdownMenu.Item
-                key={`${target.type_name}-${target.vfs_id ?? i}`}
+                key={`${target.type_name}-${target.vfs_id ?? i}-${target.root ?? ""}`}
                 className={menuStyles.item}
                 onSelect={(e) => {
                   // Prevent Radix from auto-closing the dropdown — the
@@ -294,6 +302,7 @@ function VfsSelector({
                         paneHandle,
                         target.vfs_id,
                         target.type_name,
+                        target.root,
                       ),
                     );
                   }
@@ -1335,6 +1344,7 @@ function PaneInner(
               vfsTargets={vfsTargets}
               paneHandle={paneHandle}
               activeVfsId={path.vfs_id}
+              activePath={path.path}
               open={isVfsSelectorOpen}
             />
             <div className={styles.headerPath}>
@@ -1355,6 +1365,7 @@ function PaneInner(
               vfsTargets={vfsTargets}
               paneHandle={paneHandle}
               activeVfsId={path.vfs_id}
+              activePath={path.path}
               open={isVfsSelectorOpen}
             />
           </div>

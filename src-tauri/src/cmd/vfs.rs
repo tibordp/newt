@@ -136,9 +136,15 @@ pub async fn switch_vfs(
     pane_handle: PaneHandle,
     vfs_id: Option<VfsId>,
     type_name: String,
+    root: Option<newt_common::vfs::path::PathBuf>,
 ) -> Result<(), Error> {
     let vfs_path = if let Some(id) = vfs_id {
-        ctx.vfs_initial_path(id)
+        // A split-root entry carries the exact drive to land on;
+        // otherwise use the VFS's default landing path.
+        match root {
+            Some(r) => VfsPath::new(id, r),
+            None => ctx.vfs_initial_path(id),
+        }
     } else {
         let descriptor = lookup_descriptor(&type_name)
             .ok_or_else(|| Error::Custom(format!("unknown VFS type: {}", type_name)))?;

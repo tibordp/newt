@@ -566,11 +566,16 @@ pub struct VfsTarget {
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
     pub display_name: String,
-    /// Human-readable label for a mounted instance (e.g. hostname for SFTP).
+    /// Human-readable label for a mounted instance (e.g. hostname for
+    /// SFTP, or the drive for a split-root entry).
     pub label: Option<String>,
     /// Dialog to open when user selects this unmounted VFS type.
     /// If None and vfs_id is None, the type supports auto-mount.
     pub mount_dialog: Option<String>,
+    /// Specific root to land on. `Some` only for split-root VFSes
+    /// (one target per drive); selecting it navigates straight there
+    /// instead of the VFS's default `initial_path`.
+    pub root: Option<newt_common::vfs::path::PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,17 +1200,34 @@ impl MainWindowContext {
                     continue;
                 }
                 mounted_types.insert(info.descriptor.type_name());
-                targets.push(VfsTarget {
-                    vfs_id: Some(*vfs_id),
-                    type_name: info.descriptor.type_name().to_string(),
-                    display_name: s
-                        .vfs_info
-                        .display_name(*vfs_id)
-                        .unwrap_or_default()
-                        .to_string(),
-                    label: info.descriptor.mount_label(&info.mount_meta),
-                    mount_dialog: None,
-                });
+                let display_name = s
+                    .vfs_info
+                    .display_name(*vfs_id)
+                    .unwrap_or_default()
+                    .to_string();
+                if info.descriptor.has_unified_root(&info.mount_meta) {
+                    targets.push(VfsTarget {
+                        vfs_id: Some(*vfs_id),
+                        type_name: info.descriptor.type_name().to_string(),
+                        display_name,
+                        label: info.descriptor.mount_label(&info.mount_meta),
+                        mount_dialog: None,
+                        root: None,
+                    });
+                } else {
+                    // Split-root FS (Windows drives): one entry per root,
+                    // labelled with the drive (`C:\`).
+                    for root in info.descriptor.roots(&info.mount_meta) {
+                        targets.push(VfsTarget {
+                            vfs_id: Some(*vfs_id),
+                            type_name: info.descriptor.type_name().to_string(),
+                            display_name: display_name.clone(),
+                            label: Some(info.descriptor.format_path(&root, &info.mount_meta)),
+                            mount_dialog: None,
+                            root: Some(root),
+                        });
+                    }
+                }
             }
         })?;
 
@@ -1221,12 +1243,14 @@ impl MainWindowContext {
                     display_name: desc.display_name().to_string(),
                     label: None,
                     mount_dialog,
+                    root: None,
                 });
             }
         }
 
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
-            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b),
+            // Same VFS → keep split-root drives in a stable order.
+            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b).then_with(|| a.root.cmp(&b.root)),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a.type_name.cmp(&b.type_name),
