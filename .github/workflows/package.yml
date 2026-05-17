@@ -47,7 +47,7 @@ jobs:
       - name: Build agent
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
-        run: make agents/${{ matrix.target }}/newt-agent
+        run: cargo xtask agents ${{ matrix.target }}
       - uses: actions/upload-artifact@v6
         with:
           name: agent-${{ matrix.target }}
