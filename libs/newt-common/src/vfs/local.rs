@@ -319,9 +319,20 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
         });
         return crumbs;
     }
+    // The root crumb's display (`C:\`, `\\server\share`) is the
+    // conventional form. When deeper segments follow, the *label* (the
+    // concatenation unit) must end in a separator so the next segment
+    // doesn't fuse onto it — `C:\` already does, `\\server\share` does
+    // not. `nav_path` stays the conventional form regardless.
+    let root_disp = comps_display(&comps[..root_depth], style);
+    let root_label = if comps.len() > root_depth && !root_disp.ends_with('\\') {
+        format!("{root_disp}\\")
+    } else {
+        root_disp.clone()
+    };
     crumbs.push(Breadcrumb {
-        label: comps_display(&comps[..root_depth], style),
-        nav_path: comps_display(&comps[..root_depth], style),
+        label: root_label,
+        nav_path: root_disp,
     });
     for i in root_depth..comps.len() {
         let is_last = i + 1 == comps.len();
@@ -1071,4 +1082,55 @@ fn win_disk_space(path: &StdPath) -> Option<(u64, u64, u64)> {
         return None;
     }
     Some((total, total_free, free_caller))
+}
+
+#[cfg(test)]
+mod windows_path_tests {
+    use super::*;
+    use crate::vfs::path::PathBuf;
+
+    fn p(comps: &[&str]) -> PathBuf {
+        PathBuf::from_components(comps.iter().copied())
+    }
+
+    #[test]
+    fn roots_render_conventionally() {
+        // Drives keep their trailing separator (`C:\`); a UNC share root
+        // does not (`\\server\share`) — matches Explorer and every other
+        // final-location display.
+        assert_eq!(comps_display(&["?", "C:"], PathStyle::Windows), r"C:\");
+        assert_eq!(
+            comps_display(&["?", "UNC", "localhost", "Users"], PathStyle::Windows),
+            r"\\localhost\Users"
+        );
+        assert_eq!(
+            comps_display(
+                &["?", "UNC", "localhost", "Users", "Public"],
+                PathStyle::Windows
+            ),
+            r"\\localhost\Users\Public"
+        );
+    }
+
+    #[test]
+    fn share_root_breadcrumb_has_no_trailing_slash() {
+        let crumbs = local_breadcrumbs(&p(&["?", "UNC", "localhost", "Users"]), PathStyle::Windows);
+        assert_eq!(crumbs.len(), 1);
+        assert_eq!(crumbs[0].label, r"\\localhost\Users");
+    }
+
+    #[test]
+    fn breadcrumbs_concatenate_without_fusing() {
+        for (comps, expected) in [
+            (
+                &["?", "UNC", "localhost", "Users", "Public"][..],
+                r"\\localhost\Users\Public",
+            ),
+            (&["?", "C:", "Users", "Public"][..], r"C:\Users\Public"),
+        ] {
+            let crumbs = local_breadcrumbs(&p(comps), PathStyle::Windows);
+            let joined: String = crumbs.iter().map(|c| c.label.as_str()).collect();
+            assert_eq!(joined, expected);
+        }
+    }
 }
