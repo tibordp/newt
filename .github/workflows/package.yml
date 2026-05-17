@@ -291,3 +291,83 @@ jobs:
           name: package-macos-aarch64
           path: target/release/bundle/dmg/*.dmg
           retention-days: 7
+
+  # ─── Stage 3c: Windows .msi ───
+  #
+  # Both arches cross-compile on the x86_64 `windows-latest` runner (the
+  # MSVC toolchain there carries the ARM64 cross tools), mirroring the
+  # Linux x86-runner pattern. The stage-1 Linux/macOS agents are bundled
+  # as on every other platform — you remote *from* Windows into those.
+  # The one thing Windows-specific: there is no remoting *into* Windows
+  # from another platform (or another Windows arch), so the Windows agent
+  # is only ever shipped here, and only for the build's own arch. It is
+  # built inline for the build triple alongside the cross agents.
+
+  package-windows:
+    name: Package (Windows ${{ matrix.arch }})
+    runs-on: windows-latest
+    needs: [agent, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: aarch64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-windows-${{ matrix.arch }}
+      # aws-lc-sys / ring assemble with NASM on Windows MSVC targets.
+      - name: Install NASM
+        run: choco install nasm --no-progress -y
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+      - name: Download frontend
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: dist/
+      - name: Download agent artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: agent-*
+          path: agents/
+          merge-multiple: false
+      - name: Arrange agent artifacts
+        shell: bash
+        run: |
+          cd agents
+          for dir in agent-*/; do
+            triple="${dir#agent-}"
+            triple="${triple%/}"
+            mkdir -p "$triple"
+            cp -r "$dir"* "$triple/"
+            rm -rf "$dir"
+          done
+          chmod +x */newt-agent
+      # Add this build's own-arch Windows agent next to the cross agents.
+      # The Windows agent ships only on Windows, same-arch only.
+      - name: Build agent (${{ matrix.target }})
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: cargo xtask agents ${{ matrix.target }}
+      # bash (Git for Windows) so the single-quoted --config JSON survives
+      # verbatim; PowerShell would mangle it.
+      - name: Build Tauri app
+        shell: bash
+        run: >
+          cargo tauri build
+          --target ${{ matrix.target }}
+          --bundles msi
+          --config '{"build":{"beforeBuildCommand":""}}'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: package-windows-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/bundle/msi/*.msi
+          retention-days: 7
