@@ -1049,7 +1049,7 @@ A fuzzy-searchable palette for quick navigation to common locations.
 | User Bookmarks | User-added bookmarks from `settings.toml` `[[bookmark]]` entries |
 | Standard Folders | Home, Desktop, Downloads, Documents, Pictures, Music, Videos |
 | System Bookmarks | GTK bookmarks (`~/.config/gtk-3.0/bookmarks`) on Linux |
-| Mounted Volumes | Entries in `/proc/self/mountinfo` filtered to `/media/`, `/run/media/`, `/mnt/` on Linux; `/Volumes` on macOS |
+| Mounted Volumes | Entries in `/proc/self/mountinfo` filtered to `/media/`, `/run/media/`, `/mnt/` on Linux; `/Volumes` on macOS; logical drives (`C:`, `D:`, …) on Windows |
 | Mounted VFS | Currently mounted S3, SFTP, and archive filesystems |
 | Recent Folders | `recently-used.xbel` on Linux (top 20 by modification time); Finder GoToFieldHistory on macOS |
 

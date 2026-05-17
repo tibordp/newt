@@ -82,7 +82,31 @@ fn collect_system_paths() -> Vec<HotPathEntry> {
         collect_macos_recent_folders(&mut entries);
     }
 
+    #[cfg(windows)]
+    {
+        collect_windows_drives(&mut entries);
+    }
+
     entries
+}
+
+// ---------------------------------------------------------------------------
+// Windows: logical drives (the split roots — the same enumeration the VFS
+// selector uses, surfaced here so each drive is one keystroke away)
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+fn collect_windows_drives(out: &mut Vec<HotPathEntry>) {
+    for root in crate::vfs::local::local_roots() {
+        // `root` is the sentinel form `["?", "C:"]`; the drive is the
+        // second component (`C:`), which doubles as the display name.
+        let name = root.components().nth(1).map(|c| c.to_string());
+        out.push(HotPathEntry {
+            path: VfsPath::new(crate::vfs::VfsId::ROOT, root),
+            name,
+            category: HotPathCategory::Mount,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
