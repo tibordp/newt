@@ -18,7 +18,7 @@ pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
-pub use path_style::PathStyle;
+pub use path_style::{PathStyle, encode_mount_meta, mount_roots};
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
     VfsProgressSink,
@@ -281,14 +281,34 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         path.parent().map(Path::to_owned)
     }
 
+    /// The filesystem's root paths. One `/` for a unified-root FS (every
+    /// network/archive VFS, and Unix local); one per drive/share for a
+    /// split-root FS (Windows local, incl. a Windows client's FS exposed
+    /// into a remote session). Recorded in `mount_meta` at mount time.
+    fn roots(&self, _mount_meta: &[u8]) -> Vec<PathBuf> {
+        vec![PathBuf::root()]
+    }
+
+    /// Whether the FS has a single `/` root. When false the VFS selector
+    /// surfaces each [`roots`](Self::roots) entry as its own drive.
+    fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
+        self.roots(mount_meta).len() == 1
+    }
+
     /// VFS-internal path to land on when this VFS is freshly selected or
-    /// mounted (VFS selector, post-mount, unmount redirect). Defaults to
-    /// the VFS root, which is correct for every network/archive VFS. The
-    /// local VFS overrides this: its abstract root (`/`) is not a valid
-    /// navigable location on Windows (there is no single filesystem root —
-    /// you need a drive), so it resolves to the user's home / cwd instead.
-    fn initial_path(&self, _mount_meta: &[u8]) -> PathBuf {
-        PathBuf::root()
+    /// mounted (VFS selector, post-mount, unmount redirect). The abstract
+    /// root `/` is correct for a unified-root FS but is the unlistable
+    /// `\\?\` position on Windows — so a split-root FS lands on its first
+    /// drive instead.
+    fn initial_path(&self, mount_meta: &[u8]) -> PathBuf {
+        if self.has_unified_root(mount_meta) {
+            PathBuf::root()
+        } else {
+            self.roots(mount_meta)
+                .into_iter()
+                .next()
+                .unwrap_or_else(PathBuf::root)
+        }
     }
 
     /// Try to parse a user-entered display path. Returns the VFS-internal path

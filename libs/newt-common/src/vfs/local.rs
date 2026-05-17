@@ -121,15 +121,22 @@ impl VfsDescriptor for LocalVfsDescriptor {
         None
     }
 
-    fn initial_path(&self, mount_meta: &[u8]) -> PathBuf {
-        match PathStyle::from_mount_meta(mount_meta) {
-            // `local_default_root` resolves a real host path (home/cwd);
-            // only meaningful when this genuinely is the host's own
-            // Windows FS. A Unix-style mount (incl. every remote root)
-            // lands at `/`, a real navigable directory there.
-            PathStyle::Windows => local_default_root(),
-            PathStyle::Unix => PathBuf::root(),
-        }
+    fn roots(&self, mount_meta: &[u8]) -> Vec<PathBuf> {
+        roots_from_meta(mount_meta)
+    }
+    // `has_unified_root` / `initial_path` use the trait defaults, which
+    // are now roots-aware (split-root → land on the first drive).
+}
+
+/// FS roots from `mount_meta`, defaulting to a single `/` when none were
+/// recorded (a style-only mount, e.g. a remote Unix root). Shared by
+/// `LocalVfsDescriptor` and `RemoteVfsDescriptor`.
+pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<PathBuf> {
+    let roots = super::mount_roots(mount_meta);
+    if roots.is_empty() {
+        vec![PathBuf::root()]
+    } else {
+        roots
     }
 }
 
@@ -166,25 +173,43 @@ pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
     }
 }
 
-/// Where a freshly-selected local VFS should land.
-///
-/// On Unix the abstract root (`/`) is a real, navigable directory, so we
-/// keep the existing behaviour. On Windows `/` maps to the synthetic
-/// "above any drive" position (`\\?\`), which can't be listed — so fall
-/// back to the user's home directory (always a valid absolute path),
-/// then the process cwd, and only then the (invalid-on-Windows) root as
-/// a last resort.
+/// Root paths of the local filesystem, enumerated once on the side that
+/// owns it (the host for a local session, the agent for a remote one;
+/// also the host for its FS exposed into a remote session). Unix has the
+/// single `/`; Windows has one per logical drive (`\\?\C:`, …). Baked
+/// into `mount_meta` at mount time — a drive added afterwards needs a
+/// restart, the accepted tradeoff for keeping this RPC-free.
 #[cfg(unix)]
-fn local_default_root() -> PathBuf {
-    PathBuf::root()
+pub fn local_roots() -> Vec<PathBuf> {
+    vec![PathBuf::root()]
 }
 
 #[cfg(windows)]
-fn local_default_root() -> PathBuf {
-    dirs::home_dir()
-        .or_else(|| std::env::current_dir().ok())
-        .map(|p| local_path_from_native(&p))
-        .unwrap_or_else(PathBuf::root)
+pub fn local_roots() -> Vec<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDriveStringsW;
+
+    // First call with a zero length returns the required buffer size.
+    let needed = unsafe { GetLogicalDriveStringsW(0, std::ptr::null_mut()) };
+    if needed == 0 {
+        return vec![PathBuf::root()];
+    }
+    let mut buf = vec![0u16; needed as usize];
+    let written = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) };
+    if written == 0 {
+        return vec![PathBuf::root()];
+    }
+    // Buffer is a sequence of NUL-terminated `X:\` strings, double-NUL
+    // terminated. Decode each into the `["?","X:"]` sentinel form.
+    let roots: Vec<PathBuf> = buf[..written as usize]
+        .split(|&c| c == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| local_path_from_native(StdPath::new(&String::from_utf16_lossy(s))))
+        .collect();
+    if roots.is_empty() {
+        vec![PathBuf::root()]
+    } else {
+        roots
+    }
 }
 
 pub static LOCAL_VFS_DESCRIPTOR: LocalVfsDescriptor = LocalVfsDescriptor;
@@ -411,10 +436,10 @@ impl Vfs for LocalVfs {
 
     /// A `LocalVfs` always serves the filesystem of whatever process it
     /// runs in — the host for a local session / client-local hairpin, the
-    /// agent for a remote session. So its path style is this binary's
-    /// compile-time host style, carried to whichever side renders it.
+    /// agent for a remote session. So it stamps this binary's host style
+    /// and the roots enumerated here, carried to whichever side renders.
     fn mount_meta(&self) -> Vec<u8> {
-        PathStyle::host().encode()
+        super::encode_mount_meta(PathStyle::host(), &local_roots())
     }
 
     async fn list_files(

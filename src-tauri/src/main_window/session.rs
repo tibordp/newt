@@ -1680,10 +1680,16 @@ pub(super) async fn connect(
     // registry (so `LocalVfs::mount_meta()` isn't consulted), so stamp the
     // path style here: the host's own for Local, Unix for any remote
     // (every agent target in scope is Unix).
-    let root_style = if matches!(connection_target, ConnectionTarget::Spawn(_)) {
-        PathStyle::Unix
+    // Remote root = the agent's Unix FS (style-only, single `/`). Local
+    // root = this host's FS, with its drives enumerated so a Windows host
+    // lands on a drive instead of the unlistable `/`.
+    let root_meta = if matches!(connection_target, ConnectionTarget::Spawn(_)) {
+        PathStyle::Unix.encode()
     } else {
-        PathStyle::host()
+        newt_common::vfs::encode_mount_meta(
+            PathStyle::host(),
+            &newt_common::vfs::local::local_roots(),
+        )
     };
     let mut initial_mounted = HashMap::new();
     initial_mounted.insert(
@@ -1691,7 +1697,7 @@ pub(super) async fn connect(
         MountedVfsInfo {
             vfs_id: VfsId::ROOT,
             descriptor: &LOCAL_VFS_DESCRIPTOR,
-            mount_meta: root_style.encode(),
+            mount_meta: root_meta,
             origin: None,
         },
     );
@@ -1717,9 +1723,13 @@ pub(super) async fn connect(
                             vfs_id: resp.vfs_id,
                             descriptor: desc,
                             // This VFS surfaces *this host's* local FS into
-                            // the remote session, so it renders in the
-                            // host's path style — not the remote's.
-                            mount_meta: PathStyle::host().encode(),
+                            // the remote session: host path style, and the
+                            // host's drives so a Windows client lands on a
+                            // drive instead of the unlistable `/`.
+                            mount_meta: newt_common::vfs::encode_mount_meta(
+                                PathStyle::host(),
+                                &newt_common::vfs::local::local_roots(),
+                            ),
                             origin: None,
                         },
                     );

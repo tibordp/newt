@@ -17,18 +17,49 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::path::PathBuf;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PathStyle {
     Unix,
     Windows,
 }
 
-/// Versioned wrapper so a mixed-version agent/host can't silently
-/// misread the bytes (a future field/variant bumps `version`).
+/// No version field: the agent is built from the same sources as the
+/// host and bootstrapped per session by content hash, and `mount_meta`
+/// is runtime-only (never persisted), so there is no version drift to
+/// guard against — only platform-shape differences, which is exactly
+/// what `style`/`roots` carry.
+///
+/// `roots` are the filesystem's root paths (VFS wire strings), captured
+/// once at mount/launch time on the side that owns the FS — a single
+/// `["/"]` for Unix, one per drive/share on Windows. A drive added after
+/// launch needs a restart to appear; the deliberate tradeoff for keeping
+/// this a descriptor-only lookup with no per-call RPC.
 #[derive(Serialize, Deserialize)]
-struct MountMetaV1 {
-    version: u8,
+struct MountMeta {
     style: PathStyle,
+    roots: Vec<String>,
+}
+
+/// Encode `mount_meta` carrying both the path style and the FS roots.
+pub fn encode_mount_meta(style: PathStyle, roots: &[PathBuf]) -> Vec<u8> {
+    bincode::serialize(&MountMeta {
+        style,
+        roots: roots.iter().map(|r| r.as_wire_str().to_string()).collect(),
+    })
+    .unwrap_or_default()
+}
+
+/// The FS roots from `mount_meta`. Empty when none were recorded
+/// (legacy / style-only mount) — callers fall back to a single `/`.
+pub fn mount_roots(meta: &[u8]) -> Vec<PathBuf> {
+    if meta.is_empty() {
+        return Vec::new();
+    }
+    bincode::deserialize::<MountMeta>(meta)
+        .map(|m| m.roots.iter().map(|s| PathBuf::from_wire_str(s)).collect())
+        .unwrap_or_default()
 }
 
 impl PathStyle {
@@ -44,13 +75,10 @@ impl PathStyle {
         }
     }
 
-    /// Encode for `mount_meta`.
+    /// Encode for `mount_meta` with no recorded roots (style-only — e.g.
+    /// a remote Unix root, where the single `/` is implied).
     pub fn encode(self) -> Vec<u8> {
-        bincode::serialize(&MountMetaV1 {
-            version: 1,
-            style: self,
-        })
-        .unwrap_or_default()
+        encode_mount_meta(self, &[])
     }
 
     /// Decode from `mount_meta`. Empty / legacy / unparseable ⇒ `Unix`:
@@ -60,7 +88,7 @@ impl PathStyle {
         if meta.is_empty() {
             return PathStyle::Unix;
         }
-        bincode::deserialize::<MountMetaV1>(meta)
+        bincode::deserialize::<MountMeta>(meta)
             .map(|m| m.style)
             .unwrap_or(PathStyle::Unix)
     }
@@ -84,5 +112,20 @@ mod tests {
             PathStyle::from_mount_meta(&[0xff, 0x00, 0x42]),
             PathStyle::Unix
         );
+    }
+
+    #[test]
+    fn roots_round_trip() {
+        let roots = [
+            PathBuf::from_wire_str("/?/C:"),
+            PathBuf::from_wire_str("/?/D:"),
+        ];
+        let meta = encode_mount_meta(PathStyle::Windows, &roots);
+        assert_eq!(PathStyle::from_mount_meta(&meta), PathStyle::Windows);
+        assert_eq!(mount_roots(&meta), roots);
+        // Style-only / empty / garbage → no roots recorded.
+        assert!(mount_roots(&PathStyle::Unix.encode()).is_empty());
+        assert!(mount_roots(&[]).is_empty());
+        assert!(mount_roots(&[0xff, 0x00]).is_empty());
     }
 }
