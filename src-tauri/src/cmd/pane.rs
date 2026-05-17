@@ -1,5 +1,6 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
-use newt_common::vfs::{MountRequest, VfsPath};
+use newt_common::vfs::local::{local_path_from_native, to_native};
+use newt_common::vfs::{MountRequest, VfsId, VfsPath};
 
 use crate::common::Error;
 use crate::main_window::pane::{FilterMode, Sorting};
@@ -22,41 +23,47 @@ pub async fn navigate(
     path: &str,
     exact: bool,
 ) -> Result<(), Error> {
-    if !exact {
-        // First try resolving as a VFS display path (handles s3://, etc.)
-        let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
-            Some(vfs_path)
+    // Decode an *absolute* input into a fully-qualified VfsPath here, at
+    // the boundary. Anything that stays `None` is a relative fragment
+    // (`..`, `subdir`) resolved against the pane's current directory.
+    // This is the single place native OS paths are turned into VfsPaths;
+    // the VFS-domain code below the `Pane::navigate` call never sees a
+    // drive letter / separator skew.
+    let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
+        // A VFS display path (s3://, archive, k8s, …).
+        Some(vfs_path)
+    } else if exact {
+        // Verbatim: no shell expansion/fuzzing. A breadcrumb hands us a
+        // native display path (`C:\Users\Tibor`, `/home/x`); `..` and
+        // other relative fragments fall through to relative resolution.
+        let native = std::path::Path::new(path);
+        if native.is_absolute() {
+            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(native)))
         } else {
-            // Try shell expansion (handles ~, env vars, etc.)
-            let expanded = ctx.shell_service()?.shell_expand(path.to_string()).await?;
-            if expanded.is_absolute() {
-                Some(VfsPath::root(expanded))
-            } else {
-                // Relative path — will be resolved against the pane's current path
-                None
-            }
-        };
-
-        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-            gs.close_modal();
-            if let Some(target) = resolved {
-                pane.navigate_to(target).await?;
-            } else {
-                // Resolve relative to the pane's current directory
-                pane.navigate(path).await?;
-            }
-            Ok(())
-        })
-        .await
+            None
+        }
     } else {
-        let path = path.to_string();
-        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-            gs.close_modal();
-            pane.navigate(path).await?;
-            Ok(())
-        })
-        .await
-    }
+        // Non-exact: allow shell expansion (~, env vars, …). The decode
+        // to a VFS path happens inside `shell_expand`, on the side the
+        // shell runs (the agent in a remote session); `None` means the
+        // expansion wasn't absolute → resolve relative to the pane.
+        ctx.shell_service()?
+            .shell_expand(path.to_string())
+            .await?
+            .map(|p| VfsPath::new(VfsId::ROOT, p))
+    };
+
+    let path = path.to_string();
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        if let Some(target) = resolved {
+            pane.navigate_to(target).await?;
+        } else {
+            pane.navigate(&path).await?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -265,7 +272,7 @@ pub async fn cmd_open_in_other_pane(
                 origin: target_path.clone(),
             })
             .await?;
-        target_path = VfsPath::new(response.vfs_id, "/");
+        target_path = VfsPath::root(response.vfs_id);
     }
 
     ctx.with_pane_update_async(target, |_gs, pane| async move {
@@ -340,7 +347,7 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
 
     // Open through shell if on local VFS
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(&full_path.path)?;
+        opener::open(to_native(&full_path.path))?;
     } else {
         download_and_open(&ctx, full_path, &file.name).await?;
     }
@@ -362,7 +369,7 @@ async fn download_and_open(
 
     let temp_dir = tempfile::tempdir_in(std::env::temp_dir())?.keep();
     let dest_path = temp_dir.join(filename);
-    let dest_vfs_path = VfsPath::new(host_vfs, temp_dir.to_string_lossy().to_string());
+    let dest_vfs_path = VfsPath::new(host_vfs, local_path_from_native(&temp_dir));
 
     let op_id = super::operations::start_operation(
         ctx.clone(),
@@ -408,7 +415,7 @@ pub async fn cmd_open_archive(
             origin: origin.clone(),
         })
         .await?;
-    let vfs_path = VfsPath::new(response.vfs_id, "/");
+    let vfs_path = VfsPath::root(response.vfs_id);
 
     ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {
         pane.navigate_to(vfs_path).await?;
@@ -446,19 +453,31 @@ pub async fn cmd_follow_symlink(
             .get_focused_source()
             .and_then(|p| p.parent())
             .unwrap_or_else(|| pane.path());
-        if target.is_absolute() {
-            VfsPath::new(source_parent.vfs_id, target)
+        // `target` is the raw link string from the source FS. Map it into
+        // segments for the VFS the source lives in: the local VFS gets the
+        // platform-aware decoder (drive prefixes), every other VFS treats
+        // it as a Unix-style string.
+        let target_path = if source_parent.vfs_id == VfsId::ROOT {
+            local_path_from_native(std::path::Path::new(&target))
         } else {
-            VfsPath::new(source_parent.vfs_id, source_parent.path.join(&target))
+            newt_common::vfs::path::PathBuf::from_components(
+                target.split('/').filter(|s| !s.is_empty()),
+            )
+        };
+        if std::path::Path::new(&target).is_absolute() {
+            VfsPath::new(source_parent.vfs_id, target_path)
+        } else {
+            let mut path = source_parent.path.clone();
+            for comp in target_path.components() {
+                path.push(comp);
+            }
+            VfsPath::new(source_parent.vfs_id, path)
         }
     };
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {
         let parent = resolved.parent().unwrap_or_else(|| resolved.clone());
-        let filename = resolved
-            .path
-            .file_name()
-            .map(|n: &std::ffi::OsStr| n.to_string_lossy().to_string());
+        let filename = resolved.file_name().map(str::to_string);
         pane.navigate_to(parent).await?;
         if let Some(name) = filename {
             pane.view_state_mut().focus(name);
@@ -475,7 +494,7 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let full_path = pane.path();
 
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(&full_path.path)?;
+        opener::open(to_native(&full_path.path))?;
     }
 
     Ok(())
@@ -568,7 +587,7 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let pane = ctx.panes().get(pane_handle).unwrap();
 
     #[cfg(windows)]
-    const LINE_ENDING: &'static str = "\r\n";
+    const LINE_ENDING: &str = "\r\n";
     #[cfg(not(windows))]
     const LINE_ENDING: &str = "\n";
 
@@ -603,12 +622,10 @@ pub async fn cmd_paste_from_clipboard(
     let resolved = if let Some(vfs_path) = ctx.resolve_display_path(text) {
         Some(vfs_path)
     } else {
-        let expanded = ctx.shell_service()?.shell_expand(text.to_string()).await?;
-        if expanded.is_absolute() {
-            Some(VfsPath::root(expanded))
-        } else {
-            None
-        }
+        ctx.shell_service()?
+            .shell_expand(text.to_string())
+            .await?
+            .map(|p| VfsPath::new(VfsId::ROOT, p))
     };
 
     let text = text.to_string();
@@ -616,7 +633,7 @@ pub async fn cmd_paste_from_clipboard(
         if let Some(target) = resolved {
             pane.navigate_to(target).await?;
         } else {
-            pane.navigate(text).await?;
+            pane.navigate(&text).await?;
         }
         Ok(())
     })

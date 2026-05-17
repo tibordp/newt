@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::task::{Context, Poll};
@@ -10,11 +9,13 @@ use crate::api::PendingVfsReadStreams;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, StreamId};
 use crate::rpc::Communicator;
+use crate::vfs::path::Path;
 
 use super::{
-    Breadcrumb, DisplayPathMatch, LOCAL_VFS_DESCRIPTOR, RegisteredDescriptor, Vfs, VfsAsyncWriter,
+    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsAsyncWriter,
     VfsDescriptor, VfsMetadata, VfsSpaceInfo,
 };
+use crate::vfs::path::PathBuf;
 
 // ---------------------------------------------------------------------------
 // RemoteVfsDescriptor
@@ -89,11 +90,26 @@ impl VfsDescriptor for RemoteVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        LOCAL_VFS_DESCRIPTOR.format_path(path, mount_meta)
+        // Identical path shape to `LocalVfsDescriptor`; the style is
+        // whatever the proxied end stamped into `mount_meta` (Unix for
+        // every remote in scope, the client's OS for a client-local FS
+        // exposed back into a remote session).
+        super::local::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        LOCAL_VFS_DESCRIPTOR.breadcrumbs(path, mount_meta)
+        super::local::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
+    }
+
+    fn navigable_parent(&self, path: &Path, mount_meta: &[u8]) -> Option<PathBuf> {
+        super::local::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
+    }
+
+    fn roots(&self, mount_meta: &[u8]) -> Vec<PathBuf> {
+        // A Windows client's FS exposed into a remote session is
+        // split-root; `has_unified_root`/`initial_path` (trait defaults)
+        // then land on its first drive instead of the unlistable `/`.
+        super::local::roots_from_meta(mount_meta)
     }
 
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
@@ -176,7 +192,7 @@ impl Vfs for RemoteVfs {
     ) -> Result<super::VfsFileList, Error> {
         let ret: Result<super::VfsFileList, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_LIST_FILES, &path.to_path_buf())
+            .invoke(API_HOST_VFS_LIST_FILES, &path.to_owned())
             .await?;
         ret
     }
@@ -184,7 +200,7 @@ impl Vfs for RemoteVfs {
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_POLL_CHANGES, &path.to_path_buf())
+            .invoke(API_HOST_VFS_POLL_CHANGES, &path.to_owned())
             .await?;
         ret
     }
@@ -192,7 +208,7 @@ impl Vfs for RemoteVfs {
     async fn fs_stats(&self, path: &Path) -> Result<Option<crate::filesystem::FsStats>, Error> {
         let ret: Result<Option<crate::filesystem::FsStats>, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FS_STATS, &path.to_path_buf())
+            .invoke(API_HOST_VFS_FS_STATS, &path.to_owned())
             .await?;
         ret
     }
@@ -224,7 +240,7 @@ impl Vfs for RemoteVfs {
         // The sentinel is delivered through the data channel, so the reader sees
         // EOF independently of when the invoke completes.
         let communicator = self.communicator.clone();
-        let path = path.to_path_buf();
+        let path = path.to_owned();
         let invoke_handle = tokio::spawn(async move {
             let ret: Result<Result<(), Error>, _> = communicator
                 .invoke(API_HOST_VFS_OPEN_READ_ASYNC, &(path, stream_id))
@@ -244,10 +260,7 @@ impl Vfs for RemoteVfs {
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let ret: Result<FileChunk, Error> = self
             .communicator
-            .invoke(
-                API_HOST_VFS_READ_RANGE,
-                &(path.to_path_buf(), offset, length),
-            )
+            .invoke(API_HOST_VFS_READ_RANGE, &(path.to_owned(), offset, length))
             .await?;
         ret
     }
@@ -255,7 +268,7 @@ impl Vfs for RemoteVfs {
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let ret: Result<FileDetails, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FILE_DETAILS, &path.to_path_buf())
+            .invoke(API_HOST_VFS_FILE_DETAILS, &path.to_owned())
             .await?;
         ret
     }
@@ -263,7 +276,7 @@ impl Vfs for RemoteVfs {
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let ret: Result<File, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FILE_INFO, &path.to_path_buf())
+            .invoke(API_HOST_VFS_FILE_INFO, &path.to_owned())
             .await?;
         ret
     }
@@ -271,7 +284,7 @@ impl Vfs for RemoteVfs {
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let stream_id: Result<StreamId, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_path_buf())
+            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_owned())
             .await?;
         let stream_id = stream_id?;
 
@@ -285,17 +298,17 @@ impl Vfs for RemoteVfs {
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_CREATE_DIRECTORY, &path.to_path_buf())
+            .invoke(API_HOST_VFS_CREATE_DIRECTORY, &path.to_owned())
             .await?;
         ret
     }
 
-    async fn create_symlink(&self, link: &Path, target: &Path) -> Result<(), Error> {
+    async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(
                 API_HOST_VFS_CREATE_SYMLINK,
-                &(link.to_path_buf(), target.to_path_buf()),
+                &(link.to_owned(), target.to_string()),
             )
             .await?;
         ret
@@ -304,7 +317,7 @@ impl Vfs for RemoteVfs {
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_TOUCH, &path.to_path_buf())
+            .invoke(API_HOST_VFS_TOUCH, &path.to_owned())
             .await?;
         ret
     }
@@ -312,7 +325,7 @@ impl Vfs for RemoteVfs {
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_TRUNCATE, &path.to_path_buf())
+            .invoke(API_HOST_VFS_TRUNCATE, &path.to_owned())
             .await?;
         ret
     }
@@ -320,7 +333,7 @@ impl Vfs for RemoteVfs {
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_FILE, &path.to_path_buf())
+            .invoke(API_HOST_VFS_REMOVE_FILE, &path.to_owned())
             .await?;
         ret
     }
@@ -328,7 +341,7 @@ impl Vfs for RemoteVfs {
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_DIR, &path.to_path_buf())
+            .invoke(API_HOST_VFS_REMOVE_DIR, &path.to_owned())
             .await?;
         ret
     }
@@ -336,7 +349,7 @@ impl Vfs for RemoteVfs {
     async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_TREE, &path.to_path_buf())
+            .invoke(API_HOST_VFS_REMOVE_TREE, &path.to_owned())
             .await?;
         ret
     }
@@ -344,7 +357,7 @@ impl Vfs for RemoteVfs {
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let ret: Result<VfsMetadata, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_GET_METADATA, &path.to_path_buf())
+            .invoke(API_HOST_VFS_GET_METADATA, &path.to_owned())
             .await?;
         ret
     }
@@ -352,10 +365,7 @@ impl Vfs for RemoteVfs {
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(
-                API_HOST_VFS_SET_METADATA,
-                &(path.to_path_buf(), meta.clone()),
-            )
+            .invoke(API_HOST_VFS_SET_METADATA, &(path.to_owned(), meta.clone()))
             .await?;
         ret
     }
@@ -363,7 +373,7 @@ impl Vfs for RemoteVfs {
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let ret: Result<VfsSpaceInfo, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_AVAILABLE_SPACE, &path.to_path_buf())
+            .invoke(API_HOST_VFS_AVAILABLE_SPACE, &path.to_owned())
             .await?;
         ret
     }
@@ -371,7 +381,7 @@ impl Vfs for RemoteVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_RENAME, &(from.to_path_buf(), to.to_path_buf()))
+            .invoke(API_HOST_VFS_RENAME, &(from.to_owned(), to.to_owned()))
             .await?;
         ret
     }
@@ -379,10 +389,7 @@ impl Vfs for RemoteVfs {
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(
-                API_HOST_VFS_COPY_WITHIN,
-                &(from.to_path_buf(), to.to_path_buf()),
-            )
+            .invoke(API_HOST_VFS_COPY_WITHIN, &(from.to_owned(), to.to_owned()))
             .await?;
         ret
     }
@@ -392,7 +399,7 @@ impl Vfs for RemoteVfs {
             .communicator
             .invoke(
                 API_HOST_VFS_HARD_LINK,
-                &(link.to_path_buf(), target.to_path_buf()),
+                &(link.to_owned(), target.to_owned()),
             )
             .await?;
         ret

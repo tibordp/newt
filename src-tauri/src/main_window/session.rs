@@ -4,15 +4,15 @@ use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
 };
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
+use newt_common::proc::NoConsoleWindow;
 use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
-    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, VfsDescriptor, VfsId, VfsManager,
+    LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
     VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -285,7 +285,7 @@ impl serde::Serialize for ConnectionState {
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
 pub use newt_common::agent_resolver::AgentResolver;
-use newt_common::agent_resolver::local_agent_triple;
+use newt_common::agent_resolver::{agent_file_name, local_agent_triple};
 
 /// Host-side resolver. Searches directories in priority order:
 /// 1. `NEWT_AGENT_DIR` env var (runtime dev override)
@@ -293,7 +293,7 @@ use newt_common::agent_resolver::local_agent_triple;
 /// 3. Tauri resource dir (`agents/` inside the bundled app)
 /// 4. `agents/` relative fallback (legacy/dev)
 pub struct TauriAgentResolver {
-    dirs: Vec<PathBuf>,
+    dirs: Vec<std::path::PathBuf>,
 }
 
 impl TauriAgentResolver {
@@ -302,18 +302,18 @@ impl TauriAgentResolver {
         let mut dirs = Vec::new();
 
         if let Ok(dir) = std::env::var("NEWT_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
+            dirs.push(std::path::PathBuf::from(dir));
         }
 
         if let Some(dir) = option_env!("NEWT_SYSTEM_AGENT_DIR") {
-            dirs.push(PathBuf::from(dir));
+            dirs.push(std::path::PathBuf::from(dir));
         }
 
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
             dirs.push(resource_dir.join("agents"));
         }
 
-        dirs.push(PathBuf::from("agents"));
+        dirs.push(std::path::PathBuf::from("agents"));
 
         Self { dirs }
     }
@@ -328,24 +328,34 @@ impl AgentResolver for TauriAgentResolver {
         for dir in &self.dirs {
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    let path = entry.path().join("newt-agent");
-                    if path.is_file() {
-                        hasher.update(&std::fs::read(&path)?);
-                        found = true;
+                    let p = entry.path();
+                    // Triple-subdir layout: <dir>/<triple>/newt-agent[.exe]
+                    // (the agent's extension follows the triple's OS, not
+                    // the host's).
+                    if let Some(triple) = p.file_name().and_then(|n| n.to_str()) {
+                        let nested = p.join(agent_file_name(triple));
+                        if nested.is_file() {
+                            hasher.update(&std::fs::read(&nested)?);
+                            found = true;
+                        }
                     }
-                    // Also check flat layout (dir/newt-agent)
-                    let flat = entry.path();
-                    if flat.is_file() && flat.file_name().is_some_and(|n| n == "newt-agent") {
-                        hasher.update(&std::fs::read(&flat)?);
+                    // Flat layout: <dir>/newt-agent[.exe]
+                    if p.is_file()
+                        && p.file_name()
+                            .is_some_and(|n| n == "newt-agent" || n == "newt-agent.exe")
+                    {
+                        hasher.update(&std::fs::read(&p)?);
                         found = true;
                     }
                 }
             }
-            // Flat layout: dir/newt-agent directly
-            let flat = dir.join("newt-agent");
-            if flat.is_file() {
-                hasher.update(&std::fs::read(&flat)?);
-                found = true;
+            // Flat layout, direct: <dir>/newt-agent[.exe]
+            for name in ["newt-agent", "newt-agent.exe"] {
+                let flat = dir.join(name);
+                if flat.is_file() {
+                    hasher.update(&std::fs::read(&flat)?);
+                    found = true;
+                }
             }
         }
 
@@ -359,13 +369,14 @@ impl AgentResolver for TauriAgentResolver {
     }
 
     /// Look up the agent binary for a given target triple.
-    fn find_agent_binary(&self, triple: &str) -> Result<PathBuf, newt_common::Error> {
+    fn find_agent_binary(&self, triple: &str) -> Result<std::path::PathBuf, newt_common::Error> {
+        let name = agent_file_name(triple);
         for dir in &self.dirs {
-            let path = dir.join(triple).join("newt-agent");
+            let path = dir.join(triple).join(name);
             if path.exists() {
                 return Ok(path);
             }
-            let path = dir.join("newt-agent");
+            let path = dir.join(name);
             if path.exists() {
                 return Ok(path);
             }
@@ -379,7 +390,7 @@ impl AgentResolver for TauriAgentResolver {
 
     /// Find the agent binary on the local machine (for elevated mode).
     /// Maps the compile-time target to the agent triple (always musl on Linux).
-    fn find_local_agent_binary(&self) -> Result<PathBuf, newt_common::Error> {
+    fn find_local_agent_binary(&self) -> Result<std::path::PathBuf, newt_common::Error> {
         let triple = local_agent_triple();
         self.find_agent_binary(&triple)
     }
@@ -436,15 +447,19 @@ pub trait VfsInfo: Send + Sync {
     /// enclosing directory of the origin file and recurses. For VFSes with
     /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
-    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<PathBuf> {
+    fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::vfs::path::PathBuf> {
         let mut current = path.clone();
         loop {
             if current.vfs_id == VfsId::ROOT {
+                // Return the VFS path; the terminal client converts it to
+                // a native path on the side that spawns the PTY (the
+                // agent in a remote session), in that OS — no `std::path`
+                // crosses the RPC boundary here.
                 return Some(current.path);
             }
             let origin = self.origin(current.vfs_id)?;
-            let parent = origin.path.parent()?.to_path_buf();
-            current = VfsPath::new(origin.vfs_id, parent);
+            let parent = origin.parent()?;
+            current = parent;
         }
     }
 }
@@ -910,7 +925,10 @@ fn create_local_services(
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
-        initial_dir: VfsPath::root(std::env::current_dir().unwrap()),
+        initial_dir: VfsPath::new(
+            VfsId::ROOT,
+            newt_common::vfs::local::local_path_from_native(&std::env::current_dir().unwrap()),
+        ),
     }
 }
 
@@ -927,7 +945,7 @@ fn create_remote_services(communicator: Communicator, pending_streams: PendingSt
         file_reader: Arc::new(newt_common::file_reader::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator)),
-        initial_dir: VfsPath::root("/"),
+        initial_dir: VfsPath::root(VfsId::ROOT),
     }
 }
 
@@ -1005,6 +1023,7 @@ async fn spawn_bootstrap(
     transport_cmd: &[String],
     enable_askpass: bool,
     shell_join: bool,
+    extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
     conn_log: &ConnectionLog,
@@ -1012,6 +1031,7 @@ async fn spawn_bootstrap(
     let (program, args) = transport_cmd
         .split_first()
         .ok_or_else(|| Error::Custom("empty transport command".into()))?;
+    let program = crate::path_resolver::resolve_program(program, extra_path);
 
     // The script reads `NEWT_RUST_LOG` from its own environment. Inject the
     // assignment as the first line of the script body so it survives transport
@@ -1033,9 +1053,14 @@ async fn spawn_bootstrap(
         None
     };
 
-    conn_log.log(format!("Spawning: {} {}", program, args.join(" ")));
+    conn_log.log(format!(
+        "Spawning: {} {}",
+        program.display(),
+        args.join(" ")
+    ));
 
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(&program);
+    cmd.no_console_window();
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1188,6 +1213,7 @@ async fn perform_bootstrap_handshake(
 /// no shell to run `bootstrap.sh`.
 async fn spawn_direct_copy(
     plan: &DirectCopyPlan,
+    extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     conn_log: &ConnectionLog,
 ) -> Result<ChildConnection, Error> {
@@ -1202,12 +1228,14 @@ async fn spawn_direct_copy(
         let (prog, args) = resolved
             .split_first()
             .ok_or_else(|| Error::Custom("empty arch_detect step".into()))?;
+        let prog = crate::path_resolver::resolve_program(prog, extra_path);
         conn_log.log(format!(
             "Detecting target arch: {} {}",
-            prog,
+            prog.display(),
             args.join(" ")
         ));
-        let out = tokio::process::Command::new(prog)
+        let out = tokio::process::Command::new(&prog)
+            .no_console_window()
             .args(args)
             .output()
             .await
@@ -1276,12 +1304,14 @@ async fn spawn_direct_copy(
     let (copy_program, copy_args) = copy_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty copy_cmd".into()))?;
+    let copy_program = crate::path_resolver::resolve_program(copy_program, extra_path);
     conn_log.log(format!(
         "Copying agent: {} {}",
-        copy_program,
+        copy_program.display(),
         copy_args.join(" ")
     ));
-    let copy_status = tokio::process::Command::new(copy_program)
+    let copy_status = tokio::process::Command::new(&copy_program)
+        .no_console_window()
         .args(copy_args)
         .output()
         .await
@@ -1307,8 +1337,14 @@ async fn spawn_direct_copy(
     let (exec_program, exec_args) = exec_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty exec_cmd".into()))?;
-    conn_log.log(format!("Exec: {} {}", exec_program, exec_args.join(" ")));
-    let mut cmd = tokio::process::Command::new(exec_program);
+    let exec_program = crate::path_resolver::resolve_program(exec_program, extra_path);
+    conn_log.log(format!(
+        "Exec: {} {}",
+        exec_program.display(),
+        exec_args.join(" ")
+    ));
+    let mut cmd = tokio::process::Command::new(&exec_program);
+    cmd.no_console_window();
     cmd.args(exec_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1359,6 +1395,7 @@ async fn spawn_custom_shell(
         skip_bootstrap, command
     ));
     let mut cmd = tokio::process::Command::new("sh");
+    cmd.no_console_window();
     cmd.arg("-c")
         .arg(command)
         .env("NEWT_BOOTSTRAP", &script)
@@ -1398,6 +1435,7 @@ async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConne
 
     let agent_path = agent_resolver.find_local_agent_binary()?;
     let mut cmd = tokio::process::Command::new("pkexec");
+    cmd.no_console_window();
     cmd.arg(&agent_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1533,6 +1571,7 @@ pub(super) async fn connect(
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             };
+            let extra_path = preferences.load().environment.extra_path.clone();
             let conn = match spec {
                 SpawnSpec::Bootstrap {
                     transport_cmd,
@@ -1544,6 +1583,7 @@ pub(super) async fn connect(
                         transport_cmd,
                         *askpass,
                         *shell_join,
+                        &extra_path,
                         agent_resolver,
                         askpass_provider.clone(),
                         &conn_log,
@@ -1551,7 +1591,7 @@ pub(super) async fn connect(
                     .await?
                 }
                 SpawnSpec::DirectCopy(plan) => {
-                    spawn_direct_copy(plan, agent_resolver, &conn_log).await?
+                    spawn_direct_copy(plan, &extra_path, agent_resolver, &conn_log).await?
                 }
                 SpawnSpec::CustomShell {
                     command,
@@ -1614,12 +1654,10 @@ pub(super) async fn connect(
     let default_dir = if matches!(connection_target, ConnectionTarget::Local) {
         services.initial_dir.clone()
     } else {
-        services
-            .shell_service
-            .shell_expand("~".to_string())
-            .await
-            .map(VfsPath::root)
-            .unwrap_or(services.initial_dir.clone())
+        match services.shell_service.shell_expand("~".to_string()).await {
+            Ok(Some(home)) => VfsPath::new(VfsId::ROOT, home),
+            _ => services.initial_dir.clone(),
+        }
     };
 
     // Per-pane CLI overrides (`--cwd-left`, `--cwd-right`). Passed through
@@ -1629,26 +1667,44 @@ pub(super) async fn connect(
     for (slot, override_path) in main_window_ctx.initial_pane_paths().iter().enumerate() {
         if let Some(path) = override_path {
             let raw = path.to_string_lossy().into_owned();
-            if let Ok(expanded) = services.shell_service.shell_expand(raw).await {
-                pane_dirs[slot] = VfsPath::root(expanded);
-            } else {
-                log::warn!(
-                    "could not resolve --cwd-{} path {:?}; falling back to default",
-                    if slot == 0 { "left" } else { "right" },
-                    path
-                );
+            match services.shell_service.shell_expand(raw).await {
+                Ok(Some(expanded)) => {
+                    pane_dirs[slot] = VfsPath::new(VfsId::ROOT, expanded);
+                }
+                _ => {
+                    log::warn!(
+                        "could not resolve --cwd-{} path {:?}; falling back to default",
+                        if slot == 0 { "left" } else { "right" },
+                        path
+                    );
+                }
             }
         }
     }
 
-    // Set up VFS
+    // Set up VFS. The root is a `LocalVfs` — the host's own FS in a local
+    // session, the agent's in a remote one. It isn't mounted via the
+    // registry (so `LocalVfs::mount_meta()` isn't consulted), so stamp the
+    // path style here: the host's own for Local, Unix for any remote
+    // (every agent target in scope is Unix).
+    // Remote root = the agent's Unix FS (style-only, single `/`). Local
+    // root = this host's FS, with its drives enumerated so a Windows host
+    // lands on a drive instead of the unlistable `/`.
+    let root_meta = if matches!(connection_target, ConnectionTarget::Spawn(_)) {
+        PathStyle::Unix.encode()
+    } else {
+        newt_common::vfs::encode_mount_meta(
+            PathStyle::host(),
+            &newt_common::vfs::local::local_roots(),
+        )
+    };
     let mut initial_mounted = HashMap::new();
     initial_mounted.insert(
         VfsId::ROOT,
         MountedVfsInfo {
             vfs_id: VfsId::ROOT,
             descriptor: &LOCAL_VFS_DESCRIPTOR,
-            mount_meta: Vec::new(),
+            mount_meta: root_meta,
             origin: None,
         },
     );
@@ -1673,7 +1729,14 @@ pub(super) async fn connect(
                         MountedVfsInfo {
                             vfs_id: resp.vfs_id,
                             descriptor: desc,
-                            mount_meta: resp.mount_meta,
+                            // This VFS surfaces *this host's* local FS into
+                            // the remote session: host path style, and the
+                            // host's drives so a Windows client lands on a
+                            // drive instead of the unlistable `/`.
+                            mount_meta: newt_common::vfs::encode_mount_meta(
+                                PathStyle::host(),
+                                &newt_common::vfs::local::local_roots(),
+                            ),
                             origin: None,
                         },
                     );

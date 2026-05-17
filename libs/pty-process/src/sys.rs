@@ -1,5 +1,4 @@
 use std::os::fd::AsRawFd as _;
-use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Pty(pub nix::pty::PtyMaster);
@@ -41,7 +40,7 @@ impl Pty {
     }
 
     #[cfg(target_os = "macos")]
-    fn get_slave_name(&self) -> std::io::Result<PathBuf> {
+    fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
         use std::ffi::{CStr, OsStr};
         use std::os::raw::c_char;
         use std::os::unix::ffi::OsStrExt;
@@ -53,7 +52,7 @@ impl Pty {
                 u64::from(libc::TIOCPTYGNAME),
                 buf.as_mut_ptr(),
             ) {
-                0 => Ok(PathBuf::from(OsStr::from_bytes(
+                0 => Ok(std::path::PathBuf::from(OsStr::from_bytes(
                     CStr::from_ptr(buf.as_ptr()).to_bytes(),
                 ))),
                 _ => Err(std::io::Error::last_os_error()),
@@ -62,7 +61,7 @@ impl Pty {
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn get_slave_name(&self) -> std::io::Result<PathBuf> {
+    fn get_slave_name(&self) -> std::io::Result<std::path::PathBuf> {
         let mut name_buf = Vec::<libc::c_char>::with_capacity(64);
         let name_buf_ptr = name_buf.as_mut_ptr();
         let cname = unsafe {
@@ -91,7 +90,7 @@ impl std::os::fd::AsRawFd for Pty {
     }
 }
 
-pub struct Pts(PathBuf);
+pub struct Pts(std::path::PathBuf);
 
 impl Pts {
     /// Returns a closure suitable for `pre_exec` that sets up the child as a

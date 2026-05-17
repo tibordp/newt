@@ -95,7 +95,7 @@ async fn serve_file(
         Ok(id) => VfsId(id),
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let vfs_path = VfsPath::new(vfs_id, format!("/{}", path));
+    let vfs_path = VfsPath::from_wire_str(vfs_id, &path);
 
     let details = match state.file_reader.file_details(vfs_path.clone()).await {
         Ok(d) => d,

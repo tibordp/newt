@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+// The archive index machinery is keyed by Unix-style relative path
+// strings built on std paths; the `Vfs` surface speaks our
+// `vfs::path::Path`. Convert at each trait-method boundary via
+// `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
+use std::path::Path as StdPath;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -13,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
+use crate::vfs::path::{Path, PathBuf};
 
 use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
@@ -263,10 +268,10 @@ impl TarArchiveVfs {
         let file_size = details.size;
         let descriptor = upstream.descriptor();
 
-        let compression = detect_compression_from_name(&archive_path.to_string_lossy());
+        let compression = detect_compression_from_name(archive_path.as_wire_str());
         info!(
             "archive: indexing {} (size={}, compression={:?}, sync={})",
-            archive_path.display(),
+            archive_path,
             file_size,
             compression,
             descriptor.can_read_sync()
@@ -278,7 +283,7 @@ impl TarArchiveVfs {
             let cancel = job.cancel_token();
             let state_clone = state.clone();
             let reporter_clone = reporter.clone();
-            let archive_label = archive_path.to_string_lossy().into_owned();
+            let archive_label = archive_path.as_wire_str().to_string();
 
             let result = tokio::task::spawn_blocking(move || {
                 Self::drive_indexing_sync(
@@ -312,14 +317,14 @@ impl TarArchiveVfs {
             let mut position: u64 = 0;
             let mut last_snapshot = tokio::time::Instant::now();
             let mut last_snapshot_entries = 0usize;
-            let archive_label = archive_path.to_string_lossy().into_owned();
+            let archive_label = archive_path.as_wire_str().to_string();
             // Initial progress report so the spinner is replaced with
             // a live "Indexing · 0 entries" line immediately on mount.
             emit_indexing_progress(&reporter, 0, file_size, position, &archive_label);
 
             loop {
                 if job.is_cancelled() {
-                    info!("archive: indexing cancelled for {}", archive_path.display());
+                    info!("archive: indexing cancelled for {}", archive_path);
                     let partial = engine.cancel();
                     let entries: Vec<&iluvatar::IndexEntry> = partial.entries.values().collect();
                     let tree = build_directory_tree_from_iluvatar(entries);
@@ -391,7 +396,7 @@ impl TarArchiveVfs {
             ));
         }
 
-        info!("archive: indexing complete for {}", archive_path.display());
+        info!("archive: indexing complete for {}", archive_path);
 
         Ok(())
     }
@@ -502,7 +507,11 @@ impl TarArchiveVfs {
         index: &'a iluvatar::ArchiveIndex,
         path: &Path,
     ) -> Result<(String, &'a iluvatar::IndexEntry), Error> {
-        let resolved = self.state.tree.read().resolve_path(path, true)?;
+        // Archive index keys are Unix-style relative strings; feed the
+        // wire form to the std-path-based machinery (leading `/` stripped
+        // by `normalize_dir_path` inside `resolve_path`).
+        let std_path = StdPath::new(path.as_wire_str());
+        let resolved = self.state.tree.read().resolve_path(std_path, true)?;
         let resolved_str = normalized_to_string(&resolved);
 
         let entry = index_get(index, &resolved_str)
@@ -513,7 +522,7 @@ impl TarArchiveVfs {
         if matches!(entry.entry_type, iluvatar::EntryType::HardLink)
             && let Some(ref target) = entry.link_target
         {
-            let target_normalized = normalize_dir_path(Path::new(target));
+            let target_normalized = normalize_dir_path(StdPath::new(target));
             let target_str = target_normalized.to_string_lossy();
             let target_entry = index_get(index, &target_str)
                 .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
@@ -612,6 +621,10 @@ impl Vfs for TarArchiveVfs {
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::super::VfsFileList, Error> {
+        // The directory tree is keyed by Unix-style relative strings;
+        // feed the wire form to its std-path-based lookups.
+        let std_path = StdPath::new(path.as_wire_str());
+
         // Acquire a consumer slot for the indexer. The guard is held
         // for the entirety of this call — if the navigation that
         // originated us is cancelled, dropping the guard cancels the
@@ -628,14 +641,14 @@ impl Vfs for TarArchiveVfs {
         {
             log::debug!(
                 "archive: list_files {} — index ready ({:?}), returning immediately",
-                path.display(),
+                path,
                 job_status,
             );
             return self
                 .state
                 .tree
                 .read()
-                .list(path)
+                .list(std_path)
                 .map(|files| super::super::VfsFileList {
                     files,
                     partial: job_status == super::super::JobStatus::Cancelled,
@@ -647,7 +660,7 @@ impl Vfs for TarArchiveVfs {
 
         log::debug!(
             "archive: list_files {} — waiting for indexing (batch_tx={})",
-            path.display(),
+            path,
             batch_tx.is_some()
         );
 
@@ -662,7 +675,7 @@ impl Vfs for TarArchiveVfs {
             if self.state.completed_index.get().is_some() {
                 log::debug!(
                     "archive: list_files {} — indexing completed after {} updates",
-                    path.display(),
+                    path,
                     update_count
                 );
                 break;
@@ -673,7 +686,7 @@ impl Vfs for TarArchiveVfs {
             if self.job.status() == super::super::JobStatus::Cancelled {
                 log::debug!(
                     "archive: list_files {} — indexer cancelled, returning partial tree",
-                    path.display(),
+                    path,
                 );
                 break;
             }
@@ -682,7 +695,7 @@ impl Vfs for TarArchiveVfs {
             if let Some(ref tx) = batch_tx {
                 let new_files = {
                     let tree = self.state.tree.read();
-                    tree.list(path).ok().map(|files| {
+                    tree.list(std_path).ok().map(|files| {
                         files
                             .into_iter()
                             .filter(|f| sent_names.insert(f.name.clone()))
@@ -694,12 +707,12 @@ impl Vfs for TarArchiveVfs {
                 {
                     log::debug!(
                         "archive: list_files {} — sending delta batch ({} new files, {} total sent)",
-                        path.display(),
+                        path,
                         new_files.len(),
                         sent_names.len()
                     );
                     if tx.send(new_files).await.is_err() {
-                        log::debug!("archive: list_files {} — receiver dropped", path.display());
+                        log::debug!("archive: list_files {} — receiver dropped", path);
                         break;
                     }
                 }
@@ -709,10 +722,10 @@ impl Vfs for TarArchiveVfs {
             notified.await;
         }
 
-        let result = self.state.tree.read().list(path);
+        let result = self.state.tree.read().list(std_path);
         log::debug!(
             "archive: list_files {} — returning final result ({} files)",
-            path.display(),
+            path,
             result.as_ref().map(|f| f.len()).unwrap_or(0)
         );
         // Cancelled during the streaming wait → partial; Done → full.
@@ -736,14 +749,14 @@ impl Vfs for TarArchiveVfs {
         // This may return None if the path traverses through a symlink
         // directory (e.g. "/symlink_dir/file.txt" — only the resolved
         // path exists in the index).
-        let normalized = normalize_dir_path(path);
+        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
         let path_str = normalized.to_string_lossy();
         let original_entry = index_get(index, &path_str);
 
         let is_symlink =
             original_entry.is_some_and(|e| matches!(e.entry_type, iluvatar::EntryType::SymLink));
         let symlink_target = if is_symlink {
-            original_entry.and_then(|e| e.link_target.as_ref().map(PathBuf::from))
+            original_entry.and_then(|e| e.link_target.clone())
         } else {
             None
         };
@@ -763,7 +776,7 @@ impl Vfs for TarArchiveVfs {
 
         Ok(FileDetails {
             size: resolved_entry.size,
-            mime_type: crate::file_reader::guess_mime_type(path),
+            mime_type: crate::file_reader::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir: resolved_entry.entry_type.is_directory(),
             is_symlink,
             symlink_target,
@@ -779,7 +792,10 @@ impl Vfs for TarArchiveVfs {
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         // Wait for indexing to complete for accurate file info
         let (_index, _guard) = self.wait_for_index().await?;
-        self.state.tree.read().file_info(path)
+        self.state
+            .tree
+            .read()
+            .file_info(StdPath::new(path.as_wire_str()))
     }
 
     async fn open_read_async(

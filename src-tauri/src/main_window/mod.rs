@@ -16,7 +16,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 use std::future::Future;
-use std::path::Path;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
@@ -567,11 +566,16 @@ pub struct VfsTarget {
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
     pub display_name: String,
-    /// Human-readable label for a mounted instance (e.g. hostname for SFTP).
+    /// Human-readable label for a mounted instance (e.g. hostname for
+    /// SFTP, or the drive for a split-root entry).
     pub label: Option<String>,
     /// Dialog to open when user selects this unmounted VFS type.
     /// If None and vfs_id is None, the type supports auto-mount.
     pub mount_dialog: Option<String>,
+    /// Specific root to land on. `Some` only for split-root VFSes
+    /// (one target per drive); selecting it navigates straight there
+    /// instead of the VFS's default `initial_path`.
+    pub root: Option<newt_common::vfs::path::PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,7 +1139,10 @@ impl MainWindowContext {
         &self.inner.main_window_state.terminals
     }
 
-    pub async fn create_terminal(&self, path: Option<&Path>) -> Result<Arc<Terminal>, Error> {
+    pub async fn create_terminal(
+        &self,
+        path: Option<&newt_common::vfs::path::Path>,
+    ) -> Result<Arc<Terminal>, Error> {
         let terminal = Terminal::create(self.clone(), self.inner.window.clone(), path).await?;
 
         self.with_update(|s| {
@@ -1193,17 +1200,34 @@ impl MainWindowContext {
                     continue;
                 }
                 mounted_types.insert(info.descriptor.type_name());
-                targets.push(VfsTarget {
-                    vfs_id: Some(*vfs_id),
-                    type_name: info.descriptor.type_name().to_string(),
-                    display_name: s
-                        .vfs_info
-                        .display_name(*vfs_id)
-                        .unwrap_or_default()
-                        .to_string(),
-                    label: info.descriptor.mount_label(&info.mount_meta),
-                    mount_dialog: None,
-                });
+                let display_name = s
+                    .vfs_info
+                    .display_name(*vfs_id)
+                    .unwrap_or_default()
+                    .to_string();
+                if info.descriptor.has_unified_root(&info.mount_meta) {
+                    targets.push(VfsTarget {
+                        vfs_id: Some(*vfs_id),
+                        type_name: info.descriptor.type_name().to_string(),
+                        display_name,
+                        label: info.descriptor.mount_label(&info.mount_meta),
+                        mount_dialog: None,
+                        root: None,
+                    });
+                } else {
+                    // Split-root FS (Windows drives): one entry per root,
+                    // labelled with the drive (`C:\`).
+                    for root in info.descriptor.roots(&info.mount_meta) {
+                        targets.push(VfsTarget {
+                            vfs_id: Some(*vfs_id),
+                            type_name: info.descriptor.type_name().to_string(),
+                            display_name: display_name.clone(),
+                            label: Some(info.descriptor.format_path(&root, &info.mount_meta)),
+                            mount_dialog: None,
+                            root: Some(root),
+                        });
+                    }
+                }
             }
         })?;
 
@@ -1219,12 +1243,14 @@ impl MainWindowContext {
                     display_name: desc.display_name().to_string(),
                     label: None,
                     mount_dialog,
+                    root: None,
                 });
             }
         }
 
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
-            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b),
+            // Same VFS → keep split-root drives in a stable order.
+            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b).then_with(|| a.root.cmp(&b.root)),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a.type_name.cmp(&b.type_name),
@@ -1296,6 +1322,21 @@ impl MainWindowContext {
         // don't trust that across the RPC boundary.
         self.inner.main_window_state.vfs_progress.clear_for(vfs_id);
         Ok(())
+    }
+
+    /// Fully-qualified path to land on when selecting/mounting `vfs_id`
+    /// (asks the descriptor — see `VfsDescriptor::initial_path`). Falls
+    /// back to the VFS root if the VFS isn't mounted.
+    pub fn vfs_initial_path(&self, vfs_id: VfsId) -> VfsPath {
+        self.with_session(|s| {
+            s.mounted_vfs
+                .read()
+                .get(&vfs_id)
+                .map(|info| VfsPath::new(vfs_id, info.descriptor.initial_path(&info.mount_meta)))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| VfsPath::root(vfs_id))
     }
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {
@@ -1475,6 +1516,7 @@ pub fn spawn_main_window(
             .inner_size(1100.0, 800.0)
             .theme(theme)
             .build()?;
+    crate::disable_webview_autofill(&window);
 
     let ctx = MainWindowContext::new(
         window.clone(),

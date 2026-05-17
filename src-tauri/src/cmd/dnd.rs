@@ -115,7 +115,15 @@ pub async fn external_drop(
         )
     })?;
 
-    let sources: Vec<VfsPath> = paths.iter().map(|p| VfsPath::new(host_vfs, p)).collect();
+    let sources: Vec<VfsPath> = paths
+        .iter()
+        .map(|p| {
+            VfsPath::new(
+                host_vfs,
+                newt_common::vfs::local::local_path_from_native(std::path::Path::new(p)),
+            )
+        })
+        .collect();
 
     let dest_path = ctx
         .panes()

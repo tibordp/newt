@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -75,7 +72,11 @@ pub struct File {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,
-    pub symlink_target: Option<PathBuf>,
+    /// Raw link target as reported by the source FS. A string, not a path
+    /// type: it may be relative (`../x`) or otherwise un-normalizable, and
+    /// it crosses the agent↔host RPC boundary — no `std::path` there, its
+    /// meaning belongs to the source OS, not the receiver's.
+    pub symlink_target: Option<String>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
@@ -113,6 +114,17 @@ pub struct FsStats {
     total_bytes: u64,
 }
 
+impl FsStats {
+    pub fn new(free_bytes: u64, available_bytes: u64, total_bytes: u64) -> Self {
+        Self {
+            free_bytes,
+            available_bytes,
+            total_bytes,
+        }
+    }
+}
+
+#[cfg(unix)]
 impl From<nix::sys::statvfs::Statvfs> for FsStats {
     #[allow(clippy::unnecessary_cast)]
     fn from(stats: nix::sys::statvfs::Statvfs) -> Self {
@@ -177,28 +189,6 @@ impl FileList {
 #[path = "filesystem_tests.rs"]
 mod tests;
 
-/// Canonicalize . and .. segments in a path (without following symlinks or
-/// checking whether they exists)
-pub fn resolve(path: &Path) -> PathBuf {
-    assert!(path.is_absolute());
-    let mut ret = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            component => ret.push(component.as_os_str()),
-        }
-    }
-    ret
-}
-
-/// Resolve a VfsPath by canonicalizing its path component.
-pub fn resolve_vfs(vfs_path: &VfsPath) -> VfsPath {
-    VfsPath::new(vfs_path.vfs_id, resolve(&vfs_path.path))
-}
-
 pub struct UidGidCache {
     local_users: RwLock<HashMap<u32, UserGroup>>,
     local_groups: RwLock<HashMap<u32, UserGroup>>,
@@ -226,11 +216,7 @@ impl UidGidCache {
             }
         }
 
-        let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
-        let group = match group {
-            Some(g) => UserGroup::Name(g.name),
-            None => UserGroup::Id(gid),
-        };
+        let group = lookup_group(gid)?;
 
         let mut groups = self.local_groups.write();
         groups.insert(gid, group.clone());
@@ -246,17 +232,43 @@ impl UidGidCache {
             }
         }
 
-        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
-        let user = match user {
-            Some(u) => UserGroup::Name(u.name),
-            None => UserGroup::Id(uid),
-        };
+        let user = lookup_user(uid)?;
 
         let mut users = self.local_users.write();
         users.insert(uid, user.clone());
 
         Ok(user)
     }
+}
+
+#[cfg(unix)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
+    Ok(match group {
+        Some(g) => UserGroup::Name(g.name),
+        None => UserGroup::Id(gid),
+    })
+}
+
+#[cfg(unix)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
+    Ok(match user {
+        Some(u) => UserGroup::Name(u.name),
+        None => UserGroup::Id(uid),
+    })
+}
+
+#[cfg(windows)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    // Windows has no POSIX gid space; the local FS never produces real gids
+    // (`VfsMetadata.gid` is None), so this should be unreachable in practice.
+    Ok(UserGroup::Id(gid))
+}
+
+#[cfg(windows)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    Ok(UserGroup::Id(uid))
 }
 
 #[async_trait::async_trait]
@@ -477,20 +489,65 @@ impl Filesystem for Remote {
 // ShellService — shell expansion (separate from VFS/Filesystem)
 // ---------------------------------------------------------------------------
 
+/// `~`/env expansion of a user-typed path on the shell's filesystem.
+///
+/// Returns a **VFS path**, not `std::path` — the result crosses the RPC
+/// boundary, and the native→VFS decode happens here, on the side the
+/// shell actually runs (the agent in a remote session), in its own OS.
+/// `None` means the expansion isn't an absolute path (caller resolves it
+/// relative to the pane instead).
 #[async_trait::async_trait]
 pub trait ShellService: Send + Sync {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error>;
+    async fn shell_expand(&self, input: String)
+    -> Result<Option<crate::vfs::path::PathBuf>, Error>;
+}
+
+/// Decode an expanded native path into a VFS path, but only if it is
+/// absolute (a relative expansion has no meaningful VFS form here).
+fn expanded_to_vfs(p: &std::path::Path) -> Option<crate::vfs::path::PathBuf> {
+    p.is_absolute()
+        .then(|| crate::vfs::local::local_path_from_native(p))
 }
 
 pub struct LocalShellService;
 
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl ShellService for LocalShellService {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
         let expanded =
             tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
                 .await??;
-        Ok(expanded)
+        Ok(expanded_to_vfs(&expanded))
+    }
+}
+
+#[cfg(windows)]
+#[async_trait::async_trait]
+impl ShellService for LocalShellService {
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
+        // Windows has no pwd database, so only the bare `~` / `~/...` form is supported.
+        // `~user/...` is left as-is.
+        let expanded = if input == "~" {
+            dirs::home_dir().ok_or_else(|| Error::custom("could not determine home directory"))?
+        } else if let Some(rest) = input
+            .strip_prefix("~/")
+            .or_else(|| input.strip_prefix("~\\"))
+        {
+            let mut home = dirs::home_dir()
+                .ok_or_else(|| Error::custom("could not determine home directory"))?;
+            home.push(rest);
+            home
+        } else {
+            std::path::PathBuf::from(input)
+        };
+        Ok(expanded_to_vfs(&expanded))
     }
 }
 
@@ -506,8 +563,11 @@ impl ShellRemote {
 
 #[async_trait::async_trait]
 impl ShellService for ShellRemote {
-    async fn shell_expand(&self, input: String) -> Result<PathBuf, Error> {
-        let ret: Result<PathBuf, Error> = self
+    async fn shell_expand(
+        &self,
+        input: String,
+    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
+        let ret: Result<Option<crate::vfs::path::PathBuf>, Error> = self
             .communicator
             .invoke(crate::api::API_SHELL_EXPAND, &input)
             .await?;

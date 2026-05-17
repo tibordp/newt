@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+// The ZIP index/directory tree is keyed by Unix-style relative path
+// strings built on std paths; the `Vfs` surface speaks our
+// `vfs::path::Path`. Convert at each trait-method boundary via
+// `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
+use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 use std::sync::Arc;
 
 use log::info;
@@ -9,6 +13,7 @@ use tokio::sync::mpsc;
 use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode};
+use crate::vfs::path::{Path, PathBuf};
 
 use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
@@ -199,10 +204,7 @@ impl ZipArchiveVfs {
     async fn ensure_indexed(&self) -> Result<&(ZipIndex, DirectoryTree), Error> {
         self.index
             .get_or_try_init(|| async {
-                info!(
-                    "archive: indexing ZIP archive {}",
-                    self.archive_path.display()
-                );
+                info!("archive: indexing ZIP archive {}", self.archive_path);
 
                 // One-shot progress message; clear on exit.
                 let mut extra = std::collections::BTreeMap::new();
@@ -246,7 +248,7 @@ impl ZipArchiveVfs {
                 info!(
                     "archive: indexed {} entries from ZIP {}",
                     zip_index.entries.len(),
-                    self.archive_path.display()
+                    self.archive_path
                 );
 
                 Ok((zip_index, tree))
@@ -422,11 +424,11 @@ fn build_zip_index(
     mut zip: zip::ZipArchive<RangeReadAdapter>,
 ) -> Result<(ZipIndex, DirectoryTree), Error> {
     let mut entries = HashMap::new();
-    let mut dirs: HashMap<PathBuf, Vec<File>> = HashMap::new();
-    let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
+    let mut seen_dirs: std::collections::HashSet<StdPathBuf> = std::collections::HashSet::new();
 
-    dirs.insert(PathBuf::from(""), Vec::new());
-    seen_dirs.insert(PathBuf::from(""));
+    dirs.insert(StdPathBuf::from(""), Vec::new());
+    seen_dirs.insert(StdPathBuf::from(""));
 
     for i in 0..zip.len() {
         let entry = zip
@@ -448,7 +450,7 @@ fn build_zip_index(
         let mtime = zip_mtime(&entry);
         let is_encrypted = entry.encrypted();
 
-        let entry_path = PathBuf::from(path);
+        let entry_path = StdPathBuf::from(path);
         let parent = entry_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -546,7 +548,9 @@ impl Vfs for ZipArchiveVfs {
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::super::VfsFileList, Error> {
         let (_, tree) = self.ensure_indexed().await?;
-        Ok(tree.list(path)?.into())
+        // The directory tree is keyed by Unix-style relative strings;
+        // feed the wire form to its std-path-based lookups.
+        Ok(tree.list(StdPath::new(path.as_wire_str()))?.into())
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
@@ -559,7 +563,7 @@ impl Vfs for ZipArchiveVfs {
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(path);
+        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
         let path_str = normalized.to_string_lossy();
 
         let entry = index
@@ -569,7 +573,7 @@ impl Vfs for ZipArchiveVfs {
 
         Ok(FileDetails {
             size: entry.size,
-            mime_type: crate::file_reader::guess_mime_type(path),
+            mime_type: crate::file_reader::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir: entry.is_dir,
             is_symlink: false,
             symlink_target: None,
@@ -584,12 +588,12 @@ impl Vfs for ZipArchiveVfs {
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let (_, tree) = self.ensure_indexed().await?;
-        tree.file_info(path)
+        tree.file_info(StdPath::new(path.as_wire_str()))
     }
 
     async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
         let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(path);
+        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
         let path_str = normalized.to_string_lossy();
         let entry = index
             .entries
@@ -603,7 +607,7 @@ impl Vfs for ZipArchiveVfs {
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(path);
+        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
         let path_str = normalized.to_string_lossy();
 
         let entry = index

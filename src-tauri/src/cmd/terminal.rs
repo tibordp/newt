@@ -28,13 +28,11 @@ pub async fn cmd_send_to_terminal(
         .get_effective_selection()
         .iter()
         .filter_map(|p| {
-            p.path
-                .file_name()
-                .map(shell_quote::Bash::quote)
-                .map(|mut b: Vec<u8>| {
-                    b.push(b' ');
-                    b
-                })
+            p.file_name().map(|name| {
+                let mut b: Vec<u8> = shell_quote::Bash::quote(name);
+                b.push(b' ');
+                b
+            })
         })
         .flatten()
         .collect();

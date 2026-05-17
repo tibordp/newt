@@ -19,7 +19,6 @@ use crate::main_window::session::VfsInfo;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -273,7 +272,7 @@ impl Pane {
         old_snapshot: &HistoryEntry,
         new_path: &VfsPath,
     ) {
-        if old_snapshot.path.path.as_os_str().is_empty() || old_snapshot.path == *new_path {
+        if old_snapshot.path == *new_path {
             return;
         }
         let mut history = self.history.lock();
@@ -561,14 +560,14 @@ impl Pane {
             if old_file_list.path().vfs_id != new_file_list.path().vfs_id {
                 // VFS boundary crossed (e.g. exiting an archive) — focus the origin filename
                 if let Some(origin) = self.vfs_info.origin(old_file_list.path().vfs_id)
-                    && let Some(name) = origin.path.file_name()
+                    && let Some(name) = origin.file_name()
                 {
-                    ws.focus(name.to_string_lossy().to_string());
+                    ws.focus(name.to_string());
                 }
             } else if target == *new_file_list.path() {
-                ws.focus_descendant(&old_file_list.path().path);
+                ws.focus_descendant(old_file_list.path());
             } else {
-                ws.focus_descendant(&target.path);
+                ws.focus_descendant(&target);
             }
         }
 
@@ -665,9 +664,9 @@ impl Pane {
         }
     }
 
-    pub async fn navigate<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    pub async fn navigate(&self, rel: &str) -> Result<(), Error> {
         let current = self.path();
-        let target = self.resolve_relative(&current, path.as_ref());
+        let target = self.resolve_relative(&current, rel);
 
         // Cancel any pending navigation
         self.cancel();
@@ -682,66 +681,59 @@ impl Pane {
         Ok(())
     }
 
-    /// Resolve a relative path against a VfsPath, crossing VFS boundaries
-    /// when `..` escapes above root on a VFS that has an origin.
-    fn resolve_relative(&self, base: &VfsPath, rel: &Path) -> VfsPath {
-        use std::path::Component;
-
-        // Start by resolving the base path's components into a stack
+    /// Resolve a relative path *expression* against a VfsPath, crossing
+    /// VFS boundaries when `..` escapes above root on a VFS that has an
+    /// origin.
+    ///
+    /// `rel` is a relative fragment (`..`, `a/b`) — never an absolute or
+    /// native OS path. Absolute inputs (breadcrumb display paths, typed
+    /// absolute paths) are decoded into a `VfsPath` at the navigate
+    /// boundary (see `cmd::pane::navigate`) and routed through
+    /// `navigate_to`, so they never reach here. We split on `/` and `\`
+    /// ourselves rather than going through `std::path::Component`, whose
+    /// model would — on Windows — fabricate a drive `Prefix` and silently
+    /// corrupt the path. The VFS path domain has no drive/UNC concept.
+    fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
         let mut vfs_id = base.vfs_id;
-        let mut components: Vec<std::ffi::OsString> = base
-            .path
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(s) => Some(s.to_os_string()),
-                _ => None,
-            })
-            .collect();
+        let mut path = if rel.starts_with(['/', '\\']) {
+            // Defensive: an absolute fragment resets to the VFS root.
+            newt_common::vfs::path::PathBuf::root()
+        } else {
+            base.path.clone()
+        };
 
-        for component in rel.components() {
-            match component {
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    if components.is_empty() {
-                        // At root — try to escape to origin VFS
-                        if let Some((desc, _)) = self.vfs_info.descriptor(vfs_id)
-                            && desc.has_origin()
-                            && let Some(origin) = self.vfs_info.origin(vfs_id)
-                        {
-                            // Switch to the origin's VFS and path
-                            vfs_id = origin.vfs_id;
-                            components = origin
-                                .path
-                                .components()
-                                .filter_map(|c| match c {
-                                    Component::Normal(s) => Some(s.to_os_string()),
-                                    _ => None,
-                                })
-                                .collect();
-                            // The `..` pops the archive filename itself
-                            components.pop();
-                            continue;
+        for seg in rel.split(['/', '\\']) {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    // Ask the descriptor what "up" means — most just pop
+                    // one segment, but `LocalVfs` on Windows refuses to
+                    // go above a drive/share root.
+                    let popped = self
+                        .vfs_info
+                        .descriptor(vfs_id)
+                        .and_then(|(desc, meta)| desc.navigable_parent(&path, &meta));
+                    match popped {
+                        Some(parent) => path = parent,
+                        None => {
+                            // At root — try to escape to origin VFS.
+                            if let Some((desc, _)) = self.vfs_info.descriptor(vfs_id)
+                                && desc.has_origin()
+                                && let Some(origin) = self.vfs_info.origin(vfs_id)
+                            {
+                                vfs_id = origin.vfs_id;
+                                path = origin.path.clone();
+                                // The `..` pops the archive filename itself
+                                path.pop();
+                            }
+                            // No origin — clamp at root.
                         }
-                        // No origin — clamp at root (like resolve_vfs)
-                    } else {
-                        components.pop();
                     }
                 }
-                Component::Normal(s) => {
-                    components.push(s.to_os_string());
-                }
-                Component::RootDir => {
-                    // Absolute path resets to root of current VFS
-                    components.clear();
-                }
-                Component::Prefix(_) => {}
+                seg => path.push(seg),
             }
         }
 
-        let mut path = PathBuf::from("/");
-        for c in components {
-            path.push(c);
-        }
         VfsPath::new(vfs_id, path)
     }
 
@@ -1112,7 +1104,7 @@ impl Pane {
             .cloned()
     }
 
-    pub fn get_focused_symlink_target(&self) -> Option<PathBuf> {
+    pub fn get_focused_symlink_target(&self) -> Option<String> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state
@@ -1387,10 +1379,10 @@ impl PaneViewState {
     /// archive-internal path).
     fn project_file(&self, f: &File) -> FileView {
         let source_display = f.source.as_ref().and_then(|src| {
-            let parent = src.path.parent()?;
+            let parent = src.parent()?;
             let info = self.vfs_info.as_ref()?;
             let (desc, meta) = info.descriptor(src.vfs_id)?;
-            Some(desc.format_path(parent, &meta))
+            Some(desc.format_path(&parent.path, &meta))
         });
         FileView {
             file: f.clone(),
@@ -1622,13 +1614,15 @@ impl PaneViewState {
         self.recompute_focused_index_and_viewport();
     }
 
-    pub fn focus_descendant(&mut self, path: &Path) {
-        if let Some(filename) = path
-            .strip_prefix(&self.path.path)
-            .ok()
-            .and_then(|prefix| prefix.iter().next())
+    pub fn focus_descendant(&mut self, descendant: &VfsPath) {
+        if descendant.vfs_id != self.path.vfs_id {
+            return;
+        }
+        if descendant.path.depth() > self.path.path.depth()
+            && descendant.path.starts_with(&self.path.path)
+            && let Some(next) = descendant.path.components().nth(self.path.path.depth())
         {
-            self.focus(filename.to_string_lossy().to_string());
+            self.focus(next.to_string());
         }
     }
 

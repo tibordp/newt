@@ -66,7 +66,7 @@ impl VfsDispatcher {
 #[async_trait::async_trait]
 impl Dispatcher for VfsDispatcher {
     async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
-        use std::path::PathBuf;
+        use crate::vfs::path::PathBuf;
 
         let ret = match api {
             API_HOST_VFS_LIST_FILES => {
@@ -263,7 +263,7 @@ impl Dispatcher for VfsDispatcher {
                 encode(&ret)?
             }
             API_HOST_VFS_CREATE_SYMLINK => {
-                let (link, target): (PathBuf, PathBuf) = decode(&req[..])?;
+                let (link, target): (PathBuf, String) = decode(&req[..])?;
                 let ret = self.vfs.create_symlink(&link, &target).await;
                 encode(&ret)?
             }

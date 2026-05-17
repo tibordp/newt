@@ -61,8 +61,40 @@ fn apply_log_flags(verbose: u8, quiet: bool) {
     unsafe { std::env::set_var("RUST_LOG", level) };
 }
 
-/// SSH_ASKPASS mode: connect to the parent process via a Unix domain socket,
-/// send the prompt, read the response, and print it to stdout for SSH.
+/// Connect to the parent's askpass endpoint. Unix: a Unix-domain socket.
+/// Windows: a named pipe — opened as a r/w file handle, retried briefly
+/// while the listener is between instances (busy) or hasn't recreated one
+/// yet (not-found).
+#[cfg(unix)]
+fn connect_askpass(endpoint: &str) -> std::io::Result<std::os::unix::net::UnixStream> {
+    std::os::unix::net::UnixStream::connect(endpoint)
+}
+
+#[cfg(windows)]
+fn connect_askpass(endpoint: &str) -> std::io::Result<std::fs::File> {
+    // ERROR_FILE_NOT_FOUND (2): listener hasn't recreated an instance yet.
+    // ERROR_PIPE_BUSY (231): all instances are serving other clients.
+    for _ in 0..50 {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(endpoint)
+        {
+            Ok(f) => return Ok(f),
+            Err(e) if matches!(e.raw_os_error(), Some(2) | Some(231)) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "askpass pipe unavailable",
+    ))
+}
+
+/// SSH_ASKPASS mode: connect to the parent process over the askpass
+/// endpoint, send the prompt, read the response, print it to stdout for SSH.
 fn run_askpass(sock_path: &str) -> i32 {
     use newt_common::askpass::{AskpassRequest, AskpassResponse, PromptType};
 
@@ -75,7 +107,7 @@ fn run_askpass(sock_path: &str) -> i32 {
         _ => PromptType::Secret,
     };
 
-    let mut stream = match std::os::unix::net::UnixStream::connect(sock_path) {
+    let mut stream = match connect_askpass(sock_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("newt-askpass: connect failed: {}", e);

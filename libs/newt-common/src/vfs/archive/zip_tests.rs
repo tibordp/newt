@@ -15,7 +15,6 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
@@ -28,7 +27,13 @@ use crate::ErrorKind;
 use crate::api::MountContext;
 use crate::askpass::{AskpassProvider, AskpassRequest, AskpassResponse};
 use crate::test_support::{MockVfs, MockVfsConfig};
-use crate::vfs::{VfsPath, VfsRegistry};
+use crate::vfs::path::PathBuf;
+use crate::vfs::{VfsId, VfsPath, VfsRegistry};
+
+/// Build a VFS path from a wire string.
+fn vp(s: &str) -> PathBuf {
+    PathBuf::from_wire_str(s)
+}
 
 const ENCRYPTED_ZIP: &[u8] = include_bytes!("fixtures/encrypted.zip");
 
@@ -108,7 +113,7 @@ impl Harness {
             .build();
 
         let registry = Arc::new(VfsRegistry::with_root(upstream));
-        let archive_origin = VfsPath::root(ARCHIVE_PATH);
+        let archive_origin = VfsPath::from_wire_str(VfsId::ROOT, ARCHIVE_PATH);
 
         Self {
             registry,
@@ -144,7 +149,7 @@ async fn mount_with(
 }
 
 async fn read_to_vec(vfs: &Arc<dyn crate::vfs::Vfs>, path: &str) -> Result<Vec<u8>, crate::Error> {
-    let mut reader = vfs.open_read_sync(Path::new(path)).await?;
+    let mut reader = vfs.open_read_sync(&vp(path)).await?;
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf).map_err(crate::Error::from)?;
     Ok(buf)
@@ -160,7 +165,7 @@ async fn mount_succeeds_without_askpass_even_for_encrypted_archive() {
     let vfs = mount_with(&h, None).await;
 
     let mut names: Vec<String> = vfs
-        .list_files(Path::new("/"), None)
+        .list_files(&vp("/"), None)
         .await
         .expect("list_files")
         .files

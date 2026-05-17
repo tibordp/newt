@@ -102,7 +102,7 @@ Click a column header to sort ascending by that key; click the same header again
 **Visual indicators**:
 - Selected files: distinct background highlight.
 - Focused (cursor) file: different highlight from selection.
-- Hidden files (starting with `.`): dimmed styling.
+- Hidden files: dimmed styling. Hidden-ness is platform-native — the leading-`.` convention on Unix, the filesystem `HIDDEN`/`SYSTEM` attributes on Windows.
 - Symlinks: special styling (CSS class).
 - `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected.
 
@@ -1049,7 +1049,7 @@ A fuzzy-searchable palette for quick navigation to common locations.
 | User Bookmarks | User-added bookmarks from `settings.toml` `[[bookmark]]` entries |
 | Standard Folders | Home, Desktop, Downloads, Documents, Pictures, Music, Videos |
 | System Bookmarks | GTK bookmarks (`~/.config/gtk-3.0/bookmarks`) on Linux |
-| Mounted Volumes | Entries in `/proc/self/mountinfo` filtered to `/media/`, `/run/media/`, `/mnt/` on Linux; `/Volumes` on macOS |
+| Mounted Volumes | Entries in `/proc/self/mountinfo` filtered to `/media/`, `/run/media/`, `/mnt/` on Linux; `/Volumes` on macOS; logical drives (`C:`, `D:`, …) on Windows |
 | Mounted VFS | Currently mounted S3, SFTP, and archive filesystems |
 | Recent Folders | `recently-used.xbel` on Linux (top 20 by modification time); Finder GoToFieldHistory on macOS |
 

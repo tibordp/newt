@@ -5,10 +5,24 @@
 
 use std::time::Duration;
 
+use newt_common::proc::NoConsoleWindow;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::common::Error;
+use crate::path_resolver::resolve_program;
+
+/// Read the user-configured extra-PATH list from preferences. Discovery
+/// handlers don't take a connection profile, so we pull it from the global
+/// preferences manager directly.
+fn extra_path(global_ctx: &tauri::State<'_, crate::GlobalContext>) -> Vec<String> {
+    global_ctx
+        .preferences()
+        .settings()
+        .environment
+        .extra_path
+        .clone()
+}
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -61,7 +75,7 @@ impl<T> DiscoveryResult<T> {
 }
 
 async fn run_capture(cmd: &mut Command) -> Result<Vec<u8>, String> {
-    let fut = cmd.output();
+    let fut = cmd.no_console_window().output();
     let out = tokio::time::timeout(DISCOVERY_TIMEOUT, fut)
         .await
         .map_err(|_| "timed out".to_string())?
@@ -159,20 +173,28 @@ fn parse_ssh_config() -> DiscoveryResult<SshHostEntry> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn discover_docker_containers() -> Result<DiscoveryResult<ContainerEntry>, Error> {
-    Ok(discover_engine_containers("docker").await)
+pub async fn discover_docker_containers(
+    global_ctx: tauri::State<'_, crate::GlobalContext>,
+) -> Result<DiscoveryResult<ContainerEntry>, Error> {
+    Ok(discover_engine_containers("docker", &extra_path(&global_ctx)).await)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn discover_podman_containers() -> Result<DiscoveryResult<ContainerEntry>, Error> {
-    Ok(discover_engine_containers("podman").await)
+pub async fn discover_podman_containers(
+    global_ctx: tauri::State<'_, crate::GlobalContext>,
+) -> Result<DiscoveryResult<ContainerEntry>, Error> {
+    Ok(discover_engine_containers("podman", &extra_path(&global_ctx)).await)
 }
 
-async fn discover_engine_containers(program: &str) -> DiscoveryResult<ContainerEntry> {
+async fn discover_engine_containers(
+    program: &str,
+    extra_path: &[String],
+) -> DiscoveryResult<ContainerEntry> {
     // Both engines accept `ps --format '{{json .}}'` and emit one JSON object
     // per line (NDJSON), even on engines too old to support `--format=json`.
-    let mut cmd = Command::new(program);
+    let resolved = resolve_program(program, extra_path);
+    let mut cmd = Command::new(&resolved);
     cmd.args(["ps", "-a", "--no-trunc", "--format", "{{json .}}"]);
     let out = match run_capture(&mut cmd).await {
         Ok(o) => o,
@@ -241,8 +263,11 @@ async fn discover_engine_containers(program: &str) -> DiscoveryResult<ContainerE
 
 #[tauri::command]
 #[specta::specta]
-pub async fn discover_kube_contexts() -> Result<DiscoveryResult<String>, Error> {
-    let mut cmd = Command::new("kubectl");
+pub async fn discover_kube_contexts(
+    global_ctx: tauri::State<'_, crate::GlobalContext>,
+) -> Result<DiscoveryResult<String>, Error> {
+    let resolved = resolve_program("kubectl", &extra_path(&global_ctx));
+    let mut cmd = Command::new(&resolved);
     cmd.args(["config", "get-contexts", "-o", "name"]);
     let out = match run_capture(&mut cmd).await {
         Ok(o) => o,
@@ -260,13 +285,15 @@ pub async fn discover_kube_contexts() -> Result<DiscoveryResult<String>, Error> 
 #[tauri::command]
 #[specta::specta]
 pub async fn discover_kube_pods(
+    global_ctx: tauri::State<'_, crate::GlobalContext>,
     context: Option<String>,
     namespace: Option<String>,
 ) -> Result<DiscoveryResult<KubePodEntry>, Error> {
     // Global flags need to follow the subcommand on some kubectl wrappers
     // (notably orbstack's): "flags cannot be placed before plugin name". Put
     // `get pods` first, then `--context`/`--namespace`/`-o json`.
-    let mut cmd = Command::new("kubectl");
+    let resolved = resolve_program("kubectl", &extra_path(&global_ctx));
+    let mut cmd = Command::new(&resolved);
     cmd.args(["get", "pods", "-o", "json"]);
     if let Some(c) = &context {
         cmd.arg(format!("--context={}", c));

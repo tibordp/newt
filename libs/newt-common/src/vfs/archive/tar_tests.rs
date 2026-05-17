@@ -11,14 +11,20 @@
 //! /links/soft.txt     symlink  -> ../hello.txt
 //! ```
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::io::AsyncReadExt;
 
 use crate::ErrorKind;
 use crate::test_support::{FailureSpec, MockVfs, MockVfsConfig};
+use crate::vfs::path::PathBuf;
 use crate::vfs::{TarArchiveVfs, Vfs, VfsId, VfsPath};
+
+/// Build a VFS path from a wire string (the archive's internal paths are
+/// always `/`-rooted).
+fn vp(s: &str) -> PathBuf {
+    PathBuf::from_wire_str(s)
+}
 
 const SIMPLE_TAR: &[u8] = include_bytes!("fixtures/simple.tar");
 const SIMPLE_TAR_GZ: &[u8] = include_bytes!("fixtures/simple.tar.gz");
@@ -42,8 +48,8 @@ fn mount(bytes: &[u8], path: &str, config: MockVfsConfig) -> Arc<TarArchiveVfs> 
     );
     Arc::new(TarArchiveVfs::new(
         upstream,
-        PathBuf::from(path),
-        VfsPath::new(VfsId(1), "/"),
+        PathBuf::from_wire_str(path),
+        VfsPath::root(VfsId(1)),
         Vec::new(),
         reporter,
     ))
@@ -67,7 +73,7 @@ fn async_only_config() -> MockVfsConfig {
 
 async fn read_to_vec(vfs: &TarArchiveVfs, path: &str) -> Vec<u8> {
     let mut reader = vfs
-        .open_read_async(Path::new(path))
+        .open_read_async(&vp(path))
         .await
         .expect("open_read_async");
     let mut out = Vec::new();
@@ -83,7 +89,7 @@ async fn read_to_vec(vfs: &TarArchiveVfs, path: &str) -> Vec<u8> {
 async fn lists_top_level_entries_sync_upstream() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
     let mut names: Vec<String> = vfs
-        .list_files(Path::new("/"), None)
+        .list_files(&vp("/"), None)
         .await
         .expect("list_files")
         .files
@@ -99,7 +105,7 @@ async fn lists_top_level_entries_sync_upstream() {
 async fn lists_top_level_entries_async_upstream() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, async_only_config());
     let mut names: Vec<String> = vfs
-        .list_files(Path::new("/"), None)
+        .list_files(&vp("/"), None)
         .await
         .expect("list_files")
         .files
@@ -115,7 +121,7 @@ async fn lists_top_level_entries_async_upstream() {
 async fn lists_nested_dir() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
     let mut names: Vec<String> = vfs
-        .list_files(Path::new("/dir"), None)
+        .list_files(&vp("/dir"), None)
         .await
         .expect("list_files")
         .files
@@ -164,10 +170,7 @@ async fn streaming_read_small_buffers() {
     // Drain via a 17-byte buffer to stress the partial-chunk path in
     // TarStreamingReader::poll_read (chunk shorter than `buf.remaining()`).
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
-    let mut reader = vfs
-        .open_read_async(Path::new("/dir/big.bin"))
-        .await
-        .unwrap();
+    let mut reader = vfs.open_read_async(&vp("/dir/big.bin")).await.unwrap();
     let mut out = Vec::new();
     let mut tmp = [0u8; 17];
     loop {
@@ -183,7 +186,7 @@ async fn streaming_read_small_buffers() {
 #[tokio::test]
 async fn open_read_async_missing_path_errors() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
-    let err = match vfs.open_read_async(Path::new("/nope.txt")).await {
+    let err = match vfs.open_read_async(&vp("/nope.txt")).await {
         Ok(_) => panic!("expected NotFound, got Ok"),
         Err(e) => e,
     };
@@ -201,7 +204,7 @@ async fn read_range_returns_correct_slice() {
 
     // Mid-file slice across the 64 KiB chunk boundary.
     let chunk = vfs
-        .read_range(Path::new("/dir/big.bin"), 60_000, 10_000)
+        .read_range(&vp("/dir/big.bin"), 60_000, 10_000)
         .await
         .expect("read_range");
     assert_eq!(chunk.offset, 60_000);
@@ -210,7 +213,7 @@ async fn read_range_returns_correct_slice() {
 
     // Tail slice — clamped to file end.
     let chunk = vfs
-        .read_range(Path::new("/dir/big.bin"), 199_900, 1_000)
+        .read_range(&vp("/dir/big.bin"), 199_900, 1_000)
         .await
         .expect("read_range tail");
     assert_eq!(chunk.data, big[199_900..]);
@@ -236,14 +239,11 @@ async fn symlink_resolves_to_target_content() {
 async fn file_details_reports_symlink_metadata() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
     let details = vfs
-        .file_details(Path::new("/links/soft.txt"))
+        .file_details(&vp("/links/soft.txt"))
         .await
         .expect("file_details");
     assert!(details.is_symlink);
-    assert_eq!(
-        details.symlink_target.as_deref(),
-        Some(Path::new("../hello.txt"))
-    );
+    assert_eq!(details.symlink_target.as_deref(), Some("../hello.txt"));
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +259,7 @@ async fn upstream_read_range_failure_during_indexing_surfaces() {
         .config(async_only_config())
         .file(ARCHIVE_PATH, SIMPLE_TAR)
         .failure(FailureSpec {
-            path: PathBuf::from(ARCHIVE_PATH),
+            path: PathBuf::from_wire_str(ARCHIVE_PATH),
             operation: "read_range",
             error: crate::Error {
                 kind: ErrorKind::Connection,
@@ -274,13 +274,13 @@ async fn upstream_read_range_failure_during_indexing_surfaces() {
     );
     let vfs = TarArchiveVfs::new(
         upstream,
-        PathBuf::from(ARCHIVE_PATH),
-        VfsPath::new(VfsId(1), "/"),
+        PathBuf::from_wire_str(ARCHIVE_PATH),
+        VfsPath::root(VfsId(1)),
         Vec::new(),
         reporter,
     );
 
-    let err = match vfs.open_read_async(Path::new("/hello.txt")).await {
+    let err = match vfs.open_read_async(&vp("/hello.txt")).await {
         Ok(_) => panic!("indexing should fail, got Ok"),
         Err(e) => e,
     };

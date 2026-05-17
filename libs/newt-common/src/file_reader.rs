@@ -1,5 +1,3 @@
-use std::path::{Path, PathBuf};
-
 use crate::Error;
 use crate::filesystem::{Mode, UserGroup};
 use crate::rpc::Communicator;
@@ -7,7 +5,7 @@ use crate::vfs::VfsPath;
 
 /// Guess MIME type from a file path's extension.
 /// Returns `None` if the extension is not recognized.
-pub fn guess_mime_type(path: &Path) -> Option<String> {
+pub fn guess_mime_type(path: &std::path::Path) -> Option<String> {
     mime_guess::from_path(path)
         .first()
         .map(|m| m.essence_str().to_string())
@@ -31,7 +29,8 @@ pub struct FileDetails {
     pub mime_type: Option<String>,
     pub is_dir: bool,
     pub is_symlink: bool,
-    pub symlink_target: Option<PathBuf>,
+    /// Raw link target as reported by the source FS (see `File::symlink_target`).
+    pub symlink_target: Option<String>,
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,

@@ -428,9 +428,9 @@ async discoverKubePods(context: string | null, namespace: string | null) : Promi
     else return { status: "error", error: e  as any };
 }
 },
-async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string) : Promise<Result<null, string>> {
+async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string, root: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName }) };
+    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName, root }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1273,7 +1273,7 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; hot_paths?: HotPathsPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1421,7 +1421,23 @@ warning?: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
-export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
+export type EnvironmentPreferences = { 
+/**
+ * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
+ * where GUI apps don't inherit the user's shell `PATH`, so subprocesses
+ * like `docker` / `kubectl` / `podman` can't be found at their usual
+ * install locations. Leading `~` expands to the user's home directory.
+ * Non-existent entries are silently skipped.
+ */
+extra_path: string[] }
+export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+/**
+ * Raw link target as reported by the source FS. A string, not a path
+ * type: it may be relative (`../x`) or otherwise un-normalizable, and
+ * it crosses the agent↔host RPC boundary — no `std::path` there, its
+ * meaning belongs to the source OS, not the receiver's.
+ */
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
 /**
  * Directory-scoped identifier. When `None`, `name` is used as the
  * identifier — the common case. Set explicitly by synthetic VFSes
@@ -1438,7 +1454,11 @@ key: string | null;
  */
 source: VfsPath | null }
 export type FileChunk = { data: number[]; offset: number; total_size: number }
-export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
+export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; 
+/**
+ * Raw link target as reported by the source FS (see `File::symlink_target`).
+ */
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
 /**
  * Set when the underlying VFS reports that the listing is
@@ -1459,7 +1479,13 @@ export type FsStats = { free_bytes: number; available_bytes: number; total_bytes
  */
 export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
-export type HotPathEntry = { path: VfsPath; name: string | null; category: HotPathCategory }
+export type HotPathEntry = { path: VfsPath; 
+/**
+ * User-facing rendering of `path` (via the VFS descriptor). The
+ * provider can't format — it has no mounted-VFS context — so it
+ * leaves this empty; the host fills it in `get_hot_paths`.
+ */
+display_path: string; name: string | null; category: HotPathCategory }
 export type HotPathsPreferences = { 
 /**
  * Show standard folders (Home, Downloads, Documents, etc.)
@@ -1607,7 +1633,12 @@ mode_set: number;
 /**
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
-mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; working_dir: string | null } } | 
+mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; 
+/**
+ * VFS path, not `std::path` — crosses RPC; the executor (the
+ * agent in a remote session) converts to native in its own OS.
+ */
+working_dir: string | null } } | 
 /**
  * Synthetic long-running operation for manual testing of the progress
  * UI — scan phase, prepared totals, ticking progress, and completion.
@@ -1688,6 +1719,13 @@ applies_to?: string | null }
 export type UserCommandPrompt = { label: string; default: string }
 export type UserGroup = { name: string } | { id: number }
 export type VfsId = number
+/**
+ * A fully-qualified location: which VFS, and where within it.
+ * 
+ * `specta::Type` is derived: `PathBuf`'s own `Type` impl renders as a
+ * plain `string`, so the generated TS is `{ vfs_id: VfsId; path: string }`
+ * under the named type `VfsPath` — identical to the pre-refactor shape.
+ */
 export type VfsPath = { vfs_id: VfsId; path: string }
 /**
  * Free-schema progress snapshot. The frontend renders this as a short
@@ -1712,14 +1750,21 @@ processed: number | null; total: number | null;
 extra: Partial<{ [key in string]: string }> }
 export type VfsTarget = { vfs_id: VfsId | null; type_name: string; display_name: string; 
 /**
- * Human-readable label for a mounted instance (e.g. hostname for SFTP).
+ * Human-readable label for a mounted instance (e.g. hostname for
+ * SFTP, or the drive for a split-root entry).
  */
 label: string | null; 
 /**
  * Dialog to open when user selects this unmounted VFS type.
  * If None and vfs_id is None, the type supports auto-mount.
  */
-mount_dialog: string | null }
+mount_dialog: string | null; 
+/**
+ * Specific root to land on. `Some` only for split-root VFSes
+ * (one target per drive); selecting it navigates straight there
+ * instead of the VFS's default `initial_path`.
+ */
+root: string | null }
 /**
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.

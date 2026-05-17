@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::process::Stdio;
+
+use crate::vfs::path::{Path, PathBuf};
 
 use log::debug;
 use tokio::io::AsyncRead;
@@ -8,6 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::File;
+use crate::proc::NoConsoleWindow;
 use crate::{Error, ErrorKind};
 
 use super::{
@@ -91,36 +93,15 @@ impl VfsDescriptor for K8sVfsDescriptor {
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
         let context = String::from_utf8_lossy(mount_meta);
-        let s = path.to_string_lossy();
-        format!("k8s://{}{}", context, s)
+        format!("k8s://{}{}", context, super::unix_display_path(path))
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
         let context = String::from_utf8_lossy(mount_meta);
-        let mut crumbs = Vec::new();
-        let s = path.to_string_lossy();
-        let segments: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
-
-        crumbs.push(Breadcrumb {
-            label: format!("k8s://{}/", context),
-            nav_path: "/".to_string(),
-        });
-
-        let mut accumulated = String::new();
-        for (i, seg) in segments.iter().enumerate() {
-            accumulated.push('/');
-            accumulated.push_str(seg);
-            let is_last = i == segments.len() - 1;
-            crumbs.push(Breadcrumb {
-                label: if is_last {
-                    seg.to_string()
-                } else {
-                    format!("{}/", seg)
-                },
-                nav_path: accumulated.clone(),
-            });
+        let mut crumbs = super::unix_breadcrumbs(path);
+        if let Some(root) = crumbs.first_mut() {
+            root.label = format!("k8s://{}/", context);
         }
-
         crumbs
     }
 
@@ -128,14 +109,10 @@ impl VfsDescriptor for K8sVfsDescriptor {
         let rest = input.strip_prefix("k8s://")?;
         let context = String::from_utf8_lossy(mount_meta);
         let after_ctx = rest.strip_prefix(context.as_ref())?;
-        let path = if after_ctx.is_empty() || after_ctx == "/" {
-            PathBuf::from("/")
-        } else if after_ctx.starts_with('/') {
-            PathBuf::from(after_ctx)
-        } else {
+        if !after_ctx.is_empty() && !after_ctx.starts_with('/') {
             return None;
-        };
-        Some(DisplayPathMatch::exact(path))
+        }
+        Some(DisplayPathMatch::exact(PathBuf::from_wire_str(after_ctx)))
     }
 
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
@@ -175,11 +152,9 @@ impl ApiResource {
     /// For core resources (empty group): `v1/<plural>`
     fn qualified_dir(&self) -> PathBuf {
         if self.group.is_empty() {
-            PathBuf::from(&self.version).join(&self.name)
+            PathBuf::from_components([&self.version, &self.name])
         } else {
-            PathBuf::from(&self.group)
-                .join(&self.version)
-                .join(&self.name)
+            PathBuf::from_components([&self.group, &self.version, &self.name])
         }
     }
 }
@@ -232,6 +207,7 @@ impl K8sVfs {
 /// Get the current kubectl context name.
 async fn get_current_context() -> Result<String, Error> {
     let output = tokio::process::Command::new("kubectl")
+        .no_console_window()
         .args(["config", "current-context"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -385,6 +361,7 @@ fn build_symlinks(resources: &[ApiResource]) -> HashMap<String, PathBuf> {
 /// Run a kubectl command and return stdout.
 async fn run_kubectl(context: &str, args: &[&str]) -> Result<String, Error> {
     let mut cmd = tokio::process::Command::new("kubectl");
+    cmd.no_console_window();
     cmd.arg("--context").arg(context);
     cmd.args(args);
     cmd.stdout(Stdio::piped());
@@ -444,13 +421,7 @@ enum PathResolution<'a> {
 impl K8sVfs {
     /// Resolve a VFS path, following symlinks internally.
     fn resolve_path<'a>(&'a self, path: &'a Path) -> PathResolution<'a> {
-        let components: Vec<&str> = path
-            .components()
-            .filter_map(|c| match c {
-                std::path::Component::Normal(s) => s.to_str(),
-                _ => None,
-            })
-            .collect();
+        let components: Vec<&str> = path.components().collect();
 
         match components.as_slice() {
             [] => PathResolution::Root,
@@ -478,13 +449,7 @@ impl K8sVfs {
         if let Some(first) = components.first()
             && let Some(target) = self.symlinks.get(*first)
         {
-            let target_components: Vec<&str> = target
-                .components()
-                .filter_map(|c| match c {
-                    std::path::Component::Normal(s) => s.to_str(),
-                    _ => None,
-                })
-                .collect();
+            let target_components: Vec<&str> = target.components().collect();
             // Check that this symlink applies to the right scope
             let target_matches = self
                 .resources
@@ -646,7 +611,7 @@ impl K8sVfs {
                     is_dir: true,
                     is_hidden: false,
                     is_symlink: true,
-                    symlink_target: Some(target.clone()),
+                    symlink_target: Some(target.as_wire_str().trim_start_matches('/').to_string()),
                     user: None,
                     group: None,
                     mode: None,
@@ -769,7 +734,7 @@ impl Vfs for K8sVfs {
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::VfsFileList, Error> {
-        debug!("k8s: list_files {}", path.display());
+        debug!("k8s: list_files {}", path);
 
         let files: Vec<File> = match self.resolve_path(path) {
             PathResolution::Root => vec![dir_entry("cluster"), dir_entry("namespaces")],

@@ -5,6 +5,7 @@ pub mod file_reader;
 pub mod filesystem;
 pub mod hot_paths;
 pub mod operation;
+pub mod proc;
 pub mod rpc;
 pub mod sys;
 pub mod terminal;
@@ -85,6 +86,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[cfg(unix)]
 impl From<nix::Error> for Error {
     fn from(e: nix::Error) -> Self {
         let kind = match e {
@@ -146,6 +148,7 @@ impl From<openssh_sftp_client::Error> for Error {
     }
 }
 
+#[cfg(unix)]
 impl From<pty_process::Error> for Error {
     fn from(e: pty_process::Error) -> Self {
         Self {

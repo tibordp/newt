@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useCallback,
   memo,
+  Fragment,
 } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -202,6 +203,11 @@ const FileRow = memo(
     prev.onOpen === next.onOpen,
 );
 
+// Reflects the machine running the app (the host webview), *not* the
+// session/remote — so Shift+<drive> is offered on a Windows host only,
+// and never on a Linux/Mac host connected to a Windows remote.
+const IS_WINDOWS_HOST = navigator.platform.startsWith("Win");
+
 const VFS_ICONS: Record<string, string> = {
   local: "\u{f02ca}",
   s3: "\u{f0e0f}",
@@ -216,12 +222,14 @@ function VfsSelector({
   vfsTargets,
   paneHandle,
   activeVfsId,
+  activePath,
   open,
 }: {
   vfsDisplayName: string;
   vfsTargets: VfsTarget[];
   paneHandle: number;
   activeVfsId: number;
+  activePath: string;
   open: boolean;
 }) {
   // Track when we're opening a mount dialog so we don't steal focus back
@@ -268,61 +276,98 @@ function VfsSelector({
         >
           {vfsTargets.map((target, i) => {
             const isActive =
-              target.vfs_id != null && target.vfs_id === activeVfsId;
+              target.vfs_id != null &&
+              target.vfs_id === activeVfsId &&
+              // For a split-root entry, only the drive containing the
+              // pane's path is the active one.
+              (target.root == null ||
+                activePath === target.root ||
+                activePath.startsWith(target.root + "/"));
             const icon = VFS_ICONS[target.type_name];
+            // Split-root entries (one per drive) are grouped under a
+            // header for the VFS and closed off with a divider. They sort
+            // contiguously, so detect the run by its neighbours.
+            const prev = vfsTargets[i - 1];
+            const next = vfsTargets[i + 1];
+            const isSplit = target.vfs_id != null && target.root != null;
+            const groupStart =
+              isSplit &&
+              (!prev || prev.vfs_id !== target.vfs_id || prev.root == null);
+            const groupEnd =
+              isSplit &&
+              (!next || next.vfs_id !== target.vfs_id || next.root == null);
             return (
-              <DropdownMenu.Item
-                key={`${target.type_name}-${target.vfs_id ?? i}`}
-                className={menuStyles.item}
-                onSelect={(e) => {
-                  // Prevent Radix from auto-closing the dropdown — the
-                  // command handlers replace/close the modal on the Rust
-                  // side, which updates `open` via props.
-                  e.preventDefault();
-                  if (target.vfs_id == null && target.mount_dialog) {
-                    openingDialogRef.current = true;
-                    commands.dialog(
-                      target.mount_dialog as
-                        | "mount_s3"
-                        | "mount_sftp"
-                        | "mount_k8s",
-                      paneHandle,
-                    );
-                  } else {
-                    safe(
-                      commands.switchVfs(
-                        paneHandle,
-                        target.vfs_id,
-                        target.type_name,
-                      ),
-                    );
-                  }
-                }}
+              <Fragment
+                key={`${target.type_name}-${target.vfs_id ?? i}-${target.root ?? ""}`}
               >
-                <span className={menuStyles.itemIcon}>{icon}</span>
-                <span className={menuStyles.itemLabel}>
-                  {target.display_name}
-                  {target.label && ` (${target.label})`}
-                  {target.vfs_id == null && " (connect...)"}
-                </span>
-                {isActive && (
-                  <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                {groupStart && (
+                  <DropdownMenu.Label className={menuStyles.sectionHeader}>
+                    {target.display_name}
+                  </DropdownMenu.Label>
                 )}
-                {target.vfs_id != null && target.type_name !== "local" && (
-                  <button
-                    className={menuStyles.itemDismiss}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (target.vfs_id !== null) {
-                        safe(commands.unmountVfs(paneHandle, target.vfs_id));
-                      }
-                    }}
-                    tabIndex={-1}
-                  >
-                    {"\u2715"}
-                  </button>
+                <DropdownMenu.Item
+                  className={menuStyles.item}
+                  onSelect={(e) => {
+                    // Prevent Radix from auto-closing the dropdown — the
+                    // command handlers replace/close the modal on the Rust
+                    // side, which updates `open` via props.
+                    e.preventDefault();
+                    if (target.vfs_id == null && target.mount_dialog) {
+                      openingDialogRef.current = true;
+                      commands.dialog(
+                        target.mount_dialog as
+                          | "mount_s3"
+                          | "mount_sftp"
+                          | "mount_k8s",
+                        paneHandle,
+                      );
+                    } else {
+                      safe(
+                        commands.switchVfs(
+                          paneHandle,
+                          target.vfs_id,
+                          target.type_name,
+                          target.root,
+                        ),
+                      );
+                    }
+                  }}
+                >
+                  <span className={menuStyles.itemIcon}>{icon}</span>
+                  <span className={menuStyles.itemLabel}>
+                    {isSplit ? (
+                      // Under the group header, just the drive.
+                      target.label
+                    ) : (
+                      <>
+                        {target.display_name}
+                        {target.label && ` (${target.label})`}
+                        {target.vfs_id == null && " (connect...)"}
+                      </>
+                    )}
+                  </span>
+                  {isActive && (
+                    <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                  )}
+                  {target.vfs_id != null && target.type_name !== "local" && (
+                    <button
+                      className={menuStyles.itemDismiss}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (target.vfs_id !== null) {
+                          safe(commands.unmountVfs(paneHandle, target.vfs_id));
+                        }
+                      }}
+                      tabIndex={-1}
+                    >
+                      {"\u2715"}
+                    </button>
+                  )}
+                </DropdownMenu.Item>
+                {groupEnd && (
+                  <DropdownMenu.Separator className={menuStyles.separator} />
                 )}
-              </DropdownMenu.Item>
+              </Fragment>
             );
           })}
         </DropdownMenu.Content>
@@ -1091,6 +1136,19 @@ function PaneInner(
     } else if (e.key == "/" && noModifiers) {
       guarded(() => commands.setFilter(paneHandle, "", "filter"));
       inputRef.current?.focus();
+    } else if (
+      IS_WINDOWS_HOST &&
+      e.shiftKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      /^[a-z]$/i.test(e.key)
+    ) {
+      // Shift+<drive letter> → that drive's root.
+      guarded(
+        () => commands.navigate(paneHandle, `${e.key.toUpperCase()}:\\`, true),
+        true,
+      );
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
@@ -1335,6 +1393,7 @@ function PaneInner(
               vfsTargets={vfsTargets}
               paneHandle={paneHandle}
               activeVfsId={path.vfs_id}
+              activePath={path.path}
               open={isVfsSelectorOpen}
             />
             <div className={styles.headerPath}>
@@ -1355,6 +1414,7 @@ function PaneInner(
               vfsTargets={vfsTargets}
               paneHandle={paneHandle}
               activeVfsId={path.vfs_id}
+              activePath={path.path}
               open={isVfsSelectorOpen}
             />
           </div>
