@@ -203,6 +203,11 @@ const FileRow = memo(
     prev.onOpen === next.onOpen,
 );
 
+// Reflects the machine running the app (the host webview), *not* the
+// session/remote — so Shift+<drive> is offered on a Windows host only,
+// and never on a Linux/Mac host connected to a Windows remote.
+const IS_WINDOWS_HOST = navigator.platform.startsWith("Win");
+
 const VFS_ICONS: Record<string, string> = {
   local: "\u{f02ca}",
   s3: "\u{f0e0f}",
@@ -1131,6 +1136,19 @@ function PaneInner(
     } else if (e.key == "/" && noModifiers) {
       guarded(() => commands.setFilter(paneHandle, "", "filter"));
       inputRef.current?.focus();
+    } else if (
+      IS_WINDOWS_HOST &&
+      e.shiftKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      /^[a-z]$/i.test(e.key)
+    ) {
+      // Shift+<drive letter> → that drive's root.
+      guarded(
+        () => commands.navigate(paneHandle, `${e.key.toUpperCase()}:\\`, true),
+        true,
+      );
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
       // Is this a good way to check for printable characters? Works for en-US,
       // but I have no idea how well it works for international IMEs.
