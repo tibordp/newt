@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useCallback,
   memo,
+  Fragment,
 } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -278,60 +279,90 @@ function VfsSelector({
                 activePath === target.root ||
                 activePath.startsWith(target.root + "/"));
             const icon = VFS_ICONS[target.type_name];
+            // Split-root entries (one per drive) are grouped under a
+            // header for the VFS and closed off with a divider. They sort
+            // contiguously, so detect the run by its neighbours.
+            const prev = vfsTargets[i - 1];
+            const next = vfsTargets[i + 1];
+            const isSplit = target.vfs_id != null && target.root != null;
+            const groupStart =
+              isSplit &&
+              (!prev || prev.vfs_id !== target.vfs_id || prev.root == null);
+            const groupEnd =
+              isSplit &&
+              (!next || next.vfs_id !== target.vfs_id || next.root == null);
             return (
-              <DropdownMenu.Item
+              <Fragment
                 key={`${target.type_name}-${target.vfs_id ?? i}-${target.root ?? ""}`}
-                className={menuStyles.item}
-                onSelect={(e) => {
-                  // Prevent Radix from auto-closing the dropdown — the
-                  // command handlers replace/close the modal on the Rust
-                  // side, which updates `open` via props.
-                  e.preventDefault();
-                  if (target.vfs_id == null && target.mount_dialog) {
-                    openingDialogRef.current = true;
-                    commands.dialog(
-                      target.mount_dialog as
-                        | "mount_s3"
-                        | "mount_sftp"
-                        | "mount_k8s",
-                      paneHandle,
-                    );
-                  } else {
-                    safe(
-                      commands.switchVfs(
-                        paneHandle,
-                        target.vfs_id,
-                        target.type_name,
-                        target.root,
-                      ),
-                    );
-                  }
-                }}
               >
-                <span className={menuStyles.itemIcon}>{icon}</span>
-                <span className={menuStyles.itemLabel}>
-                  {target.display_name}
-                  {target.label && ` (${target.label})`}
-                  {target.vfs_id == null && " (connect...)"}
-                </span>
-                {isActive && (
-                  <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                {groupStart && (
+                  <DropdownMenu.Label className={menuStyles.sectionHeader}>
+                    {target.display_name}
+                  </DropdownMenu.Label>
                 )}
-                {target.vfs_id != null && target.type_name !== "local" && (
-                  <button
-                    className={menuStyles.itemDismiss}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (target.vfs_id !== null) {
-                        safe(commands.unmountVfs(paneHandle, target.vfs_id));
-                      }
-                    }}
-                    tabIndex={-1}
-                  >
-                    {"\u2715"}
-                  </button>
+                <DropdownMenu.Item
+                  className={menuStyles.item}
+                  onSelect={(e) => {
+                    // Prevent Radix from auto-closing the dropdown — the
+                    // command handlers replace/close the modal on the Rust
+                    // side, which updates `open` via props.
+                    e.preventDefault();
+                    if (target.vfs_id == null && target.mount_dialog) {
+                      openingDialogRef.current = true;
+                      commands.dialog(
+                        target.mount_dialog as
+                          | "mount_s3"
+                          | "mount_sftp"
+                          | "mount_k8s",
+                        paneHandle,
+                      );
+                    } else {
+                      safe(
+                        commands.switchVfs(
+                          paneHandle,
+                          target.vfs_id,
+                          target.type_name,
+                          target.root,
+                        ),
+                      );
+                    }
+                  }}
+                >
+                  <span className={menuStyles.itemIcon}>{icon}</span>
+                  <span className={menuStyles.itemLabel}>
+                    {isSplit ? (
+                      // Under the group header, just the drive.
+                      target.label
+                    ) : (
+                      <>
+                        {target.display_name}
+                        {target.label && ` (${target.label})`}
+                        {target.vfs_id == null && " (connect...)"}
+                      </>
+                    )}
+                  </span>
+                  {isActive && (
+                    <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                  )}
+                  {target.vfs_id != null && target.type_name !== "local" && (
+                    <button
+                      className={menuStyles.itemDismiss}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (target.vfs_id !== null) {
+                          safe(commands.unmountVfs(paneHandle, target.vfs_id));
+                        }
+                      }}
+                      tabIndex={-1}
+                    >
+                      {"\u2715"}
+                    </button>
+                  )}
+                </DropdownMenu.Item>
+                {groupEnd && (
+                  <DropdownMenu.Separator className={menuStyles.separator} />
                 )}
-              </DropdownMenu.Item>
+              </Fragment>
             );
           })}
         </DropdownMenu.Content>
