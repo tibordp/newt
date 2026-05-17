@@ -14,14 +14,23 @@ use pty_process::{OwnedReadPty, OwnedWritePty};
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[cfg(unix)]
+#[cfg(windows)]
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicU32},
+};
+
+#[cfg(windows)]
+use parking_lot::Mutex;
+
+#[cfg(any(unix, windows))]
 use log::{debug, error, info};
 
 use crate::{Error, rpc::Communicator};
 
 /// Bytes read in one PTY pull. Matches a typical terminal flush; bigger
 /// reads block emitting until they fill, smaller reads waste syscalls.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const PTY_READ_BUFFER_SIZE: usize = 1024;
 
 /// Buffer size for `getpwuid_r`. POSIX gives no upper bound; 1 KiB is the
@@ -89,7 +98,13 @@ impl LocalInner {
 pub struct Local(Arc<LocalInner>);
 
 #[cfg(windows)]
-pub struct Local;
+struct WinInner {
+    handle: AtomicU32,
+    terminals: Mutex<HashMap<TerminalHandle, Arc<crate::conpty::Conpty>>>,
+}
+
+#[cfg(windows)]
+pub struct Local(Arc<WinInner>);
 
 impl Default for Local {
     fn default() -> Self {
@@ -107,30 +122,108 @@ impl Local {
 #[cfg(windows)]
 impl Local {
     pub fn new() -> Self {
-        Self
+        Self(Arc::new(WinInner {
+            handle: AtomicU32::new(0),
+            terminals: Mutex::new(HashMap::new()),
+        }))
+    }
+
+    fn get(&self, handle: TerminalHandle) -> Result<Arc<crate::conpty::Conpty>, Error> {
+        self.0
+            .terminals
+            .lock()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| Error::custom("terminal not found"))
     }
 }
 
 #[cfg(windows)]
 #[async_trait::async_trait]
 impl TerminalClient for Local {
-    async fn create(&self, _options: TerminalOptions) -> Result<TerminalHandle, Error> {
-        Err(Error::not_supported())
+    async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
+        info!("terminal::create called with options: {:?}", options);
+        let handle = TerminalHandle(
+            self.0
+                .handle
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+        );
+
+        // No explicit command ⇒ the user's default shell. COMSPEC always
+        // points at cmd.exe; it is the one shell guaranteed present.
+        let (program, args) = match options.command {
+            Some(cmd) => (cmd, options.args.unwrap_or_default()),
+            None => (
+                std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
+                Vec::new(),
+            ),
+        };
+
+        // Convert here — this runs in the process that owns the FS (the
+        // agent in a remote session), so its own OS cfg is the right one.
+        let cwd = options
+            .working_dir
+            .as_ref()
+            .map(|p| crate::vfs::local::to_native(p));
+
+        // ConPTY needs an initial size; the frontend issues a real resize
+        // as soon as the xterm mounts, so the default is transient.
+        let conpty = crate::conpty::Conpty::spawn(
+            &program,
+            &args,
+            options.env.as_deref(),
+            cwd.as_deref(),
+            24,
+            80,
+        )
+        .await
+        .map_err(|e| {
+            error!("conpty spawn failed: {e}");
+            Error::from(e)
+        })?;
+
+        self.0.terminals.lock().insert(handle, Arc::new(conpty));
+        info!("terminal {:?} created successfully", handle);
+        Ok(handle)
     }
-    async fn kill(&self, _handle: TerminalHandle) -> Result<(), Error> {
-        Err(Error::not_supported())
+
+    async fn kill(&self, handle: TerminalHandle) -> Result<(), Error> {
+        info!("terminal::kill {:?}", handle);
+        // Dropping the Conpty tears down the pseudo-console and child.
+        self.0
+            .terminals
+            .lock()
+            .remove(&handle)
+            .ok_or_else(|| Error::custom("terminal not found"))?;
+        Ok(())
     }
-    async fn resize(&self, _handle: TerminalHandle, _rows: u16, _cols: u16) -> Result<(), Error> {
-        Err(Error::not_supported())
+
+    async fn resize(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<(), Error> {
+        debug!("terminal::resize {:?} rows={} cols={}", handle, rows, cols);
+        self.get(handle)?.resize(rows, cols)?;
+        Ok(())
     }
-    async fn input(&self, _handle: TerminalHandle, _data: Vec<u8>) -> Result<(), Error> {
-        Err(Error::not_supported())
+
+    async fn input(&self, handle: TerminalHandle, data: Vec<u8>) -> Result<(), Error> {
+        self.get(handle)?.write(&data).await?;
+        Ok(())
     }
-    async fn read(&self, _handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
-        Err(Error::not_supported())
+
+    async fn read(&self, handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
+        let conpty = self.get(handle)?;
+        let mut buf = [0u8; PTY_READ_BUFFER_SIZE];
+        match conpty.read(&mut buf).await? {
+            Some(n) if n > 0 => Ok(Some(buf[..n].to_vec())),
+            _ => Ok(None),
+        }
     }
-    async fn wait(&self, _handle: TerminalHandle) -> Result<ExitStatus, Error> {
-        Err(Error::not_supported())
+
+    async fn wait(&self, handle: TerminalHandle) -> Result<ExitStatus, Error> {
+        let code = self.get(handle)?.wait().await?;
+        Ok(ExitStatus {
+            code: Some(code as i32),
+            signal: None,
+        })
     }
 }
 

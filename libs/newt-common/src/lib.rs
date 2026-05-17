@@ -1,6 +1,8 @@
 pub mod agent_resolver;
 pub mod api;
 pub mod askpass;
+#[cfg(windows)]
+pub mod conpty;
 pub mod file_reader;
 pub mod filesystem;
 pub mod hot_paths;
