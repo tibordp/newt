@@ -1479,7 +1479,13 @@ export type FsStats = { free_bytes: number; available_bytes: number; total_bytes
  */
 export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
-export type HotPathEntry = { path: VfsPath; name: string | null; category: HotPathCategory }
+export type HotPathEntry = { path: VfsPath; 
+/**
+ * User-facing rendering of `path` (via the VFS descriptor). The
+ * provider can't format — it has no mounted-VFS context — so it
+ * leaves this empty; the host fills it in `get_hot_paths`.
+ */
+display_path: string; name: string | null; category: HotPathCategory }
 export type HotPathsPreferences = { 
 /**
  * Show standard folders (Home, Downloads, Documents, etc.)

@@ -14,6 +14,10 @@ pub enum HotPathCategory {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct HotPathEntry {
     pub path: VfsPath,
+    /// User-facing rendering of `path` (via the VFS descriptor). The
+    /// provider can't format — it has no mounted-VFS context — so it
+    /// leaves this empty; the host fills it in `get_hot_paths`.
+    pub display_path: String,
     pub name: Option<String>,
     pub category: HotPathCategory,
 }
@@ -60,6 +64,7 @@ fn make_entry(
             crate::vfs::VfsId::ROOT,
             crate::vfs::local::local_path_from_native(&path),
         ),
+        display_path: String::new(),
         name,
         category,
     }
@@ -103,6 +108,7 @@ fn collect_windows_drives(out: &mut Vec<HotPathEntry>) {
         let name = root.components().nth(1).map(|c| c.to_string());
         out.push(HotPathEntry {
             path: VfsPath::new(crate::vfs::VfsId::ROOT, root),
+            display_path: String::new(),
             name,
             category: HotPathCategory::Mount,
         });

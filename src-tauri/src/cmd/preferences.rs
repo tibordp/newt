@@ -127,9 +127,17 @@ pub async fn get_hot_paths(
                 newt_common::vfs::VfsId::ROOT,
                 newt_common::vfs::local::local_path_from_native(std::path::Path::new(&bm.path)),
             ),
+            display_path: String::new(),
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
         });
+    }
+
+    // Render each path through the VFS descriptor — the provider can't
+    // (no mounted-VFS context), so the menu would otherwise show raw
+    // sentinel paths (`/?/C:/…`) instead of `C:\…`.
+    for entry in entries.iter_mut() {
+        entry.display_path = ctx.format_vfs_path(&entry.path);
     }
 
     Ok(entries)

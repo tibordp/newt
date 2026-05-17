@@ -4,6 +4,8 @@
 export type {
   Breadcrumb,
   HistoryEntryView,
+  HotPathCategory,
+  HotPathEntry,
   VfsPath,
   VfsTarget,
 } from "./bindings";

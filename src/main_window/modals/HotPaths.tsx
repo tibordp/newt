@@ -3,23 +3,10 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { safe, safeSilent } from "../../lib/ipc";
 import { MainWindowState } from "../types";
-import { VfsPath } from "../../lib/types";
+import { HotPathCategory, HotPathEntry } from "../../lib/types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
 import styles from "./HotPaths.module.scss";
 import { commands } from "../../lib/bindings";
-
-type HotPathCategory =
-  | "UserBookmark"
-  | "StandardFolder"
-  | "Bookmark"
-  | "Mount"
-  | "RecentFolder";
-
-type HotPathEntry = {
-  path: VfsPath;
-  name: string | null;
-  category: HotPathCategory;
-};
 
 const CATEGORY_LABELS: Record<HotPathCategory, string> = {
   UserBookmark: "Bookmarks",
@@ -40,11 +27,11 @@ const CATEGORY_ORDER: HotPathCategory[] = [
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 function displayPath(entry: HotPathEntry): string {
-  return entry.path.path;
+  return entry.display_path;
 }
 
 function searchableText(entry: HotPathEntry): string {
-  const parts = [entry.path.path];
+  const parts = [entry.display_path];
   if (entry.name) parts.push(entry.name);
   return parts.join(" ");
 }
