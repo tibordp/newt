@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use crate::proc::NoConsoleWindow;
 use crate::rpc::Communicator;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
@@ -537,6 +538,7 @@ async fn execute_run_command(
 
     let mut child = {
         let mut cmd = tokio::process::Command::new("sh");
+        cmd.no_console_window();
         cmd.args(["-c", command]);
         if let Some(dir) = working_dir {
             // Native conversion happens here — the executor runs where

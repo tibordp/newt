@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::File;
+use crate::proc::NoConsoleWindow;
 use crate::{Error, ErrorKind};
 
 use super::{
@@ -206,6 +207,7 @@ impl K8sVfs {
 /// Get the current kubectl context name.
 async fn get_current_context() -> Result<String, Error> {
     let output = tokio::process::Command::new("kubectl")
+        .no_console_window()
         .args(["config", "current-context"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -359,6 +361,7 @@ fn build_symlinks(resources: &[ApiResource]) -> HashMap<String, PathBuf> {
 /// Run a kubectl command and return stdout.
 async fn run_kubectl(context: &str, args: &[&str]) -> Result<String, Error> {
     let mut cmd = tokio::process::Command::new("kubectl");
+    cmd.no_console_window();
     cmd.arg("--context").arg(context);
     cmd.args(args);
     cmd.stdout(Stdio::piped());

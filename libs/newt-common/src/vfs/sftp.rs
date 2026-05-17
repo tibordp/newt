@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UserGroup};
+use crate::proc::NoConsoleWindow;
 use crate::vfs::path::{Path, PathBuf};
 use crate::{Error, ErrorKind};
 
@@ -214,6 +215,7 @@ impl SftpVfs {
         // shorter on cellular). Three failed probes 30s apart = ~90s before we
         // consider the connection dead.
         let mut cmd = tokio::process::Command::new("ssh");
+        cmd.no_console_window();
         cmd.arg("-o")
             .arg("ServerAliveInterval=30")
             .arg("-o")

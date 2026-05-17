@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use newt_common::proc::NoConsoleWindow;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
@@ -74,7 +75,7 @@ impl<T> DiscoveryResult<T> {
 }
 
 async fn run_capture(cmd: &mut Command) -> Result<Vec<u8>, String> {
-    let fut = cmd.output();
+    let fut = cmd.no_console_window().output();
     let out = tokio::time::timeout(DISCOVERY_TIMEOUT, fut)
         .await
         .map_err(|_| "timed out".to_string())?

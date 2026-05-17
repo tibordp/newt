@@ -4,6 +4,7 @@ use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
 };
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
+use newt_common::proc::NoConsoleWindow;
 use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
@@ -1059,6 +1060,7 @@ async fn spawn_bootstrap(
     ));
 
     let mut cmd = tokio::process::Command::new(&program);
+    cmd.no_console_window();
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1233,6 +1235,7 @@ async fn spawn_direct_copy(
             args.join(" ")
         ));
         let out = tokio::process::Command::new(&prog)
+            .no_console_window()
             .args(args)
             .output()
             .await
@@ -1308,6 +1311,7 @@ async fn spawn_direct_copy(
         copy_args.join(" ")
     ));
     let copy_status = tokio::process::Command::new(&copy_program)
+        .no_console_window()
         .args(copy_args)
         .output()
         .await
@@ -1340,6 +1344,7 @@ async fn spawn_direct_copy(
         exec_args.join(" ")
     ));
     let mut cmd = tokio::process::Command::new(&exec_program);
+    cmd.no_console_window();
     cmd.args(exec_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1390,6 +1395,7 @@ async fn spawn_custom_shell(
         skip_bootstrap, command
     ));
     let mut cmd = tokio::process::Command::new("sh");
+    cmd.no_console_window();
     cmd.arg("-c")
         .arg(command)
         .env("NEWT_BOOTSTRAP", &script)
@@ -1429,6 +1435,7 @@ async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConne
 
     let agent_path = agent_resolver.find_local_agent_binary()?;
     let mut cmd = tokio::process::Command::new("pkexec");
+    cmd.no_console_window();
     cmd.arg(&agent_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
