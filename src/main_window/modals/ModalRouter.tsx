@@ -7,6 +7,7 @@ import CommandPaletteContent from "./CommandPalette";
 import ConnectionLogContent from "./ConnectionLogDialog";
 import HotPathsContent from "./HotPaths";
 import QuickConnectContent from "./QuickConnect";
+import SelectWslDistroContent from "./SelectWslDistro";
 import SettingsEditorContent from "./SettingsEditor";
 import { ModalContent } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
@@ -33,6 +34,14 @@ export default function ModalRouter({
   const closeModal = useCallback(() => safe(commands.closeModal()), []);
 
   function renderContent() {
+    // WSL is Windows-only. Gating the sole reference to the import behind
+    // the build-time `__WINDOWS__` literal lets Rollup DCE drop both this
+    // branch and `SelectWslDistro.tsx` from non-Windows bundles.
+    if (__WINDOWS__ && modalType === "select_wsl_distro") {
+      return (
+        <SelectWslDistroContent distros={state?.modal?.data?.distros ?? []} />
+      );
+    }
     switch (modalType) {
       case "command_palette":
         return (

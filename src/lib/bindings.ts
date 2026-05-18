@@ -1007,6 +1007,29 @@ async cmdOpenElevated(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Top-level "Connect to WSL Distribution..." command. With one distro,
+ * connect straight away; with several, open the picker; with none, error.
+ */
+async cmdConnectWsl(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_connect_wsl", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Picked a distro in the WSL picker — open a session to it.
+ */
+async connectWslDistro(distro: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_wsl_distro", { distro }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdQuickConnect(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_quick_connect", { paneHandle }) };
@@ -1550,7 +1573,7 @@ path: VfsPath;
  * Pre-rendered display label for the root (so the dialog can
  * show "Search in /home/foo" without re-resolving).
  */
-display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1608,7 +1631,7 @@ path: VfsPath;
  * Pre-rendered display label for the root (so the dialog can
  * show "Search in /home/foo" without re-resolving).
  */
-display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1770,6 +1793,10 @@ root: string | null }
  * the strings the frontend uses.
  */
 export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf"
+/**
+ * One installed WSL distribution. Serialized into the picker modal payload.
+ */
+export type WslDistro = { name: string; is_default: boolean }
 
 /** tauri-specta globals **/
 

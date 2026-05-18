@@ -349,11 +349,22 @@ pub fn default_commands() -> Vec<CommandDef> {
             default_when: None,
             needs_pane: false,
         },
-        @cfg(target_os = "linux") {
+        @cfg(any(target_os = "linux", windows)) {
             CommandDef {
                 id: "open_elevated".into(),
                 name: "Open Elevated".into(),
                 short_name: None,
+                category: "File".into(),
+                default_key: None,
+                default_when: None,
+                needs_pane: false,
+            },
+        }
+        @cfg(windows) {
+            CommandDef {
+                id: "connect_wsl".into(),
+                name: "Connect to WSL Distribution...".into(),
+                short_name: Some("WSL".into()),
                 category: "File".into(),
                 default_key: None,
                 default_when: None,

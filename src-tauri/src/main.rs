@@ -54,6 +54,29 @@ struct Args {
     #[arg(long, value_name = "NAME")]
     profile: Option<String>,
 
+    /// Open a session inside a WSL distribution (Windows only). Bare
+    /// `--wsl` uses the default distro; `--wsl <NAME>` targets a specific
+    /// one. There are no saved WSL profiles.
+    #[cfg(windows)]
+    #[arg(
+        long,
+        value_name = "NAME",
+        num_args = 0..=1,
+        default_missing_value = "",
+        conflicts_with_all = ["target", "profile"]
+    )]
+    wsl: Option<String>,
+
+    /// Open an elevated session (Linux: pkexec; Windows: UAC).
+    #[cfg(windows)]
+    #[arg(long, conflicts_with_all = ["target", "profile", "wsl"])]
+    elevated: bool,
+
+    /// Open an elevated session (Linux: pkexec; Windows: UAC).
+    #[cfg(target_os = "linux")]
+    #[arg(long, conflicts_with_all = ["target", "profile"])]
+    elevated: bool,
+
     /// Window title suffix (e.g., "user@host" or "Elevated")
     #[arg(long)]
     title: Option<String>,
@@ -405,6 +428,15 @@ fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
             }
             return Ok((ConnectionTarget::Elevated, "Elevated".to_string()));
         }
+        // Cross-platform spelling: pkexec on Linux, UAC on Windows.
+        "elevated" => {
+            if cfg!(not(any(target_os = "linux", windows))) {
+                return Err(Error::Custom(
+                    "elevated mode is not supported on this platform".into(),
+                ));
+            }
+            return Ok((ConnectionTarget::Elevated, "Elevated".to_string()));
+        }
         _ => {}
     }
 
@@ -528,6 +560,61 @@ fn main() {
         },
         (None, None) => Some((ConnectionTarget::Local, "Newt".to_string())),
         (None, Some(_)) => None,
+    };
+
+    // `--wsl[=NAME]` resolves to a WSL target at launch. It conflicts with
+    // `--target`/`--profile`, so `non_profile` is the Local default here.
+    #[cfg(windows)]
+    let non_profile = match &args.wsl {
+        Some(name) => {
+            let installed = discovery::wsl::list_distros();
+            if installed.is_empty() {
+                eprintln!("newt: no WSL distributions installed");
+                std::process::exit(2);
+            }
+            let distro = if name.is_empty() {
+                installed
+                    .iter()
+                    .find(|d| d.is_default)
+                    .unwrap_or(&installed[0])
+                    .name
+                    .clone()
+            } else {
+                // Validate up front so a typo fails fast with the list,
+                // rather than surfacing as an opaque WslLaunch error.
+                match installed.iter().find(|d| d.name == *name) {
+                    Some(d) => d.name.clone(),
+                    None => {
+                        eprintln!(
+                            "newt: no WSL distribution named {:?}. Installed: {}",
+                            name,
+                            installed
+                                .iter()
+                                .map(|d| d.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        std::process::exit(2);
+                    }
+                }
+            };
+            Some((
+                ConnectionTarget::Wsl {
+                    distro: distro.clone(),
+                },
+                format!("Newt [WSL: {}]", distro),
+            ))
+        }
+        None => non_profile,
+    };
+
+    // `--elevated` (pkexec on Linux, UAC on Windows). Conflicts with
+    // `--target`/`--profile`/`--wsl`, so this just overrides the default.
+    #[cfg(any(target_os = "linux", windows))]
+    let non_profile = if args.elevated {
+        Some((ConnectionTarget::Elevated, "Newt [Elevated]".to_string()))
+    } else {
+        non_profile
     };
 
     let specta_builder = cmd::create_specta_builder();

@@ -2,6 +2,12 @@
 //! handlers touch `MainWindowState` — they spawn one-off CLI processes and
 //! return parsed JSON. Failures fold to empty results + a warning string so the
 //! dialog can show a single inline hint rather than a blocking error.
+//!
+//! `wsl` is the odd one out: it reads the registry rather than spawning a
+//! CLI, but it's still a stateless transport enumerator so it lives here.
+
+#[cfg(windows)]
+pub mod wsl;
 
 use std::time::Duration;
 

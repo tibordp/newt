@@ -35,6 +35,13 @@ struct Args {
     #[arg(long)]
     print_triple: bool,
 
+    /// Speak RPC over this named pipe instead of stdin/stdout. Used by the
+    /// Windows elevated transport, where `ShellExecuteEx "runas"` cannot
+    /// redirect stdio.
+    #[cfg(windows)]
+    #[arg(long, value_name = "NAME")]
+    pipe: Option<String>,
+
     /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
     #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
     verbose: u8,
@@ -151,6 +158,37 @@ fn main() {
     }
 }
 
+/// Connect to the host's named pipe, retrying briefly while it's busy
+/// (ERROR_PIPE_BUSY = 231) — the host creates the server right before
+/// launching us, so a short race is expected.
+#[cfg(windows)]
+async fn connect_pipe(
+    name: &str,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, Error> {
+    use std::time::Duration;
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    const ERROR_PIPE_BUSY: i32 = 231;
+    for _ in 0..200 {
+        match ClientOptions::new().open(name) {
+            Ok(client) => return Ok(client),
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => {
+                return Err(Error::custom(format!(
+                    "failed to open named pipe {:?}: {}",
+                    name, e
+                )));
+            }
+        }
+    }
+    Err(Error::custom(format!(
+        "timed out connecting to named pipe {:?}",
+        name
+    )))
+}
+
 async fn run_agent() -> Result<(), Error> {
     let args = Args::parse();
     if args.print_triple {
@@ -160,8 +198,25 @@ async fn run_agent() -> Result<(), Error> {
     apply_log_flags(args.verbose, args.quiet);
     pretty_env_logger::init();
 
-    let mut rx: Box<dyn AsyncRead + Send + Unpin> = Box::new(tokio::io::stdin());
-    let mut tx: Box<dyn AsyncWrite + Send + Unpin> = Box::new(tokio::io::stdout());
+    #[cfg(windows)]
+    let pipe = args.pipe.clone();
+    #[cfg(not(windows))]
+    let pipe: Option<String> = None;
+
+    let (mut rx, mut tx): (
+        Box<dyn AsyncRead + Send + Unpin>,
+        Box<dyn AsyncWrite + Send + Unpin>,
+    ) = match pipe {
+        #[cfg(windows)]
+        Some(name) => {
+            let client = connect_pipe(&name).await?;
+            let (r, w) = tokio::io::split(client);
+            (Box::new(r), Box::new(w))
+        }
+        #[cfg(not(windows))]
+        Some(_) => unreachable!("pipe is always None on non-Windows"),
+        None => (Box::new(tokio::io::stdin()), Box::new(tokio::io::stdout())),
+    };
 
     if args.compression {
         rx = Box::new(ZstdDecoder::new(tokio::io::BufReader::new(rx)));

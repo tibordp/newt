@@ -289,7 +289,7 @@ pub async fn connect_target(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open_elevated(
@@ -305,13 +305,84 @@ pub async fn cmd_open_elevated(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open_elevated(_pane_handle: PaneHandle) -> Result<(), Error> {
     Err(Error::Custom(
-        "Elevated mode is only supported on Linux".into(),
+        "Elevated mode is not supported on this platform".into(),
     ))
+}
+
+/// Top-level "Connect to WSL Distribution..." command. With one distro,
+/// connect straight away; with several, open the picker; with none, error.
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_connect_wsl(
+    ctx: MainWindowContext,
+    _pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let distros = crate::discovery::wsl::list_distros();
+    match distros.len() {
+        0 => Err(Error::Custom("No WSL distributions installed".into())),
+        1 => {
+            let name = distros.into_iter().next().unwrap().name;
+            let app_handle = ctx.window().app_handle().clone();
+            crate::main_window::spawn_main_window(
+                &app_handle,
+                ConnectionTarget::Wsl {
+                    distro: name.clone(),
+                },
+                format!("Newt [WSL: {}]", name),
+                [None, None],
+            )?;
+            Ok(())
+        }
+        _ => ctx.with_update(|gs| {
+            let mut modal_state = gs.modal.0.write();
+            *modal_state = Some(crate::main_window::ModalData {
+                kind: crate::main_window::ModalDataKind::SelectWslDistro { distros },
+                context: crate::main_window::ModalContext { pane_handle: None },
+            });
+            Ok(())
+        }),
+    }
+}
+
+/// Picked a distro in the WSL picker — open a session to it.
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn connect_wsl_distro(ctx: MainWindowContext, distro: String) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    crate::main_window::spawn_main_window(
+        &app_handle,
+        ConnectionTarget::Wsl {
+            distro: distro.clone(),
+        },
+        format!("Newt [WSL: {}]", distro),
+        [None, None],
+    )?;
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_connect_wsl(_pane_handle: PaneHandle) -> Result<(), Error> {
+    Err(Error::Custom("WSL is only available on Windows".into()))
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn connect_wsl_distro(distro: String) -> Result<(), Error> {
+    let _ = distro;
+    Err(Error::Custom("WSL is only available on Windows".into()))
 }
 
 #[tauri::command]

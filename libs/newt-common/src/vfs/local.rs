@@ -534,32 +534,56 @@ impl Vfs for LocalVfs {
                 let mut batch = Vec::new();
 
                 if let Some(parent) = path.parent() {
-                    let metadata = parent.symlink_metadata()?;
-                    let (mode_field, user_field, group_field) = unix_owner_bits(&metadata, &cache);
-                    let file = File {
-                        name: "..".to_string(),
-                        size: None,
-                        is_dir: true,
-                        is_symlink: metadata.is_symlink(),
-                        symlink_target: None,
-                        is_hidden: false,
-                        user: user_field,
-                        group: group_field,
-                        mode: mode_field,
-                        modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                        accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                        created: metadata.created().map(|t| t.to_unix()).ok(),
-                        key: None,
-                        source: None,
+                    // Always emit `..` so up-navigation works even if the
+                    // parent can't be stat'd (degrade to null metadata).
+                    let file = match parent.symlink_metadata() {
+                        Ok(metadata) => {
+                            let (mode_field, user_field, group_field) =
+                                unix_owner_bits(&metadata, &cache);
+                            File {
+                                name: "..".to_string(),
+                                size: None,
+                                is_dir: true,
+                                is_symlink: metadata.is_symlink(),
+                                symlink_target: None,
+                                is_hidden: false,
+                                user: user_field,
+                                group: group_field,
+                                mode: mode_field,
+                                modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                                accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                                created: metadata.created().map(|t| t.to_unix()).ok(),
+                                key: None,
+                                source: None,
+                            }
+                        }
+                        Err(_) => File {
+                            name: "..".to_string(),
+                            size: None,
+                            is_dir: true,
+                            is_symlink: false,
+                            symlink_target: None,
+                            is_hidden: false,
+                            user: None,
+                            group: None,
+                            mode: None,
+                            modified: None,
+                            accessed: None,
+                            created: None,
+                            key: None,
+                            source: None,
+                        },
                     };
                     batch.push(file.clone());
                     ret.push(file);
                 }
 
                 for maybe_entry in std::fs::read_dir(&path)? {
-                    let entry = maybe_entry?;
-                    let metadata = entry.metadata()?;
-                    let file_type = metadata.file_type();
+                    // A dirent we can't even read — skip it rather than
+                    // aborting the whole listing.
+                    let Ok(entry) = maybe_entry else {
+                        continue;
+                    };
 
                     // Best-effort UTF-8 conversion: a non-UTF-8 filename gets
                     // U+FFFD replacement chars. The entry shows up in the UI
@@ -569,37 +593,70 @@ impl Vfs for LocalVfs {
                     // replacements that doesn't exist on disk. Acceptable
                     // trade-off vs. panicking the entire listing.
                     let name = entry.file_name().to_string_lossy().into_owned();
-                    let mut is_dir = file_type.is_dir();
 
-                    let symlink_target = if file_type.is_symlink() {
-                        let target_metadata = std::fs::metadata(entry.path());
-                        if let Ok(target_metadata) = target_metadata {
-                            is_dir = target_metadata.is_dir();
+                    let file = match entry.metadata() {
+                        Ok(metadata) => {
+                            let file_type = metadata.file_type();
+                            let mut is_dir = file_type.is_dir();
+
+                            let symlink_target = if file_type.is_symlink() {
+                                let target_metadata = std::fs::metadata(entry.path());
+                                if let Ok(target_metadata) = target_metadata {
+                                    is_dir = target_metadata.is_dir();
+                                }
+                                std::fs::read_link(entry.path())
+                                    .ok()
+                                    .map(|t| t.to_string_lossy().into_owned())
+                            } else {
+                                None
+                            };
+
+                            let (mode_field, user_field, group_field) =
+                                unix_owner_bits(&metadata, &cache);
+                            File {
+                                name: name.clone(),
+                                size: (!is_dir).then_some(metadata.len()),
+                                is_dir,
+                                is_symlink: file_type.is_symlink(),
+                                symlink_target,
+                                is_hidden: is_hidden(&name, &metadata),
+                                user: user_field,
+                                group: group_field,
+                                mode: mode_field,
+                                modified: metadata.modified().map(|t| t.to_unix()).ok(),
+                                accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
+                                created: metadata.created().map(|t| t.to_unix()).ok(),
+                                key: None,
+                                source: None,
+                            }
                         }
-                        std::fs::read_link(entry.path())
-                            .ok()
-                            .map(|t| t.to_string_lossy().into_owned())
-                    } else {
-                        None
+                        // `stat()` was denied. Real-world trigger: Windows
+                        // system files (pagefile.sys, hiberfil.sys,
+                        // swapfile.sys, DumpStack.log.tmp) seen through WSL's
+                        // `/mnt` DrvFs return `-?????????` from `ls`. Degrade
+                        // to the bare dirent (d_type, if any) with null
+                        // metadata instead of failing the whole directory.
+                        Err(_) => {
+                            let file_type = entry.file_type().ok();
+                            File {
+                                name: name.clone(),
+                                size: None,
+                                is_dir: file_type.map(|t| t.is_dir()).unwrap_or(false),
+                                is_symlink: file_type.map(|t| t.is_symlink()).unwrap_or(false),
+                                symlink_target: None,
+                                is_hidden: name.starts_with('.'),
+                                user: None,
+                                group: None,
+                                mode: None,
+                                modified: None,
+                                accessed: None,
+                                created: None,
+                                key: None,
+                                source: None,
+                            }
+                        }
                     };
 
-                    let (mode_field, user_field, group_field) = unix_owner_bits(&metadata, &cache);
-                    let file = File {
-                        name: name.clone(),
-                        size: (!is_dir).then_some(metadata.len()),
-                        is_dir,
-                        is_symlink: file_type.is_symlink(),
-                        symlink_target,
-                        is_hidden: is_hidden(&name, &metadata),
-                        user: user_field,
-                        group: group_field,
-                        mode: mode_field,
-                        modified: metadata.modified().map(|t| t.to_unix()).ok(),
-                        accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
-                        created: metadata.created().map(|t| t.to_unix()).ok(),
-                        key: None,
-                        source: None,
-                    };
                     batch.push(file.clone());
                     ret.push(file);
 

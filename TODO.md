@@ -7,7 +7,10 @@ Basic Remote VFS is implemented. Remaining work:
 
 ## Generalized remote session transport
 
-Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom (caller-supplied argv) all share the same `SpawnSpec::Bootstrap` path. Docker and Podman additionally support an opt-in `bootstrapless` (`docker cp` / `podman cp`) path for distroless / sh-less containers. Remaining:
+Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom (caller-supplied argv) all share the same `SpawnSpec::Bootstrap` path. Docker and Podman additionally support an opt-in `bootstrapless` (`docker cp` / `podman cp`) path for distroless / sh-less containers. WSL (Windows) is a separate `ConnectionTarget::Wsl` path: `wslapi!WslLaunch` (loaded at runtime) execs the bundled Linux-musl agent directly from its `/mnt/<drive>/…` path — no bootstrap, no upload — with distros enumerated from the `Lxss` registry key. Elevated mode now works on Windows too (`ConnectionTarget::Elevated`): `ShellExecuteEx "runas"` (UAC) launches the native agent, which speaks RPC over a single-instance named pipe (`ShellExecuteEx` can't redirect stdio); the host GUI stays unelevated. Remaining:
+- WSL assumes the default `[automount] root = /mnt`; a custom automount root isn't detected. Read `/etc/wsl.conf` if this proves limiting.
+- WSL agent arch is derived from the Windows host arch (correct for WSL2 / x64 WSL1); no in-distro `uname` probe.
+- Windows elevated agent stderr/logs are not captured (`runas` carries no console). Optional: have the elevated agent log to `%TEMP%\newt-agent-elevated.log` for debugging.
 - Host-key prompts and "are you sure you want to add fingerprint" flows for SSH still ride the existing askpass channel; verify the same UX with `StrictHostKeyChecking=accept-new` setups.
 - The bootstrapless flow trusts the daemon's reported OS/arch from `inspect`. If the container runs a foreign-arch userspace under qemu the agent will be the wrong arch; consider a `--print-triple` self-check post-launch.
 - Kubernetes is bootstrap-only (kubectl cp itself needs tar). If we want sh-less k8s pods later we'd need to teach the agent how to be `tar`-injected.

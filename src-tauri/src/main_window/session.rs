@@ -56,8 +56,27 @@ pub enum ConnectionTarget {
     Local,
     /// pkexec-elevated agent on the local machine (Linux only).
     Elevated,
+    /// Agent launched inside a WSL distribution via `wslapi!WslLaunch`
+    /// (Windows only). The bundled Linux-musl agent is exec'd directly
+    /// from its `/mnt/<drive>/…` path — no bootstrap, no upload.
+    #[cfg(windows)]
+    Wsl { distro: String },
     /// Spawn an agent over an external transport.
     Spawn(SpawnSpec),
+}
+
+impl ConnectionTarget {
+    /// A "remote-style" session: the agent's FS is a single Unix root and
+    /// the client-local FS is exposed via the Remote VFS. True for every
+    /// spawned transport and for WSL; false for Local / Elevated.
+    pub fn is_remote(&self) -> bool {
+        match self {
+            ConnectionTarget::Spawn(_) => true,
+            #[cfg(windows)]
+            ConnectionTarget::Wsl { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -755,7 +774,7 @@ impl ConnectionLog {
 
 /// Spawn a task that reads lines from `stderr` and appends them to `log`.
 /// Publishes after each line so the frontend can see logs in real-time.
-fn spawn_stderr_reader(stderr: tokio::process::ChildStderr, conn_log: ConnectionLog) {
+fn spawn_stderr_reader<R: AsyncRead + Unpin + Send + 'static>(stderr: R, conn_log: ConnectionLog) {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
@@ -996,13 +1015,45 @@ fn create_rpc_services(
 type DynStream =
     tokio_duplex::Duplex<Box<dyn AsyncRead + Send + Unpin>, Box<dyn AsyncWrite + Send + Unpin>>;
 
-/// Result of spawning a child process with a bidirectional RPC stream.
+/// Erased stderr source. `tokio::process::ChildStderr` for the
+/// `Command`-spawned transports; the bridged WSL stderr pipe otherwise.
+type DynStderr = Box<dyn AsyncRead + Send + Unpin>;
+
+/// The agent's host-side process. Every `Command`-spawned transport keeps a
+/// real `tokio::process::Child`. WSL is launched via `wslapi!WslLaunch`,
+/// which hands back a raw Win32 process `HANDLE` that `std`/`tokio` cannot
+/// adopt into a `Child` (no `from_raw_handle` for `Child`) — so it gets its
+/// own tiny wrapper. The enum exists only so `spawn_child_watcher` can
+/// `.wait()` uniformly.
+// `Child` is much larger than the handle wrapper, but this is a short-lived
+// owner held one-per-session — boxing would just add an allocation.
+#[cfg_attr(windows, allow(clippy::large_enum_variant))]
+enum AgentProcess {
+    Child(tokio::process::Child),
+    /// A raw Win32 process handle (WSL via `WslLaunch`, or the elevated
+    /// agent via `ShellExecuteEx`) — `std`/`tokio` can't adopt one into a
+    /// `Child`, so it gets the shared `WinProcess` wrapper.
+    #[cfg(windows)]
+    Win(super::win_proc::WinProcess),
+}
+
+impl AgentProcess {
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        match self {
+            AgentProcess::Child(c) => c.wait().await,
+            #[cfg(windows)]
+            AgentProcess::Win(w) => w.wait().await,
+        }
+    }
+}
+
+/// Result of spawning the agent process with a bidirectional RPC stream.
 struct ChildConnection {
-    child: tokio::process::Child,
-    stderr: Option<tokio::process::ChildStderr>,
+    child: AgentProcess,
+    stderr: Option<DynStderr>,
     stream: DynStream,
     /// Askpass listener tied to the ssh process; dropped when the connection
-    /// tears down. `None` for elevated mode (no askpass).
+    /// tears down. `None` for elevated / WSL mode (no askpass).
     _askpass: Option<newt_common::askpass::listener::AskpassListener>,
 }
 
@@ -1141,7 +1192,7 @@ async fn perform_bootstrap_handshake(
         conn_log.log("Agent ready");
         Ok(ChildConnection {
             stream: make_stream(reader, stdin),
-            child,
+            child: AgentProcess::Child(child),
             stderr: None,
             _askpass: askpass_listener,
         })
@@ -1193,7 +1244,7 @@ async fn perform_bootstrap_handshake(
 
         Ok(ChildConnection {
             stream: make_stream(reader, stdin),
-            child,
+            child: AgentProcess::Child(child),
             stderr: None,
             _askpass: askpass_listener,
         })
@@ -1359,9 +1410,9 @@ async fn spawn_direct_copy(
     let stream = make_stream(BufReader::new(stdout), stdin);
 
     Ok(ChildConnection {
-        child,
+        child: AgentProcess::Child(child),
         stream,
-        stderr: Some(stderr),
+        stderr: Some(Box::new(stderr)),
         _askpass: None,
     })
 }
@@ -1415,9 +1466,9 @@ async fn spawn_custom_shell(
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         Ok(ChildConnection {
-            child,
+            child: AgentProcess::Child(child),
             stream: make_stream(BufReader::new(stdout), stdin),
-            stderr: Some(stderr),
+            stderr: Some(Box::new(stderr)),
             _askpass: None,
         })
     } else {
@@ -1425,14 +1476,9 @@ async fn spawn_custom_shell(
     }
 }
 
-/// Spawn pkexec + agent binary (elevated mode, Linux only).
+/// Spawn pkexec + agent binary (elevated mode, Linux).
+#[cfg(target_os = "linux")]
 async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
-    if cfg!(not(target_os = "linux")) {
-        return Err(Error::Custom(
-            "elevated mode is not supported on this platform".into(),
-        ));
-    }
-
     let agent_path = agent_resolver.find_local_agent_binary()?;
     let mut cmd = tokio::process::Command::new("pkexec");
     cmd.no_console_window();
@@ -1456,18 +1502,40 @@ async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConne
     let stream = tokio_duplex::Duplex::new(rx, tx);
 
     Ok(ChildConnection {
-        child,
+        child: AgentProcess::Child(child),
         stream,
-        stderr: Some(stderr),
+        stderr: Some(Box::new(stderr)),
         _askpass: None,
     })
+}
+
+/// Spawn an elevated agent via UAC (`ShellExecuteEx "runas"`) and connect to
+/// it over a named pipe (stdio can't cross the UAC boundary).
+#[cfg(windows)]
+async fn spawn_elevated(agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
+    let spawn = super::elevate::spawn_elevated_windows(agent_resolver).await?;
+    let stream = tokio_duplex::Duplex::new(spawn.stdout, spawn.stdin);
+    Ok(ChildConnection {
+        child: AgentProcess::Win(spawn.process),
+        stream,
+        stderr: None,
+        _askpass: None,
+    })
+}
+
+/// Elevated mode is unsupported on this platform (e.g. macOS).
+#[cfg(not(any(target_os = "linux", windows)))]
+async fn spawn_elevated(_agent_resolver: &dyn AgentResolver) -> Result<ChildConnection, Error> {
+    Err(Error::Custom(
+        "elevated mode is not supported on this platform".into(),
+    ))
 }
 
 /// Spawn a background task that waits for the child to exit, then clears the
 /// session and sets the connection status to `Disconnected`.
 fn spawn_child_watcher(
-    mut child: tokio::process::Child,
-    stderr: Option<tokio::process::ChildStderr>,
+    mut child: AgentProcess,
+    stderr: Option<DynStderr>,
     askpass_listener: Option<newt_common::askpass::listener::AskpassListener>,
     stderr_log: StderrLog,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
@@ -1648,6 +1716,49 @@ pub(super) async fn connect(
                 Some((conn.child, conn.stderr, conn._askpass)),
             )
         }
+        #[cfg(windows)]
+        ConnectionTarget::Wsl { distro } => {
+            set_status(&format!("Connecting to WSL [{}]...", distro));
+            let stderr_log = StderrLog::default();
+            let conn_log = ConnectionLog {
+                stderr_log: stderr_log.clone(),
+                connection_status: state.connection_status.clone(),
+                publisher: publisher.clone(),
+            };
+            let spawn = super::wsl_launch::spawn_wsl(distro, agent_resolver).await?;
+            // Stream WSL stderr into the connection log right away.
+            spawn_stderr_reader(
+                spawn.stderr,
+                ConnectionLog {
+                    stderr_log: stderr_log.clone(),
+                    connection_status: state.connection_status.clone(),
+                    publisher: publisher.clone(),
+                },
+            );
+            conn_log.log("Setting up RPC services...");
+            let stream: DynStream = tokio_duplex::Duplex::new(spawn.stdout, spawn.stdin);
+            let expose_local_fs = preferences.load().behavior.expose_local_fs;
+            let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+                Arc::new(crate::main_window::LocalProgressSink::new(
+                    state.vfs_progress.clone(),
+                    publisher.clone(),
+                ));
+            let (services, _) = create_rpc_services(
+                stream,
+                &state.operations,
+                publisher,
+                &preferences,
+                expose_local_fs,
+                askpass_provider.clone(),
+                progress_sink,
+            );
+            conn_log.log("Connected");
+            (
+                services,
+                stderr_log,
+                Some((AgentProcess::Win(spawn.process), None, None)),
+            )
+        }
     };
 
     // Resolve initial directory for remote connections
@@ -1690,7 +1801,7 @@ pub(super) async fn connect(
     // Remote root = the agent's Unix FS (style-only, single `/`). Local
     // root = this host's FS, with its drives enumerated so a Windows host
     // lands on a drive instead of the unlistable `/`.
-    let root_meta = if matches!(connection_target, ConnectionTarget::Spawn(_)) {
+    let root_meta = if connection_target.is_remote() {
         PathStyle::Unix.encode()
     } else {
         newt_common::vfs::encode_mount_meta(
@@ -1713,9 +1824,7 @@ pub(super) async fn connect(
     // the client-local filesystem from within the remote session.
     // Also set up hairpin diversion so list_files/read/write for the remote
     // VFS are handled locally without round-tripping through the agent.
-    if matches!(connection_target, ConnectionTarget::Spawn(_))
-        && preferences.load().behavior.expose_local_fs
-    {
+    if connection_target.is_remote() && preferences.load().behavior.expose_local_fs {
         match services
             .vfs_manager
             .mount(newt_common::vfs::MountRequest::Remote)
@@ -1766,7 +1875,7 @@ pub(super) async fn connect(
 
     let vfs_info: Arc<dyn VfsInfo> = Arc::new(MountedVfsInfoService {
         mounted_vfs: mounted_vfs.clone(),
-        remote_session: matches!(connection_target, ConnectionTarget::Spawn(_)),
+        remote_session: connection_target.is_remote(),
     });
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();

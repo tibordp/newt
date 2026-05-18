@@ -1,6 +1,12 @@
+#[cfg(windows)]
+pub mod elevate;
 pub mod pane;
 pub mod session;
 pub mod terminal;
+#[cfg(windows)]
+pub mod win_proc;
+#[cfg(windows)]
+pub mod wsl_launch;
 
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
@@ -456,6 +462,10 @@ pub enum ModalDataKind {
     },
     SelectVfs {
         targets: Vec<VfsTarget>,
+    },
+    #[cfg(windows)]
+    SelectWslDistro {
+        distros: Vec<crate::discovery::wsl::WslDistro>,
     },
     HistoryNavigator {
         entries: Vec<pane::HistoryEntryView>,

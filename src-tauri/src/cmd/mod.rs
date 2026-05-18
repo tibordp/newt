@@ -291,6 +291,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
             terminal::cmd_next_terminal,
             terminal::cmd_prev_terminal,
             window::cmd_open_elevated,
+            window::cmd_connect_wsl,
+            window::connect_wsl_distro,
             dialog::cmd_quick_connect,
             dialog::cmd_mount_s3,
             vfs::mount_s3,
