@@ -12,6 +12,13 @@ jobs:
   agent:
     name: Agent (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    # One shared target dir (cargo's default location) so
+    # Swatinem/rust-cache actually caches the agent build. Each job
+    # builds a single triple and nothing else, so xtask's per-triple
+    # split (local default) buys nothing here. Set job-wide so the
+    # rust-cache step sees it too.
+    env:
+      CARGO_TARGET_DIR: target
     strategy:
       fail-fast: false
       matrix:
@@ -307,6 +314,11 @@ jobs:
     name: Package (Windows ${{ matrix.arch }})
     runs-on: windows-latest
     needs: [agent, frontend]
+    # Shared target dir so the inline agent build and the Tauri app
+    # build reuse deps and are both covered by rust-cache (xtask honours
+    # this instead of its local per-triple split).
+    env:
+      CARGO_TARGET_DIR: target
     strategy:
       fail-fast: false
       matrix:

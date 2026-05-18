@@ -70,8 +70,20 @@ fn cargo_subcommand(triple: &str) -> &'static str {
 
 fn build_one(triple: &str) -> Result<(), String> {
     let name = agent_file_name(triple);
-    let target_dir = PathBuf::from("target-agents").join(triple);
     let sub = cargo_subcommand(triple);
+
+    // Where cargo writes the build. If the environment already dictates
+    // a `CARGO_TARGET_DIR` we honour it and inherit it to the child
+    // (don't override): every CI workflow job builds exactly one triple
+    // and nothing else concurrently, so a single shared `target/` lets
+    // Swatinem/rust-cache actually cache agent builds. Locally, with no
+    // such env, default to a per-triple dir so agent builds stay
+    // isolated from each other and from the main dev `./target`.
+    let preset = std::env::var_os("CARGO_TARGET_DIR");
+    let target_dir = match &preset {
+        Some(dir) => PathBuf::from(dir),
+        None => PathBuf::from("target-agents").join(triple),
+    };
 
     // Ensure the std component for the target is present. Idempotent;
     // ignored if rustup isn't on PATH (the build below then surfaces the
@@ -81,11 +93,14 @@ fn build_one(triple: &str) -> Result<(), String> {
         .status();
 
     println!("→ cargo {sub} --release --target {triple} -p newt-agent");
-    let status = Command::new("cargo")
-        .args([sub, "--release", "--target", triple, "-p", "newt-agent"])
-        // Per-triple cache dir keeps each target isolated from the others
-        // and from the main dev build in ./target.
-        .env("CARGO_TARGET_DIR", &target_dir)
+    let mut command = Command::new("cargo");
+    command.args([sub, "--release", "--target", triple, "-p", "newt-agent"]);
+    if preset.is_none() {
+        // Only impose the per-triple split when nothing set it; an
+        // inherited CARGO_TARGET_DIR is passed through untouched.
+        command.env("CARGO_TARGET_DIR", &target_dir);
+    }
+    let status = command
         .status()
         .map_err(|e| format!("failed to spawn cargo: {e}"))?;
     if !status.success() {
