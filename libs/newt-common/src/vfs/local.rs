@@ -124,8 +124,12 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn roots(&self, mount_meta: &[u8]) -> Vec<PathBuf> {
         roots_from_meta(mount_meta)
     }
-    // `has_unified_root` / `initial_path` use the trait defaults, which
-    // are now roots-aware (split-root → land on the first drive).
+    fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
+        // Style-based, not root-count: a single-drive Windows host is
+        // still split-root. `initial_path` (trait default) then lands on
+        // the first drive instead of the unlistable `/`.
+        unified_root_from_meta(mount_meta)
+    }
 }
 
 /// FS roots from `mount_meta`, defaulting to a single `/` when none were
@@ -138,6 +142,18 @@ pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<PathBuf> {
     } else {
         roots
     }
+}
+
+/// Whether a `Local`/`Remote` mount presents one unified `/` root.
+///
+/// This is a property of the *path style*, **not** the number of roots: a
+/// Windows filesystem with only a `C:` drive is still split-root — its
+/// root is `C:\`, never `/`. Keying off `roots().len() == 1` (the trait
+/// default) silently misclassifies a single-drive Windows box as unified,
+/// so the VFS selector offers one "Local" entry pointing at the
+/// unlistable `\\?\` sentinel instead of the drive. Decide by style.
+pub fn unified_root_from_meta(mount_meta: &[u8]) -> bool {
+    PathStyle::from_mount_meta(mount_meta) == PathStyle::Unix
 }
 
 /// Logical parent of a LocalVfs path, honouring Windows drive/share

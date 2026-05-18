@@ -1,0 +1,7 @@
+# Shell scripts are embedded verbatim via `include_str!` and executed by
+# remote POSIX shells. A Windows checkout with the default
+# `core.autocrlf=true` (e.g. the GitHub Actions Windows runners) would
+# rewrite them to CRLF, and `\r` makes the remote `sh` fail with syntax
+# errors. Pin them to LF regardless of platform or git config.
+*.sh text eol=lf
+scripts/** text eol=lf

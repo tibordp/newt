@@ -107,9 +107,14 @@ impl VfsDescriptor for RemoteVfsDescriptor {
 
     fn roots(&self, mount_meta: &[u8]) -> Vec<PathBuf> {
         // A Windows client's FS exposed into a remote session is
-        // split-root; `has_unified_root`/`initial_path` (trait defaults)
-        // then land on its first drive instead of the unlistable `/`.
+        // split-root; `has_unified_root`/`initial_path` then land on its
+        // first drive instead of the unlistable `/`.
         super::local::roots_from_meta(mount_meta)
+    }
+    fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
+        // Style-based, not root-count (a single-drive Windows client is
+        // still split-root). See `unified_root_from_meta`.
+        super::local::unified_root_from_meta(mount_meta)
     }
 
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {

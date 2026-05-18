@@ -1857,3 +1857,20 @@ pub(super) async fn connect(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BOOTSTRAP_SCRIPT;
+
+    /// `bootstrap.sh` is embedded verbatim via `include_str!` and run by a
+    /// remote POSIX `sh`, which fails on `\r`. `.gitattributes` pins it to
+    /// LF; this guards against a regression (a checkout that smuggled CRLF
+    /// in, or that pin being lost).
+    #[test]
+    fn bootstrap_script_is_lf_only() {
+        assert!(
+            !BOOTSTRAP_SCRIPT.contains('\r'),
+            "bootstrap.sh contains CR — must be LF-only (check .gitattributes / autocrlf)"
+        );
+    }
+}
