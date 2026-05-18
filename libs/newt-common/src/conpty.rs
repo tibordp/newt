@@ -214,9 +214,11 @@ pub struct Conpty {
     reader: Mutex<NamedPipeServer>,
 }
 
-// SAFETY: the integer-encoded handles are only dereferenced through the
-// Win32 calls in this module; the pipe servers and Notify are themselves
-// Send+Sync. No interior raw-pointer aliasing escapes.
+// SAFETY: the integer-encoded handles are only used through the Win32
+// calls in this module; `exit_ctx` is never dereferenced via a shared
+// `&Conpty` (only in `Drop` and the wait trampoline, both ordering-
+// guarded by `UnregisterWaitEx`), and the pipe servers + watch channel
+// are themselves Send+Sync. No interior raw-pointer aliasing escapes.
 unsafe impl Send for Conpty {}
 unsafe impl Sync for Conpty {}
 
@@ -488,9 +490,15 @@ unsafe fn spawn_child(
     unsafe {
         InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size);
     }
-    let mut attr_buf = vec![0u8; attr_size];
+    // The attribute list holds pointer-sized fields and must be
+    // pointer-aligned; a `Vec<u8>` is only 1-aligned by contract (it works
+    // by accident on the system allocator). Back it with `usize` storage,
+    // rounded up to cover `attr_size` bytes, for guaranteed alignment.
+    let nwords = attr_size.div_ceil(std::mem::size_of::<usize>()).max(1);
+    let mut attr_buf = vec![0usize; nwords];
     let attr_list = attr_buf.as_mut_ptr() as *mut c_void;
-    // SAFETY: buffer is sized exactly as the first call reported.
+    // SAFETY: buffer is pointer-aligned and ≥ the size the first call
+    // reported.
     if unsafe { InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size) } == 0 {
         return Err(io::Error::last_os_error());
     }
