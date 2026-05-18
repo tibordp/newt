@@ -1031,7 +1031,7 @@ async fn spawn_bootstrap(
     let (program, args) = transport_cmd
         .split_first()
         .ok_or_else(|| Error::Custom("empty transport command".into()))?;
-    let program = crate::path_resolver::resolve_program(program, extra_path);
+    let program = newt_common::shell::resolve_program(program, extra_path);
 
     // The script reads `NEWT_RUST_LOG` from its own environment. Inject the
     // assignment as the first line of the script body so it survives transport
@@ -1228,7 +1228,7 @@ async fn spawn_direct_copy(
         let (prog, args) = resolved
             .split_first()
             .ok_or_else(|| Error::Custom("empty arch_detect step".into()))?;
-        let prog = crate::path_resolver::resolve_program(prog, extra_path);
+        let prog = newt_common::shell::resolve_program(prog, extra_path);
         conn_log.log(format!(
             "Detecting target arch: {} {}",
             prog.display(),
@@ -1304,7 +1304,7 @@ async fn spawn_direct_copy(
     let (copy_program, copy_args) = copy_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty copy_cmd".into()))?;
-    let copy_program = crate::path_resolver::resolve_program(copy_program, extra_path);
+    let copy_program = newt_common::shell::resolve_program(copy_program, extra_path);
     conn_log.log(format!(
         "Copying agent: {} {}",
         copy_program.display(),
@@ -1337,7 +1337,7 @@ async fn spawn_direct_copy(
     let (exec_program, exec_args) = exec_argv
         .split_first()
         .ok_or_else(|| Error::Custom("empty exec_cmd".into()))?;
-    let exec_program = crate::path_resolver::resolve_program(exec_program, extra_path);
+    let exec_program = newt_common::shell::resolve_program(exec_program, extra_path);
     conn_log.log(format!(
         "Exec: {} {}",
         exec_program.display(),
@@ -1394,10 +1394,10 @@ async fn spawn_custom_shell(
         "Running custom command (skip_bootstrap={}): sh -c {:?}",
         skip_bootstrap, command
     ));
-    let mut cmd = tokio::process::Command::new("sh");
+    let (shell, shell_args) = newt_common::shell::run_via_shell(command);
+    let mut cmd = tokio::process::Command::new(shell);
     cmd.no_console_window();
-    cmd.arg("-c")
-        .arg(command)
+    cmd.args(shell_args)
         .env("NEWT_BOOTSTRAP", &script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

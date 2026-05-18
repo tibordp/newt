@@ -161,10 +161,12 @@ impl TerminalClient for Local {
 
         // Convert here — this runs in the process that owns the FS (the
         // agent in a remote session), so its own OS cfg is the right one.
+        // `launch_cwd` (not `to_native`): cmd.exe rejects the verbatim
+        // `\\?\C:\…` form and would silently open in %SystemRoot%.
         let cwd = options
             .working_dir
             .as_ref()
-            .map(|p| crate::vfs::local::to_native(p));
+            .map(|p| crate::vfs::local::launch_cwd(p));
 
         // ConPTY needs an initial size; the frontend issues a real resize
         // as soon as the xterm mounts, so the default is transient.
@@ -269,7 +271,7 @@ impl TerminalClient for Local {
                 // Convert here — this runs in the process that owns the
                 // FS (the agent in a remote session), so its own OS cfg
                 // is the right one.
-                cmd.current_dir(crate::vfs::local::to_native(&working_dir));
+                cmd.current_dir(crate::vfs::local::launch_cwd(&working_dir));
             }
 
             if let Some(env) = options.env {

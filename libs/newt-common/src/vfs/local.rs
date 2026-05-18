@@ -390,6 +390,45 @@ pub fn to_native(path: &Path) -> StdPathBuf {
     }
 }
 
+/// Native path suitable as a **spawned process's working directory**.
+///
+/// [`to_native`] returns the verbatim (`\\?\…`) form, which `std::fs` and
+/// the change watcher need but which `cmd.exe` chokes on: it reads
+/// `\\?\C:\…` as a UNC path, refuses to `cd` there, and silently starts
+/// in `%SystemRoot%` instead — so local terminals would open in the wrong
+/// directory. Strip the verbatim prefix so an ordinary local directory
+/// becomes a plain `C:\…` the shell accepts. Genuine network locations
+/// are intentionally left as conventional UNC (`\\server\share\…`) so the
+/// shell shows its own "UNC paths are not supported" notice rather than us
+/// masking it. Over-long paths (> `MAX_PATH`) keep the verbatim form,
+/// since stripping it wouldn't help `cmd` anyway and other shells can
+/// still use it.
+///
+/// On non-Windows this is just [`to_native`].
+pub fn launch_cwd(path: &Path) -> StdPathBuf {
+    #[cfg(windows)]
+    {
+        const MAX_PATH: usize = 260;
+        let s = to_native(path).to_string_lossy().into_owned();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            // Verbatim UNC → conventional UNC; cmd will (rightly) warn.
+            StdPathBuf::from(format!(r"\\{rest}"))
+        } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+            if rest.len() <= MAX_PATH {
+                StdPathBuf::from(rest)
+            } else {
+                StdPathBuf::from(s)
+            }
+        } else {
+            StdPathBuf::from(s)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        to_native(path)
+    }
+}
+
 /// Decode a host-native `std::path::Path` into LocalVfs path components.
 ///
 /// * Unix: walks `Normal` components — `/home/user` → `["home", "user"]`.

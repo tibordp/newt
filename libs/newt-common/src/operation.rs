@@ -537,13 +537,15 @@ async fn execute_run_command(
     reporter.maybe_send_progress(0, 0, command);
 
     let mut child = {
-        let mut cmd = tokio::process::Command::new("sh");
+        let (shell, shell_args) = crate::shell::run_via_shell(command);
+        let mut cmd = tokio::process::Command::new(shell);
         cmd.no_console_window();
-        cmd.args(["-c", command]);
+        cmd.args(shell_args);
         if let Some(dir) = working_dir {
             // Native conversion happens here — the executor runs where
-            // the FS is (the agent in a remote session).
-            cmd.current_dir(crate::vfs::local::to_native(dir));
+            // the FS is (the agent in a remote session). `launch_cwd`
+            // (not `to_native`) so cmd.exe accepts a local directory.
+            cmd.current_dir(crate::vfs::local::launch_cwd(dir));
         }
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());

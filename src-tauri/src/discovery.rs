@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::common::Error;
-use crate::path_resolver::resolve_program;
+use newt_common::shell::resolve_program;
 
 /// Read the user-configured extra-PATH list from preferences. Discovery
 /// handlers don't take a connection profile, so we pull it from the global

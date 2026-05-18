@@ -9,6 +9,7 @@ pub mod hot_paths;
 pub mod operation;
 pub mod proc;
 pub mod rpc;
+pub mod shell;
 pub mod sys;
 pub mod terminal;
 pub mod vfs;

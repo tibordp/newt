@@ -374,10 +374,11 @@ async fn execute_rendered(
 ) -> Result<(), Error> {
     if terminal_mode {
         let terminal_client = ctx.terminal_client()?;
+        let (shell, shell_args) = newt_common::shell::run_via_shell(&rendered);
         let options = newt_common::terminal::TerminalOptions {
             working_dir: Some(pane_path),
-            command: Some("sh".to_string()),
-            args: Some(vec!["-c".to_string(), rendered]),
+            command: Some(shell),
+            args: Some(shell_args),
             ..Default::default()
         };
 
