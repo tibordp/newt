@@ -1553,23 +1553,8 @@ pub fn spawn_main_window(
         let _ = app_handle.set_menu(menu);
     }
 
-    // Live theme updates when the user changes preferences.
-    {
-        let mut prefs_rx = prefs_handle.subscribe();
-        let prefs = prefs_handle.clone();
-        let window_clone = window.clone();
-        tauri::async_runtime::spawn(async move {
-            while prefs_rx.changed().await.is_ok() {
-                let theme = prefs
-                    .load()
-                    .appearance
-                    .theme
-                    .to_tauri_theme()
-                    .or_else(crate::detect_theme);
-                let _ = window_clone.set_theme(theme);
-            }
-        });
-    }
+    // Live title-bar theme updates when the user changes preferences.
+    crate::spawn_theme_sync(&window, prefs_handle.clone());
 
     Ok((window, ctx))
 }

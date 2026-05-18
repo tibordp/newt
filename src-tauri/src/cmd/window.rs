@@ -22,10 +22,27 @@ fn build_child_window(
     let label = uuid::Uuid::new_v4().to_string();
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
 
+    // Resolve the theme exactly as the main window does. This matters
+    // beyond the title bar: the WebView2 color scheme is a process-wide
+    // profile, and a window built without an explicit theme stamps it
+    // back to the OS setting on creation — so a prewarmed F3/F4 window
+    // (created in the background) would silently reset *every* window's
+    // webview to system mode. Building them with the app theme keeps the
+    // shared profile consistent.
+    let theme = global_ctx
+        .preferences()
+        .handle()
+        .load()
+        .appearance
+        .theme
+        .to_tauri_theme()
+        .or_else(crate::detect_theme);
+
     let mut builder =
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App(url.into()))
             .title(title)
             .inner_size(size.0, size.1)
+            .theme(theme)
             .center();
 
     if visible {
@@ -43,6 +60,12 @@ fn build_child_window(
     // started loading at this point, so no IPC has fired yet.
     let window = builder.build()?;
     crate::disable_webview_autofill(&window);
+
+    // Live title-bar updates on theme-preference changes. (Webview
+    // content already follows globally via the shared WebView2 profile /
+    // window appearance.)
+    crate::spawn_theme_sync(&window, global_ctx.preferences().handle());
+
     global_ctx
         .main_windows
         .lock()

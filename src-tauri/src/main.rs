@@ -323,6 +323,33 @@ pub(crate) fn disable_webview_autofill(window: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 pub(crate) fn disable_webview_autofill(_window: &tauri::WebviewWindow) {}
 
+/// Spawn a task that keeps `window`'s title-bar theme in sync with the
+/// theme preference. Shared by the main window and the child
+/// (viewer/editor) windows so the resolution + subscription lives in one
+/// place. Self-terminating: once the window is gone `set_theme` errors,
+/// which ends the loop — so per-window tasks don't accumulate (child
+/// windows are created/destroyed on every F3/F4).
+pub(crate) fn spawn_theme_sync(
+    window: &tauri::WebviewWindow,
+    prefs: crate::preferences::PreferencesHandle,
+) {
+    let mut prefs_rx = prefs.subscribe();
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        while prefs_rx.changed().await.is_ok() {
+            let theme = prefs
+                .load()
+                .appearance
+                .theme
+                .to_tauri_theme()
+                .or_else(detect_theme);
+            if window.set_theme(theme).is_err() {
+                break;
+            }
+        }
+    });
+}
+
 /// Diagnostic dump for `--print-config`. Prints the same identity info the
 /// About dialog shows, plus the resolved configuration directory and the
 /// agent binaries the host has on hand.
