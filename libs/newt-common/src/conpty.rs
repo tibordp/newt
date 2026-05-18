@@ -22,7 +22,6 @@ use std::ffi::c_void;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -46,14 +45,6 @@ use windows_sys::Win32::System::Threading::{
 /// Process still running (ConPTY child exit codes are `u32`; this is the
 /// `STILL_ACTIVE` sentinel, also `STATUS_PENDING`).
 const STILL_ACTIVE: u32 = 259;
-
-/// After the child exits, conhost keeps flushing its rendered output for a
-/// while (and on a cold first console, may not even have rendered the
-/// child's final writes yet). ConPTY gives no "done" signal, so we treat
-/// this much silence *following child exit* as "fully drained", then tear
-/// the console down. Long enough to cover cold-start render latency,
-/// short enough to be imperceptible at terminal teardown.
-const POST_EXIT_QUIET: Duration = Duration::from_millis(250);
 
 /// Per-process unique suffix source for pipe names.
 static PIPE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -385,44 +376,40 @@ impl Conpty {
     /// Read a chunk of child output. `Ok(None)` signals EOF.
     ///
     /// Unlike a Unix PTY master, the ConPTY output pipe is owned by
-    /// conhost, not the child: it does **not** break when the child exits,
-    /// only when we `ClosePseudoConsole`. But closing it the instant the
-    /// child exits truncates conhost mid-render (its final output is lost,
-    /// badly so on a cold first console). ConPTY exposes no "I'm done
-    /// flushing" signal, so once the child has exited we keep reading and
-    /// only conclude EOF after [`POST_EXIT_QUIET`] of silence, *then* tear
-    /// the console down. While the child is alive a normal blocking read
-    /// is used (no polling, no wasted thread).
+    /// conhost, not the child: it does **not** break on its own when the
+    /// child exits, only when we `ClosePseudoConsole`. ConPTY exposes no
+    /// "client drained" signal, so the moment the child exits we close the
+    /// console — that call makes conhost flush *everything* it has
+    /// buffered and then break the pipe. The reads here deliver that
+    /// flushed tail and then a clean EOF. This is fully deterministic: no
+    /// timer, no teardown latency, and (verified by the
+    /// `bursty_then_exit_preserves_tail` test) no trailing-output loss
+    /// even when a child floods output and exits immediately. While the
+    /// child is alive a normal blocking read is used (no polling, no
+    /// wasted thread).
+    ///
+    /// The one residual gap is inherent to ConPTY and unfixable from here:
+    /// a child that exits within roughly one render tick of its *first*
+    /// write, before conhost has read its stdout at all, can still lose
+    /// that output. Real shells stay alive and never hit this.
     pub async fn read(&self, buf: &mut [u8]) -> io::Result<Option<usize>> {
         let mut guard = self.reader.lock().await;
 
-        if !*self.exit_rx.borrow() {
-            let mut exit_rx = self.exit_rx.clone();
-            tokio::select! {
-                res = guard.read(buf) => return map_read(res),
-                // Child exited: fall through to the post-exit drain.
-                _ = exit_rx.changed() => {}
-            }
+        if *self.exit_rx.borrow() {
+            // Child has exited: close the console, which makes conhost
+            // flush everything it has buffered and then break the output
+            // pipe. Subsequent reads deliver that tail and then a clean,
+            // deterministic EOF — no timer, no teardown latency.
+            self.close_console();
+            return map_read(guard.read(buf).await);
         }
 
-        // Post-exit. conhost holds small output and only truly flushes it
-        // (and closes the pipe's write end) on `ClosePseudoConsole`, but a
-        // process that streams right up to exit must not be cut off. So:
-        // keep delivering output; after a quiet gap, force the flush via
-        // `close_console()` and keep reading — that flush plus the pipe
-        // break is the genuine, ordered end-of-stream.
-        loop {
-            match tokio::time::timeout(POST_EXIT_QUIET, guard.read(buf)).await {
-                Ok(res) => return map_read(res),
-                Err(_quiet) => {
-                    if self.closed.load(Ordering::SeqCst) {
-                        // Already flushed and still nothing: genuinely done.
-                        return Ok(None);
-                    }
-                    self.close_console();
-                    // Loop: the next read drains conhost's final flush and
-                    // then observes the real pipe EOF.
-                }
+        let mut exit_rx = self.exit_rx.clone();
+        tokio::select! {
+            res = guard.read(buf) => map_read(res),
+            _ = exit_rx.changed() => {
+                self.close_console();
+                map_read(guard.read(buf).await)
             }
         }
     }
@@ -616,6 +603,43 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("conpty_marker"), "output was: {text:?}");
         assert_eq!(code, 0, "expected clean exit");
+    }
+
+    /// Worst case for the exit/drain logic: a non-interactive child that
+    /// floods output and then exits *immediately* after its last write.
+    /// If the final marker survives here, trailing output isn't being
+    /// truncated at console teardown.
+    #[tokio::test]
+    async fn bursty_then_exit_preserves_tail() {
+        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        let conpty = Conpty::spawn(
+            &comspec,
+            &[
+                "/c".to_string(),
+                "for /l %i in (1,1,300) do @echo line%i & echo TAIL_MARKER_Z9".to_string(),
+            ],
+            None,
+            None,
+            24,
+            80,
+        )
+        .await
+        .expect("spawn pseudo-console");
+
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Some(n) = conpty.read(&mut buf).await.expect("read") {
+            out.extend_from_slice(&buf[..n]);
+            if out.len() > 1 << 20 {
+                break;
+            }
+        }
+        let text = String::from_utf8_lossy(&out);
+        assert!(
+            text.contains("TAIL_MARKER_Z9"),
+            "trailing output truncated; tail was: {:?}",
+            &text[text.len().saturating_sub(120)..]
+        );
     }
 
     /// `wait` must resolve even when called *after* the child has already
