@@ -87,3 +87,7 @@ objc = "*"
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+# Compile the platform-gated specta-visible items (e.g. the WSL picker
+# payload) even off their target OS, so `cargo xtask gen-bindings` emits a
+# host-independent `bindings.ts`. Never enabled for shipping builds.
+specta-bindings = []

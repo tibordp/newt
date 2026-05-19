@@ -175,6 +175,8 @@ fn help() {
     println!("      build agents (default: every triple this host can produce)");
     println!("  cargo xtask clean");
     println!("      remove agents/ and target-agents/");
+    println!("  cargo xtask gen-bindings [--check]");
+    println!("      regenerate src/lib/bindings.ts (host-independent)");
 }
 
 fn run() -> Result<(), String> {
@@ -227,12 +229,60 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "gen-bindings" => gen_bindings(rest.iter().any(|a| a == "--check")),
         "help" | "-h" | "--help" => {
             help();
             Ok(())
         }
         other => Err(format!("unknown command: {other} (try `cargo xtask help`)")),
     }
+}
+
+/// Regenerate `src/lib/bindings.ts` from the Rust command registry, built
+/// with `--features specta-bindings` so platform-gated specta items are
+/// included regardless of host OS (the output must not depend on the build
+/// host). `--check` fails if the committed copy then differs.
+fn gen_bindings(check: bool) -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("cannot locate workspace root")?
+        .to_path_buf();
+    let out = root.join("src").join("lib").join("bindings.ts");
+
+    let status = Command::new("cargo")
+        .current_dir(&root)
+        .args([
+            "run",
+            "-p",
+            "newt",
+            "--features",
+            "specta-bindings",
+            "--quiet",
+            "--",
+            "--export-bindings",
+        ])
+        .arg(&out)
+        .status()
+        .map_err(|e| format!("failed to spawn cargo: {e}"))?;
+    if !status.success() {
+        return Err("bindings export failed".into());
+    }
+
+    if check {
+        let diff = Command::new("git")
+            .current_dir(&root)
+            .args(["diff", "--exit-code", "--", "src/lib/bindings.ts"])
+            .status()
+            .map_err(|e| format!("failed to spawn git: {e}"))?;
+        if !diff.success() {
+            return Err(
+                "src/lib/bindings.ts is out of date — run `cargo xtask gen-bindings` and commit"
+                    .into(),
+            );
+        }
+    }
+    println!("wrote {}", out.display());
+    Ok(())
 }
 
 fn main() -> ExitCode {

@@ -15,8 +15,9 @@ case "$OSTYPE" in
 esac
 cargo clippy --workspace $CLIPPY_EXCLUDES -- -D warnings
 
-# Regenerate tauri-specta TS bindings; fail if they drift from what's staged.
-cargo test -p newt --quiet export_typescript_bindings >/dev/null
+# Regenerate tauri-specta TS bindings (host-independent via the
+# `specta-bindings` feature); fail if they drift from what's staged.
+cargo xtask gen-bindings >/dev/null
 git diff --name-only -- src/lib/bindings.ts | if read -r; then
   echo "src/lib/bindings.ts is out of date — please re-stage:"
   echo "  src/lib/bindings.ts"

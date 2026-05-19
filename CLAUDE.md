@@ -29,6 +29,10 @@ Both modes use the exact same traits, so the Tauri backend and frontend code is 
 
 Remote VFSes (S3 today, SFTP planned) are orthogonal to the session mode. A VFS is mounted into the `VfsRegistry` and accessed through the same `Filesystem` trait. In a local session, the VFS connection originates from the Tauri process; in a remote session, it originates from the agent — so e.g. an S3 mount in a remote session uses the remote host's AWS credentials and network.
 
+### RPC boundary
+
+`std::path::Path`/`PathBuf` must **never** appear on a serde-serialized type that crosses the agent↔host RPC boundary (anything sent via the `Communicator` or an `api`/`VfsDescriptor` payload). Use `newt_common::vfs::path::PathBuf` (implements `specta::Type` + serde) or `String`. Native conversion happens only on the side that physically owns the filesystem. Treat this as a litmus test whenever touching an RPC/`api` type or adding a path field — audit the whole type, don't symptom-fix one field (`agent_resolver` host-local paths are exempt — never serialized).
+
 ## UX: Keyboard-Centric Design
 
 This is a keyboard-centric app. All UX decisions should keep efficient keyboard navigation firmly in mind.
@@ -74,10 +78,17 @@ When adding state that affects the UI beyond a single component (e.g. a new pane
 
 When a task or direction is unclear — especially around architecture or design intent — stop and ask rather than guessing. The user likely has a specific vision; don't fill in the blanks with assumptions.
 
+## Code Style
+
+- **Comments:** sparse — only non-obvious rationale (a trap, a why). Don't narrate what the code says, and don't repeat a point in both a comment and an adjacent doc. `///` on a `clap` field is `--help` text: one short line.
+- **Match existing patterns over ceremony:** before adding auth/validation/guards/error-handling, check how analogous code here handles the same boundary; justify any deviation with a concrete threat rather than "to be safe".
+- **Sync↔async bridging is a smell:** `block_on`, `spawn_blocking` wrappers, blocking inside async (or vice versa) need explicit justification — it's not always avoidable, but reach for the async-native or sync-native path first.
+- **No reflexive sleeps/timeouts/retries:** sprinkling `sleep`s, arbitrary timeouts, or "short" retry loops to paper over a race is almost always wrong and needs very high justification. Fix the synchronization (await the actual signal/handle) instead.
+
 ## Git Commits
 
 When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: tick off / delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added).
 
-Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any and fix the issues surface.
+Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any, and fix the issues it surfaces. Never `git stash` to satisfy the hook's whole-tree gate; if several logical commits are pending, sequence them instead.
 
 Do not add `Co-Authored-By` lines to commit messages.

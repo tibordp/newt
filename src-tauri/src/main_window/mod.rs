@@ -463,7 +463,11 @@ pub enum ModalDataKind {
     SelectVfs {
         targets: Vec<VfsTarget>,
     },
-    #[cfg(windows)]
+    // Specta-visible, so compiled under the bindings feature too (keeps
+    // bindings.ts host-independent). Constructed only on Windows; the
+    // allow covers the off-Windows bindings build.
+    #[cfg(any(windows, feature = "specta-bindings"))]
+    #[cfg_attr(not(windows), allow(dead_code))]
     SelectWslDistro {
         distros: Vec<crate::discovery::wsl::WslDistro>,
     },

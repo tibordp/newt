@@ -5,8 +5,12 @@
 //!
 //! `wsl` is the odd one out: it reads the registry rather than spawning a
 //! CLI, but it's still a stateless transport enumerator so it lives here.
+//! It also compiles under the `specta-bindings` feature (off-Windows it's
+//! inert) so the bindings export is host-independent; `allow(dead_code)`
+//! covers that build since only `#[cfg(windows)]` callers use it.
 
-#[cfg(windows)]
+#[cfg(any(windows, feature = "specta-bindings"))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub mod wsl;
 
 use std::time::Duration;

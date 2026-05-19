@@ -370,6 +370,12 @@ pub async fn connect_wsl_distro(ctx: MainWindowContext, distro: String) -> Resul
     })
 }
 
+// Doc comments below must stay identical to the `#[cfg(windows)]`
+// definitions: tauri-specta emits them as JSDoc, so a mismatch makes
+// `bindings.ts` depend on the build host.
+
+/// Top-level "Connect to WSL Distribution..." command. With one distro,
+/// connect straight away; with several, open the picker; with none, error.
 #[cfg(not(windows))]
 #[tauri::command]
 #[specta::specta]
@@ -377,6 +383,7 @@ pub async fn cmd_connect_wsl(_pane_handle: PaneHandle) -> Result<(), Error> {
     Err(Error::Custom("WSL is only available on Windows".into()))
 }
 
+/// Picked a distro in the WSL picker — open a session to it.
 #[cfg(not(windows))]
 #[tauri::command]
 #[specta::specta]

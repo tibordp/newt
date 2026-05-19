@@ -100,6 +100,11 @@ struct Args {
     #[arg(long)]
     print_config: bool,
 
+    /// Export tauri-specta bindings to PATH and exit (xtask use).
+    #[cfg(feature = "specta-bindings")]
+    #[arg(long, value_name = "PATH")]
+    export_bindings: Option<std::path::PathBuf>,
+
     /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
     #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
     verbose: u8,
@@ -545,6 +550,14 @@ fn parse_kube_spec(spec: &str) -> Result<crate::connections::ConnectionKind, Err
 
 fn main() {
     let args = Args::parse();
+
+    #[cfg(feature = "specta-bindings")]
+    if let Some(path) = &args.export_bindings {
+        cmd::create_specta_builder()
+            .export(cmd::typescript_export_config(), path)
+            .expect("failed to export tauri-specta bindings");
+        return;
+    }
     apply_log_flags(args.verbose, args.quiet);
     pretty_env_logger::init();
 
@@ -619,12 +632,8 @@ fn main() {
 
     let specta_builder = cmd::create_specta_builder();
 
-    // In debug builds, regenerate `src/lib/bindings.ts` from the Rust command
-    // registry on every startup. CI fails if the committed bindings drift.
-    #[cfg(debug_assertions)]
-    if let Err(e) = specta_builder.export(cmd::typescript_export_config(), cmd::BINDINGS_PATH) {
-        log::warn!("failed to export tauri-specta bindings: {}", e);
-    }
+    // Bindings are regenerated out-of-band by `cargo xtask gen-bindings`
+    // (see `--export-bindings` above), not on every startup.
 
     let inner_handler = specta_builder.invoke_handler();
     let handler = cmd::wrap_with_modal_close_middleware(inner_handler);
