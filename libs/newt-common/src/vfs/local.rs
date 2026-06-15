@@ -761,7 +761,7 @@ impl Vfs for LocalVfs {
             let size = meta.len();
             let (mode_field, user_field, group_field) = unix_owner_bits(&meta, &cache);
 
-            // MIME detection for files: try extension first, then content sniffing
+            // Try extension first, then content sniffing.
             let mime_type = if is_dir {
                 None
             } else {
@@ -1045,7 +1045,7 @@ impl Vfs for LocalVfs {
         let from = to_native(from);
         let to = to_native(to);
         tokio::task::spawn_blocking(move || {
-            // Try FICLONE (instant COW clone) first on Linux
+            // Try FICLONE (instant COW clone) first on Linux.
             #[cfg(target_os = "linux")]
             {
                 use std::os::unix::io::AsRawFd;

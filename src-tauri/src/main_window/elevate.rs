@@ -7,11 +7,10 @@
 //! Security: the pipe name is an unguessable UUID, the server is created
 //! with `first_pipe_instance(true)` + `max_instances(1)` (no squatting, one
 //! connection ever), and the default named-pipe DACL admits only the
-//! creating user + admins. There is no auth handshake — deliberately the
-//! same model the existing askpass/conpty named pipes use. This protects
-//! against *other users*; it does not (and cannot) defend against a
-//! same-user attacker, who could already tamper with the unelevated Newt
-//! process itself.
+//! creating user + admins. There is no auth handshake (same model as the
+//! askpass/conpty named pipes). This protects against *other users*; it
+//! does not (and cannot) defend against a same-user attacker, who could
+//! already tamper with the unelevated Newt process itself.
 //!
 //! Windows-only module.
 
@@ -55,20 +54,18 @@ pub async fn spawn_elevated_windows(
 
     let pipe_name = format!(r"\\.\pipe\newt-elevated-{}", uuid::Uuid::new_v4());
 
-    // Create the (single-instance) server before launching so the agent can
-    // connect immediately.
+    // Create the server before launching so the agent can connect immediately.
     let server = ServerOptions::new()
         .first_pipe_instance(true)
         .max_instances(1)
         .create(&pipe_name)
         .map_err(|e| Error::Custom(format!("failed to create elevated pipe: {}", e)))?;
 
-    // ShellExecuteEx "runas" → UAC consent prompt. No stdio redirection is
-    // possible; the agent reaches us via `--pipe`. Kept in a sync block so
-    // the raw-pointer-bearing `SHELLEXECUTEINFOW` is dropped before the
-    // `.await` below (otherwise the future would be `!Send`). The returned
-    // `WinProcess` is `Send`; if the connect fails, dropping it terminates
-    // the orphaned elevated agent.
+    // ShellExecuteEx "runas" → UAC consent prompt; the agent reaches us via
+    // `--pipe`. Scoped to a sync block so the raw-pointer-bearing
+    // `SHELLEXECUTEINFOW` is dropped before the `.await` below, otherwise the
+    // future would be `!Send`. Dropping the returned `WinProcess` (e.g. on a
+    // failed connect) terminates the orphaned elevated agent.
     let process = {
         let verb = wide("runas");
         let file = wide(&agent_path);

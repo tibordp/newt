@@ -74,15 +74,10 @@ export const unwrap = async <T>(
   return r.ok;
 };
 
-// ---------------------------------------------------------------------------
-// Dynamic-name escape hatches.
-//
-// Prefer the typed `commands.X(...)` + `safe(...)` wrappers above. These
-// stringly-typed shims exist for the few call sites that compute the command
-// name at runtime — the command palette's `cmd_<id>` dispatch, the per-pane
-// context menus that take a command-name prop, etc. — where TS can't
+// Dynamic-name escape hatches. Prefer the typed wrappers above; these
+// stringly-typed shims exist for call sites that compute the command name at
+// runtime (command-palette `cmd_<id>` dispatch, context menus) where TS can't
 // statically narrow the args anyway.
-// ---------------------------------------------------------------------------
 
 export const safeCommand = async (
   command: string,

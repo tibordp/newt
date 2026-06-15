@@ -370,9 +370,9 @@ pub async fn connect_wsl_distro(ctx: MainWindowContext, distro: String) -> Resul
     })
 }
 
-// Doc comments below must stay identical to the `#[cfg(windows)]`
-// definitions: tauri-specta emits them as JSDoc, so a mismatch makes
-// `bindings.ts` depend on the build host.
+// Doc comments below must stay identical to the `#[cfg(windows)]` defs:
+// tauri-specta emits them as JSDoc, so a mismatch makes `bindings.ts`
+// depend on the build host.
 
 /// Top-level "Connect to WSL Distribution..." command. With one distro,
 /// connect straight away; with several, open the picker; with none, error.
@@ -409,8 +409,8 @@ pub fn destroy_window(window: Window) -> Result<(), Error> {
 #[tauri::command]
 #[specta::specta]
 pub fn set_window_title(webview_window: WebviewWindow, title: String) -> Result<(), Error> {
-    // NOTE: set_title doesn't visually update on Wayland (upstream Tauri/GTK bug).
-    // Works on X11 and macOS. Keeping it so it works where it can.
+    // set_title doesn't visually update on Wayland (upstream Tauri/GTK bug);
+    // works on X11 and macOS.
     webview_window.set_title(&title)?;
     Ok(())
 }

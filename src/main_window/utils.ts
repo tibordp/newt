@@ -31,12 +31,10 @@ export const getSiPrefixedNumber = (number: number): string => {
   const siBase = (base < 0 ? Math.ceil : Math.floor)(base / EXP_STEP_SIZE);
   const prefix = siPrefixes[siBase + SI_PREFIXES_CENTER_INDEX];
 
-  // return number as-is if no prefix is available
   if (siBase === 0) return number.toString();
 
-  // We're left with a number which needs to be devided by the power of 10e[base]
-  // This outcome is then rounded two decimals and parsed as float to make sure those
-  // decimals only appear when they're actually requird (10.0 -> 10, 10.90 -> 19.9, 10.01 -> 10.01)
+  // Scale by the prefix's power of 10; round to 2 decimals and re-parse so
+  // trailing zeros drop (10.0 → 10, 10.90 → 10.9, 10.01 → 10.01).
   const baseNumber = parseFloat(
     (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2),
   );

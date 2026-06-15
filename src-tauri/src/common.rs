@@ -29,7 +29,6 @@ impl From<newt_common::Error> for Error {
     }
 }
 
-// we must manually implement serde::Serialize
 impl serde::Serialize for Error {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

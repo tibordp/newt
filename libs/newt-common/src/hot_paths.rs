@@ -151,9 +151,8 @@ fn collect_standard_folders(out: &mut Vec<HotPathEntry>) {
 fn collect_gtk_bookmarks(out: &mut Vec<HotPathEntry>) {
     use std::fs;
 
-    // GTK 3/4 bookmarks location (GTK4 still uses the gtk-3.0 path)
+    // GTK4 still uses the gtk-3.0 path; `.gtk-bookmarks` is the legacy fallback.
     let gtk3_path = dirs::config_dir().map(|c| c.join("gtk-3.0").join("bookmarks"));
-    // Legacy fallback
     let legacy_path = dirs::home_dir().map(|h| h.join(".gtk-bookmarks"));
 
     let content = gtk3_path
@@ -302,8 +301,7 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
         None => return,
     };
 
-    // Extract href + modified from <bookmark> elements and collect parent dirs.
-    // We track the most recent modification timestamp per parent directory.
+    // Track the most recent <bookmark> modified timestamp per parent dir.
     let mut dir_timestamps: HashMap<std::path::PathBuf, String> = HashMap::new();
     let mut reader = Reader::from_str(&content);
     let mut buf = Vec::new();
@@ -349,12 +347,11 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
         buf.clear();
     }
 
-    // Sort by most recent timestamp, take top 20
     let mut dirs: Vec<(std::path::PathBuf, String)> = dir_timestamps.into_iter().collect();
     dirs.sort_by(|a, b| b.1.cmp(&a.1));
     dirs.truncate(20);
 
-    // Filter out standard folders (they're already shown under StandardFolder)
+    // Standard folders are already shown under StandardFolder.
     let standard_dirs: Vec<std::path::PathBuf> = [
         dirs::home_dir(),
         dirs::desktop_dir(),

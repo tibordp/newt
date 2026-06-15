@@ -11,8 +11,6 @@ import "./styles/globals.scss";
 import { safe } from "./lib/ipc";
 import { commands } from "./lib/bindings";
 
-// --- React app ---
-
 const router = createBrowserRouter([
   {
     path: "/",
@@ -60,7 +58,6 @@ function App({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    //document.body.style.zoom = zoom.toString();
     safe(commands.zoom(zoom));
   }, [zoom]);
 

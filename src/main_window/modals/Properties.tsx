@@ -72,15 +72,13 @@ function cycleBit(
   modeClear: number,
   bit: number,
 ): [number, number] {
+  // Cycle: checked → unchecked → indeterminate → checked.
   const state = getBitState(modeSet, modeClear, bit);
   if (state === "checked") {
-    // checked → unchecked
     return [modeSet & ~bit, modeClear | bit];
   } else if (state === "unchecked") {
-    // unchecked → indeterminate (leave unchanged)
     return [modeSet & ~bit, modeClear & ~bit];
   } else {
-    // indeterminate → checked
     return [modeSet | bit, modeClear & ~bit];
   }
 }

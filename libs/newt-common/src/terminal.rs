@@ -464,12 +464,9 @@ struct Passwd<'a> {
 /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
 #[cfg(unix)]
 fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error> {
-    // Create zeroed passwd struct.
     let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
-
     let mut res: *mut libc::passwd = std::ptr::null_mut();
 
-    // Try and read the pw file.
     let uid = unsafe { libc::getuid() };
     let status = unsafe {
         libc::getpwuid_r(
@@ -490,10 +487,8 @@ fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error>
         return Err(Error::custom("pw not found"));
     }
 
-    // Sanity check.
     assert_eq!(entry.pw_uid, uid);
 
-    // Build a borrowed Passwd struct.
     Ok(Passwd {
         name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
         dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },

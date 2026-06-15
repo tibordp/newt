@@ -303,7 +303,6 @@ impl DirectoryTree {
         let entries = match self.dirs.get(&resolved) {
             Some(entries) => entries,
             None => {
-                // Check if it exists as a file rather than a directory
                 if self.lookup_entry(&resolved).is_some() {
                     return Err(Error {
                         kind: ErrorKind::NotADirectory,

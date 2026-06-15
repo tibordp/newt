@@ -3,11 +3,11 @@
 //! return parsed JSON. Failures fold to empty results + a warning string so the
 //! dialog can show a single inline hint rather than a blocking error.
 //!
-//! `wsl` is the odd one out: it reads the registry rather than spawning a
-//! CLI, but it's still a stateless transport enumerator so it lives here.
-//! It also compiles under the `specta-bindings` feature (off-Windows it's
-//! inert) so the bindings export is host-independent; `allow(dead_code)`
-//! covers that build since only `#[cfg(windows)]` callers use it.
+//! `wsl` reads the registry rather than spawning a CLI, but is still a
+//! stateless transport enumerator. It also compiles under `specta-bindings`
+//! (inert off-Windows) so the bindings export is host-independent;
+//! `allow(dead_code)` covers that build, where only `#[cfg(windows)]`
+//! callers use it.
 
 #[cfg(any(windows, feature = "specta-bindings"))]
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -174,8 +174,7 @@ fn parse_ssh_config() -> DiscoveryResult<SshHostEntry> {
     if let Some(e) = current {
         out.push(e);
     }
-    // Note: we don't follow `Include` directives. Most real configs put their
-    // hosts top-level; revisit if users complain.
+    // `Include` directives are not followed.
     DiscoveryResult::ok(out)
 }
 

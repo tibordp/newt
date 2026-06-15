@@ -232,9 +232,8 @@ impl PathBuf {
             "VFS path component must not contain '/': {segment:?}"
         );
         if self.inner == "/" {
+            // "/" + "a" → "/a" (no extra separator needed at the root).
             self.inner.push_str(segment);
-            // "/" + "a" → "/a" — but we pushed onto "/", giving "/a"? No:
-            // inner is "/", push "a" → "/a". Correct.
         } else {
             self.inner.push('/');
             self.inner.push_str(segment);

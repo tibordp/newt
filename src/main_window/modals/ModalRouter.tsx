@@ -15,10 +15,8 @@ import { commands } from "../../lib/bindings";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
-// Modal types not rendered by this router. These are anchored per-pane
-// (rendered inline by Pane via Radix DropdownMenu): the VFS selector and
-// the history navigator. They each have their own outside-click /
-// dismissal behavior driven by Radix.
+// Anchored per-pane (rendered inline by Pane via Radix DropdownMenu, with
+// their own dismissal behavior), so not routed here.
 const EXCLUDED_MODAL_TYPES = ["select_vfs", "history_navigator"];
 
 export default function ModalRouter({
@@ -34,9 +32,9 @@ export default function ModalRouter({
   const closeModal = useCallback(() => safe(commands.closeModal()), []);
 
   function renderContent() {
-    // WSL is Windows-only. Gating the sole reference to the import behind
-    // the build-time `__WINDOWS__` literal lets Rollup DCE drop both this
-    // branch and `SelectWslDistro.tsx` from non-Windows bundles.
+    // Gating the sole import reference behind the build-time `__WINDOWS__`
+    // literal lets Rollup DCE drop this branch and SelectWslDistro.tsx from
+    // non-Windows bundles.
     if (__WINDOWS__ && modalType === "select_wsl_distro") {
       return (
         <SelectWslDistroContent distros={state?.modal?.data?.distros ?? []} />

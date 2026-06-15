@@ -159,8 +159,6 @@ impl PreferencesManager {
         self.config_dir.join("settings.toml")
     }
 
-    /// Reload preferences from disk and update the stored state.
-    /// Returns the new resolved preferences for immediate emission.
     /// Reload preferences from disk, update stored state, notify subscribers,
     /// and emit to the frontend.
     pub fn reload(&self) {
@@ -565,8 +563,7 @@ impl PreferencesManager {
         let config_dir_owned = config_dir.to_owned();
         let app_handle = app_handle.clone();
 
-        // Debounce: we'll use notify's built-in debouncing is not available in
-        // notify 8, so we do manual debounce with a channel.
+        // notify 8 has no built-in debouncing; debounce manually via a channel.
         let (tx, rx) = std::sync::mpsc::channel();
 
         let mut watcher = match RecommendedWatcher::new(

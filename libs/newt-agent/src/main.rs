@@ -146,7 +146,7 @@ fn run_askpass(sock_path: &str) -> i32 {
 }
 
 fn main() {
-    // Check for askpass mode before initializing anything heavy
+    // Askpass mode short-circuits before any heavy init.
     if let Ok(sock_path) = std::env::var("NEWT_ASKPASS_SOCK") {
         std::process::exit(run_askpass(&sock_path));
     }
@@ -225,7 +225,7 @@ async fn run_agent() -> Result<(), Error> {
 
     let stream = Duplex::new(rx, tx);
 
-    // Create outbox channel first so OperationDispatcher can use it
+    // Outbox first so OperationDispatcher can use it.
     let (outbox, inbox) = Communicator::create_outbox();
 
     let root_vfs = Arc::new(LocalVfs::new());

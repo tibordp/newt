@@ -410,10 +410,10 @@ impl Filesystem for Remote {
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             );
 
-            // Register the batch sender so HostDispatcher can route Notify messages to it
+            // Register the batch sender so notifications can be routed to it.
             self.pending_streams.lock().insert(stream_id, batch_tx);
 
-            // RAII guard to ensure cleanup even on cancellation/error
+            // RAII guard to ensure cleanup even on cancellation/error.
             struct StreamGuard {
                 stream_id: StreamId,
                 pending_streams: PendingStreams,

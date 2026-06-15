@@ -725,13 +725,12 @@ fn main() {
                 match event {
                     tauri::WindowEvent::Destroyed => {
                         global_ctx.destroy_window(window.label()).unwrap();
-                        // Exit when the last real main window is gone. On macOS,
-                        // Tauri would otherwise keep the process alive (standard
-                        // Cocoa behavior); we want the same semantics as
-                        // pre-refactor, when each main window was its own
-                        // process. `main_windows` also contains aliased entries
-                        // for prewarmed/active viewer/editor children (value is
-                        // the parent's ctx), so filter to self-parented entries.
+                        // Exit when the last real main window is gone (on
+                        // macOS, Tauri would otherwise keep the process alive
+                        // per standard Cocoa behavior). `main_windows` also
+                        // contains aliased entries for prewarmed/active
+                        // viewer/editor children (value is the parent's ctx),
+                        // so filter to self-parented entries.
                         let has_real_main = global_ctx
                             .main_windows
                             .lock()

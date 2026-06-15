@@ -66,10 +66,8 @@ function FileName({
     </div>
   );
 
-  // Search results carry a pre-rendered `source_display` from the host
-  // (parent directory formatted through the source VFS's descriptor).
-  // Render it inline as a "where from" hint so identically-named matches
-  // are distinguishable at a glance.
+  // `source_display` (pre-rendered by the host for search results) is shown
+  // inline as a "where from" hint so identically-named matches stay distinct.
   return (
     <div
       className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${

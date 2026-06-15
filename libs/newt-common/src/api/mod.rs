@@ -85,11 +85,8 @@ pub const API_HOST_ASKPASS: Api = Api(624);
 mod vfs;
 pub use vfs::{VfsDispatcher, VfsReadChunkDispatcher};
 
-// ---------------------------------------------------------------------------
 // bincode helpers — propagate decode/encode failures as structured errors so
-// a malformed payload (deliberately bad agent, version skew, …) doesn't crash
-// the whole process.
-// ---------------------------------------------------------------------------
+// a malformed payload (bad agent, version skew, …) doesn't crash the process.
 
 pub(super) fn decode<'a, T: serde::Deserialize<'a>>(req: &'a [u8]) -> Result<T, Error> {
     bincode::deserialize(req).map_err(|e| Error::custom(format!("RPC decode: {}", e)))
@@ -150,7 +147,6 @@ impl Dispatcher for FilesystemDispatcher {
                     crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
                 );
 
-                // Spawn a forwarder task: batches → Notify messages
                 let outbox = self.outbox.clone();
                 let forwarder = tokio::spawn(async move {
                     while let Some(file_list) = batch_rx.recv().await {
@@ -164,7 +160,7 @@ impl Dispatcher for FilesystemDispatcher {
 
                 let ret = self.filesystem.list_files(path, opts, Some(batch_tx)).await;
 
-                // Ensure all batch notifications are sent before returning the response
+                // Drain all batch notifications before returning the response.
                 let _ = forwarder.await;
 
                 encode(&ret)?
@@ -405,11 +401,10 @@ impl Dispatcher for OperationDispatcher {
                 let next_issue_id = self.next_issue_id.clone();
                 let id = request.id;
 
-                // Create a progress channel and bridge it to the RPC outbox
+                // Bridge the progress channel to the RPC outbox.
                 let (progress_tx, mut progress_rx) =
                     tokio::sync::mpsc::unbounded_channel::<operation::OperationProgress>();
 
-                // Spawn a task to forward progress to the RPC outbox
                 let outbox_for_bridge = outbox.clone();
                 tokio::spawn(async move {
                     while let Some(progress) = progress_rx.recv().await {
@@ -583,11 +578,9 @@ impl VfsRegistryManager {
 #[async_trait::async_trait]
 impl VfsManager for VfsRegistryManager {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
-        // Allocate the id up front so we can hand the mount a progress
-        // reporter that's already scoped to its final VfsId. The id is
-        // not visible to anyone until we `insert` below, so a mount
-        // that fails (returns Err) leaks nothing — the id just goes
-        // unused.
+        // Allocate the id up front so the mount gets a progress reporter
+        // already scoped to its final VfsId. The id isn't visible until
+        // `insert` below, so a failed mount just leaves it unused.
         let vfs_id = self.registry.allocate_id();
         let progress_reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
             crate::vfs::ScopedReporter::new(self.progress_sink.clone(), vfs_id),
@@ -614,11 +607,9 @@ impl VfsManager for VfsRegistryManager {
             MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
-                // Content matching needs a FileReader; the natural one
-                // here is the registry-backed reader so search inside a
-                // SearchVfs's source automatically follows future
-                // redirects (defensive — for v1 the source is always
-                // the local filesystem etc., but the trait is the same).
+                // Content matching needs a FileReader; use the
+                // registry-backed reader so search inside a SearchVfs's
+                // source follows registry redirects.
                 let file_reader: std::sync::Arc<dyn crate::file_reader::FileReader> =
                     std::sync::Arc::new(crate::vfs::VfsRegistryFileReader::new(
                         self.registry.clone(),

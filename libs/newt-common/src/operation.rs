@@ -614,9 +614,7 @@ async fn execute_debug_sleep(
 
     // Work phase — tick once per simulated item. Raise a synthetic
     // AlreadyExists conflict at four points so the issue-resolution UI
-    // (and the apply-to-all checkbox) can be exercised: pick Overwrite/Skip
-    // and tick the box on the first one and the remaining three should
-    // resolve automatically via sticky resolutions.
+    // and the apply-to-all/sticky-resolution path can be exercised.
     let conflict_at: [u64; 4] = [
         TOTAL_ITEMS / 5,
         2 * TOTAL_ITEMS / 5,
@@ -1202,12 +1200,11 @@ async fn preserve_metadata(
     dst_path: &Path,
     options: &CopyOptions,
 ) -> Result<(), crate::Error> {
-    // Skip entirely if destination doesn't support metadata
     if !dst_vfs.descriptor().can_set_metadata() {
         return Ok(());
     }
 
-    // Always try to preserve permissions; additionally preserve timestamps/owner/group if requested
+    // Permissions are always preserved; timestamps/owner/group only if requested.
     let meta = match src_vfs.get_metadata(src_path).await {
         Ok(m) => m,
         Err(_) => return Ok(()), // source doesn't support metadata, nothing to preserve
@@ -1229,7 +1226,6 @@ async fn preserve_metadata(
         to_set.gid = meta.gid;
     }
 
-    // Ignore errors on destination that doesn't support metadata
     let _ = dst_vfs.set_metadata(dst_path, &to_set).await;
 
     Ok(())
@@ -1265,7 +1261,6 @@ async fn execute_copy(
     let dst_vfs_id = destination.vfs_id;
     let same_vfs = src_vfs_id == dst_vfs_id;
 
-    // Validate all sources share the same VFS
     if let Some(mismatched) = sources.iter().find(|s| s.vfs_id != src_vfs_id) {
         return Err(crate::Error::custom(format!(
             "all sources must be on the same VFS (expected {}, got {})",
@@ -1288,7 +1283,6 @@ async fn execute_copy(
 
     let source_paths: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
 
-    // Handle create_symlink for single-file copy
     if options.create_symlink {
         if !dst_descriptor.can_create_symlink() {
             return Err(crate::Error::custom(
@@ -1339,13 +1333,12 @@ async fn execute_copy(
             .unwrap_or_else(|| entry.dest.as_wire_str().to_string());
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
-        // Check for destination conflicts
         let dest_file = dst_vfs.file_info(&entry.dest).await;
         if let Ok(dest_file) = dest_file {
             match &entry.kind {
                 CopyEntryKind::Directory => {
                     if dest_file.is_dir {
-                        // Merge: directory already exists, skip mkdir
+                        // Directory already exists — merge, skip mkdir.
                         items_done += 1;
                         continue;
                     } else {
@@ -1751,7 +1744,6 @@ async fn execute_set_metadata(
         *p = context.registry.dereference(p).await;
     }
 
-    // Collect all entries to process
     let mut all_entries: Vec<(Arc<dyn Vfs>, PathBuf, String)> = Vec::new();
 
     for vfs_path in &paths {
@@ -1796,7 +1788,6 @@ async fn execute_set_metadata(
         while retry {
             retry = false;
 
-            // Compute the new permissions if mode bits are being changed
             let new_permissions = if has_mode_changes {
                 match vfs.file_info(local_path).await {
                     Ok(file_info) => {
@@ -1897,7 +1888,7 @@ async fn execute_delete(
         let descriptor = vfs.descriptor();
 
         if descriptor.can_remove_tree() {
-            // Fast path: single atomic removal, count as 1 item
+            // Fast path: single atomic removal, counts as 1 item.
             all_entries.push(ResolvedDeleteEntry {
                 vfs,
                 path: local_path,

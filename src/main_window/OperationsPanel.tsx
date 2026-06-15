@@ -283,11 +283,10 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        // Click-out / programmatic close: background. Esc is intercepted
-        // separately below and routes to cancel — that's the panic-cancel
-        // reflex (Esc gets me out of a runaway destructive op fast),
-        // while click-out stays forgiving (accidental clicks shouldn't
-        // throw away work).
+        // Click-out / programmatic close backgrounds the op (forgiving:
+        // an accidental click shouldn't discard work). Esc is intercepted
+        // below and routes to cancel instead (fast bail-out for a runaway
+        // destructive op).
         if (!open) backgroundOp();
       }}
     >

@@ -7,10 +7,8 @@
 //! describes one distro (`DistributionName`, `State`), and the parent key's
 //! `DefaultDistribution` value names the default distro's subkey.
 //!
-//! This module is compiled on Windows *and* whenever the `specta-bindings`
-//! feature is on (so `cargo xtask gen-bindings` sees `WslDistro` /
-//! `select_wsl_distro` regardless of host OS — `bindings.ts` must not depend
-//! on the build host). The actual registry reading is `#[cfg(windows)]`;
+//! Compiled on Windows and under `specta-bindings` (so `bindings.ts` doesn't
+//! depend on the build host). The registry reading is `#[cfg(windows)]`;
 //! elsewhere the public functions return empty.
 
 use serde::Serialize;

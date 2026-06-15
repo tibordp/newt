@@ -197,7 +197,6 @@ impl Dispatcher for VfsDispatcher {
                         write_sessions.lock().remove(&stream_id);
                         Ok(())
                     });
-                    // Update abort handle and store JoinHandle for FINISH to await.
                     write_task_handles.lock().insert(stream_id, handle);
 
                     Ok(stream_id)
@@ -227,7 +226,7 @@ impl Dispatcher for VfsDispatcher {
                         {
                             writer.write_all(&data)?;
                         }
-                        drop(writer); // flush on drop
+                        drop(writer); // flushes
                         write_sessions.lock().remove(&stream_id);
                         Ok(())
                     });

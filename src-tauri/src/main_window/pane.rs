@@ -1587,8 +1587,8 @@ impl PaneViewState {
             self.filter_mode = self.default_filter_mode;
         }
         if self.path != *file_list.path() {
-            // HACK: focused_index stores the previous position, so if the file disappears (but we stayed on the same path), we don't jump back to the beginning
-            // but we don't want that if the path has actually changed
+            // Path changed: drop the retained focus position (it's only
+            // meaningful for an in-place refresh of the same directory).
             self.focused_index = None;
         }
         self.path = file_list.path().clone();

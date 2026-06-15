@@ -52,8 +52,7 @@ pub fn triple_from_os_arch(os: &str, arch: &str) -> Option<String> {
 }
 
 /// Resolver that only knows how to produce its own running executable. Used
-/// by the agent. A future revision will add an RPC fallback that fetches a
-/// foreign-arch agent binary from the host.
+/// by the agent; foreign-arch sub-agent bootstrap is not implemented.
 pub struct CurrentExeAgentResolver;
 
 impl CurrentExeAgentResolver {

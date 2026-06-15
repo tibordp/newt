@@ -12,7 +12,7 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Get the alternate mode for F3 toggle */
+/** The mode F3 toggles to from the current one. */
 export function getAlternateMode(
   currentMode: ViewerMode,
   autoMode: ViewerMode,

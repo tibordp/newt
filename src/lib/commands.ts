@@ -39,18 +39,15 @@ export function normalizeKeyEvent(e: KeyboardEvent): string {
   if (e.shiftKey) parts.push("shift");
   if (e.altKey) parts.push("alt");
 
-  // Normalize the key name
   let key = e.key;
 
-  // Don't include standalone modifier presses
+  // A standalone modifier press is not a binding.
   if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") {
     return "";
   }
 
-  // Normalize common key names
   key = key.toLowerCase();
 
-  // Map key names to our canonical format
   const keyMap: Record<string, string> = {
     " ": "space",
     arrowup: "up",

@@ -91,15 +91,11 @@ fn resolve_bindings_removal_then_readd() {
     let bindings = vec![
         ("ctrl+a".into(), "cmd1".into(), None),
         ("ctrl+a".into(), "-".into(), None),
-        // This re-sets the same (key, when) pair, but since the key already
-        // exists in the order vec, it won't be re-added — it overwrites the "-".
-        // Wait — actually, the map_key is already in `order`, so it won't be
-        // pushed again. The map will have "cmd3". So the output should include it.
     ];
     let resolved = resolve_bindings(bindings);
     assert!(resolved.is_empty());
 
-    // But if we add a third entry that overrides the "-":
+    // A later entry on the same (key, when) overwrites the "-" disable:
     let bindings2 = vec![
         ("ctrl+a".into(), "cmd1".into(), None),
         ("ctrl+a".into(), "-".into(), None),

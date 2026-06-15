@@ -45,8 +45,7 @@ function PathBreadcrumbs(props: {
 }) {
   const { breadcrumbs, paneHandle, displayPath } = props;
 
-  // Build the display path up to each breadcrumb by joining labels.
-  // The last breadcrumb gets the full display_path.
+  // The last breadcrumb gets the full display_path; earlier ones join labels.
   const pathUpTo = (index: number): string => {
     if (index === breadcrumbs.length - 1) return displayPath;
     return breadcrumbs
@@ -120,7 +119,7 @@ function getFileIconChar(
   name: string,
   isDir: boolean,
 ): { ch: string; color: string } {
-  if (isDir) return { ch: "\uE5FF", color: "" }; // folder icon fallback
+  if (isDir) return { ch: "\uE5FF", color: "" };
   const icon =
     fileNames[name] ||
     fileExtensions[name.substr(name.indexOf(".") + 1)] ||
@@ -568,14 +567,11 @@ function PaneInner(
   const focusedIndex = props.focused_index ?? -1;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
-  // Run a typed command, but skip it while the pane is in a "busy" state
-  // (waiting on the first listing of a navigated-to path). `alsoWhenBusy`
-  // overrides the guard for the few commands that should always fire
-  // (Escape's cancel/clear-filter, the directory-up nav).
-  //
-  // Takes a thunk because invoking `commands.X(...)` already sends the IPC —
-  // the guard has to gate construction of the promise, not just the safe()
-  // wrap.
+  // Run a typed command, skipping it while the pane is busy (awaiting the
+  // first listing of a navigated-to path); `alsoWhenBusy` overrides the guard
+  // for commands that must always fire (Escape cancel/clear-filter, dir-up).
+  // Takes a thunk because invoking `commands.X(...)` already sends the IPC, so
+  // the guard must gate promise construction, not just the safe() wrap.
   const guarded = <T,>(
     factory: () => Promise<Result<T, string>>,
     alsoWhenBusy = false,
@@ -1150,8 +1146,8 @@ function PaneInner(
         true,
       );
     } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
-      // Is this a good way to check for printable characters? Works for en-US,
-      // but I have no idea how well it works for international IMEs.
+      // Printable-character heuristic: routes typing into quick-search.
+      // Reliable for en-US; international IME coverage is unverified.
       inputRef.current?.focus();
       return;
     }

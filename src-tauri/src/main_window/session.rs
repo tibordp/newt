@@ -1019,20 +1019,14 @@ type DynStream =
 /// `Command`-spawned transports; the bridged WSL stderr pipe otherwise.
 type DynStderr = Box<dyn AsyncRead + Send + Unpin>;
 
-/// The agent's host-side process. Every `Command`-spawned transport keeps a
-/// real `tokio::process::Child`. WSL is launched via `wslapi!WslLaunch`,
-/// which hands back a raw Win32 process `HANDLE` that `std`/`tokio` cannot
-/// adopt into a `Child` (no `from_raw_handle` for `Child`) — so it gets its
-/// own tiny wrapper. The enum exists only so `spawn_child_watcher` can
-/// `.wait()` uniformly.
-// `Child` is much larger than the handle wrapper, but this is a short-lived
-// owner held one-per-session — boxing would just add an allocation.
+/// The agent's host-side process, unified so `spawn_child_watcher` can
+/// `.wait()` regardless of transport. The variant size disparity is fine:
+/// one short-lived owner per session, boxing would just add an allocation.
 #[cfg_attr(windows, allow(clippy::large_enum_variant))]
 enum AgentProcess {
     Child(tokio::process::Child),
-    /// A raw Win32 process handle (WSL via `WslLaunch`, or the elevated
-    /// agent via `ShellExecuteEx`) — `std`/`tokio` can't adopt one into a
-    /// `Child`, so it gets the shared `WinProcess` wrapper.
+    /// Raw Win32 process handle (WSL `WslLaunch` / elevated `ShellExecuteEx`),
+    /// wrapped because it can't be adopted into a `tokio::process::Child`.
     #[cfg(windows)]
     Win(super::win_proc::WinProcess),
 }
@@ -1793,14 +1787,11 @@ pub(super) async fn connect(
         }
     }
 
-    // Set up VFS. The root is a `LocalVfs` — the host's own FS in a local
-    // session, the agent's in a remote one. It isn't mounted via the
-    // registry (so `LocalVfs::mount_meta()` isn't consulted), so stamp the
-    // path style here: the host's own for Local, Unix for any remote
-    // (every agent target in scope is Unix).
-    // Remote root = the agent's Unix FS (style-only, single `/`). Local
-    // root = this host's FS, with its drives enumerated so a Windows host
-    // lands on a drive instead of the unlistable `/`.
+    // The root `LocalVfs` isn't mounted via the registry, so `mount_meta()`
+    // isn't consulted — stamp the path style here. Remote root = the agent's
+    // Unix FS (style-only, single `/`). Local root = this host's FS, with
+    // drives enumerated so a Windows host lands on a drive instead of the
+    // unlistable `/`.
     let root_meta = if connection_target.is_remote() {
         PathStyle::Unix.encode()
     } else {
