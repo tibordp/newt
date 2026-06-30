@@ -107,8 +107,18 @@ jobs:
             install_deps: |
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
             runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
+
+          - name: Debian 13
+            container: debian:13
+            distro: debian13
+            pkg_type: deb
+            install_deps: |
+              apt-get update
+              apt-get install -y curl build-essential pkg-config git python3 \
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
 
           - name: Ubuntu 22.04
             container: ubuntu:22.04
@@ -118,7 +128,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
             runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
 
           - name: Ubuntu 24.04
@@ -129,7 +139,18 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+          - name: Ubuntu 26.04
+            container: ubuntu:26.04
+            distro: ubuntu2604
+            pkg_type: deb
+            install_deps: |
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y curl build-essential pkg-config git python3 \
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
             runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
 
           - name: Fedora 43
@@ -140,9 +161,9 @@ jobs:
               dnf install -y gcc g++ make pkg-config git python3 \
                 webkit2gtk4.1-devel gtk3-devel librsvg2-devel rpm-build
 
-          - name: Fedora 42
-            container: fedora:42
-            distro: fedora42
+          - name: Fedora 44
+            container: fedora:44
+            distro: fedora44
             pkg_type: rpm
             install_deps: |
               dnf install -y gcc g++ make pkg-config git python3 \
