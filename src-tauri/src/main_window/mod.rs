@@ -432,6 +432,17 @@ pub enum ConfirmAction {
     DeleteSelected { paths: Vec<VfsPath> },
 }
 
+/// Pack-dialog defaults sourced from `ArchivePreferences`.
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct ArchiveDialogDefaults {
+    pub format: newt_common::operation::ArchiveFormat,
+    pub preserve_symlinks: bool,
+    pub zip_level: i32,
+    pub gzip_level: i32,
+    pub xz_level: i32,
+    pub zstd_level: i32,
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
@@ -481,6 +492,17 @@ pub enum ModalDataKind {
         destination: VfsPath,
         display_destination: String,
         summary: String,
+    },
+    CreateArchive {
+        sources: Vec<VfsPath>,
+        /// Directory the archive lands in (the other pane); the dialog
+        /// composes the final file path from this and the name field.
+        destination: VfsPath,
+        display_destination: String,
+        summary: String,
+        /// Suggested archive name, without extension.
+        default_name: String,
+        defaults: ArchiveDialogDefaults,
     },
     ConnectRemote {
         /// Pre-populated transport for the dialog. Empty `Ssh { host: "" }`

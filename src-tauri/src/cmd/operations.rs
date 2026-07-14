@@ -1,7 +1,7 @@
 use newt_common::file_reader::{FileChunk, FileDetails};
 use newt_common::operation::{
-    CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest, ResolveIssueRequest,
-    StartOperationRequest,
+    ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
+    ResolveIssueRequest, StartOperationRequest,
 };
 use newt_common::vfs::VfsPath;
 use tauri::Manager;
@@ -209,6 +209,18 @@ pub async fn start_operation(
         OperationRequest::Delete { paths } => (
             "delete".to_string(),
             format!("Deleting {} item(s)", paths.len()),
+        ),
+        OperationRequest::CreateArchive {
+            sources,
+            destination,
+            ..
+        } => (
+            "pack".to_string(),
+            format!(
+                "Packing {} item(s) to {}",
+                sources.len(),
+                ctx.format_vfs_path(destination),
+            ),
         ),
         OperationRequest::SetMetadata { paths, .. } => (
             "chmod".to_string(),
@@ -431,6 +443,30 @@ pub async fn start_copy_move(
     })?;
 
     start_operation(ctx, request).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn start_create_archive(
+    ctx: MainWindowContext,
+    sources: Vec<VfsPath>,
+    destination: VfsPath,
+    options: ArchiveOptions,
+) -> Result<OperationId, Error> {
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })?;
+
+    start_operation(
+        ctx,
+        OperationRequest::CreateArchive {
+            sources,
+            destination,
+            options,
+        },
+    )
+    .await
 }
 
 #[tauri::command]

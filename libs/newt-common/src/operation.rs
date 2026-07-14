@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use crate::filesystem::File;
 use crate::proc::NoConsoleWindow;
 use crate::rpc::Communicator;
 use crate::vfs::path::{Path, PathBuf};
@@ -66,6 +67,54 @@ pub struct CopyOptions {
     pub create_symlink: bool,
 }
 
+// --- Archive Options ---
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Zip,
+    Tar,
+    TarGz,
+    TarXz,
+    TarZst,
+}
+
+impl ArchiveFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            ArchiveFormat::Zip => "zip",
+            ArchiveFormat::Tar => "tar",
+            ArchiveFormat::TarGz => "tar.gz",
+            ArchiveFormat::TarXz => "tar.xz",
+            ArchiveFormat::TarZst => "tar.zst",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, specta::Type)]
+pub struct ArchiveOptions {
+    pub format: ArchiveFormat,
+    /// `None` = per-format default (gzip/xz/deflate 6, zstd 3); zip 0 = store.
+    pub level: Option<i32>,
+    /// Store symlinks as symlink entries; off = follow them into the archive.
+    pub preserve_symlinks: bool,
+    /// Zip only — WinZip AES-256 encryption.
+    pub password: Option<String>,
+}
+
+// `execute_operation` logs the whole request with `{:?}` — keep the password
+// out of the logs.
+impl std::fmt::Debug for ArchiveOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArchiveOptions")
+            .field("format", &self.format)
+            .field("level", &self.level)
+            .field("preserve_symlinks", &self.preserve_symlinks)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 // --- Operation Request ---
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
@@ -84,6 +133,12 @@ pub enum OperationRequest {
     },
     Delete {
         paths: Vec<VfsPath>,
+    },
+    CreateArchive {
+        sources: Vec<VfsPath>,
+        /// Full path of the archive file itself, not its directory.
+        destination: VfsPath,
+        options: ArchiveOptions,
     },
     SetMetadata {
         paths: Vec<VfsPath>,
@@ -720,6 +775,21 @@ pub async fn execute_operation(
             )
             .await
         }
+        OperationRequest::CreateArchive {
+            sources,
+            destination,
+            options,
+        } => {
+            execute_create_archive(
+                &mut reporter,
+                &context,
+                sources,
+                destination,
+                options,
+                cancel.clone(),
+            )
+            .await
+        }
         OperationRequest::SetMetadata {
             paths,
             mode_set,
@@ -782,19 +852,83 @@ async fn cancellable<T>(
     }
 }
 
-// --- Plan copy (async, uses Vfs) ---
+// --- Shared source-tree walk (copy and archive planning) ---
 
-async fn plan_copy(
+enum WalkedKind {
+    File,
+    Directory,
+    Symlink { target: String },
+}
+
+struct WalkedEntry {
+    pub source: PathBuf,
+    /// Path relative to the selection: the top-level source's file name, then
+    /// dirent names down the tree, `/`-joined.
+    pub rel: String,
+    pub kind: WalkedKind,
+    /// The dirent as seen during the walk — carries the metadata (mode,
+    /// owner, mtime, size) so consumers don't need a second stat pass.
+    pub file: File,
+}
+
+#[derive(Default)]
+struct WalkOptions {
+    /// Classify through symlinks (archive "follow" mode): symlinks to
+    /// directories are recursed into, symlinks to files become plain files.
+    /// Cycles among followed targets are detected and skipped.
+    pub follow_symlinks: bool,
+    /// Path on the source VFS to silently omit — the archive being written,
+    /// so it doesn't pack itself.
+    pub exclude: Option<PathBuf>,
+}
+
+/// Longest chain of dir-symlinks the walk will follow before assuming a
+/// cycle it failed to detect structurally (mirrors the archive-read side's
+/// `MAX_SYMLINK_HOPS`).
+const MAX_FOLLOWED_LINKS: usize = 40;
+
+/// Resolve a raw symlink target against the directory containing the link.
+/// Best-effort textual normalization — the VFS surface has no realpath.
+fn resolve_symlink_target(parent: &Path, target: &str) -> PathBuf {
+    let mut path = if target.starts_with('/') {
+        PathBuf::root()
+    } else {
+        parent.to_owned()
+    };
+    for seg in target.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                path = path
+                    .parent()
+                    .map(|p| p.to_owned())
+                    .unwrap_or_else(PathBuf::root);
+            }
+            seg => path.push(seg),
+        }
+    }
+    path
+}
+
+async fn walk_sources(
     src_vfs: &dyn Vfs,
     src_descriptor: &dyn VfsDescriptor,
     sources: &[PathBuf],
-    destination: &Path,
+    options: &WalkOptions,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
-) -> Result<CopyPlan, crate::Error> {
-    let mut entries = Vec::new();
+) -> Result<(Vec<WalkedEntry>, u64), crate::Error> {
+    struct DirFrame {
+        src: PathBuf,
+        rel: String,
+        /// Normalized targets of the dir-symlinks followed to reach here.
+        link_ancestry: Arc<Vec<PathBuf>>,
+    }
+
+    let mut entries: Vec<WalkedEntry> = Vec::new();
     let mut total_bytes = 0u64;
     let has_symlinks = src_descriptor.has_symlinks();
+    let follow = options.follow_symlinks;
 
     for source in sources {
         if cancel.is_cancelled() {
@@ -803,8 +937,8 @@ async fn plan_copy(
 
         let file_name = source
             .file_name()
-            .ok_or_else(|| crate::Error::custom("source has no file name".to_string()))?;
-        let dest_base = destination.join(file_name);
+            .ok_or_else(|| crate::Error::custom("source has no file name".to_string()))?
+            .to_string();
 
         // Classify the top-level source. Use file_info (stat) when available,
         // fall back to listing the parent directory for VFSes like S3 where
@@ -823,99 +957,187 @@ async fn plan_copy(
                 .ok_or_else(|| crate::Error::custom(format!("source not found: {}", source)))?
         };
 
-        if has_symlinks && file_entry.is_symlink {
-            entries.push(CopyEntry {
-                source: source.clone(),
-                dest: dest_base,
-                kind: CopyEntryKind::Symlink {
-                    target: file_entry.symlink_target.clone().unwrap(),
-                },
-                size_bytes: 0,
-            });
-        } else if file_entry.is_dir {
-            let mut stack = vec![(source.clone(), dest_base.clone())];
-            entries.push(CopyEntry {
-                source: source.clone(),
-                dest: dest_base,
-                kind: CopyEntryKind::Directory,
-                size_bytes: 0,
-            });
+        let mut stack: Vec<DirFrame> = Vec::new();
+        // The top-level source enters classification as a pseudo-child;
+        // directory listings feed the same queue below.
+        let mut pending: Vec<(PathBuf, String, File, Arc<Vec<PathBuf>>)> =
+            vec![(source.clone(), file_name, file_entry, Arc::new(Vec::new()))];
 
-            while let Some((src_dir, dst_dir)) = stack.pop() {
-                if cancel.is_cancelled() {
-                    return Err(crate::Error::cancelled());
+        loop {
+            for (src_path, rel, file, link_ancestry) in pending.drain(..) {
+                if options.exclude.as_ref() == Some(&src_path) {
+                    continue;
                 }
 
-                let file_list = loop {
-                    match cancellable(cancel, src_vfs.list_files(&src_dir, None)).await {
-                        Ok(list) => break list,
-                        Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
-                        Err(e) => {
-                            match reporter
-                                .handle_io_error(
-                                    e,
-                                    &format!("Error scanning directory {}", src_dir),
-                                    None,
-                                    cancel,
-                                    true,
-                                )
-                                .await?
-                            {
-                                IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
-                                IssueOutcome::Retry => continue,
-                            }
-                        }
-                    }
-                };
-
-                for file in &file_list.files {
-                    if file.name == ".." {
+                if has_symlinks && file.is_symlink && !follow {
+                    entries.push(WalkedEntry {
+                        source: src_path,
+                        rel,
+                        kind: WalkedKind::Symlink {
+                            target: file.symlink_target.clone().unwrap_or_default(),
+                        },
+                        file,
+                    });
+                } else if has_symlinks && file.is_symlink && follow && file.is_dir {
+                    let parent = src_path
+                        .parent()
+                        .map(|p| p.to_owned())
+                        .unwrap_or_else(PathBuf::root);
+                    let target = resolve_symlink_target(
+                        &parent,
+                        file.symlink_target.as_deref().unwrap_or_default(),
+                    );
+                    // A target that is itself on the followed chain, or an
+                    // ancestor of the link, recurses forever.
+                    let cycle = link_ancestry.contains(&target) || src_path.starts_with(&target);
+                    if cycle || link_ancestry.len() >= MAX_FOLLOWED_LINKS {
+                        reporter
+                            .raise_issue(
+                                IssueKind::Other("SymlinkCycle".to_string()),
+                                format!("Symlink cycle at {}", src_path),
+                                Some(format!("target: {}", target)),
+                                vec![IssueAction::Skip],
+                            )
+                            .await?;
                         continue;
                     }
-                    let src_path = src_dir.join(&file.name);
-                    let dst_path = dst_dir.join(&file.name);
+                    let mut ancestry = (*link_ancestry).clone();
+                    ancestry.push(target.clone());
+                    entries.push(WalkedEntry {
+                        source: src_path,
+                        rel: rel.clone(),
+                        kind: WalkedKind::Directory,
+                        file,
+                    });
+                    // Recurse into the resolved target: identical on a real
+                    // FS, and keeps the frame path physical for VFSes that
+                    // don't resolve links on access.
+                    stack.push(DirFrame {
+                        src: target,
+                        rel,
+                        link_ancestry: Arc::new(ancestry),
+                    });
+                } else if has_symlinks && file.is_symlink && follow {
+                    // Followed file symlink: the dirent's size is the link's
+                    // own length — stat the target for the real size (drives
+                    // progress totals and the zip writer's zip64 decision).
+                    let parent = src_path
+                        .parent()
+                        .map(|p| p.to_owned())
+                        .unwrap_or_else(PathBuf::root);
+                    let target = resolve_symlink_target(
+                        &parent,
+                        file.symlink_target.as_deref().unwrap_or_default(),
+                    );
+                    let resolved = src_vfs.file_info(&target).await.unwrap_or(file);
+                    total_bytes += resolved.size.unwrap_or(0);
+                    entries.push(WalkedEntry {
+                        source: target,
+                        rel,
+                        kind: WalkedKind::File,
+                        file: resolved,
+                    });
+                } else if file.is_dir {
+                    entries.push(WalkedEntry {
+                        source: src_path.clone(),
+                        rel: rel.clone(),
+                        kind: WalkedKind::Directory,
+                        file,
+                    });
+                    stack.push(DirFrame {
+                        src: src_path,
+                        rel,
+                        link_ancestry,
+                    });
+                } else {
+                    total_bytes += file.size.unwrap_or(0);
+                    entries.push(WalkedEntry {
+                        source: src_path,
+                        rel,
+                        kind: WalkedKind::File,
+                        file,
+                    });
+                }
+            }
 
-                    if has_symlinks && file.is_symlink {
-                        entries.push(CopyEntry {
-                            source: src_path,
-                            dest: dst_path,
-                            kind: CopyEntryKind::Symlink {
-                                target: file.symlink_target.clone().unwrap(),
-                            },
-                            size_bytes: 0,
-                        });
-                    } else if file.is_dir {
-                        entries.push(CopyEntry {
-                            source: src_path.clone(),
-                            dest: dst_path.clone(),
-                            kind: CopyEntryKind::Directory,
-                            size_bytes: 0,
-                        });
-                        stack.push((src_path, dst_path));
-                    } else {
-                        let size = file.size.unwrap_or(0);
-                        total_bytes += size;
-                        entries.push(CopyEntry {
-                            source: src_path,
-                            dest: dst_path,
-                            kind: CopyEntryKind::File,
-                            size_bytes: size,
-                        });
+            let Some(frame) = stack.pop() else { break };
+            if cancel.is_cancelled() {
+                return Err(crate::Error::cancelled());
+            }
+
+            let file_list = loop {
+                match cancellable(cancel, src_vfs.list_files(&frame.src, None)).await {
+                    Ok(list) => break list,
+                    Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
+                    Err(e) => {
+                        match reporter
+                            .handle_io_error(
+                                e,
+                                &format!("Error scanning directory {}", frame.src),
+                                None,
+                                cancel,
+                                true,
+                            )
+                            .await?
+                        {
+                            IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
+                            IssueOutcome::Retry => continue,
+                        }
                     }
                 }
-                reporter.maybe_send_scanning(entries.len() as u64, total_bytes);
+            };
+
+            for file in file_list.files {
+                if file.name == ".." {
+                    continue;
+                }
+                let src_path = frame.src.join(&file.name);
+                let rel = format!("{}/{}", frame.rel, file.name);
+                pending.push((src_path, rel, file, frame.link_ancestry.clone()));
             }
-        } else {
-            let size = file_entry.size.unwrap_or(0);
-            total_bytes += size;
-            entries.push(CopyEntry {
-                source: source.clone(),
-                dest: dest_base,
-                kind: CopyEntryKind::File,
-                size_bytes: size,
-            });
+            reporter.maybe_send_scanning(entries.len() as u64, total_bytes);
         }
     }
+
+    Ok((entries, total_bytes))
+}
+
+// --- Plan copy (async, uses Vfs) ---
+
+async fn plan_copy(
+    src_vfs: &dyn Vfs,
+    src_descriptor: &dyn VfsDescriptor,
+    sources: &[PathBuf],
+    destination: &Path,
+    reporter: &mut ProgressReporter,
+    cancel: &CancellationToken,
+) -> Result<CopyPlan, crate::Error> {
+    let (walked, total_bytes) = walk_sources(
+        src_vfs,
+        src_descriptor,
+        sources,
+        &WalkOptions::default(),
+        reporter,
+        cancel,
+    )
+    .await?;
+
+    let entries = walked
+        .into_iter()
+        .map(|w| CopyEntry {
+            dest: destination.join(&w.rel),
+            size_bytes: match w.kind {
+                WalkedKind::File => w.file.size.unwrap_or(0),
+                _ => 0,
+            },
+            kind: match w.kind {
+                WalkedKind::File => CopyEntryKind::File,
+                WalkedKind::Directory => CopyEntryKind::Directory,
+                WalkedKind::Symlink { target } => CopyEntryKind::Symlink { target },
+            },
+            source: w.source,
+        })
+        .collect::<Vec<_>>();
 
     debug!(
         "plan_copy: {} entries, {} total bytes",
@@ -927,6 +1149,39 @@ async fn plan_copy(
         entries,
         total_bytes,
     })
+}
+
+// --- Sync-reader bridge (spawn_blocking + bounded channel) ---
+
+/// Bridge a sync reader into an async chunk stream. The bounded channel
+/// provides backpressure; the blocking task ends on EOF, error, or cancel.
+pub(crate) fn bridge_sync_reader(
+    mut reader: Box<dyn std::io::Read + Send>,
+    cancel: CancellationToken,
+) -> tokio::sync::mpsc::Receiver<Result<Vec<u8>, crate::Error>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
+    tokio::task::spawn_blocking(move || {
+        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+        loop {
+            if cancel.is_cancelled() {
+                let _ = tx.blocking_send(Err(crate::Error::cancelled()));
+                return;
+            }
+            match std::io::Read::read(&mut *reader, &mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(e.into()));
+                    return;
+                }
+            }
+        }
+    });
+    rx
 }
 
 // --- Chunked byte copy (runs in spawn_blocking with trait objects) ---
@@ -1091,32 +1346,7 @@ async fn copy_single_file(
         let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
 
-        // Bridge sync reader to async via spawn_blocking + channel
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
-        let cancel2 = cancel.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut reader = sync_reader;
-            let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-            loop {
-                if cancel2.is_cancelled() {
-                    let _ = tx.blocking_send(Err(crate::Error::cancelled()));
-                    return;
-                }
-                match std::io::Read::read(&mut *reader, &mut buf) {
-                    Ok(0) => return,
-                    Ok(n) => {
-                        if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
-                            return;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.blocking_send(Err(e.into()));
-                        return;
-                    }
-                }
-            }
-        });
-
+        let mut rx = bridge_sync_reader(sync_reader, cancel.clone());
         while let Some(chunk) = rx.recv().await {
             let data = chunk?;
             writer.write(&data).await?;
@@ -1560,6 +1790,263 @@ async fn execute_copy(
         }
     }
 
+    Ok(())
+}
+
+// --- Execute CreateArchive (async pack loop, streams via archive_pack) ---
+
+async fn execute_create_archive(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    sources: Vec<VfsPath>,
+    destination: VfsPath,
+    options: ArchiveOptions,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    use crate::archive_pack::{ArchiveSink, ArchiveWriter};
+
+    // Follow any redirect_target hooks (e.g. flat search results), same as copy.
+    let mut sources = sources;
+    for s in sources.iter_mut() {
+        *s = context.registry.dereference(s).await;
+    }
+    let first_source = sources
+        .first()
+        .ok_or_else(|| crate::Error::custom("no sources provided"))?;
+    let (src_vfs, _) = context.registry.resolve(first_source)?;
+    let (dst_vfs, dst_path) = context.registry.resolve(&destination)?;
+
+    let src_vfs_id = first_source.vfs_id;
+    if let Some(mismatched) = sources.iter().find(|s| s.vfs_id != src_vfs_id) {
+        return Err(crate::Error::custom(format!(
+            "all sources must be on the same VFS (expected {}, got {})",
+            src_vfs_id, mismatched.vfs_id
+        )));
+    }
+    if options.password.is_some() && options.format != ArchiveFormat::Zip {
+        return Err(crate::Error::custom(
+            "password protection is only supported for zip archives",
+        ));
+    }
+
+    let src_descriptor = src_vfs.descriptor();
+    debug!(
+        "execute_create_archive: {} sources, src_vfs={} ({}), dst={} on vfs {} ({})",
+        sources.len(),
+        src_vfs_id,
+        src_descriptor.type_name(),
+        dst_path,
+        destination.vfs_id,
+        dst_vfs.descriptor().type_name(),
+    );
+
+    // Destination conflict before any work. The archive is a single artifact,
+    // so declining to overwrite simply cancels the operation.
+    if let Ok(existing) = dst_vfs.file_info(&dst_path).await {
+        if existing.is_dir {
+            return Err(crate::Error::custom(format!(
+                "destination is a directory: {}",
+                dst_path
+            )));
+        }
+        match reporter
+            .raise_issue(
+                IssueKind::AlreadyExists,
+                format!("File already exists: {}", dst_path),
+                None,
+                vec![IssueAction::Skip, IssueAction::Overwrite],
+            )
+            .await?
+        {
+            IssueAction::Overwrite => {}
+            _ => {
+                // Skipping the only artifact means nothing to do — surface
+                // as a cancellation, not a failure.
+                cancel.cancel();
+                return Err(crate::Error::cancelled());
+            }
+        }
+    }
+
+    let source_paths: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
+    let walk_options = WalkOptions {
+        follow_symlinks: !options.preserve_symlinks,
+        // Keep a same-VFS destination out of the walk, or the archive
+        // would pack its growing self.
+        exclude: (src_vfs_id == destination.vfs_id).then(|| dst_path.to_owned()),
+    };
+    let (walked, total_bytes) = walk_sources(
+        &*src_vfs,
+        src_descriptor,
+        &source_paths,
+        &walk_options,
+        reporter,
+        &cancel,
+    )
+    .await?;
+
+    // Duplicate top-level names would silently collide inside the archive.
+    let mut top_level = std::collections::HashSet::new();
+    for entry in &walked {
+        if !entry.rel.contains('/') && !top_level.insert(entry.rel.as_str()) {
+            return Err(crate::Error::custom(format!(
+                "duplicate top-level name in selection: {}",
+                entry.rel
+            )));
+        }
+    }
+
+    reporter.send_prepared(total_bytes, walked.len() as u64);
+
+    let writer = ArchiveWriter::new(&options)?;
+    let mut sink = ArchiveSink::open(&*dst_vfs, &dst_path).await?;
+
+    let result = match pack_entries(reporter, &*src_vfs, writer, &mut sink, &walked, &cancel).await
+    {
+        Ok(()) => sink.finish().await,
+        Err(e) => {
+            drop(sink);
+            Err(e)
+        }
+    };
+    if let Err(e) = result {
+        // Append-only stream — a failed or cancelled archive can't be
+        // salvaged; best-effort cleanup of the partial artifact.
+        let _ = dst_vfs.remove_file(&dst_path).await;
+        return Err(e);
+    }
+    Ok(())
+}
+
+async fn pack_entries(
+    reporter: &mut ProgressReporter,
+    src_vfs: &dyn Vfs,
+    mut writer: crate::archive_pack::ArchiveWriter,
+    sink: &mut crate::archive_pack::ArchiveSink,
+    entries: &[WalkedEntry],
+    cancel: &CancellationToken,
+) -> Result<(), crate::Error> {
+    use crate::archive_pack::SourceReader;
+
+    let mut buf = Vec::new();
+    let mut bytes_done = 0u64;
+    let mut items_done = 0u64;
+
+    for entry in entries {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        reporter.maybe_send_progress(bytes_done, items_done, &entry.rel);
+
+        match &entry.kind {
+            WalkedKind::Directory => {
+                writer.add_directory(&entry.rel, &entry.file, &mut buf)?;
+                sink.write_all(std::mem::take(&mut buf)).await?;
+            }
+            WalkedKind::Symlink { target } => {
+                writer.add_symlink(&entry.rel, target, &entry.file, &mut buf)?;
+                sink.write_all(std::mem::take(&mut buf)).await?;
+            }
+            WalkedKind::File => {
+                let scanned_size = entry.file.size;
+                let entry_start = bytes_done;
+
+                // Open the source before the entry header is committed to the
+                // stream — an open failure can still Skip/Retry cleanly.
+                let reader = loop {
+                    match SourceReader::open(src_vfs, &entry.source, cancel).await {
+                        Ok(reader) => break Some(reader),
+                        Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
+                        Err(e) => {
+                            match reporter
+                                .handle_io_error(
+                                    e,
+                                    "Error",
+                                    Some(entry.source.as_wire_str().to_string()),
+                                    cancel,
+                                    true,
+                                )
+                                .await?
+                            {
+                                IssueOutcome::Skip => break None,
+                                IssueOutcome::Retry => continue,
+                            }
+                        }
+                    }
+                };
+                let Some(mut reader) = reader else {
+                    bytes_done = entry_start + scanned_size.unwrap_or(0);
+                    items_done += 1;
+                    continue;
+                };
+
+                writer.begin_file(&entry.rel, scanned_size, &entry.file, &mut buf)?;
+                sink.write_all(std::mem::take(&mut buf)).await?;
+
+                let mut read_error = None;
+                loop {
+                    if cancel.is_cancelled() {
+                        return Err(crate::Error::cancelled());
+                    }
+                    match reader.next().await {
+                        Ok(Some(chunk)) => {
+                            let accepted = writer.write_data(&chunk, &mut buf)?;
+                            sink.write_all(std::mem::take(&mut buf)).await?;
+                            bytes_done += chunk.len() as u64;
+                            reporter.maybe_send_progress(bytes_done, items_done, &entry.rel);
+                            if accepted < chunk.len() {
+                                warn!(
+                                    "archive entry {} truncated: source grew past its scanned size",
+                                    entry.rel
+                                );
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
+                        Err(e) => {
+                            read_error = Some(e);
+                            break;
+                        }
+                    }
+                }
+
+                let padded = writer.end_file(&mut buf)?;
+                sink.write_all(std::mem::take(&mut buf)).await?;
+                if padded > 0 && read_error.is_none() {
+                    warn!(
+                        "archive entry {} zero-padded: source shrank below its scanned size",
+                        entry.rel
+                    );
+                }
+                if let Some(e) = read_error {
+                    // The entry header is already on the append-only stream;
+                    // the entry was finalized as truncated/padded, so a retry
+                    // is structurally impossible — only Skip is offered.
+                    reporter
+                        .handle_io_error(
+                            e,
+                            &format!(
+                                "Error reading {} (stored truncated in the archive)",
+                                entry.rel
+                            ),
+                            Some(entry.source.as_wire_str().to_string()),
+                            cancel,
+                            false,
+                        )
+                        .await?;
+                }
+                // Snap to the scanned contribution so skips/shrinks still
+                // drive the bar to 100% (mirrors execute_copy's accounting).
+                bytes_done = bytes_done.max(entry_start + scanned_size.unwrap_or(0));
+            }
+        }
+        items_done += 1;
+    }
+
+    writer.finish(&mut buf)?;
+    sink.write_all(std::mem::take(&mut buf)).await?;
+    reporter.maybe_send_progress(bytes_done, items_done, "");
     Ok(())
 }
 

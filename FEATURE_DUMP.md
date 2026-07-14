@@ -307,6 +307,7 @@ Opens a modal dialog with:
   - **Preserve timestamps** — maintains file modification and access times.
   - **Preserve owner** — maintains UID.
   - **Preserve group** — maintains GID.
+- **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
 **Copy execution**:
 
@@ -334,6 +335,36 @@ Same dialog and options as Copy (except "Create symbolic link" is not available)
 **Move execution**:
 1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same Skip / Overwrite prompt as Copy is shown rather than silently overwriting.
 2. **Fallback to copy+delete**: If rename fails (cross-device, cross-VFS, permission error), falls back to copying each file and immediately deleting the source after successful copy. After all files are copied, empty source directories are removed in reverse order (deepest first). Directories that still contain files (because some copies were skipped) are left intact.
+
+### Pack to Archive (Alt+F5)
+
+Packs the active pane's selection into a new archive in the other pane's directory. Fully streaming through the VFS layer — archive bytes are produced chunk-at-a-time and written straight to the destination, so there are **no temp files and no whole-archive buffering**, regardless of which side is remote (local→S3, S3→local, remote-session sources, etc. all stream end-to-end).
+
+Opens a modal dialog with:
+
+- **Format tab bar**: `zip`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`. Switching formats swaps the extension on the name field.
+- **Archive name** (auto-focused, stem pre-selected): defaults to the single selection's stem, or the containing directory's name for multi-selections.
+- **Destination** display (read-only, the other pane's directory).
+- **Compression level** (per-format, seeded from the `[archives]` preferences): gzip/xz/deflate 0–9, zstd 1–22; zip level 0 stores entries uncompressed. Hidden for plain tar. Each format remembers its own level while the dialog is open.
+- **Preserve symlinks** (default on, seeded from preferences): stores symlinks as symlink entries. When off, symlinks are followed — symlinked files are stored as regular files, symlinked directories are descended into (with cycle detection; a cycle raises a skip prompt).
+- **Password** (zip only, optional, with confirm field): WinZip AES-256 (AE-2) encryption. Opens in 7-Zip/WinRAR/Keka and Newt's own archive VFS (lazy askpass); not in Windows Explorer or macOS Archive Utility.
+
+**Writers** (in-tree `newt-archive` crate, sans-IO streaming state machines):
+
+- **tar**: ustar with pax extended headers when needed (long/unsplittable paths, long link targets, files ≥ 8 GiB, large uid/gid, pre-epoch or sub-second mtimes). Preserves mode, uid/gid (or uname/gname), and mtime from the source dirent; sensible defaults (0644/0755, archive-creation time) when the source VFS has no such metadata (e.g. S3).
+- **zip**: streaming data-descriptor mode (no seeking — this is what makes append-only sinks like S3 multipart possible), UTF-8 names, per-entry zip64 committed up front from the scanned size, zip64 EOCD for >65k entries or >4 GiB offsets, unix modes in external attributes, symlink entries, extended-timestamp extra field. DOS times are written as UTC.
+
+**Execution**:
+
+1. **Planning phase**: same recursive scan as Copy (live "Scanning…" counts, skip/retry on unreadable subdirectories). The destination archive itself is excluded from the walk (overwriting an archive that sits inside the selection doesn't pack its stale self). Duplicate top-level names across sources fail up front rather than silently colliding inside the archive.
+2. **Conflict detection**: if the destination file exists, offers Skip (cancels the operation — single artifact) / Overwrite.
+3. **Per-entry streaming**: sources are opened *before* their header is committed, so open failures offer Skip/Retry cleanly. A read error mid-entry finalizes the entry as truncated (tar zero-pads to the declared size) and offers Skip only — the stream can't rewind. Files that grow or shrink between scan and pack are truncated/padded with a logged warning, matching GNU tar's "file changed as we read it" spirit.
+4. **Failure/cancel cleanup**: the partial archive is removed best-effort; an S3 multipart upload is aborted (also on drop — writers discarded mid-stream no longer leak uploads).
+5. **Progress**: bytes count source bytes read, so the bar tracks the scanned totals regardless of compression ratio.
+
+The Copy (F5) dialog has a **"Pack into archive…"** button that swaps it for this dialog over the same selection.
+
+Hardlinks are not detectable through the VFS surface and are archived as independent file copies.
 
 ### Properties (Alt+Enter)
 
@@ -844,7 +875,7 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Symlink and hard link resolution** (TAR/CPIO): Symlinks and hard links inside the archive are resolved internally. Directory listings show the *target's* size and `is_dir` for symlinks, and reading or viewing a file through a symlink or hard link transparently fetches the target's contents.
 
-**Limitations**: Read-only. No create, modify, delete, rename, or metadata changes inside archives. Tar archives support symlinks; ZIP archives do not.
+**Limitations**: Read-only. No create, modify, delete, rename, or metadata changes inside archives. Tar archives support symlinks; ZIP archives do not. (Creating new archives is a separate operation — see Pack to Archive under File Operations.)
 
 ### Kubernetes (Read-Only)
 
@@ -1243,6 +1274,14 @@ expose_local_fs = false     # Expose local filesystem to remote host in SSH sess
 default_sort = { key = "name", ascending = true }
 history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
 
+[archives]
+default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "tar", "tar_gz", "tar_xz", "tar_zst"
+preserve_symlinks = true    # Store symlinks as symlinks (false: follow them)
+zip_level = 6               # Deflate level for zip (0-9, 0 = store)
+gzip_level = 6              # tar.gz level (0-9)
+xz_level = 6                # tar.xz level (0-9)
+zstd_level = 3              # tar.zst level (1-22)
+
 [hot_paths]
 standard_folders = true     # Show Home, Downloads, Documents, etc.
 system_bookmarks = true     # Show GTK bookmarks (Linux)
@@ -1472,6 +1511,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | F4 | Edit file | Pane focused |
 | Shift+F4 | Create and edit file | Pane focused |
 | F5 | Copy to other pane | Pane focused |
+| Alt+F5 | Pack to archive | Pane focused |
 | F6 | Move to other pane | Pane focused |
 | F7 | Create directory | Pane focused |
 | F8 | Delete selected | Pane focused |

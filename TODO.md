@@ -26,9 +26,9 @@ Shipped (design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`): `newt_common::connec
 
 Inspect and edit VFS-specific object state (S3 canned ACLs, grants, user metadata, storage class; later xattrs etc.) without per-VFS trait/protocol sprawl. Design captured in `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`: one generic verb pair (`get_property_sheet` / `apply_properties`) + `has_extended_properties` capability, schema-driven `PropertySheet`/`PropertyPatch` payloads rendered by a single generic frontend editor. Open questions (bulk/recursive apply semantics, UI placement, enricher taxonomy co-design) are noted in the doc.
 
-## Archive packing and unpacking
+## Archive unpacking
 
-(as an operation, not a VFS)
+(as an operation, not a VFS — packing shipped as Pack to Archive / Alt+F5; a dedicated extract operation with conflict handling remains, today unpacking means copying out of a mounted archive VFS)
 
 ## Bug fixes and strengthening
 

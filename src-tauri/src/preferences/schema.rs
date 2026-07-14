@@ -16,6 +16,9 @@ pub struct AppPreferences {
     #[schemars(title = "Behavior")]
     pub behavior: BehaviorPreferences,
     #[serde(default)]
+    #[schemars(title = "Archives")]
+    pub archives: ArchivePreferences,
+    #[serde(default)]
     #[schemars(title = "Hot Paths")]
     pub hot_paths: HotPathsPreferences,
     #[serde(default)]
@@ -188,6 +191,68 @@ impl Default for HotPathsPreferences {
             system_bookmarks: true,
             mounts: true,
             recent_folders: true,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveFormatPref {
+    Zip,
+    Tar,
+    TarGz,
+    TarXz,
+    #[default]
+    TarZst,
+}
+
+impl From<ArchiveFormatPref> for newt_common::operation::ArchiveFormat {
+    fn from(pref: ArchiveFormatPref) -> Self {
+        use newt_common::operation::ArchiveFormat;
+        match pref {
+            ArchiveFormatPref::Zip => ArchiveFormat::Zip,
+            ArchiveFormatPref::Tar => ArchiveFormat::Tar,
+            ArchiveFormatPref::TarGz => ArchiveFormat::TarGz,
+            ArchiveFormatPref::TarXz => ArchiveFormat::TarXz,
+            ArchiveFormatPref::TarZst => ArchiveFormat::TarZst,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct ArchivePreferences {
+    /// Format preselected in the Pack to Archive dialog.
+    #[schemars(title = "Default Format")]
+    pub default_format: ArchiveFormatPref,
+    /// Store symlinks as symlinks (off: follow them into the archive).
+    #[schemars(title = "Preserve Symlinks")]
+    pub preserve_symlinks: bool,
+    /// Deflate level for zip archives; 0 stores entries uncompressed.
+    #[schemars(title = "Zip Compression Level", range(min = 0, max = 9))]
+    pub zip_level: i32,
+    /// Compression level for tar.gz archives.
+    #[schemars(title = "Gzip Compression Level", range(min = 0, max = 9))]
+    pub gzip_level: i32,
+    /// Compression level for tar.xz archives.
+    #[schemars(title = "XZ Compression Level", range(min = 0, max = 9))]
+    pub xz_level: i32,
+    /// Compression level for tar.zst archives.
+    #[schemars(title = "Zstd Compression Level", range(min = 1, max = 22))]
+    pub zstd_level: i32,
+}
+
+impl Default for ArchivePreferences {
+    fn default() -> Self {
+        Self {
+            default_format: ArchiveFormatPref::default(),
+            preserve_symlinks: true,
+            zip_level: 6,
+            gzip_level: 6,
+            xz_level: 6,
+            zstd_level: 3,
         }
     }
 }

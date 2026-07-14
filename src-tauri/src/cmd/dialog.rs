@@ -21,6 +21,7 @@ pub enum DialogKind {
     Rename,
     Copy,
     Move,
+    CreateArchive,
     ConnectRemote,
     MountSftp,
     MountS3,
@@ -285,6 +286,57 @@ pub fn dialog(
                         summary,
                     }
                 }
+                DialogKind::CreateArchive => {
+                    let pane = pane.unwrap();
+                    let sources = pane.get_effective_selection_dereferenced();
+                    if sources.is_empty() {
+                        return Ok(());
+                    }
+                    let other_pane = gs.other_pane(pane_handle.unwrap());
+                    let destination = other_pane.path();
+                    let display_destination = ctx.format_vfs_path(&destination);
+                    let summary = if sources.len() == 1 {
+                        sources[0]
+                            .file_name()
+                            .map(str::to_string)
+                            .unwrap_or_default()
+                    } else {
+                        format!("{} items", sources.len())
+                    };
+                    // Single selection → its stem; multiple → the directory
+                    // they sit in.
+                    let default_name = if sources.len() == 1 {
+                        sources[0]
+                            .file_name()
+                            .map(|name| match name.rsplit_once('.') {
+                                Some((stem, _)) if !stem.is_empty() => stem.to_string(),
+                                _ => name.to_string(),
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        sources[0]
+                            .parent()
+                            .and_then(|p| p.file_name().map(str::to_string))
+                            .unwrap_or_else(|| "archive".to_string())
+                    };
+                    let settings = ctx.preferences().load();
+                    let prefs = &settings.archives;
+                    ModalDataKind::CreateArchive {
+                        sources,
+                        destination,
+                        display_destination,
+                        summary,
+                        default_name,
+                        defaults: crate::main_window::ArchiveDialogDefaults {
+                            format: prefs.default_format.into(),
+                            preserve_symlinks: prefs.preserve_symlinks,
+                            zip_level: prefs.zip_level,
+                            gzip_level: prefs.gzip_level,
+                            xz_level: prefs.xz_level,
+                            zstd_level: prefs.zstd_level,
+                        },
+                    }
+                }
                 DialogKind::ConnectRemote => ModalDataKind::ConnectRemote {
                     initial: crate::connections::ConnectionKind::Ssh {
                         host: String::new(),
@@ -390,6 +442,7 @@ cmd_dialog!(cmd_create_and_edit, DialogKind::CreateAndEdit);
 cmd_dialog!(cmd_navigate, DialogKind::Navigate);
 cmd_dialog!(cmd_copy, DialogKind::Copy);
 cmd_dialog!(cmd_move, DialogKind::Move);
+cmd_dialog!(cmd_create_archive, DialogKind::CreateArchive);
 cmd_dialog!(cmd_connect_remote, DialogKind::ConnectRemote);
 cmd_dialog!(cmd_select_vfs, DialogKind::SelectVfs);
 cmd_dialog!(cmd_history_back, DialogKind::HistoryBack);

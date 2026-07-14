@@ -1,0 +1,21 @@
+[package]
+name = "newt-archive"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only"
+description = "Sans-IO streaming archive writers (tar + zip) for Newt"
+
+[dependencies]
+flate2 = "1"
+xz2 = "0.1"
+zstd = "0.13"
+crc32fast = "1"
+aes = "0.8"
+hmac = "0.12"
+sha1 = "0.10"
+pbkdf2 = "0.12"
+getrandom = { version = "0.3", features = ["std"] }
+
+[dev-dependencies]
+tar = "0.4"
+zip = "2"

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
-import { safe } from "../../lib/ipc";
+import { safe, safeCommand } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./CopyMove.module.scss";
@@ -15,6 +15,7 @@ export default function CopyMove({
   display_destination,
   summary: itemSummary,
   cancel,
+  context,
 }: CopyMoveProps) {
   const [preserveTimestamps, setPreserveTimestamps] = useState(false);
   const [preserveOwner, setPreserveOwner] = useState(false);
@@ -89,6 +90,21 @@ export default function CopyMove({
         </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
+        {isCopy && context?.pane_handle != null && (
+          // Swaps this modal for the Pack to Archive dialog over the same
+          // selection (the cmd_ middleware closes this one).
+          <button
+            type="button"
+            style={{ marginRight: "auto" }}
+            onClick={() =>
+              safeCommand("cmd_create_archive", {
+                paneHandle: context.pane_handle,
+              })
+            }
+          >
+            Pack into archive…
+          </button>
+        )}
         <button type="button" onClick={cancel}>
           Cancel
         </button>

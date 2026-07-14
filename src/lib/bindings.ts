@@ -241,6 +241,14 @@ async startCopyMove(kind: string, sources: VfsPath[], destination: VfsPath, opti
     else return { status: "error", error: e  as any };
 }
 },
+async startCreateArchive(sources: VfsPath[], destination: VfsPath, options: ArchiveOptions) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_create_archive", { sources, destination, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cancelOperation(operationId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel_operation", { operationId }) };
@@ -700,6 +708,14 @@ async cmdCopy(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 async cmdMove(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_move", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdCreateArchive(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_create_archive", { paneHandle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1296,7 +1312,7 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1326,6 +1342,50 @@ theme: ThemeMode;
  * Visible columns and their order.
  */
 columns: string[] }
+/**
+ * Pack-dialog defaults sourced from `ArchivePreferences`.
+ */
+export type ArchiveDialogDefaults = { format: ArchiveFormat; preserve_symlinks: boolean; zip_level: number; gzip_level: number; xz_level: number; zstd_level: number }
+export type ArchiveFormat = "zip" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
+export type ArchiveFormatPref = "zip" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
+export type ArchiveOptions = { format: ArchiveFormat; 
+/**
+ * `None` = per-format default (gzip/xz/deflate 6, zstd 3); zip 0 = store.
+ */
+level: number | null; 
+/**
+ * Store symlinks as symlink entries; off = follow them into the archive.
+ */
+preserve_symlinks: boolean; 
+/**
+ * Zip only — WinZip AES-256 encryption.
+ */
+password: string | null }
+export type ArchivePreferences = { 
+/**
+ * Format preselected in the Pack to Archive dialog.
+ */
+default_format: ArchiveFormatPref; 
+/**
+ * Store symlinks as symlinks (off: follow them into the archive).
+ */
+preserve_symlinks: boolean; 
+/**
+ * Deflate level for zip archives; 0 stores entries uncompressed.
+ */
+zip_level: number; 
+/**
+ * Compression level for tar.gz archives.
+ */
+gzip_level: number; 
+/**
+ * Compression level for tar.xz archives.
+ */
+xz_level: number; 
+/**
+ * Compression level for tar.zst archives.
+ */
+zstd_level: number }
 export type AskpassPrompt = { prompt: string; is_secret: boolean }
 export type BehaviorPreferences = { 
 /**
@@ -1440,7 +1500,7 @@ export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "acces
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
 export type DiscoveryResult<T> = { items: T[]; 
 /**
  * Best-effort failure note. When present, the dialog should show this
@@ -1560,7 +1620,16 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+/**
+ * Directory the archive lands in (the other pane); the dialog
+ * composes the final file path from this and the name field.
+ */
+destination: VfsPath; display_destination: string; summary: string; 
+/**
+ * Suggested archive name, without extension.
+ */
+default_name: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
 /**
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
@@ -1625,7 +1694,16 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "connect_remote"; data: { 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+/**
+ * Directory the archive lands in (the other pane); the dialog
+ * composes the final file path from this and the name field.
+ */
+destination: VfsPath; display_destination: string; summary: string; 
+/**
+ * Suggested archive name, without extension.
+ */
+default_name: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
 /**
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
@@ -1669,7 +1747,11 @@ persistent: boolean } } | { type: "command_palette"; data: { category_filter: st
 export type Mode = number
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
-export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
+export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { CreateArchive: { sources: VfsPath[]; 
+/**
+ * Full path of the archive file itself, not its directory.
+ */
+destination: VfsPath; options: ArchiveOptions } } | { SetMetadata: { paths: VfsPath[]; 
 /**
  * Bits to force ON (applied as `old_mode | mode_set`)
  */

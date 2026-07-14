@@ -783,6 +783,7 @@ impl Vfs for S3Vfs {
             completed_parts: Vec::new(),
             notifier: self.notifier.clone(),
             path: path.to_owned(),
+            terminated: false,
         }))
     }
 
@@ -944,6 +945,10 @@ struct S3AsyncWriter {
     completed_parts: Vec<aws_sdk_s3::types::CompletedPart>,
     notifier: VfsChangeNotifier,
     path: PathBuf,
+    /// Set once the upload was completed or aborted — the Drop guard only
+    /// fires for writers discarded mid-stream (cancelled/failed operations),
+    /// which would otherwise leak the multipart upload.
+    terminated: bool,
 }
 
 impl S3AsyncWriter {
@@ -988,11 +993,12 @@ impl S3AsyncWriter {
         Ok(())
     }
 
-    async fn abort(&self) {
+    async fn abort(&mut self) {
         warn!(
             "s3: aborting multipart upload upload_id={} bucket={} key={}",
             self.upload_id, self.bucket, self.key
         );
+        self.terminated = true;
         let _ = self
             .client
             .abort_multipart_upload()
@@ -1001,6 +1007,29 @@ impl S3AsyncWriter {
             .upload_id(&self.upload_id)
             .send()
             .await;
+    }
+}
+
+impl Drop for S3AsyncWriter {
+    fn drop(&mut self) {
+        if self.terminated {
+            return;
+        }
+        warn!(
+            "s3: writer dropped mid-upload, aborting multipart upload upload_id={} bucket={} key={}",
+            self.upload_id, self.bucket, self.key
+        );
+        let request = self
+            .client
+            .abort_multipart_upload()
+            .bucket(&self.bucket)
+            .key(&self.key)
+            .upload_id(&self.upload_id);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = request.send().await;
+            });
+        }
     }
 }
 
@@ -1040,6 +1069,7 @@ impl VfsAsyncWriter for S3AsyncWriter {
             .send()
             .await
             .map_err(|e| Error::custom(e.to_string()))?;
+        self.terminated = true;
 
         info!(
             "s3: completed multipart upload upload_id={} bucket={} key={} ({} parts)",

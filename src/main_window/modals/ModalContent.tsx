@@ -8,6 +8,7 @@ import About from "./About";
 import Confirm from "./Confirm";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
+import CreateArchive from "./CreateArchive";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
 import Debug from "./Debug";
@@ -59,6 +60,8 @@ export function ModalContent({
       return <Rename {...state.data} {...commonProps} />;
     case "copy_move":
       return <CopyMove {...state.data} {...commonProps} />;
+    case "create_archive":
+      return <CreateArchive {...state.data} {...commonProps} />;
     case "connect_remote":
       return (
         <ConnectRemote {...state.data} {...commonProps} mountLog={mountLog} />

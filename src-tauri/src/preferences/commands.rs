@@ -278,6 +278,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "create_archive".into(),
+            name: "Pack to Archive...".into(),
+            short_name: Some("Pack".into()),
+            category: "File".into(),
+            default_key: Some("alt+f5".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "copy_to_clipboard".into(),
             name: "Copy Path to Clipboard".into(),
             short_name: Some("CopyPath".into()),

@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::operation::*;
-use crate::test_support::{MockVfs, MockVfsConfig};
+use crate::test_support::{FailureSpec, MockVfs, MockVfsConfig};
 use crate::vfs::path::PathBuf;
 use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
@@ -1279,4 +1279,441 @@ async fn test_progress_events_correct() {
     let (total_bytes, total_items) = get_prepared(&result.events).unwrap();
     assert_eq!(total_bytes, 10); // "hello" + "world"
     assert_eq!(total_items, 2);
+}
+
+// ===========================================================================
+// CreateArchive tests
+// ===========================================================================
+
+fn archive_options(format: ArchiveFormat) -> ArchiveOptions {
+    ArchiveOptions {
+        format,
+        level: Some(1),
+        preserve_symlinks: true,
+        password: None,
+    }
+}
+
+fn archive_source_vfs() -> Arc<MockVfs> {
+    MockVfs::builder()
+        .dir("/data")
+        .file_with_mode("/data/hello.txt", b"hello world", 0o640)
+        .dir("/data/sub")
+        .file("/data/sub/nested.txt", b"nested content")
+        .dir("/data/empty")
+        .symlink("/data/link", "hello.txt")
+        .build()
+}
+
+struct TarCheck {
+    is_dir: bool,
+    is_symlink: bool,
+    symlink_target: Option<String>,
+    mode: Option<u32>,
+    content: Option<Vec<u8>>,
+}
+
+/// Read an archive produced by CreateArchive back through the read-side
+/// `TarArchiveVfs` — the strongest oracle we have in-tree.
+async fn read_back_tar(bytes: &[u8], name: &str) -> std::collections::BTreeMap<String, TarCheck> {
+    use crate::vfs::{NoopProgressSink, ScopedReporter, TarArchiveVfs, Vfs};
+
+    let path = format!("/{name}");
+    let upstream = MockVfs::builder().file(&path, bytes).build();
+    let reporter: Arc<dyn crate::vfs::ProgressReporter> =
+        Arc::new(ScopedReporter::new(Arc::new(NoopProgressSink), VfsId(1)));
+    let vfs = Arc::new(TarArchiveVfs::new(
+        upstream,
+        PathBuf::from_wire_str(&path),
+        VfsPath::root(VfsId(1)),
+        Vec::new(),
+        reporter,
+    ));
+
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![PathBuf::root()];
+    while let Some(dir) = stack.pop() {
+        let list = vfs.list_files(&dir, None).await.unwrap();
+        for f in list.files {
+            if f.name == ".." {
+                continue;
+            }
+            let p = dir.join(&f.name);
+            if f.is_dir && !f.is_symlink {
+                stack.push(p.clone());
+            }
+            let content = if !f.is_dir && !f.is_symlink {
+                let mut reader = vfs.open_read_async(&p).await.unwrap();
+                let mut data = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut data)
+                    .await
+                    .unwrap();
+                Some(data)
+            } else {
+                None
+            };
+            out.insert(
+                p.as_wire_str().trim_start_matches('/').to_string(),
+                TarCheck {
+                    is_dir: f.is_dir,
+                    is_symlink: f.is_symlink,
+                    symlink_target: f.symlink_target.clone(),
+                    mode: f.mode.as_ref().map(|m| m.0),
+                    content,
+                },
+            );
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn test_create_archive_tar_round_trip() {
+    let vfs = archive_source_vfs();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar.zst"),
+            options: archive_options(ArchiveFormat::TarZst),
+        },
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let (total_bytes, total_items) = get_prepared(&result.events).unwrap();
+    assert_eq!(
+        total_bytes,
+        ("hello world".len() + "nested content".len()) as u64
+    );
+    assert_eq!(total_items, 6);
+
+    let bytes = result.vfs.read_content("/out.tar.zst");
+    let entries = read_back_tar(&bytes, "check.tar.zst").await;
+
+    assert!(entries["data"].is_dir);
+    assert!(entries["data/empty"].is_dir);
+    assert_eq!(
+        entries["data/hello.txt"].content.as_deref(),
+        Some(&b"hello world"[..])
+    );
+    assert_eq!(entries["data/hello.txt"].mode, Some(0o640));
+    assert_eq!(
+        entries["data/sub/nested.txt"].content.as_deref(),
+        Some(&b"nested content"[..])
+    );
+    assert!(entries["data/link"].is_symlink);
+    assert_eq!(
+        entries["data/link"].symlink_target.as_deref(),
+        Some("hello.txt")
+    );
+}
+
+#[tokio::test]
+async fn test_create_archive_zip_round_trip() {
+    use std::io::Read;
+
+    let vfs = archive_source_vfs();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.zip"),
+            options: ArchiveOptions {
+                level: Some(6),
+                ..archive_options(ArchiveFormat::Zip)
+            },
+        },
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let bytes = result.vfs.read_content("/out.zip");
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    assert!(names.contains(&"data/".to_string()));
+    assert!(names.contains(&"data/empty/".to_string()));
+
+    let mut hello = archive.by_name("data/hello.txt").unwrap();
+    assert_eq!(hello.unix_mode().unwrap() & 0o7777, 0o640);
+    let mut content = Vec::new();
+    hello.read_to_end(&mut content).unwrap();
+    assert_eq!(content, b"hello world");
+    drop(hello);
+
+    let mut link = archive.by_name("data/link").unwrap();
+    assert_eq!(link.unix_mode().unwrap() & 0o170000, 0o120000);
+    let mut target = String::new();
+    link.read_to_string(&mut target).unwrap();
+    assert_eq!(target, "hello.txt");
+}
+
+#[tokio::test]
+async fn test_create_archive_zip_encrypted() {
+    use std::io::Read;
+
+    let vfs = archive_source_vfs();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.zip"),
+            options: ArchiveOptions {
+                password: Some("hunter2".to_string()),
+                ..archive_options(ArchiveFormat::Zip)
+            },
+        },
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let bytes = result.vfs.read_content("/out.zip");
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+
+    let index = archive.index_for_name("data/hello.txt").unwrap();
+    let mut file = archive.by_index_decrypt(index, b"hunter2").unwrap();
+    let mut content = Vec::new();
+    file.read_to_end(&mut content).unwrap();
+    assert_eq!(content, b"hello world");
+    drop(file);
+
+    assert!(archive.by_index_decrypt(index, b"wrong").is_err());
+}
+
+#[tokio::test]
+async fn test_create_archive_password_rejected_for_tar() {
+    let vfs = archive_source_vfs();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar"),
+            options: ArchiveOptions {
+                password: Some("nope".to_string()),
+                ..archive_options(ArchiveFormat::Tar)
+            },
+        },
+        skip_all,
+    )
+    .await;
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Failed { .. }))
+    );
+}
+
+#[tokio::test]
+async fn test_create_archive_capability_matrix() {
+    for (src_async, dst_async) in [(false, false), (false, true), (true, false), (true, true)] {
+        let src = MockVfs::builder()
+            .config(MockVfsConfig {
+                can_read_sync: !src_async,
+                can_read_async: src_async,
+                ..MockVfsConfig::default()
+            })
+            .dir("/data")
+            .file("/data/a.txt", b"alpha")
+            .file("/data/b.txt", b"beta")
+            .build();
+        let dst = MockVfs::builder()
+            .config(MockVfsConfig {
+                can_overwrite_sync: !dst_async,
+                can_overwrite_async: dst_async,
+                ..MockVfsConfig::default()
+            })
+            .build();
+
+        let (result, dst) = run_operation_two_vfs(
+            src,
+            dst,
+            OperationRequest::CreateArchive {
+                sources: vec![vfs_path("/data")],
+                destination: vfs_path_id(1, "/out.tar"),
+                options: archive_options(ArchiveFormat::Tar),
+            },
+            |issue| panic!("unexpected issue: {}", issue.message),
+        )
+        .await;
+        assert!(
+            has_completed(&result.events),
+            "src_async={src_async} dst_async={dst_async}: {:?}",
+            result.events
+        );
+
+        let entries = read_back_tar(&dst.read_content("/out.tar"), "check.tar").await;
+        assert_eq!(
+            entries["data/a.txt"].content.as_deref(),
+            Some(&b"alpha"[..]),
+            "src_async={src_async} dst_async={dst_async}"
+        );
+        assert_eq!(entries["data/b.txt"].content.as_deref(), Some(&b"beta"[..]));
+    }
+}
+
+#[tokio::test]
+async fn test_create_archive_dest_exists_skip_cancels() {
+    let vfs = MockVfs::builder()
+        .dir("/data")
+        .file("/data/hello.txt", b"hello world")
+        // Pre-existing artifact at the destination.
+        .file("/out.tar", b"old bytes")
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar"),
+            options: archive_options(ArchiveFormat::Tar),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_cancelled(&result.events), "{:?}", result.events);
+    assert_eq!(result.vfs.read_content("/out.tar"), b"old bytes");
+}
+
+#[tokio::test]
+async fn test_create_archive_dest_exists_overwrite_excludes_old_archive() {
+    // The stale artifact sits INSIDE the tree being archived: overwrite must
+    // replace it and the walk must not pack the old archive into the new one.
+    let vfs = MockVfs::builder()
+        .dir("/data")
+        .file("/data/hello.txt", b"hello world")
+        .file("/data/out.tar", b"stale archive")
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data/hello.txt"), vfs_path("/data/out.tar")],
+            destination: vfs_path("/data/out.tar"),
+            options: archive_options(ArchiveFormat::Tar),
+        },
+        overwrite_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let entries = read_back_tar(&result.vfs.read_content("/data/out.tar"), "check.tar").await;
+    assert_eq!(
+        entries["hello.txt"].content.as_deref(),
+        Some(&b"hello world"[..])
+    );
+    assert!(!entries.contains_key("out.tar"));
+}
+
+#[tokio::test]
+async fn test_create_archive_duplicate_top_level_fails() {
+    let vfs = MockVfs::builder()
+        .dir("/a")
+        .dir("/b")
+        .file("/a/x.txt", b"one")
+        .file("/b/x.txt", b"two")
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/a/x.txt"), vfs_path("/b/x.txt")],
+            destination: vfs_path("/out.tar"),
+            options: archive_options(ArchiveFormat::Tar),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Failed { .. })),
+        "{:?}",
+        result.events
+    );
+    assert!(!result.vfs.exists("/out.tar"));
+}
+
+#[tokio::test]
+async fn test_create_archive_follow_symlinks() {
+    let vfs = MockVfs::builder()
+        .dir("/data")
+        .file("/data/file.txt", b"real content")
+        .symlink("/data/link", "file.txt")
+        .symlink("/data/loop", "/data")
+        .build();
+
+    let issues = std::cell::Cell::new(0u32);
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar"),
+            options: ArchiveOptions {
+                preserve_symlinks: false,
+                ..archive_options(ArchiveFormat::Tar)
+            },
+        },
+        |_issue| {
+            issues.set(issues.get() + 1);
+            IssueResponse {
+                action: IssueAction::Skip,
+                apply_to_all: false,
+            }
+        },
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+    // The /data → /data cycle raised exactly one skip issue.
+    assert_eq!(issues.get(), 1);
+
+    let entries = read_back_tar(&result.vfs.read_content("/out.tar"), "check.tar").await;
+    // The followed link is stored as a regular file with the target's bytes.
+    assert!(!entries["data/link"].is_symlink);
+    assert_eq!(
+        entries["data/link"].content.as_deref(),
+        Some(&b"real content"[..])
+    );
+    assert!(!entries.contains_key("data/loop"));
+}
+
+#[tokio::test]
+async fn test_create_archive_open_failure_skips_entry() {
+    let vfs = MockVfs::builder()
+        .dir("/data")
+        .file("/data/good.txt", b"good")
+        .file("/data/bad.txt", b"bad")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/data/bad.txt"),
+            operation: "open_read_sync",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "denied".to_string(),
+            },
+            remaining: None,
+        })
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data")],
+            destination: vfs_path("/out.tar"),
+            options: archive_options(ArchiveFormat::Tar),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+
+    let entries = read_back_tar(&result.vfs.read_content("/out.tar"), "check.tar").await;
+    // The unreadable file was skipped before its header hit the stream.
+    assert!(!entries.contains_key("data/bad.txt"));
+    assert_eq!(
+        entries["data/good.txt"].content.as_deref(),
+        Some(&b"good"[..])
+    );
 }

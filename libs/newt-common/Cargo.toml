@@ -36,6 +36,7 @@ url = "2"
 openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
 iluvatar = { version = "0.1.1", features = ["tokio"] }
+newt-archive = { path = "../newt-archive" }
 blake3 = "1"
 serde_json = "1"
 tokio-duplex = "1.0.1"
