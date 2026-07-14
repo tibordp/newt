@@ -15,6 +15,17 @@ Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom 
 - The bootstrapless flow trusts the daemon's reported OS/arch from `inspect`. If the container runs a foreign-arch userspace under qemu the agent will be the wrong arch; consider a `--print-triple` self-check post-launch.
 - Kubernetes is bootstrap-only (kubectl cp itself needs tar). If we want sh-less k8s pods later we'd need to teach the agent how to be `tar`-injected.
 
+## Pane-mounted agent connections (agent-as-VFS)
+
+Mount a spawn-style connection (SSH, docker, podman, kubectl, custom) as a VFS in a pane instead of remoting the whole session — e.g. peek into a container running on the current remote session's host. Design is locked in `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`. Connection establishment (`SpawnSpec`, bootstrap/direct-copy spawn, transport builders) already lives in `newt_common::connect` behind the `ConnectLog` seam. Remaining:
+- `MountRequest::Agent` + FS-only agent serve mode (VfsDispatcher + askpass only, enforced structurally). Distinct descriptor type_name — must not collide with `"remote"` (display flip + `is_host_local`).
+- Streaming agent-binary provisioning from the host (`API_HOST_FETCH_AGENT`), spliced into bootstrap uploads; materialize-to-disk for `docker cp` modes; self-exe fast path.
+- Connect dialog "open as window / pane" knob; `open_in` field on saved connection profiles (serde-default `window`).
+
+## VFS property sheets (S3 ACLs / metadata)
+
+Inspect and edit VFS-specific object state (S3 canned ACLs, grants, user metadata, storage class; later xattrs etc.) without per-VFS trait/protocol sprawl. Design captured in `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`: one generic verb pair (`get_property_sheet` / `apply_properties`) + `has_extended_properties` capability, schema-driven `PropertySheet`/`PropertyPatch` payloads rendered by a single generic frontend editor. Open questions (bulk/recursive apply semantics, UI placement, enricher taxonomy co-design) are noted in the doc.
+
 ## Archive packing and unpacking
 
 (as an operation, not a VFS)
