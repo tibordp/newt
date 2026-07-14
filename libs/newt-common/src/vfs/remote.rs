@@ -137,6 +137,11 @@ pub struct RemoteVfs {
     communicator: Communicator,
     pending_read_streams: PendingVfsReadStreams,
     next_stream_id: AtomicU64,
+    descriptor: &'static dyn VfsDescriptor,
+    mount_meta: Vec<u8>,
+    /// Keeps a spawned sub-agent (process, askpass listener) alive for the
+    /// lifetime of the mount. `None` for the host-communicator flavor.
+    _connection: Option<super::agent::AgentConnectionGuard>,
 }
 
 impl RemoteVfs {
@@ -162,6 +167,27 @@ impl RemoteVfs {
             communicator,
             pending_read_streams,
             next_stream_id: AtomicU64::new(1),
+            descriptor: &REMOTE_VFS_DESCRIPTOR,
+            mount_meta: Vec::new(),
+            _connection: None,
+        }
+    }
+
+    /// The same proxy pointed at a spawned FS-only sub-agent instead of the
+    /// host: an agent mount. Owns the connection so unmount tears it down.
+    pub fn for_agent(
+        communicator: Communicator,
+        pending_read_streams: PendingVfsReadStreams,
+        mount_meta: Vec<u8>,
+        connection: super::agent::AgentConnectionGuard,
+    ) -> Self {
+        Self {
+            communicator,
+            pending_read_streams,
+            next_stream_id: AtomicU64::new(1),
+            descriptor: &super::agent::AGENT_VFS_DESCRIPTOR,
+            mount_meta,
+            _connection: Some(connection),
         }
     }
 
@@ -187,7 +213,11 @@ use crate::api::{
 #[async_trait::async_trait]
 impl Vfs for RemoteVfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
-        &REMOTE_VFS_DESCRIPTOR
+        self.descriptor
+    }
+
+    fn mount_meta(&self) -> Vec<u8> {
+        self.mount_meta.clone()
     }
 
     async fn list_files(

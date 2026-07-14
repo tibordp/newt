@@ -7,7 +7,7 @@ use newt_common::{
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
         PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
-        VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
+        VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
     },
     askpass,
     filesystem::LocalShellService,
@@ -41,6 +41,10 @@ struct Args {
     #[cfg(windows)]
     #[arg(long, value_name = "NAME")]
     pipe: Option<String>,
+
+    /// Serve only the filesystem (VFS) API — used for pane-scoped agent mounts.
+    #[arg(long)]
+    serve_vfs: bool,
 
     /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
     #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
@@ -228,6 +232,20 @@ async fn run_agent() -> Result<(), Error> {
     // Outbox first so OperationDispatcher can use it.
     let (outbox, inbox) = Communicator::create_outbox();
 
+    // FS-only mode (pane-scoped agent mounts): serve the VFS API over the
+    // local filesystem and nothing else. The mode is a soft trust boundary —
+    // none of the full-session services below are ever constructed, so this
+    // agent structurally cannot spawn terminals, run operations, or mount
+    // further VFSes.
+    if args.serve_vfs {
+        let dispatcher = VfsDispatcher::new(Arc::new(LocalVfs::new()), outbox.clone());
+        info!("agent started (serve-vfs), entering RPC loop");
+        let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
+        rpc.closed().await;
+        info!("RPC connection closed, agent exiting");
+        return Ok(());
+    }
+
     let root_vfs = Arc::new(LocalVfs::new());
     let registry = Arc::new(VfsRegistry::with_root(root_vfs));
     let op_context = Arc::new(OperationContext {
@@ -244,7 +262,7 @@ async fn run_agent() -> Result<(), Error> {
     // the correct RemoteVfs read stream.
     let pending_read_streams: PendingVfsReadStreams = Default::default();
 
-    let resolver = CurrentExeAgentResolver::new();
+    let resolver = Arc::new(CurrentExeAgentResolver::new());
     let askpass_binary = resolver.find_local_agent_binary()?;
 
     let askpass_provider: Arc<dyn askpass::AskpassProvider> =
@@ -267,7 +285,8 @@ async fn run_agent() -> Result<(), Error> {
         askpass_binary,
         provider: askpass_provider,
     })
-    .with_progress_sink(progress_sink);
+    .with_progress_sink(progress_sink)
+    .with_agent_resolver(resolver);
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))

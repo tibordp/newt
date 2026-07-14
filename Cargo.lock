@@ -3634,12 +3634,14 @@ name = "newt-agent"
 version = "0.1.0"
 dependencies = [
  "async-compression",
+ "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "clap",
  "log",
  "newt-common",
  "pretty_env_logger",
+ "tempfile",
  "tokio",
  "tokio-duplex",
 ]

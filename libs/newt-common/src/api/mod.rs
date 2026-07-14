@@ -486,6 +486,11 @@ pub struct MountContext<'a> {
     pub pending_read_streams: &'a PendingVfsReadStreams,
     pub sftp_askpass: Option<&'a SftpAskpass>,
     pub askpass_provider: Option<&'a Arc<dyn crate::askpass::AskpassProvider>>,
+    /// Resolves agent binaries for spawn-style agent mounts (`None` ⇒
+    /// such mounts are rejected).
+    pub agent_resolver: Option<&'a Arc<dyn crate::agent_resolver::AgentResolver>>,
+    /// Extra PATH entries for transport binary resolution on agent mounts.
+    pub extra_path: &'a [String],
     /// Per-mount progress reporter, scoped to the `VfsId` the manager
     /// is about to assign to this mount. VFSes that report progress
     /// (e.g. SearchVfs) clone the inner `Arc` and call `report()`
@@ -522,6 +527,13 @@ pub struct VfsRegistryManager {
     /// no-op so manager construction outside of a real session (tests,
     /// agent boot before the outbox is wired, etc.) keeps working.
     progress_sink: Arc<dyn crate::vfs::VfsProgressSink>,
+    /// Resolves agent binaries for spawn-style agent mounts. When `None`,
+    /// `MountRequest::Agent` is rejected.
+    agent_resolver: Option<Arc<dyn crate::agent_resolver::AgentResolver>>,
+    /// Extra PATH entries for resolving transport binaries (docker, ssh, …)
+    /// on spawn-style agent mounts. Host sessions populate this from
+    /// preferences; the agent's ambient PATH is used otherwise.
+    extra_path: Vec<String>,
 }
 
 impl VfsRegistryManager {
@@ -533,6 +545,8 @@ impl VfsRegistryManager {
             sftp_askpass: None,
             askpass_provider: None,
             progress_sink: Arc::new(crate::vfs::NoopProgressSink),
+            agent_resolver: None,
+            extra_path: Vec::new(),
         }
     }
 
@@ -548,6 +562,8 @@ impl VfsRegistryManager {
             sftp_askpass: None,
             askpass_provider: None,
             progress_sink: Arc::new(crate::vfs::NoopProgressSink),
+            agent_resolver: None,
+            extra_path: Vec::new(),
         }
     }
 
@@ -573,6 +589,19 @@ impl VfsRegistryManager {
         self.progress_sink = sink;
         self
     }
+
+    pub fn with_agent_resolver(
+        mut self,
+        resolver: Arc<dyn crate::agent_resolver::AgentResolver>,
+    ) -> Self {
+        self.agent_resolver = Some(resolver);
+        self
+    }
+
+    pub fn with_extra_path(mut self, extra_path: Vec<String>) -> Self {
+        self.extra_path = extra_path;
+        self
+    }
 }
 
 #[async_trait::async_trait]
@@ -591,6 +620,8 @@ impl VfsManager for VfsRegistryManager {
             pending_read_streams: &self.pending_read_streams,
             sftp_askpass: self.sftp_askpass.as_ref(),
             askpass_provider: self.askpass_provider.as_ref(),
+            agent_resolver: self.agent_resolver.as_ref(),
+            extra_path: &self.extra_path,
             progress_reporter: &progress_reporter,
         };
 
@@ -605,6 +636,9 @@ impl VfsManager for VfsRegistryManager {
                 crate::vfs::K8sVfs::mount(context, &ctx).await?
             }
             MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
+            MountRequest::Agent { spec, label } => {
+                crate::vfs::agent::mount(spec, label, &ctx).await?
+            }
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
                 // Content matching needs a FileReader; use the

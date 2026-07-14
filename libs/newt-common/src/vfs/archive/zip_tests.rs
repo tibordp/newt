@@ -134,6 +134,8 @@ impl Harness {
             pending_read_streams: &self.pending_read_streams,
             sftp_askpass: None,
             askpass_provider: askpass,
+            agent_resolver: None,
+            extra_path: &[],
             progress_reporter: &self.progress_reporter,
         }
     }

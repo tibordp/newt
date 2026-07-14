@@ -696,6 +696,7 @@ fn create_local_services(
     sftp_askpass: Option<newt_common::api::SftpAskpass>,
     askpass_provider: Arc<dyn AskpassProvider>,
     progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
+    agent_resolver: Arc<dyn AgentResolver>,
 ) -> Services {
     let (progress_tx, mut progress_rx) =
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
@@ -707,10 +708,13 @@ fn create_local_services(
 
     let operations = operations.clone();
     let publisher_clone = publisher.clone();
-    let preferences = preferences.clone();
+    let preferences_progress = preferences.clone();
     tokio::spawn(async move {
         while let Some(progress) = progress_rx.recv().await {
-            let keep = preferences.load().behavior.keep_finished_operations;
+            let keep = preferences_progress
+                .load()
+                .behavior
+                .keep_finished_operations;
             apply_operation_progress(&operations, progress, keep);
             let _ = publisher_clone.publish();
         }
@@ -722,7 +726,9 @@ fn create_local_services(
         vfs_manager: Arc::new({
             let mgr = VfsRegistryManager::new(registry.clone())
                 .with_askpass_provider(askpass_provider)
-                .with_progress_sink(progress_sink);
+                .with_progress_sink(progress_sink)
+                .with_agent_resolver(agent_resolver)
+                .with_extra_path(preferences.load().environment.extra_path.clone());
             if let Some(askpass) = sftp_askpass {
                 mgr.with_sftp_askpass(askpass)
             } else {
@@ -956,7 +962,7 @@ fn spawn_child_watcher(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn connect(
     connection_target: &ConnectionTarget,
-    agent_resolver: &dyn AgentResolver,
+    agent_resolver: Arc<dyn AgentResolver>,
     state: &MainWindowState,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: crate::preferences::PreferencesHandle,
@@ -997,6 +1003,7 @@ pub(super) async fn connect(
                 sftp_askpass,
                 askpass_provider.clone(),
                 progress_sink,
+                agent_resolver.clone(),
             );
             (services, StderrLog::default(), None)
         }
@@ -1011,8 +1018,9 @@ pub(super) async fn connect(
             let extra_path = preferences.load().environment.extra_path.clone();
             let conn: ChildConnection = newt_common::connect::spawn(
                 spec,
+                newt_common::connect::AgentMode::Session,
                 &extra_path,
-                agent_resolver,
+                agent_resolver.as_ref(),
                 askpass_provider.clone(),
                 conn_log.clone(),
             )
@@ -1043,7 +1051,7 @@ pub(super) async fn connect(
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
-            let conn = spawn_elevated(agent_resolver).await?;
+            let conn = spawn_elevated(agent_resolver.as_ref()).await?;
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
@@ -1074,7 +1082,7 @@ pub(super) async fn connect(
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             });
-            let spawn = super::wsl_launch::spawn_wsl(distro, agent_resolver).await?;
+            let spawn = super::wsl_launch::spawn_wsl(distro, agent_resolver.as_ref()).await?;
             // Stream WSL stderr into the connection log right away.
             spawn_stderr_reader(spawn.stderr, conn_log.clone());
             conn_log.log("Setting up RPC services...");

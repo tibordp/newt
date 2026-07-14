@@ -26,7 +26,7 @@ use main_window::spawn_main_window;
 use main_window::{AgentResolver, TauriAgentResolver};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 use tauri::State;
 use tauri::Webview;
@@ -146,7 +146,7 @@ pub struct GlobalContext {
     prewarmed_viewers: Mutex<HashMap<String, PrewarmedWindow>>,
     /// Pre-warmed hidden editor windows, keyed by parent main window label.
     prewarmed_editors: Mutex<HashMap<String, PrewarmedWindow>>,
-    agent_resolver: OnceLock<TauriAgentResolver>,
+    agent_resolver: OnceLock<Arc<dyn AgentResolver>>,
     preferences: OnceLock<preferences::PreferencesManager>,
     #[cfg(target_os = "macos")]
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
@@ -171,14 +171,15 @@ impl Default for GlobalContext {
 impl GlobalContext {
     pub fn init_agent_resolver(&self, app_handle: &tauri::AppHandle) {
         self.agent_resolver
-            .set(TauriAgentResolver::new(app_handle))
+            .set(Arc::new(TauriAgentResolver::new(app_handle)))
             .ok();
     }
 
-    pub fn agent_resolver(&self) -> &dyn AgentResolver {
+    pub fn agent_resolver(&self) -> Arc<dyn AgentResolver> {
         self.agent_resolver
             .get()
             .expect("AgentResolver not initialized")
+            .clone()
     }
 
     pub fn init_preferences(

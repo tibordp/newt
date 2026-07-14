@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod archive;
 pub mod background_job;
 pub mod k8s;
@@ -14,11 +15,14 @@ pub mod sftp;
 #[path = "../vfs_tests.rs"]
 mod tests;
 
+pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
-pub use path_style::{PathStyle, encode_mount_meta, mount_roots};
+pub use path_style::{
+    PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_label, mount_roots,
+};
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
     VfsProgressSink,
@@ -1088,6 +1092,13 @@ pub enum MountRequest {
         params: search::SearchParams,
     },
     Remote,
+    /// Spawn an FS-only sub-agent over a transport (SSH, docker, …) and
+    /// mount its local filesystem. See `vfs::agent`.
+    Agent {
+        spec: crate::connect::SpawnSpec,
+        /// Display label for the VFS selector, e.g. `docker:web-1`.
+        label: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

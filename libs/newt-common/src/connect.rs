@@ -23,6 +23,30 @@ pub trait ConnectLog: Send + Sync {
     fn log(&self, line: String);
 }
 
+/// What the spawned agent serves. Baked into the invocation (argv/env), not
+/// negotiated after connect: the mode is a soft trust boundary, and fixing it
+/// at spawn time means the restricted agent provably never constructs the
+/// full-session services.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentMode {
+    /// Full session services (filesystem, terminals, operations, mounts).
+    Session,
+    /// FS-only: the agent serves just the VFS API over its local
+    /// filesystem, for pane-scoped agent mounts. Selected via the agent's
+    /// `--serve-vfs` flag; the bootstrap path carries it as a
+    /// `NEWT_AGENT_MODE` assignment injected into the script (the
+    /// `NEWT_RUST_LOG` mechanism), direct-exec paths append the flag to
+    /// the exec argv. A `CustomShell { skip_bootstrap: true }` spec brings
+    /// its own agent, so the mode is the user's responsibility there.
+    ServeVfs,
+}
+
+impl AgentMode {
+    fn serve_vfs(self) -> bool {
+        matches!(self, AgentMode::ServeVfs)
+    }
+}
+
 /// On Linux, arrange for the child to receive SIGTERM when the parent exits.
 /// This ensures SSH/agent processes don't linger if Newt is killed.
 /// On other platforms this is a no-op.
@@ -49,7 +73,7 @@ pub fn set_parent_death_signal(cmd: &mut tokio::process::Command) {
 // SpawnSpec
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub enum SpawnSpec {
     /// Run `transport_cmd` and append the sh-based `bootstrap.sh` script as its
     /// final argument. The bootstrap negotiates arch detection, agent caching,
@@ -104,7 +128,7 @@ impl SpawnSpec {
 /// except for the `{local}` / `{remote}` / `{agent_path}` placeholders, which
 /// are substituted at spawn time. Keeping these as templates lets us share one
 /// `spawn_direct_copy` implementation across `docker` / `podman`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DirectCopyPlan {
     /// Ordered list of arch-detection commands. The trimmed stdout of each
     /// step is interpolated as `{prev}` into the next; the last step's stdout
@@ -302,6 +326,7 @@ pub fn spawn_stderr_reader<R: AsyncRead + Unpin + Send + 'static>(
 /// transport styles; returns a connection whose `stream` is ready for RPC.
 pub async fn spawn(
     spec: &SpawnSpec,
+    mode: AgentMode,
     extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
@@ -316,6 +341,7 @@ pub async fn spawn(
         } => {
             spawn_bootstrap(
                 transport_cmd,
+                mode,
                 *askpass,
                 *shell_join,
                 extra_path,
@@ -326,22 +352,43 @@ pub async fn spawn(
             .await
         }
         SpawnSpec::DirectCopy(plan) => {
-            spawn_direct_copy(plan, extra_path, agent_resolver, log).await
+            spawn_direct_copy(plan, mode, extra_path, agent_resolver, log).await
         }
         SpawnSpec::CustomShell {
             command,
             skip_bootstrap,
             ..
-        } => spawn_custom_shell(command, *skip_bootstrap, agent_resolver, log).await,
+        } => spawn_custom_shell(command, mode, *skip_bootstrap, agent_resolver, log).await,
     }
+}
+
+/// Prepare the bootstrap script body: stamp the agent hash, and inject
+/// env assignments that must survive transports which don't propagate
+/// env vars (`NEWT_RUST_LOG` forwarding, `NEWT_AGENT_MODE` for FS-only
+/// agents — consumed by the script's `exec` line).
+fn bootstrap_script_body(
+    agent_resolver: &dyn AgentResolver,
+    mode: AgentMode,
+) -> Result<String, Error> {
+    let mut body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        let escaped_val = rust_log.replace('\'', "'\\''");
+        body = format!("NEWT_RUST_LOG='{}'\n{}", escaped_val, body);
+    }
+    if mode.serve_vfs() {
+        body = format!("NEWT_AGENT_MODE='vfs'\n{}", body);
+    }
+    Ok(body)
 }
 
 /// Spawn a bootstrap-style transport (SSH / docker exec / kubectl exec / …),
 /// pipe the embedded `bootstrap.sh` into it, and negotiate agent upload.
 /// `enable_askpass` wires up SSH_ASKPASS for transports that may prompt for a
 /// password (SSH); daemon-mediated transports (docker / kubectl etc.) skip it.
+#[allow(clippy::too_many_arguments)]
 async fn spawn_bootstrap(
     transport_cmd: &[String],
+    mode: AgentMode,
     enable_askpass: bool,
     shell_join: bool,
     extra_path: &[String],
@@ -354,14 +401,7 @@ async fn spawn_bootstrap(
         .ok_or_else(|| Error::custom("empty transport command"))?;
     let program = crate::shell::resolve_program(program, extra_path);
 
-    // The script reads `NEWT_RUST_LOG` from its own environment. Inject the
-    // assignment as the first line of the script body so it survives transport
-    // boundaries that don't propagate env vars (e.g. `docker exec` without `-e`).
-    let mut script_body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
-    if let Ok(rust_log) = std::env::var("RUST_LOG") {
-        let escaped_val = rust_log.replace('\'', "'\\''");
-        script_body = format!("NEWT_RUST_LOG='{}'\n{}", escaped_val, script_body);
-    }
+    let script_body = bootstrap_script_body(agent_resolver, mode)?;
 
     let askpass_listener = if enable_askpass {
         Some(crate::askpass::listener::spawn(askpass_provider)?)
@@ -409,6 +449,38 @@ async fn spawn_bootstrap(
     perform_bootstrap_handshake(child, askpass_listener, agent_resolver, log).await
 }
 
+/// Read the next `NEWT:` status line from the bootstrap script, forwarding
+/// any other output (login-shell noise, etc.) to the log.
+async fn read_status_line(
+    reader: &mut BufReader<tokio::process::ChildStdout>,
+    log: &Arc<dyn ConnectLog>,
+    stderr_tail: &Arc<parking_lot::Mutex<Option<String>>>,
+) -> Result<String, Error> {
+    loop {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).await?;
+        if n == 0 {
+            // Connection closed — give the stderr reader a beat to flush the
+            // last diagnostic line, then use it for context.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let detail = stderr_tail
+                .lock()
+                .as_ref()
+                .map(|l| format!(": {}", l))
+                .unwrap_or_default();
+            return Err(Error::custom(format!(
+                "remote connection closed before bootstrap completed{}",
+                detail
+            )));
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("NEWT:") {
+            return Ok(trimmed.to_string());
+        }
+        log.log(format!("bootstrap: {}", trimmed));
+    }
+}
+
 /// Run the `NEWT:READY` / `NEWT:NEED` negotiation on a freshly-spawned child
 /// whose stdin/stdout will become the RPC channel. Shared between the
 /// argv-appending bootstrap path and the env-var-based custom-shell path.
@@ -449,29 +521,7 @@ async fn perform_bootstrap_handshake(
 
     // Read status line, skipping any noise from .bashrc etc.
     let mut reader = BufReader::new(stdout);
-    let status_line = loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            // Connection closed — give the stderr reader a beat to flush the
-            // last diagnostic line, then use it for context.
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let detail = stderr_tail
-                .lock()
-                .as_ref()
-                .map(|l| format!(": {}", l))
-                .unwrap_or_default();
-            return Err(Error::custom(format!(
-                "remote connection closed before bootstrap completed{}",
-                detail
-            )));
-        }
-        let trimmed = line.trim();
-        if trimmed.starts_with("NEWT:") {
-            break trimmed.to_string();
-        }
-        log.log(format!("bootstrap: {}", trimmed));
-    };
+    let status_line = read_status_line(&mut reader, &log, &stderr_tail).await?;
     let status_line = status_line.as_str();
 
     if status_line == "NEWT:READY" {
@@ -526,6 +576,18 @@ async fn perform_bootstrap_handshake(
             .await?;
         stdin.write_all(&upload_data).await?;
         stdin.flush().await?;
+
+        // Wait for the script's install confirmation before exposing the
+        // stream for RPC: some `head -c` implementations (BSD/macOS) read
+        // ahead of the requested count and would silently swallow RPC bytes
+        // written while the upload is still being consumed.
+        let confirm = read_status_line(&mut reader, &log, &stderr_tail).await?;
+        if confirm != "NEWT:READY" {
+            return Err(Error::custom(format!(
+                "unexpected bootstrap response after upload: {}",
+                confirm
+            )));
+        }
         log.log("Agent uploaded".to_string());
 
         Ok(SpawnedAgent {
@@ -550,6 +612,7 @@ async fn perform_bootstrap_handshake(
 /// no shell to run `bootstrap.sh`.
 async fn spawn_direct_copy(
     plan: &DirectCopyPlan,
+    mode: AgentMode,
     extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     log: Arc<dyn ConnectLog>,
@@ -666,11 +729,14 @@ async fn spawn_direct_copy(
     log.log("Agent copied".to_string());
 
     // 4. Exec.
-    let exec_argv: Vec<String> = plan
+    let mut exec_argv: Vec<String> = plan
         .exec_cmd
         .iter()
         .map(|a| a.replace("{agent_path}", &remote_path))
         .collect();
+    if mode.serve_vfs() {
+        exec_argv.push("--serve-vfs".to_string());
+    }
     let (exec_program, exec_args) = exec_argv
         .split_first()
         .ok_or_else(|| Error::custom("empty exec_cmd"))?;
@@ -713,11 +779,12 @@ async fn spawn_direct_copy(
 /// assuming the user produced a ready agent out of band.
 async fn spawn_custom_shell(
     command: &str,
+    mode: AgentMode,
     skip_bootstrap: bool,
     agent_resolver: &dyn AgentResolver,
     log: Arc<dyn ConnectLog>,
 ) -> Result<SpawnedAgent, Error> {
-    let script = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
+    let script = bootstrap_script_body(agent_resolver, mode)?;
 
     log.log(format!(
         "Running custom command (skip_bootstrap={}): sh -c {:?}",

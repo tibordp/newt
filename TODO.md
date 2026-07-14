@@ -17,9 +17,8 @@ Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom 
 
 ## Pane-mounted agent connections (agent-as-VFS)
 
-Mount a spawn-style connection (SSH, docker, podman, kubectl, custom) as a VFS in a pane instead of remoting the whole session — e.g. peek into a container running on the current remote session's host. Design is locked in `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`. Connection establishment (`SpawnSpec`, bootstrap/direct-copy spawn, transport builders) already lives in `newt_common::connect` behind the `ConnectLog` seam. Remaining:
-- `MountRequest::Agent` + FS-only agent serve mode (VfsDispatcher + askpass only, enforced structurally). Distinct descriptor type_name — must not collide with `"remote"` (display flip + `is_host_local`).
-- Streaming agent-binary provisioning from the host (`API_HOST_FETCH_AGENT`), spliced into bootstrap uploads; materialize-to-disk for `docker cp` modes; self-exe fast path.
+Mount a spawn-style connection (SSH, docker, podman, kubectl, custom) as a VFS in a pane instead of remoting the whole session — e.g. peek into a container running on the current remote session's host. Design is locked in `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`. Done so far: connection establishment lives in `newt_common::connect` behind the `ConnectLog` seam; `--serve-vfs` FS-only agent mode (VfsDispatcher + askpass only, enforced structurally, e2e-tested in `newt-agent/tests/serve_vfs.rs`); `MountRequest::Agent` mounting a `RemoteVfs` proxy under the `"agent"` descriptor with the connection label in mount_meta. Remaining:
+- Streaming agent-binary provisioning from the host (`API_HOST_FETCH_AGENT`), spliced into bootstrap uploads; materialize-to-disk for `docker cp` modes; self-exe fast path. Until then, nested mounts only work when the sub-agent triple matches the middle agent (`CurrentExeAgentResolver`).
 - Connect dialog "open as window / pane" knob; `open_in` field on saved connection profiles (serde-default `window`).
 
 ## VFS property sheets (S3 ACLs / metadata)

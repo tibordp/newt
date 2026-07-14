@@ -5,13 +5,17 @@
 #
 # Protocol:
 #   stdout status lines (read by the Tauri host):
-#     NEWT:READY              — cached binary valid, exec follows
+#     NEWT:READY              — agent installed, exec follows
 #     NEWT:NEED:<triple>      — need binary upload for <triple>
 #     NEWT:ERROR:<message>    — fatal error
 #   On NEED, host writes to stdin:
 #     <decimal size>\n        — byte count of the binary
 #     <raw bytes>             — the binary itself
-#   Then this script writes the binary to cache and execs it.
+#   Then this script installs the binary, confirms with NEWT:READY, and
+#   execs it. The confirmation is load-bearing: the host must not write
+#   RPC bytes into stdin until the upload has been fully consumed —
+#   some `head -c` implementations (BSD/macOS) read ahead and would
+#   silently swallow them.
 
 set -e
 
@@ -102,6 +106,10 @@ else
                 ;;
         esac
     done
+
+    # Confirm the upload is fully consumed — the host holds off on RPC
+    # traffic until it sees this (see protocol note above).
+    echo "NEWT:READY"
 fi
 
 # Forward RUST_LOG from host (passed as NEWT_RUST_LOG to avoid shell conflicts)
@@ -109,5 +117,7 @@ if [ -n "${NEWT_RUST_LOG}" ]; then
     export RUST_LOG="${NEWT_RUST_LOG}"
 fi
 
-exec "$AGENT_PATH"
+# NEWT_AGENT_MODE=vfs is injected by the spawner for FS-only agents
+# (pane-scoped agent mounts).
+exec "$AGENT_PATH" ${NEWT_AGENT_MODE:+--serve-vfs}
 

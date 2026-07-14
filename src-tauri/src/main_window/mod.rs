@@ -959,7 +959,7 @@ impl MainWindowContext {
         &self.inner.initial_pane_paths
     }
 
-    pub async fn connect(&self, agent_resolver: &dyn AgentResolver) -> Result<(), Error> {
+    pub async fn connect(&self, agent_resolver: Arc<dyn AgentResolver>) -> Result<(), Error> {
         let state = &self.inner.main_window_state;
         let publisher = &self.inner.publisher;
         let session_slot = &self.inner.session;

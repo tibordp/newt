@@ -20,6 +20,7 @@ async fn mount_and_navigate(
         MountRequest::Archive { .. } => "archive",
         MountRequest::Search { .. } => "search",
         MountRequest::Remote => "remote",
+        MountRequest::Agent { .. } => "agent",
     };
     log::info!("cmd: mount {} pane={:?}", kind, pane_handle);
     let response = ctx.mount_vfs(request).await.inspect_err(|e| {
