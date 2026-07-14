@@ -3,7 +3,7 @@ use std::sync::Arc;
 use log::info;
 use newt_common::{
     Error,
-    agent_resolver::{AgentResolver, CurrentExeAgentResolver},
+    agent_resolver::AgentResolver,
     api::{
         FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
         PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
@@ -262,7 +262,14 @@ async fn run_agent() -> Result<(), Error> {
     // the correct RemoteVfs read stream.
     let pending_read_streams: PendingVfsReadStreams = Default::default();
 
-    let resolver = Arc::new(CurrentExeAgentResolver::new());
+    // RPC-backed resolver: serves its own triple from the running
+    // executable, fetches foreign triples (nested agent mounts) from the
+    // host, and reports the host's agent hash.
+    let fetch_streams: PendingVfsReadStreams = Default::default();
+    let resolver = Arc::new(newt_common::agent_resolver::Remote::new(
+        host_communicator.clone(),
+        fetch_streams.clone(),
+    ));
     let askpass_binary = resolver.find_local_agent_binary()?;
 
     let askpass_provider: Arc<dyn askpass::AskpassProvider> =
@@ -297,6 +304,10 @@ async fn run_agent() -> Result<(), Error> {
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
         .chain(VfsMountDispatcher::new(vfs_manager))
         .chain(VfsReadChunkDispatcher::new(pending_read_streams))
+        .chain(VfsReadChunkDispatcher::for_api(
+            newt_common::api::API_HOST_FETCH_AGENT_CHUNK,
+            fetch_streams,
+        ))
         .chain(HotPathsDispatcher::new(hot_paths::Local::new()));
 
     info!("agent started, entering RPC loop");

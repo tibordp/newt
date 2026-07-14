@@ -372,12 +372,20 @@ impl Dispatcher for VfsDispatcher {
 // ---------------------------------------------------------------------------
 
 pub struct VfsReadChunkDispatcher {
+    api: Api,
     pending_read_streams: PendingVfsReadStreams,
 }
 
 impl VfsReadChunkDispatcher {
     pub fn new(pending_read_streams: PendingVfsReadStreams) -> Self {
+        Self::for_api(API_HOST_VFS_READ_CHUNK, pending_read_streams)
+    }
+
+    /// The same sequenced-chunk routing for another notification verb
+    /// (e.g. `API_HOST_FETCH_AGENT_CHUNK`), with its own stream map.
+    pub fn for_api(api: Api, pending_read_streams: PendingVfsReadStreams) -> Self {
         Self {
+            api,
             pending_read_streams,
         }
     }
@@ -390,7 +398,7 @@ impl Dispatcher for VfsReadChunkDispatcher {
     }
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
-        if api == API_HOST_VFS_READ_CHUNK {
+        if api == self.api {
             let (stream_id, seq, data): (StreamId, u64, Vec<u8>) = decode(&req[..])?;
 
             let tx = {

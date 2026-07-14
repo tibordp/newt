@@ -139,9 +139,10 @@ impl TauriAgentResolver {
     }
 }
 
+#[async_trait::async_trait]
 impl AgentResolver for TauriAgentResolver {
     /// Compute a hash that changes whenever any agent binary changes.
-    fn agent_hash(&self) -> Result<String, newt_common::Error> {
+    async fn agent_hash(&self) -> Result<String, newt_common::Error> {
         let mut hasher = blake3::Hasher::new();
         let mut found = false;
 
@@ -765,6 +766,7 @@ fn create_remote_services(communicator: Communicator, pending_streams: PendingSt
 
 /// Set up the communicator + host dispatcher over a bidirectional stream,
 /// and return the services + communicator.
+#[allow(clippy::too_many_arguments)]
 fn create_rpc_services(
     stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static,
     operations: &Operations,
@@ -773,6 +775,7 @@ fn create_rpc_services(
     expose_local_fs: bool,
     askpass_provider: Arc<dyn AskpassProvider>,
     progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
+    agent_resolver: Arc<dyn AgentResolver>,
 ) -> (Services, PendingStreams) {
     use newt_common::rpc::DispatcherExt;
 
@@ -789,7 +792,11 @@ fn create_rpc_services(
         provider: askpass_provider,
     };
     let (outbox, inbox) = Communicator::create_outbox();
-    let base = host_dispatcher.chain(askpass_dispatcher);
+    let fetch_dispatcher =
+        newt_common::api::AgentFetchDispatcher::new(agent_resolver, outbox.clone());
+    let base = host_dispatcher
+        .chain(askpass_dispatcher)
+        .chain(fetch_dispatcher);
     let communicator = if expose_local_fs {
         use newt_common::api::VfsDispatcher;
         use newt_common::vfs::LocalVfs;
@@ -1041,6 +1048,7 @@ pub(super) async fn connect(
                 expose_local_fs,
                 askpass_provider.clone(),
                 progress_sink,
+                agent_resolver.clone(),
             );
             conn_log.log("Connected");
             (
@@ -1065,6 +1073,7 @@ pub(super) async fn connect(
                 false,
                 askpass_provider.clone(),
                 progress_sink,
+                agent_resolver.clone(),
             );
             let stderr_log = StderrLog::default();
             (
@@ -1101,6 +1110,7 @@ pub(super) async fn connect(
                 expose_local_fs,
                 askpass_provider.clone(),
                 progress_sink,
+                agent_resolver.clone(),
             );
             conn_log.log("Connected");
             (

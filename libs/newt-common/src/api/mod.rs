@@ -82,6 +82,12 @@ pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);
 
+// Agent-binary provisioning — invoked by the agent (nested spawns for
+// pane-scoped agent mounts), served from the host's agents dir.
+pub const API_HOST_AGENT_HASH: Api = Api(625);
+pub const API_HOST_FETCH_AGENT: Api = Api(626);
+pub const API_HOST_FETCH_AGENT_CHUNK: Api = Api(627);
+
 mod vfs;
 pub use vfs::{VfsDispatcher, VfsReadChunkDispatcher};
 
@@ -473,6 +479,103 @@ pub struct ReadStream {
 }
 
 pub type PendingVfsReadStreams = Arc<parking_lot::Mutex<HashMap<StreamId, ReadStream>>>;
+
+/// Response header for `API_HOST_FETCH_AGENT`. The bytes follow as
+/// sequenced `API_HOST_FETCH_AGENT_CHUNK` notifications (empty sentinel =
+/// EOF); the consumer validates the received byte count against `size`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentFetchHeader {
+    pub size: u64,
+    pub raw_size: u64,
+    pub encoding: crate::agent_resolver::AgentEncoding,
+}
+
+/// Serves the host's agent binaries to a session agent: the content hash
+/// (`API_HOST_AGENT_HASH`) and streamed binaries for nested spawns
+/// (`API_HOST_FETCH_AGENT`).
+pub struct AgentFetchDispatcher {
+    resolver: Arc<dyn crate::agent_resolver::AgentResolver>,
+    outbox: Outbox,
+}
+
+impl AgentFetchDispatcher {
+    pub fn new(resolver: Arc<dyn crate::agent_resolver::AgentResolver>, outbox: Outbox) -> Self {
+        Self { resolver, outbox }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for AgentFetchDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_HOST_AGENT_HASH => {
+                let ret = self.resolver.agent_hash().await;
+                encode(&ret)?
+            }
+            API_HOST_FETCH_AGENT => {
+                let (triple, accept_gzip, stream_id): (String, bool, StreamId) = decode(&req[..])?;
+                let ret: Result<AgentFetchHeader, Error> = match self
+                    .resolver
+                    .open_agent_binary(&triple, accept_gzip)
+                    .await
+                {
+                    Ok(mut stream) => {
+                        let header = AgentFetchHeader {
+                            size: stream.size,
+                            raw_size: stream.raw_size,
+                            encoding: stream.encoding,
+                        };
+                        let outbox = self.outbox.clone();
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncReadExt;
+                            let mut seq: u64 = 0;
+                            let mut buf = vec![0u8; crate::vfs::VFS_READ_CHUNK_SIZE];
+                            loop {
+                                match stream.reader.read(&mut buf).await {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        if let Some(bytes) =
+                                            try_encode(&(stream_id, seq, &buf[..n]))
+                                        {
+                                            let _ = outbox
+                                                .send(Message::Notify(
+                                                    API_HOST_FETCH_AGENT_CHUNK,
+                                                    bytes.into(),
+                                                ))
+                                                .await;
+                                        }
+                                        seq += 1;
+                                    }
+                                    Err(e) => {
+                                        // Cut the stream short; the
+                                        // consumer's size check turns
+                                        // this into a hard error.
+                                        log::error!("agent fetch read failed: {}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
+                                let _ = outbox
+                                    .send(Message::Notify(API_HOST_FETCH_AGENT_CHUNK, bytes.into()))
+                                    .await;
+                            }
+                        });
+                        Ok(header)
+                    }
+                    Err(e) => Err(e),
+                };
+                encode(&ret)?
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
 
 /// Shared state passed to per-VFS `mount` helpers. Bundles the registry
 /// (needed by archive mounts to resolve their upstream), the host

@@ -133,8 +133,9 @@ async fn serve_vfs_does_not_expose_session_api() {
 
 struct TestResolver;
 
+#[async_trait::async_trait]
 impl newt_common::agent_resolver::AgentResolver for TestResolver {
-    fn agent_hash(&self) -> Result<String, newt_common::Error> {
+    async fn agent_hash(&self) -> Result<String, newt_common::Error> {
         Ok("cafebabe00112233".to_string())
     }
     fn find_agent_binary(&self, _triple: &str) -> Result<std::path::PathBuf, newt_common::Error> {

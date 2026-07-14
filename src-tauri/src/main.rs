@@ -392,9 +392,7 @@ fn print_resolved_config(global_ctx: &GlobalContext) {
         "Config dir: {}",
         global_ctx.preferences().config_dir().display()
     );
-    let agent_hash = global_ctx
-        .agent_resolver()
-        .agent_hash()
+    let agent_hash = tauri::async_runtime::block_on(global_ctx.agent_resolver().agent_hash())
         .unwrap_or_else(|e| format!("(unavailable: {})", e));
     println!("Agents hash: {}", agent_hash);
 }

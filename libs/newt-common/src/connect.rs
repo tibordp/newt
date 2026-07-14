@@ -366,11 +366,11 @@ pub async fn spawn(
 /// env assignments that must survive transports which don't propagate
 /// env vars (`NEWT_RUST_LOG` forwarding, `NEWT_AGENT_MODE` for FS-only
 /// agents — consumed by the script's `exec` line).
-fn bootstrap_script_body(
+async fn bootstrap_script_body(
     agent_resolver: &dyn AgentResolver,
     mode: AgentMode,
 ) -> Result<String, Error> {
-    let mut body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash()?);
+    let mut body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash().await?);
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
         let escaped_val = rust_log.replace('\'', "'\\''");
         body = format!("NEWT_RUST_LOG='{}'\n{}", escaped_val, body);
@@ -401,7 +401,7 @@ async fn spawn_bootstrap(
         .ok_or_else(|| Error::custom("empty transport command"))?;
     let program = crate::shell::resolve_program(program, extra_path);
 
-    let script_body = bootstrap_script_body(agent_resolver, mode)?;
+    let script_body = bootstrap_script_body(agent_resolver, mode).await?;
 
     let askpass_listener = if enable_askpass {
         Some(crate::askpass::listener::spawn(askpass_provider)?)
@@ -543,38 +543,31 @@ async fn perform_bootstrap_handshake(
             triple,
             if caps.is_empty() { "none" } else { caps_str }
         ));
-        let binary_path = agent_resolver.find_agent_binary(triple)?;
-        let binary_data = tokio::fs::read(&binary_path).await?;
-        let raw_size = binary_data.len();
-
-        let (upload_data, encoding) = if has_gzip {
-            use flate2::Compression;
-            use flate2::write::GzEncoder;
-            use std::io::Write;
-
-            let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-            encoder.write_all(&binary_data)?;
-            let compressed = encoder.finish()?;
+        let mut stream = agent_resolver.open_agent_binary(triple, has_gzip).await?;
+        if stream.encoding == crate::agent_resolver::AgentEncoding::Gzip {
             log.log(format!(
                 "Compressed {} → {} bytes ({:.0}%)",
-                raw_size,
-                compressed.len(),
-                compressed.len() as f64 / raw_size as f64 * 100.0
+                stream.raw_size,
+                stream.size,
+                stream.size as f64 / stream.raw_size as f64 * 100.0
             ));
-            (compressed, "gzip")
-        } else {
-            (binary_data, "raw")
-        };
+        }
 
         log.log(format!(
             "Uploading agent ({} bytes, {})...",
-            upload_data.len(),
-            encoding
+            stream.size,
+            stream.encoding.as_str()
         ));
         stdin
-            .write_all(format!("{} {}\n", upload_data.len(), encoding).as_bytes())
+            .write_all(format!("{} {}\n", stream.size, stream.encoding.as_str()).as_bytes())
             .await?;
-        stdin.write_all(&upload_data).await?;
+        let copied = tokio::io::copy(&mut stream.reader, &mut stdin).await?;
+        if copied != stream.size {
+            return Err(Error::custom(format!(
+                "agent upload truncated: {} of {} bytes",
+                copied, stream.size
+            )));
+        }
         stdin.flush().await?;
 
         // Wait for the script's install confirmation before exposing the
@@ -665,9 +658,10 @@ async fn spawn_direct_copy(
     })?;
     log.log(format!("Target reports {}/{} → {}", os, arch, triple));
 
-    // 2. Resolve local binary.
-    let local_binary = agent_resolver.find_agent_binary(&triple)?;
-    let agent_hash = agent_resolver.agent_hash()?;
+    // 2. Resolve a local file with the binary (RPC-backed resolvers
+    //    download foreign triples into their cache here).
+    let local_binary = agent_resolver.materialize_agent_binary(&triple).await?;
+    let agent_hash = agent_resolver.agent_hash().await?;
     let remote_path = format!("/tmp/newt-agent-{}", agent_hash);
 
     // The source binary on disk is typically mode 644 (cargo-zigbuild output,
@@ -784,7 +778,7 @@ async fn spawn_custom_shell(
     agent_resolver: &dyn AgentResolver,
     log: Arc<dyn ConnectLog>,
 ) -> Result<SpawnedAgent, Error> {
-    let script = bootstrap_script_body(agent_resolver, mode)?;
+    let script = bootstrap_script_body(agent_resolver, mode).await?;
 
     log.log(format!(
         "Running custom command (skip_bootstrap={}): sh -c {:?}",
