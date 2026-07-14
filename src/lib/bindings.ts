@@ -1446,7 +1446,7 @@ export type DiscoveryResult<T> = { items: T[];
  * Best-effort failure note. When present, the dialog should show this
  * dimmed under the combo-box instead of an empty list.
  */
-warning?: string | null }
+warning: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
@@ -1732,7 +1732,7 @@ export type SearchMatch = { offset: number; length: number }
 export type SearchPattern = { Literal: number[] } | { Regex: string }
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "modified" | "accessed" | "created"
-export type SshHostEntry = { host: string; hostname?: string | null; user?: string | null }
+export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
 export type TerminalHandle = number
 export type ThemeMode = "system" | "light" | "dark"
 /**

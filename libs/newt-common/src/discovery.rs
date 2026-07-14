@@ -19,12 +19,12 @@ use crate::shell::resolve_program;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
+// NOTE: these types cross the agent↔host bincode RPC boundary — no
+// `skip_serializing_if` (it desyncs bincode's serialize/deserialize).
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct SshHostEntry {
     pub host: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
 }
 
@@ -48,7 +48,6 @@ pub struct DiscoveryResult<T> {
     pub items: Vec<T>,
     /// Best-effort failure note. When present, the dialog should show this
     /// dimmed under the combo-box instead of an empty list.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
 

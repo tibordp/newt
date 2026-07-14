@@ -298,58 +298,6 @@ export default function ConnectRemote({
             )}
 
             <div>
-              <div
-                role="radiogroup"
-                aria-label="Open in"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  fontSize: "0.9em",
-                }}
-              >
-                <span>Open in:</span>
-                {(
-                  [
-                    { value: "window", label: "New window" },
-                    { value: "pane", label: "Active pane" },
-                  ] as { value: OpenIn; label: string }[]
-                ).map((opt) => (
-                  <label
-                    key={opt.value}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "var(--space-1)",
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="open-in"
-                      checked={form.openIn === opt.value}
-                      onChange={() => update("openIn", opt.value)}
-                      disabled={pending}
-                    />
-                    {opt.label}
-                  </label>
-                ))}
-              </div>
-              {form.openIn === "pane" && (
-                <div
-                  style={{
-                    marginTop: "var(--space-1)",
-                    fontSize: "0.8em",
-                    opacity: 0.7,
-                  }}
-                >
-                  Mounts the target's filesystem in the pane. The connection is
-                  made by the current session — its ssh/docker/kubectl,
-                  credentials, and network.
-                </div>
-              )}
-            </div>
-
-            <div>
               <label
                 style={{
                   display: "flex",
