@@ -7,7 +7,7 @@ description = "Shared types, RPC protocol, VFS traits, and operation logic for N
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
+thiserror = "2"
 notify = "8"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
@@ -35,7 +35,7 @@ dirs = "6"
 url = "2"
 openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
-iluvatar = { version = "0.1.1", features = ["tokio"] }
+iluvatar = { version = "0.3", features = ["tokio"] }
 newt-archive = { path = "../newt-archive" }
 blake3 = "1"
 serde_json = "1"
