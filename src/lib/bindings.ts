@@ -1565,7 +1565,14 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
  */
-initial: ConnectionKind } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+initial: ConnectionKind; 
+/**
+ * Session-dependent default scope: local sessions default to a new
+ * session window, remote sessions to a pane mount (the common
+ * reason to connect from inside a remote session is peeking into
+ * one of its containers).
+ */
+default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.
@@ -1623,7 +1630,14 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
  */
-initial: ConnectionKind } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+initial: ConnectionKind; 
+/**
+ * Session-dependent default scope: local sessions default to a new
+ * session window, remote sessions to a pane mount (the common
+ * reason to connect from inside a remote session is peeking into
+ * one of its containers).
+ */
+default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.

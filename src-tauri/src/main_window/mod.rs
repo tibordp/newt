@@ -486,6 +486,11 @@ pub enum ModalDataKind {
         /// Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
         /// when opened cold from the palette.
         initial: crate::connections::ConnectionKind,
+        /// Session-dependent default scope: local sessions default to a new
+        /// session window, remote sessions to a pane mount (the common
+        /// reason to connect from inside a remote session is peeking into
+        /// one of its containers).
+        default_open_in: crate::connections::OpenIn,
     },
     MountSftp {
         host: String,

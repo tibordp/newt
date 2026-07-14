@@ -139,6 +139,11 @@ export function TextViewer({
   const eofFoundRef = useRef(false);
   const [lineCount, setLineCount] = useState(1);
   const [scanTarget, setScanTarget] = useState(200);
+  // Bumped whenever bytes become renderable (chunk loaded / scan advanced).
+  // The visible-text memo keys on it: scan progress must re-render even
+  // when lineCount doesn't change — a one-line file with no trailing
+  // newline keeps lineCount at 1, and without this it would stay blank.
+  const [renderGen, setRenderGen] = useState(0);
 
   // Reset on file change
   useEffect(() => {
@@ -185,6 +190,7 @@ export function TextViewer({
 
         if (!cancelled) {
           setLineCount(lineStartsRef.current.length);
+          setRenderGen((n) => n + 1);
         }
       }
     })();
@@ -267,8 +273,6 @@ export function TextViewer({
     visEndByte > visStartByte
       ? Math.floor((visEndByte - 1) / CHUNK_SIZE)
       : visStartChunk;
-  const [renderGen, setRenderGen] = useState(0);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {

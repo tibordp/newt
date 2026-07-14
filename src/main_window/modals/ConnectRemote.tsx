@@ -51,7 +51,10 @@ type FormState = {
   connectionName: string;
 };
 
-function initialForm(initial: ConnectionKind): FormState {
+function initialForm(
+  initial: ConnectionKind,
+  defaultOpenIn: OpenIn,
+): FormState {
   const base: FormState = {
     transport: "ssh",
     sshHost: "",
@@ -68,7 +71,7 @@ function initialForm(initial: ConnectionKind): FormState {
     kubeContainer: "",
     customCommand: "",
     customSkipBootstrap: false,
-    openIn: "window",
+    openIn: defaultOpenIn,
     saveProfile: false,
     connectionName: "",
   };
@@ -180,11 +183,14 @@ function defaultProfileName(form: FormState): string {
 
 export default function ConnectRemote({
   initial,
+  default_open_in,
   cancel,
   context,
   mountLog,
 }: ConnectRemoteProps) {
-  const [form, setForm] = useState<FormState>(() => initialForm(initial));
+  const [form, setForm] = useState<FormState>(() =>
+    initialForm(initial, default_open_in),
+  );
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -369,17 +375,17 @@ export default function ConnectRemote({
             marginRight: "auto",
             fontSize: "0.9em",
           }}
-          title="Mount the target's filesystem in the active pane instead of opening a session window. The connection is made by the current session — its ssh/docker/kubectl, credentials, and network."
+          title="Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network."
         >
           <input
             type="checkbox"
-            checked={form.openIn === "pane"}
+            checked={form.openIn === "window"}
             onChange={(e) =>
-              update("openIn", e.target.checked ? "pane" : "window")
+              update("openIn", e.target.checked ? "window" : "pane")
             }
             disabled={pending}
           />
-          Mount in active pane
+          Open as a new session
         </label>
         <button type="button" onClick={cancel} disabled={pending}>
           Cancel

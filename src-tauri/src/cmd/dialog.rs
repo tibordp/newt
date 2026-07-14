@@ -51,6 +51,11 @@ pub fn dialog(
     dialog: DialogKind,
     pane_handle: Option<PaneHandle>,
 ) -> Result<(), Error> {
+    let default_open_in = if ctx.connection_target().is_remote() {
+        crate::connections::OpenIn::Pane
+    } else {
+        crate::connections::OpenIn::Window
+    };
     ctx.with_update(|gs| {
         let pane = pane_handle.map(|h| gs.panes.get(h).unwrap());
         let mut modal_state = gs.modal.0.write();
@@ -285,6 +290,7 @@ pub fn dialog(
                         host: String::new(),
                         forward_agent: false,
                     },
+                    default_open_in,
                 },
                 DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),

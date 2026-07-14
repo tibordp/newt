@@ -217,6 +217,17 @@ async fn discover_engine_containers(
                 continue;
             }
         };
+        // Exited/dead containers can't be exec'd into — connecting to one
+        // can only fail, so don't offer them.
+        let state = v
+            .get("State")
+            .or_else(|| v.get("Status"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let state_lower = state.to_ascii_lowercase();
+        if state_lower.contains("exited") || state_lower.contains("dead") {
+            continue;
+        }
         items.push(ContainerEntry {
             id: v
                 .get("ID")
