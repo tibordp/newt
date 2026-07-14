@@ -200,10 +200,11 @@ impl AskpassProvider for CancelAskpass {
 
 pub async fn mount(
     spec: SpawnSpec,
+    kind: String,
     label: String,
     ctx: &MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
-    let result = mount_inner(spec, &label, ctx).await;
+    let result = mount_inner(spec, &kind, &label, ctx).await;
     // The spawn-progress lines above are one-shot; clear them regardless of
     // outcome so a failed mount doesn't leave a stale progress entry.
     ctx.progress_reporter.report(None);
@@ -212,6 +213,7 @@ pub async fn mount(
 
 async fn mount_inner(
     spec: SpawnSpec,
+    kind: &str,
     label: &str,
     ctx: &MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
@@ -248,7 +250,7 @@ async fn mount_inner(
 
     // Sub-agents are Unix-shaped today: bootstrap and direct-copy only
     // target linux/darwin triples (`triple_from_os_arch`).
-    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some(label));
+    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some(kind), Some(label));
 
     Ok(Arc::new(RemoteVfs::for_agent(
         communicator,

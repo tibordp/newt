@@ -1046,6 +1046,12 @@ impl MainWindowContext {
         self.with_session(|s| s.vfs_info.clone())
     }
 
+    pub fn discovery_provider(
+        &self,
+    ) -> Result<Arc<dyn newt_common::discovery::DiscoveryProvider>, Error> {
+        self.with_session(|s| s.discovery_provider.clone())
+    }
+
     pub fn hot_paths_provider(
         &self,
     ) -> Result<Arc<dyn newt_common::hot_paths::HotPathsProvider>, Error> {
@@ -1210,11 +1216,7 @@ impl MainWindowContext {
                     continue;
                 }
                 mounted_types.insert(info.descriptor.type_name());
-                let display_name = s
-                    .vfs_info
-                    .display_name(*vfs_id)
-                    .unwrap_or_default()
-                    .to_string();
+                let display_name = s.vfs_info.display_name(*vfs_id).unwrap_or_default();
                 if info.descriptor.has_unified_root(&info.mount_meta) {
                     targets.push(VfsTarget {
                         vfs_id: Some(*vfs_id),

@@ -21,7 +21,8 @@ pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, Res
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use path_style::{
-    PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_label, mount_roots,
+    PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
+    mount_roots,
 };
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
@@ -1096,7 +1097,9 @@ pub enum MountRequest {
     /// mount its local filesystem. See `vfs::agent`.
     Agent {
         spec: crate::connect::SpawnSpec,
-        /// Display label for the VFS selector, e.g. `docker:web-1`.
+        /// Transport kind shown as the VFS display name, e.g. `Docker`.
+        kind: String,
+        /// Mount target shown as the VFS label, e.g. the container name.
         label: String,
     },
 }

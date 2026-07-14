@@ -281,7 +281,7 @@ pub async fn connect_target(
     open_in: crate::connections::OpenIn,
 ) -> Result<(), Error> {
     if open_in == crate::connections::OpenIn::Pane {
-        let (request, _) = crate::connections::agent_mount_request_for(&kind)
+        let request = crate::connections::agent_mount_request_for(&kind)
             .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
         return crate::connections::mount_into_pane(&ctx, pane_handle, request).await;
     }

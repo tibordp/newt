@@ -308,7 +308,10 @@ async fn run_agent() -> Result<(), Error> {
             newt_common::api::API_HOST_FETCH_AGENT_CHUNK,
             fetch_streams,
         ))
-        .chain(HotPathsDispatcher::new(hot_paths::Local::new()));
+        .chain(HotPathsDispatcher::new(hot_paths::Local::new()))
+        .chain(newt_common::api::DiscoveryDispatcher::new(
+            newt_common::discovery::Local::new(Vec::new()),
+        ));
 
     info!("agent started, entering RPC loop");
 

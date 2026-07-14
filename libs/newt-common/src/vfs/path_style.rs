@@ -40,26 +40,32 @@ pub enum PathStyle {
 struct MountMeta {
     style: PathStyle,
     roots: Vec<String>,
-    /// Human-readable mount target (agent mounts: the connection label,
-    /// e.g. `docker:web-1`). `None` for style-only metas.
+    /// Human-readable mount target (agent mounts: the container name,
+    /// host, or pod). `None` for style-only metas.
     label: Option<String>,
+    /// Transport kind shown as the VFS display name (agent mounts:
+    /// "Docker", "SSH", …). `None` for style-only metas.
+    kind: Option<String>,
 }
 
 /// Encode `mount_meta` carrying both the path style and the FS roots.
 pub fn encode_mount_meta(style: PathStyle, roots: &[PathBuf]) -> Vec<u8> {
-    encode_mount_meta_labeled(style, roots, None)
+    encode_mount_meta_labeled(style, roots, None, None)
 }
 
-/// `encode_mount_meta`, plus a display label (see `MountMeta::label`).
+/// `encode_mount_meta`, plus display strings (see `MountMeta::kind` /
+/// `MountMeta::label`).
 pub fn encode_mount_meta_labeled(
     style: PathStyle,
     roots: &[PathBuf],
+    kind: Option<&str>,
     label: Option<&str>,
 ) -> Vec<u8> {
     bincode::serialize(&MountMeta {
         style,
         roots: roots.iter().map(|r| r.as_wire_str().to_string()).collect(),
         label: label.map(|l| l.to_string()),
+        kind: kind.map(|k| k.to_string()),
     })
     .unwrap_or_default()
 }
@@ -69,6 +75,13 @@ pub fn mount_meta_label(meta: &[u8]) -> Option<String> {
     bincode::deserialize::<MountMeta>(meta)
         .ok()
         .and_then(|m| m.label)
+}
+
+/// The transport-kind display name from `mount_meta`, if one was recorded.
+pub fn mount_meta_kind(meta: &[u8]) -> Option<String> {
+    bincode::deserialize::<MountMeta>(meta)
+        .ok()
+        .and_then(|m| m.kind)
 }
 
 /// The FS roots from `mount_meta`. Empty when none were recorded

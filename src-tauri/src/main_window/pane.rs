@@ -611,8 +611,7 @@ impl Pane {
             ws.vfs_display_name = self
                 .vfs_info
                 .display_name(ws.path.vfs_id)
-                .unwrap_or_default()
-                .to_string();
+                .unwrap_or_default();
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();

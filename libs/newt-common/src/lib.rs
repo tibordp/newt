@@ -4,6 +4,7 @@ pub mod askpass;
 pub mod connect;
 #[cfg(windows)]
 pub mod conpty;
+pub mod discovery;
 pub mod file_reader;
 pub mod filesystem;
 pub mod hot_paths;

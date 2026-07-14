@@ -279,19 +279,60 @@ pub fn connection_target_for(
 }
 
 /// Build a pane-scoped agent `MountRequest` for spawn-style kinds. `None`
-/// for VFS kinds (S3, SFTP) and non-spawn targets.
-pub fn agent_mount_request_for(
-    kind: &ConnectionKind,
-) -> Option<(newt_common::vfs::MountRequest, String)> {
-    let (target, label) = connection_target_for(kind)?;
-    match target {
-        crate::main_window::ConnectionTarget::Spawn(spec) => Some((
-            newt_common::vfs::MountRequest::Agent {
-                spec,
-                label: label.clone(),
+/// for VFS kinds (S3, SFTP) and non-spawn targets. The transport kind
+/// becomes the VFS display name and the target its label, so the selector
+/// reads e.g. "Docker (web-1)" rather than an ambiguous "Remote".
+pub fn agent_mount_request_for(kind: &ConnectionKind) -> Option<newt_common::vfs::MountRequest> {
+    let (kind_name, target) = match kind {
+        ConnectionKind::Ssh { host, .. } => ("SSH", host.clone()),
+        ConnectionKind::Docker {
+            container, user, ..
+        }
+        | ConnectionKind::Podman {
+            container, user, ..
+        } => (
+            if matches!(kind, ConnectionKind::Docker { .. }) {
+                "Docker"
+            } else {
+                "Podman"
             },
-            label,
-        )),
+            match user {
+                Some(u) => format!("{}@{}", u, container),
+                None => container.clone(),
+            },
+        ),
+        ConnectionKind::Kube {
+            namespace,
+            pod,
+            container,
+            ..
+        } => (
+            "Kubernetes",
+            match (namespace, container) {
+                (Some(ns), Some(c)) => format!("{}/{}:{}", ns, pod, c),
+                (Some(ns), None) => format!("{}/{}", ns, pod),
+                (None, Some(c)) => format!("{}:{}", pod, c),
+                (None, None) => pod.clone(),
+            },
+        ),
+        ConnectionKind::Custom { command, .. } => (
+            "Custom",
+            command
+                .split_whitespace()
+                .next()
+                .unwrap_or("custom")
+                .to_string(),
+        ),
+        ConnectionKind::S3 { .. } | ConnectionKind::Sftp { .. } => return None,
+    };
+    match connection_target_for(kind)?.0 {
+        crate::main_window::ConnectionTarget::Spawn(spec) => {
+            Some(newt_common::vfs::MountRequest::Agent {
+                spec,
+                kind: kind_name.to_string(),
+                label: target,
+            })
+        }
         _ => None,
     }
 }
@@ -430,7 +471,7 @@ pub async fn connect_profile(
         // current session (its docker/ssh/kubectl, credentials, network),
         // not necessarily this machine.
         if profile.open_in == OpenIn::Pane {
-            let (request, _) = agent_mount_request_for(&profile.kind)
+            let request = agent_mount_request_for(&profile.kind)
                 .expect("spawn-style kind always yields an agent mount request");
             return mount_into_pane(&ctx, pane_handle, request).await;
         }

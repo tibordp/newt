@@ -896,7 +896,7 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 Any spawn-style connection (SSH, Docker, Podman, Kubernetes-exec, Custom) can be mounted as a VFS in a pane instead of remoting a whole session — pick **Open in: Active pane** in the Connect dialog, or save a profile with `open_in = "pane"`.
 
-**Architecture**: The spawner launches the agent with `--serve-vfs`: an FS-only mode that serves just the VFS API over the target's local filesystem (plus askpass forwarding) — no terminals, operations, or nested mounts exist on that connection, structurally. The proxy side is the same `Vfs`-over-RPC implementation as the client-local Remote VFS, under a distinct `agent` descriptor labelled "Remote (<target>)" in the VFS selector.
+**Architecture**: The spawner launches the agent with `--serve-vfs`: an FS-only mode that serves just the VFS API over the target's local filesystem (plus askpass forwarding) — no terminals, operations, or nested mounts exist on that connection, structurally. The proxy side is the same `Vfs`-over-RPC implementation as the client-local Remote VFS, under a distinct `agent` descriptor. The VFS selector shows the transport kind plus target — e.g. "Docker (web-1)", "SSH (user@host)" — not a bare "Remote".
 
 **Where the connection originates follows the session**, like every mount: in a local session the host spawns the sub-agent; in a remote session the *agent* does — so a Docker profile mounted from an SSH session execs `docker` on the SSH host, against its daemon and network.
 
@@ -998,7 +998,7 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 
 The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. For Docker/Podman/Kube the dialog populates a combo-box with live targets (`docker ps`, `podman ps`, `kubectl get pods`), and for SSH it parses `~/.ssh/config` for host aliases. Discovery is per-dialog ephemeral state — no persistent caching.
 
-**Open in** (radio in the Connect dialog): **New window** (default) opens a full remote session; **Active pane** mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. In a remote session the pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network, which is the point: peek into a container running on the connected host without opening another window.
+**Mount in active pane** (checkbox in the Connect dialog's button row): unchecked (default) opens a full remote session in a new window; checked mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. In a remote session the pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network, which is the point: peek into a container running on the connected host without opening another window. Discovery follows the same side: with the checkbox set, the container/host/pod lists come from the session owner, so a remote session lists the remote's targets.
 
 **Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
 1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.

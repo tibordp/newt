@@ -388,41 +388,41 @@ async connectTarget(paneHandle: PaneHandle, kind: ConnectionKind, openIn: OpenIn
     else return { status: "error", error: e  as any };
 }
 },
-async discoverSshHosts() : Promise<Result<DiscoveryResult<SshHostEntry>, string>> {
+async discoverSshHosts(openIn: OpenIn) : Promise<Result<DiscoveryResult<SshHostEntry>, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discover_ssh_hosts") };
+    return { status: "ok", data: await TAURI_INVOKE("discover_ssh_hosts", { openIn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async discoverDockerContainers() : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
+async discoverDockerContainers(openIn: OpenIn) : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discover_docker_containers") };
+    return { status: "ok", data: await TAURI_INVOKE("discover_docker_containers", { openIn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async discoverPodmanContainers() : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
+async discoverPodmanContainers(openIn: OpenIn) : Promise<Result<DiscoveryResult<ContainerEntry>, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discover_podman_containers") };
+    return { status: "ok", data: await TAURI_INVOKE("discover_podman_containers", { openIn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async discoverKubeContexts() : Promise<Result<DiscoveryResult<string>, string>> {
+async discoverKubeContexts(openIn: OpenIn) : Promise<Result<DiscoveryResult<string>, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discover_kube_contexts") };
+    return { status: "ok", data: await TAURI_INVOKE("discover_kube_contexts", { openIn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async discoverKubePods(context: string | null, namespace: string | null) : Promise<Result<DiscoveryResult<KubePodEntry>, string>> {
+async discoverKubePods(openIn: OpenIn, context: string | null, namespace: string | null) : Promise<Result<DiscoveryResult<KubePodEntry>, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("discover_kube_pods", { context, namespace }) };
+    return { status: "ok", data: await TAURI_INVOKE("discover_kube_pods", { openIn, context, namespace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -52,6 +52,13 @@ pub const API_VFS_PROGRESS: Api = Api(402);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
+// Connect-dialog discovery — runs on the session owner, so pane-scoped
+// agent mounts list the targets they would actually reach.
+pub const API_DISCOVER_SSH_HOSTS: Api = Api(510);
+pub const API_DISCOVER_CONTAINERS: Api = Api(511);
+pub const API_DISCOVER_KUBE_CONTEXTS: Api = Api(512);
+pub const API_DISCOVER_KUBE_PODS: Api = Api(513);
+
 // Host VFS APIs — invoked by the agent, handled by the Tauri host.
 // Used by RemoteVfs to access the client-local filesystem.
 pub const API_HOST_VFS_LIST_FILES: Api = Api(600);
@@ -739,8 +746,8 @@ impl VfsManager for VfsRegistryManager {
                 crate::vfs::K8sVfs::mount(context, &ctx).await?
             }
             MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
-            MountRequest::Agent { spec, label } => {
-                crate::vfs::agent::mount(spec, label, &ctx).await?
+            MountRequest::Agent { spec, kind, label } => {
+                crate::vfs::agent::mount(spec, kind, label, &ctx).await?
             }
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
@@ -802,6 +809,49 @@ impl Dispatcher for VfsMountDispatcher {
                 let vfs_id: VfsId = decode(&req[..])?;
                 let ret = self.vfs_manager.unmount(vfs_id).await;
                 encode(&ret)?
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ret.into()))
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+pub struct DiscoveryDispatcher {
+    provider: Box<dyn crate::discovery::DiscoveryProvider>,
+}
+
+impl DiscoveryDispatcher {
+    pub fn new<P: crate::discovery::DiscoveryProvider + 'static>(provider: P) -> Self {
+        Self {
+            provider: Box::new(provider),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for DiscoveryDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        let ret = match api {
+            API_DISCOVER_SSH_HOSTS => {
+                let _: () = decode(&req[..])?;
+                encode(&self.provider.ssh_hosts().await)?
+            }
+            API_DISCOVER_CONTAINERS => {
+                let engine: String = decode(&req[..])?;
+                encode(&self.provider.containers(engine).await)?
+            }
+            API_DISCOVER_KUBE_CONTEXTS => {
+                let _: () = decode(&req[..])?;
+                encode(&self.provider.kube_contexts().await)?
+            }
+            API_DISCOVER_KUBE_PODS => {
+                let (context, namespace): (Option<String>, Option<String>) = decode(&req[..])?;
+                encode(&self.provider.kube_pods(context, namespace).await)?
             }
             _ => return Ok(None),
         };

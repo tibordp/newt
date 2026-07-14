@@ -402,6 +402,26 @@ export default function ConnectRemote({
         </div>
       </div>
       <div className={dialogStyles.dialogButtons}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-1)",
+            marginRight: "auto",
+            fontSize: "0.9em",
+          }}
+          title="Mount the target's filesystem in the active pane instead of opening a session window. The connection is made by the current session — its ssh/docker/kubectl, credentials, and network."
+        >
+          <input
+            type="checkbox"
+            checked={form.openIn === "pane"}
+            onChange={(e) =>
+              update("openIn", e.target.checked ? "pane" : "window")
+            }
+            disabled={pending}
+          />
+          Mount in active pane
+        </label>
         <button type="button" onClick={cancel} disabled={pending}>
           Cancel
         </button>
@@ -669,12 +689,13 @@ function SshList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
   const [hosts, setHosts] = useState<SshHostEntry[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    setLoading(true);
     (async () => {
-      const r = await commands.discoverSshHosts();
+      const r = await commands.discoverSshHosts(form.openIn);
       if (r.status === "ok") setHosts(r.data.items);
       setLoading(false);
     })();
-  }, []);
+  }, [form.openIn]);
   const pick = (h: SshHostEntry) => {
     const value = h.user ? `${h.user}@${h.host}` : h.host;
     selectFormUpdate(setForm, () => ({ sshHost: value }), defaultProfileName);
@@ -725,15 +746,15 @@ function ContainerList({
     (async () => {
       const r =
         engine === "docker"
-          ? await commands.discoverDockerContainers()
-          : await commands.discoverPodmanContainers();
+          ? await commands.discoverDockerContainers(form.openIn)
+          : await commands.discoverPodmanContainers(form.openIn);
       if (r.status === "ok") {
         setItems(r.data.items);
         setWarning(r.data.warning ?? null);
       }
       setLoading(false);
     })();
-  }, [engine]);
+  }, [engine, form.openIn]);
   const pick = (c: ContainerEntry) => {
     selectFormUpdate(
       setForm,
@@ -795,16 +816,17 @@ function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
 
   useEffect(() => {
     (async () => {
-      const r = await commands.discoverKubeContexts();
+      const r = await commands.discoverKubeContexts(form.openIn);
       if (r.status === "ok") setContexts(r.data.items);
     })();
-  }, []);
+  }, [form.openIn]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
       const r = await commands.discoverKubePods(
+        form.openIn,
         form.kubeContext.trim() || null,
         form.kubeNamespace.trim() || null,
       );
@@ -818,7 +840,7 @@ function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [form.kubeContext, form.kubeNamespace]);
+  }, [form.kubeContext, form.kubeNamespace, form.openIn]);
 
   const pick = (p: KubePodEntry) => {
     selectFormUpdate(

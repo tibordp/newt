@@ -230,6 +230,7 @@ pub struct Session {
     pub(super) file_reader: Arc<dyn FileReader>,
     pub(super) operations_client: Arc<dyn OperationsClient>,
     pub(super) hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+    pub(super) discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     pub(super) mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
     pub(super) next_operation_id: AtomicU64,
     pub(super) file_server_port: u16,
@@ -254,7 +255,7 @@ pub trait VfsInfo: Send + Sync {
     fn origin(&self, vfs_id: VfsId) -> Option<VfsPath>;
     /// Whether the given VFS is backed by the host machine's local filesystem.
     fn is_host_local(&self, vfs_id: VfsId) -> bool;
-    fn display_name(&self, vfs_id: VfsId) -> Option<&str>;
+    fn display_name(&self, vfs_id: VfsId) -> Option<String>;
     /// Returns the VFS ID of a filesystem that is local to the host machine
     /// (the machine running the Tauri process), or `None` if no such VFS is mounted.
     fn host_local_vfs_id(&self) -> Option<VfsId>;
@@ -321,20 +322,32 @@ impl VfsInfo for MountedVfsInfoService {
         }
     }
 
-    fn display_name(&self, vfs_id: VfsId) -> Option<&str> {
-        let descriptor = self
+    fn display_name(&self, vfs_id: VfsId) -> Option<String> {
+        let (descriptor, mount_meta) = self
             .mounted_vfs
             .read()
             .get(&vfs_id)
-            .map(|info| info.descriptor)?;
+            .map(|info| (info.descriptor, info.mount_meta.clone()))?;
 
-        Some(match descriptor.type_name() {
-            "local" if !self.remote_session => "Local",
-            "local" if self.remote_session => "Remote",
-            "remote" if self.remote_session => "Local",
-            "remote" if !self.remote_session => "Remote",
-            _ => descriptor.display_name(), // For custom VFS types, just show the type name
-        })
+        // Agent mounts display their transport kind ("Docker", "SSH", …)
+        // — a plain "Remote" is ambiguous next to the session's own root.
+        if descriptor.type_name() == "agent" {
+            return Some(
+                newt_common::vfs::mount_meta_kind(&mount_meta)
+                    .unwrap_or_else(|| descriptor.display_name().to_string()),
+            );
+        }
+
+        Some(
+            match descriptor.type_name() {
+                "local" if !self.remote_session => "Local",
+                "local" if self.remote_session => "Remote",
+                "remote" if self.remote_session => "Local",
+                "remote" if !self.remote_session => "Remote",
+                _ => descriptor.display_name(), // For custom VFS types, just show the type name
+            }
+            .to_string(),
+        )
     }
 
     fn host_local_vfs_id(&self) -> Option<VfsId> {
@@ -686,6 +699,7 @@ struct Services {
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
     hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+    discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     initial_dir: VfsPath,
 }
 
@@ -740,6 +754,9 @@ fn create_local_services(
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
+        discovery_provider: Arc::new(newt_common::discovery::Local::new(
+            preferences.load().environment.extra_path.clone(),
+        )),
         initial_dir: VfsPath::new(
             VfsId::ROOT,
             newt_common::vfs::local::local_path_from_native(&std::env::current_dir().unwrap()),
@@ -759,7 +776,8 @@ fn create_remote_services(communicator: Communicator, pending_streams: PendingSt
         terminal_client: Arc::new(newt_common::terminal::Remote::new(communicator.clone())),
         file_reader: Arc::new(newt_common::file_reader::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
-        hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator)),
+        hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator.clone())),
+        discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator)),
         initial_dir: VfsPath::root(VfsId::ROOT),
     }
 }
@@ -1293,6 +1311,7 @@ pub(super) async fn connect(
         file_reader: services.file_reader,
         operations_client: services.operations_client,
         hot_paths_provider: services.hot_paths_provider,
+        discovery_provider: services.discovery_provider,
         mounted_vfs,
         vfs_info,
         next_operation_id: AtomicU64::new(1),
