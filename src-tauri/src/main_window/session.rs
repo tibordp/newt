@@ -1019,6 +1019,7 @@ pub(super) async fn connect(
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
+                    state.mount_log.clone(),
                     publisher.clone(),
                 ));
             let services = create_local_services(
@@ -1056,6 +1057,7 @@ pub(super) async fn connect(
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
+                    state.mount_log.clone(),
                     publisher.clone(),
                 ));
             let (services, _) = create_rpc_services(
@@ -1081,6 +1083,7 @@ pub(super) async fn connect(
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
+                    state.mount_log.clone(),
                     publisher.clone(),
                 ));
             let (services, _) = create_rpc_services(
@@ -1118,6 +1121,7 @@ pub(super) async fn connect(
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
+                    state.mount_log.clone(),
                     publisher.clone(),
                 ));
             let (services, _) = create_rpc_services(

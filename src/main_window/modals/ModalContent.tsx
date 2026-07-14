@@ -34,7 +34,13 @@ export type ModalDataOf<
   K extends Extract<ModalData, { data: unknown }>["type"],
 > = Extract<ModalData, { type: K; data: unknown }>["data"];
 
-export function ModalContent({ state }: { state: ModalData | null }) {
+export function ModalContent({
+  state,
+  mountLog,
+}: {
+  state: ModalData | null;
+  mountLog?: string[];
+}) {
   const commonProps: CommonDialogProps = {
     cancel: () => {
       safe(commands.closeModal());
@@ -54,7 +60,9 @@ export function ModalContent({ state }: { state: ModalData | null }) {
     case "copy_move":
       return <CopyMove {...state.data} {...commonProps} />;
     case "connect_remote":
-      return <ConnectRemote {...state.data} {...commonProps} />;
+      return (
+        <ConnectRemote {...state.data} {...commonProps} mountLog={mountLog} />
+      );
     case "mount_s3":
       return <MountS3 {...commonProps} />;
     case "mount_sftp":

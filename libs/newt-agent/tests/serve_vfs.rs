@@ -215,3 +215,104 @@ async fn bootstrap_spawns_serve_vfs_agent() {
     let listing = vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
     assert!(!listing.files.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Full mount() path — startup probe and failure diagnostics
+// ---------------------------------------------------------------------------
+
+struct MountHarness {
+    registry: Arc<newt_common::vfs::VfsRegistry>,
+    host_communicator: Arc<std::sync::OnceLock<Communicator>>,
+    pending: PendingVfsReadStreams,
+    resolver: Arc<dyn newt_common::agent_resolver::AgentResolver>,
+    reporter: Arc<dyn newt_common::vfs::ProgressReporter>,
+}
+
+impl MountHarness {
+    fn new() -> Self {
+        Self {
+            registry: Arc::new(newt_common::vfs::VfsRegistry::with_root(Arc::new(
+                newt_common::vfs::LocalVfs::new(),
+            ))),
+            host_communicator: Arc::new(std::sync::OnceLock::new()),
+            pending: Default::default(),
+            resolver: Arc::new(TestResolver),
+            reporter: Arc::new(newt_common::vfs::ScopedReporter::new(
+                Arc::new(newt_common::vfs::NoopProgressSink),
+                newt_common::vfs::VfsId(1),
+            )),
+        }
+    }
+
+    fn ctx(&self) -> newt_common::api::MountContext<'_> {
+        newt_common::api::MountContext {
+            registry: &self.registry,
+            host_communicator: &self.host_communicator,
+            pending_read_streams: &self.pending,
+            sftp_askpass: None,
+            askpass_provider: None,
+            agent_resolver: Some(&self.resolver),
+            extra_path: &[],
+            progress_reporter: &self.reporter,
+        }
+    }
+}
+
+/// The whole `vfs::agent::mount` path, startup probe included, against a
+/// real serve-vfs agent.
+#[tokio::test]
+async fn agent_mount_succeeds_against_live_agent() {
+    let harness = MountHarness::new();
+    let spec = SpawnSpec::CustomShell {
+        command: format!("'{}' --serve-vfs", agent_binary()),
+        label: "test".to_string(),
+        skip_bootstrap: true,
+    };
+    let vfs = newt_common::vfs::agent::mount(
+        spec,
+        "Custom".to_string(),
+        "probe-test".to_string(),
+        &harness.ctx(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(vfs.descriptor().type_name(), "agent");
+    vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
+}
+
+/// An agent that dies on startup (the direct-exec failure mode: wrong arch,
+/// missing binary, …) must fail the mount with a diagnostic instead of
+/// producing a VFS that fails every operation.
+#[tokio::test]
+async fn agent_mount_fails_when_agent_dies_on_startup() {
+    let harness = MountHarness::new();
+    let spec = SpawnSpec::CustomShell {
+        // Prints a diagnostic to stderr and exits — an agent never comes up.
+        command: "echo 'exec format error' >&2; true".to_string(),
+        label: "test".to_string(),
+        skip_bootstrap: true,
+    };
+    let err = newt_common::vfs::agent::mount(
+        spec,
+        "Custom".to_string(),
+        "dead-agent".to_string(),
+        &harness.ctx(),
+    )
+    .await
+    .err()
+    .expect("mount of a dead agent must fail");
+    // Either race arm is a correct failure: the probe invoke erroring on
+    // the closed channel, or the closed() branch winning.
+    assert!(
+        err.message.contains("exited during startup")
+            || err.message.contains("startup probe failed"),
+        "unexpected error: {}",
+        err.message
+    );
+    // The stderr diagnostic must ride along in the connection log.
+    assert!(
+        err.message.contains("exec format error"),
+        "stderr diagnostic missing from error: {}",
+        err.message
+    );
+}

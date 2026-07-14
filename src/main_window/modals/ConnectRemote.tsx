@@ -15,7 +15,13 @@ import { DialogError, DialogSubmitButton } from "./DialogActions";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./ConnectRemote.module.scss";
 
-type ConnectRemoteProps = CommonDialogProps & ModalDataOf<"connect_remote">;
+type ConnectRemoteProps = CommonDialogProps &
+  ModalDataOf<"connect_remote"> & {
+    /// Live connect/bootstrap transcript of the mount in flight
+    /// (pane-scoped mounts only; window connects log into the new
+    /// window's connection screen).
+    mountLog?: string[];
+  };
 
 type TransportTag = "ssh" | "docker" | "podman" | "kube" | "custom";
 
@@ -176,6 +182,7 @@ export default function ConnectRemote({
   initial,
   cancel,
   context,
+  mountLog,
 }: ConnectRemoteProps) {
   const [form, setForm] = useState<FormState>(() => initialForm(initial));
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -334,6 +341,10 @@ export default function ConnectRemote({
                 />
               )}
             </div>
+            <MountLogView
+              lines={mountLog}
+              visible={pending && form.openIn === "pane"}
+            />
             <DialogError error={error} />
           </div>
 
@@ -378,6 +389,42 @@ export default function ConnectRemote({
         </DialogSubmitButton>
       </div>
     </form>
+  );
+}
+
+/// Streaming connect/bootstrap log, shown while a pane mount is in
+/// flight. Failures don't need it live — the error message carries the
+/// transcript.
+function MountLogView({
+  lines,
+  visible,
+}: {
+  lines?: string[];
+  visible: boolean;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+  if (!visible || !lines || lines.length === 0) return null;
+  return (
+    <div
+      ref={boxRef}
+      style={{
+        maxHeight: "7em",
+        overflowY: "auto",
+        fontFamily: "var(--font-mono, monospace)",
+        fontSize: "0.8em",
+        opacity: 0.75,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      }}
+    >
+      {lines.map((l, i) => (
+        <div key={i}>{l}</div>
+      ))}
+    </div>
   );
 }
 

@@ -340,6 +340,41 @@ impl serde::Serialize for VfsProgressState {
     }
 }
 
+/// Rolling transcript of counter-less progress stage lines — in practice,
+/// agent-mount connection/bootstrap logs. Rendered live by the Connect
+/// dialog while a pane mount is in flight (mount progress is scoped to the
+/// *new* VfsId, which no pane shows yet, so without this the log would be
+/// invisible). Cleared when a new connect/mount begins.
+#[derive(Clone, Default)]
+pub struct MountLogState(Arc<RwLock<Vec<String>>>);
+
+impl MountLogState {
+    pub fn clear(&self) {
+        self.0.write().clear();
+    }
+
+    fn push(&self, line: &str) {
+        let mut lock = self.0.write();
+        if lock.last().map(String::as_str) == Some(line) {
+            return;
+        }
+        lock.push(line.to_string());
+        let overflow = lock.len().saturating_sub(200);
+        if overflow > 0 {
+            lock.drain(..overflow);
+        }
+    }
+}
+
+impl serde::Serialize for MountLogState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.0.read().serialize(serializer)
+    }
+}
+
 /// Concrete `VfsProgressSink` used on the host: writes into
 /// `VfsProgressState` and triggers a publish so the frontend sees the
 /// update. Used both for local-mode VFSes (which call it directly via a
@@ -348,12 +383,21 @@ impl serde::Serialize for VfsProgressState {
 /// forwarded into the same sink by `HostDispatcher::notify`).
 pub struct LocalProgressSink {
     state: VfsProgressState,
+    mount_log: MountLogState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
 
 impl LocalProgressSink {
-    pub fn new(state: VfsProgressState, publisher: Arc<UpdatePublisher<MainWindowState>>) -> Self {
-        Self { state, publisher }
+    pub fn new(
+        state: VfsProgressState,
+        mount_log: MountLogState,
+        publisher: Arc<UpdatePublisher<MainWindowState>>,
+    ) -> Self {
+        Self {
+            state,
+            mount_log,
+            publisher,
+        }
     }
 }
 
@@ -363,6 +407,12 @@ impl newt_common::vfs::VfsProgressSink for LocalProgressSink {
             let mut map = self.state.0.write();
             match progress {
                 Some(p) => {
+                    // Counter-less stages are log lines (agent-mount
+                    // connect/bootstrap); counted ones are live progress
+                    // (search walkers etc.) and would spam a transcript.
+                    if p.processed.is_none() && p.total.is_none() {
+                        self.mount_log.push(&p.stage);
+                    }
                     map.insert(vfs_id, p);
                 }
                 None => {
@@ -690,6 +740,7 @@ pub struct MainWindowState {
     pub operations: Operations,
     pub window_title: String,
     pub vfs_progress: VfsProgressState,
+    pub mount_log: MountLogState,
 }
 
 impl serde::Serialize for MainWindowState {
@@ -699,7 +750,7 @@ impl serde::Serialize for MainWindowState {
     {
         use serde::ser::SerializeStruct;
         let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 11)?;
+        let mut s = serializer.serialize_struct("MainWindowState", 12)?;
         s.serialize_field("connection_status", &self.connection_status)?;
         s.serialize_field("askpass", &self.askpass)?;
         s.serialize_field("panes", &self.panes)?;
@@ -711,6 +762,7 @@ impl serde::Serialize for MainWindowState {
         s.serialize_field("window_title", &self.window_title)?;
         s.serialize_field("foreground_operation_id", &foreground_id)?;
         s.serialize_field("vfs_progress", &self.vfs_progress)?;
+        s.serialize_field("mount_log", &self.mount_log)?;
         s.end()
     }
 }
@@ -730,6 +782,7 @@ impl MainWindowState {
             operations: Operations::default(),
             window_title: "Newt".to_string(),
             vfs_progress: VfsProgressState::default(),
+            mount_log: MountLogState::default(),
         }
     }
 
@@ -1044,6 +1097,13 @@ impl MainWindowContext {
 
     pub fn vfs_info(&self) -> Result<Arc<dyn VfsInfo>, Error> {
         self.with_session(|s| s.vfs_info.clone())
+    }
+
+    /// Reset the mount-log transcript at the start of a connect/mount, so
+    /// the Connect dialog shows only the attempt in flight.
+    pub fn clear_mount_log(&self) {
+        self.inner.main_window_state.mount_log.clear();
+        let _ = self.inner.publisher.publish();
     }
 
     pub fn discovery_provider(

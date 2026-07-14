@@ -168,15 +168,25 @@ impl Drop for AgentConnectionGuard {
 // Mount
 // ---------------------------------------------------------------------------
 
-/// Bridge spawn-progress lines into the mount's VFS progress channel, so
-/// bootstrap/upload status shows where every other mount reports progress.
-struct ProgressConnectLog {
+/// Bridge spawn-progress lines into the mount's VFS progress channel (so
+/// bootstrap/upload status shows where every other mount reports progress)
+/// while keeping a transcript — a failed mount attaches it to the error, so
+/// the dialog shows *why* instead of a bare failure.
+struct MountConnectLog {
     reporter: Arc<dyn super::ProgressReporter>,
+    lines: parking_lot::Mutex<Vec<String>>,
 }
 
-impl ConnectLog for ProgressConnectLog {
+impl MountConnectLog {
+    fn transcript(&self) -> String {
+        self.lines.lock().join("\n")
+    }
+}
+
+impl ConnectLog for MountConnectLog {
     fn log(&self, line: String) {
         log::info!("agent mount: {}", line);
+        self.lines.lock().push(line.clone());
         self.reporter.report(Some(VfsProgress {
             stage: line,
             processed: None,
@@ -204,17 +214,32 @@ pub async fn mount(
     label: String,
     ctx: &MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
-    let result = mount_inner(spec, &kind, &label, ctx).await;
+    let log = Arc::new(MountConnectLog {
+        reporter: ctx.progress_reporter.clone(),
+        lines: parking_lot::Mutex::new(Vec::new()),
+    });
+    let result = mount_inner(spec, &kind, &label, log.clone(), ctx).await;
     // The spawn-progress lines above are one-shot; clear them regardless of
     // outcome so a failed mount doesn't leave a stale progress entry.
     ctx.progress_reporter.report(None);
-    result
+    result.map_err(|e| {
+        let transcript = log.transcript();
+        if transcript.is_empty() {
+            e
+        } else {
+            Error {
+                kind: e.kind,
+                message: format!("{}\n\nConnection log:\n{}", e.message, transcript),
+            }
+        }
+    })
 }
 
 async fn mount_inner(
     spec: SpawnSpec,
     kind: &str,
     label: &str,
+    log: Arc<MountConnectLog>,
     ctx: &MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
     let resolver = ctx
@@ -224,19 +249,24 @@ async fn mount_inner(
         Some(p) => p.clone(),
         None => Arc::new(CancelAskpass),
     };
-    let log: Arc<dyn ConnectLog> = Arc::new(ProgressConnectLog {
-        reporter: ctx.progress_reporter.clone(),
-    });
+    let connect_log: Arc<dyn ConnectLog> = log.clone();
 
-    let spawned = crate::connect::spawn(
+    let mut spawned = crate::connect::spawn(
         &spec,
         AgentMode::ServeVfs,
         ctx.extra_path,
         resolver.as_ref(),
         askpass_provider,
-        log,
+        connect_log.clone(),
     )
     .await?;
+
+    // The direct-exec transports hand back an unread stderr pipe (the
+    // bootstrap path consumes stderr during its handshake). Keep reading it —
+    // it is where in-container failures like "exec format error" surface.
+    if let Some(stderr) = spawned.stderr.take() {
+        crate::connect::spawn_stderr_reader(stderr, connect_log.clone());
+    }
 
     // Parent side of the sub-agent connection only routes read-chunk
     // notifications; an FS-only agent never invokes anything else on us.
@@ -252,10 +282,33 @@ async fn mount_inner(
     // target linux/darwin triples (`triple_from_os_arch`).
     let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some(kind), Some(label));
 
-    Ok(Arc::new(RemoteVfs::for_agent(
-        communicator,
+    let vfs = Arc::new(RemoteVfs::for_agent(
+        communicator.clone(),
         pending_read_streams,
         mount_meta,
         guard,
-    )))
+    ));
+
+    // Startup probe. The bootstrap transports handshake before RPC, but the
+    // direct-exec ones don't — without this, an agent that dies on exec
+    // (wrong arch, missing interpreter, …) would still "mount" and produce
+    // a VFS that fails every operation. Racing against connection close
+    // turns that into a mount error carrying the stderr transcript; a beat
+    // for the stderr reader lets the actual diagnostic land in it first.
+    log.log("Verifying agent connection...".to_string());
+    let probe_path = PathBuf::root();
+    tokio::select! {
+        r = vfs.get_metadata(&probe_path) => {
+            r.map_err(|e| Error::custom(format!("agent startup probe failed: {}", e)))?;
+        }
+        _ = communicator.closed() => {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            return Err(Error::custom(
+                "agent exited during startup (see connection log)",
+            ));
+        }
+    }
+    log.log("Connected".to_string());
+
+    Ok(vfs)
 }

@@ -500,6 +500,7 @@ pub async fn mount_into_pane(
     pane_handle: crate::main_window::PaneHandle,
     request: newt_common::vfs::MountRequest,
 ) -> Result<(), Error> {
+    ctx.clear_mount_log();
     let response = ctx.mount_vfs(request).await?;
     let vfs_path = newt_common::vfs::VfsPath::root(response.vfs_id);
 

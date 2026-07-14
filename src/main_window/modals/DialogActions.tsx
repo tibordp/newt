@@ -38,7 +38,12 @@ type DialogErrorProps = {
 export function DialogError({ error }: DialogErrorProps) {
   if (!error) return null;
   return (
-    <div className={styles.error} role="alert">
+    // pre-wrap: mount failures carry a multi-line connection log.
+    <div
+      className={styles.error}
+      role="alert"
+      style={{ whiteSpace: "pre-wrap" }}
+    >
       {error}
     </div>
   );

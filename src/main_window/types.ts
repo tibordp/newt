@@ -118,4 +118,7 @@ export type MainWindowState = {
   /// VFS-keyed background progress (e.g. SearchVfs walker status). Keys
   /// are stringified VfsIds.
   vfs_progress: Record<string, VfsProgress>;
+  /// Rolling connect/bootstrap transcript of the mount in flight; rendered
+  /// by the Connect dialog. Cleared when a new connect/mount starts.
+  mount_log?: string[];
 };

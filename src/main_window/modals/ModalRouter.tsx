@@ -68,7 +68,10 @@ export default function ModalRouter({
             className={dialogStyles.dialogContent}
             onCloseAutoFocus={preventAutoFocus}
           >
-            <ModalContent state={state?.modal ?? null} />
+            <ModalContent
+              state={state?.modal ?? null}
+              mountLog={state?.mount_log}
+            />
           </Dialog.Content>
         );
     }

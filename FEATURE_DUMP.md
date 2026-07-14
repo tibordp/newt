@@ -902,7 +902,11 @@ Any spawn-style connection (SSH, Docker, Podman, Kubernetes-exec, Custom) can be
 
 **Agent binary provisioning**: The spawner uploads its own executable when the target's triple matches (the common case). Foreign triples are streamed on demand from the host's bundled agents over RPC (pre-gzipped, spliced straight into the bootstrap upload), or downloaded into `~/.cache/newt/` for `docker cp`-style transports. Cache keys use the host's agent hash throughout.
 
-**Lifecycle**: The sub-agent process is owned by the mount — unmounting (× in the VFS selector) or closing the last referencing history entry kills it; a sub-agent that dies on its own is reaped immediately and subsequent operations surface connection errors. Spawn/bootstrap progress is reported through the standard VFS mount progress line. Not ephemeral: agent mounts appear in the VFS selector like S3/SFTP.
+**Lifecycle**: The sub-agent process is owned by the mount — unmounting (× in the VFS selector) or closing the last referencing history entry kills it; a sub-agent that dies on its own is reaped immediately and subsequent operations surface connection errors. Not ephemeral: agent mounts appear in the VFS selector like S3/SFTP.
+
+**Startup probe**: after connecting, the mount verifies the agent actually responds (raced against connection close) before registering the VFS — an agent that dies on exec (wrong arch, missing binary) fails the mount with a diagnostic instead of producing a VFS that fails every operation.
+
+**Connection log**: the spawn/bootstrap transcript (including the sub-agent process's stderr, where failures like "exec format error" surface) streams live into the Connect dialog while the mount is in flight, and a failed mount attaches the full transcript to its error message.
 
 **Askpass**: SSH password / host-key prompts during the spawn ride the standard askpass channel — in a remote session they hop agent → host and land in the same UI dialog.
 
