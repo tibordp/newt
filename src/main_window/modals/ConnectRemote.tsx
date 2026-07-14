@@ -5,6 +5,7 @@ import {
   type ConnectionKind,
   type ContainerEntry,
   type KubePodEntry,
+  type OpenIn,
   type SshHostEntry,
 } from "../../lib/bindings";
 import { safe, safeSilent, tryRun } from "../../lib/ipc";
@@ -37,6 +38,8 @@ type FormState = {
   // Custom
   customCommand: string;
   customSkipBootstrap: boolean;
+  // Session scope
+  openIn: OpenIn;
   // Profile
   saveProfile: boolean;
   connectionName: string;
@@ -59,6 +62,7 @@ function initialForm(initial: ConnectionKind): FormState {
     kubeContainer: "",
     customCommand: "",
     customSkipBootstrap: false,
+    openIn: "window",
     saveProfile: false,
     connectionName: "",
   };
@@ -168,7 +172,11 @@ function defaultProfileName(form: FormState): string {
   }
 }
 
-export default function ConnectRemote({ initial, cancel }: ConnectRemoteProps) {
+export default function ConnectRemote({
+  initial,
+  cancel,
+  context,
+}: ConnectRemoteProps) {
   const [form, setForm] = useState<FormState>(() => initialForm(initial));
   const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -195,12 +203,19 @@ export default function ConnectRemote({ initial, cancel }: ConnectRemoteProps) {
       const id = form.connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       await safeSilent(
         commands.cmdSaveConnection(
-          { id, name: form.connectionName.trim(), ...kind },
+          {
+            id,
+            name: form.connectionName.trim(),
+            open_in: form.openIn,
+            ...kind,
+          },
           null,
         ),
       );
     }
-    const err = await tryRun(commands.connectTarget(kind));
+    const err = await tryRun(
+      commands.connectTarget(context?.pane_handle ?? 0, kind, form.openIn),
+    );
     if (err) return err;
     await safe(commands.closeModal());
     return null;
@@ -281,6 +296,58 @@ export default function ConnectRemote({ initial, cancel }: ConnectRemoteProps) {
                 firstInputRef={firstInputRef}
               />
             )}
+
+            <div>
+              <div
+                role="radiogroup"
+                aria-label="Open in"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--space-3)",
+                  fontSize: "0.9em",
+                }}
+              >
+                <span>Open in:</span>
+                {(
+                  [
+                    { value: "window", label: "New window" },
+                    { value: "pane", label: "Active pane" },
+                  ] as { value: OpenIn; label: string }[]
+                ).map((opt) => (
+                  <label
+                    key={opt.value}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--space-1)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="open-in"
+                      checked={form.openIn === opt.value}
+                      onChange={() => update("openIn", opt.value)}
+                      disabled={pending}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+              {form.openIn === "pane" && (
+                <div
+                  style={{
+                    marginTop: "var(--space-1)",
+                    fontSize: "0.8em",
+                    opacity: 0.7,
+                  }}
+                >
+                  Mounts the target's filesystem in the pane. The connection is
+                  made by the current session — its ssh/docker/kubectl,
+                  credentials, and network.
+                </div>
+              )}
+            </div>
 
             <div>
               <label

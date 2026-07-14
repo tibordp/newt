@@ -10,8 +10,21 @@ use crate::common::Error;
 pub struct ConnectionProfile {
     pub id: String,
     pub name: String,
+    /// How a spawn-style connection opens: a full remote session in a new
+    /// window, or an FS-only agent mount in the active pane. Ignored for
+    /// VFS kinds (S3/SFTP), which are always pane mounts.
+    #[serde(default)]
+    pub open_in: OpenIn,
     #[serde(flatten)]
     pub kind: ConnectionKind,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenIn {
+    #[default]
+    Window,
+    Pane,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -265,6 +278,24 @@ pub fn connection_target_for(
     }
 }
 
+/// Build a pane-scoped agent `MountRequest` for spawn-style kinds. `None`
+/// for VFS kinds (S3, SFTP) and non-spawn targets.
+pub fn agent_mount_request_for(
+    kind: &ConnectionKind,
+) -> Option<(newt_common::vfs::MountRequest, String)> {
+    let (target, label) = connection_target_for(kind)?;
+    match target {
+        crate::main_window::ConnectionTarget::Spawn(spec) => Some((
+            newt_common::vfs::MountRequest::Agent {
+                spec,
+                label: label.clone(),
+            },
+            label,
+        )),
+        _ => None,
+    }
+}
+
 // --- Keychain helpers for connection secrets ---
 
 const KEYCHAIN_PREFIX: &str = "connection:";
@@ -395,6 +426,15 @@ pub async fn connect_profile(
         .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", id)))?;
 
     if let Some((target, _label)) = connection_target_for(&profile.kind) {
+        // Pane-scoped agent mount: the connection is established by the
+        // current session (its docker/ssh/kubectl, credentials, network),
+        // not necessarily this machine.
+        if profile.open_in == OpenIn::Pane {
+            let (request, _) = agent_mount_request_for(&profile.kind)
+                .expect("spawn-style kind always yields an agent mount request");
+            return mount_into_pane(&ctx, pane_handle, request).await;
+        }
+
         let app_handle = ctx.window().app_handle().clone();
         crate::main_window::spawn_main_window(
             &app_handle,
@@ -409,15 +449,23 @@ pub async fn connect_profile(
     } else {
         let request = build_mount_request(&profile)?
             .ok_or_else(|| Error::Custom("unsupported connection type".into()))?;
-
-        let response = ctx.mount_vfs(request).await?;
-        let vfs_path = newt_common::vfs::VfsPath::root(response.vfs_id);
-
-        ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
-            gs.close_modal();
-            pane.navigate_to(vfs_path).await?;
-            Ok(())
-        })
-        .await
+        mount_into_pane(&ctx, pane_handle, request).await
     }
+}
+
+/// Mount `request` and navigate the pane into it, closing the open modal.
+pub async fn mount_into_pane(
+    ctx: &crate::main_window::MainWindowContext,
+    pane_handle: crate::main_window::PaneHandle,
+    request: newt_common::vfs::MountRequest,
+) -> Result<(), Error> {
+    let response = ctx.mount_vfs(request).await?;
+    let vfs_path = newt_common::vfs::VfsPath::root(response.vfs_id);
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(vfs_path).await?;
+        Ok(())
+    })
+    .await
 }

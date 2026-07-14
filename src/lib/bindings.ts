@@ -380,9 +380,9 @@ async reconnect() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async connectTarget(kind: ConnectionKind) : Promise<Result<null, string>> {
+async connectTarget(paneHandle: PaneHandle, kind: ConnectionKind, openIn: OpenIn) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("connect_target", { kind }) };
+    return { status: "ok", data: await TAURI_INVOKE("connect_target", { paneHandle, kind, openIn }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1406,7 +1406,13 @@ export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: stri
  * A saved connection profile. Secrets are stored in the system keychain,
  * not in this struct or the connections file.
  */
-export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }) & { id: string; name: string }
+export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }) & { id: string; name: string; 
+/**
+ * How a spawn-style connection opens: a full remote session in a new
+ * window, or an FS-only agent mount in the active pane. Ignored for
+ * VFS kinds (S3/SFTP), which are always pane mounts.
+ */
+open_in?: OpenIn }
 export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
 export type ContainerEntry = { id: string; name: string; image: string; state: string }
 /**
@@ -1647,6 +1653,7 @@ initial_direction: number;
  */
 persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
 export type Mode = number
+export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { SetMetadata: { paths: VfsPath[]; 
 /**

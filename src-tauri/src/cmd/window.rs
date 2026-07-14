@@ -275,13 +275,21 @@ pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
 #[tauri::command]
 #[specta::specta]
 pub async fn connect_target(
-    webview: tauri::Webview,
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
     kind: crate::connections::ConnectionKind,
+    open_in: crate::connections::OpenIn,
 ) -> Result<(), Error> {
+    if open_in == crate::connections::OpenIn::Pane {
+        let (request, _) = crate::connections::agent_mount_request_for(&kind)
+            .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
+        return crate::connections::mount_into_pane(&ctx, pane_handle, request).await;
+    }
+
     let (target, label) = crate::connections::connection_target_for(&kind)
         .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
     crate::main_window::spawn_main_window(
-        webview.app_handle(),
+        ctx.window().app_handle(),
         target,
         format!("Newt [{}]", label),
         [None, None],

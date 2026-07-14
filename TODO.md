@@ -17,9 +17,10 @@ Implemented: SSH, pkexec, Docker, Podman, Kubernetes (kubectl exec), and Custom 
 
 ## Pane-mounted agent connections (agent-as-VFS)
 
-Mount a spawn-style connection (SSH, docker, podman, kubectl, custom) as a VFS in a pane instead of remoting the whole session — e.g. peek into a container running on the current remote session's host. Design is locked in `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`. Done so far: connection establishment lives in `newt_common::connect` behind the `ConnectLog` seam; `--serve-vfs` FS-only agent mode (VfsDispatcher + askpass only, enforced structurally, e2e-tested in `newt-agent/tests/serve_vfs.rs`); `MountRequest::Agent` mounting a `RemoteVfs` proxy under the `"agent"` descriptor with the connection label in mount_meta. Remaining:
-- Streaming agent-binary provisioning from the host (`API_HOST_FETCH_AGENT`), spliced into bootstrap uploads; materialize-to-disk for `docker cp` modes; self-exe fast path. Until then, nested mounts only work when the sub-agent triple matches the middle agent (`CurrentExeAgentResolver`).
-- Connect dialog "open as window / pane" knob; `open_in` field on saved connection profiles (serde-default `window`).
+Shipped (design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`): `newt_common::connect` spawn infra behind the `ConnectLog` seam, `--serve-vfs` FS-only agent mode (e2e-tested in `newt-agent/tests/serve_vfs.rs`), `MountRequest::Agent` under the `"agent"` descriptor, streaming agent-binary provisioning (`API_HOST_FETCH_AGENT`, self-exe fast path, materialize cache for `docker cp` modes), and the Connect dialog / profile `open_in` knob. Follow-ups:
+- Quick Connect affordance to override a profile's `open_in` at activation time (modifier key, submenu, or two entries).
+- Auto-reconnect for dead agent mounts — folds into the dead-history-entry remount item below.
+- Real-world pass over double-hop askpass and foreign-arch provisioning (unit/e2e covered; not yet exercised against a live remote+container).
 
 ## VFS property sheets (S3 ACLs / metadata)
 

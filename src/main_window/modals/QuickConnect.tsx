@@ -53,6 +53,11 @@ function subtitle(c: ConnectionProfile): string {
   const parts = [TYPE_LABELS[c.type] || c.type];
   const detail = connectionDetail(c);
   if (detail) parts.push(detail);
+  // Pane-scoped spawn profiles mount into the active pane instead of
+  // opening a session window; flag them so selection isn't a surprise.
+  if (c.open_in === "pane" && c.type !== "s3" && c.type !== "sftp") {
+    parts.push("pane mount");
+  }
   return parts.join(" \u2014 ");
 }
 

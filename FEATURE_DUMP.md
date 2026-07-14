@@ -892,6 +892,20 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 **VFS ID rewriting**: Batch streaming results from `list_files` have their VFS IDs rewritten from the local root to the remote VFS ID before being forwarded to the UI.
 
+### Agent Mounts (remote connection in a pane)
+
+Any spawn-style connection (SSH, Docker, Podman, Kubernetes-exec, Custom) can be mounted as a VFS in a pane instead of remoting a whole session — pick **Open in: Active pane** in the Connect dialog, or save a profile with `open_in = "pane"`.
+
+**Architecture**: The spawner launches the agent with `--serve-vfs`: an FS-only mode that serves just the VFS API over the target's local filesystem (plus askpass forwarding) — no terminals, operations, or nested mounts exist on that connection, structurally. The proxy side is the same `Vfs`-over-RPC implementation as the client-local Remote VFS, under a distinct `agent` descriptor labelled "Remote (<target>)" in the VFS selector.
+
+**Where the connection originates follows the session**, like every mount: in a local session the host spawns the sub-agent; in a remote session the *agent* does — so a Docker profile mounted from an SSH session execs `docker` on the SSH host, against its daemon and network.
+
+**Agent binary provisioning**: The spawner uploads its own executable when the target's triple matches (the common case). Foreign triples are streamed on demand from the host's bundled agents over RPC (pre-gzipped, spliced straight into the bootstrap upload), or downloaded into `~/.cache/newt/` for `docker cp`-style transports. Cache keys use the host's agent hash throughout.
+
+**Lifecycle**: The sub-agent process is owned by the mount — unmounting (× in the VFS selector) or closing the last referencing history entry kills it; a sub-agent that dies on its own is reaped immediately and subsequent operations surface connection errors. Spawn/bootstrap progress is reported through the standard VFS mount progress line. Not ephemeral: agent mounts appear in the VFS selector like S3/SFTP.
+
+**Askpass**: SSH password / host-key prompts during the spawn ride the standard askpass channel — in a remote session they hop agent → host and land in the same UI dialog.
+
 ### Recursive Search (Find in Folder, Mod+F)
 
 A search becomes a mounted VFS — results show up as a flat directory the user can browse, select, open, copy, delete using every existing pane affordance.
@@ -950,13 +964,15 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 - **Kube**: kubectl context, namespace, pod, container.
 - **Custom**: Caller-supplied shell command run locally via the platform shell (`sh -c` on Unix, `cmd.exe /C` on Windows). The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
 
+Spawn-style profiles additionally carry **`open_in`** (`window` default, or `pane`): whether activating the profile opens a full session window or mounts the target as an agent VFS in the active pane.
+
 Profiles are created via the **Save as connection profile** checkbox in the S3 Mount, SFTP Mount, and Connect dialogs.
 
 **Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing all saved connection profiles.
 
 - **Search**: Searches across name, ID, bucket, host, region, and endpoint URL.
 - **Each entry shows**: Connection name, type badge, and relevant details (bucket, host, region, etc.).
-- **Enter**: Activates the selected connection (mounts VFS or opens new window for remote).
+- **Enter**: Activates the selected connection (mounts VFS, opens a new session window, or mounts a pane-scoped agent VFS per the profile's `open_in`; pane-scoped spawn profiles are marked "pane mount").
 - **Delete**: Removes the selected profile (with inline Yes/No confirmation). Also removes associated keychain secrets.
 - **Escape**: Closes the palette.
 - Empty state: "No saved connections. Use the connect or mount dialogs to save one."
@@ -982,12 +998,14 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 
 The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. For Docker/Podman/Kube the dialog populates a combo-box with live targets (`docker ps`, `podman ps`, `kubectl get pods`), and for SSH it parses `~/.ssh/config` for host aliases. Discovery is per-dialog ephemeral state — no persistent caching.
 
+**Open in** (radio in the Connect dialog): **New window** (default) opens a full remote session; **Active pane** mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. In a remote session the pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network, which is the point: peek into a container running on the connected host without opening another window.
+
 **Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
 1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.
 2. The script detects platform and architecture (`uname -s`, `uname -m`).
 3. It checks a cache directory (`~/.cache/newt/`) for a matching `newt-agent` binary (keyed by a blake3 hash of the local agent binary).
 4. If cached: Executes immediately (`NEWT:READY`).
-5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script caches it for future use and cleans up old versions.
+5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script caches it for future use, cleans up old versions, and confirms with a second `NEWT:READY` — the host holds off RPC traffic until then, because some `head -c` implementations (BSD/macOS) read ahead and would swallow bytes sent while the upload is still being consumed.
 6. The agent enters RPC mode; all further communication is bincode over stdin/stdout.
 
 **Bootstrapless (direct-copy) protocol** (Docker / Podman only):
