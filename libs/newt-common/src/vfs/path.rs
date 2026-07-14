@@ -309,7 +309,7 @@ impl std::fmt::Debug for Path {
 
 impl std::fmt::Debug for PathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", &self.inner)
+        write!(f, "{:?}", self.inner)
     }
 }
 

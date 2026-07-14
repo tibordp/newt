@@ -37,6 +37,9 @@ openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
 iluvatar = { version = "0.1.1", features = ["tokio"] }
 blake3 = "1"
+tokio-duplex = "1.0.1"
+flate2 = "1.1.9"
+tempfile = "3.27.0"
 specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }
 
 [dev-dependencies]

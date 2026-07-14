@@ -514,26 +514,17 @@ impl ShellUser {
 
         let user = match std::env::var("USER") {
             Ok(user) => user,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.name.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => pw.as_ref().map_err(Error::clone)?.name.to_owned(),
         };
 
         let home = match std::env::var("HOME") {
             Ok(home) => home,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.dir.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => pw.as_ref().map_err(Error::clone)?.dir.to_owned(),
         };
 
         let shell = match std::env::var("SHELL") {
             Ok(shell) => shell,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.shell.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => pw.as_ref().map_err(Error::clone)?.shell.to_owned(),
         };
 
         Ok(Self { user, home, shell })
