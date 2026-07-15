@@ -315,9 +315,7 @@ function VfsSelector({
                       openingDialogRef.current = true;
                       commands.dialog(
                         target.mount_dialog as
-                          | "mount_s3"
-                          | "mount_sftp"
-                          | "mount_k8s",
+                          "mount_s3" | "mount_sftp" | "mount_k8s",
                         paneHandle,
                       );
                     } else {
