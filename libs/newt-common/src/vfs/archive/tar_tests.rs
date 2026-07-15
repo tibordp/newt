@@ -1,6 +1,6 @@
 //! End-to-end tests for `TarArchiveVfs` over a `MockVfs` upstream.
 //!
-//! Fixtures (`fixtures/simple.tar` and `fixtures/simple.tar.gz`) are
+//! Fixtures (`fixtures/simple.tar`, `.tar.gz`, `.tar.zst`) are
 //! committed and regenerated via `fixtures/regenerate.py`. Layout:
 //!
 //! ```text
@@ -28,6 +28,7 @@ fn vp(s: &str) -> PathBuf {
 
 const SIMPLE_TAR: &[u8] = include_bytes!("fixtures/simple.tar");
 const SIMPLE_TAR_GZ: &[u8] = include_bytes!("fixtures/simple.tar.gz");
+const SIMPLE_TAR_ZST: &[u8] = include_bytes!("fixtures/simple.tar.zst");
 
 const ARCHIVE_PATH: &str = "/archive";
 
@@ -244,6 +245,52 @@ async fn file_details_reports_symlink_metadata() {
         .expect("file_details");
     assert!(details.is_symlink);
     assert_eq!(details.symlink_target.as_deref(), Some("../hello.txt"));
+}
+
+// ---------------------------------------------------------------------------
+// Strict-range upstreams (object stores)
+// ---------------------------------------------------------------------------
+
+/// S3-style upstreams reject range reads starting at/past the object size
+/// instead of returning an empty chunk. The zstd decoder asks for more
+/// input after consuming the final frame (probing for a concatenated one),
+/// so the indexer must stop at the known file size rather than read past
+/// the end.
+#[tokio::test]
+async fn zstd_indexes_over_strict_async_upstream() {
+    let vfs = mount(
+        SIMPLE_TAR_ZST,
+        "/archive.zst",
+        MockVfsConfig {
+            strict_range_reads: true,
+            ..async_only_config()
+        },
+    );
+    let mut names: Vec<String> = vfs
+        .list_files(&vp("/"), None)
+        .await
+        .expect("list_files")
+        .files
+        .into_iter()
+        .map(|f| f.name)
+        .filter(|n| n != "..")
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["dir", "hello.txt", "links"]);
+}
+
+#[tokio::test]
+async fn zstd_reads_over_strict_async_upstream() {
+    let vfs = mount(
+        SIMPLE_TAR_ZST,
+        "/archive.zst",
+        MockVfsConfig {
+            strict_range_reads: true,
+            ..async_only_config()
+        },
+    );
+    assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
+    assert_eq!(read_to_vec(&vfs, "/dir/big.bin").await, big_bytes());
 }
 
 // ---------------------------------------------------------------------------

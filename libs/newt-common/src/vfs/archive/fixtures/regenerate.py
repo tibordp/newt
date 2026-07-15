@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate archive test fixtures used by TarArchiveVfs / ZipArchiveVfs tests.
 
-Produces deterministic `simple.tar`, `simple.tar.gz` and `encrypted.zip`
+Produces deterministic `simple.tar`, `simple.tar.gz`, `simple.tar.zst`
+and `encrypted.zip`
 so the bytes committed to the repo are reproducible. Run from this
 directory:
 
@@ -77,6 +78,21 @@ def build() -> bytes:
     return buf.getvalue()
 
 
+def build_zstd(data: bytes, out: Path) -> None:
+    """Compress via the system `zstd` CLI (stdin/stdout, so no filename
+    or mtime metadata lands in the frame header)."""
+    zstd_bin = shutil.which("zstd")
+    if not zstd_bin:
+        raise RuntimeError("`zstd` not found on PATH; cannot regenerate simple.tar.zst")
+    result = subprocess.run(
+        [zstd_bin, "-q", "-19"],
+        input=data,
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    out.write_bytes(result.stdout)
+
+
 def build_encrypted_zip(out: Path) -> None:
     """Build encrypted.zip via the system `zip` CLI.
 
@@ -122,6 +138,8 @@ def main() -> None:
             gz.write(data)
         finally:
             gz.close()
+
+    build_zstd(data, OUT_DIR / "simple.tar.zst")
 
     build_encrypted_zip(OUT_DIR / "encrypted.zip")
 

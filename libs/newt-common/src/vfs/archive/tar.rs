@@ -335,6 +335,15 @@ impl TarArchiveVfs {
 
                 match engine.step() {
                     iluvatar::EngineRequest::NeedInput => {
+                        // Don't read past the known end: not every upstream
+                        // returns an empty chunk there (S3 range GETs at/past
+                        // the object size are errors), and the decompressor
+                        // may ask for more input after consuming the whole
+                        // file (e.g. zstd probing for a concatenated frame).
+                        if position >= file_size {
+                            engine.signal_eof();
+                            continue;
+                        }
                         let chunk = upstream
                             .read_range(&archive_path, position, VFS_READ_CHUNK_SIZE as u64)
                             .await?;
@@ -554,9 +563,16 @@ impl TarArchiveVfs {
         let mut output = Vec::new();
         let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         let mut position: u64 = 0;
+        // Same clamp as the indexer: never read at/past the end — object
+        // stores reject such ranges rather than returning an empty chunk.
+        let archive_size = index.metadata.archive_size;
         loop {
             match engine.step() {
                 iluvatar::EngineRequest::NeedInput => {
+                    if position >= archive_size {
+                        engine.signal_eof();
+                        continue;
+                    }
                     let chunk = self
                         .upstream
                         .read_range(&self.archive_path, position, buf.len() as u64)
@@ -570,6 +586,10 @@ impl TarArchiveVfs {
                 }
                 iluvatar::EngineRequest::SeekAndRead { offset, len } => {
                     position = offset;
+                    if position >= archive_size {
+                        engine.signal_eof();
+                        continue;
+                    }
                     let chunk = self
                         .upstream
                         .read_range(&self.archive_path, position, len as u64)
@@ -814,6 +834,7 @@ impl Vfs for TarArchiveVfs {
         let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(STREAM_CHANNEL_CAPACITY);
         let upstream = self.upstream.clone();
         let archive_file_path = self.archive_path.clone();
+        let archive_size = index.metadata.archive_size;
         // The read holds the consumer guard for its entire lifetime
         // (moved into the streaming task) — if the navigation that
         // originated this read is cancelled, the indexer stays alive
@@ -831,6 +852,13 @@ impl Vfs for TarArchiveVfs {
                 }
                 match engine.step() {
                     iluvatar::EngineRequest::NeedInput => {
+                        // Same clamp as the indexer: never read at/past the
+                        // end — object stores reject such ranges rather than
+                        // returning an empty chunk.
+                        if position >= archive_size {
+                            engine.signal_eof();
+                            continue;
+                        }
                         match upstream
                             .read_range(&archive_file_path, position, buf.len() as u64)
                             .await
@@ -856,6 +884,10 @@ impl Vfs for TarArchiveVfs {
                     }
                     iluvatar::EngineRequest::SeekAndRead { offset, len } => {
                         position = offset;
+                        if position >= archive_size {
+                            engine.signal_eof();
+                            continue;
+                        }
                         match upstream
                             .read_range(&archive_file_path, position, len as u64)
                             .await

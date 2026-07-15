@@ -58,6 +58,9 @@ pub struct FailureSpec {
 pub struct MockVfsConfig {
     pub can_read_sync: bool,
     pub can_read_async: bool,
+    /// Mimic object stores (S3): `read_range` starting at or past the
+    /// file size is an error, not an empty chunk.
+    pub strict_range_reads: bool,
     pub can_overwrite_sync: bool,
     pub can_overwrite_async: bool,
     pub can_create_directory: bool,
@@ -75,6 +78,7 @@ impl Default for MockVfsConfig {
         Self {
             can_read_sync: true,
             can_read_async: false,
+            strict_range_reads: false,
             can_overwrite_sync: true,
             can_overwrite_async: false,
             can_create_directory: true,
@@ -185,6 +189,7 @@ pub struct MockVfs {
     entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
     failures: Mutex<Vec<FailureSpec>>,
     descriptor: &'static dyn VfsDescriptor,
+    strict_range_reads: bool,
 }
 
 impl MockVfs {
@@ -431,7 +436,14 @@ impl Vfs for MockVfs {
         }
         match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => {
-                let start = offset as usize;
+                if self.strict_range_reads && offset >= content.len() as u64 {
+                    return Err(crate::Error::custom(format!(
+                        "range start {} is beyond object size {}",
+                        offset,
+                        content.len()
+                    )));
+                }
+                let start = (offset as usize).min(content.len());
                 let end = (offset + length) as usize;
                 let data = content[start..end.min(content.len())].to_vec();
                 Ok(crate::file_reader::FileChunk {
@@ -1036,6 +1048,7 @@ impl MockVfsBuilder {
     }
 
     pub fn build(self) -> Arc<MockVfs> {
+        let strict_range_reads = self.config.strict_range_reads;
         let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
             config: self.config,
         }));
@@ -1044,6 +1057,7 @@ impl MockVfsBuilder {
             entries: Arc::new(Mutex::new(self.entries)),
             failures: Mutex::new(self.failures),
             descriptor,
+            strict_range_reads,
         })
     }
 }

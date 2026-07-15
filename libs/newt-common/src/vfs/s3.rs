@@ -24,6 +24,12 @@ use super::{
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
+/// `SdkError`'s bare `Display` is just "service error" — render the full
+/// source chain (service error code and message included) instead.
+fn sdk_err<E: std::error::Error>(e: E) -> Error {
+    Error::custom(aws_sdk_s3::error::DisplayErrorContext(&e).to_string())
+}
+
 // ---------------------------------------------------------------------------
 // S3VfsDescriptor
 // ---------------------------------------------------------------------------
@@ -234,7 +240,10 @@ impl S3Vfs {
             }
             let resp = assume.send().await.map_err(|e| Error {
                 kind: crate::ErrorKind::Other,
-                message: format!("AssumeRole failed: {}", e),
+                message: format!(
+                    "AssumeRole failed: {}",
+                    aws_sdk_s3::error::DisplayErrorContext(&e)
+                ),
             })?;
             let sts_creds = resp.credentials().ok_or_else(|| Error {
                 kind: crate::ErrorKind::Other,
@@ -293,7 +302,7 @@ impl S3Vfs {
             .bucket(bucket)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         // GetBucketLocation returns None/empty for us-east-1
         let region = resp
@@ -374,7 +383,7 @@ impl S3Vfs {
             .list_buckets()
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         debug!("s3: list_buckets returned {} buckets", resp.buckets().len());
 
@@ -472,7 +481,7 @@ impl S3Vfs {
                 req = req.continuation_token(token);
             }
 
-            let resp = req.send().await.map_err(|e| Error::custom(e.to_string()))?;
+            let resp = req.send().await.map_err(sdk_err)?;
 
             debug!(
                 "s3: list_objects page: {} prefixes, {} objects",
@@ -606,7 +615,7 @@ fn grant_to_s3(grant: &PropertyGrant) -> Result<aws_sdk_s3::types::Grant, Error>
             .email_address(address)
             .build(),
     }
-    .map_err(|e| Error::custom(e.to_string()))?;
+    .map_err(sdk_err)?;
     Ok(Grant::builder()
         .grantee(grantee)
         .permission(Permission::from(grant.permission.as_str()))
@@ -654,7 +663,7 @@ impl S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         let meta_entries = head
             .metadata()
@@ -826,7 +835,7 @@ impl S3Vfs {
                 .key(&key)
                 .send()
                 .await
-                .map_err(|e| Error::custom(e.to_string()))?;
+                .map_err(sdk_err)?;
 
             // CopyObject also resets the ACL to the owner default —
             // snapshot a non-trivial ACL so it survives the rewrite
@@ -883,7 +892,7 @@ impl S3Vfs {
                 .or_else(|| head.storage_class().cloned());
             req = req.set_storage_class(class);
 
-            req.send().await.map_err(|e| Error::custom(e.to_string()))?;
+            req.send().await.map_err(sdk_err)?;
 
             if let Some(acl) = acl_snapshot {
                 let policy = AccessControlPolicy::builder()
@@ -900,7 +909,7 @@ impl S3Vfs {
                     .map_err(|e| {
                         Error::custom(format!(
                             "metadata updated, but restoring the ACL failed: {}",
-                            e
+                            aws_sdk_s3::error::DisplayErrorContext(&e)
                         ))
                     })?;
             }
@@ -915,7 +924,7 @@ impl S3Vfs {
                 .acl(ObjectCannedAcl::from(canned.as_str()))
                 .send()
                 .await
-                .map_err(|e| Error::custom(e.to_string()))?;
+                .map_err(sdk_err)?;
         }
 
         if let Some(grants) = grants {
@@ -926,7 +935,7 @@ impl S3Vfs {
                 .key(&key)
                 .send()
                 .await
-                .map_err(|e| Error::custom(e.to_string()))?;
+                .map_err(sdk_err)?;
             let s3_grants: Vec<_> = grants.iter().map(grant_to_s3).collect::<Result<_, _>>()?;
             let policy = AccessControlPolicy::builder()
                 .set_owner(current.owner().cloned())
@@ -939,7 +948,7 @@ impl S3Vfs {
                 .access_control_policy(policy)
                 .send()
                 .await
-                .map_err(|e| Error::custom(e.to_string()))?;
+                .map_err(sdk_err)?;
         }
 
         self.notifier.notify(path);
@@ -998,7 +1007,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
         let modified = resp.last_modified().and_then(|d| {
@@ -1041,7 +1050,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
         let mime_type = resp
@@ -1085,14 +1094,34 @@ impl Vfs for S3Vfs {
         let end = offset + length - 1;
         let range = format!("bytes={}-{}", offset, end);
 
-        let resp = client
+        let resp = match client
             .get_object()
             .bucket(&bucket)
             .key(&key)
             .range(range)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+        {
+            Ok(resp) => resp,
+            // A range starting at or past the object size gets 416 rather
+            // than an empty body — map it to POSIX read-at-EOF semantics.
+            // The 416 response still carries the size ("Content-Range:
+            // bytes */12345").
+            Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 416) => {
+                let total_size = e
+                    .raw_response()
+                    .and_then(|r| r.headers().get("content-range"))
+                    .and_then(|v| v.rsplit('/').next())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(offset);
+                return Ok(FileChunk {
+                    data: Vec::new(),
+                    offset,
+                    total_size,
+                });
+            }
+            Err(e) => return Err(sdk_err(e)),
+        };
 
         // Parse total size from content_range header (e.g. "bytes 0-99/12345")
         let total_size = resp
@@ -1105,7 +1134,7 @@ impl Vfs for S3Vfs {
             .body
             .collect()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?
+            .map_err(sdk_err)?
             .into_bytes()
             .to_vec();
 
@@ -1131,7 +1160,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         Ok(Box::new(resp.body.into_async_read()))
     }
@@ -1153,7 +1182,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         let upload_id = resp
             .upload_id()
@@ -1190,7 +1219,7 @@ impl Vfs for S3Vfs {
             .key(&key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         self.notifier.notify(path);
         Ok(())
@@ -1217,7 +1246,7 @@ impl Vfs for S3Vfs {
             .key(&dir_key)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         self.notifier.notify(path);
         Ok(())
@@ -1247,7 +1276,7 @@ impl Vfs for S3Vfs {
             .copy_source(&copy_source)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
         self.notifier.notify(to);
         Ok(())
     }
@@ -1286,7 +1315,7 @@ impl Vfs for S3Vfs {
                     debug!("s3: touch object already exists (412), no-op");
                     Ok(())
                 } else {
-                    Err(Error::custom(e.to_string()))
+                    Err(sdk_err(e))
                 }
             }
         }
@@ -1322,7 +1351,7 @@ impl Vfs for S3Vfs {
             .body(aws_sdk_s3::primitives::ByteStream::from_static(b""))
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
         self.notifier.notify(path);
         Ok(())
     }
@@ -1377,7 +1406,7 @@ impl S3AsyncWriter {
             .body(body)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
 
         self.completed_parts.push(
             aws_sdk_s3::types::CompletedPart::builder()
@@ -1465,7 +1494,7 @@ impl VfsAsyncWriter for S3AsyncWriter {
             .multipart_upload(completed)
             .send()
             .await
-            .map_err(|e| Error::custom(e.to_string()))?;
+            .map_err(sdk_err)?;
         self.terminated = true;
 
         info!(
