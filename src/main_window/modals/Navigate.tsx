@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  Field,
+} from "./primitives";
 
 type NavigateProps = CommonDialogProps & ModalDataOf<"navigate">;
 
@@ -25,30 +31,24 @@ export default function Navigate({
   }, []);
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Navigate to
-        </Dialog.Title>
-        <label htmlFor="path">Path</label>
-        <input
-          ref={inputRef}
-          type="text"
-          name="path"
-          value={newPath}
-          onChange={(e) => setNewPath(e.target.value)}
-          size={40}
-          autoFocus
-        />
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
-          Cancel
-        </button>
-        <button type="submit" className="suggested" disabled={!newPath}>
-          Navigate
-        </button>
-      </div>
-    </form>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Navigate to" />
+      <DialogBody>
+        <Field label="Path" htmlFor="path">
+          <input
+            ref={inputRef}
+            type="text"
+            id="path"
+            value={newPath}
+            onChange={(e) => setNewPath(e.target.value)}
+            size={40}
+            autoFocus
+          />
+        </Field>
+      </DialogBody>
+      <DialogFooter onCancel={cancel}>
+        <DialogSubmitButton disabled={!newPath}>Navigate</DialogSubmitButton>
+      </DialogFooter>
+    </DialogShell>
   );
 }

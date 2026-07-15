@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  Field,
+} from "./primitives";
 
 type RenameProps = CommonDialogProps & ModalDataOf<"rename">;
 
@@ -28,32 +34,31 @@ export default function Rename({
   }, []);
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Rename file
-        </Dialog.Title>
-        <label htmlFor="path">
-          New name for <b>{name}</b>
-        </label>
-        <input
-          type="text"
-          name="path"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          size={40}
-          ref={inputRef}
-          autoFocus
-        />
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
-          Cancel
-        </button>
-        <button type="submit" className="suggested" disabled={!newName}>
-          Rename
-        </button>
-      </div>
-    </form>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Rename file" />
+      <DialogBody>
+        <Field
+          label={
+            <>
+              New name for <b>{name}</b>
+            </>
+          }
+          htmlFor="path"
+        >
+          <input
+            type="text"
+            id="path"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            size={40}
+            ref={inputRef}
+            autoFocus
+          />
+        </Field>
+      </DialogBody>
+      <DialogFooter onCancel={cancel}>
+        <DialogSubmitButton disabled={!newName}>Rename</DialogSubmitButton>
+      </DialogFooter>
+    </DialogShell>
   );
 }

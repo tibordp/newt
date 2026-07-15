@@ -1,9 +1,17 @@
 import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  Field,
+  FieldGroup,
+  CheckboxField,
+} from "./primitives";
 
 type UserCommandInputProps = CommonDialogProps &
   ModalDataOf<"user_command_input">;
@@ -60,17 +68,10 @@ export default function UserCommandInput({
   // Single confirm with no prompts: show as a simple yes/no dialog
   if (isSingleConfirm) {
     return (
-      <>
-        <div className={dialogStyles.dialogContents}>
-          <Dialog.Title className={dialogStyles.dialogTitle}>
-            {command_title}
-          </Dialog.Title>
-          <p className={dialogStyles.dialogSummary}>{confirms[0]}</p>
-        </div>
-        <div className={dialogStyles.dialogButtons}>
-          <button type="button" onClick={cancel}>
-            No
-          </button>
+      <DialogShell>
+        <DialogHeader title={command_title} />
+        <DialogBody>{confirms[0]}</DialogBody>
+        <DialogFooter onCancel={cancel} cancelLabel="No">
           <button
             type="button"
             className="suggested"
@@ -79,50 +80,46 @@ export default function UserCommandInput({
           >
             Yes
           </button>
-        </div>
-      </>
+        </DialogFooter>
+      </DialogShell>
     );
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          {command_title}
-        </Dialog.Title>
-        {confirms.map((message, i) => (
-          <label
-            key={`confirm-${i}`}
-            style={{ display: "flex", alignItems: "center", gap: 8 }}
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title={command_title} />
+      <DialogBody>
+        {confirms.length > 0 && (
+          <FieldGroup>
+            {confirms.map((message, i) => (
+              <CheckboxField
+                key={`confirm-${i}`}
+                label={message}
+                checked={confirmValues[i]}
+                onChange={(checked) => updateConfirm(i, checked)}
+              />
+            ))}
+          </FieldGroup>
+        )}
+        {prompts.map((prompt, i) => (
+          <Field
+            key={`prompt-${i}`}
+            label={prompt.label}
+            htmlFor={`prompt-${i}`}
           >
             <input
-              type="checkbox"
-              checked={confirmValues[i]}
-              onChange={(e) => updateConfirm(i, e.target.checked)}
-            />
-            {message}
-          </label>
-        ))}
-        {prompts.map((prompt, i) => (
-          <label key={`prompt-${i}`}>
-            {prompt.label}
-            <input
               type="text"
+              id={`prompt-${i}`}
               value={promptValues[i]}
               onChange={(e) => updatePrompt(i, e.target.value)}
               autoFocus={i === 0}
             />
-          </label>
+          </Field>
         ))}
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
-          Cancel
-        </button>
-        <button type="submit" className="suggested">
-          Run
-        </button>
-      </div>
-    </form>
+      </DialogBody>
+      <DialogFooter onCancel={cancel}>
+        <DialogSubmitButton>Run</DialogSubmitButton>
+      </DialogFooter>
+    </DialogShell>
   );
 }

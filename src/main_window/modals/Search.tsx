@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import { useAsyncAction, DialogError, DialogSubmitButton } from "./primitives";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  DialogError,
+  Field,
+  FieldGroup,
+  CheckboxField,
+  useAsyncAction,
+} from "./primitives";
 
 type SearchProps = CommonDialogProps & ModalDataOf<"search">;
 
@@ -47,108 +56,67 @@ export default function SearchDialog({
   const canSubmit = namePattern.length > 0 || contentPattern.length > 0;
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Search in {display_path}
-        </Dialog.Title>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-4)",
-          }}
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title={`Search in ${display_path}`} />
+      <DialogBody>
+        <Field
+          label="Name (substring; use *, ?, [ for glob — e.g. *.rs)"
+          htmlFor="name-pattern"
         >
-          <div>
-            <label htmlFor="name-pattern">
-              Name (substring; use *, ?, [ for glob — e.g. *.rs)
-            </label>
-            <input
-              ref={inputRef}
-              id="name-pattern"
-              type="text"
-              value={namePattern}
-              onChange={(e) => setNamePattern(e.target.value)}
-              size={40}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              disabled={pending}
-            />
-          </div>
-          <div>
-            <label htmlFor="content-pattern">
-              Content (optional; substring or regex)
-            </label>
-            <input
-              id="content-pattern"
-              type="text"
-              value={contentPattern}
-              onChange={(e) => setContentPattern(e.target.value)}
-              size={40}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              disabled={pending}
-            />
-          </div>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              fontSize: "0.9em",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={contentIsRegex}
-              onChange={(e) => setContentIsRegex(e.target.checked)}
-              disabled={pending}
-            />
-            Content is a regular expression
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              fontSize: "0.9em",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={caseSensitive}
-              onChange={(e) => setCaseSensitive(e.target.checked)}
-              disabled={pending}
-            />
-            Case-sensitive
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              fontSize: "0.9em",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={followSymlinks}
-              onChange={(e) => setFollowSymlinks(e.target.checked)}
-              disabled={pending}
-            />
-            Follow symlinks
-          </label>
-          <DialogError error={error} />
-        </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel} disabled={pending}>
-          Cancel
-        </button>
+          <input
+            ref={inputRef}
+            id="name-pattern"
+            type="text"
+            value={namePattern}
+            onChange={(e) => setNamePattern(e.target.value)}
+            size={40}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={pending}
+          />
+        </Field>
+        <Field
+          label="Content (optional; substring or regex)"
+          htmlFor="content-pattern"
+        >
+          <input
+            id="content-pattern"
+            type="text"
+            value={contentPattern}
+            onChange={(e) => setContentPattern(e.target.value)}
+            size={40}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={pending}
+          />
+        </Field>
+        <FieldGroup>
+          <CheckboxField
+            label="Content is a regular expression"
+            checked={contentIsRegex}
+            onChange={setContentIsRegex}
+            disabled={pending}
+          />
+          <CheckboxField
+            label="Case-sensitive"
+            checked={caseSensitive}
+            onChange={setCaseSensitive}
+            disabled={pending}
+          />
+          <CheckboxField
+            label="Follow symlinks"
+            checked={followSymlinks}
+            onChange={setFollowSymlinks}
+            disabled={pending}
+          />
+        </FieldGroup>
+        <DialogError error={error} />
+      </DialogBody>
+      <DialogFooter onCancel={cancel} cancelDisabled={pending}>
         <DialogSubmitButton
           pending={pending}
           pendingLabel="Starting…"
@@ -156,7 +124,7 @@ export default function SearchDialog({
         >
           Search
         </DialogSubmitButton>
-      </div>
-    </form>
+      </DialogFooter>
+    </DialogShell>
   );
 }

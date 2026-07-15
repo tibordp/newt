@@ -1,9 +1,15 @@
 import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  Field,
+} from "./primitives";
 
 type CreateDirectoryProps = CommonDialogProps & ModalDataOf<"create_directory">;
 
@@ -20,29 +26,23 @@ export default function CreateDirectory({
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Create Directory
-        </Dialog.Title>
-        <label htmlFor="path">Directory name</label>
-        <input
-          type="text"
-          name="path"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          size={40}
-          autoFocus
-        />
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
-          Cancel
-        </button>
-        <button type="submit" className="suggested" disabled={!name}>
-          Create
-        </button>
-      </div>
-    </form>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Create Directory" />
+      <DialogBody>
+        <Field label="Directory name" htmlFor="path">
+          <input
+            type="text"
+            id="path"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            size={40}
+            autoFocus
+          />
+        </Field>
+      </DialogBody>
+      <DialogFooter onCancel={cancel}>
+        <DialogSubmitButton disabled={!name}>Create</DialogSubmitButton>
+      </DialogFooter>
+    </DialogShell>
   );
 }
