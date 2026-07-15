@@ -1149,9 +1149,18 @@ function PaneInner(
         () => commands.navigate(paneHandle, `${e.key.toUpperCase()}:\\`, true),
         true,
       );
-    } else if (e.key.length == 1 && !e.ctrlKey && !e.shiftKey) {
+    } else if (
+      e.key.length == 1 &&
+      !e.ctrlKey &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
       // Printable-character heuristic: routes typing into quick-search.
       // Reliable for en-US; international IME coverage is unverified.
+      // Modifier chords (⌘H, Alt+…) are app shortcuts handled by the
+      // window-level binding dispatcher, which runs *after* this handler
+      // — stealing focus into the filter input here would strand them.
       inputRef.current?.focus();
       return;
     }
