@@ -27,40 +27,22 @@
   min-width: 0;
 }
 
-.input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.tabBar {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: var(--space-4);
-}
-
-.tab {
-  padding: var(--space-3) var(--space-4);
-  border-radius: 0;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
+.mountLog {
+  max-height: 7em;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 500;
-
-  &:hover {
-    color: var(--color-fg);
-    background: var(--color-button-bg);
-  }
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.tabActive {
-  composes: tab;
-  color: var(--color-fg);
-  border-bottom-color: var(--color-accent);
+.openInLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
 }
 
 .listColumn {
@@ -89,7 +71,7 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-2) var(--space-3);
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
@@ -98,21 +80,21 @@
 .contextChips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 .chip {
-  padding: 2px 8px;
+  padding: var(--space-1) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
   font: inherit;
   color: inherit;
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
 
   &:hover {
     background: var(--color-button-hover-bg);
@@ -134,7 +116,7 @@
   padding: var(--space-4);
   text-align: center;
   color: var(--color-fg-muted);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .row {
@@ -178,7 +160,7 @@
 }
 
 .rowSub {
-  font-size: 0.8em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   white-space: nowrap;
   overflow: hidden;

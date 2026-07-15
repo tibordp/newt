@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   commands,
   type ConnectionKind,
@@ -10,8 +9,19 @@ import {
 } from "../../lib/bindings";
 import { safe, safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import { useAsyncAction, DialogError, DialogSubmitButton } from "./primitives";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  useAsyncAction,
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogError,
+  DialogSubmitButton,
+  DialogTabs,
+  Field,
+  FieldGroup,
+  CheckboxField,
+} from "./primitives";
 import styles from "./ConnectRemote.module.scss";
 
 type ConnectRemoteProps = CommonDialogProps &
@@ -247,28 +257,15 @@ export default function ConnectRemote({
   ];
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Connect
-        </Dialog.Title>
-        <div className={styles.tabBar} role="tablist">
-          {TABS.map((t) => (
-            <button
-              key={t.tag}
-              type="button"
-              role="tab"
-              aria-selected={form.transport === t.tag}
-              className={
-                form.transport === t.tag ? styles.tabActive : styles.tab
-              }
-              onClick={() => update("transport", t.tag)}
-              disabled={pending}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Connect" />
+      <DialogBody>
+        <DialogTabs
+          tabs={TABS.map((t) => ({ value: t.tag, label: t.label }))}
+          value={form.transport}
+          onChange={(tag) => update("transport", tag)}
+          disabled={pending}
+        />
         <div
           className={
             form.transport === "custom" ? styles.layoutCompact : styles.layout
@@ -309,29 +306,19 @@ export default function ConnectRemote({
               />
             )}
 
-            <div>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  fontSize: "0.9em",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.saveProfile}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      saveProfile: e.target.checked,
-                      connectionName: f.connectionName || defaultProfileName(f),
-                    }))
-                  }
-                  disabled={pending}
-                />
-                Save as connection profile
-              </label>
+            <FieldGroup>
+              <CheckboxField
+                label="Save as connection profile"
+                checked={form.saveProfile}
+                onChange={(checked) =>
+                  setForm((f) => ({
+                    ...f,
+                    saveProfile: checked,
+                    connectionName: f.connectionName || defaultProfileName(f),
+                  }))
+                }
+                disabled={pending}
+              />
               {form.saveProfile && (
                 <input
                   type="text"
@@ -340,12 +327,10 @@ export default function ConnectRemote({
                     setForm((f) => ({ ...f, connectionName: e.target.value }))
                   }
                   placeholder="Connection name"
-                  className={styles.input}
-                  style={{ marginTop: "var(--space-2)" }}
                   disabled={pending}
                 />
               )}
-            </div>
+            </FieldGroup>
             <MountLogView
               lines={mountLog}
               visible={pending && form.openIn === "pane"}
@@ -364,36 +349,32 @@ export default function ConnectRemote({
             </div>
           )}
         </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-1)",
-            marginRight: "auto",
-            fontSize: "0.9em",
-          }}
-          title="Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network."
-        >
-          <input
-            type="checkbox"
-            checked={form.openIn === "window"}
-            onChange={(e) =>
-              update("openIn", e.target.checked ? "window" : "pane")
-            }
-            disabled={pending}
-          />
-          Open as a new session
-        </label>
-        <button type="button" onClick={cancel} disabled={pending}>
-          Cancel
-        </button>
+      </DialogBody>
+      <DialogFooter
+        onCancel={cancel}
+        cancelDisabled={pending}
+        start={
+          <label
+            className={styles.openInLabel}
+            title="Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network."
+          >
+            <input
+              type="checkbox"
+              checked={form.openIn === "window"}
+              onChange={(e) =>
+                update("openIn", e.target.checked ? "window" : "pane")
+              }
+              disabled={pending}
+            />
+            Open as a new session
+          </label>
+        }
+      >
         <DialogSubmitButton pending={pending} pendingLabel="Connecting…">
           Connect
         </DialogSubmitButton>
-      </div>
-    </form>
+      </DialogFooter>
+    </DialogShell>
   );
 }
 
@@ -414,18 +395,7 @@ function MountLogView({
   }, [lines]);
   if (!visible || !lines || lines.length === 0) return null;
   return (
-    <div
-      ref={boxRef}
-      style={{
-        maxHeight: "7em",
-        overflowY: "auto",
-        fontFamily: "var(--font-mono, monospace)",
-        fontSize: "0.8em",
-        opacity: 0.75,
-        whiteSpace: "pre-wrap",
-        overflowWrap: "anywhere",
-      }}
-    >
+    <div ref={boxRef} className={styles.mountLog}>
       {lines.map((l, i) => (
         <div key={i}>{l}</div>
       ))}
@@ -445,34 +415,26 @@ type FieldProps = {
 function SshFormFields({ form, update, pending, firstInputRef }: FieldProps) {
   return (
     <>
-      <div>
-        <label htmlFor="ssh-host">Host (user@host)</label>
+      <Field label="Host (user@host)" htmlFor="ssh-host">
         <input
           ref={firstInputRef}
           id="ssh-host"
           type="text"
           value={form.sshHost}
           onChange={(e) => update("sshHost", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          fontSize: "0.9em",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={form.sshForwardAgent}
-          onChange={(e) => update("sshForwardAgent", e.target.checked)}
-          disabled={pending}
-        />
-        Forward SSH agent (<code>-A</code>)
-      </label>
+      </Field>
+      <CheckboxField
+        label={
+          <>
+            Forward SSH agent (<code>-A</code>)
+          </>
+        }
+        checked={form.sshForwardAgent}
+        onChange={(checked) => update("sshForwardAgent", checked)}
+        disabled={pending}
+      />
     </>
   );
 }
@@ -486,45 +448,31 @@ function ContainerFormFields({
 }: FieldProps & { engine: "docker" | "podman" }) {
   return (
     <>
-      <div>
-        <label htmlFor="ctr-name">Container</label>
+      <Field label="Container" htmlFor="ctr-name">
         <input
           ref={firstInputRef}
           id="ctr-name"
           type="text"
           value={form.containerName}
           onChange={(e) => update("containerName", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <div>
-        <label htmlFor="ctr-user">User (optional)</label>
+      </Field>
+      <Field label="User (optional)" htmlFor="ctr-user">
         <input
           id="ctr-user"
           type="text"
           value={form.containerUser}
           onChange={(e) => update("containerUser", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          fontSize: "0.9em",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={form.bootstrapless}
-          onChange={(e) => update("bootstrapless", e.target.checked)}
-          disabled={pending}
-        />
-        Bootstrapless (use {engine} cp; for containers without sh)
-      </label>
+      </Field>
+      <CheckboxField
+        label={`Bootstrapless (use ${engine} cp; for containers without sh)`}
+        checked={form.bootstrapless}
+        onChange={(checked) => update("bootstrapless", checked)}
+        disabled={pending}
+      />
     </>
   );
 }
@@ -532,51 +480,43 @@ function ContainerFormFields({
 function KubeFormFields({ form, update, pending, firstInputRef }: FieldProps) {
   return (
     <>
-      <div>
-        <label htmlFor="kube-ctx">Context (optional)</label>
+      <Field label="Context (optional)" htmlFor="kube-ctx">
         <input
           id="kube-ctx"
           type="text"
           value={form.kubeContext}
           onChange={(e) => update("kubeContext", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <div>
-        <label htmlFor="kube-ns">Namespace (optional)</label>
+      </Field>
+      <Field label="Namespace (optional)" htmlFor="kube-ns">
         <input
           id="kube-ns"
           type="text"
           value={form.kubeNamespace}
           onChange={(e) => update("kubeNamespace", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <div>
-        <label htmlFor="kube-pod">Pod</label>
+      </Field>
+      <Field label="Pod" htmlFor="kube-pod">
         <input
           ref={firstInputRef}
           id="kube-pod"
           type="text"
           value={form.kubePod}
           onChange={(e) => update("kubePod", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
-      <div>
-        <label htmlFor="kube-container">Container (optional)</label>
+      </Field>
+      <Field label="Container (optional)" htmlFor="kube-container">
         <input
           id="kube-container"
           type="text"
           value={form.kubeContainer}
           onChange={(e) => update("kubeContainer", e.target.value)}
-          className={styles.input}
           disabled={pending}
         />
-      </div>
+      </Field>
     </>
   );
 }
@@ -589,24 +529,11 @@ function CustomFormFields({
 }: FieldProps) {
   return (
     <>
-      <div>
-        <label htmlFor="custom-cmd">Command</label>
-        <input
-          ref={firstInputRef}
-          id="custom-cmd"
-          type="text"
-          value={form.customCommand}
-          onChange={(e) => update("customCommand", e.target.value)}
-          className={styles.input}
-          placeholder={
-            form.customSkipBootstrap
-              ? "e.g. my-prespawned-agent"
-              : 'e.g. ssh user@host "$NEWT_BOOTSTRAP"'
-          }
-          disabled={pending}
-        />
-        <div style={{ fontSize: "0.85em", opacity: 0.6, marginTop: 4 }}>
-          {form.customSkipBootstrap ? (
+      <Field
+        label="Command"
+        htmlFor="custom-cmd"
+        hint={
+          form.customSkipBootstrap ? (
             <>
               Runs locally via <code>sh -c</code>. Stdio is piped straight to
               the RPC layer — your command must produce a ready agent.
@@ -617,25 +544,29 @@ function CustomFormFields({
               exposed as <code>$NEWT_BOOTSTRAP</code>; splice it in however you
               like.
             </>
-          )}
-        </div>
-      </div>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          fontSize: "0.9em",
-        }}
+          )
+        }
       >
         <input
-          type="checkbox"
-          checked={form.customSkipBootstrap}
-          onChange={(e) => update("customSkipBootstrap", e.target.checked)}
+          ref={firstInputRef}
+          id="custom-cmd"
+          type="text"
+          value={form.customCommand}
+          onChange={(e) => update("customCommand", e.target.value)}
+          placeholder={
+            form.customSkipBootstrap
+              ? "e.g. my-prespawned-agent"
+              : 'e.g. ssh user@host "$NEWT_BOOTSTRAP"'
+          }
           disabled={pending}
         />
-        Skip bootstrap (assume command already runs the agent)
-      </label>
+      </Field>
+      <CheckboxField
+        label="Skip bootstrap (assume command already runs the agent)"
+        checked={form.customSkipBootstrap}
+        onChange={(checked) => update("customSkipBootstrap", checked)}
+        disabled={pending}
+      />
     </>
   );
 }

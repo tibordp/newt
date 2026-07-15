@@ -5,12 +5,14 @@ export function DialogTabs<T extends string>({
   value,
   onChange,
   stretch,
+  disabled,
 }: {
   tabs: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
   // Tabs share the full width equally (settings-editor style).
   stretch?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -25,6 +27,7 @@ export function DialogTabs<T extends string>({
           aria-selected={tab.value === value}
           className={tab.value === value ? styles.tabActive : styles.tab}
           onClick={() => onChange(tab.value)}
+          disabled={disabled}
         >
           {tab.label}
         </button>

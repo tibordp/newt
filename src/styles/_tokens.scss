@@ -81,4 +81,7 @@
   --font-size-sm: 12px;
   --font-size-md: 13px;
   --font-size-lg: 15px;
+
+  // Monospace (logs, transcripts; the terminal configures xterm directly)
+  --font-mono: Menlo, Monaco, "Courier New", monospace;
 }

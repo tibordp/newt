@@ -1,6 +1,8 @@
 .shell {
   display: flex;
   flex-direction: column;
+  // Fill fixed-height dialog containers; no-op in fit-content ones.
+  flex: 1;
   min-height: 0;
   max-height: 100%;
 }

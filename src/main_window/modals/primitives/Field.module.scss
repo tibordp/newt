@@ -1,6 +1,12 @@
 .field {
   display: flex;
   flex-direction: column;
+
+  // Selects default to width:auto globally; as a stacked field's control
+  // they should fill the column like text inputs do.
+  select {
+    width: 100%;
+  }
 }
 
 .fieldLabel {

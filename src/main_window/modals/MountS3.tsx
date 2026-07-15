@@ -1,9 +1,18 @@
 import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
-import { useAsyncAction, DialogError, DialogSubmitButton } from "./primitives";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  DialogError,
+  Field,
+  FieldGroup,
+  CheckboxField,
+  useAsyncAction,
+} from "./primitives";
 import { commands } from "../../lib/bindings";
 
 type CredentialMode = "default" | "iam_user" | "assume_role" | "profile";
@@ -124,182 +133,147 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
     (credentialMode === "assume_role" && !!roleArn);
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Mount S3
-        </Dialog.Title>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Mount S3" />
+      <DialogBody>
+        <Field label="Region (optional)" htmlFor="s3-region">
+          <input
+            id="s3-region"
+            type="text"
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            placeholder="us-east-1"
+            autoFocus
+            autoComplete="off"
+          />
+        </Field>
 
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-4)",
-          }}
-        >
-          <div>
-            <label htmlFor="s3-region">Region (optional)</label>
+        <Field label="Bucket (optional)" htmlFor="s3-bucket">
+          <input
+            id="s3-bucket"
+            type="text"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value)}
+            placeholder="Scope mount to a specific bucket"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+
+        <Field label="Endpoint URL (optional)" htmlFor="s3-endpoint">
+          <input
+            id="s3-endpoint"
+            type="text"
+            value={endpointUrl}
+            onChange={(e) => setEndpointUrl(e.target.value)}
+            placeholder="https://s3.amazonaws.com"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+
+        <Field label="Credentials" htmlFor="s3-cred-mode">
+          <select
+            id="s3-cred-mode"
+            value={credentialMode}
+            onChange={(e) =>
+              setCredentialMode(e.target.value as CredentialMode)
+            }
+          >
+            <option value="default">
+              Default (environment / instance metadata)
+            </option>
+            <option value="profile">AWS Profile</option>
+            <option value="iam_user">IAM User (access key)</option>
+            <option value="assume_role">Assume Role</option>
+          </select>
+        </Field>
+
+        {credentialMode === "profile" && (
+          <Field label="Profile name" htmlFor="s3-profile">
             <input
-              id="s3-region"
+              id="s3-profile"
               type="text"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              placeholder="us-east-1"
-              autoFocus
+              value={awsProfileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              placeholder="default"
               autoComplete="off"
             />
-          </div>
+          </Field>
+        )}
 
-          <div>
-            <label htmlFor="s3-bucket">Bucket (optional)</label>
-            <input
-              id="s3-bucket"
-              type="text"
-              value={bucket}
-              onChange={(e) => setBucket(e.target.value)}
-              placeholder="Scope mount to a specific bucket"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="s3-endpoint">Endpoint URL (optional)</label>
-            <input
-              id="s3-endpoint"
-              type="text"
-              value={endpointUrl}
-              onChange={(e) => setEndpointUrl(e.target.value)}
-              placeholder="https://s3.amazonaws.com"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="s3-cred-mode">Credentials</label>
-            <select
-              id="s3-cred-mode"
-              value={credentialMode}
-              style={{ width: "100%" }}
-              onChange={(e) =>
-                setCredentialMode(e.target.value as CredentialMode)
-              }
-            >
-              <option value="default">
-                Default (environment / instance metadata)
-              </option>
-              <option value="profile">AWS Profile</option>
-              <option value="iam_user">IAM User (access key)</option>
-              <option value="assume_role">Assume Role</option>
-            </select>
-          </div>
-
-          {credentialMode === "profile" && (
-            <div>
-              <label htmlFor="s3-profile">Profile name</label>
+        {credentialMode === "iam_user" && (
+          <>
+            <Field label="Access Key ID" htmlFor="s3-access-key">
               <input
-                id="s3-profile"
+                id="s3-access-key"
                 type="text"
-                value={awsProfileName}
-                onChange={(e) => setProfileName(e.target.value)}
-                placeholder="default"
+                value={accessKeyId}
+                onChange={(e) => setAccessKeyId(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Field>
+            <Field label="Secret Access Key" htmlFor="s3-secret-key">
+              <input
+                id="s3-secret-key"
+                type="password"
+                value={secretAccessKey}
+                onChange={(e) => setSecretAccessKey(e.target.value)}
                 autoComplete="off"
               />
-            </div>
-          )}
+            </Field>
+          </>
+        )}
 
-          {credentialMode === "iam_user" && (
-            <>
-              <div>
-                <label htmlFor="s3-access-key">Access Key ID</label>
-                <input
-                  id="s3-access-key"
-                  type="text"
-                  value={accessKeyId}
-                  onChange={(e) => setAccessKeyId(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              <div>
-                <label htmlFor="s3-secret-key">Secret Access Key</label>
-                <input
-                  id="s3-secret-key"
-                  type="password"
-                  value={secretAccessKey}
-                  onChange={(e) => setSecretAccessKey(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-            </>
-          )}
+        {credentialMode === "assume_role" && (
+          <>
+            <Field label="Role ARN" htmlFor="s3-role-arn">
+              <input
+                id="s3-role-arn"
+                type="text"
+                value={roleArn}
+                onChange={(e) => setRoleArn(e.target.value)}
+                placeholder="arn:aws:iam::123456789012:role/MyRole"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Field>
+            <Field label="External ID (optional)" htmlFor="s3-external-id">
+              <input
+                id="s3-external-id"
+                type="text"
+                value={externalId}
+                onChange={(e) => setExternalId(e.target.value)}
+                autoComplete="off"
+              />
+            </Field>
+          </>
+        )}
 
-          {credentialMode === "assume_role" && (
-            <>
-              <div>
-                <label htmlFor="s3-role-arn">Role ARN</label>
-                <input
-                  id="s3-role-arn"
-                  type="text"
-                  value={roleArn}
-                  onChange={(e) => setRoleArn(e.target.value)}
-                  placeholder="arn:aws:iam::123456789012:role/MyRole"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              <div>
-                <label htmlFor="s3-external-id">External ID (optional)</label>
-                <input
-                  id="s3-external-id"
-                  type="text"
-                  value={externalId}
-                  onChange={(e) => setExternalId(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-            </>
-          )}
-
-          <div>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--space-2)",
-                fontSize: "0.9em",
+        <FieldGroup>
+          <CheckboxField
+            label="Save as connection profile"
+            checked={saveProfile}
+            onChange={setSaveProfile}
+          />
+          {saveProfile && (
+            <input
+              type="text"
+              value={displayedConnectionName}
+              onChange={(e) => {
+                setConnectionName(e.target.value);
+                setConnectionNameEdited(true);
               }}
-            >
-              <input
-                type="checkbox"
-                checked={saveProfile}
-                onChange={(e) => setSaveProfile(e.target.checked)}
-              />
-              Save as connection profile
-            </label>
-            {saveProfile && (
-              <input
-                type="text"
-                value={displayedConnectionName}
-                onChange={(e) => {
-                  setConnectionName(e.target.value);
-                  setConnectionNameEdited(true);
-                }}
-                placeholder="Connection name"
-                size={30}
-                style={{ marginTop: "var(--space-2)" }}
-                autoComplete="off"
-              />
-            )}
-          </div>
-          <DialogError error={error} />
-        </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel} disabled={pending}>
-          Cancel
-        </button>
+              placeholder="Connection name"
+              size={30}
+              autoComplete="off"
+            />
+          )}
+        </FieldGroup>
+        <DialogError error={error} />
+      </DialogBody>
+      <DialogFooter onCancel={cancel} cancelDisabled={pending}>
         <DialogSubmitButton
           pending={pending}
           pendingLabel="Connecting…"
@@ -307,7 +281,7 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
         >
           Mount
         </DialogSubmitButton>
-      </div>
-    </form>
+      </DialogFooter>
+    </DialogShell>
   );
 }

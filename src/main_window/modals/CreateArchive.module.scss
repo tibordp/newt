@@ -1,75 +1,13 @@
-// Tab bar matches ConnectRemote's transport picker. Not `composes: ... from`:
-// cross-file composes makes Vite pull the referenced .scss through the plain
-// CSS-modules parser, which chokes on Sass syntax.
-.tabBar {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: var(--space-4);
+.levelInput {
+  width: 4.5em;
 }
 
-.tab {
-  padding: var(--space-3) var(--space-4);
-  border-radius: 0;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  color: var(--color-fg-muted);
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 500;
-
-  &:hover {
-    color: var(--color-fg);
-    background: var(--color-button-bg);
-  }
-}
-
-.tabActive {
-  composes: tab;
-  color: var(--color-fg);
-  border-bottom-color: var(--color-accent);
-}
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.optionLabel {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.95em !important;
-  padding-bottom: 0 !important;
-  cursor: pointer;
-
-  input[type="checkbox"] {
-    margin: 0;
-  }
-}
-
-.levelRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.95em !important;
-  padding-bottom: 0 !important;
-
-  input[type="number"] {
-    width: 4.5em;
-  }
-
-  input[type="password"] {
-    flex: 1;
-  }
+.passwordInput {
+  flex: 1;
 }
 
 .hint {
   margin: 0;
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }

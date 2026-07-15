@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safe } from "../../lib/ipc";
 import type { MainWindowState } from "../types";
-import dialogStyles from "./Dialog.module.scss";
 import styles from "./ConnectionLogDialog.module.scss";
 import { commands } from "../../lib/bindings";
+import { DialogShell, DialogHeader, DialogFooter } from "./primitives";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
@@ -24,34 +24,24 @@ export default function ConnectionLogContent({
 
   return (
     <Dialog.Content
-      className={dialogStyles.dialogContent}
+      className={styles.content}
       onCloseAutoFocus={preventAutoFocus}
-      style={{
-        width: 700,
-        maxWidth: "90%",
-        height: 500,
-        maxHeight: "85%",
-        display: "flex",
-        flexDirection: "column",
-      }}
     >
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Connection Log
-        </Dialog.Title>
-      </div>
-      <pre className={styles.log} ref={ref}>
-        {log.length > 0 ? log.join("\n") : "(no log entries)"}
-      </pre>
-      <div className={dialogStyles.dialogButtons}>
-        <button
-          type="button"
-          onClick={() => safe(commands.closeModal())}
-          autoFocus
-        >
-          Close
-        </button>
-      </div>
+      <DialogShell>
+        <DialogHeader title="Connection Log" />
+        <pre className={styles.log} ref={ref}>
+          {log.length > 0 ? log.join("\n") : "(no log entries)"}
+        </pre>
+        <DialogFooter>
+          <button
+            type="button"
+            onClick={() => safe(commands.closeModal())}
+            autoFocus
+          >
+            Close
+          </button>
+        </DialogFooter>
+      </DialogShell>
     </Dialog.Content>
   );
 }

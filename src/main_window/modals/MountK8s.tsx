@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import { useAsyncAction, DialogError, DialogSubmitButton } from "./primitives";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  DialogError,
+  Field,
+  useAsyncAction,
+} from "./primitives";
 
 type MountK8sProps = CommonDialogProps & ModalDataOf<"mount_k8s">;
 
@@ -30,46 +37,30 @@ export default function MountK8s({
   }, []);
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Mount Kubernetes
-        </Dialog.Title>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-4)",
-          }}
-        >
-          <div>
-            <label htmlFor="k8s_context">
-              Context (leave empty for current)
-            </label>
-            <input
-              ref={inputRef}
-              type="text"
-              name="k8s_context"
-              value={k8sContext}
-              onChange={(e) => setK8sContext(e.target.value)}
-              size={40}
-              autoFocus
-              autoComplete="off"
-              placeholder="default: current context"
-              disabled={pending}
-            />
-          </div>
-          <DialogError error={error} />
-        </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel} disabled={pending}>
-          Cancel
-        </button>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Mount Kubernetes" />
+      <DialogBody>
+        <Field label="Context (leave empty for current)" htmlFor="k8s_context">
+          <input
+            ref={inputRef}
+            type="text"
+            id="k8s_context"
+            value={k8sContext}
+            onChange={(e) => setK8sContext(e.target.value)}
+            size={40}
+            autoFocus
+            autoComplete="off"
+            placeholder="default: current context"
+            disabled={pending}
+          />
+        </Field>
+        <DialogError error={error} />
+      </DialogBody>
+      <DialogFooter onCancel={cancel} cancelDisabled={pending}>
         <DialogSubmitButton pending={pending} pendingLabel="Connecting…">
           Mount
         </DialogSubmitButton>
-      </div>
-    </form>
+      </DialogFooter>
+    </DialogShell>
   );
 }

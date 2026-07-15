@@ -1,9 +1,18 @@
 import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { type ArchiveFormat, commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogSubmitButton,
+  DialogTabs,
+  FieldGroup,
+  FieldRow,
+  CheckboxField,
+} from "./primitives";
 import styles from "./CreateArchive.module.scss";
 
 type CreateArchiveProps = CommonDialogProps & ModalDataOf<"create_archive">;
@@ -101,26 +110,15 @@ export default function CreateArchive({
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          Pack to Archive
-        </Dialog.Title>
-        <div className={styles.tabBar} role="tablist">
-          {FORMATS.map((f) => (
-            <button
-              key={f.tag}
-              type="button"
-              role="tab"
-              aria-selected={format === f.tag}
-              className={format === f.tag ? styles.tabActive : styles.tab}
-              onClick={() => switchFormat(f.tag)}
-            >
-              {f.ext}
-            </button>
-          ))}
-        </div>
-        <p className={dialogStyles.dialogSummary}>
+    <DialogShell onSubmit={onSubmit}>
+      <DialogHeader title="Pack to Archive" />
+      <DialogBody>
+        <DialogTabs
+          tabs={FORMATS.map((f) => ({ value: f.tag, label: f.ext }))}
+          value={format}
+          onChange={switchFormat}
+        />
+        <p className={styles.hint}>
           Pack <b>{summary}</b> into:
         </p>
         <input
@@ -131,15 +129,15 @@ export default function CreateArchive({
           autoFocus
           size={50}
         />
-        <p className={dialogStyles.dialogSummary}>
+        <p className={styles.hint}>
           in <b>{display_destination}</b>
         </p>
-        <div className={styles.options}>
+        <FieldGroup>
           {range && (
-            <label className={styles.levelRow}>
-              Compression level
+            <FieldRow label="Compression level">
               <input
                 type="number"
+                className={styles.levelInput}
                 min={range[0]}
                 max={range[1]}
                 value={levels[format]}
@@ -153,37 +151,34 @@ export default function CreateArchive({
               {format === "zip" && (
                 <span className={styles.hint}>0 = store</span>
               )}
-            </label>
+            </FieldRow>
           )}
-          <label className={styles.optionLabel}>
-            <input
-              type="checkbox"
-              checked={preserveSymlinks}
-              onChange={(e) => setPreserveSymlinks(e.target.checked)}
-            />
-            Preserve symlinks
-          </label>
+          <CheckboxField
+            label="Preserve symlinks"
+            checked={preserveSymlinks}
+            onChange={setPreserveSymlinks}
+          />
           {format === "zip" && (
             <>
-              <label className={styles.levelRow}>
-                Password
+              <FieldRow label="Password">
                 <input
                   type="password"
+                  className={styles.passwordInput}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="no encryption"
                 />
-              </label>
+              </FieldRow>
               {password !== "" && (
                 <>
-                  <label className={styles.levelRow}>
-                    Confirm password
+                  <FieldRow label="Confirm password">
                     <input
                       type="password"
+                      className={styles.passwordInput}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                     />
-                  </label>
+                  </FieldRow>
                   <p className={styles.hint}>
                     AES-256 — opens in 7-Zip, WinRAR, or Keka; not in Windows
                     Explorer.
@@ -192,20 +187,13 @@ export default function CreateArchive({
               )}
             </>
           )}
-        </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        <button type="button" onClick={cancel}>
-          Cancel
-        </button>
-        <button
-          type="submit"
-          className="suggested"
-          disabled={nameInvalid || passwordMismatch}
-        >
+        </FieldGroup>
+      </DialogBody>
+      <DialogFooter onCancel={cancel}>
+        <DialogSubmitButton disabled={nameInvalid || passwordMismatch}>
           Pack
-        </button>
-      </div>
-    </form>
+        </DialogSubmitButton>
+      </DialogFooter>
+    </DialogShell>
   );
 }
