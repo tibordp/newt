@@ -121,22 +121,35 @@ pub async fn rename(
     old_name: String,
     new_name: String,
 ) -> Result<(), Error> {
-    let old_path = base_path.join(&old_name);
-    let new_path = base_path.join(&new_name);
+    let request = OperationRequest::Rename {
+        source: base_path.join(&old_name),
+        new_name: new_name.clone(),
+    };
 
-    ctx.fs()?.rename(old_path, new_path).await?;
+    // Refresh and re-focus once the rename lands — native renames are
+    // near-instant, but the copy+delete fallback (e.g. an S3 prefix) can
+    // take a while, and focusing before the new name exists is a no-op.
+    let cb_ctx = ctx.clone();
+    let on_completed = Box::new(move || {
+        tauri::async_runtime::spawn(async move {
+            let _ = cb_ctx
+                .with_update_async(|gs| async move {
+                    if let Some(pane_handle) = pane_handle {
+                        let pane = gs.panes.get(pane_handle).unwrap();
+                        pane.refresh(None, true).await?;
+                        pane.view_state_mut().focus(new_name);
+                    }
+                    Ok(())
+                })
+                .await;
+        });
+    });
+    start_operation_with_callback(ctx.clone(), request, Some(on_completed)).await?;
 
-    ctx.with_update_async(|gs| async move {
+    ctx.with_update(|gs| {
         gs.close_modal();
-        if let Some(pane_handle) = pane_handle {
-            let pane = gs.panes.get(pane_handle).unwrap();
-            pane.refresh(None, true).await?;
-            pane.view_state_mut().focus(new_name);
-        }
-
         Ok(())
     })
-    .await
 }
 
 #[tauri::command]
@@ -206,6 +219,17 @@ pub async fn start_operation(
     ctx: MainWindowContext,
     request: OperationRequest,
 ) -> Result<OperationId, Error> {
+    start_operation_with_callback(ctx, request, None).await
+}
+
+/// Like `start_operation`, but registers the completion callback *before*
+/// the operation is handed to the client — registering after it starts
+/// races with fast operations completing immediately.
+pub async fn start_operation_with_callback(
+    ctx: MainWindowContext,
+    request: OperationRequest,
+    on_completed: Option<Box<dyn FnOnce() + Send>>,
+) -> Result<OperationId, Error> {
     let id = ctx.next_operation_id()?;
 
     let (kind, description) = match &request {
@@ -231,6 +255,14 @@ pub async fn start_operation(
                 "Moving {} item(s) to {}",
                 sources.len(),
                 ctx.format_vfs_path(destination),
+            ),
+        ),
+        OperationRequest::Rename { source, new_name } => (
+            "rename".to_string(),
+            format!(
+                "Renaming {} to {}",
+                source.file_name().unwrap_or("item"),
+                new_name,
             ),
         ),
         OperationRequest::Delete { paths } => (
@@ -290,6 +322,10 @@ pub async fn start_operation(
         );
     }
     ctx.publish()?;
+
+    if let Some(cb) = on_completed {
+        ctx.operations().register_completion_callback(id, cb);
+    }
 
     // Send to operations client
     let req = StartOperationRequest { id, request };

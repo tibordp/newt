@@ -131,6 +131,13 @@ pub enum OperationRequest {
         #[serde(default)]
         options: CopyOptions,
     },
+    /// Give `source` a new leaf name in its parent. Uses native
+    /// `Vfs::rename` when available, else copy+delete (so S3 objects and
+    /// prefixes can be "renamed" via server-side CopyObject).
+    Rename {
+        source: VfsPath,
+        new_name: String,
+    },
     Delete {
         paths: Vec<VfsPath>,
     },
@@ -764,6 +771,7 @@ pub async fn execute_operation(
                 cancel.clone(),
                 false,
                 0,
+                None,
             )
             .await
         }
@@ -781,6 +789,9 @@ pub async fn execute_operation(
                 cancel.clone(),
             )
             .await
+        }
+        OperationRequest::Rename { source, new_name } => {
+            execute_rename(&mut reporter, &context, source, new_name, cancel.clone()).await
         }
         OperationRequest::CreateArchive {
             sources,
@@ -1131,6 +1142,7 @@ async fn plan_copy(
     src_descriptor: &dyn VfsDescriptor,
     sources: &[PathBuf],
     destination: &Path,
+    rename_to: Option<&str>,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<CopyPlan, crate::Error> {
@@ -1146,18 +1158,29 @@ async fn plan_copy(
 
     let entries = walked
         .into_iter()
-        .map(|w| CopyEntry {
-            dest: destination.join(&w.rel),
-            size_bytes: match w.kind {
-                WalkedKind::File => w.file.size.unwrap_or(0),
-                _ => 0,
-            },
-            kind: match w.kind {
-                WalkedKind::File => CopyEntryKind::File,
-                WalkedKind::Directory => CopyEntryKind::Directory,
-                WalkedKind::Symlink { target } => CopyEntryKind::Symlink { target },
-            },
-            source: w.source,
+        .map(|w| {
+            // `rel` leads with the top-level source's file name; a rename
+            // lands under a different leaf name in the destination.
+            let rel = match rename_to {
+                Some(new_name) => match w.rel.split_once('/') {
+                    Some((_, rest)) => format!("{}/{}", new_name, rest),
+                    None => new_name.to_string(),
+                },
+                None => w.rel,
+            };
+            CopyEntry {
+                dest: destination.join(&rel),
+                size_bytes: match w.kind {
+                    WalkedKind::File => w.file.size.unwrap_or(0),
+                    _ => 0,
+                },
+                kind: match w.kind {
+                    WalkedKind::File => CopyEntryKind::File,
+                    WalkedKind::Directory => CopyEntryKind::Directory,
+                    WalkedKind::Symlink { target } => CopyEntryKind::Symlink { target },
+                },
+                source: w.source,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -1289,13 +1312,24 @@ async fn copy_single_file(
     // 1. Same-VFS copy_within fast path
     if same_vfs && dst_descriptor.can_copy_within() {
         debug!("copy_single_file: trying copy_within for {}", entry.source);
-        if src_vfs
-            .copy_within(&entry.source, &entry.dest)
-            .await
-            .is_ok()
-        {
-            *bytes_done += entry.size_bytes;
-            return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
+        match src_vfs.copy_within(&entry.source, &entry.dest).await {
+            Ok(()) => {
+                *bytes_done += entry.size_bytes;
+                return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options)
+                    .await;
+            }
+            // The descriptor can't see per-call quirks (a RootVfs spans
+            // many real filesystems; server-side copies have size caps),
+            // so "unsupported" is only known at call time — fall through
+            // to the streaming strategies. Real failures surface as
+            // issues instead of silently downgrading to a full re-stream.
+            Err(e) if e.kind == crate::ErrorKind::NotSupported => {
+                debug!(
+                    "copy_single_file: copy_within unsupported for {}: {}",
+                    entry.source, e
+                );
+            }
+            Err(e) => return Err(e),
         }
     }
 
@@ -1495,7 +1529,12 @@ async fn execute_copy(
     cancel: CancellationToken,
     is_move: bool,
     items_done_offset: u64,
+    rename_to: Option<&str>,
 ) -> Result<(), crate::Error> {
+    debug_assert!(
+        rename_to.is_none() || sources.len() == 1,
+        "rename_to requires exactly one source"
+    );
     // Follow any redirect_target hooks (e.g. flat search results) so the
     // copy operates on the underlying real files, not on the synthetic
     // SearchVfs paths the user clicked.
@@ -1562,6 +1601,7 @@ async fn execute_copy(
         src_descriptor,
         &source_paths,
         &dst_path,
+        rename_to,
         reporter,
         &cancel,
     )
@@ -2637,6 +2677,7 @@ async fn execute_move(
             };
             let dest_local = dst_path.join(file_name);
             let source_local = source.path.clone();
+            let mut overwrite_approved = false;
 
             // Check for destination conflicts before renaming (rename silently overwrites)
             if let Ok(dest_file) = src_vfs.file_info(&dest_local).await {
@@ -2669,29 +2710,83 @@ async fn execute_move(
                     {
                         Ok(IssueAction::Skip) => continue,
                         Ok(IssueAction::Overwrite) => {
-                            // Proceed with rename (will overwrite)
+                            // Proceed with rename — an atomic replace on
+                            // backends that support it (POSIX rename,
+                            // posix-rename SFTP servers). Backends that
+                            // refuse report AlreadyExists, handled below.
+                            overwrite_approved = true;
                         }
                         Err(e) => return Err(e),
                         _ => unreachable!("not offered"),
                     }
+                } else {
+                    // Both are directories: merge — the copy machinery
+                    // merges into an existing destination; rename can't.
+                    needs_copy.push(source.clone());
+                    continue;
                 }
-                // Both are directories: merge semantics — fall through to rename
-                // (which will fail for non-empty dirs, then fall back to copy+delete)
             }
 
-            match src_vfs.rename(&source_local, &dest_local).await {
-                Ok(()) => {
-                    debug!("execute_move: renamed {} -> {}", source_local, dest_local);
-                    renamed_count += 1;
-                }
-                Err(_) => {
-                    debug!(
-                        "execute_move: rename failed for {}, falling back to copy+delete",
-                        source_local
-                    );
-                    // Any rename failure (cross-device, permission, etc.)
-                    // falls through to copy+delete
-                    needs_copy.push(source.clone());
+            let mut retry = true;
+            while retry {
+                retry = false;
+                match src_vfs.rename(&source_local, &dest_local).await {
+                    Ok(()) => {
+                        debug!("execute_move: renamed {} -> {}", source_local, dest_local);
+                        renamed_count += 1;
+                    }
+                    // Only "rename not supported" — for the backend or for
+                    // this particular pair (cross-device in a RootVfs) —
+                    // falls back to copy+delete; real failures surface as
+                    // issues rather than silently degrading.
+                    Err(e) if e.kind == crate::ErrorKind::NotSupported => {
+                        debug!(
+                            "execute_move: rename unsupported for {}, falling back to copy+delete",
+                            source_local
+                        );
+                        needs_copy.push(source.clone());
+                    }
+                    // A backend whose rename won't replace an existing
+                    // destination (SFTP servers without posix-rename):
+                    // the user approved the overwrite, so clear the
+                    // destination and retry once. Keyed on the approval —
+                    // an unexpected AlreadyExists still surfaces below.
+                    Err(e) if e.kind == crate::ErrorKind::AlreadyExists && overwrite_approved => {
+                        overwrite_approved = false;
+                        match src_vfs.remove_file(&dest_local).await {
+                            Ok(()) => retry = true,
+                            Err(e) => {
+                                match reporter
+                                    .handle_io_error(
+                                        e,
+                                        &format!("Error replacing {}", dest_local),
+                                        None,
+                                        &cancel,
+                                        false,
+                                    )
+                                    .await?
+                                {
+                                    IssueOutcome::Skip => {}
+                                    IssueOutcome::Retry => unreachable!("not offered"),
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        match reporter
+                            .handle_io_error(
+                                e,
+                                &format!("Error renaming {}", source_local),
+                                Some(format!("{} -> {}", source_local, dest_local)),
+                                &cancel,
+                                true,
+                            )
+                            .await?
+                        {
+                            IssueOutcome::Skip => {}
+                            IssueOutcome::Retry => retry = true,
+                        }
+                    }
                 }
             }
         }
@@ -2718,6 +2813,178 @@ async fn execute_move(
         cancel,
         true,
         renamed_count,
+        None,
+    )
+    .await
+}
+
+// --- Execute Rename ---
+
+async fn execute_rename(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    source: VfsPath,
+    new_name: String,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    // Follow redirect_target so renames from a SearchVfs operate on the
+    // real file.
+    let source = context.registry.dereference(&source).await;
+    let parent = source
+        .parent()
+        .ok_or_else(|| crate::Error::custom("cannot rename the VFS root"))?;
+    let new_path = parent.join(&new_name);
+    if new_path.path == source.path {
+        reporter.send_prepared(0, 0);
+        return Ok(());
+    }
+
+    let (vfs, _) = context.registry.resolve(&source)?;
+    let descriptor = vfs.descriptor();
+
+    if descriptor.can_rename() {
+        // Check for destination conflicts before renaming (rename silently
+        // overwrites) — same policy as the Move fast path.
+        let mut attempt_rename = true;
+        let mut overwrite_approved = false;
+        if let Ok(dest_file) = vfs.file_info(&new_path.path).await {
+            let source_file = vfs.file_info(&source.path).await?;
+            if dest_file.is_dir != source_file.is_dir {
+                let msg = if dest_file.is_dir {
+                    format!("Cannot replace directory with file: {}", new_path.path)
+                } else {
+                    format!("Cannot replace file with directory: {}", new_path.path)
+                };
+                match reporter
+                    .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
+                    .await
+                {
+                    Ok(IssueAction::Skip) => {
+                        reporter.send_prepared(0, 0);
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e),
+                    _ => unreachable!("not offered"),
+                }
+            } else if !dest_file.is_dir {
+                match reporter
+                    .raise_issue(
+                        IssueKind::AlreadyExists,
+                        format!("File already exists: {}", new_path.path),
+                        None,
+                        vec![IssueAction::Skip, IssueAction::Overwrite],
+                    )
+                    .await
+                {
+                    Ok(IssueAction::Skip) => {
+                        reporter.send_prepared(0, 0);
+                        return Ok(());
+                    }
+                    Ok(IssueAction::Overwrite) => {
+                        // Proceed with rename — an atomic replace on
+                        // backends that support it (POSIX rename,
+                        // posix-rename SFTP servers). Backends that refuse
+                        // report AlreadyExists, handled below.
+                        overwrite_approved = true;
+                    }
+                    Err(e) => return Err(e),
+                    _ => unreachable!("not offered"),
+                }
+            } else {
+                // Both are directories: merge — the copy machinery merges
+                // into an existing destination; rename can't.
+                attempt_rename = false;
+            }
+        }
+
+        let mut retry = attempt_rename;
+        while retry {
+            retry = false;
+            match vfs.rename(&source.path, &new_path.path).await {
+                Ok(()) => {
+                    debug!("execute_rename: renamed {} -> {}", source, new_path);
+                    reporter.send_prepared(0, 1);
+                    reporter.maybe_send_progress(0, 1, &new_name);
+                    return Ok(());
+                }
+                // "Not supported" — for the backend or this particular pair
+                // — falls back to copy+delete below; real failures surface
+                // as issues.
+                Err(e) if e.kind == crate::ErrorKind::NotSupported => {
+                    debug!(
+                        "execute_rename: rename unsupported for {}, falling back to copy+delete",
+                        source
+                    );
+                }
+                // A backend whose rename won't replace an existing
+                // destination (SFTP servers without posix-rename): the
+                // user approved the overwrite, so clear the destination
+                // and retry once.
+                Err(e) if e.kind == crate::ErrorKind::AlreadyExists && overwrite_approved => {
+                    overwrite_approved = false;
+                    match vfs.remove_file(&new_path.path).await {
+                        Ok(()) => retry = true,
+                        Err(e) => {
+                            match reporter
+                                .handle_io_error(
+                                    e,
+                                    &format!("Error replacing {}", new_path.path),
+                                    None,
+                                    &cancel,
+                                    false,
+                                )
+                                .await?
+                            {
+                                IssueOutcome::Skip => {
+                                    reporter.send_prepared(0, 0);
+                                    return Ok(());
+                                }
+                                IssueOutcome::Retry => unreachable!("not offered"),
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    match reporter
+                        .handle_io_error(
+                            e,
+                            &format!("Error renaming {}", source),
+                            Some(format!("{} -> {}", source, new_path)),
+                            &cancel,
+                            true,
+                        )
+                        .await?
+                    {
+                        IssueOutcome::Skip => {
+                            reporter.send_prepared(0, 0);
+                            return Ok(());
+                        }
+                        IssueOutcome::Retry => retry = true,
+                    }
+                }
+            }
+        }
+    }
+
+    // No native rename (S3, k8s, …) or it failed: copy to the new name and
+    // delete the source. Same-VFS copies take the copy_within fast path
+    // (server-side CopyObject on S3), so no data flows through the app.
+    // Timestamps are preserved where the VFS allows it — a rename should
+    // not look like a fresh file.
+    let options = CopyOptions {
+        preserve_timestamps: true,
+        ..CopyOptions::default()
+    };
+    execute_copy(
+        reporter,
+        context,
+        vec![source],
+        parent,
+        options,
+        cancel,
+        true,
+        0,
+        Some(&new_name),
     )
     .await
 }

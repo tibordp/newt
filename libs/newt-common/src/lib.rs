@@ -83,6 +83,10 @@ impl From<std::io::Error> for Error {
             std::io::ErrorKind::IsADirectory => ErrorKind::IsADirectory,
             std::io::ErrorKind::DirectoryNotEmpty => ErrorKind::DirectoryNotEmpty,
             std::io::ErrorKind::Unsupported => ErrorKind::NotSupported,
+            // Cross-device rename/clone: "not supported for this pair of
+            // paths". Strategy cascades (rename → copy+delete, copy_within
+            // → streaming) key on NotSupported to decide fallback.
+            std::io::ErrorKind::CrossesDevices => ErrorKind::NotSupported,
             _ => ErrorKind::Other,
         };
         Self {
@@ -103,6 +107,7 @@ impl From<nix::Error> for Error {
             nix::Error::EISDIR => ErrorKind::IsADirectory,
             nix::Error::ENOTEMPTY => ErrorKind::DirectoryNotEmpty,
             nix::Error::ENOTSUP => ErrorKind::NotSupported,
+            nix::Error::EXDEV => ErrorKind::NotSupported,
             _ => ErrorKind::Other,
         };
         Self {
@@ -138,6 +143,7 @@ impl From<openssh_sftp_client::Error> for Error {
         let kind = match &e {
             SftpErr::SftpError(ErrorCode::NoSuchFile, _) => ErrorKind::NotFound,
             SftpErr::SftpError(ErrorCode::PermDenied, _) => ErrorKind::PermissionDenied,
+            SftpErr::SftpError(ErrorCode::OpUnsupported, _) => ErrorKind::NotSupported,
             SftpErr::IOError(io_err) if io_err.kind() == std::io::ErrorKind::UnexpectedEof => {
                 ErrorKind::Connection
             }

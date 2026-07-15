@@ -295,7 +295,7 @@ Creates a new file (same dialog as Create File) and immediately opens it in the 
 
 ### Rename (F2)
 
-Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Renames the file or directory within the same VFS.
+Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it, else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the unchanged name is a no-op. The pane refreshes and re-focuses the new name when the operation completes.
 
 ### Delete (F8 / Shift+Delete / Cmd+Backspace)
 
@@ -345,8 +345,8 @@ Opens a modal dialog with:
 Same dialog and options as Copy (except "Create symbolic link" is not available).
 
 **Move execution**:
-1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same Skip / Overwrite prompt as Copy is shown rather than silently overwriting.
-2. **Fallback to copy+delete**: If rename fails (cross-device, cross-VFS, permission error), falls back to copying each file and immediately deleting the source after successful copy. After all files are copied, empty source directories are removed in reverse order (deepest first). Directories that still contain files (because some copies were skipped) are left intact.
+1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same Skip / Overwrite prompt as Copy is shown rather than silently overwriting. An approved overwrite still goes through the plain rename (atomic replace on POSIX and posix-rename SFTP servers); only if the backend refuses with "already exists" is the destination cleared and the rename retried. Directory-onto-existing-directory goes straight to the copy machinery, which merges.
+2. **Fallback to copy+delete**: Only a `NotSupported` rename — the VFS has no rename, or this particular pair can't be renamed (cross-device inside the root VFS, cross-VFS) — falls back to copying each file and immediately deleting the source after successful copy. Real rename failures (permissions, connection) raise a Skip/Retry issue instead of silently degrading. After all files are copied, empty source directories are removed in reverse order (deepest first). Directories that still contain files (because some copies were skipped) are left intact. The same rule governs the same-VFS server-side copy fast path: `copy_within` falling over with `NotSupported` (e.g. S3 CopyObject's 5 GiB cap) cascades to streaming; real errors surface as issues.
 
 ### Pack to Archive (Alt+F5)
 
@@ -419,7 +419,7 @@ Today only S3 implements a sheet:
 
 ### Operation Progress and Issue Resolution
 
-When a copy, move, or delete operation runs, it's tracked in the **Operations Panel**:
+When a copy, move, rename, or delete operation runs, it's tracked in the **Operations Panel**:
 
 **Foreground modal** (default for new operations):
 - Large overlay showing operation kind, description, progress bar, percentage, the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
@@ -818,9 +818,9 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 - Bucket contents are listed using `ListObjectsV2` with delimiter, simulating a directory structure via common prefixes.
 - "Directories" in S3 are virtual (based on `/` separators in object keys). Created directories are 0-byte objects with trailing `/`.
 
-**Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch, extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog).
+**Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch, rename (via the operation's copy+delete fallback — server-side CopyObject per object, works on prefixes too), extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog). Server-side copies (copy/move/rename within S3) carry over user metadata and system headers (CopyObject default), and explicitly re-apply the source's storage class and any non-default ACL — a failed ACL restore is logged and the copy still succeeds, since the streaming fallback couldn't restore it either.
 
-**Operations NOT supported**: Rename, hard link, symlink, Unix permissions, filesystem stats.
+**Operations NOT supported**: Hard link, symlink, Unix permissions, filesystem stats.
 
 **Display path**: `s3://bucket/prefix/key`
 

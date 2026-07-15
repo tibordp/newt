@@ -3,7 +3,7 @@
 ## Host VFS (local ↔ remote bridge)
 
 Basic Remote VFS is implemented. Remaining work:
-- Hairpin diversion for additional methods (rename, touch, create_directory, etc.) — only `list_files`, `poll_changes`, `read_range`, `read_file`, `write_file` are diverted today.
+- Hairpin diversion for additional methods (touch, create_directory, etc.) — only `list_files`, `poll_changes`, `read_range`, `read_file`, `write_file` are diverted today. (Rename is no longer a `Filesystem` verb — it runs as `OperationRequest::Rename`.)
 
 ## Generalized remote session transport
 

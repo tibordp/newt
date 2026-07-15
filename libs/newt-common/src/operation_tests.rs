@@ -802,13 +802,18 @@ async fn test_move_cross_vfs() {
 async fn test_move_rename_fails_fallback() {
     use crate::test_support::mock_vfs::FailureSpec;
 
+    // Cross-device rename (EXDEV) maps to NotSupported — the only error
+    // kind that cascades to copy+delete.
     let vfs = MockVfs::builder()
         .file("/src/a.txt", b"hello")
         .dir("/dst")
         .failure(FailureSpec {
             path: PathBuf::from_wire_str("/src/a.txt"),
             operation: "rename",
-            error: crate::Error::custom("cross-device link"),
+            error: crate::Error {
+                kind: crate::ErrorKind::NotSupported,
+                message: "cross-device link".into(),
+            },
             remaining: None,
         })
         .build();
@@ -827,6 +832,139 @@ async fn test_move_rename_fails_fallback() {
     assert!(has_completed(&result.events));
     assert!(!result.vfs.exists("/src/a.txt"));
     assert_eq!(result.vfs.read_content("/dst/a.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_move_rename_real_error_raises_issue() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    // A non-NotSupported rename failure must NOT silently degrade to
+    // copy+delete — it surfaces as an issue (Skip leaves the source put).
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/src/a.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Issue { .. }))
+    );
+    assert_eq!(result.vfs.read_content("/src/a.txt"), b"hello");
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_move_file_overwrite() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"source")
+        .dir("/dst")
+        .file("/dst/a.txt", b"existing")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"source");
+}
+
+#[tokio::test]
+async fn test_move_overwrite_no_replace_backend() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    // Backend whose rename refuses to replace an existing destination
+    // (AlreadyExists): after the approved overwrite, the destination is
+    // cleared and the rename retried — no copy+delete degradation.
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"source")
+        .dir("/dst")
+        .file("/dst/a.txt", b"existing")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/src/a.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::AlreadyExists,
+                message: "destination exists".into(),
+            },
+            remaining: Some(1),
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"source");
+}
+
+#[tokio::test]
+async fn test_move_directory_merge_into_existing() {
+    // Directory onto existing directory: merged via the copy machinery
+    // (rename is never attempted over an existing destination).
+    let vfs = MockVfs::builder()
+        .dir("/src")
+        .file("/src/a.txt", b"aaa")
+        .dir("/dst")
+        .dir("/dst/src")
+        .file("/dst/src/existing.txt", b"keep")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            sources: vec![vfs_path("/src")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/src"));
+    assert_eq!(result.vfs.read_content("/dst/src/a.txt"), b"aaa");
+    assert_eq!(result.vfs.read_content("/dst/src/existing.txt"), b"keep");
 }
 
 #[tokio::test]
@@ -986,6 +1124,375 @@ async fn test_move_symlink_not_followed_inside_dir() {
         result.vfs.read_content("/target_dir/precious.txt"),
         b"keep me"
     );
+}
+
+// ===========================================================================
+// copy_within strategy cascade
+// ===========================================================================
+
+#[tokio::test]
+async fn test_copy_within_unsupported_falls_back_to_streaming() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    // copy_within advertised but NotSupported for this pair (e.g. a
+    // cross-filesystem pair inside a RootVfs) — cascade to streaming.
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_copy_within: true,
+            ..Default::default()
+        })
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/src/a.txt"),
+            operation: "copy_within",
+            error: crate::Error {
+                kind: crate::ErrorKind::NotSupported,
+                message: "cross-device copy".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"hello");
+    assert_eq!(result.vfs.read_content("/src/a.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_copy_within_real_error_raises_issue() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    // A real copy_within failure (throttling, permissions) must surface
+    // as an issue instead of silently re-streaming the file.
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_copy_within: true,
+            ..Default::default()
+        })
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/src/a.txt"),
+            operation: "copy_within",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "access denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Issue { .. }))
+    );
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+// ===========================================================================
+// Rename tests
+// ===========================================================================
+
+#[tokio::test]
+async fn test_rename_native() {
+    let vfs = MockVfs::builder().file("/dir/old.txt", b"hello").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_rename_fallback_file() {
+    // No native rename (S3-like) — copy+delete under the hood.
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_rename: false,
+            ..Default::default()
+        })
+        .file("/dir/old.txt", b"hello")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_rename_fallback_directory() {
+    // Directory rename without native rename walks and re-creates the
+    // whole tree under the new name, then removes the source.
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_rename: false,
+            ..Default::default()
+        })
+        .dir("/data/old")
+        .file("/data/old/a.txt", b"aaa")
+        .dir("/data/old/sub")
+        .file("/data/old/sub/b.txt", b"bbb")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/data/old"),
+            new_name: "new".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/data/old"));
+    assert!(!result.vfs.exists("/data/old/a.txt"));
+    assert_eq!(result.vfs.read_content("/data/new/a.txt"), b"aaa");
+    assert_eq!(result.vfs.read_content("/data/new/sub/b.txt"), b"bbb");
+}
+
+#[tokio::test]
+async fn test_rename_native_fails_fallback() {
+    // can_rename is true but the call reports NotSupported (e.g. a
+    // cross-device pair inside a RootVfs) — fall back to copy+delete.
+    let vfs = MockVfs::builder()
+        .file("/dir/old.txt", b"hello")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/dir/old.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::NotSupported,
+                message: "simulated cross-device rename".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_rename_real_error_raises_issue() {
+    // A non-NotSupported rename failure surfaces as an issue; Skip
+    // completes the operation with the source untouched.
+    let vfs = MockVfs::builder()
+        .file("/dir/old.txt", b"hello")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/dir/old.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Issue { .. }))
+    );
+    assert_eq!(result.vfs.read_content("/dir/old.txt"), b"hello");
+    assert!(!result.vfs.exists("/dir/new.txt"));
+}
+
+#[tokio::test]
+async fn test_rename_conflict_skip() {
+    let vfs = MockVfs::builder()
+        .file("/dir/old.txt", b"source")
+        .file("/dir/new.txt", b"existing")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dir/old.txt"), b"source");
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"existing");
+}
+
+#[tokio::test]
+async fn test_rename_conflict_overwrite() {
+    let vfs = MockVfs::builder()
+        .file("/dir/old.txt", b"source")
+        .file("/dir/new.txt", b"existing")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"source");
+}
+
+#[tokio::test]
+async fn test_rename_fallback_conflict_overwrite() {
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_rename: false,
+            ..Default::default()
+        })
+        .file("/dir/old.txt", b"source")
+        .file("/dir/new.txt", b"existing")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"source");
+}
+
+#[tokio::test]
+async fn test_rename_overwrite_no_replace_backend() {
+    // Same clear-and-retry as Move when the backend's rename won't
+    // replace an existing destination.
+    let vfs = MockVfs::builder()
+        .file("/dir/old.txt", b"source")
+        .file("/dir/new.txt", b"existing")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/dir/old.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::AlreadyExists,
+                message: "destination exists".into(),
+            },
+            remaining: Some(1),
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "new.txt".into(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dir/old.txt"));
+    assert_eq!(result.vfs.read_content("/dir/new.txt"), b"source");
+}
+
+#[tokio::test]
+async fn test_rename_same_name_noop() {
+    // Renaming to the current name must not go anywhere near the
+    // copy+delete fallback (copy-onto-self would destroy the file).
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_rename: false,
+            ..Default::default()
+        })
+        .file("/dir/old.txt", b"hello")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/old.txt"),
+            new_name: "old.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dir/old.txt"), b"hello");
 }
 
 // ===========================================================================

@@ -636,6 +636,47 @@ fn is_owner_only_acl(acl: &aws_sdk_s3::operation::get_object_acl::GetObjectAclOu
         })
 }
 
+/// Snapshot an object's ACL when it differs from the owner default.
+/// `None` on read failure too (GetObjectAcl needs its own permission) —
+/// callers skip the restore in both cases.
+async fn snapshot_nontrivial_acl(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+) -> Option<aws_sdk_s3::operation::get_object_acl::GetObjectAclOutput> {
+    client
+        .get_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .ok()
+        .filter(|acl| !is_owner_only_acl(acl))
+}
+
+/// Re-put a snapshotted ACL onto an object (Copy/CopyObject always reset
+/// the destination ACL to the bucket-owner default).
+async fn restore_acl(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    acl: &aws_sdk_s3::operation::get_object_acl::GetObjectAclOutput,
+) -> Result<(), Error> {
+    let policy = aws_sdk_s3::types::AccessControlPolicy::builder()
+        .set_owner(acl.owner().cloned())
+        .set_grants(Some(acl.grants().to_vec()))
+        .build();
+    client
+        .put_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .access_control_policy(policy)
+        .send()
+        .await
+        .map_err(sdk_err)?;
+    Ok(())
+}
+
 fn text_field(key: &str, label: &str, value: &str) -> PropertyField {
     PropertyField {
         key: key.to_string(),
@@ -841,14 +882,7 @@ impl S3Vfs {
             // snapshot a non-trivial ACL so it survives the rewrite
             // (unless this patch is about to overwrite it anyway).
             let acl_snapshot = if canned_acl.is_none() && grants.is_none() {
-                client
-                    .get_object_acl()
-                    .bucket(&bucket)
-                    .key(&key)
-                    .send()
-                    .await
-                    .ok()
-                    .filter(|acl| !is_owner_only_acl(acl))
+                snapshot_nontrivial_acl(&client, &bucket, &key).await
             } else {
                 None
             };
@@ -895,21 +929,12 @@ impl S3Vfs {
             req.send().await.map_err(sdk_err)?;
 
             if let Some(acl) = acl_snapshot {
-                let policy = AccessControlPolicy::builder()
-                    .set_owner(acl.owner().cloned())
-                    .set_grants(Some(acl.grants().to_vec()))
-                    .build();
-                client
-                    .put_object_acl()
-                    .bucket(&bucket)
-                    .key(&key)
-                    .access_control_policy(policy)
-                    .send()
+                restore_acl(&client, &bucket, &key, &acl)
                     .await
                     .map_err(|e| {
                         Error::custom(format!(
                             "metadata updated, but restoring the ACL failed: {}",
-                            aws_sdk_s3::error::DisplayErrorContext(&e)
+                            e
                         ))
                     })?;
             }
@@ -1267,16 +1292,50 @@ impl Vfs for S3Vfs {
         );
 
         let client = self.client_for_bucket(&dst_bucket).await?;
+        let src_client = self.client_for_bucket(&src_bucket).await?;
         let copy_source = format!("{}/{}", src_bucket, src_key);
+
+        // CopyObject carries user metadata and headers over by default
+        // (MetadataDirective COPY), but the destination's storage class
+        // defaults to STANDARD and its ACL always resets to the bucket-
+        // owner default — snapshot both from the source explicitly.
+        let head = src_client
+            .head_object()
+            .bucket(&src_bucket)
+            .key(&src_key)
+            .send()
+            .await
+            .map_err(sdk_err)?;
+
+        // CopyObject caps out at 5 GiB per atomic copy — signal
+        // NotSupported so the copy cascade falls back to streaming.
+        if head.content_length().unwrap_or(0) as u64 > 5 * 1024 * 1024 * 1024 {
+            return Err(Error::not_supported());
+        }
+
+        let acl_snapshot = snapshot_nontrivial_acl(&src_client, &src_bucket, &src_key).await;
 
         client
             .copy_object()
             .bucket(&dst_bucket)
             .key(&dst_key)
             .copy_source(&copy_source)
+            .set_storage_class(head.storage_class().cloned())
             .send()
             .await
             .map_err(sdk_err)?;
+
+        if let Some(acl) = acl_snapshot {
+            // Losing the grants beats failing the copy: the caller's next
+            // strategy (streaming re-upload) couldn't restore them either.
+            if let Err(e) = restore_acl(&client, &dst_bucket, &dst_key, &acl).await {
+                warn!(
+                    "s3: copy_within: failed to restore ACL on {}/{}: {}",
+                    dst_bucket, dst_key, e
+                );
+            }
+        }
+
         self.notifier.notify(to);
         Ok(())
     }

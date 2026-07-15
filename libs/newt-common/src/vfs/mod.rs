@@ -858,22 +858,6 @@ impl Filesystem for VfsRegistryFs {
         }
     }
 
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
-        debug!("vfs_registry_fs: rename {} -> {}", old_path, new_path);
-        // Deref the source side. `new_path` is a freshly-constructed target
-        // path supplied by the caller; only the *source* can be a redirect.
-        let old_path = self.registry.dereference(&old_path).await;
-        if old_path.vfs_id != new_path.vfs_id {
-            return Err(Error::custom("cannot rename across VFS boundaries"));
-        }
-        let (vfs, old_local) = self.registry.resolve(&old_path)?;
-        if vfs.descriptor().can_rename() {
-            vfs.rename(&old_local, &new_path.path).await
-        } else {
-            Err(Error::not_supported())
-        }
-    }
-
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         debug!("vfs_registry_fs: touch {}", path);
         let path = self.registry.dereference(&path).await;

@@ -415,10 +415,6 @@ impl Filesystem for HairpinFs {
         }
     }
 
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), newt_common::Error> {
-        self.inner.rename(old_path, new_path).await
-    }
-
     async fn touch(&self, path: VfsPath) -> Result<(), newt_common::Error> {
         self.inner.touch(path).await
     }

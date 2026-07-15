@@ -280,7 +280,6 @@ pub trait Filesystem: Send + Sync {
         options: ListFilesOptions,
         batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error>;
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error>;
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
 
@@ -336,10 +335,6 @@ impl<T: Filesystem> Filesystem for Slow<T> {
             }
         }
         Ok(file_list)
-    }
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.rename(old_path, new_path).await
     }
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -446,15 +441,6 @@ impl Filesystem for Remote {
             Ok(ret?)
         }
     }
-    async fn rename(&self, old_path: VfsPath, new_path: VfsPath) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(crate::api::API_RENAME, &(old_path, new_path))
-            .await?;
-
-        Ok(ret?)
-    }
-
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator

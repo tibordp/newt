@@ -19,7 +19,7 @@ use crate::{
 
 pub const API_POLL_CHANGES: Api = Api(0);
 pub const API_LIST_FILES: Api = Api(1);
-pub const API_RENAME: Api = Api(2);
+// api 2 retired (rename — now OperationRequest::Rename)
 pub const API_CREATE_DIRECTORY: Api = Api(3);
 // api 4 missing
 pub const API_TOUCH: Api = Api(5);
@@ -176,12 +176,6 @@ impl Dispatcher for FilesystemDispatcher {
 
                 // Drain all batch notifications before returning the response.
                 let _ = forwarder.await;
-
-                encode(&ret)?
-            }
-            API_RENAME => {
-                let (old_path, new_path): (VfsPath, VfsPath) = decode(&req[..])?;
-                let ret = self.filesystem.rename(old_path, new_path).await;
 
                 encode(&ret)?
             }

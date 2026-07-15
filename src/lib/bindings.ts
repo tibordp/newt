@@ -1755,7 +1755,13 @@ persistent: boolean } } | { type: "command_palette"; data: { category_filter: st
 export type Mode = number
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
-export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Delete: { paths: VfsPath[] } } | { CreateArchive: { sources: VfsPath[]; 
+export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | 
+/**
+ * Give `source` a new leaf name in its parent. Uses native
+ * `Vfs::rename` when available, else copy+delete (so S3 objects and
+ * prefixes can be "renamed" via server-side CopyObject).
+ */
+{ Rename: { source: VfsPath; new_name: string } } | { Delete: { paths: VfsPath[] } } | { CreateArchive: { sources: VfsPath[]; 
 /**
  * Full path of the archive file itself, not its directory.
  */
