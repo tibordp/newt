@@ -168,7 +168,7 @@ Large directories are loaded incrementally via streaming:
 | Action | Behavior |
 |--------|----------|
 | Left click | Focus the clicked file |
-| Ctrl+Click | Toggle selection for that file (keeps other selections) |
+| Mod+Click (Ctrl; ⌘ on macOS) | Toggle selection for that file (keeps other selections) |
 | Shift+Click | Range select from focused file to clicked file |
 | Double-click | Open/enter (same as Enter key) |
 | Right-click | If clicked file is NOT selected: focus it (clears selection), show context menu. If clicked file IS selected: keep selection, show context menu. |
@@ -179,7 +179,7 @@ Large directories are loaded incrementally via streaming:
 - Must drag at least 5px before the rectangle appears (prevents accidental activation on click).
 - A blue selection rectangle is drawn; files overlapping the rectangle are selected.
 - Auto-scrolls when dragging near the top or bottom edges of the pane (44px zone). Speed increases closer to the edge.
-- **Ctrl+Drag**: Adds rectangle selection to existing selection.
+- **Mod+Drag** (Ctrl; ⌘ on macOS): Adds rectangle selection to existing selection.
 - **Shift+Drag**: Selects range from focused file to drag endpoint.
 - **Normal drag**: Replaces entire selection with rectangle contents.
 

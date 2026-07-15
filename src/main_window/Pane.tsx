@@ -206,6 +206,12 @@ const FileRow = memo(
 // session/remote — so Shift+<drive> is offered on a Windows host only,
 // and never on a Linux/Mac host connected to a Windows remote.
 const IS_WINDOWS_HOST = navigator.platform.startsWith("Win");
+const IS_MAC_HOST = navigator.platform.startsWith("Mac");
+
+// Platform "mod" for mouse interactions (add-to-selection): ⌘ on macOS —
+// where Ctrl+click is the native context-menu gesture — Ctrl elsewhere.
+const modKey = (e: { ctrlKey: boolean; metaKey: boolean }) =>
+  IS_MAC_HOST ? e.metaKey : e.ctrlKey;
 
 const VFS_ICONS: Record<string, string> = {
   local: "\u{f02ca}",
@@ -869,7 +875,7 @@ function PaneInner(
         startY: e.clientY,
         startScrollX,
         startScrollY,
-        mode: e.ctrlKey ? "ctrl" : "normal",
+        mode: modKey(e) ? "ctrl" : "normal",
         lastSentStartIdx: -1,
         lastSentEndIdx: -1,
         lastClientY: e.clientY,
@@ -1205,7 +1211,7 @@ function PaneInner(
       // onClick only handles modifier-key actions.
       const name = e.currentTarget.dataset.name;
       if (!name) return;
-      if (e.ctrlKey) {
+      if (modKey(e)) {
         safe(commands.toggleSelected(paneHandle, name, false));
       } else if (e.shiftKey) {
         safe(commands.selectRange(paneHandle, name));
