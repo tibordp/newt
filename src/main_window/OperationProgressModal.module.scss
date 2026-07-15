@@ -6,39 +6,30 @@
   height: fit-content;
   width: 480px;
   max-width: 90%;
-  padding: var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  overflow: hidden;
 }
 
-.header {
+.titleRow {
   display: flex;
   align-items: baseline;
   gap: var(--space-4);
-  font-size: 1em;
-  font-weight: normal;
-  margin: 0;
 }
 
 .kind {
-  font-weight: bold;
   text-transform: capitalize;
   flex-shrink: 0;
 }
 
 .description {
   color: var(--color-fg-muted);
+  font-size: var(--font-size-md);
+  font-weight: normal;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-
-.body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
 }
 
 .bodyIssueResolution {
@@ -121,10 +112,4 @@
 
 .statusCancelled {
   color: var(--color-fg-muted);
-}
-
-.footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-4);
 }

@@ -7,6 +7,12 @@ import { safe } from "../lib/ipc";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
 import dialogStyles from "./modals/Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+} from "./modals/primitives";
 
 export type { IssueAction, OperationState };
 
@@ -304,91 +310,99 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
             }
           }}
         >
-          <Dialog.Title className={modalStyles.header}>
-            <span className={modalStyles.kind}>{op.kind}</span>
-            <span className={modalStyles.description}>{op.description}</span>
-          </Dialog.Title>
+          <DialogShell>
+            <DialogHeader
+              title={
+                <span className={modalStyles.titleRow}>
+                  <span className={modalStyles.kind}>{op.kind}</span>
+                  <span className={modalStyles.description}>
+                    {op.description}
+                  </span>
+                </span>
+              }
+            />
 
-          <div className={modalStyles.body}>
-            {isWaiting ? (
-              <IssueResolution
-                op={op}
-                inModal
-                classNameOverrides={{
-                  issueResolution: `${styles.issueResolution} ${modalStyles.bodyIssueResolution}`,
-                  issueMessage: `${styles.issueMessage} ${modalStyles.bodyIssueMessage}`,
-                  issueActions: `${styles.issueActions} ${modalStyles.bodyIssueActions}`,
-                }}
-              />
-            ) : (
-              <>
-                {(op.status === "scanning" || op.status === "running") && (
-                  <>
-                    <div className={modalStyles.progressBar}>
-                      <div
-                        className={modalStyles.progressFill}
-                        style={{ width: `${fraction * 100}%` }}
-                      />
-                    </div>
-                    <div className={modalStyles.progressInfo}>
-                      <span className={modalStyles.progressText}>
-                        {progress}
-                      </span>
-                      <TransferSpeedInfo op={op} />
-                      {op.current_item && (
-                        <span
-                          className={modalStyles.currentItem}
-                          title={op.current_item}
-                        >
-                          {op.current_item}
+            <DialogBody>
+              {isWaiting ? (
+                <IssueResolution
+                  op={op}
+                  inModal
+                  classNameOverrides={{
+                    issueResolution: `${styles.issueResolution} ${modalStyles.bodyIssueResolution}`,
+                    issueMessage: `${styles.issueMessage} ${modalStyles.bodyIssueMessage}`,
+                    issueActions: `${styles.issueActions} ${modalStyles.bodyIssueActions}`,
+                  }}
+                />
+              ) : (
+                <>
+                  {(op.status === "scanning" || op.status === "running") && (
+                    <>
+                      <div className={modalStyles.progressBar}>
+                        <div
+                          className={modalStyles.progressFill}
+                          style={{ width: `${fraction * 100}%` }}
+                        />
+                      </div>
+                      <div className={modalStyles.progressInfo}>
+                        <span className={modalStyles.progressText}>
+                          {progress}
                         </span>
-                      )}
+                        <TransferSpeedInfo op={op} />
+                        {op.current_item && (
+                          <span
+                            className={modalStyles.currentItem}
+                            title={op.current_item}
+                          >
+                            {op.current_item}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {op.status === "completed" && (
+                    <div
+                      className={`${modalStyles.status} ${modalStyles.statusDone}`}
+                    >
+                      Completed
                     </div>
-                  </>
-                )}
-                {op.status === "completed" && (
-                  <div
-                    className={`${modalStyles.status} ${modalStyles.statusDone}`}
-                  >
-                    Completed
-                  </div>
-                )}
-                {op.status === "failed" && (
-                  <div
-                    className={`${modalStyles.status} ${modalStyles.statusFailed}`}
-                  >
-                    Failed{op.error ? `: ${op.error}` : ""}
-                  </div>
-                )}
-                {op.status === "cancelled" && (
-                  <div
-                    className={`${modalStyles.status} ${modalStyles.statusCancelled}`}
-                  >
-                    Cancelled
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+                  )}
+                  {op.status === "failed" && (
+                    <div
+                      className={`${modalStyles.status} ${modalStyles.statusFailed}`}
+                    >
+                      Failed{op.error ? `: ${op.error}` : ""}
+                    </div>
+                  )}
+                  {op.status === "cancelled" && (
+                    <div
+                      className={`${modalStyles.status} ${modalStyles.statusCancelled}`}
+                    >
+                      Cancelled
+                    </div>
+                  )}
+                </>
+              )}
+            </DialogBody>
 
-          <div className={modalStyles.footer}>
-            {isActive && (
-              <>
-                <button onClick={backgroundOp}>Background</button>
-                <button onClick={cancelOp}>Cancel</button>
-              </>
-            )}
-            {(op.status === "completed" ||
-              op.status === "failed" ||
-              op.status === "cancelled") && (
-              <button
-                autoFocus
-                onClick={() => safe(commands.dismissOperation(op.id))}
-              >
-                Close
-              </button>
-            )}
-          </div>
+            <DialogFooter>
+              {isActive && (
+                <>
+                  <button onClick={backgroundOp}>Background</button>
+                  <button onClick={cancelOp}>Cancel</button>
+                </>
+              )}
+              {(op.status === "completed" ||
+                op.status === "failed" ||
+                op.status === "cancelled") && (
+                <button
+                  autoFocus
+                  onClick={() => safe(commands.dismissOperation(op.id))}
+                >
+                  Close
+                </button>
+              )}
+            </DialogFooter>
+          </DialogShell>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
