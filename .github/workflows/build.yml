@@ -18,18 +18,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: yarn
-      - run: yarn install --frozen-lockfile
+          cache: npm
+      - run: npm ci
       - name: Typecheck
-        run: yarn tsc --noEmit
+        run: npx tsc --noEmit
       - name: Lint
-        run: yarn lint
+        run: npm run lint
       - name: Format check
-        run: yarn format:check
+        run: npm run format:check
       - name: Test
-        run: yarn test
+        run: npm test
       - name: Build
-        run: yarn build
+        run: npm run build
 
   rust:
     name: Rust

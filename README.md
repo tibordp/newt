@@ -26,9 +26,9 @@ All filesystem and terminal functionality goes through traits with local (in-pro
 
 ## Building
 
-Requires Rust, Node.js, and Yarn.
+Requires Rust and Node.js.
 
 ```sh
-yarn install
+npm install
 cargo tauri dev
 ```
