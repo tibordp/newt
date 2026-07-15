@@ -98,7 +98,6 @@ function AskpassDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className={dialogStyles.dialogOverlay} />
         <Dialog.Content
           className={dialogStyles.dialogContentTop}
           onOpenAutoFocus={preventAskpassAutoFocus}

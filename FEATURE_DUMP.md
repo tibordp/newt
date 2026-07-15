@@ -27,7 +27,7 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 - **Field / FieldGroup / CheckboxField / FieldRow**: form layout primitives (stacked label+control with optional hint, tight checkbox clusters, inline label+control rows).
 - **DialogTabs**: shared tab strip (Connect transports, archive formats, Settings sections).
 - **DialogSubmitButton**: submit with spinner + pending label; `variant="destructive"` renders the red primary used by delete confirmations. **DialogError**: inline error banner. Both pair with `useAsyncAction` for single-flight async submits.
-- Every open modal dims the panes behind it with a subtle theme-aware scrim (~100 ms fade-in, disabled under `prefers-reduced-motion`; no exit animation so Rust-driven closes stay instant).
+- No backdrop scrim — dialogs separate from the panes via a deep elevation shadow (`--shadow-dialog`) plus a strong border, keeping open/close instant and the panes fully readable (deliberate: dimming reads web-modal, and macOS/KDE/Win32 dialogs don't dim).
 - Floating containers (centered dialogs, top-anchored palettes, settings editor, progress modal, askpass) share elevation/border/radius via Sass mixins in `src/styles/_dialog-mixins.scss`.
 - Type sizes come from `--font-size-xs/sm/md/lg` tokens; a `--font-mono` token covers log/transcript surfaces.
 

@@ -34,9 +34,11 @@
   --_border: rgba(0, 0, 0, 0.15);
   --_border-strong: rgba(0, 0, 0, 0.18);
   --_input-border: rgba(0, 0, 0, 0.18);
-  --_shadow-dialog: 0 4px 24px rgba(0, 0, 0, 0.15);
+  // No backdrop scrim behind dialogs — elevation alone separates them, so
+  // the shadow is slightly deeper than a typical raised-surface shadow.
+  --_shadow-dialog:
+    0 6px 28px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.08);
   --_shadow-header: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
-  --_scrim: rgba(0, 0, 0, 0.12);
   --_dialog-footer-tint: rgba(0, 0, 0, 0.035);
   --_drag-rect-bg: rgba(0, 120, 215, 0.15);
   --_drag-rect-border: rgba(0, 120, 215, 0.6);

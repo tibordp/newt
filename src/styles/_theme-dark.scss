@@ -30,9 +30,9 @@
   --_border: rgba(255, 255, 255, 0.12);
   --_border-strong: rgba(255, 255, 255, 0.18);
   --_input-border: rgba(255, 255, 255, 0.18);
-  --_shadow-dialog: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --_shadow-dialog:
+    0 6px 28px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.3);
   --_shadow-header: 0 2px 2px -1px rgba(0, 0, 0, 0.3);
-  --_scrim: rgba(0, 0, 0, 0.2);
   --_dialog-footer-tint: rgba(0, 0, 0, 0.15);
   --_drag-rect-bg: rgba(53, 132, 228, 0.25);
   --_drag-rect-border: rgba(53, 132, 228, 0.6);

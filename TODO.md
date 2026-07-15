@@ -31,7 +31,7 @@ Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`): `Vfs::get_propert
 
 ## Dialog visual uplift
 
-Shipped: shared dialog primitives (`modals/primitives/` — DialogShell/Header/Body/Footer with pinned chrome-tinted footer, Field/FieldGroup/CheckboxField/FieldRow, DialogTabs, extended DialogSubmitButton with a `destructive` variant), theme-aware scrim behind all three Dialog.Roots, `_dialog-mixins.scss` for floating containers (centered/top-anchored/tab-bar/cmdk chrome), font-size + `--font-mono` tokens, and all ~26 dialogs migrated (legacy `dialogContents`/`dialogButtons` classes deleted; About/Search/mount dialogs no longer hand-roll inline styles). Follow-ups:
+Shipped: shared dialog primitives (`modals/primitives/` — DialogShell/Header/Body/Footer with pinned chrome-tinted footer, Field/FieldGroup/CheckboxField/FieldRow, DialogTabs, extended DialogSubmitButton with a `destructive` variant), deep elevation shadow instead of a backdrop scrim (a scrim was tried and dropped as too web-modal), `_dialog-mixins.scss` for floating containers (centered/top-anchored/tab-bar/cmdk chrome), font-size + `--font-mono` tokens, and all ~26 dialogs migrated (legacy `dialogContents`/`dialogButtons` classes deleted; About/Search/mount dialogs no longer hand-roll inline styles). Follow-ups:
 - Settings editor *internals* (SettingControls/CommandsEditor) still use ad-hoc inline `style={{}}` for widget sizing; migrate to module classes if they get touched again.
 - `HotPaths.module.scss` deleteBtn hover keeps an `opacity !important`; HistoryNavigator keeps two `!important`s fighting Menu.module's `data-highlighted` styling — both need a structural fix in Menu.module.scss to remove.
 

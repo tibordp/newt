@@ -6,7 +6,6 @@ import type { IssueAction, OperationState } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
-import dialogStyles from "./modals/Dialog.module.scss";
 import {
   DialogShell,
   DialogHeader,
@@ -298,7 +297,6 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className={dialogStyles.dialogOverlay} />
         <Dialog.Content
           className={modalStyles.content}
           onCloseAutoFocus={preventAutoFocus}

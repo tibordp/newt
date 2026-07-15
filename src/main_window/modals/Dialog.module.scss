@@ -1,26 +1,5 @@
 @use "../../styles/dialog-mixins" as dlg;
 
-.dialogOverlay {
-  position: fixed;
-  inset: 0;
-  // Under dialog surfaces (201), above panes; menus stay on top at 300.
-  z-index: 200;
-  background: var(--color-scrim);
-  animation: overlay-in 100ms ease-out;
-}
-
-@keyframes overlay-in {
-  from {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dialogOverlay {
-    animation: none;
-  }
-}
-
 .dialogContent {
   @include dlg.dialog-surface;
   @include dlg.dialog-centered;

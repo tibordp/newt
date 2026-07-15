@@ -247,7 +247,7 @@ impl TarArchiveVfs {
                 match result {
                     Ok(()) => handle.mark_done(),
                     Err(e) => {
-                        log::error!("archive indexing failed: {}", e);
+                        log::error!("archive indexing failed: {:?}", e);
                         let _ = state.error.set(e.to_string());
                     }
                 }
