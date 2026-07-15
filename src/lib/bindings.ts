@@ -225,6 +225,14 @@ async setMetadata(paneHandle: PaneHandle | null, paths: VfsPath[], modeSet: numb
     else return { status: "error", error: e  as any };
 }
 },
+async applyProperties(paneHandle: PaneHandle | null, paths: VfsPath[], patch: PropertyPatch, recursive: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_properties", { paneHandle, paths, patch, recursive }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async startOperation(request: OperationRequest) : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("start_operation", { request }) };
@@ -1620,7 +1628,7 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1694,7 +1702,7 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1759,7 +1767,12 @@ mode_set: number;
 /**
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
-mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | { RunCommand: { command: string; 
+mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | 
+/**
+ * Apply a property-sheet patch (`Vfs::apply_properties`) to each
+ * path; `recursive` walks directories/prefixes like `SetMetadata`.
+ */
+{ ApplyProperties: { paths: VfsPath[]; patch: PropertyPatch; recursive: boolean } } | { RunCommand: { command: string; 
 /**
  * VFS path, not `std::path` — crosses RPC; the executor (the
  * agent in a remote session) converts to native in its own OS.
@@ -1780,6 +1793,73 @@ export type OperationState = { id: number; kind: string; description: string; to
 scanning_items: number | null; scanning_bytes: number | null }
 export type OperationStatus = "scanning" | "running" | "completed" | "failed" | "cancelled" | "waiting_for_input"
 export type PaneHandle = number
+export type PropertyField = { 
+/**
+ * Stable key (e.g. `s3.meta`) — patch target and i18n/docs anchor.
+ */
+key: string; label: string; value: PropertyFieldValue; editable: boolean; 
+/**
+ * Accepts a value but has no readable current state (e.g. S3 canned
+ * ACL, which reads back as grants). Rendered without a current value.
+ */
+write_only: boolean }
+/**
+ * Field kind + current value. `None` values mean "mixed across the
+ * selection" in a folded sheet (or "no current value" on a write-only
+ * field); a VFS itself always emits concrete values.
+ */
+export type PropertyFieldValue = { text: { value: string | null } } | { choice: { choices: string[]; value: string | null } } | 
+/**
+ * String map (e.g. `x-amz-meta-*`). A `None` entry value = key
+ * present on only part of the selection, or with differing values.
+ */
+{ map: { entries: Partial<{ [key in string]: string | null }> } } | 
+/**
+ * Access-grant list, compared whole across a selection.
+ */
+{ grants: { permission_choices: string[]; value: PropertyGrant[] | null } }
+export type PropertyGrant = { grantee: PropertyGrantee; permission: string }
+export type PropertyGrantee = { user: { id: string; display_name: string | null } } | { group: { uri: string } } | { email: { address: string } }
+export type PropertyGroup = { label: string; fields: PropertyField[] }
+/**
+ * Carries only the fields the user changed; unmentioned fields are left
+ * alone (same philosophy as the permission editor's set/clear masks).
+ */
+export type PropertyPatch = { ops: PropertyPatchOp[] }
+export type PropertyPatchOp = { 
+/**
+ * Field key the op targets.
+ */
+key: string; op: PropertyValuePatch }
+export type PropertySheet = { groups: PropertyGroup[]; 
+/**
+ * Shown next to the apply button (e.g. S3: applying rewrites objects
+ * in place, which may be slow on large ones).
+ */
+apply_hint: string | null }
+/**
+ * Extended-properties section of the Properties dialog. The sheet is
+ * fetched after the dialog opens (open-then-fill): the modal starts in
+ * `Loading` and a spawned task patches it to `Loaded`/`Failed` once the
+ * per-file sheets have been fetched and folded. `Hidden` when the VFS
+ * has no extended properties.
+ */
+export type PropertySheetState = { status: "hidden" } | { status: "loading" } | { status: "loaded"; sheet: PropertySheet } | { status: "failed"; error: string }
+export type PropertyValuePatch = 
+/**
+ * Text/Choice: set the value.
+ */
+{ set: { value: string } } | 
+/**
+ * Map: per-key set/delete applied over each file's existing map.
+ * "Replace the whole map" is expressible as deletes for dropped keys
+ * — merge is the only primitive.
+ */
+{ map_patch: { set: Partial<{ [key in string]: string }>; delete: string[] } } | 
+/**
+ * Grants: whole-list replace (no per-grant merge semantics).
+ */
+{ replace_grants: { grants: PropertyGrant[] } }
 /**
  * A resolved keybinding after `mod+` expansion and cascading.
  */

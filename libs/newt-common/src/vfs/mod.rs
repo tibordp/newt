@@ -6,6 +6,7 @@ pub mod local;
 pub mod path;
 pub mod path_style;
 pub mod progress;
+pub mod properties;
 pub mod remote;
 pub mod s3;
 pub mod search;
@@ -27,6 +28,10 @@ pub use path_style::{
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
     VfsProgressSink,
+};
+pub use properties::{
+    PropertyField, PropertyFieldValue, PropertyGrant, PropertyGrantee, PropertyGroup,
+    PropertyPatch, PropertyPatchOp, PropertySheet, PropertyValuePatch, fold_sheets,
 };
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
@@ -212,6 +217,15 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn has_symlinks(&self) -> bool;
     fn can_stat_directories(&self) -> bool;
     fn can_fs_stats(&self) -> bool;
+
+    /// Whether this VFS serves a property sheet (`Vfs::get_property_sheet`
+    /// / `apply_properties`) — per-VFS extras beyond `VfsMetadata`, e.g.
+    /// S3 ACLs and user metadata. Gates the sheet section in the
+    /// Properties dialog (and the fetch, so VFSes without sheets pay
+    /// nothing).
+    fn has_extended_properties(&self) -> bool {
+        false
+    }
 
     // --- Same-VFS fast paths ---
     fn can_rename(&self) -> bool;
@@ -645,6 +659,19 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
+    // --- Extended properties ---
+    // VFSes overriding these must also override
+    // `VfsDescriptor::has_extended_properties`.
+    async fn get_property_sheet(&self, path: &Path) -> Result<PropertySheet, Error> {
+        let _ = path;
+        Err(Error::not_supported())
+    }
+
+    async fn apply_properties(&self, path: &Path, patch: &PropertyPatch) -> Result<(), Error> {
+        let _ = (path, patch);
+        Err(Error::not_supported())
+    }
+
     // --- Same-VFS fast paths ---
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
@@ -897,6 +924,12 @@ impl FileReader for VfsRegistryFileReader {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.file_details(&local_path).await
+    }
+
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
+        let path = self.registry.dereference(&path).await;
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        vfs.get_property_sheet(&local_path).await
     }
 
     async fn read_range(

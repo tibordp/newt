@@ -368,7 +368,7 @@ Hardlinks are not detectable through the VFS surface and are archived as indepen
 
 ### Properties (Alt+Enter)
 
-Modal dialog showing file metadata. Supports single files and multi-file selections. Read-only on VFS types that don't support metadata changes (S3, archives).
+Modal dialog showing file metadata. Supports single files and multi-file selections. The Unix permission/ownership editor is read-only on VFS types that don't support metadata changes (S3, archives); VFSes with extended properties (S3) still get their own editable sheet groups (see below).
 
 **Information displayed**:
 - Name
@@ -391,6 +391,12 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 - Text input accepts numeric ID. Name resolution planned for future.
 
 **Recursive** checkbox (for directories): Applies permissions and ownership changes to all contents.
+
+**Extended properties (property sheets)**: VFSes that advertise `has_extended_properties` contribute extra editable groups below the generic metadata. The sheet is schema-driven — the backend describes fields (text, choice, key-value map, grant list) and one generic renderer edits them all; no per-VFS frontend code. Sheets load after the dialog opens (loading placeholder → filled in place), so Alt+Enter never stalls on network calls. Multi-select folds per-field: equal values show, differing ones show as mixed/indeterminate and are left untouched unless edited; grant lists fold whole (differing lists offer an explicit "replace on all"). Applying goes through the operations engine (progress, per-item retry/skip, cancel) as an `ApplyProperties` operation; the **Recursive** checkbox extends to sheet edits (per-prefix apply on S3, skipping synthetic directory entries).
+
+Today only S3 implements a sheet:
+- **S3 metadata** group: user metadata (`x-amz-meta-*`) as an editable key-value map (add/remove/edit keys), storage class, Content-Type, Cache-Control. Edits rewrite the object in place (CopyObject with metadata replacement) — untouched system headers and any non-default ACL are preserved across the rewrite; the dialog shows a hint that this can be slow for large objects.
+- **S3 access control** group: the grant list (grantee user ID / group URI / email × permission) and a write-only canned ACL selector (S3 reads back grants, not the canned value). Omitted gracefully when `s3:GetObjectAcl` is denied — the metadata group still loads.
 
 **Directory Properties**: Available from the pane context menu (right-click empty space). Shows metadata for the current directory itself.
 
@@ -800,9 +806,9 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 - Bucket contents are listed using `ListObjectsV2` with delimiter, simulating a directory structure via common prefixes.
 - "Directories" in S3 are virtual (based on `/` separators in object keys). Created directories are 0-byte objects with trailing `/`.
 
-**Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch.
+**Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch, extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog).
 
-**Operations NOT supported**: Rename, hard link, symlink, permissions, filesystem stats.
+**Operations NOT supported**: Rename, hard link, symlink, Unix permissions, filesystem stats.
 
 **Display path**: `s3://bucket/prefix/key`
 

@@ -45,6 +45,7 @@ pub const API_READ_RANGE: Api = Api(301);
 pub const API_READ_FILE: Api = Api(302);
 pub const API_WRITE_FILE: Api = Api(303);
 pub const API_FIND_IN_FILE: Api = Api(304);
+pub const API_GET_PROPERTY_SHEET: Api = Api(305);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
@@ -331,6 +332,12 @@ impl Dispatcher for FileReaderDispatcher {
             API_FILE_DETAILS => {
                 let path: VfsPath = decode(&req[..])?;
                 let ret = self.file_reader.file_details(path).await;
+
+                encode(&ret)?
+            }
+            API_GET_PROPERTY_SHEET => {
+                let path: VfsPath = decode(&req[..])?;
+                let ret = self.file_reader.get_property_sheet(path).await;
 
                 encode(&ret)?
             }

@@ -1,9 +1,12 @@
+use newt_common::vfs::VfsPath;
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
 use crate::common::Error;
 use crate::main_window::pane::FilterMode;
-use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle};
+use crate::main_window::{
+    MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle, PropertySheetState,
+};
 
 /// Every dialog the host can open. Serialized as snake_case so the frontend
 /// can keep sending string literals like `"navigate"` / `"mount_s3"` over
@@ -57,6 +60,10 @@ pub fn dialog(
     } else {
         crate::connections::OpenIn::Window
     };
+    // Set when a Properties modal wants its extended-property sheet
+    // fetched after opening (open-then-fill): (modal paths — the write
+    // guard, sheet paths — the file entries to actually fetch).
+    let mut sheet_fetch: Option<(Vec<VfsPath>, Vec<VfsPath>)> = None;
     ctx.with_update(|gs| {
         let pane = pane_handle.map(|h| gs.panes.get(h).unwrap());
         let mut modal_state = gs.modal.0.write();
@@ -85,11 +92,23 @@ pub fn dialog(
                     let file_list = pane.file_list();
                     let dir_entry = file_list.files().iter().find(|f| f.name == "..");
 
-                    let can_set_metadata = ctx
+                    let descriptor = ctx
                         .vfs_info()
                         .ok()
-                        .and_then(|vi| vi.descriptor(pane_path.vfs_id))
+                        .and_then(|vi| vi.descriptor(pane_path.vfs_id));
+                    let can_set_metadata = descriptor
+                        .as_ref()
                         .is_some_and(|(d, _)| d.can_set_metadata());
+                    // Directories only carry a sheet where they're real,
+                    // stattable objects (not S3-style synthetic prefixes).
+                    let sheet = if descriptor.as_ref().is_some_and(|(d, _)| {
+                        d.has_extended_properties() && d.can_stat_directories()
+                    }) {
+                        sheet_fetch = Some((vec![pane_path.clone()], vec![pane_path.clone()]));
+                        PropertySheetState::Loading
+                    } else {
+                        PropertySheetState::Hidden
+                    };
 
                     let name = pane_path
                         .file_name()
@@ -116,6 +135,7 @@ pub fn dialog(
                         modified: dir_entry.and_then(|f| f.modified),
                         accessed: dir_entry.and_then(|f| f.accessed),
                         created: dir_entry.and_then(|f| f.created),
+                        sheet,
                     }
                 }
                 DialogKind::Properties => {
@@ -138,6 +158,14 @@ pub fn dialog(
                         .ok()
                         .and_then(|vi| vi.descriptor(pane.path().vfs_id))
                         .is_some_and(|(d, _)| d.can_set_metadata());
+
+                    // Sheet capability follows the *dereferenced* paths'
+                    // VFS — a search-result entry gets its source VFS's
+                    // sheet, not the search VFS's.
+                    let sheet_descriptor = ctx
+                        .vfs_info()
+                        .ok()
+                        .and_then(|vi| vi.descriptor(paths[0].vfs_id));
 
                     // Look up entries by *in-pane* identity (key) rather
                     // than basename — flat search results may share names.
@@ -222,6 +250,35 @@ pub fn dialog(
                         (None, None, None)
                     };
 
+                    // Fetch sheets from file entries only where directories
+                    // are synthetic (S3 prefixes — nothing to head); the
+                    // apply still targets the whole selection, so recursive
+                    // prefix apply keeps working.
+                    let sheet = match sheet_descriptor {
+                        Some((d, _)) if d.has_extended_properties() => {
+                            let sheet_paths: Vec<VfsPath> = if d.can_stat_directories() {
+                                paths.clone()
+                            } else {
+                                display_paths
+                                    .iter()
+                                    .zip(paths.iter())
+                                    .filter_map(|(dp, p)| {
+                                        let key = dp.file_name()?;
+                                        let f = view_files.iter().find(|f| f.key() == key)?;
+                                        (!f.is_dir).then(|| p.clone())
+                                    })
+                                    .collect()
+                            };
+                            if sheet_paths.is_empty() {
+                                PropertySheetState::Hidden
+                            } else {
+                                sheet_fetch = Some((paths.clone(), sheet_paths));
+                                PropertySheetState::Loading
+                            }
+                        }
+                        _ => PropertySheetState::Hidden,
+                    };
+
                     ModalDataKind::Properties {
                         paths,
                         can_set_metadata,
@@ -240,6 +297,7 @@ pub fn dialog(
                         modified,
                         accessed,
                         created,
+                        sheet,
                     }
                 }
                 DialogKind::Rename => {
@@ -412,7 +470,76 @@ pub fn dialog(
         });
 
         Ok(())
-    })
+    })?;
+
+    if let Some((modal_paths, sheet_paths)) = sheet_fetch {
+        spawn_property_sheet_fetch(&ctx, modal_paths, sheet_paths);
+    }
+
+    Ok(())
+}
+
+/// Fetch per-file property sheets for an open Properties modal, fold
+/// them, and patch the modal state (open-then-fill). The write is
+/// guarded on the modal still being the same Properties instance — the
+/// user may have closed it (or opened another) while the fetch ran.
+fn spawn_property_sheet_fetch(
+    ctx: &MainWindowContext,
+    modal_paths: Vec<VfsPath>,
+    sheet_paths: Vec<VfsPath>,
+) {
+    let ctx = ctx.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = match fetch_folded_sheet(&ctx, &sheet_paths).await {
+            Ok(sheet) => PropertySheetState::Loaded { sheet },
+            Err(e) => PropertySheetState::Failed {
+                error: e.to_string(),
+            },
+        };
+        let _ = ctx.with_update(|gs| {
+            let mut modal = gs.modal.0.write();
+            if let Some(ModalData {
+                kind:
+                    ModalDataKind::Properties {
+                        paths: current_paths,
+                        sheet,
+                        ..
+                    },
+                ..
+            }) = modal.as_mut()
+                && *current_paths == modal_paths
+            {
+                *sheet = state;
+            }
+            Ok(())
+        });
+    });
+}
+
+async fn fetch_folded_sheet(
+    ctx: &MainWindowContext,
+    paths: &[VfsPath],
+) -> Result<newt_common::vfs::PropertySheet, Error> {
+    const CONCURRENCY: usize = 8;
+
+    let reader = ctx.file_reader()?;
+    let mut iter = paths.iter().cloned();
+    let mut join_set = tokio::task::JoinSet::new();
+    for path in iter.by_ref().take(CONCURRENCY) {
+        let reader = reader.clone();
+        join_set.spawn(async move { reader.get_property_sheet(path).await });
+    }
+
+    let mut sheets = Vec::with_capacity(paths.len());
+    while let Some(res) = join_set.join_next().await {
+        sheets.push(res.map_err(|e| Error::Custom(e.to_string()))??);
+        if let Some(path) = iter.next() {
+            let reader = reader.clone();
+            join_set.spawn(async move { reader.get_property_sheet(path).await });
+        }
+    }
+
+    Ok(newt_common::vfs::fold_sheets(&sheets))
 }
 
 // ---------------------------------------------------------------------------

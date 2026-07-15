@@ -24,7 +24,10 @@ Shipped (design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`): `newt_common::connec
 
 ## VFS property sheets (S3 ACLs / metadata)
 
-Inspect and edit VFS-specific object state (S3 canned ACLs, grants, user metadata, storage class; later xattrs etc.) without per-VFS trait/protocol sprawl. Design captured in `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`: one generic verb pair (`get_property_sheet` / `apply_properties`) + `has_extended_properties` capability, schema-driven `PropertySheet`/`PropertyPatch` payloads rendered by a single generic frontend editor. Open questions (bulk/recursive apply semantics, UI placement, enricher taxonomy co-design) are noted in the doc.
+Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`): `Vfs::get_property_sheet`/`apply_properties` + `has_extended_properties` capability, schema-driven `PropertySheet`/`PropertyPatch` (`vfs/properties.rs`, with host-side fold for multi-select), reads via a `FileReader` verb, writes via `OperationRequest::ApplyProperties` (recursive/prefix apply included), S3 sheet (user metadata, storage class, Content-Type/Cache-Control, grants, write-only canned ACL; CopyObject-REPLACE rewrite that preserves untouched headers and non-default ACLs), open-then-fill sheet groups in the Properties dialog with a generic per-kind renderer. Follow-ups:
+- `Vfs`-level remoting of the two verbs (`API_HOST_VFS_*` constants + `RemoteVfs`/`VfsHostDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today.
+- Recursive prefix apply is unreachable for an all-directories S3 selection (no file entry to source the sheet's fields from); revisit if it bites.
+- CopyObject-based rewrite fails on objects >5 GiB (needs multipart copy) and on unrestored Glacier objects; both surface as per-item operation issues.
 
 ## Archive unpacking
 

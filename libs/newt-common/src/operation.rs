@@ -150,6 +150,13 @@ pub enum OperationRequest {
         gid: Option<u32>,
         recursive: bool,
     },
+    /// Apply a property-sheet patch (`Vfs::apply_properties`) to each
+    /// path; `recursive` walks directories/prefixes like `SetMetadata`.
+    ApplyProperties {
+        paths: Vec<VfsPath>,
+        patch: crate::vfs::PropertyPatch,
+        recursive: bool,
+    },
     RunCommand {
         command: String,
         /// VFS path, not `std::path` — crosses RPC; the executor (the
@@ -806,6 +813,21 @@ pub async fn execute_operation(
                 mode_clear,
                 uid,
                 gid,
+                recursive,
+                cancel.clone(),
+            )
+            .await
+        }
+        OperationRequest::ApplyProperties {
+            paths,
+            patch,
+            recursive,
+        } => {
+            execute_apply_properties(
+                &mut reporter,
+                &context,
+                paths,
+                patch,
                 recursive,
                 cancel.clone(),
             )
@@ -2152,13 +2174,15 @@ async fn collect_delete_entries(
     Ok(files)
 }
 
+/// Walk a directory tree and collect every entry (root included) as
+/// `(path, is_dir)`, for per-item recursive apply (chmod, properties).
 async fn collect_chmod_entries(
     vfs: &dyn Vfs,
     path: &Path,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
-) -> Result<Vec<PathBuf>, crate::Error> {
-    let mut entries = vec![path.to_owned()];
+) -> Result<Vec<(PathBuf, bool)>, crate::Error> {
+    let mut entries = vec![(path.to_owned(), true)];
     let mut stack = vec![path.to_owned()];
 
     while let Some(dir) = stack.pop() {
@@ -2193,10 +2217,11 @@ async fn collect_chmod_entries(
                 continue;
             }
             let entry_path = dir.join(&file.name);
-            if file.is_dir && !file.is_symlink {
+            let is_dir = file.is_dir && !file.is_symlink;
+            if is_dir {
                 stack.push(entry_path.clone());
             }
-            entries.push(entry_path);
+            entries.push((entry_path, is_dir));
         }
     }
 
@@ -2245,7 +2270,7 @@ async fn execute_set_metadata(
             let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
             if is_dir {
                 let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
-                for entry in entries {
+                for (entry, _) in entries {
                     let display = format!("{}:{}", vfs_path.vfs_id, entry);
                     all_entries.push((vfs.clone(), entry, display));
                 }
@@ -2318,6 +2343,105 @@ async fn execute_set_metadata(
                     .handle_io_error(
                         e,
                         &format!("Error setting metadata on {}", display),
+                        None,
+                        &cancel,
+                        true,
+                    )
+                    .await?
+                {
+                    IssueOutcome::Skip => {}
+                    IssueOutcome::Retry => {
+                        retry = true;
+                    }
+                }
+            }
+        }
+
+        items_done += 1;
+    }
+
+    reporter.maybe_send_progress(0, items_done, "");
+    Ok(())
+}
+
+async fn execute_apply_properties(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    paths: Vec<VfsPath>,
+    patch: crate::vfs::PropertyPatch,
+    recursive: bool,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    debug!(
+        "execute_apply_properties: {} paths, {} ops, recursive={}",
+        paths.len(),
+        patch.ops.len(),
+        recursive
+    );
+
+    if patch.is_empty() {
+        return Ok(());
+    }
+
+    // Follow redirect_target so applies from a SearchVfs hit the real files.
+    let mut paths = paths;
+    for p in paths.iter_mut() {
+        *p = context.registry.dereference(p).await;
+    }
+
+    let mut all_entries: Vec<(Arc<dyn Vfs>, PathBuf, String)> = Vec::new();
+
+    for vfs_path in &paths {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+
+        let (vfs, local_path) = context.registry.resolve(vfs_path)?;
+        let descriptor = vfs.descriptor();
+        // On VFSes that can't stat directories (S3), listed "directories"
+        // are synthetic prefixes, not objects — nothing to apply to.
+        let include_dirs = descriptor.can_stat_directories();
+
+        if recursive {
+            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
+            if is_dir {
+                let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
+                for (entry, entry_is_dir) in entries {
+                    if entry_is_dir && !include_dirs {
+                        continue;
+                    }
+                    let display = format!("{}:{}", vfs_path.vfs_id, entry);
+                    all_entries.push((vfs.clone(), entry, display));
+                }
+                continue;
+            }
+        }
+
+        let display = vfs_path.to_string();
+        all_entries.push((vfs, local_path, display));
+    }
+
+    let total_items = all_entries.len() as u64;
+    reporter.send_prepared(0, total_items);
+
+    let mut items_done = 0u64;
+
+    for (vfs, local_path, display) in &all_entries {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+
+        reporter.maybe_send_progress(0, items_done, display);
+
+        let mut retry = true;
+        while retry {
+            retry = false;
+
+            if let Err(e) = vfs.apply_properties(local_path, &patch).await {
+                match reporter
+                    .handle_io_error(
+                        e,
+                        &format!("Error applying properties to {}", display),
                         None,
                         &cancel,
                         true,

@@ -1,8 +1,13 @@
 import { useState, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { commands, type UserGroup } from "../../lib/bindings";
+import {
+  commands,
+  type PropertyPatchOp,
+  type UserGroup,
+} from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
+import { PropertySheetSection } from "./PropertySheetSection";
 import dialogStyles from "./Dialog.module.scss";
 import styles from "./Properties.module.scss";
 
@@ -227,12 +232,14 @@ export default function Properties({
   modified,
   accessed,
   created,
+  sheet,
   cancel,
   context,
 }: PropertiesProps) {
   const [modeSet, setModeSet] = useState(initialModeSet);
   const [modeClear, setModeClear] = useState(initialModeClear);
   const [recursive, setRecursive] = useState(false);
+  const [sheetOps, setSheetOps] = useState<PropertyPatchOp[]>([]);
   const [ownerEdit, setOwnerEdit] = useState<OwnerEditState>({
     enabled: false,
     value: "",
@@ -264,20 +271,36 @@ export default function Properties({
     modeSet !== initialModeSet || modeClear !== initialModeClear;
   const ownerChanged = ownerEdit.enabled && ownerEdit.value.trim() !== "";
   const groupChanged = groupEdit.enabled && groupEdit.value.trim() !== "";
-  const isDirty = modeChanged || ownerChanged || groupChanged;
+  const metaDirty = modeChanged || ownerChanged || groupChanged;
+  const isDirty = metaDirty || sheetOps.length > 0;
 
   function onApply() {
-    safe(
-      commands.setMetadata(
-        context?.pane_handle ?? null,
-        paths,
-        modeSet,
-        modeClear,
-        ownerChanged ? parseOwnerId(ownerEdit.value) : null,
-        groupChanged ? parseOwnerId(groupEdit.value) : null,
-        recursive,
-      ),
-    );
+    // The two editors apply through separate operations; fire only the
+    // ones with actual changes (recursive-only counts for the
+    // permission editor, matching its historical behavior).
+    if (canEdit && (metaDirty || (recursive && sheetOps.length === 0))) {
+      safe(
+        commands.setMetadata(
+          context?.pane_handle ?? null,
+          paths,
+          modeSet,
+          modeClear,
+          ownerChanged ? parseOwnerId(ownerEdit.value) : null,
+          groupChanged ? parseOwnerId(groupEdit.value) : null,
+          recursive,
+        ),
+      );
+    }
+    if (sheetOps.length > 0) {
+      safe(
+        commands.applyProperties(
+          context?.pane_handle ?? null,
+          paths,
+          { ops: sheetOps },
+          recursive,
+        ),
+      );
+    }
   }
 
   const typeLabel = is_symlink
@@ -287,6 +310,13 @@ export default function Properties({
       : "File";
 
   const canEdit = can_set_metadata && has_mode;
+  const sheetEditable =
+    sheet.status === "loaded" &&
+    sheet.sheet.groups.some((g) => g.fields.some((f) => f.editable));
+  const applyHint =
+    sheet.status === "loaded" && sheetOps.length > 0
+      ? sheet.sheet.apply_hint
+      : null;
 
   return (
     <div>
@@ -391,17 +421,30 @@ export default function Properties({
             </div>
           )}
         </div>
+
+        <PropertySheetSection state={sheet} onOpsChange={setSheetOps} />
+        {!canEdit && sheetEditable && hasDirs && (
+          <label className={styles.recursiveLabel}>
+            <input
+              type="checkbox"
+              checked={recursive}
+              onChange={(e) => setRecursive(e.target.checked)}
+            />
+            Apply recursively
+          </label>
+        )}
       </div>
       <div className={dialogStyles.dialogButtons}>
+        {applyHint && <span className={styles.sheetHint}>{applyHint}</span>}
         <button type="button" onClick={cancel}>
-          {canEdit ? "Cancel" : "Close"}
+          {canEdit || sheetEditable ? "Cancel" : "Close"}
         </button>
-        {canEdit && (
+        {(canEdit || sheetEditable) && (
           <button
             type="button"
             className="suggested"
             onClick={onApply}
-            disabled={!isDirty && !recursive}
+            disabled={!isDirty && !(recursive && canEdit)}
             autoFocus
           >
             Apply

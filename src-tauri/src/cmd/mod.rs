@@ -187,6 +187,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             operations::touch_file,
             operations::rename,
             operations::set_metadata,
+            operations::apply_properties,
             operations::start_operation,
             operations::start_copy_move,
             operations::start_create_archive,

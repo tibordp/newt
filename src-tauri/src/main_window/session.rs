@@ -457,6 +457,13 @@ impl FileReader for HairpinFileReader {
         self.inner.file_details(path).await
     }
 
+    async fn get_property_sheet(
+        &self,
+        path: VfsPath,
+    ) -> Result<newt_common::vfs::PropertySheet, newt_common::Error> {
+        self.inner.get_property_sheet(path).await
+    }
+
     async fn read_range(
         &self,
         path: VfsPath,

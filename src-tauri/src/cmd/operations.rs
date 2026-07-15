@@ -175,6 +175,33 @@ pub async fn set_metadata(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn apply_properties(
+    ctx: MainWindowContext,
+    pane_handle: Option<PaneHandle>,
+    paths: Vec<VfsPath>,
+    patch: newt_common::vfs::PropertyPatch,
+    recursive: bool,
+) -> Result<(), Error> {
+    let request = OperationRequest::ApplyProperties {
+        paths,
+        patch,
+        recursive,
+    };
+    start_operation(ctx.clone(), request).await?;
+
+    ctx.with_update_async(|gs| async move {
+        gs.close_modal();
+        if let Some(pane_handle) = pane_handle {
+            let pane = gs.panes.get(pane_handle).unwrap();
+            pane.refresh(None, true).await?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn start_operation(
     ctx: MainWindowContext,
     request: OperationRequest,
@@ -225,6 +252,10 @@ pub async fn start_operation(
         OperationRequest::SetMetadata { paths, .. } => (
             "chmod".to_string(),
             format!("Setting metadata on {} item(s)", paths.len()),
+        ),
+        OperationRequest::ApplyProperties { paths, .. } => (
+            "properties".to_string(),
+            format!("Updating properties on {} item(s)", paths.len()),
         ),
         OperationRequest::RunCommand { command, .. } => {
             ("command".to_string(), format!("Running: {}", command))

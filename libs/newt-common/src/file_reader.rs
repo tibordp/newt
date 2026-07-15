@@ -2,6 +2,7 @@ use crate::Error;
 use crate::filesystem::{Mode, UserGroup};
 use crate::rpc::Communicator;
 use crate::vfs::VfsPath;
+use crate::vfs::properties::PropertySheet;
 
 /// Guess MIME type from a file path's extension.
 /// Returns `None` if the extension is not recognized.
@@ -49,6 +50,7 @@ pub struct FileChunk {
 #[async_trait::async_trait]
 pub trait FileReader: Send + Sync {
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error>;
     async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
     -> Result<FileChunk, Error>;
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
@@ -78,6 +80,15 @@ impl FileReader for Remote {
         let ret: Result<FileDetails, Error> = self
             .communicator
             .invoke(crate::api::API_FILE_DETAILS, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
+        let ret: Result<PropertySheet, Error> = self
+            .communicator
+            .invoke(crate::api::API_GET_PROPERTY_SHEET, &path)
             .await?;
 
         Ok(ret?)

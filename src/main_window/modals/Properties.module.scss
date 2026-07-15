@@ -152,6 +152,108 @@
   font-size: 0.9em;
 }
 
+// -- Extended-property sheet --
+
+.sheetStatus {
+  margin-top: var(--space-5);
+  color: var(--color-fg-muted);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.sheetFieldRow {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: var(--space-5);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.sheetFieldBlock {
+  margin-bottom: var(--space-3);
+
+  > .sheetFieldLabel {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+}
+
+.sheetFieldLabel {
+  color: var(--color-fg-muted);
+  font-size: 0.9em;
+  text-align: right;
+  white-space: nowrap;
+
+  .sheetFieldBlock > & {
+    text-align: left;
+  }
+}
+
+.sheetTextInput {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.9em;
+}
+
+.mapGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mapRow,
+.grantRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.9em;
+  }
+}
+
+.mapKey {
+  flex: 0 0 35%;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.mapRowDeleted {
+  .mapKey {
+    text-decoration: line-through;
+    color: var(--color-fg-muted);
+  }
+}
+
+.sheetRowButton {
+  flex-shrink: 0;
+  padding: 0 var(--space-3);
+}
+
+.sheetAddButton {
+  align-self: flex-start;
+  font-size: 0.9em;
+}
+
+.mixedNote {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--color-fg-muted);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.sheetHint {
+  flex: 1;
+  align-self: center;
+  color: var(--color-fg-muted);
+  font-size: 0.85em;
+  text-align: left;
+}
+
 // -- Footer controls --
 
 .recursiveLabel {

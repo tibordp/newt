@@ -443,6 +443,24 @@ pub struct ArchiveDialogDefaults {
     pub zstd_level: i32,
 }
 
+/// Extended-properties section of the Properties dialog. The sheet is
+/// fetched after the dialog opens (open-then-fill): the modal starts in
+/// `Loading` and a spawned task patches it to `Loaded`/`Failed` once the
+/// per-file sheets have been fetched and folded. `Hidden` when the VFS
+/// has no extended properties.
+#[derive(Clone, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PropertySheetState {
+    Hidden,
+    Loading,
+    Loaded {
+        sheet: newt_common::vfs::PropertySheet,
+    },
+    Failed {
+        error: String,
+    },
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
@@ -477,6 +495,7 @@ pub enum ModalDataKind {
         modified: Option<i64>,
         accessed: Option<i64>,
         created: Option<i64>,
+        sheet: PropertySheetState,
     },
     Navigate {
         path: VfsPath,
