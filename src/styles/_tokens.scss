@@ -33,6 +33,12 @@
   --color-success: var(--_green-500);
   --color-error: var(--_red-500);
 
+  // Destructive actions (filled buttons)
+  --color-destructive: var(--_destructive-500);
+  --color-destructive-hover: var(--_destructive-600);
+  --color-destructive-active: var(--_destructive-700);
+  --color-destructive-fg: #ffffff;
+
   // Focus
   --focus-ring: 2px solid var(--_blue-500);
 
@@ -43,6 +49,10 @@
   // Shadows
   --shadow-dialog: var(--_shadow-dialog);
   --shadow-header: var(--_shadow-header);
+
+  // Dialog chrome
+  --color-scrim: var(--_scrim);
+  --color-dialog-footer: var(--_dialog-footer-tint);
 
   // Drag rect
   --color-drag-rect-bg: var(--_drag-rect-bg);
@@ -65,4 +75,10 @@
   --radius-sm: 3px;
   --radius-md: 6px;
   --radius-lg: 12px;
+
+  // Type scale (base font is 13px, set in _reset.scss)
+  --font-size-xs: 10px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
 }

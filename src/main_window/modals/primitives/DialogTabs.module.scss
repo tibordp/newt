@@ -1,0 +1,22 @@
+@use "../../../styles/dialog-mixins" as dlg;
+
+.tabBar {
+  @include dlg.tab-bar;
+}
+
+.tabBarStretch {
+  composes: tabBar;
+
+  > * {
+    flex: 1;
+  }
+}
+
+.tab {
+  @include dlg.tab;
+}
+
+.tabActive {
+  composes: tab;
+  @include dlg.tab-active;
+}

@@ -84,7 +84,10 @@ export default function ModalRouter({
         if (!open) closeModal();
       }}
     >
-      <Dialog.Portal>{renderContent()}</Dialog.Portal>
+      <Dialog.Portal>
+        <Dialog.Overlay className={dialogStyles.dialogOverlay} />
+        {renderContent()}
+      </Dialog.Portal>
     </Dialog.Root>
   );
 }

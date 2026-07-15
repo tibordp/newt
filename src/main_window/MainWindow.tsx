@@ -102,6 +102,7 @@ function AskpassDialog({
       }}
     >
       <Dialog.Portal>
+        <Dialog.Overlay className={dialogStyles.dialogOverlay} />
         <Dialog.Content
           className={dialogStyles.dialogContent}
           style={ASKPASS_DIALOG_STYLE}

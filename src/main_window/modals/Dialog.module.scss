@@ -1,23 +1,39 @@
-.dialogContent {
+@use "../../styles/dialog-mixins" as dlg;
+
+.dialogOverlay {
   position: fixed;
   inset: 0;
-  margin: auto;
-  width: fit-content;
-  height: fit-content;
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border-strong);
-  box-shadow: var(--shadow-dialog);
-  z-index: 201;
-  max-width: 80%;
-  max-height: 80%;
-  overflow: auto;
+  // Under dialog surfaces (201), above panes; menus stay on top at 300.
+  z-index: 200;
+  background: var(--color-scrim);
+  animation: overlay-in 100ms ease-out;
+}
 
-  &:focus {
-    outline: none;
+@keyframes overlay-in {
+  from {
+    opacity: 0;
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .dialogOverlay {
+    animation: none;
+  }
+}
+
+.dialogContent {
+  @include dlg.dialog-surface;
+  @include dlg.dialog-centered;
+  width: fit-content;
+  height: fit-content;
+  display: flex;
+  flex-direction: column;
+  // DialogBody scrolls; DialogHeader/DialogFooter stay pinned.
+  overflow: hidden;
+}
+
+// Legacy shell classes, superseded by the primitives in ./primitives.
+// Deleted once the askpass dialog (last consumer) migrates.
 .dialogContents {
   padding: var(--space-6) var(--space-7) 0;
   display: flex;

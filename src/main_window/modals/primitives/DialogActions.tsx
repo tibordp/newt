@@ -4,6 +4,8 @@ type DialogSubmitButtonProps = {
   pending?: boolean;
   disabled?: boolean;
   pendingLabel?: string;
+  variant?: "suggested" | "destructive";
+  autoFocus?: boolean;
   children: React.ReactNode;
 };
 
@@ -14,14 +16,17 @@ export function DialogSubmitButton({
   pending = false,
   disabled = false,
   pendingLabel,
+  variant = "suggested",
+  autoFocus,
   children,
 }: DialogSubmitButtonProps) {
   return (
     <button
       type="submit"
-      className="suggested"
+      className={variant}
       disabled={disabled || pending}
       aria-busy={pending}
+      autoFocus={autoFocus}
     >
       {pending && <span className={styles.spinner} aria-hidden />}
       {pending && pendingLabel ? pendingLabel : children}
@@ -38,12 +43,8 @@ type DialogErrorProps = {
 export function DialogError({ error }: DialogErrorProps) {
   if (!error) return null;
   return (
-    // pre-wrap: mount failures carry a multi-line connection log.
-    <div
-      className={styles.error}
-      role="alert"
-      style={{ whiteSpace: "pre-wrap" }}
-    >
+    // pre-wrap (in the module): mount failures carry a multi-line log.
+    <div className={styles.error} role="alert">
       {error}
     </div>
   );

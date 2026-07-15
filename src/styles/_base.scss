@@ -54,6 +54,20 @@ input[type="submit"] {
       background: var(--color-accent-active);
     }
   }
+
+  &.destructive {
+    background: var(--color-destructive);
+    color: var(--color-destructive-fg);
+    border-color: transparent;
+
+    &:hover {
+      background: var(--color-destructive-hover);
+    }
+
+    &:active {
+      background: var(--color-destructive-active);
+    }
+  }
 }
 
 input[type="text"],
@@ -98,7 +112,5 @@ input[type="checkbox"] {
 }
 
 label {
-  font-size: 1.1em;
   margin: 0;
-  padding-bottom: 0.2em;
 }

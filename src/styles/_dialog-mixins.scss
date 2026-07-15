@@ -1,0 +1,109 @@
+// Shared dialog chrome. Mixins rather than cross-file `composes`, which the
+// Vite/Sass module pipeline cannot resolve (see note in CreateArchive.module.scss).
+
+@mixin dialog-surface {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-dialog);
+  z-index: 201;
+
+  &:focus {
+    outline: none;
+  }
+}
+
+@mixin dialog-centered {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  max-width: 80%;
+  max-height: 80%;
+}
+
+@mixin dialog-top-anchored {
+  position: fixed;
+  top: 40px;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  height: fit-content;
+  max-width: 80%;
+  overflow: hidden;
+}
+
+@mixin tab-bar {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+@mixin tab {
+  padding: var(--space-3) var(--space-4);
+  border-radius: 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--color-fg-muted);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 500;
+
+  &:hover {
+    color: var(--color-fg);
+    background: var(--color-button-bg);
+  }
+}
+
+@mixin tab-active {
+  color: var(--color-fg);
+  border-bottom-color: var(--color-accent);
+}
+
+// cmdk chrome shared by CommandPalette and HotPaths (the latter also serves
+// QuickConnect and SelectWslDistro). Include inside the dialog's `.content`
+// selector — scoping the [cmdk-*] rules keeps the two palettes' styles from
+// clobbering each other, which the old unscoped :global blocks did.
+@mixin palette-header {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-header);
+
+  :global([cmdk-input]) {
+    font-family: inherit;
+    font-size: inherit;
+    color: var(--color-fg);
+    background: var(--color-input-bg);
+    border: 1px solid var(--color-input-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    width: 100%;
+    outline: none;
+
+    &:focus {
+      outline: var(--focus-ring);
+      outline-offset: -1px;
+    }
+  }
+}
+
+@mixin palette-list($max-height) {
+  :global([cmdk-list]) {
+    padding: var(--space-3);
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: $max-height;
+  }
+
+  :global([cmdk-empty]) {
+    padding: var(--space-3);
+    text-align: center;
+    color: var(--color-fg-muted);
+  }
+}

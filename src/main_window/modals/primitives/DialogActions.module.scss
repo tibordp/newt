@@ -22,7 +22,7 @@
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
-  font-size: 0.95em;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
 }

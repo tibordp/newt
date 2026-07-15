@@ -2,8 +2,7 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { safeSilent, tryRun } from "../../lib/ipc";
 import { CommonDialogProps } from "./ModalContent";
-import { useAsyncAction } from "./useAsyncAction";
-import { DialogError, DialogSubmitButton } from "./DialogActions";
+import { useAsyncAction, DialogError, DialogSubmitButton } from "./primitives";
 import dialogStyles from "./Dialog.module.scss";
 import { commands } from "../../lib/bindings";
 

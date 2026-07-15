@@ -1,0 +1,49 @@
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.fieldLabel {
+  padding-bottom: var(--space-1);
+}
+
+.hint {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.checkboxField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: fit-content;
+  cursor: pointer;
+
+  input[type="checkbox"] {
+    flex-shrink: 0;
+  }
+}
+
+// Indented past the 16px checkbox + 6px gap to align with the label text.
+.checkboxHint {
+  margin: var(--space-1) 0 0 calc(16px + var(--space-3));
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fieldRowLabel {
+  flex-shrink: 0;
+}
