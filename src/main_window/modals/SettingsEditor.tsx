@@ -9,6 +9,7 @@ import { KeybindingsEditor } from "./settings/KeybindingsEditor";
 import { CustomWidget, SettingControl } from "./settings/SettingControls";
 import { extractSettings } from "./settings/schema";
 import { commands } from "../../lib/bindings";
+import { DialogTabs } from "./primitives";
 
 type Tab = "settings" | "keybindings" | "commands";
 
@@ -83,27 +84,17 @@ export default function SettingsEditor({
           autoFocus
         />
       </div>
-      <div className={styles.tabBar}>
-        <button
-          className={activeTab === "settings" ? styles.tabActive : styles.tab}
-          onClick={() => setActiveTab("settings")}
-        >
-          Preferences
-        </button>
-        <button
-          className={
-            activeTab === "keybindings" ? styles.tabActive : styles.tab
-          }
-          onClick={() => setActiveTab("keybindings")}
-        >
-          Keybindings
-        </button>
-        <button
-          className={activeTab === "commands" ? styles.tabActive : styles.tab}
-          onClick={() => setActiveTab("commands")}
-        >
-          Commands
-        </button>
+      <div className={styles.tabStrip}>
+        <DialogTabs
+          tabs={[
+            { value: "settings", label: "Preferences" },
+            { value: "keybindings", label: "Keybindings" },
+            { value: "commands", label: "Commands" },
+          ]}
+          value={activeTab}
+          onChange={setActiveTab}
+          stretch
+        />
       </div>
       <div className={styles.body}>
         {activeTab === "settings" && (

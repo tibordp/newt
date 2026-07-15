@@ -12,6 +12,12 @@ import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
 import ConnectionLog from "./ConnectionLog";
 import dialogStyles from "./modals/Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+} from "./modals/primitives";
 
 import { enablePatches } from "immer";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -38,16 +44,6 @@ import { usePreferences } from "../lib/preferences";
 import CommandBar from "./CommandBar";
 
 enablePatches();
-
-const ASKPASS_DIALOG_STYLE = {
-  top: 40,
-  inset: "auto" as const,
-  left: 0,
-  right: 0,
-  marginInline: "auto",
-  width: 500,
-  maxWidth: "80%",
-};
 
 function sendAskpassResponse(response: string | null) {
   safeSilent(commands.askpassRespond(response));
@@ -104,24 +100,23 @@ function AskpassDialog({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogStyles.dialogOverlay} />
         <Dialog.Content
-          className={dialogStyles.dialogContent}
-          style={ASKPASS_DIALOG_STYLE}
+          className={dialogStyles.dialogContentTop}
           onOpenAutoFocus={preventAskpassAutoFocus}
           onPointerDownOutside={preventAskpassInteractOutside}
           onInteractOutside={preventAskpassInteractOutside}
         >
-          <form onSubmit={handleSubmit}>
-            <div className={dialogStyles.dialogContents}>
-              <Dialog.Title className={dialogStyles.dialogTitle}>
-                {isConfirm
+          <DialogShell onSubmit={handleSubmit}>
+            <DialogHeader
+              title={
+                isConfirm
                   ? "Host Key Verification"
                   : isSecret
                     ? "Authentication"
-                    : "SSH"}
-              </Dialog.Title>
-              <label style={{ whiteSpace: "pre-wrap", marginBottom: "0.5em" }}>
-                {prompt}
-              </label>
+                    : "SSH"
+              }
+              summary={prompt}
+            />
+            <DialogBody>
               <input
                 type={isSecret ? "password" : "text"}
                 value={value}
@@ -129,16 +124,16 @@ function AskpassDialog({
                 autoFocus
                 size={40}
               />
-            </div>
-            <div className={dialogStyles.dialogButtons}>
-              <button type="button" onClick={cancel}>
-                {isConfirm ? "No" : "Cancel"}
-              </button>
+            </DialogBody>
+            <DialogFooter
+              onCancel={cancel}
+              cancelLabel={isConfirm ? "No" : "Cancel"}
+            >
               <button type="submit" className="suggested">
                 {isConfirm ? "Yes" : "OK"}
               </button>
-            </div>
-          </form>
+            </DialogFooter>
+          </DialogShell>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

@@ -1,29 +1,21 @@
+@use "../styles/dialog-mixins" as dlg;
+
 .content {
-  position: fixed;
-  inset: 0;
-  margin: auto;
+  @include dlg.dialog-surface;
+  @include dlg.dialog-centered;
   height: fit-content;
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-dialog);
-  z-index: 201;
   width: 480px;
   max-width: 90%;
-  padding: 20px;
+  padding: var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-
-  &:focus {
-    outline: none;
-  }
+  gap: var(--space-6);
 }
 
 .header {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 1em;
   font-weight: normal;
   margin: 0;
@@ -46,24 +38,24 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .bodyIssueResolution {
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .bodyIssueMessage {
   white-space: normal;
-  font-size: 0.95em;
+  font-size: var(--font-size-sm);
 }
 
 .bodyIssueActions {
   button {
-    padding: 4px 12px;
-    font-size: 0.9em;
+    padding: var(--space-2) var(--space-5);
+    font-size: var(--font-size-sm);
   }
 }
 
@@ -86,23 +78,23 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: var(--space-2) var(--space-4);
 }
 
 .progressText {
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   flex-shrink: 0;
 }
 
 .speedInfo {
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   flex-shrink: 0;
 }
 
 .currentItem {
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -116,7 +108,7 @@
 .status {
   text-align: center;
   font-size: 1em;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
 }
 
 .statusDone {
@@ -134,5 +126,5 @@
 .footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
 }

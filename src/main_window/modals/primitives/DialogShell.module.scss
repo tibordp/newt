@@ -20,6 +20,8 @@
 
 .summary {
   margin: var(--space-3) 0 0;
+  // Multi-line prompts (askpass host-key fingerprints) keep their layout.
+  white-space: pre-wrap;
 }
 
 .body {

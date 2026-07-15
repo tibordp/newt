@@ -31,8 +31,8 @@
 }
 
 .header {
-  padding: 8px 10px 6px;
-  font-size: 0.85em;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -43,15 +43,15 @@
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 6px;
+  padding: var(--space-3);
   min-height: 0;
 }
 
 .bucket {
   // Quieter than .header — these are inline navigational furniture, not
   // section titles.
-  padding: 6px 6px 2px;
-  font-size: 0.75em;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-size: var(--font-size-xs);
   color: var(--color-fg-muted);
   user-select: none;
 }
@@ -62,7 +62,7 @@
   height: 24px;
   min-height: 24px;
   box-sizing: border-box;
-  padding: 0 6px;
+  padding: 0 var(--space-3);
 }
 
 .itemPreviewed {
@@ -82,7 +82,7 @@
 
 .deadTag {
   flex-shrink: 0;
-  font-size: 0.8em;
+  font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-fg-muted);
@@ -92,11 +92,11 @@
 .currentTag {
   flex-shrink: 0;
   margin-left: auto;
-  font-size: 0.75em;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 1px 6px;
+  padding: 1px var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--color-border);
   color: var(--color-fg-muted);

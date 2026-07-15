@@ -32,28 +32,12 @@
   overflow: hidden;
 }
 
-// Legacy shell classes, superseded by the primitives in ./primitives.
-// Deleted once the askpass dialog (last consumer) migrates.
-.dialogContents {
-  padding: var(--space-6) var(--space-7) 0;
+// Top-anchored variant (askpass): stays put when its content grows, and
+// leaves the panes visible behind the prompt.
+.dialogContentTop {
+  @include dlg.dialog-surface;
+  @include dlg.dialog-top-anchored;
+  width: 500px;
   display: flex;
   flex-direction: column;
-}
-
-.dialogButtons {
-  padding: var(--space-6) var(--space-7);
-  display: flex;
-  gap: var(--space-4);
-  justify-content: flex-end;
-}
-
-.dialogTitle {
-  font-weight: bold;
-  font-size: 1.2em;
-  margin: 0;
-  padding-bottom: 0.5em;
-}
-
-.dialogSummary {
-  margin: 0 0 0.5em 0;
 }
