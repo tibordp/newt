@@ -19,6 +19,18 @@ Additional overlay elements:
 - Connection status indicator (during connect/disconnect/reconnect).
 - Modal dialogs (all driven by Rust state — never by React `useState`).
 
+### Dialog system
+
+All dialogs share a common visual language and a set of frontend primitives (`src/main_window/modals/primitives/`):
+
+- **DialogShell / DialogHeader / DialogBody / DialogFooter**: structural skeleton. The body scrolls while the header and footer stay pinned (matters for tall content like Properties and the Connection Log). The footer is a chrome-tinted strip with a hairline top border; it hosts the right-aligned Cancel/primary buttons plus an optional left `start` slot for secondary controls (e.g. Copy's "Pack into archive…", Properties' "Apply recursively").
+- **Field / FieldGroup / CheckboxField / FieldRow**: form layout primitives (stacked label+control with optional hint, tight checkbox clusters, inline label+control rows).
+- **DialogTabs**: shared tab strip (Connect transports, archive formats, Settings sections).
+- **DialogSubmitButton**: submit with spinner + pending label; `variant="destructive"` renders the red primary used by delete confirmations. **DialogError**: inline error banner. Both pair with `useAsyncAction` for single-flight async submits.
+- Every open modal dims the panes behind it with a subtle theme-aware scrim (~100 ms fade-in, disabled under `prefers-reduced-motion`; no exit animation so Rust-driven closes stay instant).
+- Floating containers (centered dialogs, top-anchored palettes, settings editor, progress modal, askpass) share elevation/border/radius via Sass mixins in `src/styles/_dialog-mixins.scss`.
+- Type sizes come from `--font-size-xs/sm/md/lg` tokens; a `--font-mono` token covers log/transcript surfaces.
+
 ### Zoom
 
 - **Ctrl+=**: Zoom in.

@@ -29,6 +29,12 @@ Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`): `Vfs::get_propert
 - Recursive prefix apply is unreachable for an all-directories S3 selection (no file entry to source the sheet's fields from); revisit if it bites.
 - CopyObject-based rewrite fails on objects >5 GiB (needs multipart copy) and on unrestored Glacier objects; both surface as per-item operation issues.
 
+## Dialog visual uplift
+
+Shipped: shared dialog primitives (`modals/primitives/` — DialogShell/Header/Body/Footer with pinned chrome-tinted footer, Field/FieldGroup/CheckboxField/FieldRow, DialogTabs, extended DialogSubmitButton with a `destructive` variant), theme-aware scrim behind all three Dialog.Roots, `_dialog-mixins.scss` for floating containers (centered/top-anchored/tab-bar/cmdk chrome), font-size + `--font-mono` tokens, and all ~26 dialogs migrated (legacy `dialogContents`/`dialogButtons` classes deleted; About/Search/mount dialogs no longer hand-roll inline styles). Follow-ups:
+- Settings editor *internals* (SettingControls/CommandsEditor) still use ad-hoc inline `style={{}}` for widget sizing; migrate to module classes if they get touched again.
+- `HotPaths.module.scss` deleteBtn hover keeps an `opacity !important`; HistoryNavigator keeps two `!important`s fighting Menu.module's `data-highlighted` styling — both need a structural fix in Menu.module.scss to remove.
+
 ## Archive unpacking
 
 (as an operation, not a VFS — packing shipped as Pack to Archive / Alt+F5; a dedicated extract operation with conflict handling remains, today unpacking means copying out of a mounted archive VFS)

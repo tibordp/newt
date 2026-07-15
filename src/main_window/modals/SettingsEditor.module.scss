@@ -111,7 +111,7 @@
 }
 
 .resetButton {
-  font-size: 0.75em;
+  font-size: var(--font-size-xs);
   font-weight: normal;
   padding: 1px var(--space-2);
   border: 1px solid var(--color-border);
@@ -128,7 +128,7 @@
 }
 
 .settingDescription {
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   margin-top: 3px;
   line-height: 1.4;
@@ -159,7 +159,7 @@
   th {
     text-align: left;
     font-weight: 600;
-    font-size: 0.85em;
+    font-size: var(--font-size-sm);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--color-fg-muted);
@@ -199,7 +199,7 @@
 }
 
 .whenLabel {
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }
 
@@ -213,7 +213,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    font-size: 0.85em;
+    font-size: var(--font-size-sm);
     color: var(--color-fg-muted);
   }
 }
@@ -307,7 +307,7 @@
     border-radius: var(--radius-sm);
     font-family:
       ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
-    font-size: 0.85em;
+    font-size: var(--font-size-sm);
     color: var(--color-fg);
   }
 }
@@ -341,7 +341,7 @@
 }
 
 .transferHeader {
-  font-size: 0.8em;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -364,7 +364,7 @@
 .transferItemSelected {
   padding: var(--space-1) var(--space-3);
   cursor: pointer;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   user-select: none;
 
   &:hover {
@@ -382,14 +382,14 @@
 }
 
 .transferRequired {
-  font-size: 0.8em;
+  font-size: var(--font-size-xs);
   color: var(--color-fg-muted);
 }
 
 .transferEmpty {
   padding: var(--space-3);
   color: var(--color-fg-muted);
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   font-style: italic;
 }
 
@@ -452,7 +452,7 @@
   // a single line of text-height.
   button {
     padding: var(--space-3) var(--space-4);
-    font-size: 0.9em;
+    font-size: var(--font-size-sm);
   }
 
   button + button {
@@ -500,7 +500,7 @@
   color: var(--color-fg);
   outline: none;
   box-sizing: border-box;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 
   &:focus {
     outline: var(--focus-ring);
@@ -525,7 +525,7 @@
 .keyCapturePlaceholder {
   color: var(--color-fg-muted);
   font-style: italic;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .keyCaptureClear {
@@ -581,7 +581,7 @@
   border-radius: var(--radius-sm);
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -607,7 +607,7 @@
 }
 
 .userCmdTag {
-  font-size: 0.8em;
+  font-size: var(--font-size-xs);
   color: var(--color-fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -615,7 +615,7 @@
 
 .kbBannerWarn,
 .kbBannerError {
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   margin-top: var(--space-2);
