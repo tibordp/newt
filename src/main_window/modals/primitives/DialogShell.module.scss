@@ -1,10 +1,12 @@
 .shell {
   display: flex;
   flex-direction: column;
-  // Fill fixed-height dialog containers; no-op in fit-content ones.
-  flex: 1;
+  // Grow to fill fixed-height dialog containers (ConnectionLog), but from an
+  // auto basis: `flex: 1` (basis 0) collapses fit-content parents to zero
+  // height. min-height: 0 lets the shell shrink under the container's
+  // max-height so DialogBody scrolls instead of overflowing.
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 100%;
 }
 
 .header {
