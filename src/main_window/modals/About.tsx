@@ -1,7 +1,12 @@
 import { useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+} from "./primitives";
+import styles from "./About.module.scss";
 import appIcon from "../../assets/icon.png";
 
 type AboutProps = CommonDialogProps & ModalDataOf<"about">;
@@ -43,93 +48,44 @@ export default function About({
     .join(" ");
 
   return (
-    <div>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className="sr-only">About Newt</Dialog.Title>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "var(--space-4)",
-            padding: "var(--space-4) 0",
-          }}
-        >
-          <img
-            src={appIcon}
-            alt="Newt"
-            width={96}
-            height={96}
-            onClick={onIconClick}
-            style={{
-              cursor: "default",
-              userSelect: "none",
-              transition: "transform 0.2s",
-              transform: fact ? "rotate(5deg)" : undefined,
-            }}
-          />
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "1.3em", fontWeight: 700 }}>Newt</div>
-            <div
-              style={{
-                color: "var(--color-fg-muted)",
-                marginTop: "var(--space-1)",
-              }}
-            >
-              A keyboard-centric dual-pane file manager
-            </div>
+    <DialogShell>
+      <DialogHeader title="About Newt" srOnlyTitle />
+      <DialogBody className={styles.body}>
+        <img
+          src={appIcon}
+          alt="Newt"
+          width={96}
+          height={96}
+          onClick={onIconClick}
+          className={fact ? styles.iconTilted : styles.icon}
+        />
+        <div>
+          <div className={styles.appName}>Newt</div>
+          <div className={styles.tagline}>
+            A keyboard-centric dual-pane file manager
           </div>
-          <div
-            style={{
-              textAlign: "center",
-              fontSize: "0.85em",
-              color: "var(--color-fg-muted)",
-              lineHeight: 1.6,
-            }}
-          >
-            <div>{versionLine}</div>
-            <div>{target_triple}</div>
-          </div>
-          <div
-            style={{
-              fontSize: "0.85em",
-              color: "var(--color-fg-muted)",
-              textAlign: "center",
-            }}
-          >
-            <div>GNU General Public License v2.0</div>
-            <a
-              href="https://github.com/tibordp/newt"
-              target="_blank"
-              rel="noopener"
-              style={{ color: "var(--color-accent)" }}
-            >
-              github.com/tibordp/newt
-            </a>
-          </div>
-          {fact && (
-            <div
-              style={{
-                marginTop: "var(--space-2)",
-                padding: "var(--space-3) var(--space-4)",
-                background: "var(--color-surface)",
-                borderRadius: "var(--radius-md)",
-                fontSize: "0.85em",
-                fontStyle: "italic",
-                maxWidth: 320,
-                textAlign: "center",
-              }}
-            >
-              {fact}
-            </div>
-          )}
         </div>
-      </div>
-      <div className={dialogStyles.dialogButtons}>
+        <div className={styles.buildInfo}>
+          <div>{versionLine}</div>
+          <div>{target_triple}</div>
+        </div>
+        <div className={styles.license}>
+          <div>GNU General Public License v2.0</div>
+          <a
+            href="https://github.com/tibordp/newt"
+            target="_blank"
+            rel="noopener"
+          >
+            github.com/tibordp/newt
+          </a>
+        </div>
+        {fact && <div className={styles.factCard}>{fact}</div>}
+      </DialogBody>
+      <DialogFooter>
         <button type="button" onClick={cancel} autoFocus>
           Close
         </button>
-      </div>
-    </div>
+      </DialogFooter>
+    </DialogShell>
   );
 }

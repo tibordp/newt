@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   commands,
   type PropertyPatchOp,
@@ -8,7 +7,12 @@ import {
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import { PropertySheetSection } from "./PropertySheetSection";
-import dialogStyles from "./Dialog.module.scss";
+import {
+  DialogShell,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+} from "./primitives";
 import styles from "./Properties.module.scss";
 
 type PropertiesProps = CommonDialogProps & ModalDataOf<"properties">;
@@ -319,12 +323,11 @@ export default function Properties({
       : null;
 
   return (
-    <div>
-      <div className={dialogStyles.dialogContents}>
-        <Dialog.Title className={dialogStyles.dialogTitle}>
-          {isSingle ? "Properties" : `Properties \u2014 ${name}`}
-        </Dialog.Title>
-
+    <DialogShell>
+      <DialogHeader
+        title={isSingle ? "Properties" : `Properties \u2014 ${name}`}
+      />
+      <DialogBody>
         <div className={canEdit ? styles.columns : undefined}>
           <div className={styles.infoSection}>
             <dl className={styles.infoList}>
@@ -407,38 +410,31 @@ export default function Properties({
                 state={groupEdit}
                 onChange={setGroupEdit}
               />
-
-              {hasDirs && (
-                <label className={styles.recursiveLabel}>
-                  <input
-                    type="checkbox"
-                    checked={recursive}
-                    onChange={(e) => setRecursive(e.target.checked)}
-                  />
-                  Apply recursively
-                </label>
-              )}
             </div>
           )}
         </div>
 
         <PropertySheetSection state={sheet} onOpsChange={setSheetOps} />
-        {!canEdit && sheetEditable && hasDirs && (
-          <label className={styles.recursiveLabel}>
-            <input
-              type="checkbox"
-              checked={recursive}
-              onChange={(e) => setRecursive(e.target.checked)}
-            />
-            Apply recursively
-          </label>
-        )}
-      </div>
-      <div className={dialogStyles.dialogButtons}>
-        {applyHint && <span className={styles.sheetHint}>{applyHint}</span>}
-        <button type="button" onClick={cancel}>
-          {canEdit || sheetEditable ? "Cancel" : "Close"}
-        </button>
+      </DialogBody>
+      <DialogFooter
+        onCancel={cancel}
+        cancelLabel={canEdit || sheetEditable ? "Cancel" : "Close"}
+        start={
+          <>
+            {hasDirs && (canEdit || sheetEditable) && (
+              <label className={styles.recursiveLabel}>
+                <input
+                  type="checkbox"
+                  checked={recursive}
+                  onChange={(e) => setRecursive(e.target.checked)}
+                />
+                Apply recursively
+              </label>
+            )}
+            {applyHint && <span className={styles.sheetHint}>{applyHint}</span>}
+          </>
+        }
+      >
         {(canEdit || sheetEditable) && (
           <button
             type="button"
@@ -450,7 +446,7 @@ export default function Properties({
             Apply
           </button>
         )}
-      </div>
-    </div>
+      </DialogFooter>
+    </DialogShell>
   );
 }

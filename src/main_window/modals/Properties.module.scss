@@ -35,7 +35,7 @@
     white-space: nowrap;
     text-align: right;
     padding: var(--space-1) 0;
-    font-size: 0.9em;
+    font-size: var(--font-size-sm);
   }
 
   dd {
@@ -54,7 +54,7 @@
 
 .permSectionHeader {
   font-weight: 600;
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-fg-muted);
@@ -78,7 +78,7 @@
 .permHeader {
   text-align: center;
   font-weight: 600;
-  font-size: 0.85em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }
 
@@ -88,7 +88,7 @@
 
 .permLabel {
   text-align: right;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .permCell {
@@ -108,7 +108,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
   cursor: pointer;
 }
@@ -137,7 +137,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -149,7 +149,7 @@
   ); // align with label text past checkbox
   width: calc(100% - var(--space-2) - 13px);
   box-sizing: border-box;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 // -- Extended-property sheet --
@@ -157,7 +157,7 @@
 .sheetStatus {
   margin-top: var(--space-5);
   color: var(--color-fg-muted);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   font-style: italic;
 }
 
@@ -180,7 +180,7 @@
 
 .sheetFieldLabel {
   color: var(--color-fg-muted);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   text-align: right;
   white-space: nowrap;
 
@@ -192,7 +192,7 @@
 .sheetTextInput {
   width: 100%;
   box-sizing: border-box;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .mapGrid {
@@ -210,13 +210,13 @@
   input {
     flex: 1;
     min-width: 0;
-    font-size: 0.9em;
+    font-size: var(--font-size-sm);
   }
 }
 
 .mapKey {
   flex: 0 0 35%;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   word-break: break-all;
 }
 
@@ -234,7 +234,7 @@
 
 .sheetAddButton {
   align-self: flex-start;
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .mixedNote {
@@ -242,16 +242,13 @@
   align-items: center;
   gap: var(--space-4);
   color: var(--color-fg-muted);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   font-style: italic;
 }
 
 .sheetHint {
-  flex: 1;
-  align-self: center;
   color: var(--color-fg-muted);
-  font-size: 0.85em;
-  text-align: left;
+  font-size: var(--font-size-sm);
 }
 
 // -- Footer controls --
@@ -260,9 +257,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--color-border);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
   cursor: pointer;
+  white-space: nowrap;
 }
