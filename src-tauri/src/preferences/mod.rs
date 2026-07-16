@@ -683,6 +683,11 @@ impl PreferencesManager {
         }
 
         // Extra default aliases (commands with multiple default keys)
+        bindings.push((
+            "delete".into(),
+            "delete_selected".into(),
+            Some("pane_focused".into()),
+        ));
         if cfg!(target_os = "macos") {
             // Finder conventions: ⌘⌫ = Move to Trash, ⌥⌘⌫ = Delete Immediately.
             bindings.push((
@@ -690,8 +695,10 @@ impl PreferencesManager {
                 "delete_selected".into(),
                 Some("pane_focused".into()),
             ));
+            // Canonical modifier order is meta, ctrl, shift, alt
+            // (`normalizeKeyEvent`) — bindings are matched as exact strings.
             bindings.push((
-                "alt+meta+backspace".into(),
+                "meta+alt+backspace".into(),
                 "delete_permanent".into(),
                 Some("pane_focused".into()),
             ));

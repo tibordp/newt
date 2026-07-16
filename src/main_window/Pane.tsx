@@ -1171,6 +1171,19 @@ function PaneInner(
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
     const { noModifiers } = modifiers(e);
 
+    // Unmodified Backspace always edits the filter text, and Delete does
+    // too in regex-filter mode — keep those from reaching the window-level
+    // binding dispatcher, where plain Delete is bound to delete_selected.
+    // In quick-search mode Delete falls through and deletes files.
+    if (
+      (e.key === "Backspace" ||
+        (e.key === "Delete" && filter_mode === "filter")) &&
+      noModifiers
+    ) {
+      e.stopPropagation();
+      return;
+    }
+
     if (onKeyDownCommon(e)) {
       // ...
     } else if (e.key == "/" && noModifiers && filter_mode === "quick_search") {

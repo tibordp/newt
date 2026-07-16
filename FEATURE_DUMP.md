@@ -298,7 +298,7 @@ Creates a new file (same dialog as Create File) and immediately opens it in the 
 
 Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it, else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the unchanged name is a no-op. The pane refreshes and re-focuses the new name when the operation completes.
 
-### Delete (F8 / Cmd+Backspace) and Delete Permanently (Shift+Delete / Opt+Cmd+Backspace)
+### Delete (F8 / Del / Cmd+Backspace) and Delete Permanently (Shift+Delete / Opt+Cmd+Backspace)
 
 Deletes all selected files and directories (recursive for directories).
 
@@ -1540,6 +1540,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | F6 | Move to other pane | Pane focused |
 | F7 | Create directory | Pane focused |
 | F8 | Delete selected (to Trash by default) | Pane focused |
+| Delete | Delete selected (alternative; works in quick-search too, but edits text in the regex filter box) | Pane focused |
 | Shift+Delete | Delete selected permanently | Pane focused |
 | Cmd+Backspace | Delete selected (macOS alternative) | Pane focused |
 | Opt+Cmd+Backspace | Delete selected permanently (macOS alternative) | Pane focused |
