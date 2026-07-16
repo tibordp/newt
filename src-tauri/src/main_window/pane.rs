@@ -91,6 +91,21 @@ struct HistoryEntry {
     /// off a stack and landing on it again. This makes the visual order of
     /// the combined history monotonic in time.
     arrived_at: std::time::SystemTime,
+    /// The enrichment overlay as it stood when this view was left,
+    /// restored stale-while-revalidate on back/forward/jump: computed
+    /// du sizes reappear as they were (the user explicitly returned to
+    /// a past view, so staleness is accepted), and automatic enrichers
+    /// supersede their part when the landing rerun's results arrive.
+    /// Lifetime rides history retention like everything else here.
+    enrichments: Option<Arc<EnrichmentSnapshot>>,
+}
+
+/// Immutable capture of a pane's enrichment overlay (annotations +
+/// badges, not activity), `Arc`-shared so history-stack clones stay
+/// cheap.
+struct EnrichmentSnapshot {
+    annotations: std::collections::BTreeMap<String, HashMap<String, Annotation>>,
+    badges: std::collections::BTreeMap<String, Vec<ContextBadge>>,
 }
 
 #[derive(Default)]
@@ -171,6 +186,9 @@ pub struct Pane {
     enrich_tx: mpsc::UnboundedSender<EnrichSignal>,
     /// Receiver half for `enrichment_loop`, taken once at spawn.
     enrich_rx: Mutex<Option<mpsc::UnboundedReceiver<EnrichSignal>>>,
+    /// Cancellation for the in-flight manual enrichment run (du), if
+    /// any. Fired by Esc/navigation (`cancel`) and by a newer trigger.
+    manual_enrich: Mutex<Option<CancellationToken>>,
     history: Mutex<NavigationHistory>,
     /// When the user arrived at the currently-displayed path. Captured into
     /// each HistoryEntry pushed onto a stack so the overlay can group entries
@@ -235,6 +253,7 @@ impl Pane {
             enricher_client,
             enrich_tx,
             enrich_rx: Mutex::new(Some(enrich_rx)),
+            manual_enrich: Mutex::new(None),
             history: Mutex::new(NavigationHistory::default()),
             current_arrived_at: Mutex::new(std::time::SystemTime::now()),
         }
@@ -340,12 +359,19 @@ impl Pane {
         &self,
         target: VfsPath,
         kind: NavigationKind,
+        restore: Option<Arc<EnrichmentSnapshot>>,
         changes_sender: &mut tokio::sync::watch::Sender<()>,
     ) -> Result<NavigationOutcome, Error> {
         let silent = matches!(kind, NavigationKind::Refresh);
         debug!("navigate_impl: target={:?} kind={:?}", target, kind);
 
-        let old_snapshot = self.snapshot();
+        let mut old_snapshot = self.snapshot();
+        if !silent {
+            // Capture the overlay being left behind so a later history
+            // navigation back to this view can restore it. Skipped for
+            // refreshes (no history mutation, and the clone isn't free).
+            old_snapshot.enrichments = self.view_state().enrichment_snapshot();
+        }
 
         // If the navigation crosses a VFS boundary into the target, give
         // that VFS a chance to revalidate cached external state (e.g. an
@@ -475,8 +501,21 @@ impl Pane {
                             ws.all_selected.clear();
                             ws.focused = None;
                             // Annotations are anchored to the history
-                            // cursor — moving it drops them.
+                            // cursor — moving it drops them; a history
+                            // navigation restores the target view's
+                            // captured overlay (stale-while-revalidate:
+                            // the Start signal below hasn't fired yet,
+                            // so automatic reruns supersede it).
                             ws.clear_enrichments();
+                            // Only restore onto the view the snapshot
+                            // belongs to — a failed listing can walk up
+                            // and land on a parent, where the entry's
+                            // keys would decorate the wrong rows.
+                            if let Some(ref snapshot) = restore
+                                && batch_path.as_ref() == Some(&target)
+                            {
+                                ws.restore_enrichments(snapshot);
+                            }
                             self.update_display(&mut ws);
                             first_batch = false;
                         }
@@ -584,6 +623,13 @@ impl Pane {
                 ws.all_selected.clear();
                 ws.focused = None;
                 ws.clear_enrichments();
+                // See the first-batch landing: no restore onto a
+                // walked-up landing path.
+                if let Some(ref snapshot) = restore
+                    && *new_file_list.path() == target
+                {
+                    ws.restore_enrichments(snapshot);
+                }
             }
         }
 
@@ -628,6 +674,56 @@ impl Pane {
             token.cancel();
         }
         let _ = self.enrich_tx.send(EnrichSignal::Cancel);
+        if let Some(token) = self.manual_enrich.lock().take() {
+            token.cancel();
+        }
+    }
+
+    /// Run a manually-triggered enricher (du keybinds) for the pane's
+    /// current directory. Runs on its own lane so it isn't superseded
+    /// by the automatic enrichment that refreshes restart — only Esc,
+    /// navigation (both via [`cancel`](Self::cancel)) or a newer manual
+    /// trigger stop it.
+    pub async fn run_manual_enrichment(
+        self: Arc<Self>,
+        enrichers: Vec<String>,
+        scope: EnrichScope,
+    ) {
+        let path = self.path();
+        let token = CancellationToken::new();
+        if let Some(previous) = self.manual_enrich.lock().replace(token.clone()) {
+            previous.cancel();
+        }
+
+        let (tx, mut ev_rx) = mpsc::channel(16);
+        let run_path = path.clone();
+        let fut = self
+            .enricher_client
+            .enrich(path, scope, enrichers.clone(), tx);
+        tokio::pin!(fut);
+        let mut fut_done = false;
+        let mut events_done = false;
+        while !(fut_done && events_done) {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => break,
+                ev = ev_rx.recv(), if !events_done => match ev {
+                    Some(ev) => self.apply_enrichment_event(&run_path, ev),
+                    None => events_done = true,
+                },
+                res = &mut fut, if !fut_done => {
+                    if let Err(e) = res {
+                        debug!("manual enrichment failed: {}", e);
+                    }
+                    fut_done = true;
+                }
+            }
+        }
+        // A cancelled run never sent its Finished events — drop this
+        // run's activity labels (and only this run's).
+        if self.view_state_mut().clear_activity_for(&enrichers) {
+            let _ = self.publisher.publish();
+        }
     }
 
     /// Drive automatic enrichment for this pane: waits for `Start`
@@ -680,9 +776,10 @@ impl Pane {
             }
 
             let (tx, mut ev_rx) = mpsc::channel(16);
-            let fut = self
-                .enricher_client
-                .enrich(path, EnrichScope::AllEntries, enrichers, tx);
+            let run_path = path.clone();
+            let fut =
+                self.enricher_client
+                    .enrich(path, EnrichScope::AllEntries, enrichers.clone(), tx);
             tokio::pin!(fut);
             let mut fut_done = false;
             let mut events_done = false;
@@ -698,7 +795,7 @@ impl Pane {
                         break;
                     }
                     ev = ev_rx.recv(), if !events_done => match ev {
-                        Some(ev) => self.apply_enrichment_event(ev),
+                        Some(ev) => self.apply_enrichment_event(&run_path, ev),
                         None => events_done = true,
                     },
                     res = &mut fut, if !fut_done => {
@@ -709,16 +806,29 @@ impl Pane {
                     }
                 }
             }
-            // However the run ended, nothing is running anymore — a
-            // cancelled run never sent its Finished events, so drop any
-            // lingering activity labels.
-            if self.view_state_mut().clear_enrichment_activity() {
+            // However the run ended, none of *its* enrichers are
+            // running anymore — a cancelled run never sent its Finished
+            // events, so drop this run's activity labels (a concurrent
+            // manual run's label must survive).
+            if self.view_state_mut().clear_activity_for(&enrichers) {
                 let _ = self.publisher.publish();
             }
         }
     }
 
-    fn apply_enrichment_event(&self, event: EnrichmentEvent) {
+    fn apply_enrichment_event(&self, run_path: &VfsPath, event: EnrichmentEvent) {
+        // A run's results are only valid for the view it was requested
+        // for. `file_list` flips to the target at navigation *start*,
+        // so a straggler event from the previous view's run (already
+        // dequeued when the cancel signal landed) is rejected here —
+        // annotation keys collide across directories, so letting it
+        // through would paint the wrong view. The sliver between this
+        // check and the write below is covered by the landing-time
+        // overlay clear. (Read fully before taking `view_state`:
+        // navigate_impl holds view_state → file_list in that order.)
+        if *self.file_list.read().path() != *run_path {
+            return;
+        }
         {
             let mut ws = self.view_state_mut();
             match event {
@@ -794,9 +904,14 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         if self.refresh_queue.fetch_sub(1, Ordering::SeqCst) == 1 && self.path() == expected_path {
-            self.navigate_impl(expected_path, NavigationKind::Refresh, &mut changes_sender)
-                .await
-                .map(|_| ())?;
+            self.navigate_impl(
+                expected_path,
+                NavigationKind::Refresh,
+                None,
+                &mut changes_sender,
+            )
+            .await
+            .map(|_| ())?;
         }
 
         Ok(())
@@ -810,6 +925,10 @@ impl Pane {
             display_path: view_state.display_path.clone(),
             vfs_display_name: view_state.vfs_display_name.clone(),
             arrived_at: *self.current_arrived_at.lock(),
+            // Filled at the sites that actually push into history
+            // (navigate_impl, rearrange_history_to_index) — the clone
+            // isn't free and snapshot() also serves display paths.
+            enrichments: None,
         }
     }
 
@@ -822,7 +941,7 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         let outcome = self
-            .navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
+            .navigate_impl(target, NavigationKind::Fresh, None, &mut changes_sender)
             .await?;
         if outcome == NavigationOutcome::Landed {
             *self.current_arrived_at.lock() = std::time::SystemTime::now();
@@ -896,7 +1015,7 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         let outcome = self
-            .navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
+            .navigate_impl(target, NavigationKind::Fresh, None, &mut changes_sender)
             .await?;
         if outcome == NavigationOutcome::Landed {
             *self.current_arrived_at.lock() = std::time::SystemTime::now();
@@ -913,7 +1032,7 @@ impl Pane {
 
         let mut changes_sender = self.navigation_mutex.lock().await;
         let outcome = self
-            .navigate_impl(target, NavigationKind::Replace, &mut changes_sender)
+            .navigate_impl(target, NavigationKind::Replace, None, &mut changes_sender)
             .await?;
         if outcome == NavigationOutcome::Landed {
             *self.current_arrived_at.lock() = std::time::SystemTime::now();
@@ -1024,7 +1143,8 @@ impl Pane {
         if target_index == current_index {
             return None;
         }
-        let snap = self.snapshot();
+        let mut snap = self.snapshot();
+        snap.enrichments = self.view_state().enrichment_snapshot();
 
         if target_index < current_index {
             // Forward navigation: pop entries from forward, push to back.
@@ -1083,6 +1203,7 @@ impl Pane {
             .navigate_impl(
                 target_path,
                 NavigationKind::HistoryJump,
+                target.enrichments.clone(),
                 &mut changes_sender,
             )
             .await;
@@ -1121,7 +1242,12 @@ impl Pane {
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
         let result = self
-            .navigate_impl(target_path, NavigationKind::Back, &mut changes_sender)
+            .navigate_impl(
+                target_path,
+                NavigationKind::Back,
+                popped.enrichments.clone(),
+                &mut changes_sender,
+            )
             .await;
         drop(changes_sender);
 
@@ -1153,7 +1279,12 @@ impl Pane {
         self.cancel();
         let mut changes_sender = self.navigation_mutex.lock().await;
         let result = self
-            .navigate_impl(target_path, NavigationKind::Forward, &mut changes_sender)
+            .navigate_impl(
+                target_path,
+                NavigationKind::Forward,
+                popped.enrichments.clone(),
+                &mut changes_sender,
+            )
             .await;
         drop(changes_sender);
 
@@ -1199,6 +1330,27 @@ impl Pane {
                 .iter()
                 .map(|s: &String| view_state.path.join(s))
                 .collect()
+        }
+    }
+
+    /// Entry keys of the effective selection (same rules as
+    /// [`get_effective_selection`](Self::get_effective_selection), but
+    /// directory-scoped keys instead of joined `VfsPath`s). Used by
+    /// per-entry enrichment triggers, which address entries by key.
+    pub fn effective_selection_keys(&self) -> Vec<String> {
+        let view_state = self.view_state.read();
+
+        if view_state.all_selected.is_empty() {
+            view_state.focused.iter().cloned().collect()
+        } else if view_state.filter_mode == FilterMode::Filter {
+            view_state
+                .all_selected
+                .iter()
+                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
+                .cloned()
+                .collect()
+        } else {
+            view_state.all_selected.iter().cloned().collect()
         }
     }
 
@@ -1423,6 +1575,10 @@ pub struct PaneViewState {
     filter_regex: Option<regex::Regex>,
     #[serde(skip)]
     default_filter_mode: FilterMode,
+    /// Last-used folders-first flag, cached so enrichment batches can
+    /// re-sort in place (they arrive without preference access).
+    #[serde(skip)]
+    folders_first: bool,
     /// Last viewport hint from the frontend: (first_visible_index, visible_count).
     #[serde(skip)]
     viewport_hint: (usize, usize),
@@ -1584,6 +1740,38 @@ impl PaneViewState {
         }
     }
 
+    /// Capture the current overlay for the history entry being left, or
+    /// `None` when there is nothing to remember.
+    fn enrichment_snapshot(&self) -> Option<Arc<EnrichmentSnapshot>> {
+        if self.enrichments.is_empty() && self.enrichment_badges.is_empty() {
+            return None;
+        }
+        Some(Arc::new(EnrichmentSnapshot {
+            annotations: self.enrichments.clone(),
+            badges: self.enrichment_badges.clone(),
+        }))
+    }
+
+    /// Replace the overlay with a history entry's captured one
+    /// (stale-while-revalidate on history navigation). Runs at the
+    /// landing point, before the automatic-enrichment restart is
+    /// signalled, so automatic enrichers deterministically supersede
+    /// their part; manual results (du) simply stand.
+    ///
+    /// Deliberately no immediate window rebuild (and no re-sort): at the
+    /// landing point `files` can still hold the *previous* directory's
+    /// rows for up to the interim-publish throttle, and composing those
+    /// with the restored annotations would decorate the wrong rows
+    /// wherever keys collide. Bumping the generation is enough — the
+    /// landing's `update()` swaps the files in, sorts with the restored
+    /// overlay in place, and rebuilds the window in one step.
+    fn restore_enrichments(&mut self, snapshot: &EnrichmentSnapshot) {
+        self.enrichments = snapshot.annotations.clone();
+        self.enrichment_badges = snapshot.badges.clone();
+        self.rebuild_context_badges();
+        self.file_generation += 1;
+    }
+
     /// Drop the whole enrichment overlay (annotations, badges, activity).
     /// Called when the history cursor moves — annotations are anchored
     /// to the current visit and never survive navigation.
@@ -1619,6 +1807,14 @@ impl PaneViewState {
     }
 
     fn apply_enrichment_batch(&mut self, batch: EnrichmentBatch) {
+        // Computed sizes participate in sort-by-size — a batch that
+        // touches them while that order is active re-sorts in place.
+        let sizes_touched = batch.reset
+            || batch
+                .entries
+                .iter()
+                .any(|(_, a)| matches!(a, Annotation::RecursiveSize { .. }));
+
         let annotations = self.enrichments.entry(batch.enricher.clone()).or_default();
         if batch.reset {
             annotations.clear();
@@ -1635,8 +1831,13 @@ impl PaneViewState {
         }
         self.rebuild_context_badges();
 
-        self.file_generation += 1;
-        self.recompute_window();
+        if sizes_touched && matches!(self.sorting.key, SortingKey::Size) {
+            self.sort(self.folders_first);
+            self.recompute_stats();
+        } else {
+            self.file_generation += 1;
+            self.recompute_window();
+        }
     }
 
     fn rebuild_context_badges(&mut self) {
@@ -1654,13 +1855,15 @@ impl PaneViewState {
         }
     }
 
-    /// Returns whether anything was cleared (i.e. a publish is due).
-    fn clear_enrichment_activity(&mut self) -> bool {
-        if self.enrichment_activity.is_empty() {
-            return false;
+    /// Drop the activity labels of the given enrichers (an ended run's
+    /// own ids, leaving concurrent runs' labels alone). Returns whether
+    /// anything was cleared (i.e. a publish is due).
+    fn clear_activity_for(&mut self, ids: &[String]) -> bool {
+        let before = self.enrichment_activity.len();
+        for id in ids {
+            self.enrichment_activity.remove(id);
         }
-        self.enrichment_activity.clear();
-        true
+        self.enrichment_activity.len() != before
     }
 
     /// Projects all_selected onto the current window so only visible
@@ -1684,7 +1887,23 @@ impl PaneViewState {
         self.file_window.offset != old_offset || self.file_window.items.len() != old_len
     }
 
+    /// The size an entry sorts by: a computed recursive size (du
+    /// enricher) beats the entry's own reported size.
+    fn effective_size(
+        enrichments: &std::collections::BTreeMap<String, HashMap<String, Annotation>>,
+        f: &File,
+    ) -> Option<u64> {
+        for annotations in enrichments.values() {
+            if let Some(Annotation::RecursiveSize { bytes, .. }) = annotations.get(f.key()) {
+                return Some(*bytes);
+            }
+        }
+        f.size
+    }
+
     fn sort(&mut self, folders_first: bool) {
+        self.folders_first = folders_first;
+        let enrichments = &self.enrichments;
         self.files.sort_by(|a, b| {
             if a.name == ".." {
                 return std::cmp::Ordering::Less;
@@ -1708,7 +1927,9 @@ impl PaneViewState {
                     .cmp(&b.name.to_lowercase())
                     .then_with(|| a.name.cmp(&b.name)),
                 SortingKey::Extension => compare_extension(a, b),
-                SortingKey::Size => a.size.cmp(&b.size),
+                SortingKey::Size => {
+                    Self::effective_size(enrichments, a).cmp(&Self::effective_size(enrichments, b))
+                }
                 SortingKey::User => a
                     .user
                     .partial_cmp(&b.user)

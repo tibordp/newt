@@ -319,6 +319,10 @@ impl DirectoryTree {
         let mut files = vec![File {
             name: "..".to_string(),
             size: None,
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
             is_dir: true,
             is_hidden: false,
             is_symlink: false,
@@ -549,6 +553,10 @@ fn ensure_ancestors(
             dirs.entry(parent.to_path_buf()).or_default().push(File {
                 name,
                 size: None,
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
                 is_dir: true,
                 is_hidden: false,
                 is_symlink: false,
@@ -699,6 +707,10 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
         let file = File {
             name: name.clone(),
             size,
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
             is_dir,
             is_hidden: name.starts_with('.'),
             is_symlink,

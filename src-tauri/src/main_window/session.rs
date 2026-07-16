@@ -1,7 +1,9 @@
 use newt_common::api::{
     API_ENRICHMENT_EVENT, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS, VfsRegistryManager,
 };
-use newt_common::enrich::{EnricherClient, Enrichers, PendingEnrichments, git::GitEnricher};
+use newt_common::enrich::{
+    EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
+};
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
@@ -776,9 +778,11 @@ fn create_local_services(
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         enricher_client: Arc::new(newt_common::enrich::Local::new(Arc::new(
-            Enrichers::new(registry.clone()).with(Arc::new(GitEnricher::new(
-                preferences.load().environment.extra_path.clone(),
-            ))),
+            Enrichers::new(registry.clone())
+                .with(Arc::new(GitEnricher::new(
+                    preferences.load().environment.extra_path.clone(),
+                )))
+                .with(Arc::new(DuEnricher)),
         ))),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
         discovery_provider: Arc::new(newt_common::discovery::Local::new(

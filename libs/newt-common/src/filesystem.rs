@@ -69,6 +69,23 @@ pub struct Mode(pub u32);
 pub struct File {
     pub name: String,
     pub size: Option<u64>,
+    /// Bytes actually allocated on disk (`st_blocks`-based), when the
+    /// source filesystem reports it — sparse files (VM disk images,
+    /// Docker.raw, …) allocate far less than their apparent `size`.
+    /// The du enricher sums this when present so computed directory
+    /// sizes match `du`, not the apparent-size sum.
+    pub allocated_size: Option<u64>,
+    /// Filesystem identity (`st_dev`), when the source reports it.
+    /// Lets consumers detect mount boundaries — the du walker stops at
+    /// them (`du -x`), and a future `--one-file-system` delete guard
+    /// needs the same signal.
+    pub device_id: Option<u64>,
+    /// Inode number (`st_ino`); with `device_id`, identifies a file
+    /// across hardlinks.
+    pub inode: Option<u64>,
+    /// Hardlink count (`st_nlink`) — consumers only need the
+    /// `(device_id, inode)` dedup for entries with more than one link.
+    pub hard_links: Option<u64>,
     pub is_dir: bool,
     pub is_hidden: bool,
     pub is_symlink: bool,

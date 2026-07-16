@@ -346,6 +346,10 @@ impl MockVfs {
                 children.push(File {
                     name,
                     size,
+                    allocated_size: None,
+                    device_id: None,
+                    inode: None,
+                    hard_links: None,
                     is_dir,
                     is_hidden: false,
                     is_symlink,
@@ -544,6 +548,10 @@ impl Vfs for MockVfs {
             }) => Ok(File {
                 name,
                 size: Some(content.len() as u64),
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
                 is_dir: false,
                 is_hidden: false,
                 is_symlink: false,
@@ -560,6 +568,10 @@ impl Vfs for MockVfs {
             Some(MockEntry::Directory { mode, uid, gid }) => Ok(File {
                 name,
                 size: None,
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
                 is_dir: true,
                 is_hidden: false,
                 is_symlink: false,
@@ -576,6 +588,10 @@ impl Vfs for MockVfs {
             Some(MockEntry::Symlink { target }) => Ok(File {
                 name,
                 size: None,
+                allocated_size: None,
+                device_id: None,
+                inode: None,
+                hard_links: None,
                 is_dir: false,
                 is_hidden: false,
                 is_symlink: true,

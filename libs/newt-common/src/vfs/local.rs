@@ -380,6 +380,30 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
 /// satisfies that: it executes on whichever side physically holds the FS
 /// (the host locally, the agent in a remote session), each compiled for
 /// its own platform.
+/// `st_*` metadata carried on `File` for local entries: allocated
+/// bytes (non-directories only), device id, inode, and hardlink count.
+/// All `None` on platforms without them (Windows).
+fn stat_extras(
+    metadata: &std::fs::Metadata,
+    is_dir: bool,
+) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (
+            (!is_dir).then(|| metadata.blocks() * 512),
+            Some(metadata.dev()),
+            Some(metadata.ino()),
+            Some(metadata.nlink()),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (metadata, is_dir);
+        (None, None, None, None)
+    }
+}
+
 pub fn to_native(path: &Path) -> StdPathBuf {
     #[cfg(windows)]
     {
@@ -546,6 +570,10 @@ impl Vfs for LocalVfs {
                             File {
                                 name: "..".to_string(),
                                 size: None,
+                                allocated_size: None,
+                                device_id: None,
+                                inode: None,
+                                hard_links: None,
                                 is_dir: true,
                                 is_symlink: metadata.is_symlink(),
                                 symlink_target: None,
@@ -563,6 +591,10 @@ impl Vfs for LocalVfs {
                         Err(_) => File {
                             name: "..".to_string(),
                             size: None,
+                            allocated_size: None,
+                            device_id: None,
+                            inode: None,
+                            hard_links: None,
                             is_dir: true,
                             is_symlink: false,
                             symlink_target: None,
@@ -616,9 +648,15 @@ impl Vfs for LocalVfs {
 
                             let (mode_field, user_field, group_field) =
                                 unix_owner_bits(&metadata, &cache);
+                            let (allocated_size, device_id, inode, hard_links) =
+                                stat_extras(&metadata, is_dir);
                             File {
                                 name: name.clone(),
                                 size: (!is_dir).then_some(metadata.len()),
+                                allocated_size,
+                                device_id,
+                                inode,
+                                hard_links,
                                 is_dir,
                                 is_symlink: file_type.is_symlink(),
                                 symlink_target,
@@ -644,6 +682,10 @@ impl Vfs for LocalVfs {
                             File {
                                 name: name.clone(),
                                 size: None,
+                                allocated_size: None,
+                                device_id: None,
+                                inode: None,
+                                hard_links: None,
                                 is_dir: file_type.map(|t| t.is_dir()).unwrap_or(false),
                                 is_symlink: file_type.map(|t| t.is_symlink()).unwrap_or(false),
                                 symlink_target: None,
@@ -868,10 +910,15 @@ impl Vfs for LocalVfs {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
+            let (allocated_size, device_id, inode, hard_links) = stat_extras(&meta, is_dir);
             Ok(File {
                 is_hidden: is_hidden(&name, &meta),
                 name,
                 size: (!is_dir).then_some(meta.len()),
+                allocated_size,
+                device_id,
+                inode,
+                hard_links,
                 is_dir,
                 is_symlink,
                 symlink_target,

@@ -608,6 +608,10 @@ impl K8sVfs {
                 files.push(File {
                     name: plural.clone(),
                     size: None,
+                    allocated_size: None,
+                    device_id: None,
+                    inode: None,
+                    hard_links: None,
                     is_dir: true,
                     is_hidden: false,
                     is_symlink: true,
@@ -662,6 +666,10 @@ fn dotdot_entry() -> File {
     File {
         name: "..".to_string(),
         size: None,
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
         is_dir: true,
         is_hidden: false,
         is_symlink: false,
@@ -681,6 +689,10 @@ fn dir_entry(name: &str) -> File {
     File {
         name: name.to_string(),
         size: None,
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
         is_dir: true,
         is_hidden: false,
         is_symlink: false,
@@ -700,6 +712,10 @@ fn yaml_file_entry(name: &str) -> File {
     File {
         name: format!("{}.yaml", name),
         size: None,
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
         is_dir: false,
         is_hidden: false,
         is_symlink: false,

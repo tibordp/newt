@@ -350,6 +350,26 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "compute_size".into(),
+            name: "Calculate Size".into(),
+            short_name: Some("Size".into()),
+            category: "View".into(),
+            default_key: Some("mod+shift+enter".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
+            id: "compute_all_sizes".into(),
+            name: "Calculate All Sizes".into(),
+            short_name: None,
+            category: "View".into(),
+            // Canonical modifier order is meta,ctrl,shift,alt — an
+            // "alt+shift+…" spelling never matches a real keypress.
+            default_key: Some("shift+alt+enter".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "quick_connect".into(),
             name: "Quick Connect...".into(),
             short_name: Some("Connect".into()),

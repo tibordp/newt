@@ -642,6 +642,31 @@ pub async fn cmd_paste_from_clipboard(
 
 #[tauri::command]
 #[specta::specta]
+pub fn cmd_compute_size(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let keys = pane.effective_selection_keys();
+    if !keys.is_empty() {
+        tauri::async_runtime::spawn(pane.run_manual_enrichment(
+            vec!["du".to_string()],
+            newt_common::enrich::EnrichScope::Entries(keys),
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_compute_all_sizes(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    tauri::async_runtime::spawn(pane.run_manual_enrichment(
+        vec!["du".to_string()],
+        newt_common::enrich::EnrichScope::AllEntries,
+    ));
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cmd_refresh(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     pane.refresh(None, true).await?;

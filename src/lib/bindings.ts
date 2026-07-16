@@ -970,6 +970,22 @@ async cmdDeselectAll(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdComputeSize(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_compute_size", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdComputeAllSizes(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_compute_all_sizes", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdCopyToClipboard(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_copy_to_clipboard", { paneHandle }) };
@@ -1588,7 +1604,32 @@ export type EnvironmentPreferences = {
  * Non-existent entries are silently skipped.
  */
 extra_path: string[] }
-export type File = { name: string; size: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+export type File = { name: string; size: number | null; 
+/**
+ * Bytes actually allocated on disk (`st_blocks`-based), when the
+ * source filesystem reports it — sparse files (VM disk images,
+ * Docker.raw, …) allocate far less than their apparent `size`.
+ * The du enricher sums this when present so computed directory
+ * sizes match `du`, not the apparent-size sum.
+ */
+allocated_size: number | null; 
+/**
+ * Filesystem identity (`st_dev`), when the source reports it.
+ * Lets consumers detect mount boundaries — the du walker stops at
+ * them (`du -x`), and a future `--one-file-system` delete guard
+ * needs the same signal.
+ */
+device_id: number | null; 
+/**
+ * Inode number (`st_ino`); with `device_id`, identifies a file
+ * across hardlinks.
+ */
+inode: number | null; 
+/**
+ * Hardlink count (`st_nlink`) — consumers only need the
+ * `(device_id, inode)` dedup for entries with more than one link.
+ */
+hard_links: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
 /**
  * Raw link target as reported by the source FS. A string, not a path
  * type: it may be relative (`../x`) or otherwise un-normalizable, and

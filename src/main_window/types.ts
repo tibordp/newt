@@ -57,12 +57,18 @@ export type PaneStats = {
 export type GitEntryStatus =
   "ignored" | "untracked" | "added" | "renamed" | "modified" | "conflicted";
 
+/// Recursively computed directory size; `complete` is false while the
+/// walk is still running (or was cancelled) — rendered with a trailing
+/// `+`.
+export type RecursiveSize = { bytes: number; complete: boolean };
+
 /// Per-entry annotation from an enricher. Open taxonomy — the backend
 /// ships whatever its enrichers produce; the frontend interprets the
 /// kinds it knows. Externally tagged (serde default): the same types
 /// cross the host↔agent bincode boundary, which supports no other enum
 /// representation.
-export type Annotation = { git: GitEntryStatus };
+export type Annotation =
+  { git: GitEntryStatus } | { recursive_size: RecursiveSize };
 
 /// Per-location badge produced by an enricher (pane header / status
 /// bar). Externally tagged like `Annotation`.
@@ -74,7 +80,8 @@ export type GitBranch = {
   dirty: boolean;
 };
 
-export type ContextBadge = { git_branch: GitBranch };
+export type ContextBadge =
+  { git_branch: GitBranch } | { dir_total_size: RecursiveSize };
 
 /// Display projection of `File` produced by the host: same fields as
 /// `File`, with `source_display` pre-rendered through the source VFS's
@@ -87,7 +94,14 @@ export type FileView = File & {
 
 /// The git annotation's payload for a row, if any.
 export function gitStatus(row: FileView): GitEntryStatus | undefined {
-  return row.annotations?.find((a) => "git" in a)?.git;
+  const a = row.annotations?.find((a) => "git" in a);
+  return a && "git" in a ? a.git : undefined;
+}
+
+/// The du annotation's payload for a row, if any.
+export function recursiveSize(row: FileView): RecursiveSize | undefined {
+  const a = row.annotations?.find((a) => "recursive_size" in a);
+  return a && "recursive_size" in a ? a.recursive_size : undefined;
 }
 
 export type FileWindow = {

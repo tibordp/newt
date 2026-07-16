@@ -469,6 +469,10 @@ fn build_zip_index(
         let file = File {
             name: name.clone(),
             size: if is_dir { None } else { Some(size) },
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
             is_dir,
             is_hidden: name.starts_with('.'),
             is_symlink: false,

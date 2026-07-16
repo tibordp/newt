@@ -19,6 +19,7 @@
 //! stop all work. Enrichers therefore never detach tasks — child
 //! processes use `kill_on_drop`, concurrency uses in-future combinators.
 
+pub mod du;
 pub mod git;
 
 use std::collections::HashMap;
@@ -55,6 +56,13 @@ pub struct EnrichmentId(pub u64);
 #[serde(rename_all = "snake_case")]
 pub enum Annotation {
     Git(GitEntryStatus),
+    /// Recursively computed size of a directory entry. `complete` is
+    /// false while the walk is still running (or was cancelled) — the
+    /// frontend renders such values with a trailing `+`.
+    RecursiveSize {
+        bytes: u64,
+        complete: bool,
+    },
 }
 
 /// Git working-tree status of a listed entry. For directories this is a
@@ -91,6 +99,10 @@ pub enum ContextBadge {
         /// (repo-wide, not just the listed directory).
         dirty: bool,
     },
+    /// Total size of the listed directory, accumulating while a
+    /// "calculate all sizes" walk runs. Rendered in the pane status
+    /// bar, with a trailing `+` while `complete` is false.
+    DirTotalSize { bytes: u64, complete: bool },
 }
 
 /// Which entries a request is about. Automatic enrichment covers the
@@ -144,6 +156,12 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// streaming ones (du) call `maybe_flush` as they go.
 pub struct EnrichSink {
     enricher: &'static str,
+    /// Whether this run's first batch supersedes the enricher's previous
+    /// generation. True for automatic enrichers (a rerun replaces the
+    /// old results wholesale); false for manual ones, whose runs
+    /// accumulate within a visit (sizing one directory must not clear a
+    /// previously sized sibling).
+    reset_first: bool,
     tx: mpsc::Sender<EnrichmentEvent>,
     state: Mutex<SinkState>,
 }
@@ -156,9 +174,10 @@ struct SinkState {
 }
 
 impl EnrichSink {
-    fn new(enricher: &'static str, tx: mpsc::Sender<EnrichmentEvent>) -> Self {
+    fn new(enricher: &'static str, reset_first: bool, tx: mpsc::Sender<EnrichmentEvent>) -> Self {
         Self {
             enricher,
+            reset_first,
             tx,
             state: Mutex::new(SinkState {
                 entries: HashMap::new(),
@@ -199,13 +218,17 @@ impl EnrichSink {
         let _ = self.tx.send(EnrichmentEvent::Batch(batch)).await;
     }
 
-    /// Flush whatever is pending. Always sends at least one batch per
-    /// run so the `reset` semantics clear the previous generation even
-    /// when the run produced nothing (e.g. a repo that became clean).
+    /// Flush whatever is pending. A resetting run always sends at least
+    /// one batch so the `reset` semantics clear the previous generation
+    /// even when the run produced nothing (e.g. a repo that became
+    /// clean); an accumulating run with nothing pending sends nothing.
     async fn finish(&self) {
         let batch = {
             let mut state = self.state.lock();
-            if state.flushed_once && state.entries.is_empty() && state.badges.is_empty() {
+            if (state.flushed_once || !self.reset_first)
+                && state.entries.is_empty()
+                && state.badges.is_empty()
+            {
                 return;
             }
             self.take_batch(&mut state)
@@ -216,7 +239,7 @@ impl EnrichSink {
     fn take_batch(&self, state: &mut SinkState) -> EnrichmentBatch {
         let batch = EnrichmentBatch {
             enricher: self.enricher.to_string(),
-            reset: !state.flushed_once,
+            reset: self.reset_first && !state.flushed_once,
             entries: state.entries.drain().collect(),
             badges: std::mem::take(&mut state.badges),
         };
@@ -314,7 +337,7 @@ impl Enrichers {
                     activity: descriptor.activity().to_string(),
                 })
                 .await;
-            let sink = EnrichSink::new(descriptor.id(), tx.clone());
+            let sink = EnrichSink::new(descriptor.id(), descriptor.automatic(), tx.clone());
             if let Err(e) = enricher.enrich(&self.registry, &path, &scope, &sink).await {
                 log::debug!("enricher {} failed for {}: {}", descriptor.id(), path, e);
             }

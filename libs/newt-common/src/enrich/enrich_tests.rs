@@ -109,7 +109,7 @@ fn dir_statuses_subdir_prefix() {
 #[tokio::test]
 async fn sink_reset_and_empty_finish() {
     let (tx, mut rx) = mpsc::channel(16);
-    let sink = EnrichSink::new("test", tx);
+    let sink = EnrichSink::new("test", true, tx);
     // finish on a sink that never emitted still sends one reset batch,
     // so a rerun clears the previous generation.
     sink.finish().await;
@@ -138,7 +138,7 @@ async fn sink_reset_and_empty_finish() {
 #[tokio::test]
 async fn sink_badge_replaces_same_kind() {
     let (tx, mut rx) = mpsc::channel(16);
-    let sink = EnrichSink::new("test", tx);
+    let sink = EnrichSink::new("test", true, tx);
     let badge = |name: &str| ContextBadge::GitBranch {
         name: name.into(),
         detached: false,
@@ -175,14 +175,29 @@ fn enrichment_event_bincode_round_trip() {
         EnrichmentEvent::Batch(EnrichmentBatch {
             enricher: "git".into(),
             reset: true,
-            entries: vec![("a.txt".into(), Annotation::Git(GitEntryStatus::Modified))],
-            badges: vec![ContextBadge::GitBranch {
-                name: "main".into(),
-                detached: false,
-                ahead: 1,
-                behind: 2,
-                dirty: true,
-            }],
+            entries: vec![
+                ("a.txt".into(), Annotation::Git(GitEntryStatus::Modified)),
+                (
+                    "sub".into(),
+                    Annotation::RecursiveSize {
+                        bytes: 42,
+                        complete: false,
+                    },
+                ),
+            ],
+            badges: vec![
+                ContextBadge::GitBranch {
+                    name: "main".into(),
+                    detached: false,
+                    ahead: 1,
+                    behind: 2,
+                    dirty: true,
+                },
+                ContextBadge::DirTotalSize {
+                    bytes: 42,
+                    complete: true,
+                },
+            ],
         }),
         EnrichmentEvent::Finished {
             enricher: "git".into(),
@@ -232,13 +247,15 @@ async fn git(dir: &std::path::Path, args: &[&str]) {
     );
 }
 
-async fn collect_events(
+async fn collect_scoped_events(
     enrichers: &Enrichers,
     path: VfsPath,
+    ids: &[&str],
+    scope: EnrichScope,
 ) -> (Vec<(String, Annotation)>, Vec<ContextBadge>, Vec<String>) {
     let (tx, mut rx) = mpsc::channel(64);
     enrichers
-        .enrich(path, EnrichScope::AllEntries, vec!["git".to_string()], tx)
+        .enrich(path, scope, ids.iter().map(|s| s.to_string()).collect(), tx)
         .await
         .unwrap();
     let mut entries = Vec::new();
@@ -252,11 +269,25 @@ async fn collect_events(
             EnrichmentEvent::Finished { enricher } => lifecycle.push(format!("finish:{enricher}")),
             EnrichmentEvent::Batch(b) => {
                 entries.extend(b.entries);
-                badges.extend(b.badges);
+                // Later badge emits of the same kind supersede earlier
+                // ones (running totals), mirroring the host overlay.
+                for badge in b.badges {
+                    badges.retain(|existing: &ContextBadge| {
+                        std::mem::discriminant(existing) != std::mem::discriminant(&badge)
+                    });
+                    badges.push(badge);
+                }
             }
         }
     }
     (entries, badges, lifecycle)
+}
+
+async fn collect_events(
+    enrichers: &Enrichers,
+    path: VfsPath,
+) -> (Vec<(String, Annotation)>, Vec<ContextBadge>, Vec<String>) {
+    collect_scoped_events(enrichers, path, &["git"], EnrichScope::AllEntries).await
 }
 
 #[tokio::test]
@@ -290,10 +321,9 @@ async fn git_enricher_end_to_end() {
     let (entries, badges, lifecycle) = collect_events(&enrichers, root_path).await;
 
     let get = |name: &str| {
-        entries.iter().find_map(|(k, a)| {
-            (k == name).then(|| match a {
-                Annotation::Git(s) => *s,
-            })
+        entries.iter().find_map(|(k, a)| match a {
+            Annotation::Git(s) if k == name => Some(*s),
+            _ => None,
         })
     };
     assert_eq!(get("committed.txt"), Some(GitEntryStatus::Modified));
@@ -350,6 +380,136 @@ async fn git_enricher_end_to_end() {
         .await
         .unwrap();
     assert!(rx.recv().await.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Du enricher
+// ---------------------------------------------------------------------------
+
+/// Last emission per key wins (running totals re-emit the same key).
+fn final_sizes(entries: &[(String, Annotation)]) -> std::collections::HashMap<String, (u64, bool)> {
+    let mut map = std::collections::HashMap::new();
+    for (key, annotation) in entries {
+        if let Annotation::RecursiveSize { bytes, complete } = annotation {
+            map.insert(key.clone(), (*bytes, *complete));
+        }
+    }
+    map
+}
+
+/// What the walker should count for a file: allocated blocks where the
+/// platform reports them (matching `du`), apparent size elsewhere.
+fn disk_usage(path: &std::path::Path) -> u64 {
+    let meta = std::fs::metadata(path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.blocks() * 512
+    }
+    #[cfg(not(unix))]
+    {
+        meta.len()
+    }
+}
+
+#[tokio::test]
+async fn du_enricher_end_to_end() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+
+    std::fs::create_dir_all(dir.join("a/sub")).unwrap();
+    std::fs::write(dir.join("a/f1"), "abc").unwrap();
+    std::fs::write(dir.join("a/sub/f2"), "hello").unwrap();
+    std::fs::create_dir(dir.join("b")).unwrap();
+    std::fs::write(dir.join("b/f3"), "1234567").unwrap();
+    std::fs::write(dir.join("top.txt"), "0123456789a").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.join("a"), dir.join("link")).unwrap();
+    // Sparse file: apparent size 1 MiB, (nearly) nothing allocated —
+    // must be counted by allocation, not appearance.
+    std::fs::File::create(dir.join("a/sparse.bin"))
+        .unwrap()
+        .set_len(1 << 20)
+        .unwrap();
+    // Hardlink within the same sized entry: counted once.
+    std::fs::hard_link(dir.join("b/f3"), dir.join("b/f3_link")).unwrap();
+
+    let expected_a = disk_usage(&dir.join("a/f1"))
+        + disk_usage(&dir.join("a/sub/f2"))
+        + disk_usage(&dir.join("a/sparse.bin"));
+    #[cfg(unix)]
+    let expected_b = disk_usage(&dir.join("b/f3"));
+    #[cfg(not(unix))] // no nlink metadata on Windows — no dedup
+    let expected_b = 2 * disk_usage(&dir.join("b/f3"));
+    let expected_total = expected_a + expected_b + disk_usage(&dir.join("top.txt"));
+
+    let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+    let enrichers = Enrichers::new(registry.clone()).with(Arc::new(super::du::DuEnricher));
+    let root_path = VfsPath::new(VfsId::ROOT, local_path_from_native(&dir));
+
+    // Whole-listing run: every directory sized, badge totals the lot.
+    let (entries, badges, lifecycle) = collect_scoped_events(
+        &enrichers,
+        root_path.clone(),
+        &["du"],
+        EnrichScope::AllEntries,
+    )
+    .await;
+    let sizes = final_sizes(&entries);
+    assert_eq!(sizes.get("a"), Some(&(expected_a, true)));
+    assert_eq!(sizes.get("b"), Some(&(expected_b, true)));
+    // Symlinked directories are neither sized nor followed.
+    assert_eq!(sizes.get("link"), None);
+    assert_eq!(
+        badges,
+        vec![ContextBadge::DirTotalSize {
+            bytes: expected_total,
+            complete: true,
+        }]
+    );
+    assert_eq!(lifecycle, vec!["start:du", "finish:du"]);
+
+    // Scoped run: only the named entry, no directory-total badge.
+    let (entries, badges, _) = collect_scoped_events(
+        &enrichers,
+        root_path.clone(),
+        &["du"],
+        EnrichScope::Entries(vec!["a".to_string()]),
+    )
+    .await;
+    let sizes = final_sizes(&entries);
+    assert_eq!(sizes.get("a"), Some(&(expected_a, true)));
+    assert_eq!(sizes.get("b"), None);
+    assert!(badges.is_empty());
+
+    // Manual runs accumulate: no batch ever carries `reset`, so sizing
+    // one entry can't clear a previously sized sibling on the host.
+    let (tx, mut rx) = mpsc::channel(64);
+    enrichers
+        .enrich(
+            root_path,
+            EnrichScope::Entries(vec!["b".to_string()]),
+            vec!["du".to_string()],
+            tx,
+        )
+        .await
+        .unwrap();
+    while let Some(ev) = rx.recv().await {
+        if let EnrichmentEvent::Batch(b) = ev {
+            assert!(!b.reset, "manual enricher batches must not reset");
+        }
+    }
+}
+
+#[test]
+fn du_descriptor_registered() {
+    let descriptor = all_enricher_descriptors()
+        .find(|d| d.id() == "du")
+        .expect("du enricher descriptor not registered");
+    assert!(!descriptor.automatic());
+    // du walks through the Vfs trait, so it applies everywhere.
+    assert!(descriptor.applies_to_vfs(&crate::vfs::LOCAL_VFS_DESCRIPTOR));
+    assert!(descriptor.applies_to_vfs(&crate::vfs::SEARCH_VFS_DESCRIPTOR));
 }
 
 #[test]

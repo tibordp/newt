@@ -355,6 +355,10 @@ fn dotdot_entry() -> File {
     File {
         name: "..".to_string(),
         size: None,
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
         is_dir: true,
         is_hidden: false,
         is_symlink: false,

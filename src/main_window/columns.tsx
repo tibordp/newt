@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import iconMapping from "../assets/mapping.json";
-import { FileView, ColumnDef, Sorting, gitStatus } from "./types";
+import {
+  FileView,
+  ColumnDef,
+  Sorting,
+  gitStatus,
+  recursiveSize,
+} from "./types";
 import { modeString } from "./utils";
 import styles from "./Columns.module.scss";
 
@@ -144,15 +150,28 @@ export const allColumns: ColumnDef[] = [
         sortKey: "size",
       },
     ],
-    render: (info) => (
-      <>
-        {info.size != null
-          ? info.size.toLocaleString()
-          : info.is_dir
-            ? "DIR"
-            : "???"}
-      </>
-    ),
+    render: (info) => {
+      // Computed recursive size (du enricher) beats the entry's own
+      // size; still-growing / cancelled values get a trailing "+".
+      const du = recursiveSize(info);
+      if (du != null) {
+        return (
+          <span className={du.complete ? undefined : styles.partialValue}>
+            {du.bytes.toLocaleString()}
+            {!du.complete && "+"}
+          </span>
+        );
+      }
+      return (
+        <>
+          {info.size != null
+            ? info.size.toLocaleString()
+            : info.is_dir
+              ? "DIR"
+              : "???"}
+        </>
+      );
+    },
   },
   {
     align: "right",

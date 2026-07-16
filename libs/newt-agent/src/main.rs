@@ -11,7 +11,7 @@ use newt_common::{
         VfsRegistryManager,
     },
     askpass,
-    enrich::{Enrichers, git::GitEnricher},
+    enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
     filesystem::LocalShellService,
     hot_paths,
     operation::OperationContext,
@@ -297,8 +297,11 @@ async fn run_agent() -> Result<(), Error> {
     .with_progress_sink(progress_sink)
     .with_agent_resolver(resolver);
 
-    let enrichers =
-        Arc::new(Enrichers::new(registry.clone()).with(Arc::new(GitEnricher::new(Vec::new()))));
+    let enrichers = Arc::new(
+        Enrichers::new(registry.clone())
+            .with(Arc::new(GitEnricher::new(Vec::new())))
+            .with(Arc::new(DuEnricher)),
+    );
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
