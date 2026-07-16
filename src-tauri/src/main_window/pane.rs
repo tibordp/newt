@@ -1,6 +1,9 @@
 use log::debug;
 use log::info;
 use log::warn;
+use newt_common::enrich::{
+    Annotation, ContextBadge, EnrichScope, EnricherClient, EnrichmentBatch, EnrichmentEvent,
+};
 use newt_common::filesystem::File;
 use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
@@ -141,6 +144,17 @@ enum NavigationOutcome {
     NotLanded,
 }
 
+/// Signals from navigation/cancel entry points to the pane's
+/// `enrichment_loop`.
+enum EnrichSignal {
+    /// A listing landed (navigation or refresh) — (re)run the automatic
+    /// enrichers for `path`, superseding any run in flight.
+    Start { path: VfsPath },
+    /// Cancel the run in flight (Esc, navigate-away). Already-applied
+    /// annotations stay; only the computation stops.
+    Cancel,
+}
+
 pub struct Pane {
     fs: Arc<dyn Filesystem>,
     nav_changes_rx: tokio::sync::watch::Receiver<()>,
@@ -153,6 +167,10 @@ pub struct Pane {
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     cancellation_token: Mutex<Option<CancellationToken>>,
     vfs_info: Arc<dyn VfsInfo>,
+    enricher_client: Arc<dyn EnricherClient>,
+    enrich_tx: mpsc::UnboundedSender<EnrichSignal>,
+    /// Receiver half for `enrichment_loop`, taken once at spawn.
+    enrich_rx: Mutex<Option<mpsc::UnboundedReceiver<EnrichSignal>>>,
     history: Mutex<NavigationHistory>,
     /// When the user arrived at the currently-displayed path. Captured into
     /// each HistoryEntry pushed onto a stack so the overlay can group entries
@@ -162,6 +180,7 @@ pub struct Pane {
 }
 
 impl Pane {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         fs: Arc<dyn Filesystem>,
         path: VfsPath,
@@ -169,9 +188,11 @@ impl Pane {
         preferences: crate::preferences::PreferencesHandle,
         publisher: Arc<UpdatePublisher<MainWindowState>>,
         vfs_info: Arc<dyn VfsInfo>,
+        enricher_client: Arc<dyn EnricherClient>,
         event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
     ) -> Self {
         let (tx, rx) = tokio::sync::watch::channel(());
+        let (enrich_tx, enrich_rx) = mpsc::unbounded_channel();
 
         Self {
             fs,
@@ -211,6 +232,9 @@ impl Pane {
             cancellation_token: Mutex::new(None),
             event_tx,
             vfs_info,
+            enricher_client,
+            enrich_tx,
+            enrich_rx: Mutex::new(Some(enrich_rx)),
             history: Mutex::new(NavigationHistory::default()),
             current_arrived_at: Mutex::new(std::time::SystemTime::now()),
         }
@@ -241,6 +265,9 @@ impl Pane {
                 _ = prefs_rx.changed() => {
                     self.update_view_state();
                     let _ = self.publisher.publish();
+                    // Re-run automatic enrichers so preference toggles
+                    // (e.g. git status off) take effect immediately.
+                    let _ = self.enrich_tx.send(EnrichSignal::Start { path: vfs_path });
                     continue;
                 }
             };
@@ -447,6 +474,9 @@ impl Pane {
                             ws.set_filter(None);
                             ws.all_selected.clear();
                             ws.focused = None;
+                            // Annotations are anchored to the history
+                            // cursor — moving it drops them.
+                            ws.clear_enrichments();
                             self.update_display(&mut ws);
                             first_batch = false;
                         }
@@ -553,6 +583,7 @@ impl Pane {
                 ws.set_filter(None);
                 ws.all_selected.clear();
                 ws.focused = None;
+                ws.clear_enrichments();
             }
         }
 
@@ -579,6 +610,12 @@ impl Pane {
             }
         }
 
+        // The listing is in place (fresh navigation or refresh) — kick
+        // off the automatic enrichers for it.
+        let _ = self.enrich_tx.send(EnrichSignal::Start {
+            path: new_file_list.path().clone(),
+        });
+
         Ok(if landed {
             NavigationOutcome::Landed
         } else {
@@ -590,6 +627,111 @@ impl Pane {
         if let Some(token) = self.cancellation_token.lock().take() {
             token.cancel();
         }
+        let _ = self.enrich_tx.send(EnrichSignal::Cancel);
+    }
+
+    /// Drive automatic enrichment for this pane: waits for `Start`
+    /// signals (sent when a listing lands), runs the enricher client,
+    /// and applies streamed events to the view state. One run at a
+    /// time; a new signal supersedes the run in flight by dropping its
+    /// future (which cancels it locally, or via transport-level
+    /// `InvokeCancel` in remote sessions).
+    pub async fn enrichment_loop(self: Arc<Self>) {
+        let mut rx = self
+            .enrich_rx
+            .lock()
+            .take()
+            .expect("enrichment_loop started twice");
+        let mut pending: Option<VfsPath> = None;
+        loop {
+            let path = match pending.take() {
+                Some(p) => p,
+                None => match rx.recv().await {
+                    Some(EnrichSignal::Start { path }) => path,
+                    Some(EnrichSignal::Cancel) => continue,
+                    None => return,
+                },
+            };
+
+            let disabled = self.preferences.load().behavior.disabled_enrichers();
+            // A preference toggled off mid-visit: purge that enricher's
+            // leftovers — its run won't happen, so no reset batch will.
+            if !disabled.is_empty() {
+                self.view_state_mut().clear_enrichments_for(&disabled);
+                let _ = self.publisher.publish();
+            }
+
+            // Select enrichers host-side: static descriptor gate against
+            // the pane's VFS × preference gate. Nothing applicable →
+            // no request at all (no RPC round-trip on e.g. S3 panes).
+            let enrichers: Vec<String> = match self.vfs_info.descriptor(path.vfs_id) {
+                Some((vfs_descriptor, _)) => newt_common::enrich::all_enricher_descriptors()
+                    .filter(|d| {
+                        d.automatic()
+                            && d.applies_to_vfs(vfs_descriptor)
+                            && !disabled.iter().any(|id| id == d.id())
+                    })
+                    .map(|d| d.id().to_string())
+                    .collect(),
+                None => Vec::new(),
+            };
+            if enrichers.is_empty() {
+                continue;
+            }
+
+            let (tx, mut ev_rx) = mpsc::channel(16);
+            let fut = self
+                .enricher_client
+                .enrich(path, EnrichScope::AllEntries, enrichers, tx);
+            tokio::pin!(fut);
+            let mut fut_done = false;
+            let mut events_done = false;
+            while !(fut_done && events_done) {
+                tokio::select! {
+                    biased;
+                    sig = rx.recv() => {
+                        match sig {
+                            Some(EnrichSignal::Start { path }) => pending = Some(path),
+                            Some(EnrichSignal::Cancel) => {}
+                            None => {}
+                        }
+                        break;
+                    }
+                    ev = ev_rx.recv(), if !events_done => match ev {
+                        Some(ev) => self.apply_enrichment_event(ev),
+                        None => events_done = true,
+                    },
+                    res = &mut fut, if !fut_done => {
+                        if let Err(e) = res {
+                            debug!("enrichment failed: {}", e);
+                        }
+                        fut_done = true;
+                    }
+                }
+            }
+            // However the run ended, nothing is running anymore — a
+            // cancelled run never sent its Finished events, so drop any
+            // lingering activity labels.
+            if self.view_state_mut().clear_enrichment_activity() {
+                let _ = self.publisher.publish();
+            }
+        }
+    }
+
+    fn apply_enrichment_event(&self, event: EnrichmentEvent) {
+        {
+            let mut ws = self.view_state_mut();
+            match event {
+                EnrichmentEvent::Started { enricher, activity } => {
+                    ws.set_enrichment_activity(enricher, Some(activity));
+                }
+                EnrichmentEvent::Batch(batch) => ws.apply_enrichment_batch(batch),
+                EnrichmentEvent::Finished { enricher } => {
+                    ws.set_enrichment_activity(enricher, None);
+                }
+            }
+        }
+        let _ = self.publisher.publish();
     }
 
     pub fn view_state(&self) -> RwLockReadGuard<'_, PaneViewState> {
@@ -1213,6 +1355,10 @@ pub struct FileView {
     /// when `source` is set and the source VFS is still mounted. `None`
     /// for ordinary entries.
     pub source_display: Option<String>,
+    /// Annotations from the enrichment overlay, in stable per-enricher
+    /// order. Opaque to the pane; the frontend interprets the kinds it
+    /// knows (git status → row coloring).
+    pub annotations: Vec<Annotation>,
 }
 
 /// A windowed slice of the file list sent to the frontend.
@@ -1251,6 +1397,20 @@ pub struct PaneViewState {
     pub vfs_display_name: String,
     pub is_host_local: bool,
     pub breadcrumbs: Vec<Breadcrumb>,
+    /// Per-location badges from enrichers (branch indicator, …), in
+    /// stable per-enricher order.
+    pub context_badges: Vec<ContextBadge>,
+    /// Status-bar labels of enrichers currently running, keyed by
+    /// enricher id.
+    pub enrichment_activity: std::collections::BTreeMap<String, String>,
+
+    /// Enrichment overlay: enricher id → entry key → annotation.
+    /// Anchored to the history cursor — survives refresh, cleared on
+    /// navigation. Merged into `FileView` at window projection.
+    #[serde(skip)]
+    enrichments: std::collections::BTreeMap<String, HashMap<String, Annotation>>,
+    #[serde(skip)]
+    enrichment_badges: std::collections::BTreeMap<String, Vec<ContextBadge>>,
 
     /// Full sorted/filtered file list (not serialized — only the window is sent).
     #[serde(skip)]
@@ -1412,10 +1572,95 @@ impl PaneViewState {
             let (desc, meta) = info.descriptor(src.vfs_id)?;
             Some(desc.format_path(&parent.path, &meta))
         });
+        let annotations = self
+            .enrichments
+            .values()
+            .filter_map(|entries| entries.get(f.key()).cloned())
+            .collect();
         FileView {
             file: f.clone(),
             source_display,
+            annotations,
         }
+    }
+
+    /// Drop the whole enrichment overlay (annotations, badges, activity).
+    /// Called when the history cursor moves — annotations are anchored
+    /// to the current visit and never survive navigation.
+    pub fn clear_enrichments(&mut self) {
+        if self.enrichments.is_empty()
+            && self.enrichment_badges.is_empty()
+            && self.enrichment_activity.is_empty()
+        {
+            return;
+        }
+        self.enrichments.clear();
+        self.enrichment_badges.clear();
+        self.enrichment_activity.clear();
+        self.context_badges.clear();
+        self.file_generation += 1;
+        self.recompute_window();
+    }
+
+    /// Drop the overlay of specific enrichers (preference toggled off —
+    /// no run happens for them, so no reset batch would clear them).
+    fn clear_enrichments_for(&mut self, ids: &[String]) {
+        let mut changed = false;
+        for id in ids {
+            changed |= self.enrichments.remove(id).is_some();
+            changed |= self.enrichment_badges.remove(id).is_some();
+            self.enrichment_activity.remove(id);
+        }
+        if changed {
+            self.rebuild_context_badges();
+            self.file_generation += 1;
+            self.recompute_window();
+        }
+    }
+
+    fn apply_enrichment_batch(&mut self, batch: EnrichmentBatch) {
+        let annotations = self.enrichments.entry(batch.enricher.clone()).or_default();
+        if batch.reset {
+            annotations.clear();
+        }
+        annotations.extend(batch.entries);
+
+        let badges = self.enrichment_badges.entry(batch.enricher).or_default();
+        if batch.reset {
+            badges.clear();
+        }
+        for badge in batch.badges {
+            badges.retain(|b| std::mem::discriminant(b) != std::mem::discriminant(&badge));
+            badges.push(badge);
+        }
+        self.rebuild_context_badges();
+
+        self.file_generation += 1;
+        self.recompute_window();
+    }
+
+    fn rebuild_context_badges(&mut self) {
+        self.context_badges = self.enrichment_badges.values().flatten().cloned().collect();
+    }
+
+    fn set_enrichment_activity(&mut self, enricher: String, label: Option<String>) {
+        match label {
+            Some(label) => {
+                self.enrichment_activity.insert(enricher, label);
+            }
+            None => {
+                self.enrichment_activity.remove(&enricher);
+            }
+        }
+    }
+
+    /// Returns whether anything was cleared (i.e. a publish is due).
+    fn clear_enrichment_activity(&mut self) -> bool {
+        if self.enrichment_activity.is_empty() {
+            return false;
+        }
+        self.enrichment_activity.clear();
+        true
     }
 
     /// Projects all_selected onto the current window so only visible

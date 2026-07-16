@@ -20,6 +20,7 @@ import type { ModalData } from "../lib/bindings";
 import {
   FileView,
   ColumnDef,
+  ContextBadge,
   FilterMode,
   PaneState,
   DndFileInfo,
@@ -186,6 +187,15 @@ async function renderDragImage(files: DndFileInfo[]): Promise<number[]> {
   }
 }
 
+// Enricher annotations are tiny (0–2 entries) but structurally fresh on
+// every window projection, so the memo comparator compares by value.
+function annotationsEqual(
+  a: FileView["annotations"],
+  b: FileView["annotations"],
+) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
 type FileRowProps = {
   row: FileView;
   columns: ColumnDef[];
@@ -246,6 +256,7 @@ const FileRow = memo(
     prev.row.mode === next.row.mode &&
     prev.row.is_dir === next.row.is_dir &&
     prev.row.is_symlink === next.row.is_symlink &&
+    annotationsEqual(prev.row.annotations, next.row.annotations) &&
     prev.columns === next.columns &&
     prev.isFocused === next.isFocused &&
     prev.isSelected === next.isSelected &&
@@ -551,6 +562,36 @@ function highlightDropTarget(
   }
 }
 
+/// Branch indicator for the pane header, fed by the git enricher's
+/// context badge. Quiet by design: muted text, seti git glyph, a `*`
+/// suffix for uncommitted changes, ↑/↓ only when ahead/behind.
+function GitBranchBadge({ badge }: { badge: ContextBadge }) {
+  if (!("git_branch" in badge) || !badge.git_branch.name) return null;
+  const branch = badge.git_branch;
+  const git = iconDefs["git"];
+  const parts = [branch.name + (branch.dirty ? "*" : "")];
+  if (branch.ahead > 0) parts.push(`↑${branch.ahead}`);
+  if (branch.behind > 0) parts.push(`↓${branch.behind}`);
+  const title = [
+    branch.detached
+      ? `detached HEAD at ${branch.name}`
+      : `branch ${branch.name}`,
+    branch.dirty ? "uncommitted changes" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className={styles.gitBadge} title={title}>
+      {git && (
+        <span className={styles.gitBadgeIcon}>
+          {String.fromCodePoint(parseInt(git.fontCharacter, 16))}
+        </span>
+      )}
+      {parts.join(" ")}
+    </div>
+  );
+}
+
 /// Inline progress line for VFS background work (search walker, …).
 /// Pulls the well-known `extra.path` key out as a trailing path
 /// fragment (rendered through ellipsis-friendly CSS) and folds the
@@ -604,6 +645,8 @@ function PaneInner(
     stats,
     breadcrumbs,
     vfs_display_name,
+    context_badges,
+    enrichment_activity,
     modal,
     vfsProgress,
   } = props;
@@ -660,6 +703,20 @@ function PaneInner(
       if (timeout) clearTimeout(timeout);
     };
   }, [pending_path, loading]);
+
+  // Enrichment activity line, shown with a grace delay so sub-200ms runs
+  // (a typical git status) don't flash the status bar on every navigation.
+  const activityLabels = Object.values(enrichment_activity ?? {});
+  const hasActivity = activityLabels.length > 0;
+  const [showActivity, setShowActivity] = useState(false);
+  useEffect(() => {
+    if (!hasActivity) {
+      setShowActivity(false);
+      return;
+    }
+    const timeout = setTimeout(() => setShowActivity(true), 200);
+    return () => clearTimeout(timeout);
+  }, [hasActivity]);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -1530,6 +1587,9 @@ function PaneInner(
                 displayPath={props.display_path}
               />
             </div>
+            {(context_badges ?? []).map((badge, i) => (
+              <GitBranchBadge key={i} badge={badge} />
+            ))}
             {fs_stats?.available_bytes !== undefined && (
               <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
             )}
@@ -1664,6 +1724,12 @@ function PaneInner(
               )}
             {!showSpinner && !loading && partial && (
               <span className={styles.partial}> (partial)</span>
+            )}
+            {showActivity && hasActivity && (
+              <span className={styles.statusbarProgress}>
+                {" · "}
+                {activityLabels.join(" · ")}… (Esc cancels)
+              </span>
             )}
             {vfsProgress && (
               <span className={styles.statusbarProgress}>

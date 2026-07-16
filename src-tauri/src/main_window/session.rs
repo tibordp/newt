@@ -1,4 +1,7 @@
-use newt_common::api::{API_LIST_FILES_BATCH, API_OPERATION_PROGRESS, VfsRegistryManager};
+use newt_common::api::{
+    API_ENRICHMENT_EVENT, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS, VfsRegistryManager,
+};
+use newt_common::enrich::{EnricherClient, Enrichers, PendingEnrichments, git::GitEnricher};
 use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
@@ -608,6 +611,7 @@ struct HostDispatcher {
     operations: Operations,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     pending_streams: PendingStreams,
+    pending_enrichments: PendingEnrichments,
     preferences: crate::preferences::PreferencesHandle,
     /// Shared sink used to apply incoming VFS progress notifications
     /// from the agent into `MainWindowState.vfs_progress`. Same impl
@@ -688,6 +692,16 @@ impl newt_common::rpc::Dispatcher for HostDispatcher {
                 let _ = tx.send(file_list).await;
             }
             Ok(true)
+        } else if api == API_ENRICHMENT_EVENT {
+            let (id, event): (
+                newt_common::enrich::EnrichmentId,
+                newt_common::enrich::EnrichmentEvent,
+            ) = bincode::deserialize(&req[..]).unwrap();
+            let tx = self.pending_enrichments.lock().get(&id).cloned();
+            if let Some(tx) = tx {
+                let _ = tx.send(event).await;
+            }
+            Ok(true)
         } else {
             Ok(false)
         }
@@ -705,6 +719,7 @@ struct Services {
     terminal_client: Arc<dyn TerminalClient>,
     file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
+    enricher_client: Arc<dyn EnricherClient>,
     hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
     discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     initial_dir: VfsPath,
@@ -760,6 +775,11 @@ fn create_local_services(
         terminal_client: Arc::new(newt_common::terminal::Local::new()),
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
+        enricher_client: Arc::new(newt_common::enrich::Local::new(Arc::new(
+            Enrichers::new(registry.clone()).with(Arc::new(GitEnricher::new(
+                preferences.load().environment.extra_path.clone(),
+            ))),
+        ))),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
         discovery_provider: Arc::new(newt_common::discovery::Local::new(
             preferences.load().environment.extra_path.clone(),
@@ -772,7 +792,11 @@ fn create_local_services(
 }
 
 /// Build remote proxy services from a communicator.
-fn create_remote_services(communicator: Communicator, pending_streams: PendingStreams) -> Services {
+fn create_remote_services(
+    communicator: Communicator,
+    pending_streams: PendingStreams,
+    pending_enrichments: PendingEnrichments,
+) -> Services {
     Services {
         fs: Arc::new(newt_common::filesystem::Remote::new_with_streams(
             communicator.clone(),
@@ -783,6 +807,10 @@ fn create_remote_services(communicator: Communicator, pending_streams: PendingSt
         terminal_client: Arc::new(newt_common::terminal::Remote::new(communicator.clone())),
         file_reader: Arc::new(newt_common::file_reader::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
+        enricher_client: Arc::new(newt_common::enrich::Remote::new(
+            communicator.clone(),
+            pending_enrichments,
+        )),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator.clone())),
         discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator)),
         initial_dir: VfsPath::root(VfsId::ROOT),
@@ -805,11 +833,13 @@ fn create_rpc_services(
     use newt_common::rpc::DispatcherExt;
 
     let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
+    let pending_enrichments: PendingEnrichments = Arc::new(parking_lot::Mutex::new(HashMap::new()));
 
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
         publisher: publisher.clone(),
         pending_streams: pending_streams.clone(),
+        pending_enrichments: pending_enrichments.clone(),
         preferences: preferences.clone(),
         progress_sink,
     };
@@ -831,7 +861,8 @@ fn create_rpc_services(
     } else {
         Communicator::with_dispatcher_and_outbox(base, stream, outbox, inbox)
     };
-    let services = create_remote_services(communicator, pending_streams.clone());
+    let services =
+        create_remote_services(communicator, pending_streams.clone(), pending_enrichments);
     (services, pending_streams)
 }
 
@@ -1274,6 +1305,7 @@ pub(super) async fn connect(
         preferences.clone(),
         publisher.clone(),
         vfs_info.clone(),
+        services.enricher_client.clone(),
         Some(event_tx.clone()),
     ));
     state.panes.add(super::pane::Pane::new(
@@ -1283,6 +1315,7 @@ pub(super) async fn connect(
         preferences,
         publisher.clone(),
         vfs_info.clone(),
+        services.enricher_client.clone(),
         Some(event_tx.clone()),
     ));
 
@@ -1290,6 +1323,7 @@ pub(super) async fn connect(
     state.refresh(true).await?;
 
     for pane in state.panes.all() {
+        tauri::async_runtime::spawn(pane.clone().enrichment_loop());
         tauri::async_runtime::spawn(async move {
             pane.watch_changes().await;
         });

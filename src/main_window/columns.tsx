@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import iconMapping from "../assets/mapping.json";
-import { FileView, ColumnDef, Sorting } from "./types";
+import { FileView, ColumnDef, Sorting, gitStatus } from "./types";
 import { modeString } from "./utils";
 import styles from "./Columns.module.scss";
 
@@ -33,6 +33,7 @@ function FileName({
   displayName: string;
 }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
+  const git = gitStatus(info);
 
   const icon =
     fileNames[name] ||
@@ -72,7 +73,7 @@ function FileName({
     <div
       className={`${styles.filename} ${is_hidden ? "hidden-file" : ""} ${
         is_symlink ? "symlink" : ""
-      }`}
+      } ${git ? `git-${git}` : ""}`}
     >
       {iconElement}
       <div className={focused ? "filename-part focused" : "filename-part"}>

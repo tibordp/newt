@@ -45,12 +45,16 @@ Drag-out shipped (escalation at the window edge → native OS drag via the `drag
 
 (as an operation, not a VFS — packing shipped as Pack to Archive / Alt+F5; a dedicated extract operation with conflict handling remains, today unpacking means copying out of a mounted archive VFS)
 
+## Enrichers
+
+Subsystem + git enricher shipped (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`): symmetric `newt_common::enrich` (Enrichers registry beside the VfsRegistry, EnricherClient Local/Remote, `API_START_ENRICHMENT`/`API_ENRICHMENT_EVENT`, drop-based cancellation), pane overlay anchored to the history cursor (survives refresh, cleared on navigation), git status via shell-out (row colors, dir rollups, branch badge, `behavior.git_status` toggle). Remaining:
+- Du enricher (recursive directory sizes) — manual keybinds ("size entry under cursor" / "size all children"), streaming running totals into the size column, per-visit ephemeral (anchored to the history cursor like everything else, which dissolves the cache-invalidation problem), walk via `registry.list_files`.
+- Agent-VFS pane mounts aren't enriched (enrichment is session-level; the sub-agent's `--serve-vfs` mode has no enricher dispatcher). Needs per-VFS enricher routing, the way `Vfs` verbs remote, if it proves wanted.
+- Git status taxonomy nuances to revisit if they bite: deleted-only directories render as Modified rollups; copied (`C`) shows as Renamed; submodule status changes render as Modified.
+
 ## Bug fixes and strengthening
 
 - Auto-remount VFSes when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 - Persist column widths across sessions (today they only persist for the lifetime of the session)
+- `[archives]` and `[environment]` sections in settings.toml are silently ignored on load: `SettingsFile` only deserializes `appearance`/`behavior`/`hot_paths` tables and `merge_preferences` only merges those three, so the settings editor persists e.g. `archives.zstd_level` but a restart discards it. Extend both (or make the section list generic over the `AppPreferences` fields).
 - Implement `Vfs::revalidate` for archive VFSes (zip + tar). Trait is wired through to the navigation layer (called when a pane crosses into a VFS that advertises `VfsDescriptor::can_revalidate`); the archive impl should stat the origin file's mtime against the value captured at mount time and rebuild the central directory / entry index in place if it drifted, returning `Refreshed`. Mount identity (`VfsId`, `mount_meta`, `origin`) must be preserved so history entries remain valid. Don't forget to flip `can_revalidate` to true on the descriptors.
-
-## Compute dir sizes recursively (with caching)
-
-Cache invalidation is the hard problem — filesystem events don't bubble up from subdirectories reliably.

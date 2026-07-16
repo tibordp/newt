@@ -1466,7 +1466,14 @@ default_sort: DefaultSort;
  * session). When the cap is reached, the oldest entries roll out as
  * new ones are pushed.
  */
-history_retention: number }
+history_retention: number; 
+/**
+ * Show git status in file listings: per-row colors for
+ * modified/untracked/ignored entries and a branch badge in the pane
+ * header. Runs `git status` in the listed directory's repository
+ * (on the remote host in remote sessions).
+ */
+git_status: boolean }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */

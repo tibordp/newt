@@ -22,6 +22,11 @@
   --_red-500: #f66151;
   --_red-600: #f66151;
 
+  // Git status (VSCode-ish decoration colors)
+  --_git-modified: #e2c08d;
+  --_git-added: #73c991;
+  --_git-conflicted: #e4676b;
+
   // Hover lightens in dark, matching the blue ramp's direction
   --_destructive-500: #c01c28;
   --_destructive-600: #d0242f;

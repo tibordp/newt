@@ -156,6 +156,25 @@ pub struct BehaviorPreferences {
     /// new ones are pushed.
     #[schemars(title = "History Retention", range(min = 0, max = 100000))]
     pub history_retention: u32,
+    /// Show git status in file listings: per-row colors for
+    /// modified/untracked/ignored entries and a branch badge in the pane
+    /// header. Runs `git status` in the listed directory's repository
+    /// (on the remote host in remote sessions).
+    #[schemars(title = "Git Status")]
+    pub git_status: bool,
+}
+
+impl BehaviorPreferences {
+    /// Enricher ids gated off by preferences. The pane's enrichment
+    /// loop is generic over enrichers; the preference↔id mapping lives
+    /// here with the user-facing toggles.
+    pub fn disabled_enrichers(&self) -> Vec<String> {
+        let mut disabled = Vec::new();
+        if !self.git_status {
+            disabled.push("git".to_string());
+        }
+        disabled
+    }
 }
 
 impl Default for BehaviorPreferences {
@@ -169,6 +188,7 @@ impl Default for BehaviorPreferences {
             expose_local_fs: false,
             default_sort: DefaultSort::default(),
             history_retention: 200,
+            git_status: true,
         }
     }
 }

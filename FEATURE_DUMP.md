@@ -62,6 +62,7 @@ Each pane is an independent file browser with its own path, selection, filter, s
   - S3: `s3://bucket/prefix/key`
   - SFTP: `sftp://hostname/path`
   - Archives: origin path + inner path, e.g., `/home/user/file.tar.gz/dir/subdir`
+- **Git branch badge**: When the pane's directory is inside a git repository, a quiet muted-text badge appears between the breadcrumbs and the free-space indicator: seti git glyph + branch name (short commit id when detached), a `*` suffix when the repo has uncommitted changes, and `↑N`/`↓M` ahead/behind counts when an upstream exists. Produced by the git enricher (see "Enrichers" below).
 - **Free space indicator**: Shows available disk space (e.g., "123.4 GB free") when the filesystem reports stats. Only visible for VFS types that support `fs_stats` (local filesystem).
 
 The whole header can be hidden via the `appearance.show_pane_header` preference (default: on). When hidden, the VFS selector trigger stays mounted in an off-screen anchor so its keyboard shortcut still opens the dropdown anchored to the top of the pane.
@@ -116,6 +117,7 @@ Click a column header to sort ascending by that key; click the same header again
 - Focused (cursor) file: different highlight from selection.
 - Hidden files: dimmed styling. Hidden-ness is platform-native — the leading-`.` convention on Unix, the filesystem `HIDDEN`/`SYSTEM` attributes on Windows.
 - Symlinks: special styling (CSS class).
+- Git status: filename color per working-tree status (VSCode-style palette, theme-aware) — modified/deleted-under = amber, untracked/added/renamed = green, conflicted = red, ignored = dimmed muted. Directories carry rollups of everything beneath them. See "Enrichers" below.
 - `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected.
 
 **Status bar** (bottom of each pane) — content changes dynamically:
@@ -136,6 +138,18 @@ Large directories are loaded incrementally via streaming:
 - Intermediate batches update the visible file list and statistics in real time — the user can browse and interact while loading continues.
 - Navigation to a new directory auto-cancels any in-progress load for the same pane.
 - A 200ms grace period suppresses the loading spinner to avoid flicker on fast directories.
+
+### Enrichers
+
+Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`). An enricher computes extra per-entry information (`Annotation`s keyed by entry key) and per-location `ContextBadge`s, streamed into a pane-side overlay that is merged into rows at window projection time. The pane layer is fully generic — annotations are opaque to it (`FileView.annotations`); only the frontend interprets the kinds it knows how to render, and the preference↔enricher-id gating lives with the toggles in the preferences schema (`BehaviorPreferences::disabled_enrichers`).
+
+**Lifecycle — anchored to the history cursor**: automatic enrichers start when a navigation lands and restart on every refresh (recompute-per-refresh replaces cache invalidation); annotations survive refreshes (re-keying onto surviving rows) but are cleared completely by any navigation. Back/forward does not resurrect them. A rerun supersedes the previous generation wholesale (first batch carries a `reset` flag), so entries that stopped matching (e.g. a committed file) don't linger. Esc on a loaded pane and navigating away both cancel the run in flight reliably; already-applied annotations stay.
+
+**In-flight visibility**: while an enricher runs, the pane status bar shows its activity label ("git status… (Esc cancels)"), with a 200ms appearance delay so fast runs don't flash it.
+
+**Architecture**: symmetric across the host↔agent boundary on the operations template — an `Enrichers` registry (`newt_common::enrich`) lives next to the `VfsRegistry` (host-side in local sessions, agent-side in remote ones), fronted by an `EnricherClient` with Local/Remote impls. Static, inventory-collected `EnricherDescriptor`s (the `VfsDescriptor` analogue: id, activity label, automatic, `applies_to_vfs`) are linked by both sides, so the host selects which enrichers to run for a pane (descriptor gate against the pane's VFS × preference gate) and the request names them explicitly — an empty selection sends no request at all, so S3/search/archive/agent-mount panes cost nothing. Data-dependent applicability (is this a repo?) lives inside the enricher; a run that finds nothing still sends an empty reset batch, clearing stale annotations. The remote path streams events via `Notify(API_ENRICHMENT_EVENT)` correlated by `EnrichmentId`; cancellation is by dropping the request future (transport-level `InvokeCancel` aborts the agent-side run). Producer-side batching at 100ms.
+
+**Git enricher** (the first; recursive directory sizes planned next): shells out to the `git` binary where the files live — the remote host's git in remote sessions; no gitoxide/libgit2 dependency. A cheap `.git` walk-up (directory or file, covering worktrees) guards the spawn, so non-repo directories never pay for a git process (their run just emits the empty reset batch). One `git --no-optional-locks status --porcelain=v2 -z --branch --ignored=matching` run at the repo root yields branch/ahead-behind/dirty for the badge and repo-wide per-file statuses for row coloring, with directory rollups (precedence: conflicted > modified > renamed > added > untracked; ignored never rolls up). `--no-optional-locks` keeps status from writing `.git/index` and re-triggering the pane watcher. Toggled by `behavior.git_status` (default on); toggling takes effect immediately (preference changes re-run automatic enrichers).
 
 ### Keyboard Navigation
 
@@ -1306,6 +1320,7 @@ quick_search = true         # Use prefix quick-search; when false, typing opens 
 expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
 default_sort = { key = "name", ascending = true }
 history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
+git_status = true           # Git enricher: per-row status colors + branch badge
 
 [archives]
 default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "tar", "tar_gz", "tar_xz", "tar_zst"

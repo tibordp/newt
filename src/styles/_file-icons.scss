@@ -28,6 +28,31 @@
   opacity: 0.7;
 }
 
+// Git status row decorations (classes stamped by the FileName renderer
+// from the git enricher's per-entry status). Untracked/added/renamed
+// share the "new" green; ignored entries dim like hidden files.
+.git-modified .filename-part {
+  color: var(--color-git-modified);
+}
+
+.git-untracked .filename-part,
+.git-added .filename-part,
+.git-renamed .filename-part {
+  color: var(--color-git-added);
+}
+
+.git-conflicted .filename-part {
+  color: var(--color-git-conflicted);
+}
+
+.git-ignored {
+  opacity: 0.7;
+
+  .filename-part {
+    color: var(--color-fg-muted);
+  }
+}
+
 .symlink {
   .file-icon::after {
     content: "";

@@ -168,6 +168,21 @@
   color: var(--color-fg-muted);
 }
 
+.gitBadge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+}
+
+.gitBadgeIcon {
+  font-family: "seti";
+  font-size: 130%;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+}
+
 .pathBreadcrumb {
   color: var(--color-fg);
   text-decoration: none;

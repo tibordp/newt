@@ -53,6 +53,12 @@ pub const API_VFS_PROGRESS: Api = Api(402);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
+// Enrichers — long-lived streaming invoke; partial results ride
+// API_ENRICHMENT_EVENT notifications correlated by EnrichmentId, and
+// cancellation is transport-level (drop the invoke → InvokeCancel).
+pub const API_START_ENRICHMENT: Api = Api(700);
+pub const API_ENRICHMENT_EVENT: Api = Api(701);
+
 // Connect-dialog discovery — runs on the session owner, so pane-scoped
 // agent mounts list the targets they would actually reach.
 pub const API_DISCOVER_SSH_HOSTS: Api = Api(510);
@@ -467,6 +473,59 @@ impl Dispatcher for OperationDispatcher {
                 }
 
                 let ret: Result<(), Error> = Ok(());
+                Ok(Some(encode(&ret)?.into()))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
+pub struct EnricherDispatcher {
+    enrichers: Arc<crate::enrich::Enrichers>,
+    outbox: Outbox,
+}
+
+impl EnricherDispatcher {
+    pub fn new(outbox: Outbox, enrichers: Arc<crate::enrich::Enrichers>) -> Self {
+        Self { enrichers, outbox }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for EnricherDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        match api {
+            API_START_ENRICHMENT => {
+                let (id, path, scope, enrichers): (
+                    crate::enrich::EnrichmentId,
+                    VfsPath,
+                    crate::enrich::EnrichScope,
+                    Vec<String>,
+                ) = decode(&req[..])?;
+
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::enrich::EnrichmentEvent>(16);
+                let outbox = self.outbox.clone();
+                let forwarder = tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        if let Some(bytes) = try_encode(&(id, event)) {
+                            let _ = outbox
+                                .send(Message::Notify(API_ENRICHMENT_EVENT, bytes.into()))
+                                .await;
+                        }
+                    }
+                });
+
+                // Runs inline so a transport-level InvokeCancel (the host
+                // dropped the request) aborts the enrichment itself.
+                let ret = self.enrichers.enrich(path, scope, enrichers, tx).await;
+
+                // Drain all event notifications before the response.
+                let _ = forwarder.await;
+
                 Ok(Some(encode(&ret)?.into()))
             }
             _ => Ok(None),

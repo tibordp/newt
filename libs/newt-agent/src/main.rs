@@ -5,11 +5,13 @@ use newt_common::{
     Error,
     agent_resolver::AgentResolver,
     api::{
-        FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
-        VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
+        EnricherDispatcher, FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher,
+        OperationDispatcher, PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher,
+        TerminalDispatcher, VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher,
+        VfsRegistryManager,
     },
     askpass,
+    enrich::{Enrichers, git::GitEnricher},
     filesystem::LocalShellService,
     hot_paths,
     operation::OperationContext,
@@ -295,8 +297,12 @@ async fn run_agent() -> Result<(), Error> {
     .with_progress_sink(progress_sink)
     .with_agent_resolver(resolver);
 
+    let enrichers =
+        Arc::new(Enrichers::new(registry.clone()).with(Arc::new(GitEnricher::new(Vec::new()))));
+
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
+        .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
         .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
         .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(
             registry.clone(),

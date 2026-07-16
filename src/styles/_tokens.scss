@@ -33,6 +33,11 @@
   --color-success: var(--_green-500);
   --color-error: var(--_red-500);
 
+  // Git status decorations (file rows, branch badge)
+  --color-git-modified: var(--_git-modified);
+  --color-git-added: var(--_git-added);
+  --color-git-conflicted: var(--_git-conflicted);
+
   // Destructive actions (filled buttons)
   --color-destructive: var(--_destructive-500);
   --color-destructive-hover: var(--_destructive-600);

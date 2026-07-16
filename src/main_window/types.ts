@@ -52,12 +52,43 @@ export type PaneStats = {
   total_count?: number;
 };
 
+/// Git working-tree status of an entry (directories carry rollups of
+/// everything beneath them).
+export type GitEntryStatus =
+  "ignored" | "untracked" | "added" | "renamed" | "modified" | "conflicted";
+
+/// Per-entry annotation from an enricher. Open taxonomy — the backend
+/// ships whatever its enrichers produce; the frontend interprets the
+/// kinds it knows. Externally tagged (serde default): the same types
+/// cross the host↔agent bincode boundary, which supports no other enum
+/// representation.
+export type Annotation = { git: GitEntryStatus };
+
+/// Per-location badge produced by an enricher (pane header / status
+/// bar). Externally tagged like `Annotation`.
+export type GitBranch = {
+  name: string;
+  detached: boolean;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
+};
+
+export type ContextBadge = { git_branch: GitBranch };
+
 /// Display projection of `File` produced by the host: same fields as
 /// `File`, with `source_display` pre-rendered through the source VFS's
-/// descriptor for synthetic-VFS entries (search results, …).
+/// descriptor for synthetic-VFS entries (search results, …) and
+/// `annotations` merged in from the enrichment overlay.
 export type FileView = File & {
   source_display?: string;
+  annotations: Annotation[];
 };
+
+/// The git annotation's payload for a row, if any.
+export function gitStatus(row: FileView): GitEntryStatus | undefined {
+  return row.annotations?.find((a) => "git" in a)?.git;
+}
 
 export type FileWindow = {
   items: FileView[];
@@ -84,6 +115,9 @@ export type PaneState = {
   vfs_display_name: string;
   is_host_local: boolean;
   breadcrumbs: Breadcrumb[];
+  context_badges: ContextBadge[];
+  /// Enricher id → status-bar label, present while that enricher runs.
+  enrichment_activity: Record<string, string>;
 };
 
 export type DisplayOptions = {
