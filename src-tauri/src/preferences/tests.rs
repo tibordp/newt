@@ -571,3 +571,46 @@ when = "pane_focused"
         )]
     );
 }
+
+// ---------------------------------------------------------------------------
+// merge_preferences
+// ---------------------------------------------------------------------------
+
+/// Regression: `[archives]` and `[environment]` used to be silently
+/// dropped on load — `SettingsFile` didn't deserialize them and
+/// `merge_preferences` didn't merge them, so the settings editor
+/// persisted values a restart discarded. Every `AppPreferences` group
+/// must round-trip through a settings file.
+#[test]
+fn merge_preferences_covers_every_group() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[appearance]
+folders_first = false
+
+[behavior]
+git_status = false
+
+[archives]
+zstd_level = 9
+
+[hot_paths]
+mounts = false
+
+[environment]
+extra_path = ["/opt/custom/bin"]
+"#,
+    )
+    .unwrap();
+
+    let merged = PreferencesManager::merge_preferences(&AppPreferences::default(), &file);
+    assert!(!merged.appearance.folders_first);
+    assert!(!merged.behavior.git_status);
+    assert_eq!(merged.archives.zstd_level, 9);
+    assert!(!merged.hot_paths.mounts);
+    assert_eq!(merged.environment.extra_path, vec!["/opt/custom/bin"]);
+
+    // Unset keys keep their defaults.
+    assert_eq!(merged.behavior.history_retention, 200);
+    assert_eq!(merged.archives.zip_level, 6);
+}

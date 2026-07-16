@@ -812,13 +812,8 @@ impl PreferencesManager {
 
         // Determine which keys the user has explicitly set in their settings file
         let modified_keys = {
-            let sections: &[(&str, &toml::Value)] = &[
-                ("appearance", &user_file.appearance),
-                ("behavior", &user_file.behavior),
-                ("hot_paths", &user_file.hot_paths),
-            ];
             let mut keys = Vec::new();
-            for (section, value) in sections {
+            for (section, value) in user_file.sections() {
                 if let toml::Value::Table(table) = value {
                     for key in table.keys() {
                         keys.push(format!("{}.{}", section, key));
@@ -850,28 +845,16 @@ impl PreferencesManager {
         let mut base_table =
             toml::Value::try_from(base).unwrap_or(toml::Value::Table(Default::default()));
 
-        // Merge each category's raw TOML table on top of the serialized base
+        // Merge each section's raw TOML table on top of the serialized base
         if let toml::Value::Table(ref mut root) = base_table {
-            if let toml::Value::Table(ref t) = file.appearance {
-                deep_merge_table(
-                    root.entry("appearance")
-                        .or_insert(toml::Value::Table(Default::default())),
-                    &toml::Value::Table(t.clone()),
-                );
-            }
-            if let toml::Value::Table(ref t) = file.behavior {
-                deep_merge_table(
-                    root.entry("behavior")
-                        .or_insert(toml::Value::Table(Default::default())),
-                    &toml::Value::Table(t.clone()),
-                );
-            }
-            if let toml::Value::Table(ref t) = file.hot_paths {
-                deep_merge_table(
-                    root.entry("hot_paths")
-                        .or_insert(toml::Value::Table(Default::default())),
-                    &toml::Value::Table(t.clone()),
-                );
+            for (section, value) in file.sections() {
+                if let toml::Value::Table(t) = value {
+                    deep_merge_table(
+                        root.entry(section)
+                            .or_insert(toml::Value::Table(Default::default())),
+                        &toml::Value::Table(t.clone()),
+                    );
+                }
             }
         }
 

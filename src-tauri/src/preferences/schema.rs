@@ -333,7 +333,13 @@ pub struct SettingsFile {
     pub behavior: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
+    pub archives: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub hot_paths: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
+    pub environment: toml::Value,
 
     /// Keybinding override entries.
     #[serde(default, rename = "bind")]
@@ -348,13 +354,32 @@ pub struct SettingsFile {
     pub commands: Vec<UserCommandEntry>,
 }
 
+impl SettingsFile {
+    /// Every settings section as `(name, raw TOML table)`. The single
+    /// source of truth for section-wise processing (merging onto
+    /// defaults, modified-key detection) — a new `AppPreferences` group
+    /// must be added here (and as a field above) or its TOML section is
+    /// silently ignored on load.
+    pub fn sections(&self) -> [(&'static str, &toml::Value); 5] {
+        [
+            ("appearance", &self.appearance),
+            ("behavior", &self.behavior),
+            ("archives", &self.archives),
+            ("hot_paths", &self.hot_paths),
+            ("environment", &self.environment),
+        ]
+    }
+}
+
 impl Default for SettingsFile {
     fn default() -> Self {
         Self {
             profile: None,
             appearance: default_toml_table(),
             behavior: default_toml_table(),
+            archives: default_toml_table(),
             hot_paths: default_toml_table(),
+            environment: default_toml_table(),
             bindings: Vec::new(),
             bookmarks: Vec::new(),
             commands: Vec::new(),
