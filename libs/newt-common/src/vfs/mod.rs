@@ -212,6 +212,12 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     // --- Delete ---
     fn can_remove(&self) -> bool;
     fn can_remove_tree(&self) -> bool;
+    /// Whether `Vfs::trash_item` is available (OS / freedesktop trash).
+    /// Only real local filesystems — on whichever machine owns them —
+    /// qualify. Impls overriding `trash_item` must override this too.
+    fn can_trash(&self) -> bool {
+        false
+    }
 
     // --- Capabilities ---
     fn has_symlinks(&self) -> bool;
@@ -639,6 +645,12 @@ pub trait Vfs: Send + Sync {
     }
 
     async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
+        let _ = path;
+        Err(Error::not_supported())
+    }
+
+    /// Move a file or an entire directory tree to the OS trash.
+    async fn trash_item(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
         Err(Error::not_supported())
     }

@@ -68,6 +68,7 @@ pub struct MockVfsConfig {
     pub can_set_metadata: bool,
     pub can_remove: bool,
     pub can_remove_tree: bool,
+    pub can_trash: bool,
     pub has_symlinks: bool,
     pub can_rename: bool,
     pub can_copy_within: bool,
@@ -86,6 +87,7 @@ impl Default for MockVfsConfig {
             can_set_metadata: true,
             can_remove: true,
             can_remove_tree: true,
+            can_trash: true,
             has_symlinks: true,
             can_rename: true,
             can_copy_within: false,
@@ -148,6 +150,9 @@ impl VfsDescriptor for MockVfsDescriptor {
     fn can_remove_tree(&self) -> bool {
         self.config.can_remove_tree
     }
+    fn can_trash(&self) -> bool {
+        self.config.can_trash
+    }
     fn has_symlinks(&self) -> bool {
         self.config.has_symlinks
     }
@@ -190,6 +195,7 @@ pub struct MockVfs {
     failures: Mutex<Vec<FailureSpec>>,
     descriptor: &'static dyn VfsDescriptor,
     strict_range_reads: bool,
+    trashed: Mutex<Vec<String>>,
 }
 
 impl MockVfs {
@@ -241,6 +247,15 @@ impl MockVfs {
             Some(MockEntry::File { content, .. }) => content.clone(),
             other => panic!("read_content: {:?} is {:?}, not a file", key, other),
         }
+    }
+
+    /// Paths that were moved to the (simulated) trash, in call order.
+    pub fn trashed_paths(&self) -> Vec<PathBuf> {
+        self.trashed
+            .lock()
+            .iter()
+            .map(|p| PathBuf::from_wire_str(p))
+            .collect()
     }
 
     /// Check if path exists.
@@ -721,6 +736,29 @@ impl Vfs for MockVfs {
         Ok(())
     }
 
+    async fn trash_item(&self, path: &Path) -> Result<(), crate::Error> {
+        if let Some(e) = self.check_failure(path, "trash_item") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        let to_remove: Vec<String> = entries
+            .keys()
+            .filter(|k| PathBuf::from_wire_str(k).starts_with(path))
+            .cloned()
+            .collect();
+        if to_remove.is_empty() {
+            return Err(crate::Error {
+                kind: crate::ErrorKind::NotFound,
+                message: format!("not found: {}", path),
+            });
+        }
+        for k in to_remove {
+            entries.remove(&k);
+        }
+        self.trashed.lock().push(path.as_wire_str().to_string());
+        Ok(())
+    }
+
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, crate::Error> {
         match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { mode, uid, gid, .. })
@@ -1058,6 +1096,7 @@ impl MockVfsBuilder {
             failures: Mutex::new(self.failures),
             descriptor,
             strict_range_reads,
+            trashed: Mutex::new(Vec::new()),
         })
     }
 }

@@ -683,15 +683,16 @@ impl PreferencesManager {
         }
 
         // Extra default aliases (commands with multiple default keys)
-        bindings.push((
-            "shift+delete".into(),
-            "delete_selected".into(),
-            Some("pane_focused".into()),
-        ));
         if cfg!(target_os = "macos") {
+            // Finder conventions: ⌘⌫ = Move to Trash, ⌥⌘⌫ = Delete Immediately.
             bindings.push((
                 "meta+backspace".into(),
                 "delete_selected".into(),
+                Some("pane_focused".into()),
+            ));
+            bindings.push((
+                "alt+meta+backspace".into(),
+                "delete_permanent".into(),
                 Some("pane_focused".into()),
             ));
         }

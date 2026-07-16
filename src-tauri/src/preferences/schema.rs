@@ -127,6 +127,11 @@ pub struct BehaviorPreferences {
     /// Ask for confirmation before deleting files.
     #[schemars(title = "Confirm Delete")]
     pub confirm_delete: bool,
+    /// Move deleted files to the system Trash instead of deleting them
+    /// permanently. Applies to filesystems that have a trash (local files,
+    /// remote hosts, agent mounts); Delete Permanently always bypasses it.
+    #[schemars(title = "Delete to Trash")]
+    pub delete_to_trash: bool,
     /// Keep terminal tab open after the shell process exits.
     #[schemars(title = "Keep Terminal Open After Exit")]
     pub keep_terminal_open: bool,
@@ -157,6 +162,7 @@ impl Default for BehaviorPreferences {
     fn default() -> Self {
         Self {
             confirm_delete: true,
+            delete_to_trash: true,
             keep_terminal_open: true,
             keep_finished_operations: false,
             quick_search: true,

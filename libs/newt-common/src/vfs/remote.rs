@@ -70,6 +70,9 @@ impl VfsDescriptor for RemoteVfsDescriptor {
     fn can_remove_tree(&self) -> bool {
         false
     }
+    fn can_trash(&self) -> bool {
+        true
+    }
     fn has_symlinks(&self) -> bool {
         true
     }
@@ -206,8 +209,8 @@ use crate::api::{
     API_HOST_VFS_LIST_FILES, API_HOST_VFS_OPEN_READ_ASYNC, API_HOST_VFS_OVERWRITE_ASYNC_BEGIN,
     API_HOST_VFS_OVERWRITE_ASYNC_FINISH, API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_RANGE,
     API_HOST_VFS_REMOVE_DIR, API_HOST_VFS_REMOVE_FILE, API_HOST_VFS_REMOVE_TREE,
-    API_HOST_VFS_RENAME, API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRUNCATE,
-    API_HOST_VFS_WRITE_CHUNK,
+    API_HOST_VFS_RENAME, API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRASH_ITEM,
+    API_HOST_VFS_TRUNCATE, API_HOST_VFS_WRITE_CHUNK,
 };
 
 #[async_trait::async_trait]
@@ -385,6 +388,14 @@ impl Vfs for RemoteVfs {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(API_HOST_VFS_REMOVE_TREE, &path.to_owned())
+            .await?;
+        ret
+    }
+
+    async fn trash_item(&self, path: &Path) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(API_HOST_VFS_TRASH_ITEM, &path.to_owned())
             .await?;
         ret
     }

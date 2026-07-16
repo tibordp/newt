@@ -81,6 +81,14 @@ export function FileContextMenuContent({
           Delete
           <Shortcut commands={commands} id="delete_selected" />
         </CM.Item>
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdDeletePermanent(paneHandle))}
+        >
+          Delete Permanently
+          <Shortcut commands={commands} id="delete_permanent" />
+        </CM.Item>
 
         <CM.Separator className={styles.separator} />
 

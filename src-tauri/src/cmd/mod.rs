@@ -162,7 +162,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             askpass_respond,
             ping,
             close_modal,
-            operations::confirm_action,
+            operations::confirm_delete,
             dialog::dialog,
             window::close_window,
             window::destroy_window,
@@ -311,6 +311,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::cmd_open_config_file,
             pane::cmd_refresh,
             operations::cmd_delete_selected,
+            operations::cmd_delete_permanent,
             operations::cmd_show_next_operation,
             dialog::cmd_debug,
             operations::cmd_debug_run_test_operation,
@@ -337,7 +338,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<newt_common::filesystem::FileList>()
         .typ::<newt_common::filesystem::FsStats>()
         .typ::<crate::main_window::AskpassPrompt>()
-        .typ::<crate::main_window::ConfirmAction>()
+        .typ::<crate::main_window::DeleteConfirmMode>()
         .typ::<crate::main_window::DndData>()
         .typ::<crate::main_window::ModalData>()
         .typ::<crate::main_window::ModalDataKind>()

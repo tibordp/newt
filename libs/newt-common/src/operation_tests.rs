@@ -223,6 +223,7 @@ async fn test_delete_single_file() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -246,6 +247,7 @@ async fn test_delete_directory_with_remove_tree() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -275,6 +277,7 @@ async fn test_delete_directory_slow_path() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -309,6 +312,7 @@ async fn test_delete_error_skip() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -343,6 +347,7 @@ async fn test_delete_error_retry() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
+            to_trash: false,
         },
         retry_then_skip(&retry_count),
     )
@@ -365,6 +370,7 @@ async fn test_delete_multiple_paths() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt"), vfs_path("/c")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -390,6 +396,7 @@ async fn test_delete_symlink_not_followed_top_level() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/link_to_dir")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -420,6 +427,7 @@ async fn test_delete_symlink_not_followed_inside_dir_fast_path() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -454,6 +462,7 @@ async fn test_delete_symlink_not_followed_inside_dir_slow_path() {
         vfs,
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
+            to_trash: false,
         },
         skip_all,
     )
@@ -467,6 +476,158 @@ async fn test_delete_symlink_not_followed_inside_dir_slow_path() {
         result.vfs.read_content("/target_dir/precious.txt"),
         b"keep me"
     );
+}
+
+// ===========================================================================
+// Trash tests
+// ===========================================================================
+
+#[tokio::test]
+async fn test_trash_single_file() {
+    let vfs = MockVfs::builder().file("/a.txt", b"hello").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a.txt")],
+            to_trash: true,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/a.txt"));
+    assert_eq!(
+        result.vfs.trashed_paths(),
+        vec![PathBuf::from_wire_str("/a.txt")]
+    );
+}
+
+#[tokio::test]
+async fn test_trash_directory_counts_one_item() {
+    let vfs = MockVfs::builder()
+        .dir("/mydir")
+        .file("/mydir/a.txt", b"a")
+        .dir("/mydir/sub")
+        .file("/mydir/sub/c.txt", b"c")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/mydir")],
+            to_trash: true,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    // The whole tree is trashed wholesale as a single item — no scan walk.
+    assert_eq!(get_prepared(&result.events), Some((0, 1)));
+    assert!(!result.vfs.exists("/mydir"));
+    assert!(!result.vfs.exists("/mydir/sub/c.txt"));
+    assert_eq!(
+        result.vfs.trashed_paths(),
+        vec![PathBuf::from_wire_str("/mydir")]
+    );
+}
+
+#[tokio::test]
+async fn test_trash_error_skip() {
+    let vfs = MockVfs::builder()
+        .file("/a.txt", b"hello")
+        .file("/b.txt", b"world")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/a.txt"),
+            operation: "trash_item",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
+            to_trash: true,
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(result.vfs.exists("/a.txt"));
+    assert!(!result.vfs.exists("/b.txt"));
+    assert_eq!(
+        result.vfs.trashed_paths(),
+        vec![PathBuf::from_wire_str("/b.txt")]
+    );
+}
+
+#[tokio::test]
+async fn test_trash_error_retry() {
+    let vfs = MockVfs::builder()
+        .file("/a.txt", b"hello")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/a.txt"),
+            operation: "trash_item",
+            error: crate::Error {
+                kind: crate::ErrorKind::Other,
+                message: "transient error".into(),
+            },
+            remaining: Some(1),
+        })
+        .build();
+
+    let retry_count = std::cell::Cell::new(1u32);
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a.txt")],
+            to_trash: true,
+        },
+        retry_then_skip(&retry_count),
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/a.txt"));
+}
+
+#[tokio::test]
+async fn test_trash_not_supported_surfaces_issue() {
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_trash: false,
+            ..Default::default()
+        })
+        .file("/a.txt", b"hello")
+        .build();
+
+    let issue_count = std::cell::Cell::new(0u32);
+    let result = run_operation(
+        vfs.clone(),
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a.txt")],
+            to_trash: true,
+        },
+        |issue| {
+            issue_count.set(issue_count.get() + 1);
+            skip_all(issue)
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_count.get(), 1);
+    // Nothing deleted, nothing trashed.
+    assert!(result.vfs.exists("/a.txt"));
+    assert!(result.vfs.trashed_paths().is_empty());
 }
 
 // ===========================================================================

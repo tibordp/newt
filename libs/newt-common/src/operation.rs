@@ -134,12 +134,12 @@ pub enum OperationRequest {
     /// Give `source` a new leaf name in its parent. Uses native
     /// `Vfs::rename` when available, else copy+delete (so S3 objects and
     /// prefixes can be "renamed" via server-side CopyObject).
-    Rename {
-        source: VfsPath,
-        new_name: String,
-    },
+    Rename { source: VfsPath, new_name: String },
     Delete {
         paths: Vec<VfsPath>,
+        /// Move to the OS trash (`Vfs::trash_item`) instead of deleting.
+        #[serde(default)]
+        to_trash: bool,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -175,9 +175,7 @@ pub enum OperationRequest {
     /// Exposed only from the Debug modal in debug builds; kept here
     /// unconditionally so the wire format stays identical across debug
     /// and release builds.
-    DebugSleep {
-        duration_seconds: u64,
-    },
+    DebugSleep { duration_seconds: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
@@ -754,8 +752,12 @@ pub async fn execute_operation(
     );
 
     let result = match request {
-        OperationRequest::Delete { paths } => {
-            execute_delete(&mut reporter, &context, paths, cancel.clone()).await
+        OperationRequest::Delete { paths, to_trash } => {
+            if to_trash {
+                execute_trash(&mut reporter, &context, paths, cancel.clone()).await
+            } else {
+                execute_delete(&mut reporter, &context, paths, cancel.clone()).await
+            }
         }
         OperationRequest::Copy {
             sources,
@@ -2610,6 +2612,72 @@ async fn execute_delete(
                     .handle_io_error(
                         e,
                         &format!("Error deleting {}", entry.path),
+                        None,
+                        &cancel,
+                        true,
+                    )
+                    .await?
+                {
+                    IssueOutcome::Skip => {}
+                    IssueOutcome::Retry => {
+                        retry = true;
+                    }
+                }
+            }
+        }
+
+        items_done += 1;
+    }
+
+    reporter.maybe_send_progress(0, items_done, "");
+    Ok(())
+}
+
+async fn execute_trash(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    paths: Vec<VfsPath>,
+    cancel: CancellationToken,
+) -> Result<(), crate::Error> {
+    debug!("execute_trash: {} paths", paths.len());
+
+    // Follow redirect_target so trashing from a SearchVfs hits the real files.
+    let mut paths = paths;
+    for p in paths.iter_mut() {
+        *p = context.registry.dereference(p).await;
+    }
+
+    // No scan phase: each top-level item is trashed wholesale and counts
+    // as one item, like the remove_tree fast path.
+    reporter.send_prepared(0, paths.len() as u64);
+
+    let mut items_done = 0u64;
+
+    for vfs_path in &paths {
+        if cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+
+        let (vfs, local_path) = context.registry.resolve(vfs_path)?;
+
+        let display = local_path.to_string();
+        reporter.maybe_send_progress(0, items_done, &display);
+
+        let mut retry = true;
+        while retry {
+            retry = false;
+
+            let result = if vfs.descriptor().can_trash() {
+                vfs.trash_item(&local_path).await
+            } else {
+                Err(crate::Error::not_supported())
+            };
+
+            if let Err(e) = result {
+                match reporter
+                    .handle_io_error(
+                        e,
+                        &format!("Error moving {} to Trash", local_path),
                         None,
                         &cancel,
                         true,

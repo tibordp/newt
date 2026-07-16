@@ -86,6 +86,9 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn can_remove_tree(&self) -> bool {
         false
     }
+    fn can_trash(&self) -> bool {
+        true
+    }
     fn has_symlinks(&self) -> bool {
         true
     }
@@ -944,6 +947,14 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || {
             std::fs::remove_dir(&path)?;
             Ok(())
+        })
+        .await?
+    }
+
+    async fn trash_item(&self, path: &Path) -> Result<(), Error> {
+        let path = to_native(path);
+        tokio::task::spawn_blocking(move || {
+            trash::delete(&path).map_err(|e| Error::custom(format!("trash: {e}")))
         })
         .await?
     }

@@ -86,6 +86,7 @@ pub const API_HOST_VFS_AVAILABLE_SPACE: Api = Api(617);
 pub const API_HOST_VFS_RENAME: Api = Api(618);
 pub const API_HOST_VFS_COPY_WITHIN: Api = Api(619);
 pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
+pub const API_HOST_VFS_TRASH_ITEM: Api = Api(628);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);

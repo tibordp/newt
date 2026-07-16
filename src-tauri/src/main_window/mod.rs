@@ -426,10 +426,17 @@ impl newt_common::vfs::VfsProgressSink for LocalProgressSink {
     }
 }
 
-#[derive(Clone, serde::Serialize, specta::Type)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ConfirmAction {
-    DeleteSelected { paths: Vec<VfsPath> },
+/// Which delete-confirmation dialog to show, and which outcomes it offers.
+#[derive(Clone, Copy, PartialEq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteConfirmMode {
+    /// Move to Trash (primary) / Delete Permanently / Cancel.
+    Trash,
+    /// Delete (destructive primary) / Cancel.
+    Permanent,
+    /// Trash preference is on but the VFS has no trash: explain that the
+    /// items will be deleted permanently. Delete Permanently / Cancel.
+    TrashUnavailable,
 }
 
 /// Pack-dialog defaults sourced from `ArchivePreferences`.
@@ -586,9 +593,10 @@ pub enum ModalDataKind {
     },
     HotPaths,
     Settings,
-    Confirm {
+    ConfirmDelete {
         message: String,
-        action: ConfirmAction,
+        paths: Vec<VfsPath>,
+        mode: DeleteConfirmMode,
     },
     UserCommandInput {
         command_index: usize,

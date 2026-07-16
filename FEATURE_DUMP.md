@@ -199,6 +199,7 @@ The default browser context menu is suppressed in the main window (but not in th
 | Copy Path | Mod+C |
 | Rename | F2 |
 | Delete | F8 |
+| Delete Permanently | Shift+Delete |
 | Open in Terminal | Mod+Enter |
 | Properties | Alt+Enter |
 
@@ -297,14 +298,19 @@ Creates a new file (same dialog as Create File) and immediately opens it in the 
 
 Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it, else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the unchanged name is a no-op. The pane refreshes and re-focuses the new name when the operation completes.
 
-### Delete (F8 / Shift+Delete / Cmd+Backspace)
+### Delete (F8 / Cmd+Backspace) and Delete Permanently (Shift+Delete / Opt+Cmd+Backspace)
 
 Deletes all selected files and directories (recursive for directories).
 
-- If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first showing what will be deleted.
+- If `behavior.delete_to_trash` is enabled (default: yes), plain Delete moves items to the OS trash instead of deleting them. Only real local filesystems have a trash: the local FS, the remote host's FS in SSH/elevated sessions (freedesktop `~/.local/share/Trash` on the remote machine), and agent mounts — always the trash of the machine that owns the files. S3/SFTP/K8s/archive/search VFSes have no trash.
+- **Delete Permanently** (`delete_permanent`, Shift+Delete, ⌥⌘⌫ on macOS, also in the context menu) always bypasses the trash.
+- If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first. For a trash delete it offers three choices: **Move to Trash** (default, focused), **Delete Permanently**, and Cancel.
+- If the trash preference is on but the selection isn't trashable (e.g. on S3), a dialog explains the items will be deleted permanently and offers **Delete Permanently** / Cancel — this dialog is shown even when `confirm_delete` is off, since the recoverability expectation would otherwise be silently violated.
 - If nothing is selected, the focused file is the target (unless it's `..`).
 
-**Delete strategies** (tried in order):
+**Trash execution**: each top-level item is trashed wholesale (`Vfs::trash_item`) and counts as one progress item — no scan walk. Failures raise the standard Skip/Retry prompt. The operations panel shows the kind as `trash` ("Moving N item(s) to Trash").
+
+**Permanent delete strategies** (tried in order):
 1. **Fast tree removal**: If the VFS supports atomic `remove_tree()`, deletes the entire tree in one call.
 2. **Manual tree walk**: Depth-first traversal — deletes files first, then directories bottom-up.
 
@@ -419,7 +425,7 @@ Today only S3 implements a sheet:
 
 ### Operation Progress and Issue Resolution
 
-When a copy, move, rename, or delete operation runs, it's tracked in the **Operations Panel**:
+When a copy, move, rename, delete, or trash operation runs, it's tracked in the **Operations Panel**:
 
 **Foreground modal** (default for new operations):
 - Large overlay showing operation kind, description, progress bar, percentage, the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
@@ -820,7 +826,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch, rename (via the operation's copy+delete fallback — server-side CopyObject per object, works on prefixes too), extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog). Server-side copies (copy/move/rename within S3) carry over user metadata and system headers (CopyObject default), and explicitly re-apply the source's storage class and any non-default ACL — a failed ACL restore is logged and the copy still succeeds, since the streaming fallback couldn't restore it either.
 
-**Operations NOT supported**: Hard link, symlink, Unix permissions, filesystem stats.
+**Operations NOT supported**: Hard link, symlink, Unix permissions, filesystem stats, trash (plain Delete prompts for permanent deletion).
 
 **Display path**: `s3://bucket/prefix/key`
 
@@ -843,7 +849,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Operations supported**: Read, write, rename, create directory, delete, symlink creation, hard link, metadata (permissions, timestamps, owner, group), file watching.
 
-**Operations NOT supported**: Copy within SFTP (cross-file copy goes through the host), filesystem stats.
+**Operations NOT supported**: Copy within SFTP (cross-file copy goes through the host), filesystem stats, trash (plain Delete prompts for permanent deletion).
 
 **Symlink handling**: Reads symlink targets for display, stats targets to determine if they're directories.
 
@@ -1285,6 +1291,7 @@ columns = ["name", "size", "modified_date", "modified_time", "user", "group", "m
 
 [behavior]
 confirm_delete = true       # Ask for confirmation before deleting
+delete_to_trash = true      # Move deletes to the OS trash; Delete Permanently bypasses
 keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
@@ -1532,9 +1539,10 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Alt+F5 | Pack to archive | Pane focused |
 | F6 | Move to other pane | Pane focused |
 | F7 | Create directory | Pane focused |
-| F8 | Delete selected | Pane focused |
-| Shift+Delete | Delete selected (alternative) | Pane focused |
+| F8 | Delete selected (to Trash by default) | Pane focused |
+| Shift+Delete | Delete selected permanently | Pane focused |
 | Cmd+Backspace | Delete selected (macOS alternative) | Pane focused |
+| Opt+Cmd+Backspace | Delete selected permanently (macOS alternative) | Pane focused |
 | Alt+Enter | Properties | Pane focused |
 
 ### Navigation

@@ -145,6 +145,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "delete_permanent".into(),
+            name: "Delete Permanently".into(),
+            short_name: None,
+            category: "File".into(),
+            default_key: Some("shift+delete".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "create_directory".into(),
             name: "Create Directory...".into(),
             short_name: Some("MkDir".into()),

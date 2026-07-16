@@ -9,7 +9,7 @@ use tauri::Manager;
 use crate::GlobalContext;
 use crate::common::Error;
 use crate::main_window::{
-    ConfirmAction, MainWindowContext, ModalContext, ModalData, ModalDataKind, OperationState,
+    DeleteConfirmMode, MainWindowContext, ModalContext, ModalData, ModalDataKind, OperationState,
     OperationStatus, PaneHandle,
 };
 
@@ -76,6 +76,23 @@ pub async fn cmd_delete_selected(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
+    delete_selected_impl(ctx, pane_handle, false).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_delete_permanent(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    delete_selected_impl(ctx, pane_handle, true).await
+}
+
+async fn delete_selected_impl(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    permanent: bool,
+) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let paths = pane.get_effective_selection();
     if paths.is_empty() {
@@ -86,30 +103,81 @@ pub async fn cmd_delete_selected(
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();
     let prefs = global_ctx.preferences().settings();
 
-    if prefs.behavior.confirm_delete {
-        let message = if paths.len() > 1 {
-            format!("Delete {} selected files?", paths.len())
+    let to_trash = !permanent && prefs.behavior.delete_to_trash;
+    // Check the dereferenced selection (search results point at their real
+    // files, possibly on another VFS) — every target must be trashable.
+    let trashable = to_trash && {
+        let vfs_info = ctx.vfs_info()?;
+        pane.get_effective_selection_dereferenced().iter().all(|p| {
+            vfs_info
+                .descriptor(p.vfs_id)
+                .is_some_and(|(d, _)| d.can_trash())
+        })
+    };
+
+    let mode = if to_trash && !trashable {
+        // Explain the fallback to permanent deletion even when
+        // confirmations are disabled.
+        Some(DeleteConfirmMode::TrashUnavailable)
+    } else if prefs.behavior.confirm_delete {
+        Some(if to_trash {
+            DeleteConfirmMode::Trash
         } else {
-            let name = paths[0].file_name().map(str::to_string).unwrap_or_default();
-            format!("Delete {}?", name)
-        };
-        ctx.with_update(|gs| {
-            *gs.modal.0.write() = Some(ModalData {
-                kind: ModalDataKind::Confirm {
-                    message,
-                    action: ConfirmAction::DeleteSelected { paths },
-                },
-                context: ModalContext {
-                    pane_handle: Some(pane_handle),
-                },
-            });
-            Ok(())
+            DeleteConfirmMode::Permanent
         })
     } else {
-        let request = OperationRequest::Delete { paths };
+        None
+    };
+
+    let Some(mode) = mode else {
+        let request = OperationRequest::Delete { paths, to_trash };
         start_operation(ctx, request).await?;
+        return Ok(());
+    };
+
+    let name = || paths[0].file_name().map(str::to_string).unwrap_or_default();
+    let message = match mode {
+        DeleteConfirmMode::Trash => {
+            if paths.len() > 1 {
+                format!("Move {} selected files to Trash?", paths.len())
+            } else {
+                format!("Move {} to Trash?", name())
+            }
+        }
+        DeleteConfirmMode::Permanent => {
+            if paths.len() > 1 {
+                format!("Delete {} selected files?", paths.len())
+            } else {
+                format!("Delete {}?", name())
+            }
+        }
+        DeleteConfirmMode::TrashUnavailable => {
+            if paths.len() > 1 {
+                format!(
+                    "{} selected files cannot be moved to Trash here and will be deleted permanently.",
+                    paths.len()
+                )
+            } else {
+                format!(
+                    "{} cannot be moved to Trash here and will be deleted permanently.",
+                    name()
+                )
+            }
+        }
+    };
+    ctx.with_update(|gs| {
+        *gs.modal.0.write() = Some(ModalData {
+            kind: ModalDataKind::ConfirmDelete {
+                message,
+                paths,
+                mode,
+            },
+            context: ModalContext {
+                pane_handle: Some(pane_handle),
+            },
+        });
         Ok(())
-    }
+    })
 }
 
 #[tauri::command]
@@ -265,9 +333,13 @@ pub async fn start_operation_with_callback(
                 new_name,
             ),
         ),
-        OperationRequest::Delete { paths } => (
-            "delete".to_string(),
-            format!("Deleting {} item(s)", paths.len()),
+        OperationRequest::Delete { paths, to_trash } => (
+            if *to_trash { "trash" } else { "delete" }.to_string(),
+            if *to_trash {
+                format!("Moving {} item(s) to Trash", paths.len())
+            } else {
+                format!("Deleting {} item(s)", paths.len())
+            },
         ),
         OperationRequest::CreateArchive {
             sources,
@@ -538,28 +610,26 @@ pub async fn start_create_archive(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn confirm_action(ctx: MainWindowContext) -> Result<(), Error> {
-    let action = ctx.with_update(|gs| {
+pub async fn confirm_delete(ctx: MainWindowContext, to_trash: bool) -> Result<(), Error> {
+    let paths = ctx.with_update(|gs| {
         let modal = gs.modal.0.read().clone();
         let modal = modal.ok_or_else(|| Error::Custom("no modal open".into()))?;
-        let action = match modal {
+        let (paths, mode) = match modal {
             ModalData {
-                kind: ModalDataKind::Confirm { action, .. },
+                kind: ModalDataKind::ConfirmDelete { paths, mode, .. },
                 ..
-            } => action,
-            _ => return Err(Error::Custom("modal is not a confirm dialog".into())),
+            } => (paths, mode),
+            _ => return Err(Error::Custom("modal is not a delete confirmation".into())),
         };
+        if to_trash && mode != DeleteConfirmMode::Trash {
+            return Err(Error::Custom("dialog does not offer trash".into()));
+        }
         gs.close_modal();
-        Ok(action)
+        Ok(paths)
     })?;
 
-    match action {
-        ConfirmAction::DeleteSelected { paths } => {
-            let request = OperationRequest::Delete { paths };
-            start_operation(ctx, request).await?;
-        }
-    }
-
+    let request = OperationRequest::Delete { paths, to_trash };
+    start_operation(ctx, request).await?;
     Ok(())
 }
 

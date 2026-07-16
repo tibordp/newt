@@ -24,8 +24,8 @@ use super::{
     API_HOST_VFS_OVERWRITE_ASYNC_FINISH, API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_CHUNK,
     API_HOST_VFS_READ_RANGE, API_HOST_VFS_REMOVE_DIR, API_HOST_VFS_REMOVE_FILE,
     API_HOST_VFS_REMOVE_TREE, API_HOST_VFS_RENAME, API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH,
-    API_HOST_VFS_TRUNCATE, API_HOST_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode,
-    try_encode,
+    API_HOST_VFS_TRASH_ITEM, API_HOST_VFS_TRUNCATE, API_HOST_VFS_WRITE_CHUNK,
+    PendingVfsReadStreams, decode, encode, try_encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -289,6 +289,11 @@ impl Dispatcher for VfsDispatcher {
             API_HOST_VFS_REMOVE_TREE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_tree(&path).await;
+                encode(&ret)?
+            }
+            API_HOST_VFS_TRASH_ITEM => {
+                let path: PathBuf = decode(&req[..])?;
+                let ret = self.vfs.trash_item(&path).await;
                 encode(&ret)?
             }
             API_HOST_VFS_GET_METADATA => {

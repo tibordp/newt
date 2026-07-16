@@ -77,6 +77,9 @@ impl VfsDescriptor for AgentVfsDescriptor {
     fn can_remove_tree(&self) -> bool {
         false
     }
+    fn can_trash(&self) -> bool {
+        true
+    }
     fn has_symlinks(&self) -> bool {
         true
     }

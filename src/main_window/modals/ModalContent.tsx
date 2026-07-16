@@ -5,7 +5,7 @@ import {
 } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import About from "./About";
-import Confirm from "./Confirm";
+import ConfirmDelete from "./ConfirmDelete";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateArchive from "./CreateArchive";
@@ -74,8 +74,8 @@ export function ModalContent({
       return <MountK8s {...state.data} {...commonProps} />;
     case "search":
       return <SearchDialog {...state.data} {...commonProps} />;
-    case "confirm":
-      return <Confirm {...state.data} {...commonProps} />;
+    case "confirm_delete":
+      return <ConfirmDelete {...state.data} {...commonProps} />;
     case "properties":
       return <Properties {...state.data} {...commonProps} />;
     case "user_command_input":

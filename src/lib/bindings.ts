@@ -41,9 +41,9 @@ async closeModal() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async confirmAction() : Promise<Result<null, string>> {
+async confirmDelete(toTrash: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("confirm_action") };
+    return { status: "ok", data: await TAURI_INVOKE("confirm_delete", { toTrash }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1187,6 +1187,14 @@ async cmdDeleteSelected(paneHandle: PaneHandle) : Promise<Result<null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async cmdDeletePermanent(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_delete_permanent", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Show the next operation in foreground, cycling by op id. If an op is
  * currently foregrounded, send it to the background first and surface the
@@ -1401,6 +1409,12 @@ export type BehaviorPreferences = {
  */
 confirm_delete: boolean; 
 /**
+ * Move deleted files to the system Trash instead of deleting them
+ * permanently. Applies to filesystems that have a trash (local files,
+ * remote hosts, agent mounts); Delete Permanently always bypasses it.
+ */
+delete_to_trash: boolean; 
+/**
  * Keep terminal tab open after the shell process exits.
  */
 keep_terminal_open: boolean; 
@@ -1468,7 +1482,6 @@ default_when: string | null;
  * for built-ins; always `false` for user commands.
  */
 user_overridden: boolean }
-export type ConfirmAction = { type: "delete_selected"; paths: VfsPath[] }
 export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,
@@ -1502,6 +1515,23 @@ export type CopyFormat =
 export type CopyOptions = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean; create_symlink: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
+/**
+ * Which delete-confirmation dialog to show, and which outcomes it offers.
+ */
+export type DeleteConfirmMode = 
+/**
+ * Move to Trash (primary) / Delete Permanently / Cancel.
+ */
+"trash" | 
+/**
+ * Delete (destructive primary) / Cancel.
+ */
+"permanent" | 
+/**
+ * Trash preference is on but the VFS has no trash: explain that the
+ * items will be deleted permanently. Delete Permanently / Cancel.
+ */
+"trash_unavailable"
 /**
  * Every dialog the host can open. Serialized as snake_case so the frontend
  * can keep sending string literals like `"navigate"` / `"mount_s3"` over
@@ -1677,7 +1707,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
@@ -1751,7 +1781,7 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm"; data: { message: string; action: ConfirmAction } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
 export type Mode = number
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
@@ -1761,7 +1791,11 @@ export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPat
  * `Vfs::rename` when available, else copy+delete (so S3 objects and
  * prefixes can be "renamed" via server-side CopyObject).
  */
-{ Rename: { source: VfsPath; new_name: string } } | { Delete: { paths: VfsPath[] } } | { CreateArchive: { sources: VfsPath[]; 
+{ Rename: { source: VfsPath; new_name: string } } | { Delete: { paths: VfsPath[]; 
+/**
+ * Move to the OS trash (`Vfs::trash_item`) instead of deleting.
+ */
+to_trash?: boolean } } | { CreateArchive: { sources: VfsPath[]; 
 /**
  * Full path of the archive file itself, not its directory.
  */
