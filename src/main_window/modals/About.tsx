@@ -70,7 +70,7 @@ export default function About({
           <div>{target_triple}</div>
         </div>
         <div className={styles.license}>
-          <div>GNU General Public License v2.0</div>
+          <div>GNU General Public License v3.0 or later</div>
           <a
             href="https://github.com/tibordp/newt"
             target="_blank"

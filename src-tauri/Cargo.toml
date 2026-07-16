@@ -2,7 +2,7 @@
 name = "newt"
 version = "0.1.0"
 description = "Dual-pane file manager"
-license = "GPL-2.0-only"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/tibordp/newt"
 edition = "2024"
 

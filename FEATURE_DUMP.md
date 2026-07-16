@@ -1469,7 +1469,7 @@ Available from the command palette. Shows:
 - **App icon** (96×96), title ("Newt"), tagline ("A keyboard-centric dual-pane file manager").
 - **Version**: e.g., `v0.1.0 (a1b2c3d+)` — short git hash with `+` suffix if built from a dirty working tree.
 - **Build date** and **target triple** (e.g., `x86_64-unknown-linux-gnu`).
-- **License**: GNU General Public License v2.0.
+- **License**: GNU General Public License v3.0 or later.
 - **GitHub link**: Clickable link to the repository, opens in browser.
 - **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation). The icon rotates slightly on activation.
 
