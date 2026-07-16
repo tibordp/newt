@@ -227,13 +227,20 @@ The default browser context menu is suppressed in the main window (but not in th
 - **Visual feedback**: Drop target pane/folder highlights on hover.
 - **Same-pane restrictions**: Cannot drop a folder onto itself.
 
-**External drag-and-drop** (from the OS file manager):
+**External drag-and-drop IN** (from the OS file manager):
 - Drag one or more files from the OS file manager (Nautilus, Dolphin, Finder, etc.) and drop onto any pane.
 - **Drop on pane background**: Copies files to the pane's current directory.
 - **Drop on a folder row**: Copies files into that folder.
 - **Visual feedback**: Pane background or folder row highlights as the cursor moves, same styling as internal drag-and-drop.
 - **Always copies**: External drops always create copies (no modifier key for move).
 - **Requires host-local VFS**: Only works when a local filesystem VFS is mounted (to resolve source paths).
+
+**External drag-and-drop OUT** (to other applications):
+- Dragging past the window edge hands the internal drag off to a native OS drag session (`drag` crate; copy-only). Drop into Finder/Explorer/Nautilus, other apps, or **another Newt window** (arrives there via the normal external-drop path).
+- **Host-local files only**: every dragged file must resolve to a host-local path. Search panes escalate when the underlying files are local (per-file check after source deref). S3/SFTP/remote-session drags stay internal — leaving the window behaves as before (release outside cancels, re-entering resumes the ghost).
+- **Preview**: the drag carries a rendered pill matching the internal ghost (file icon + name, or "N items"); falls back to the app icon.
+- **Drop back into the same window**: routed through internal DnD semantics — copy, dropping into the source directory is a no-op, dropping onto a dragged folder degrades to the pane background.
+- Known platform gaps: Windows paths >260 chars crash upstream (drag-rs #76); Linux X11 can silently fail on some GTK3 setups (#84); Wayland behavior varies by compositor.
 
 ### Focus Preservation
 

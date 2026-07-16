@@ -525,11 +525,30 @@ async executeDnd(destinationPane: PaneHandle, subdirectory: string | null, isMov
 }
 },
 /**
+ * Escalate the active internal drag to a native OS drag session so files
+ * can be dropped into other applications (and other Newt windows).
+ * Returns false when there is nothing to escalate — no active drag, or a
+ * dragged file doesn't resolve to a host-local path (S3/SFTP/remote
+ * sessions keep internal-only DnD until temp materialization exists).
+ * 
+ * `image` is the PNG drag preview rendered by the frontend; an empty
+ * vector falls back to the app icon (the macOS backend aborts on invalid
+ * image bytes).
+ */
+async dndDragOut(image: number[]) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dnd_drag_out", { image }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Handle files dropped from outside the app (OS file manager).
  * The dropped paths are host-local, so we need the host-local VFS to
  * construct VfsPaths from them.
  */
-async externalDrop(paneHandle: PaneHandle, subdirectory: string | null, paths: string[]) : Promise<Result<number, string>> {
+async externalDrop(paneHandle: PaneHandle, subdirectory: string | null, paths: string[]) : Promise<Result<number | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("external_drop", { paneHandle, subdirectory, paths }) };
 } catch (e) {

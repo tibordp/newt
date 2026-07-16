@@ -16,6 +16,7 @@ thiserror = "2"
 anyhow = "1"
 serde_json = "1"
 opener = "0.6"
+drag = "2.1"
 once_cell = "1"
 notify = "8"
 uuid = { version = "1", features = ["serde", "v4"] }

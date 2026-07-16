@@ -103,6 +103,8 @@ type LocalDndState = {
   startX: number;
   startY: number;
   files: DndFileInfo[];
+  /** An escalation to a native OS drag is in flight (or done). */
+  escalating?: boolean;
 };
 
 const fileNames = iconMapping.light.fileNames as Record<string, string>;
@@ -129,6 +131,59 @@ function getFileIconChar(
     ch: String.fromCodePoint(parseInt(fontCharacter, 16)),
     color: fontColor,
   };
+}
+
+/**
+ * Render the drag ghost equivalent (icon glyph + name, or "N items") to PNG
+ * bytes for the native drag-out preview. Returns [] on any failure — the
+ * backend falls back to the app icon (drag-rs aborts on invalid bytes).
+ * Rendered at 1x: canvas PNGs carry no DPI metadata, so a 2x bitmap would
+ * draw double-size; slight blur on retina displays is accepted.
+ */
+async function renderDragImage(files: DndFileInfo[]): Promise<number[]> {
+  try {
+    const label = files.length === 1 ? files[0].name : `${files.length} items`;
+    const bodyStyle = getComputedStyle(document.body);
+    const font = `${bodyStyle.fontSize} ${bodyStyle.fontFamily}`;
+    const single = files.length === 1 && !files[0].is_dir;
+    const iconW = single ? 22 : 0;
+    const padX = 8;
+    const h = 24;
+
+    const canvas = document.createElement("canvas");
+    const c = canvas.getContext("2d");
+    if (!c) return [];
+    c.font = font;
+    const textW = Math.ceil(c.measureText(label).width);
+    canvas.width = Math.min(padX * 2 + iconW + textW, 320);
+    canvas.height = h;
+
+    // Context state resets when the canvas is resized — set everything after.
+    c.globalAlpha = 0.9;
+    c.fillStyle = bodyStyle.backgroundColor;
+    c.beginPath();
+    c.roundRect(0, 0, canvas.width, canvas.height, 6);
+    c.fill();
+    c.globalAlpha = 1;
+    c.textBaseline = "middle";
+    if (single) {
+      const { ch, color } = getFileIconChar(files[0].name, false);
+      c.font = '16px "seti"';
+      c.fillStyle = color || bodyStyle.color;
+      c.fillText(ch, padX, h / 2);
+    }
+    c.font = font;
+    c.fillStyle = bodyStyle.color;
+    c.fillText(label, padX + iconW, h / 2, canvas.width - padX * 2 - iconW);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    if (!blob) return [];
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  } catch {
+    return [];
+  }
 }
 
 type FileRowProps = {
@@ -935,6 +990,29 @@ function PaneInner(
   }, []);
 
   useEffect(() => {
+    // Hand the drag off to a native OS drag session so it can leave the
+    // window. Only tear down the internal drag once the backend accepts —
+    // a declined escalation (non-host-local files) keeps today's behavior:
+    // the ghost stays and an outside mouseup cancels via `buttons === 0`.
+    const escalateDnd = async () => {
+      const dnd = dndRef.current;
+      if (!dnd?.active || dnd.escalating) return;
+      dnd.escalating = true;
+      try {
+        const image = await renderDragImage(dnd.files);
+        const accepted = await commands.dndDragOut(image);
+        if (accepted.status === "ok" && accepted.data) {
+          cleanupDnd();
+          dndRef.current = null;
+          suppressClickRef.current = true;
+        } else {
+          dnd.escalating = false;
+        }
+      } catch {
+        if (dndRef.current) dndRef.current.escalating = false;
+      }
+    };
+
     const onDndMouseMove = (e: MouseEvent) => {
       const dnd = dndRef.current;
       if (!dnd) return;
@@ -947,6 +1025,21 @@ function PaneInner(
         }
         cleanupDnd();
         dndRef.current = null;
+        return;
+      }
+
+      // Pointer left the window with the button held: escalate. The webview
+      // captures the mouse during a drag, so moves keep firing with
+      // out-of-viewport coordinates.
+      if (
+        dnd.active &&
+        !dnd.escalating &&
+        (e.clientX < 0 ||
+          e.clientY < 0 ||
+          e.clientX >= window.innerWidth ||
+          e.clientY >= window.innerHeight)
+      ) {
+        void escalateDnd();
         return;
       }
 
@@ -1036,11 +1129,23 @@ function PaneInner(
       safe(commands.executeDnd(target.paneHandle, subdirectory, e.shiftKey));
     };
 
+    // Fallback for platforms where mouse capture stops move delivery at the
+    // window edge. A false positive (hovered node removed mid-drag) is
+    // benign: the escalated drag's drops route through the self-drop path
+    // with the same copy semantics.
+    const onDndMouseOut = (e: MouseEvent) => {
+      if (e.relatedTarget !== null || e.buttons === 0) return;
+      const dnd = dndRef.current;
+      if (dnd?.active && !dnd.escalating) void escalateDnd();
+    };
+
     document.addEventListener("mousemove", onDndMouseMove);
     document.addEventListener("mouseup", onDndMouseUp);
+    document.addEventListener("mouseout", onDndMouseOut);
     return () => {
       document.removeEventListener("mousemove", onDndMouseMove);
       document.removeEventListener("mouseup", onDndMouseUp);
+      document.removeEventListener("mouseout", onDndMouseOut);
     };
   }, [paneHandle, cleanupDnd]);
 

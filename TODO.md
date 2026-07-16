@@ -35,6 +35,12 @@ Shipped: shared dialog primitives (`modals/primitives/` — DialogShell/Header/B
 - Settings editor *internals* (SettingControls/CommandsEditor) still use ad-hoc inline `style={{}}` for widget sizing; migrate to module classes if they get touched again.
 - `HotPaths.module.scss` deleteBtn hover keeps an `opacity !important`; HistoryNavigator keeps two `!important`s fighting Menu.module's `data-highlighted` styling — both need a structural fix in Menu.module.scss to remove.
 
+## Drag and drop
+
+Drag-out shipped (escalation at the window edge → native OS drag via the `drag` crate, copy-only, host-local files only; self-drops route as internal drops; cross-window drags work via the external-drop path). Follow-ups:
+- Drag-out for non-host-local sources (S3/SFTP/remote sessions) needs materialization: either download-to-tempdir before the native drag starts (reuse the `download_and_open` pattern), or per-platform file-promise APIs (NSFilePromiseProvider / CFSTR_FILEDESCRIPTOR / XDS) — no cross-platform crate wraps those today.
+- Known upstream gaps to re-test on drag-rs upgrades: Windows >260-char paths crash (drag-rs #76), GTK3/X11 drops occasionally land nothing (#84), Wayland untested.
+
 ## Archive unpacking
 
 (as an operation, not a VFS — packing shipped as Pack to Archive / Alt+F5; a dedicated extract operation with conflict handling remains, today unpacking means copying out of a mounted archive VFS)

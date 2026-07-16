@@ -228,6 +228,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             dnd::start_dnd,
             dnd::cancel_dnd,
             dnd::execute_dnd,
+            dnd::dnd_drag_out,
             dnd::external_drop,
             // Preferences
             preferences::get_preferences,

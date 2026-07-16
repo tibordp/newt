@@ -659,6 +659,25 @@ pub struct DndFile {
 pub struct DndData {
     pub source_pane: PaneHandle,
     pub files: Vec<DndFile>,
+    /// True once the drag has escalated to a native OS drag session.
+    #[serde(skip)]
+    pub outbound: bool,
+    /// Monotonic id so async clears can't clobber a newer session.
+    #[serde(skip)]
+    pub generation: u64,
+}
+
+static DND_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl DndData {
+    pub fn new(source_pane: PaneHandle, files: Vec<DndFile>) -> Self {
+        Self {
+            source_pane,
+            files,
+            outbound: false,
+            generation: DND_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(Clone)]
