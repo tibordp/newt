@@ -409,8 +409,23 @@ pub fn dialog(
                 DialogKind::Search => {
                     let pane = pane.unwrap();
                     let path = pane.path();
+                    // cmd+f inside a search refines it: re-root the dialog
+                    // at the original search root and prefill its params.
+                    let refine = ctx.vfs_info().ok().and_then(|vi| {
+                        let (desc, meta) = vi.descriptor(path.vfs_id)?;
+                        let params = desc.search_params(&meta)?;
+                        Some((vi.origin(path.vfs_id)?, params))
+                    });
+                    let (path, prefill) = match refine {
+                        Some((root, params)) => (root, Some(params)),
+                        None => (path, None),
+                    };
                     let display_path = ctx.format_vfs_path(&path);
-                    ModalDataKind::Search { path, display_path }
+                    ModalDataKind::Search {
+                        path,
+                        display_path,
+                        prefill,
+                    }
                 }
                 DialogKind::MountK8s => ModalDataKind::MountK8s {
                     k8s_context: String::new(),
@@ -580,9 +595,11 @@ cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
 cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
 /// cmd+f. Unlike the other dialog shims this one isn't built with
-/// `cmd_dialog!`: if the active pane's VFS opts out of recursive search
-/// (`VfsDescriptor::can_search`), we transparently fall back to opening
-/// the in-pane quick filter — the same effect as pressing `/`.
+/// `cmd_dialog!`: on a search VFS the dialog reopens pre-filled to refine
+/// the current search (`VfsDescriptor::search_params`); on any other VFS
+/// that opts out of recursive search (`VfsDescriptor::can_search`), we
+/// transparently fall back to opening the in-pane quick filter — the
+/// same effect as pressing `/`.
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
@@ -591,7 +608,7 @@ pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
             .vfs_info()
             .ok()
             .and_then(|vi| vi.descriptor(pane.path().vfs_id))
-            .is_none_or(|(d, _)| d.can_search()))
+            .is_none_or(|(d, m)| d.can_search() || d.search_params(&m).is_some()))
     })?;
 
     if supports_search {

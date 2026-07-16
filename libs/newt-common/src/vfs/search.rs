@@ -12,9 +12,15 @@
 //!   listing is the relative path (set on `File::key`); the source path
 //!   in the underlying VFS is set on `File::source` for transparent
 //!   redirect at the registry layer.
-//! - **`has_origin = false`.** The search results live in their own
-//!   addressable space — `..` does not unwind into the search root.
-//!   Leaving the search is done via history (Alt+Left).
+//! - **Rooted at the searched folder.** `origin` is the search root, so
+//!   `..`/Backspace at `/` backs out of the results into the directory
+//!   the search ran over (`OriginKind::Directory` — unlike an archive's
+//!   `Entry` origin, there's nothing to pop past). A synthetic `..` row
+//!   leads there too.
+//! - **Refinable.** cmd+f inside a search reopens the dialog pre-filled
+//!   from `mount_meta` (`VfsDescriptor::search_params`); submitting
+//!   mounts a fresh search that *replaces* the pane's current history
+//!   entry, so refinements don't stack.
 //! - **No mutating ops.** Every leaf op (read, write, rename, delete,
 //!   metadata, copy/move) is redirected by `Vfs::redirect_target` at the
 //!   registry layer; `SearchVfs` itself only serves `list_files`,
@@ -32,7 +38,7 @@
 //!
 //! See `DESIGN_RECURSIVE_SEARCH.md` for rejected alternatives (pruned
 //! tree, `File::Real`/`File::Alias` enum, etc.) and what's deliberately
-//! deferred (in-place param refinement, archive/S3 native search, …).
+//! deferred (archive/S3 native search, tree-view toggle, …).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,9 +61,11 @@ use super::{
 // SearchParams
 // ---------------------------------------------------------------------------
 
-/// Parameters for a search. Captured at mount time and effectively
-/// immutable for the lifetime of the `SearchVfs`. In-place refinement is
-/// deliberately deferred — the unmount+remount UX is fine for v1.
+/// Parameters for a search. Captured at mount time and immutable for
+/// the lifetime of the `SearchVfs` — refinement mounts a fresh search
+/// (cmd+f inside a search reopens the dialog pre-filled from these).
+/// Kept in the raw dialog form (not compiled matchers) so they can
+/// round-trip through `mount_meta` back into the dialog.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct SearchParams {
     /// Glob pattern for the basename (e.g. `*.rs`, `Cargo.*`). When
@@ -65,11 +73,12 @@ pub struct SearchParams {
     pub name_pattern: Option<String>,
     /// Optional content pattern — runs `FileReader::find_in_file` on
     /// every entry whose name matched. When `None`, name-match alone is
-    /// sufficient.
-    pub content_pattern: Option<SearchPattern>,
-    /// Whether the name glob is case-sensitive. Content pattern case
-    /// sensitivity is encoded into `SearchPattern` itself (regex flags
-    /// or literal bytes).
+    /// sufficient. A substring unless `content_is_regex` is set.
+    pub content_pattern: Option<String>,
+    /// Whether `content_pattern` is a regular expression rather than a
+    /// literal substring.
+    pub content_is_regex: bool,
+    /// Whether name and content matching are case-sensitive.
     pub case_sensitive: bool,
     /// Whether the walker follows symlinks during traversal. Off by
     /// default — symlink loops and double-counting cause more pain than
@@ -85,6 +94,7 @@ impl Default for SearchParams {
         Self {
             name_pattern: None,
             content_pattern: None,
+            content_is_regex: false,
             case_sensitive: false,
             follow_symlinks: false,
             content_size_cap: 10 * 1024 * 1024, // 10 MiB
@@ -116,6 +126,9 @@ struct MountMeta {
     root_display: String,
     /// One-line params summary, e.g. `*.rs` or `*.rs · "TODO"`.
     params_summary: String,
+    /// The raw params, so cmd+f inside the search can reopen the dialog
+    /// pre-filled (`VfsDescriptor::search_params`).
+    params: SearchParams,
 }
 
 fn encode_mount_meta(meta: &MountMeta) -> Vec<u8> {
@@ -126,6 +139,7 @@ fn decode_mount_meta(bytes: &[u8]) -> MountMeta {
     bincode::deserialize(bytes).unwrap_or_else(|_| MountMeta {
         root_display: String::new(),
         params_summary: String::new(),
+        params: SearchParams::default(),
     })
 }
 
@@ -145,12 +159,12 @@ pub(crate) fn summarize_params(params: &SearchParams) -> String {
     if let Some(name) = params.name_pattern.as_deref().filter(|s| !s.is_empty()) {
         parts.push(name.to_string());
     }
-    if let Some(content) = &params.content_pattern {
-        let s = match content {
-            SearchPattern::Literal(bytes) => format!("\"{}\"", String::from_utf8_lossy(bytes)),
-            SearchPattern::Regex(r) => format!("/{}/", r),
-        };
-        parts.push(s);
+    if let Some(content) = params.content_pattern.as_deref().filter(|s| !s.is_empty()) {
+        parts.push(if params.content_is_regex {
+            format!("/{}/", content)
+        } else {
+            format!("\"{}\"", content)
+        });
     }
     if params.case_sensitive {
         parts.push("case-sensitive".to_string());
@@ -171,11 +185,10 @@ impl VfsDescriptor for SearchVfsDescriptor {
     fn auto_mount_request(&self) -> Option<super::MountRequest> {
         None
     }
-    // The search results aren't a virtual subdirectory of the root —
-    // they're a separate addressable space. Backspace at "/" must not
-    // escape into the source VFS; leaving the search is via history.
-    fn has_origin(&self) -> bool {
-        false
+    // The origin is the searched folder itself — `..`/Backspace at "/"
+    // backs out of the results into the directory the search ran over.
+    fn origin_kind(&self) -> super::OriginKind {
+        super::OriginKind::Directory
     }
     fn is_ephemeral(&self) -> bool {
         // Searches are scoped to one user action with params captured at
@@ -192,8 +205,14 @@ impl VfsDescriptor for SearchVfsDescriptor {
     fn can_search(&self) -> bool {
         // Entries are aliases to files in the source VFS; stacking another
         // search on top produces duplicate keys and confuses op routing.
-        // cmd+f falls back to the in-pane quick filter instead.
+        // cmd+f instead reopens the dialog pre-filled (`search_params`)
+        // to refine this search.
         false
+    }
+    fn search_params(&self, mount_meta: &[u8]) -> Option<SearchParams> {
+        bincode::deserialize::<MountMeta>(mount_meta)
+            .ok()
+            .map(|m| m.params)
     }
     fn can_watch(&self) -> bool {
         // Walker pushes batches through `VfsChangeNotifier`, not through
@@ -329,6 +348,28 @@ pub struct SearchVfs {
     reporter: Arc<dyn super::ProgressReporter>,
 }
 
+/// The synthetic `..` row leading back to the searched folder. Not a
+/// hit — no `key`/`source` — so it's excluded from redirect/deref and
+/// selection like every other VFS's `..` entry.
+fn dotdot_entry() -> File {
+    File {
+        name: "..".to_string(),
+        size: None,
+        is_dir: true,
+        is_hidden: false,
+        is_symlink: false,
+        symlink_target: None,
+        user: None,
+        group: None,
+        mode: None,
+        modified: None,
+        accessed: None,
+        created: None,
+        key: None,
+        source: None,
+    }
+}
+
 impl SearchVfs {
     /// Construct a `SearchVfs`. The walker is *not* spawned here — it
     /// starts on the first streaming `list_files` call. The search is
@@ -370,6 +411,10 @@ impl SearchVfs {
 impl Vfs for SearchVfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
         &SEARCH_VFS_DESCRIPTOR
+    }
+
+    fn origin(&self) -> Option<&VfsPath> {
+        Some(&self.search_root)
     }
 
     fn mount_meta(&self) -> Vec<u8> {
@@ -424,10 +469,12 @@ impl Vfs for SearchVfs {
             // running snapshot. Keep a high-water mark and slice off the
             // tail each time.
             let initial: Vec<File> = self.results.read().clone();
-            // First batch (possibly empty) so the navigation layer can
-            // clear pending_path and show "loading…" / partial results.
-            let _ = tx.send(initial.clone()).await;
             let mut sent_len = initial.len();
+            // First batch (possibly just `..`) so the navigation layer can
+            // clear pending_path and show "loading…" / partial results.
+            let mut first_batch = vec![dotdot_entry()];
+            first_batch.extend(initial);
+            let _ = tx.send(first_batch).await;
 
             // Drain results until the walker finishes. Order matters:
             // peek the current snapshot first, *then* arm the notifier.
@@ -465,14 +512,18 @@ impl Vfs for SearchVfs {
                 let delta: Vec<File> = final_snap[sent_len..].to_vec();
                 let _ = tx.send(delta).await;
             }
+            let mut files = vec![dotdot_entry()];
+            files.extend(final_snap);
             return Ok(super::VfsFileList {
-                files: final_snap,
+                files,
                 partial: self.job.status() == super::JobStatus::Cancelled,
             });
         }
 
+        let mut files = vec![dotdot_entry()];
+        files.extend(self.results.read().iter().cloned());
         Ok(super::VfsFileList {
-            files: self.results.read().clone(),
+            files,
             partial: self.job.status() == super::JobStatus::Cancelled,
         })
     }
@@ -555,12 +606,15 @@ impl Walker {
     }
 
     async fn walk(&mut self) -> Result<(), Error> {
-        // Compile the name matcher once; bail loudly if the user gave us
-        // garbage rather than silently matching everything.
+        // Compile both matchers once; bail loudly if the user gave us
+        // garbage rather than silently matching everything. `mount`
+        // already validated these, so failures here are unreachable in
+        // practice.
         let name_glob = match self.params.name_pattern.as_deref() {
             Some(pat) if !pat.is_empty() => Some(compile_glob(pat, self.params.case_sensitive)?),
             _ => None,
         };
+        let content_pattern = compile_content_pattern(&self.params)?;
 
         // Stack-based iterative DFS so we don't have to recurse async.
         // VFS `PathBuf`s are always `/`-separated regardless of host OS,
@@ -641,10 +695,10 @@ impl Walker {
                 // Directories never match content (they have no bytes to
                 // scan); so when a content filter is set, dirs are
                 // implicitly excluded.
-                if entry.is_dir && self.params.content_pattern.is_some() {
+                if entry.is_dir && content_pattern.is_some() {
                     continue;
                 }
-                if let Some(ref pattern) = self.params.content_pattern {
+                if let Some(ref pattern) = content_pattern {
                     let cap = self.params.content_size_cap;
                     if cap != 0 && entry.size.unwrap_or(0) > cap {
                         continue;
@@ -758,6 +812,32 @@ fn compile_glob(pattern: &str, case_sensitive: bool) -> Result<globset::GlobMatc
     Ok(glob.compile_matcher())
 }
 
+/// Build the `find_in_file` probe pattern from the raw params.
+/// `SearchPattern` has no case-sensitivity flag, so insensitivity is
+/// encoded inline: `(?i)` on a user regex, or an escaped `(?i)` regex
+/// for a case-insensitive literal. Validates user regexes with the same
+/// engine `find_in_file` uses (`regex::bytes`).
+fn compile_content_pattern(params: &SearchParams) -> Result<Option<SearchPattern>, Error> {
+    let Some(raw) = params.content_pattern.as_deref().filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let pattern = if params.content_is_regex {
+        let s = if params.case_sensitive {
+            raw.to_string()
+        } else {
+            format!("(?i){}", raw)
+        };
+        regex::bytes::Regex::new(&s)
+            .map_err(|e| Error::custom(format!("invalid regex '{}': {}", raw, e)))?;
+        SearchPattern::Regex(s)
+    } else if params.case_sensitive {
+        SearchPattern::Literal(raw.as_bytes().to_vec())
+    } else {
+        SearchPattern::Regex(format!("(?i){}", regex::escape(raw)))
+    };
+    Ok(Some(pattern))
+}
+
 // ---------------------------------------------------------------------------
 // Mount helper
 // ---------------------------------------------------------------------------
@@ -771,6 +851,14 @@ pub async fn mount(
     file_reader: Arc<dyn FileReader>,
     ctx: &crate::api::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
+    // Validate the patterns up front so garbage fails the mount — and
+    // surfaces in the search dialog — rather than erroring inside the
+    // walker after the pane has already navigated.
+    if let Some(pat) = params.name_pattern.as_deref().filter(|s| !s.is_empty()) {
+        compile_glob(pat, params.case_sensitive)?;
+    }
+    compile_content_pattern(&params)?;
+
     let (src_vfs, _) = ctx.registry.resolve(&root)?;
     let src_meta = src_vfs.mount_meta();
     let root_display = src_vfs.descriptor().format_path(&root.path, &src_meta);
@@ -778,6 +866,7 @@ pub async fn mount(
     let mount_meta = encode_mount_meta(&MountMeta {
         root_display,
         params_summary,
+        params: params.clone(),
     });
 
     Ok(Arc::new(SearchVfs::new(

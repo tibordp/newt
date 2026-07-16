@@ -265,8 +265,9 @@ pub trait VfsInfo: Send + Sync {
     /// remote/elevated mode), suitable for use as a child-process cwd.
     ///
     /// For paths already on `VfsId::ROOT` this returns the path unchanged.
-    /// For VFSes that have an origin (today: archives), it walks to the
-    /// enclosing directory of the origin file and recurses. For VFSes with
+    /// For VFSes that have an origin it steps to the origin and recurses:
+    /// the enclosing directory for an entry origin (archives), the origin
+    /// directory itself for a directory origin (searches). For VFSes with
     /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
     fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::vfs::path::PathBuf> {
@@ -279,9 +280,12 @@ pub trait VfsInfo: Send + Sync {
                 // crosses the RPC boundary here.
                 return Some(current.path);
             }
+            let (desc, _) = self.descriptor(current.vfs_id)?;
             let origin = self.origin(current.vfs_id)?;
-            let parent = origin.parent()?;
-            current = parent;
+            current = match desc.origin_kind() {
+                newt_common::vfs::OriginKind::Directory => origin,
+                _ => origin.parent()?,
+            };
         }
     }
 }

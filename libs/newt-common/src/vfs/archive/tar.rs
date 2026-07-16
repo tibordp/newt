@@ -47,8 +47,8 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn auto_mount_request(&self) -> Option<super::super::MountRequest> {
         None
     }
-    fn has_origin(&self) -> bool {
-        true
+    fn origin_kind(&self) -> super::super::OriginKind {
+        super::super::OriginKind::Entry
     }
     fn is_ephemeral(&self) -> bool {
         true

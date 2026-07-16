@@ -6,7 +6,7 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::{Breadcrumb, VfsId, VfsPath};
+use newt_common::vfs::{Breadcrumb, OriginKind, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -117,6 +117,9 @@ enum NavigationKind {
     Refresh,
     /// Fresh user-initiated navigation. On landing: push old snapshot to back, clear forward.
     Fresh,
+    /// Fresh navigation that takes over the current history slot (search
+    /// refinement). On landing: drop the old snapshot, leave both stacks alone.
+    Replace,
     /// Back navigation. Caller already popped from `back`. On landing: push old snapshot to forward.
     Back,
     /// Forward navigation. Caller already popped from `forward`. On landing: push old snapshot to back.
@@ -277,7 +280,7 @@ impl Pane {
         }
         let mut history = self.history.lock();
         match kind {
-            NavigationKind::Refresh | NavigationKind::HistoryJump => {}
+            NavigationKind::Refresh | NavigationKind::HistoryJump | NavigationKind::Replace => {}
             NavigationKind::Fresh => {
                 history.back.push(old_snapshot.clone());
                 history.forward.clear();
@@ -558,8 +561,13 @@ impl Pane {
 
         if has_path_changed {
             if old_file_list.path().vfs_id != new_file_list.path().vfs_id {
-                // VFS boundary crossed (e.g. exiting an archive) — focus the origin filename
-                if let Some(origin) = self.vfs_info.origin(old_file_list.path().vfs_id)
+                // VFS boundary crossed (e.g. exiting an archive) — focus the
+                // origin filename. Only for Entry origins: exiting a search
+                // lands *inside* its Directory origin, where the origin's
+                // own name isn't an entry.
+                if let Some((desc, _)) = self.vfs_info.descriptor(old_file_list.path().vfs_id)
+                    && desc.origin_kind() == OriginKind::Entry
+                    && let Some(origin) = self.vfs_info.origin(old_file_list.path().vfs_id)
                     && let Some(name) = origin.file_name()
                 {
                     ws.focus(name.to_string());
@@ -717,13 +725,17 @@ impl Pane {
                         None => {
                             // At root — try to escape to origin VFS.
                             if let Some((desc, _)) = self.vfs_info.descriptor(vfs_id)
-                                && desc.has_origin()
+                                && desc.origin_kind() != OriginKind::None
                                 && let Some(origin) = self.vfs_info.origin(vfs_id)
                             {
                                 vfs_id = origin.vfs_id;
                                 path = origin.path.clone();
-                                // The `..` pops the archive filename itself
-                                path.pop();
+                                // An Entry origin (archive file) gets popped
+                                // by the `..`; a Directory origin (search
+                                // root) is itself the landing spot.
+                                if desc.origin_kind() == OriginKind::Entry {
+                                    path.pop();
+                                }
                             }
                             // No origin — clamp at root.
                         }
@@ -743,6 +755,23 @@ impl Pane {
         let mut changes_sender = self.navigation_mutex.lock().await;
         let outcome = self
             .navigate_impl(target, NavigationKind::Fresh, &mut changes_sender)
+            .await?;
+        if outcome == NavigationOutcome::Landed {
+            *self.current_arrived_at.lock() = std::time::SystemTime::now();
+        }
+        Ok(())
+    }
+
+    /// Like [`navigate_to`](Self::navigate_to), but the new path takes over
+    /// the current history entry instead of pushing it onto the back stack.
+    /// Used when the current entry is superseded rather than left (search
+    /// refinement re-mounts).
+    pub async fn navigate_to_replace(&self, target: VfsPath) -> Result<(), Error> {
+        self.cancel();
+
+        let mut changes_sender = self.navigation_mutex.lock().await;
+        let outcome = self
+            .navigate_impl(target, NavigationKind::Replace, &mut changes_sender)
             .await?;
         if outcome == NavigationOutcome::Landed {
             *self.current_arrived_at.lock() = std::time::SystemTime::now();

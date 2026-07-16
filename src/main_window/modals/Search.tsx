@@ -20,14 +20,23 @@ type SearchProps = CommonDialogProps & ModalDataOf<"search">;
 export default function SearchDialog({
   path,
   display_path,
+  prefill,
   cancel,
   context,
 }: SearchProps) {
-  const [namePattern, setNamePattern] = useState("");
-  const [contentPattern, setContentPattern] = useState("");
-  const [contentIsRegex, setContentIsRegex] = useState(false);
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [followSymlinks, setFollowSymlinks] = useState(false);
+  const [namePattern, setNamePattern] = useState(prefill?.name_pattern ?? "");
+  const [contentPattern, setContentPattern] = useState(
+    prefill?.content_pattern ?? "",
+  );
+  const [contentIsRegex, setContentIsRegex] = useState(
+    prefill?.content_is_regex ?? false,
+  );
+  const [caseSensitive, setCaseSensitive] = useState(
+    prefill?.case_sensitive ?? false,
+  );
+  const [followSymlinks, setFollowSymlinks] = useState(
+    prefill?.follow_symlinks ?? false,
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { pending, error, run } = useAsyncAction(async () =>
@@ -50,7 +59,10 @@ export default function SearchDialog({
   }
 
   useEffect(() => {
+    // Select-all on a prefilled pattern (refine flow) so typing replaces
+    // it outright while arrow keys still allow tweaking in place.
     inputRef.current?.focus();
+    inputRef.current?.select();
   }, []);
 
   const canSubmit = namePattern.length > 0 || contentPattern.length > 0;

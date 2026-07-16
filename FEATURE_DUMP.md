@@ -902,7 +902,7 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Nested archives**: Archives can contain other archives. Opening an inner archive creates a new VFS mount with the outer archive as its origin. The cleanup system prevents unmounting a parent archive while a child archive is still open.
 
-**Stale mount cleanup**: Archive mounts are *ephemeral* — automatically removed when no pane's current path or back/forward history references them (or any of their child archives, transitively). The same cleanup machinery handles other ephemeral VFS types (currently SearchVfs) via a shared `is_ephemeral()` descriptor flag.
+**Stale mount cleanup**: Archive mounts are *ephemeral* — automatically removed when no pane's current path or back/forward history references them (or any origin-derived children — nested archives, searches over them — transitively). The same cleanup machinery handles other ephemeral VFS types (currently SearchVfs) via a shared `is_ephemeral()` descriptor flag.
 
 **Symlink and hard link resolution** (TAR/CPIO): Symlinks and hard links inside the archive are resolved internally. Directory listings show the *target's* size and `is_dir` for symlinks, and reading or viewing a file through a symlink or hard link transparently fetches the target's contents.
 
@@ -992,12 +992,13 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
 
 **Behavior**:
 - **Flat list, with paths shown.** Identically-named matches sort/select independently — entries are keyed by their relative path under the search root, not basename.
-- **`..` does not unwind into the search root.** Search results live in their own addressable space; leaving the search is via history (Alt+Left) or Shift+Enter on a hit.
-- **Mod+F inside a search falls back to the in-pane quick filter.** Nested search would produce duplicate-keyed aliases and break operation routing, so the SearchVfs opts out via `VfsDescriptor::can_search`; the host transparently routes Mod+F to `/` instead. Generalizes to any VFS that overrides `can_search`.
+- **Rooted at the searched folder.** The SearchVfs's origin is the search root, so `..`/Backspace (and the synthetic `..` row) back out of the results into the directory the search ran over — like exiting an archive, except the origin is a directory so the escape lands *in* it rather than beside it (`OriginKind::Directory` vs. the archives' `Entry`, per `VfsDescriptor::origin_kind`). History (Alt+Left) and Shift+Enter on a hit still work as exits too. A terminal opened on a search pane gets the search root as its cwd.
+- **Mod+F inside a search refines it.** The dialog reopens pre-filled with the current search's params (name field focused and selected), rooted at the original root; submitting mounts a fresh search that *replaces* the pane's current history entry, so refinements don't pile up in Alt+Left history and the superseded mount is auto-unmounted. Nested search stays impossible — it would produce duplicate-keyed aliases and break operation routing, so SearchVfs opts out via `VfsDescriptor::can_search` and exposes its params via `VfsDescriptor::search_params` instead. On any other VFS that opts out of search without offering params, Mod+F transparently falls back to the in-pane quick filter (`/`).
+- **Invalid patterns fail the mount.** A malformed glob or regex errors in the search dialog on submit (validated with the same engines the walker uses) instead of mounting a search that silently finds nothing.
 - **Operations are transparent.** Open, view, edit, rename, delete, copy/move, drag-out — every action targets the underlying real file. The display still shows the basename + source-path hint, but the bytes the operation touches are the source file's bytes.
 - **Walker boundaries.** Walks within a single VFS; mounted child VFSes (archives, etc.) are *not* descended into. OS-level mounts (bind mounts, autofs, network shares) look like ordinary directories and are traversed.
-- **Lifecycle.** SearchVfs is *ephemeral* (see below) — it auto-unmounts as soon as it's no longer reachable from any pane's current path or back/forward history, and it does not show up in the VFS selector dropdown.
-- **Deferred for v1**: in-place param refinement (re-run with new pattern), tree-view toggle, native search inside archives / S3 / SFTP, `.gitignore` honoring.
+- **Lifecycle.** SearchVfs is *ephemeral* (see below) — it auto-unmounts as soon as it's no longer reachable from any pane's current path or back/forward history, and it does not show up in the VFS selector dropdown. Its origin link also keeps the source mount (e.g. an archive the search ran over) alive while the search is reachable.
+- **Deferred for v1**: tree-view toggle, native search inside archives / S3 / SFTP, `.gitignore` honoring.
 
 ### VFS Selector Dialog (Mod+Shift+L)
 

@@ -548,10 +548,16 @@ pub enum ModalDataKind {
     /// rooted at `path`. The pane navigates to the mount root on submit.
     Search {
         /// Search root, captured from the source pane at dialog-open time.
+        /// When refining an existing search, this is that search's origin
+        /// (the original root), not the search VFS itself.
         path: VfsPath,
         /// Pre-rendered display label for the root (so the dialog can
         /// show "Search in /home/foo" without re-resolving).
         display_path: String,
+        /// Params of the search being refined (cmd+f inside a search) —
+        /// the dialog opens pre-filled with these. `None` for a fresh
+        /// search.
+        prefill: Option<newt_common::vfs::search::SearchParams>,
     },
     // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
     // the wire format serde emits.
@@ -1422,7 +1428,12 @@ impl MainWindowContext {
         if let newt_common::vfs::MountRequest::Archive { origin } = &request
             && let Some(existing) = self.with_session(|s| {
                 s.mounted_vfs.read().iter().find_map(|(_, info)| {
-                    if info.origin.as_ref() == Some(origin) {
+                    // Match on type too — searches also carry an origin
+                    // (their root directory), and a dedup must never hand
+                    // back a non-archive mount.
+                    if info.descriptor.type_name() == "archive"
+                        && info.origin.as_ref() == Some(origin)
+                    {
                         Some(newt_common::vfs::MountResponse {
                             vfs_id: info.vfs_id,
                             type_name: info.descriptor.type_name().into(),
@@ -1547,8 +1558,9 @@ impl MainWindowContext {
         // An ephemeral VFS is "stale" iff no pane references it directly
         // and no other in-use VFS has it as its (transitive) origin —
         // the second condition keeps a parent archive alive while a
-        // nested child archive is still open. SearchVfs has no origin
-        // and so the transitive walk is trivially a no-op for it.
+        // nested child archive is still open, and a search's source
+        // mount (e.g. an archive it ran over) alive while the search
+        // is reachable.
         let stale_ids: Vec<VfsId> = self.with_session(|s| {
             let mounted = s.mounted_vfs.read();
 

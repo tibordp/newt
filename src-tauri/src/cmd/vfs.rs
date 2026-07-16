@@ -1,15 +1,17 @@
-use newt_common::file_reader::SearchPattern;
 use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor, search::SearchParams};
 
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 /// Mount a VFS, then close the originating modal and navigate `pane_handle`
-/// to the new mount root.
+/// to the new mount root. With `replace` the navigation takes over the
+/// pane's current history entry instead of pushing a new one (search
+/// refinement — the superseded search shouldn't linger in history).
 async fn mount_and_navigate(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
     request: MountRequest,
+    replace: bool,
 ) -> Result<(), Error> {
     // Log the variant discriminant only — the S3 variant carries credentials,
     // and Debug-formatting the whole request would leak them into logs.
@@ -35,7 +37,11 @@ async fn mount_and_navigate(
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        pane.navigate_to(vfs_path).await?;
+        if replace {
+            pane.navigate_to_replace(vfs_path).await?;
+        } else {
+            pane.navigate_to(vfs_path).await?;
+        }
         Ok(())
     })
     .await
@@ -58,6 +64,7 @@ pub async fn mount_s3(
             bucket,
             credentials,
         },
+        false,
     )
     .await
 }
@@ -69,7 +76,7 @@ pub async fn mount_sftp(
     pane_handle: PaneHandle,
     host: String,
 ) -> Result<(), Error> {
-    mount_and_navigate(ctx, pane_handle, MountRequest::Sftp { host }).await
+    mount_and_navigate(ctx, pane_handle, MountRequest::Sftp { host }, false).await
 }
 
 #[tauri::command]
@@ -79,7 +86,13 @@ pub async fn mount_k8s(
     pane_handle: PaneHandle,
     context: String,
 ) -> Result<(), Error> {
-    mount_and_navigate(ctx, pane_handle, MountRequest::Kubernetes { context }).await
+    mount_and_navigate(
+        ctx,
+        pane_handle,
+        MountRequest::Kubernetes { context },
+        false,
+    )
+    .await
 }
 
 /// Submit handler for the search dialog. Builds a `SearchVfs` rooted at
@@ -87,6 +100,8 @@ pub async fn mount_k8s(
 /// mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
 /// `content_*` together optionally specify a content match (one of
 /// literal substring or regex). Empty strings are treated as "not set".
+/// Pattern compilation and validation happen mount-side (`search::mount`),
+/// so this just forwards the raw dialog values.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -100,34 +115,36 @@ pub async fn mount_search(
     case_sensitive: bool,
     follow_symlinks: bool,
 ) -> Result<(), Error> {
-    let name_pattern = name_pattern.filter(|s| !s.is_empty());
-    let content_pattern = content_pattern.filter(|s| !s.is_empty()).map(|s| {
-        if content_is_regex {
-            // Regex case-insensitivity is encoded inline rather than via a
-            // separate flag; wrap in `(?i)` when the dialog says so.
-            if case_sensitive {
-                SearchPattern::Regex(s)
-            } else {
-                SearchPattern::Regex(format!("(?i){}", s))
-            }
-        } else if case_sensitive {
-            SearchPattern::Literal(s.into_bytes())
-        } else {
-            // Case-insensitive literal — turn it into a regex with `(?i)`
-            // and escape regex metacharacters.
-            SearchPattern::Regex(format!("(?i){}", regex::escape(&s)))
-        }
-    });
-
     let params = SearchParams {
-        name_pattern,
-        content_pattern,
+        name_pattern: name_pattern.filter(|s| !s.is_empty()),
+        content_pattern: content_pattern.filter(|s| !s.is_empty()),
+        content_is_regex,
         case_sensitive,
         follow_symlinks,
         ..SearchParams::default()
     };
 
-    mount_and_navigate(ctx, pane_handle, MountRequest::Search { root, params }).await
+    // If the pane is already inside a search, this mount is a refinement
+    // of it — the new results take over the current history entry rather
+    // than stacking on top (and the superseded mount gets auto-unmounted
+    // once nothing references it).
+    let replace = ctx
+        .vfs_info()
+        .ok()
+        .zip(ctx.panes().get(pane_handle))
+        .and_then(|(vi, pane)| {
+            let (desc, meta) = vi.descriptor(pane.path().vfs_id)?;
+            desc.search_params(&meta)
+        })
+        .is_some();
+
+    mount_and_navigate(
+        ctx,
+        pane_handle,
+        MountRequest::Search { root, params },
+        replace,
+    )
+    .await
 }
 
 #[tauri::command]

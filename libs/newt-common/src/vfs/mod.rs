@@ -188,6 +188,24 @@ impl DisplayPathMatch {
     }
 }
 
+/// How a VFS type relates to its `Vfs::origin` — the position in another
+/// VFS it was mounted from. Governs what escaping `..` above the root
+/// means (and terminal-cwd resolution through synthetic mounts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginKind {
+    /// Standalone — no origin to escape to; `..` clamps at the root
+    /// (local, S3, SFTP, Kubernetes, Remote).
+    None,
+    /// The origin names the *entry* the mount was made of (an archive
+    /// file). Escaping `..` pops it, landing beside the entry with it
+    /// focused; terminal cwd is its enclosing directory.
+    Entry,
+    /// The origin is the *directory* the mount was derived from (a
+    /// search root). Escaping `..` (and terminal cwd) lands in the
+    /// origin itself.
+    Directory,
+}
+
 pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn type_name(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
@@ -239,10 +257,11 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_hard_link(&self) -> bool;
 
     // --- Origin ---
-    /// Whether this VFS type is grafted onto another VFS (e.g. archive mounts).
-    /// When true, navigating `..` from the root should exit to the origin VFS.
-    fn has_origin(&self) -> bool {
-        false
+    /// How this VFS type relates to its `Vfs::origin`, if it has one.
+    /// Must agree with `Vfs::origin()`: return [`OriginKind::None`] iff
+    /// `origin()` is `None`.
+    fn origin_kind(&self) -> OriginKind {
+        OriginKind::None
     }
 
     /// Whether this VFS is "ephemeral" — short-lived, scoped to a single
@@ -284,10 +303,19 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     /// where stacking a fresh search on top is incoherent. The motivating
     /// case is the search VFS itself: its entries are aliases to files in
     /// the underlying source, and a nested search produces duplicate keys
-    /// and breaks operation routing. When this returns `false`, the host
-    /// transparently falls back to the in-pane quick filter.
+    /// and breaks operation routing. When this returns `false`, cmd+f
+    /// refines via [`search_params`](Self::search_params) when available,
+    /// else transparently falls back to the in-pane quick filter.
     fn can_search(&self) -> bool {
         true
+    }
+
+    /// When this VFS is itself a search-results view, the params it was
+    /// mounted with — cmd+f on it reopens the search dialog pre-filled
+    /// with these (rooted at `origin`) instead of starting a nested
+    /// search. `None` for everything else.
+    fn search_params(&self, _mount_meta: &[u8]) -> Option<search::SearchParams> {
+        None
     }
 
     // --- Display ---

@@ -1143,6 +1143,8 @@ async mountK8s(paneHandle: PaneHandle, context: string) : Promise<Result<null, s
  * mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
  * `content_*` together optionally specify a content match (one of
  * literal substring or regex). Empty strings are treated as "not set".
+ * Pattern compilation and validation happen mount-side (`search::mount`),
+ * so this just forwards the raw dialog values.
  */
 async mountSearch(paneHandle: PaneHandle, root: VfsPath, namePattern: string | null, contentPattern: string | null, contentIsRegex: boolean, caseSensitive: boolean, followSymlinks: boolean) : Promise<Result<null, string>> {
     try {
@@ -1154,9 +1156,11 @@ async mountSearch(paneHandle: PaneHandle, root: VfsPath, namePattern: string | n
 },
 /**
  * cmd+f. Unlike the other dialog shims this one isn't built with
- * `cmd_dialog!`: if the active pane's VFS opts out of recursive search
- * (`VfsDescriptor::can_search`), we transparently fall back to opening
- * the in-pane quick filter — the same effect as pressing `/`.
+ * `cmd_dialog!`: on a search VFS the dialog reopens pre-filled to refine
+ * the current search (`VfsDescriptor::search_params`); on any other VFS
+ * that opts out of recursive search (`VfsDescriptor::can_search`), we
+ * transparently fall back to opening the in-pane quick filter — the
+ * same effect as pressing `/`.
  */
 async cmdStartSearch(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
@@ -1706,13 +1710,21 @@ default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | {
 { type: "search"; data: { 
 /**
  * Search root, captured from the source pane at dialog-open time.
+ * When refining an existing search, this is that search's origin
+ * (the original root), not the search VFS itself.
  */
 path: VfsPath; 
 /**
  * Pre-rendered display label for the root (so the dialog can
  * show "Search in /home/foo" without re-resolving).
  */
-display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+display_path: string; 
+/**
+ * Params of the search being refined (cmd+f inside a search) —
+ * the dialog opens pre-filled with these. `None` for a fresh
+ * search.
+ */
+prefill: SearchParams | null } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1780,13 +1792,21 @@ default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | {
 { type: "search"; data: { 
 /**
  * Search root, captured from the source pane at dialog-open time.
+ * When refining an existing search, this is that search's origin
+ * (the original root), not the search VFS itself.
  */
 path: VfsPath; 
 /**
  * Pre-rendered display label for the root (so the dialog can
  * show "Search in /home/foo" without re-resolving).
  */
-display_path: string } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+display_path: string; 
+/**
+ * Params of the search being refined (cmd+f inside a search) —
+ * the dialog opens pre-filled with these. `None` for a fresh
+ * search.
+ */
+prefill: SearchParams | null } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1964,6 +1984,45 @@ role_arn: string | null;
  */
 external_id: string | null }
 export type SearchMatch = { offset: number; length: number }
+/**
+ * Parameters for a search. Captured at mount time and immutable for
+ * the lifetime of the `SearchVfs` — refinement mounts a fresh search
+ * (cmd+f inside a search reopens the dialog pre-filled from these).
+ * Kept in the raw dialog form (not compiled matchers) so they can
+ * round-trip through `mount_meta` back into the dialog.
+ */
+export type SearchParams = { 
+/**
+ * Glob pattern for the basename (e.g. `*.rs`, `Cargo.*`). When
+ * `None`, matches any name.
+ */
+name_pattern: string | null; 
+/**
+ * Optional content pattern — runs `FileReader::find_in_file` on
+ * every entry whose name matched. When `None`, name-match alone is
+ * sufficient. A substring unless `content_is_regex` is set.
+ */
+content_pattern: string | null; 
+/**
+ * Whether `content_pattern` is a regular expression rather than a
+ * literal substring.
+ */
+content_is_regex: boolean; 
+/**
+ * Whether name and content matching are case-sensitive.
+ */
+case_sensitive: boolean; 
+/**
+ * Whether the walker follows symlinks during traversal. Off by
+ * default — symlink loops and double-counting cause more pain than
+ * they save.
+ */
+follow_symlinks: boolean; 
+/**
+ * Per-file size cap for content search. Files larger than this are
+ * skipped (matched-by-name still surfaces). 0 means unlimited.
+ */
+content_size_cap: number }
 export type SearchPattern = { Literal: number[] } | { Regex: string }
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "modified" | "accessed" | "created"
