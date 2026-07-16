@@ -589,6 +589,9 @@ fn merge_preferences_covers_every_group() {
 folders_first = false
 
 [behavior]
+quick_search = false
+
+[enrichers]
 git_status = false
 
 [archives]
@@ -605,7 +608,8 @@ extra_path = ["/opt/custom/bin"]
 
     let merged = PreferencesManager::merge_preferences(&AppPreferences::default(), &file);
     assert!(!merged.appearance.folders_first);
-    assert!(!merged.behavior.git_status);
+    assert!(!merged.behavior.quick_search);
+    assert!(!merged.enrichers.git_status);
     assert_eq!(merged.archives.zstd_level, 9);
     assert!(!merged.hot_paths.mounts);
     assert_eq!(merged.environment.extra_path, vec!["/opt/custom/bin"]);

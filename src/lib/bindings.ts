@@ -1351,7 +1351,7 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1466,14 +1466,7 @@ default_sort: DefaultSort;
  * session). When the cap is reached, the oldest entries roll out as
  * new ones are pushed.
  */
-history_retention: number; 
-/**
- * Show git status in file listings: per-row colors for
- * modified/untracked/ignored entries and a branch badge in the pane
- * header. Runs `git status` in the listed directory's repository
- * (on the remote host in remote sessions).
- */
-git_status: boolean }
+history_retention: number }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */
@@ -1578,6 +1571,14 @@ warning: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
+export type EnricherPreferences = { 
+/**
+ * Show git status in file listings: per-row colors for
+ * modified/untracked/ignored entries and a branch badge in the pane
+ * header. Runs `git status` in the listed directory's repository
+ * (on the remote host in remote sessions).
+ */
+git_status: boolean }
 export type EnvironmentPreferences = { 
 /**
  * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME

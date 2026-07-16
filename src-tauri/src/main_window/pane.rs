@@ -653,7 +653,7 @@ impl Pane {
                 },
             };
 
-            let disabled = self.preferences.load().behavior.disabled_enrichers();
+            let disabled = self.preferences.load().enrichers.disabled_enrichers();
             // A preference toggled off mid-visit: purge that enricher's
             // leftovers — its run won't happen, so no reset batch will.
             if !disabled.is_empty() {

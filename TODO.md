@@ -47,7 +47,7 @@ Drag-out shipped (escalation at the window edge → native OS drag via the `drag
 
 ## Enrichers
 
-Subsystem + git enricher shipped (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`): symmetric `newt_common::enrich` (Enrichers registry beside the VfsRegistry, EnricherClient Local/Remote, `API_START_ENRICHMENT`/`API_ENRICHMENT_EVENT`, drop-based cancellation), pane overlay anchored to the history cursor (survives refresh, cleared on navigation), git status via shell-out (row colors, dir rollups, branch badge, `behavior.git_status` toggle). Remaining:
+Subsystem + git enricher shipped (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`): symmetric `newt_common::enrich` (Enrichers registry beside the VfsRegistry, EnricherClient Local/Remote, `API_START_ENRICHMENT`/`API_ENRICHMENT_EVENT`, drop-based cancellation), pane overlay anchored to the history cursor (survives refresh, cleared on navigation), git status via shell-out (row colors, dir rollups, branch badge, `enrichers.git_status` toggle). Remaining:
 - Du enricher (recursive directory sizes) — manual keybinds ("size entry under cursor" / "size all children"), streaming running totals into the size column, per-visit ephemeral (anchored to the history cursor like everything else, which dissolves the cache-invalidation problem), walk via `registry.list_files`.
 - Agent-VFS pane mounts aren't enriched (enrichment is session-level; the sub-agent's `--serve-vfs` mode has no enricher dispatcher). Needs per-VFS enricher routing, the way `Vfs` verbs remote, if it proves wanted.
 - Git status taxonomy nuances to revisit if they bite: deleted-only directories render as Modified rollups; copied (`C`) shows as Renamed; submodule status changes render as Modified.

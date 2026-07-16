@@ -16,6 +16,9 @@ pub struct AppPreferences {
     #[schemars(title = "Behavior")]
     pub behavior: BehaviorPreferences,
     #[serde(default)]
+    #[schemars(title = "Enrichers")]
+    pub enrichers: EnricherPreferences,
+    #[serde(default)]
     #[schemars(title = "Archives")]
     pub archives: ArchivePreferences,
     #[serde(default)]
@@ -156,25 +159,6 @@ pub struct BehaviorPreferences {
     /// new ones are pushed.
     #[schemars(title = "History Retention", range(min = 0, max = 100000))]
     pub history_retention: u32,
-    /// Show git status in file listings: per-row colors for
-    /// modified/untracked/ignored entries and a branch badge in the pane
-    /// header. Runs `git status` in the listed directory's repository
-    /// (on the remote host in remote sessions).
-    #[schemars(title = "Git Status")]
-    pub git_status: bool,
-}
-
-impl BehaviorPreferences {
-    /// Enricher ids gated off by preferences. The pane's enrichment
-    /// loop is generic over enrichers; the preference↔id mapping lives
-    /// here with the user-facing toggles.
-    pub fn disabled_enrichers(&self) -> Vec<String> {
-        let mut disabled = Vec::new();
-        if !self.git_status {
-            disabled.push("git".to_string());
-        }
-        disabled
-    }
 }
 
 impl Default for BehaviorPreferences {
@@ -188,8 +172,37 @@ impl Default for BehaviorPreferences {
             expose_local_fs: false,
             default_sort: DefaultSort::default(),
             history_retention: 200,
-            git_status: true,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct EnricherPreferences {
+    /// Show git status in file listings: per-row colors for
+    /// modified/untracked/ignored entries and a branch badge in the pane
+    /// header. Runs `git status` in the listed directory's repository
+    /// (on the remote host in remote sessions).
+    #[schemars(title = "Git Status")]
+    pub git_status: bool,
+}
+
+impl EnricherPreferences {
+    /// Enricher ids gated off by preferences. The pane's enrichment
+    /// loop is generic over enrichers; the preference↔id mapping lives
+    /// here with the user-facing toggles.
+    pub fn disabled_enrichers(&self) -> Vec<String> {
+        let mut disabled = Vec::new();
+        if !self.git_status {
+            disabled.push("git".to_string());
+        }
+        disabled
+    }
+}
+
+impl Default for EnricherPreferences {
+    fn default() -> Self {
+        Self { git_status: true }
     }
 }
 
@@ -333,6 +346,9 @@ pub struct SettingsFile {
     pub behavior: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
+    pub enrichers: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub archives: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
@@ -360,10 +376,11 @@ impl SettingsFile {
     /// defaults, modified-key detection) — a new `AppPreferences` group
     /// must be added here (and as a field above) or its TOML section is
     /// silently ignored on load.
-    pub fn sections(&self) -> [(&'static str, &toml::Value); 5] {
+    pub fn sections(&self) -> [(&'static str, &toml::Value); 6] {
         [
             ("appearance", &self.appearance),
             ("behavior", &self.behavior),
+            ("enrichers", &self.enrichers),
             ("archives", &self.archives),
             ("hot_paths", &self.hot_paths),
             ("environment", &self.environment),
@@ -377,6 +394,7 @@ impl Default for SettingsFile {
             profile: None,
             appearance: default_toml_table(),
             behavior: default_toml_table(),
+            enrichers: default_toml_table(),
             archives: default_toml_table(),
             hot_paths: default_toml_table(),
             environment: default_toml_table(),
