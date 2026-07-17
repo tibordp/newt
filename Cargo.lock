@@ -3674,6 +3674,8 @@ dependencies = [
  "blake3",
  "byteorder",
  "bytes",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
  "dirs 6.0.0",
  "expanduser",
  "filetime",

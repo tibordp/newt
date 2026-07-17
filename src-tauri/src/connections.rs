@@ -57,6 +57,11 @@ pub enum ConnectionKind {
         /// host's keys.
         #[serde(default)]
         forward_agent: bool,
+        /// Bootstrap the agent under a login shell, so it inherits the same
+        /// environment a bare `ssh host` would have given you. Turn off for
+        /// hosts whose profile misbehaves under a non-interactive shell.
+        #[serde(default = "default_true")]
+        login_shell: bool,
     },
     Docker {
         container: String,
@@ -178,12 +183,14 @@ pub fn connection_target_for(
         ConnectionKind::Ssh {
             host,
             forward_agent,
+            login_shell,
         } => Some((
             ConnectionTarget::Spawn(SpawnSpec::Bootstrap {
                 transport_cmd: ssh_transport_cmd(host, *forward_agent),
                 label: host.clone(),
                 askpass: true,
                 shell_join: true,
+                login_shell: *login_shell,
             }),
             host.clone(),
         )),
@@ -204,6 +211,10 @@ pub fn connection_target_for(
                     label: label.clone(),
                     askpass: false,
                     shell_join: false,
+                    // `docker exec` is non-login and already carries the
+                    // image's ENV; a login shell would only add risk on images
+                    // with a minimal sh and no /etc/profile.
+                    login_shell: false,
                 })
             };
             Some((target, label))
@@ -225,6 +236,7 @@ pub fn connection_target_for(
                     label: label.clone(),
                     askpass: false,
                     shell_join: false,
+                    login_shell: false,
                 })
             };
             Some((target, label))
@@ -252,6 +264,7 @@ pub fn connection_target_for(
                     label: label.clone(),
                     askpass: false,
                     shell_join: false,
+                    login_shell: false,
                 }),
                 label,
             ))

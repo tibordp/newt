@@ -10,6 +10,7 @@ pub mod enrich;
 pub mod file_reader;
 pub mod filesystem;
 pub mod hot_paths;
+pub mod locale;
 pub mod operation;
 pub mod proc;
 pub mod rpc;

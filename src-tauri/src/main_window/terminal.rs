@@ -101,7 +101,14 @@ impl Terminal {
                     let terminal_client = terminal_client.clone();
                     async move {
                         while let Some(data) = terminal_client.read(handle).await? {
-                            window_clone.emit("terminal_data", TerminalData { handle, data })?;
+                            // `emit` goes to *every* window; terminal handles
+                            // are per-session and both start at 0, so a
+                            // broadcast lands in the other window's terminal 0.
+                            window_clone.emit_to(
+                                window_clone.label(),
+                                "terminal_data",
+                                TerminalData { handle, data },
+                            )?;
                         }
 
                         Ok::<_, Error>(())
@@ -138,7 +145,8 @@ impl Terminal {
                             "\r\n\x1b[90m[Process exited. Press Enter to close.]\x1b[0m".to_string()
                         }
                     };
-                    let _ = window.emit(
+                    let _ = window.emit_to(
+                        window.label(),
                         "terminal_data",
                         TerminalData {
                             handle,

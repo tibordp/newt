@@ -95,6 +95,15 @@ pub enum SpawnSpec {
         /// (`docker exec`, `podman exec`, `kubectl exec`, custom), where we
         /// must pass `sh`, `-c`, `<script>` as three separate argv elements.
         shell_join: bool,
+        /// Run the bootstrap under a login shell so the agent inherits the
+        /// target's real login environment (`PATH` from `/etc/profile` &c.)
+        /// ambiently — everything downstream of the agent (terminals, `sh -c`
+        /// commands, git, discovery) then inherits it too. `true` for `ssh`,
+        /// which is what a bare `ssh host` gives you; `false` for `docker exec`
+        /// style transports, which are non-login and already carry the image's
+        /// `ENV`. Relies on the handshake tolerating login-shell chatter on
+        /// stdout — see [`read_status_line`].
+        login_shell: bool,
     },
     /// Out-of-band copy: detect the target's architecture, `cp` the agent
     /// binary in, then exec it directly. No shell on the target side required.
@@ -337,6 +346,7 @@ pub async fn spawn(
             transport_cmd,
             askpass,
             shell_join,
+            login_shell,
             ..
         } => {
             spawn_bootstrap(
@@ -344,6 +354,7 @@ pub async fn spawn(
                 mode,
                 *askpass,
                 *shell_join,
+                *login_shell,
                 extra_path,
                 agent_resolver,
                 askpass_provider,
@@ -391,6 +402,7 @@ async fn spawn_bootstrap(
     mode: AgentMode,
     enable_askpass: bool,
     shell_join: bool,
+    login_shell: bool,
     extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
@@ -432,12 +444,23 @@ async fn spawn_bootstrap(
         // a shell on the remote. Quote everything into one argv element so the
         // remote sees `sh -c '<script>'`.
         let escaped = script_body.replace('\'', "'\\''");
-        cmd.arg(format!("sh -c '{}'", escaped));
+        if login_shell {
+            // sshd only execs a login shell when given *no* command, and that
+            // form would need the script on stdin — which is our RPC channel.
+            // So nest one explicitly instead. `$SHELL` (sshd sets it from
+            // passwd) rather than `sh`, so a bash user gets `~/.bash_profile`,
+            // matching what a bare `ssh host` would have sourced.
+            cmd.arg(format!("exec \"${{SHELL:-/bin/sh}}\" -lc '{}'", escaped));
+        } else {
+            cmd.arg(format!("sh -c '{}'", escaped));
+        }
     } else {
         // `docker exec` / `podman exec` / `kubectl exec` / custom transports
         // `execvp` their argv directly. Pass `sh`, `-c`, `<script>` as three
         // separate elements.
-        cmd.arg("sh").arg("-c").arg(&script_body);
+        cmd.arg("sh")
+            .arg(if login_shell { "-lc" } else { "-c" })
+            .arg(&script_body);
     }
     if let (Some(askpass_binary), Some(listener)) = (&askpass_binary, &askpass_listener) {
         cmd.env("SSH_ASKPASS", askpass_binary)

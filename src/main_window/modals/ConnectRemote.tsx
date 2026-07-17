@@ -41,6 +41,7 @@ type FormState = {
   // SSH
   sshHost: string;
   sshForwardAgent: boolean;
+  sshLoginShell: boolean;
   // Docker / Podman
   containerName: string;
   containerUser: string;
@@ -68,6 +69,9 @@ function initialForm(
     transport: "ssh",
     sshHost: "",
     sshForwardAgent: false,
+    // Matches what a bare `ssh host` gives you; off only for hosts whose
+    // profile misbehaves under a non-interactive shell.
+    sshLoginShell: true,
     containerName: "",
     containerUser: "",
     // Docker/Podman containers are typically local — bootstrapless is faster
@@ -91,6 +95,8 @@ function initialForm(
         transport: "ssh",
         sshHost: initial.host,
         sshForwardAgent: !!initial.forward_agent,
+        // Defaults on, so an absent field means enabled — not `!!`.
+        sshLoginShell: initial.login_shell ?? true,
       };
     case "docker":
       return {
@@ -137,6 +143,7 @@ function buildKind(form: FormState): ConnectionKind | string {
         type: "ssh",
         host: form.sshHost.trim(),
         forward_agent: form.sshForwardAgent,
+        login_shell: form.sshLoginShell,
       };
     case "docker":
       if (!form.containerName.trim()) return "Container is required";
@@ -433,6 +440,16 @@ function SshFormFields({ form, update, pending, firstInputRef }: FieldProps) {
         }
         checked={form.sshForwardAgent}
         onChange={(checked) => update("sshForwardAgent", checked)}
+        disabled={pending}
+      />
+      <CheckboxField
+        label={
+          <>
+            Login shell (<code>-l</code>)
+          </>
+        }
+        checked={form.sshLoginShell}
+        onChange={(checked) => update("sshLoginShell", checked)}
         disabled={pending}
       />
     </>

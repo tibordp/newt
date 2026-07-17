@@ -461,10 +461,12 @@ fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
         "ssh" => ConnectionKind::Ssh {
             host: spec.to_string(),
             forward_agent: false,
+            login_shell: true,
         },
         "ssh-agent" => ConnectionKind::Ssh {
             host: spec.to_string(),
             forward_agent: true,
+            login_shell: true,
         },
         "docker" | "docker-bootstrap" | "podman" | "podman-bootstrap" => {
             let (user, container) = match spec.split_once('@') {
@@ -559,6 +561,9 @@ fn main() {
     }
     apply_log_flags(args.verbose, args.quiet);
     pretty_env_logger::init();
+
+    // Before tauri::Builder spawns anything — `set_var` is not thread-safe.
+    newt_common::locale::ensure_locale();
 
     // Connection target for the non-profile cases — `--profile` is resolved
     // inside `setup` once the preferences directory is known.
@@ -758,9 +763,14 @@ fn main() {
                     }
                     tauri::WindowEvent::DragDrop(event) => {
                         use tauri::Emitter;
+                        // Scoped to this window: `position` is window-relative,
+                        // so a broadcast would have every other window resolve
+                        // a drop target from coordinates that aren't theirs.
+                        let label = window.label();
                         match event {
                             tauri::DragDropEvent::Enter { paths, position } => {
-                                let _ = window.emit(
+                                let _ = window.emit_to(
+                                    label,
                                     "external-drag",
                                     serde_json::json!({
                                         "kind": "enter",
@@ -771,7 +781,8 @@ fn main() {
                                 );
                             }
                             tauri::DragDropEvent::Over { position } => {
-                                let _ = window.emit(
+                                let _ = window.emit_to(
+                                    label,
                                     "external-drag",
                                     serde_json::json!({
                                         "kind": "over",
@@ -781,7 +792,8 @@ fn main() {
                                 );
                             }
                             tauri::DragDropEvent::Drop { paths, position } => {
-                                let _ = window.emit(
+                                let _ = window.emit_to(
+                                    label,
                                     "external-drag",
                                     serde_json::json!({
                                         "kind": "drop",
@@ -792,8 +804,11 @@ fn main() {
                                 );
                             }
                             tauri::DragDropEvent::Leave => {
-                                let _ = window
-                                    .emit("external-drag", serde_json::json!({ "kind": "leave" }));
+                                let _ = window.emit_to(
+                                    label,
+                                    "external-drag",
+                                    serde_json::json!({ "kind": "leave" }),
+                                );
                             }
                             _ => {}
                         }

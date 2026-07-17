@@ -231,7 +231,7 @@ pub fn activate_viewer_window(
 
         // Handle edit menu items by emitting events to the frontend
         if suffix == "copy" || suffix == "select_all" || suffix == "goto" {
-            let _ = window_clone.emit("viewer-menu", suffix);
+            let _ = window_clone.emit_to(window_clone.label(), "viewer-menu", suffix);
             return;
         }
 

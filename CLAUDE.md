@@ -33,6 +33,26 @@ Remote VFSes (S3 today, SFTP planned) are orthogonal to the session mode. A VFS 
 
 `std::path::Path`/`PathBuf` must **never** appear on a serde-serialized type that crosses the agent↔host RPC boundary (anything sent via the `Communicator` or an `api`/`VfsDescriptor` payload). Use `newt_common::vfs::path::PathBuf` (implements `specta::Type` + serde) or `String`. Native conversion happens only on the side that physically owns the filesystem. Treat this as a litmus test whenever touching an RPC/`api` type or adding a path field — audit the whole type, don't symptom-fix one field (`agent_resolver` host-local paths are exempt — never serialized).
 
+### Window-targeted events
+
+Multiple MainWindows (plus viewers/editors) share **one process**. They used to be a process each, which made every broadcast accidentally window-scoped — a lot of event code still carries that assumption, and nothing in the type system catches it.
+
+Tauri 2's `Emitter::emit` **always emits to every target**, whatever you call it on: `window.emit(…)` is *not* window-scoped. That was v1 semantics; v2 changed the meaning while keeping the call compiling. Anything destined for one window must be `window.emit_to(window.label(), …)`.
+
+The targeting is asymmetric, and that asymmetry is the trap:
+
+| Backend | Frontend listener | Delivered to |
+|---|---|---|
+| `emit` | either | **every** window (cross-talk) |
+| `emit_to(label)` | `getCurrentWebviewWindow().listen` | that window ✓ |
+| `emit_to(label)` | bare `listen` from `@tauri-apps/api/event` | **nothing** |
+
+A bare `listen()` registers as `EventTarget::Any`, and Tauri's `emit_to(AnyLabel)` matcher falls through to `_ => false` for `Any` candidates. So scoping an emit *without* moving its listener to `getCurrentWebviewWindow().listen()` silently trades cross-talk for a dead event — no compile error, no test failure, and each side looks correct read on its own. **Change both ends in the same commit**, and grep for the event name to find every listener first.
+
+Only genuinely global state (`update:preferences`) legitimately uses `app_handle.emit`. That pairing is safe because a broadcast *does* reach scoped listeners — the hazard only runs the other way.
+
+Same root cause, still live: identifiers minted per session (`TerminalHandle`) restart at 0 in every window, so they're unique only *within* a session. Never route by one alone across windows.
+
 ## UX: Keyboard-Centric Design
 
 This is a keyboard-centric app. All UX decisions should keep efficient keyboard navigation firmly in mind.

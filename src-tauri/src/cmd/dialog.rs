@@ -399,6 +399,7 @@ pub fn dialog(
                     initial: crate::connections::ConnectionKind::Ssh {
                         host: String::new(),
                         forward_agent: false,
+                        login_shell: true,
                     },
                     default_open_in,
                 },

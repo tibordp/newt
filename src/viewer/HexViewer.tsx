@@ -9,7 +9,7 @@ import React, {
 import * as CM from "@radix-ui/react-context-menu";
 
 import { safe } from "../lib/ipc";
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import styles from "./Viewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
@@ -353,19 +353,24 @@ export function HexViewer({
   goToOffsetRef.current = goToOffset;
 
   useEffect(() => {
-    const unlisten = listen<string>("viewer-menu", (event) => {
-      switch (event.payload) {
-        case "copy":
-          copyHexSelectionRef.current();
-          break;
-        case "select_all":
-          selectAllRef.current();
-          break;
-        case "goto":
-          goToOffsetRef.current();
-          break;
-      }
-    });
+    // Window-scoped: the menu event targets this viewer's label, and a bare
+    // listen() registers for "Any", which a labeled emit never matches.
+    const unlisten = getCurrentWebviewWindow().listen<string>(
+      "viewer-menu",
+      (event) => {
+        switch (event.payload) {
+          case "copy":
+            copyHexSelectionRef.current();
+            break;
+          case "select_all":
+            selectAllRef.current();
+            break;
+          case "goto":
+            goToOffsetRef.current();
+            break;
+        }
+      },
+    );
     return () => {
       unlisten.then((f) => f());
     };

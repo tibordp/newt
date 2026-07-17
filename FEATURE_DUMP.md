@@ -761,9 +761,9 @@ All terminals are always mounted in the DOM but only the active one is visible. 
 - **Font**: Menlo, Monaco, Courier New (fallback chain), 12px, 1.2 line height.
 - **Cursor**: Blinking bar, 2px wide.
 - **Working directory**: New terminals inherit the current directory of the active pane. On Windows the native path is de-verbatimised for the spawn (`\\?\C:\…` → `C:\…`) so cmd.exe actually cd's there; a genuine network location stays UNC (`\\server\share\…`) so the shell shows its own "UNC not supported" notice rather than us hiding it.
-- **Shell**: Unix — system default shell (passwd database or `$SHELL`). Windows — `%COMSPEC%` (cmd.exe).
+- **Shell**: Unix — system default shell (passwd database or `$SHELL`). Windows — `%COMSPEC%` (cmd.exe). On macOS the shell is spawned as a **login shell** (`-l`, for `bash`/`zsh`/`fish`/`sh`; shells with no login flag are left alone): launchd gives a GUI process a bare `PATH`, and everything `path_helper` contributes (`/etc/paths.d`, the cryptex dirs, `/Library/Apple/usr/bin`) only arrives via `/etc/profile`, which non-login shells never read. Terminal.app, iTerm2, Ghostty and VS Code all do the same on macOS — and, like VS Code, Newt deliberately does *not* pass `-l` elsewhere: a Linux desktop session gets its environment from PAM/systemd, and an agent gets one from its login-shell bootstrap.
 - **Backend**: Unix uses a real PTY (`pty-process`). Windows uses a ConPTY (`CreatePseudoConsole`) driven directly via `windows-sys` — no third-party PTY wrapper. I/O is fully async over tokio overlapped named pipes (IOCP reactor, no dedicated reader threads); child exit is observed via an OS thread-pool wait. Because the ConPTY output pipe (owned by conhost, not the child) never EOFs on its own, end-of-stream is deterministic: on child exit the console is closed, which makes conhost flush its entire buffer and then break the pipe (no timers, no teardown latency).
-- **Environment**: Unix sets `TERM=xterm-256color`, `COLORTERM=truecolor` (ConPTY emits its own VT, so these are not set on Windows).
+- **Environment**: Unix sets `TERM=xterm-256color`, `COLORTERM=truecolor` (ConPTY emits its own VT, so these are not set on Windows). On macOS, `LANG` is exported process-wide at startup (`newt_common::locale::ensure_locale`) when the environment carries no locale at all, which is what launchd hands a GUI process — without it bash fails `setlocale` and prints a warning per category into every terminal. The value comes from `CFLocaleCopyCurrent`, probed against libc and falling back to `en_US.UTF-8`. Only ever `LANG`, never `LC_ALL`: ssh forwards `LC_*` by default and `LC_ALL` outranks everything on the far side, so exporting it would push our locale onto every remote and warn there whenever it isn't generated. Nothing to do on Linux (pam_env supplies `LANG`) or Windows.
 - **Responsive**: Automatically resizes when the panel is resized (via ResizeObserver + FitAddon).
 
 ### Theming
@@ -1043,7 +1043,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 **Profile types**:
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
 - **SFTP**: Host (`user@hostname`).
-- **SSH**: Host (`user@hostname`) + optional `forward_agent` flag (`-A`). Connecting opens a new window.
+- **SSH**: Host (`user@hostname`) + optional `forward_agent` flag (`-A`) + `login_shell` (defaults true). Connecting opens a new window.
 - **Docker** / **Podman**: Container name + optional user + `bootstrapless` flag (defaults to true: `docker cp` / `podman cp` + direct exec; disable to use the sh-bootstrap path with hash-keyed caching).
 - **Kube**: kubectl context, namespace, pod, container.
 - **Custom**: Caller-supplied shell command run locally via the platform shell (`sh -c` on Unix, `cmd.exe /C` on Windows). The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
@@ -1068,7 +1068,7 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 | Transport | CLI | Notes |
 |---|---|---|
 | Local | (default) | No subprocess; services run in-process. |
-| SSH | `--target=ssh:user@host` | Uses `~/.ssh/config`, askpass for passwords / host keys. |
+| SSH | `--target=ssh:user@host` | Uses `~/.ssh/config`, askpass for passwords / host keys. Login-shell bootstrap (see below). |
 | SSH (agent forwarding) | `--target=ssh-agent:user@host` | Adds `-A`. Lets the remote agent's SSH/SFTP invocations reuse host keys. |
 | pkexec | `--target=pkexec` | Linux only. Elevated agent via Polkit. |
 | Elevated | `--target=elevated` / `--elevated` | Linux: pkexec. Windows: UAC (`ShellExecuteEx "runas"`) + named-pipe agent. |
@@ -1083,6 +1083,10 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. For Docker/Podman/Kube the dialog populates a combo-box with live targets (`docker ps`, `podman ps`, `kubectl get pods`), and for SSH it parses `~/.ssh/config` for host aliases. Discovery is per-dialog ephemeral state — no persistent caching.
 
 **Open as a new session** (checkbox in the Connect dialog's button row): checked opens a full remote session in a new window; unchecked mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The default follows the session: checked in local sessions, unchecked in remote ones — connecting from inside a remote session usually means peeking into one of *its* containers. The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. A pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network. Discovery follows the same side (a remote session lists the remote's targets), and exited/dead containers are filtered out — they can't be exec'd into.
+
+**Login-shell bootstrap** (SSH, on by default; per-profile `login_shell`): the agent is started under `exec "$SHELL" -lc '<script>'` so it inherits the target's real login environment — the same one a bare `ssh host` would have given you, since sshd only execs a login shell when handed *no* command. `$SHELL` rather than `sh` so a bash user gets `~/.bash_profile`. This is ambient rather than resolved: everything downstream of the agent — terminals, `sh -c` commands, git, discovery — inherits it, so no `PATH` probing or manual patching is needed on the remote side. It is safe because the handshake already skips any non-`NEWT:` line, tolerating profiles that print banners, and because `-lc` takes the script from argv and leaves stdin free for RPC.
+
+Off for `docker exec`-style transports: those are non-login by design and already carry the image's `ENV`, so a login shell would only add risk on images with a minimal `sh` and no `/etc/profile`. WSL is also non-login for now — it execs the agent directly with no handshake, so profile chatter would land in the RPC stream (see TODO.md).
 
 **Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
 1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.

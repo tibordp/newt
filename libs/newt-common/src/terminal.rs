@@ -257,8 +257,14 @@ impl TerminalClient for Local {
                 cmd
             } else {
                 let user = ShellUser::from_env()?;
-                info!("spawning default shell: {}", user.shell);
+                let login = login_shell_flag(&user.shell);
+                info!(
+                    "spawning default shell: {} (login: {})",
+                    user.shell,
+                    login.is_some()
+                );
                 let mut cmd = pty_process::Command::new(&user.shell);
+                cmd.args(login);
                 cmd.env("USER", user.user);
                 cmd.env("TERM", "xterm-256color");
                 cmd.env("COLORTERM", "truecolor");
@@ -496,6 +502,37 @@ fn get_pw_entry(buf: &mut [i8; PASSWD_BUFFER_SIZE]) -> Result<Passwd<'_>, Error>
     })
 }
 
+/// `-l`, when this platform's default shell needs to be a login shell.
+///
+/// Only macOS. A GUI process there is launched by launchd with a bare `PATH`;
+/// everything `path_helper` contributes (`/etc/paths.d`, the cryptex dirs,
+/// `/Library/Apple/usr/bin`) arrives via `/etc/profile`, which a non-login
+/// shell never reads. Terminal.app, iTerm2 and Ghostty all spawn login shells
+/// for exactly this reason, as does VS Code — whose macOS terminal profiles
+/// carry `-l` while its Linux ones deliberately don't.
+///
+/// Everywhere else the ambient environment is already right, so a login shell
+/// would only re-source profiles for no gain: a Linux desktop session gets its
+/// environment from PAM/systemd, and an agent gets one from its login-shell
+/// bootstrap (see `connect::spawn_bootstrap`).
+///
+/// Returns `None` for shells that have no login flag rather than failing the
+/// spawn. A macOS *agent* double-sources its profile — bootstrap plus this —
+/// which costs some duplicate `PATH` entries and nothing else.
+#[cfg(unix)]
+fn login_shell_flag(shell: &str) -> Option<&'static str> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(shell);
+    // The set VS Code gives `-l` to. Others (tmux, pwsh, nu) either reject it
+    // or aren't login shells in the first place.
+    matches!(name, "bash" | "zsh" | "fish" | "sh").then_some("-l")
+}
+
 /// User information that is required for a new shell session.
 #[cfg(unix)]
 struct ShellUser {
@@ -528,5 +565,37 @@ impl ShellUser {
         };
 
         Ok(Self { user, home, shell })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::login_shell_flag;
+
+    #[test]
+    fn login_flag_only_on_macos() {
+        let flag = login_shell_flag("/bin/bash");
+        if cfg!(target_os = "macos") {
+            assert_eq!(flag, Some("-l"));
+        } else {
+            // A Linux desktop session and an agent both already have a login
+            // environment; re-sourcing profiles would be pure duplication.
+            assert_eq!(flag, None);
+        }
+    }
+
+    #[test]
+    fn resolves_by_basename_not_full_path() {
+        assert_eq!(
+            login_shell_flag("/opt/homebrew/bin/zsh"),
+            login_shell_flag("zsh")
+        );
+    }
+
+    #[test]
+    fn shells_without_a_login_flag_are_left_alone() {
+        // Passing `-l` to these fails the spawn outright.
+        assert_eq!(login_shell_flag("/usr/bin/tmux"), None);
+        assert_eq!(login_shell_flag("pwsh"), None);
     }
 }

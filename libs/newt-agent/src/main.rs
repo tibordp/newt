@@ -157,6 +157,11 @@ fn main() {
         std::process::exit(run_askpass(&sock_path));
     }
 
+    // Before the runtime spawns its workers — `set_var` is not thread-safe.
+    // A Mac agent gets its locale here for the same reason the host does; a
+    // Linux one already has one from pam_env and this is a no-op.
+    newt_common::locale::ensure_locale();
+
     let rt = tokio::runtime::Runtime::new().unwrap();
     if let Err(e) = rt.block_on(run_agent()) {
         eprintln!("agent error: {}", e);
