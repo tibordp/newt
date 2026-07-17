@@ -229,6 +229,8 @@ impl ZipArchiveVfs {
 
                 let upstream = self.upstream.clone();
                 let archive_path = self.archive_path.clone();
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let _cancel_on_drop = cancel.clone().drop_guard();
 
                 let (zip_index, tree) = tokio::task::spawn_blocking(move || {
                     let adapter = RangeReadAdapter {
@@ -237,6 +239,7 @@ impl ZipArchiveVfs {
                         archive_path,
                         file_size,
                         position: 0,
+                        cancel,
                     };
                     let zip = zip::ZipArchive::new(adapter)
                         .map_err(|e| Error::custom(format!("failed to read ZIP archive: {}", e)))?;
@@ -369,6 +372,8 @@ impl ZipArchiveVfs {
         let handle = tokio::runtime::Handle::current();
         let upstream = self.upstream.clone();
         let archive_path = self.archive_path.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let _cancel_on_drop = cancel.clone().drop_guard();
 
         tokio::task::spawn_blocking(move || {
             let adapter = RangeReadAdapter {
@@ -377,6 +382,7 @@ impl ZipArchiveVfs {
                 archive_path,
                 file_size,
                 position: 0,
+                cancel,
             };
             let mut zip = zip::ZipArchive::new(adapter)
                 .map_err(|e| Error::custom(format!("failed to open ZIP: {}", e)))?;

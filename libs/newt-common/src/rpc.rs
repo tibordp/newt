@@ -95,20 +95,6 @@ impl Outbox {
         }
     }
 
-    /// Blocking send for low-priority messages. Intended for use inside
-    /// `spawn_blocking` where `.await` is not available.
-    pub fn blocking_send_low(
-        &self,
-        msg: Message,
-    ) -> Result<(), tokio::sync::mpsc::error::SendError<Message>> {
-        assert!(
-            !msg.is_high_priority(),
-            "blocking_send_low called with high-priority message: {:?}",
-            std::mem::discriminant(&msg),
-        );
-        self.low.blocking_send(msg)
-    }
-
     /// Completes when the receiver half is dropped.
     pub async fn closed(&self) {
         self.high.closed().await
@@ -225,7 +211,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 Ok(Some(Message::InvokeCancel(RequestId(request_id))))
             }
             4 => {
-                if src.len() < 1 + 2 {
+                if src.len() < 1 + 2 + 4 {
                     return Ok(None);
                 }
                 let api = (&src[1..3]).read_u16::<NetworkEndian>().unwrap();
@@ -241,7 +227,7 @@ impl tokio_util::codec::Decoder for MessageCodec {
                 Ok(Some(Message::Notify(Api(api), slice)))
             }
             5 => {
-                if src.len() < 1 + 2 {
+                if src.len() < 1 + 2 + 4 {
                     return Ok(None);
                 }
                 let api = (&src[1..3]).read_u16::<NetworkEndian>().unwrap();

@@ -1201,13 +1201,17 @@ async fn plan_copy(
 // --- Sync-reader bridge (spawn_blocking + bounded channel) ---
 
 /// Bridge a sync reader into an async chunk stream. The bounded channel
-/// provides backpressure; the blocking task ends on EOF, error, or cancel.
+/// provides backpressure; the blocking task ends on EOF, error, cancel, or
+/// receiver drop. Awaiting the returned handle propagates reader panics.
 pub(crate) fn bridge_sync_reader(
     mut reader: Box<dyn std::io::Read + Send>,
     cancel: CancellationToken,
-) -> tokio::sync::mpsc::Receiver<Result<Vec<u8>, crate::Error>> {
+) -> (
+    tokio::sync::mpsc::Receiver<Result<Vec<u8>, crate::Error>>,
+    tokio::task::JoinHandle<()>,
+) {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
-    tokio::task::spawn_blocking(move || {
+    let handle = tokio::task::spawn_blocking(move || {
         let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         loop {
             if cancel.is_cancelled() {
@@ -1228,7 +1232,7 @@ pub(crate) fn bridge_sync_reader(
             }
         }
     });
-    rx
+    (rx, handle)
 }
 
 // --- Chunked byte copy (runs in spawn_blocking with trait objects) ---
@@ -1277,15 +1281,21 @@ async fn copy_bytes_async(
     let mut buf = [0u8; VFS_READ_CHUNK_SIZE];
 
     loop {
-        if cancel.is_cancelled() {
-            return Err(crate::Error::cancelled());
-        }
-
-        let n = reader.read(&mut buf).await?;
+        let n = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
+            result = reader.read(&mut buf) => result?,
+        };
         if n == 0 {
             break;
         }
-        writer.write(&buf[..n]).await?;
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
+            result = writer.write(&buf[..n]) => {
+                result?;
+            }
+        }
         *bytes_done += n as u64;
         reporter.maybe_send_progress(*bytes_done, items_done, display);
     }
@@ -1404,13 +1414,14 @@ async fn copy_single_file(
         let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
 
-        let mut rx = bridge_sync_reader(sync_reader, cancel.clone());
+        let (mut rx, read_task) = bridge_sync_reader(sync_reader, cancel.clone());
         while let Some(chunk) = rx.recv().await {
             let data = chunk?;
             writer.write(&data).await?;
             *bytes_done += data.len() as u64;
             reporter.maybe_send_progress(*bytes_done, items_done, display);
         }
+        read_task.await?;
         writer.finish().await?;
 
         return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
@@ -1425,8 +1436,9 @@ async fn copy_single_file(
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let sync_writer = dst_vfs.overwrite_sync(&entry.dest).await?;
 
-        // Bridge async reader to sync writer via channel + spawn_blocking
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, crate::Error>>(4);
+        // Bridge async reader to sync writer via channel + spawn_blocking. The
+        // async-side send keeps the runtime thread free when the writer stalls.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
         let cancel2 = cancel.clone();
         let sender2 = reporter.sync_sender();
         let bd = *bytes_done;
@@ -1436,7 +1448,7 @@ async fn copy_single_file(
         let writer_handle = tokio::task::spawn_blocking(move || {
             let mut writer = sync_writer;
             let mut bd_local = bd;
-            for chunk in rx {
+            while let Some(chunk) = rx.blocking_recv() {
                 match chunk {
                     Ok(data) => {
                         if let Err(e) = std::io::Write::write_all(&mut *writer, &data) {
@@ -1454,16 +1466,28 @@ async fn copy_single_file(
         use tokio::io::AsyncReadExt;
         let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         loop {
-            if cancel2.is_cancelled() {
-                drop(tx);
-                let _ = writer_handle.await;
-                return Err(crate::Error::cancelled());
-            }
-            let n = reader.read(&mut buf).await?;
+            let n = tokio::select! {
+                biased;
+                _ = cancel2.cancelled() => {
+                    drop(tx);
+                    let _ = writer_handle.await;
+                    return Err(crate::Error::cancelled());
+                }
+                result = reader.read(&mut buf) => result?,
+            };
             if n == 0 {
                 break;
             }
-            if tx.send(Ok(buf[..n].to_vec())).is_err() {
+            let sent = tokio::select! {
+                biased;
+                _ = cancel2.cancelled() => {
+                    drop(tx);
+                    let _ = writer_handle.await;
+                    return Err(crate::Error::cancelled());
+                }
+                sent = tx.send(Ok(buf[..n].to_vec())) => sent,
+            };
+            if sent.is_err() {
                 break;
             }
         }
@@ -1969,7 +1993,8 @@ async fn execute_create_archive(
     {
         Ok(()) => sink.finish().await,
         Err(e) => {
-            drop(sink);
+            // Release the writer before trying to delete the partial archive.
+            let _ = sink.abort().await;
             Err(e)
         }
     };
@@ -2005,11 +2030,11 @@ async fn pack_entries(
         match &entry.kind {
             WalkedKind::Directory => {
                 writer.add_directory(&entry.rel, &entry.file, &mut buf)?;
-                sink.write_all(std::mem::take(&mut buf)).await?;
+                cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
             }
             WalkedKind::Symlink { target } => {
                 writer.add_symlink(&entry.rel, target, &entry.file, &mut buf)?;
-                sink.write_all(std::mem::take(&mut buf)).await?;
+                cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
             }
             WalkedKind::File => {
                 let scanned_size = entry.file.size;
@@ -2045,17 +2070,17 @@ async fn pack_entries(
                 };
 
                 writer.begin_file(&entry.rel, scanned_size, &entry.file, &mut buf)?;
-                sink.write_all(std::mem::take(&mut buf)).await?;
+                cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
 
                 let mut read_error = None;
                 loop {
                     if cancel.is_cancelled() {
                         return Err(crate::Error::cancelled());
                     }
-                    match reader.next().await {
+                    match cancellable(cancel, reader.next()).await {
                         Ok(Some(chunk)) => {
                             let accepted = writer.write_data(&chunk, &mut buf)?;
-                            sink.write_all(std::mem::take(&mut buf)).await?;
+                            cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
                             bytes_done += chunk.len() as u64;
                             reporter.maybe_send_progress(bytes_done, items_done, &entry.rel);
                             if accepted < chunk.len() {
@@ -2076,7 +2101,7 @@ async fn pack_entries(
                 }
 
                 let padded = writer.end_file(&mut buf)?;
-                sink.write_all(std::mem::take(&mut buf)).await?;
+                cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
                 if padded > 0 && read_error.is_none() {
                     warn!(
                         "archive entry {} zero-padded: source shrank below its scanned size",
@@ -2109,7 +2134,7 @@ async fn pack_entries(
     }
 
     writer.finish(&mut buf)?;
-    sink.write_all(std::mem::take(&mut buf)).await?;
+    cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
     reporter.maybe_send_progress(bytes_done, items_done, "");
     Ok(())
 }

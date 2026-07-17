@@ -847,7 +847,7 @@ impl Vfs for TarArchiveVfs {
             let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
             let mut position: u64 = 0;
             loop {
-                if cancel.is_cancelled() {
+                if cancel.is_cancelled() || tx.is_closed() {
                     return;
                 }
                 match engine.step() {
@@ -859,10 +859,17 @@ impl Vfs for TarArchiveVfs {
                             engine.signal_eof();
                             continue;
                         }
-                        match upstream
-                            .read_range(&archive_file_path, position, buf.len() as u64)
-                            .await
-                        {
+                        let read = tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => return,
+                            _ = tx.closed() => return,
+                            read = upstream.read_range(
+                                &archive_file_path,
+                                position,
+                                buf.len() as u64,
+                            ) => read,
+                        };
+                        match read {
                             Ok(chunk) => {
                                 if chunk.data.is_empty() {
                                     engine.signal_eof();
@@ -888,10 +895,17 @@ impl Vfs for TarArchiveVfs {
                             engine.signal_eof();
                             continue;
                         }
-                        match upstream
-                            .read_range(&archive_file_path, position, len as u64)
-                            .await
-                        {
+                        let read = tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => return,
+                            _ = tx.closed() => return,
+                            read = upstream.read_range(
+                                &archive_file_path,
+                                position,
+                                len as u64,
+                            ) => read,
+                        };
+                        match read {
                             Ok(chunk) => {
                                 if chunk.data.is_empty() {
                                     engine.signal_eof();

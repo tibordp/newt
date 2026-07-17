@@ -591,21 +591,31 @@ struct RangeReadAdapter {
     archive_path: PathBuf,
     file_size: u64,
     position: u64,
+    cancel: tokio_util::sync::CancellationToken,
 }
 
 impl Read for RangeReadAdapter {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Never ErrorKind::Interrupted here: std's read_exact/read_to_end
+        // retry on it, which would turn cancellation into a busy loop.
+        if self.cancel.is_cancelled() {
+            return Err(std::io::Error::other("archive read cancelled"));
+        }
         if self.position >= self.file_size {
             return Ok(0);
         }
         let len = buf.len() as u64;
-        let chunk = self
-            .handle
-            .block_on(
-                self.upstream
-                    .read_range(&self.archive_path, self.position, len),
-            )
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let chunk = self.handle.block_on(async {
+            tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => Err(std::io::Error::other(
+                    "archive read cancelled",
+                )),
+                result = self.upstream.read_range(&self.archive_path, self.position, len) => {
+                    result.map_err(|e| std::io::Error::other(e.to_string()))
+                }
+            }
+        })?;
         let n = chunk.data.len();
         buf[..n].copy_from_slice(&chunk.data);
         self.position += n as u64;

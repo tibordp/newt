@@ -66,6 +66,16 @@ export function detectAutoMode(mime: string | null): ViewerMode {
   return "hex";
 }
 
+export function buildFileUrl(
+  fileServerBase: string,
+  vfsId: number,
+  path: string,
+): string {
+  const url = new URL(`${fileServerBase}/${vfsId}`);
+  url.searchParams.set("path", path);
+  return url.toString();
+}
+
 export const CHUNK_SIZE = 128 * 1024;
 export const HEX_BYTES_PER_ROW = 16;
 export const MAX_SCROLL_HEIGHT = 16_000_000; // stay under browser element height limit

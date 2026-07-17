@@ -11,6 +11,7 @@ import {
   MAX_CACHED_CHUNKS,
   LruChunkCache,
   detectAutoMode,
+  buildFileUrl,
   type FileChunk,
   type FileInfo,
   type ViewerMode,
@@ -46,7 +47,7 @@ function Viewer() {
   const fileServerBase =
     viewerState?.file_server_base ?? searchParams.get("file_server_base") ?? "";
   const fileUrl = filePath
-    ? `${fileServerBase}/${filePath.vfs_id}${filePath.path}`
+    ? buildFileUrl(fileServerBase, filePath.vfs_id, filePath.path)
     : "";
 
   const [info, setInfo] = useState<FileInfo | null>(null);

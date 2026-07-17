@@ -242,11 +242,24 @@ impl Remote {
 struct FetchStreamGuard {
     stream_id: StreamId,
     pending: crate::api::PendingVfsReadStreams,
+    communicator: crate::rpc::Communicator,
+    active: bool,
+}
+
+impl FetchStreamGuard {
+    fn complete(&mut self) {
+        self.active = false;
+    }
 }
 
 impl Drop for FetchStreamGuard {
     fn drop(&mut self) {
         self.pending.lock().remove(&self.stream_id);
+        if self.active {
+            let _ = self
+                .communicator
+                .signal(crate::api::API_HOST_FETCH_AGENT_CANCEL, &self.stream_id);
+        }
     }
 }
 
@@ -257,7 +270,7 @@ struct FetchChannelRead {
     rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     current: Vec<u8>,
     offset: usize,
-    _guard: FetchStreamGuard,
+    guard: FetchStreamGuard,
 }
 
 impl tokio::io::AsyncRead for FetchChannelRead {
@@ -277,6 +290,7 @@ impl tokio::io::AsyncRead for FetchChannelRead {
             std::task::Poll::Ready(Some(chunk)) => {
                 if chunk.is_empty() {
                     // Empty sentinel — EOF.
+                    self.guard.complete();
                     std::task::Poll::Ready(Ok(()))
                 } else {
                     let n = chunk.len().min(buf.remaining());
@@ -349,6 +363,8 @@ impl AgentResolver for Remote {
         let guard = FetchStreamGuard {
             stream_id,
             pending: self.pending_streams.clone(),
+            communicator: communicator.clone(),
+            active: true,
         };
 
         // Chunks can outrun the FETCH invoke *response* (the host enqueues
@@ -384,7 +400,7 @@ impl AgentResolver for Remote {
                 rx: buf_rx,
                 current: Vec::new(),
                 offset: 0,
-                _guard: guard,
+                guard,
             }),
         })
     }

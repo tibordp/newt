@@ -15,6 +15,40 @@ fn round_trip(msg: Message) -> Message {
 }
 
 #[test]
+fn decode_handles_torn_reads_at_every_byte_boundary() {
+    // Regression: the Notify/Signal arms sliced the length field past a
+    // partial header, panicking when a read ended mid-header.
+    let messages = [
+        Message::Ping(true),
+        Message::InvokeRequest(Api(42), RequestId(1), Bytes::from_static(b"payload")),
+        Message::InvokeResponse(RequestId(2), Bytes::from_static(b"payload")),
+        Message::InvokeCancel(RequestId(3)),
+        Message::Notify(Api(4), Bytes::from_static(b"payload")),
+        Message::Signal(Api(5), Bytes::from_static(b"payload")),
+    ];
+    for msg in messages {
+        let mut c = codec();
+        let expected = std::mem::discriminant(&msg);
+        let mut full = BytesMut::new();
+        c.encode(msg, &mut full).unwrap();
+
+        let mut buf = BytesMut::new();
+        let mut decoded = None;
+        for (i, byte) in full.iter().enumerate() {
+            buf.extend_from_slice(&[*byte]);
+            match c.decode(&mut buf).unwrap() {
+                Some(m) => {
+                    assert_eq!(i, full.len() - 1, "decoded before the frame was complete");
+                    decoded = Some(m);
+                }
+                None => assert_ne!(i, full.len() - 1, "complete frame failed to decode"),
+            }
+        }
+        assert_eq!(std::mem::discriminant(&decoded.unwrap()), expected);
+    }
+}
+
+#[test]
 fn ping_false_round_trip() {
     let decoded = round_trip(Message::Ping(false));
     assert!(matches!(decoded, Message::Ping(false)));
@@ -277,13 +311,14 @@ async fn outbox_high_priority_preferred() {
     assert!(matches!(msg, Message::Notify(Api(1), _)));
 }
 
-#[test]
-fn outbox_try_recv_prefers_high() {
+#[tokio::test]
+async fn outbox_try_recv_prefers_high() {
     let (tx, mut rx) = super::create_outbox();
 
-    // Send both synchronously
+    // Queue both before receiving.
     tx.send_high(Message::Ping(true)).unwrap();
-    tx.blocking_send_low(Message::Notify(Api(2), Bytes::new()))
+    tx.send(Message::Notify(Api(2), Bytes::new()))
+        .await
         .unwrap();
 
     // try_recv should return high first
@@ -299,11 +334,4 @@ fn outbox_try_recv_prefers_high() {
 fn send_high_panics_for_low_priority() {
     let (tx, _rx) = super::create_outbox();
     tx.send_high(Message::Notify(Api(0), Bytes::new())).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "blocking_send_low called with high-priority message")]
-fn blocking_send_low_panics_for_high_priority() {
-    let (tx, _rx) = super::create_outbox();
-    tx.blocking_send_low(Message::Ping(false)).unwrap();
 }

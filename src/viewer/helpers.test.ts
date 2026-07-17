@@ -6,6 +6,7 @@ import {
   isVideoMime,
   isPdfMime,
   detectAutoMode,
+  buildFileUrl,
   formatSize,
   formatHexOffset,
   hexByte,
@@ -14,6 +15,26 @@ import {
   collectBytes,
   CHUNK_SIZE,
 } from "./helpers";
+
+describe("buildFileUrl", () => {
+  it("passes the VFS path as an opaque query parameter", () => {
+    expect(
+      buildFileUrl("http://localhost:1234/token", 7, "/photos/a.png"),
+    ).toBe("http://localhost:1234/token/7?path=%2Fphotos%2Fa.png");
+  });
+
+  it("encodes URL syntax and percent-encoded-looking names", () => {
+    expect(
+      buildFileUrl("http://localhost:1234/token", 7, "/scan #1%2F?.pdf"),
+    ).toBe("http://localhost:1234/token/7?path=%2Fscan+%231%252F%3F.pdf");
+  });
+
+  it("encodes unicode as UTF-8", () => {
+    expect(buildFileUrl("http://localhost:1234/token", 7, "/café/猫.jpg")).toBe(
+      "http://localhost:1234/token/7?path=%2Fcaf%C3%A9%2F%E7%8C%AB.jpg",
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // MIME type detection

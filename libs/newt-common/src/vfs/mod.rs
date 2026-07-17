@@ -847,30 +847,45 @@ impl Filesystem for VfsRegistryFs {
                 None
             };
 
-            let (inner_tx, forwarder) = if let Some(ref outer_tx) = batch_tx {
+            let result = if let Some(ref outer_tx) = batch_tx {
                 let (tx, mut rx) =
                     mpsc::channel::<Vec<File>>(crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY);
                 let outer_tx = outer_tx.clone();
                 let vfs_path = current.clone();
                 let fs_stats = fs_stats.clone();
-                let handle = tokio::spawn(async move {
-                    while let Some(files) = rx.recv().await {
-                        let batch = FileList::new(vfs_path.clone(), files, fs_stats.clone());
-                        if outer_tx.send(batch).await.is_err() {
-                            break;
+                let list = vfs.list_files(&current.path, Some(tx));
+                tokio::pin!(list);
+                let result = loop {
+                    tokio::select! {
+                        result = &mut list => break result,
+                        files = rx.recv() => {
+                            let Some(files) = files else {
+                                break (&mut list).await;
+                            };
+                            let batch = FileList::new(
+                                vfs_path.clone(),
+                                files,
+                                fs_stats.clone(),
+                            );
+                            if outer_tx.send(batch).await.is_err() {
+                                return Err(Error::cancelled());
+                            }
                         }
                     }
-                });
-                (Some(tx), Some(handle))
+                };
+                while let Some(files) = rx.recv().await {
+                    let batch = FileList::new(vfs_path.clone(), files, fs_stats.clone());
+                    if outer_tx.send(batch).await.is_err() {
+                        return Err(Error::cancelled());
+                    }
+                }
+                result
             } else {
-                (None, None)
+                vfs.list_files(&current.path, None).await
             };
 
-            match vfs.list_files(&current.path, inner_tx).await {
+            match result {
                 Ok(result) => {
-                    if let Some(h) = forwarder {
-                        let _ = h.await;
-                    }
                     return Ok(
                         FileList::new(current, result.files, fs_stats).with_partial(result.partial)
                     );
@@ -881,17 +896,11 @@ impl Filesystem for VfsRegistryFs {
                         (crate::ErrorKind::NotFound, false) | (crate::ErrorKind::NotADirectory, _)
                     ) =>
                 {
-                    if let Some(h) = forwarder {
-                        let _ = h.await;
-                    }
                     if !current.path.pop() {
                         return Err(e);
                     }
                 }
                 Err(e) => {
-                    if let Some(h) = forwarder {
-                        let _ = h.await;
-                    }
                     return Err(e);
                 }
             }
@@ -980,9 +989,13 @@ impl FileReader for VfsRegistryFileReader {
         let descriptor = vfs.descriptor();
         if descriptor.can_read_sync() {
             let mut reader = vfs.open_read_sync(&local_path).await?;
-            let mut data = Vec::with_capacity(details.size as usize);
-            std::io::Read::read_to_end(&mut reader, &mut data)?;
-            Ok(data)
+            let size = details.size as usize;
+            tokio::task::spawn_blocking(move || {
+                let mut data = Vec::with_capacity(size);
+                std::io::Read::read_to_end(&mut reader, &mut data)?;
+                Ok(data)
+            })
+            .await?
         } else if descriptor.can_read_async() {
             use tokio::io::AsyncReadExt;
             let mut reader = vfs.open_read_async(&local_path).await?;
@@ -1000,8 +1013,12 @@ impl FileReader for VfsRegistryFileReader {
         let descriptor = vfs.descriptor();
         if descriptor.can_overwrite_sync() {
             let mut writer = vfs.overwrite_sync(&local_path).await?;
-            std::io::Write::write_all(&mut writer, &data)?;
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                std::io::Write::write_all(&mut writer, &data)?;
+                std::io::Write::flush(&mut writer)?;
+                Ok(())
+            })
+            .await?
         } else if descriptor.can_overwrite_async() {
             let mut writer = vfs.overwrite_async(&local_path).await?;
             writer.write(&data).await?;

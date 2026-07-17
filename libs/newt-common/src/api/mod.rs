@@ -79,6 +79,7 @@ pub const API_HOST_VFS_FILE_INFO: Api = Api(606);
 pub const API_HOST_VFS_OVERWRITE_ASYNC_BEGIN: Api = Api(607);
 pub const API_HOST_VFS_WRITE_CHUNK: Api = Api(622);
 pub const API_HOST_VFS_OVERWRITE_ASYNC_FINISH: Api = Api(623);
+pub const API_HOST_VFS_OVERWRITE_ASYNC_ABORT: Api = Api(629);
 pub const API_HOST_VFS_CREATE_DIRECTORY: Api = Api(608);
 pub const API_HOST_VFS_CREATE_SYMLINK: Api = Api(609);
 pub const API_HOST_VFS_TOUCH: Api = Api(610);
@@ -102,6 +103,7 @@ pub const API_HOST_ASKPASS: Api = Api(624);
 pub const API_HOST_AGENT_HASH: Api = Api(625);
 pub const API_HOST_FETCH_AGENT: Api = Api(626);
 pub const API_HOST_FETCH_AGENT_CHUNK: Api = Api(627);
+pub const API_HOST_FETCH_AGENT_CANCEL: Api = Api(630);
 
 mod vfs;
 pub use vfs::{VfsDispatcher, VfsReadChunkDispatcher};
@@ -168,21 +170,39 @@ impl Dispatcher for FilesystemDispatcher {
                     crate::filesystem::LIST_BATCH_CHANNEL_CAPACITY,
                 );
 
-                let outbox = self.outbox.clone();
-                let forwarder = tokio::spawn(async move {
-                    while let Some(file_list) = batch_rx.recv().await {
-                        if let Some(bytes) = try_encode(&(stream_id, file_list)) {
-                            let _ = outbox
-                                .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
-                                .await;
+                let list = self.filesystem.list_files(path, opts, Some(batch_tx));
+                tokio::pin!(list);
+
+                // Keep the producer and forwarder in this RPC task. Dropping
+                // the invoke now drops batch_rx immediately, which propagates
+                // cancellation through every bounded bridge to LocalVFS.
+                let ret = loop {
+                    tokio::select! {
+                        ret = &mut list => break ret,
+                        batch = batch_rx.recv() => {
+                            let Some(file_list) = batch else {
+                                break (&mut list).await;
+                            };
+                            if let Some(bytes) = try_encode(&(stream_id, file_list)) {
+                                self.outbox
+                                    .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
+                                    .await
+                                    .map_err(|_| Error::connection())?;
+                            }
                         }
                     }
-                });
+                };
 
-                let ret = self.filesystem.list_files(path, opts, Some(batch_tx)).await;
-
-                // Drain all batch notifications before returning the response.
-                let _ = forwarder.await;
+                // The listing is complete and has dropped its sender; preserve
+                // notification-before-response ordering by draining the queue.
+                while let Some(file_list) = batch_rx.recv().await {
+                    if let Some(bytes) = try_encode(&(stream_id, file_list)) {
+                        self.outbox
+                            .send(Message::Notify(API_LIST_FILES_BATCH, bytes.into()))
+                            .await
+                            .map_err(|_| Error::connection())?;
+                    }
+                }
 
                 encode(&ret)?
             }
@@ -508,23 +528,32 @@ impl Dispatcher for EnricherDispatcher {
                 ) = decode(&req[..])?;
 
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::enrich::EnrichmentEvent>(16);
-                let outbox = self.outbox.clone();
-                let forwarder = tokio::spawn(async move {
-                    while let Some(event) = rx.recv().await {
-                        if let Some(bytes) = try_encode(&(id, event)) {
-                            let _ = outbox
-                                .send(Message::Notify(API_ENRICHMENT_EVENT, bytes.into()))
-                                .await;
+                let enrichment = self.enrichers.enrich(path, scope, enrichers, tx);
+                tokio::pin!(enrichment);
+                let ret = loop {
+                    tokio::select! {
+                        ret = &mut enrichment => break ret,
+                        event = rx.recv() => {
+                            let Some(event) = event else {
+                                break (&mut enrichment).await;
+                            };
+                            if let Some(bytes) = try_encode(&(id, event)) {
+                                self.outbox
+                                    .send(Message::Notify(API_ENRICHMENT_EVENT, bytes.into()))
+                                    .await
+                                    .map_err(|_| Error::connection())?;
+                            }
                         }
                     }
-                });
-
-                // Runs inline so a transport-level InvokeCancel (the host
-                // dropped the request) aborts the enrichment itself.
-                let ret = self.enrichers.enrich(path, scope, enrichers, tx).await;
-
-                // Drain all event notifications before the response.
-                let _ = forwarder.await;
+                };
+                while let Some(event) = rx.recv().await {
+                    if let Some(bytes) = try_encode(&(id, event)) {
+                        self.outbox
+                            .send(Message::Notify(API_ENRICHMENT_EVENT, bytes.into()))
+                            .await
+                            .map_err(|_| Error::connection())?;
+                    }
+                }
 
                 Ok(Some(encode(&ret)?.into()))
             }
@@ -564,11 +593,27 @@ pub struct AgentFetchHeader {
 pub struct AgentFetchDispatcher {
     resolver: Arc<dyn crate::agent_resolver::AgentResolver>,
     outbox: Outbox,
+    fetches: Arc<Mutex<HashMap<StreamId, CancellationToken>>>,
 }
 
 impl AgentFetchDispatcher {
     pub fn new(resolver: Arc<dyn crate::agent_resolver::AgentResolver>, outbox: Outbox) -> Self {
-        Self { resolver, outbox }
+        Self {
+            resolver,
+            outbox,
+            fetches: Default::default(),
+        }
+    }
+}
+
+struct FetchRegistration {
+    stream_id: StreamId,
+    fetches: Arc<Mutex<HashMap<StreamId, CancellationToken>>>,
+}
+
+impl Drop for FetchRegistration {
+    fn drop(&mut self) {
+        self.fetches.lock().remove(&self.stream_id);
     }
 }
 
@@ -582,6 +627,14 @@ impl Dispatcher for AgentFetchDispatcher {
             }
             API_HOST_FETCH_AGENT => {
                 let (triple, accept_gzip, stream_id): (String, bool, StreamId) = decode(&req[..])?;
+                // Register before opening the stream: a caller can cancel the
+                // FETCH invoke while open_agent_binary is still pending.
+                let cancel = CancellationToken::new();
+                self.fetches.lock().insert(stream_id, cancel.clone());
+                let registration = FetchRegistration {
+                    stream_id,
+                    fetches: self.fetches.clone(),
+                };
                 let ret: Result<AgentFetchHeader, Error> = match self
                     .resolver
                     .open_agent_binary(&triple, accept_gzip)
@@ -595,22 +648,35 @@ impl Dispatcher for AgentFetchDispatcher {
                         };
                         let outbox = self.outbox.clone();
                         tokio::spawn(async move {
+                            let _registration = registration;
                             use tokio::io::AsyncReadExt;
                             let mut seq: u64 = 0;
                             let mut buf = vec![0u8; crate::vfs::VFS_READ_CHUNK_SIZE];
                             loop {
-                                match stream.reader.read(&mut buf).await {
+                                let read = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => return,
+                                    read = stream.reader.read(&mut buf) => read,
+                                };
+                                match read {
                                     Ok(0) => break,
                                     Ok(n) => {
                                         if let Some(bytes) =
                                             try_encode(&(stream_id, seq, &buf[..n]))
                                         {
-                                            let _ = outbox
-                                                .send(Message::Notify(
-                                                    API_HOST_FETCH_AGENT_CHUNK,
-                                                    bytes.into(),
-                                                ))
-                                                .await;
+                                            let send = outbox.send(Message::Notify(
+                                                API_HOST_FETCH_AGENT_CHUNK,
+                                                bytes.into(),
+                                            ));
+                                            tokio::select! {
+                                                biased;
+                                                _ = cancel.cancelled() => return,
+                                                result = send => {
+                                                    if result.is_err() {
+                                                        return;
+                                                    }
+                                                }
+                                            }
                                         }
                                         seq += 1;
                                     }
@@ -623,6 +689,9 @@ impl Dispatcher for AgentFetchDispatcher {
                                     }
                                 }
                             }
+                            if cancel.is_cancelled() {
+                                return;
+                            }
                             if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
                                 let _ = outbox
                                     .send(Message::Notify(API_HOST_FETCH_AGENT_CHUNK, bytes.into()))
@@ -631,7 +700,10 @@ impl Dispatcher for AgentFetchDispatcher {
                         });
                         Ok(header)
                     }
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        drop(registration);
+                        Err(e)
+                    }
                 };
                 encode(&ret)?
             }
@@ -640,8 +712,16 @@ impl Dispatcher for AgentFetchDispatcher {
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        Ok(false)
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api == API_HOST_FETCH_AGENT_CANCEL {
+            let stream_id: StreamId = decode(&req[..])?;
+            if let Some(cancel) = self.fetches.lock().remove(&stream_id) {
+                cancel.cancel();
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -954,5 +1034,94 @@ impl Dispatcher for HotPathsDispatcher {
 
     async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use crate::rpc::Communicator;
+
+    struct EndlessListing {
+        started: parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        stopped: parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Filesystem for EndlessListing {
+        async fn poll_changes(&self, _path: VfsPath) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn list_files(
+            &self,
+            path: VfsPath,
+            _options: ListFilesOptions,
+            batch_tx: Option<tokio::sync::mpsc::Sender<FileList>>,
+        ) -> Result<FileList, Error> {
+            let tx = batch_tx.expect("streaming listing must provide a sender");
+            let stopped = self.stopped.lock().take();
+            tokio::task::spawn_blocking(move || {
+                loop {
+                    if tx
+                        .blocking_send(FileList::new(path.clone(), Vec::new(), None))
+                        .is_err()
+                    {
+                        if let Some(stopped) = stopped {
+                            let _ = stopped.send(());
+                        }
+                        return;
+                    }
+                }
+            });
+            if let Some(started) = self.started.lock().take() {
+                let _ = started.send(());
+            }
+            std::future::pending().await
+        }
+
+        async fn touch(&self, _path: VfsPath) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn create_directory(&self, _path: VfsPath) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn revalidate(
+            &self,
+            _vfs_id: VfsId,
+        ) -> Result<crate::vfs::RevalidationOutcome, Error> {
+            Ok(crate::vfs::RevalidationOutcome::Fresh)
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_streaming_listing_drops_blocking_producer_receiver() {
+        let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (outbox, _outbox_rx) = Communicator::create_outbox();
+        let dispatcher = FilesystemDispatcher::new(
+            EndlessListing {
+                started: parking_lot::Mutex::new(Some(started_tx)),
+                stopped: parking_lot::Mutex::new(Some(stopped_tx)),
+            },
+            outbox,
+        );
+        let path = VfsPath::root(VfsId(0));
+        let request = encode(&(path, ListFilesOptions { strict: true }, StreamId(1))).unwrap();
+
+        let invoke = tokio::spawn(async move {
+            dispatcher
+                .invoke(API_LIST_FILES_STREAMING, request.into())
+                .await
+        });
+        started_rx.await.unwrap();
+        invoke.abort();
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), stopped_rx)
+            .await
+            .expect("blocking listing producer survived invoke cancellation")
+            .unwrap();
     }
 }

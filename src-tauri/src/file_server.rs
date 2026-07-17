@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -15,6 +15,11 @@ use tokio_stream::wrappers::ReceiverStream;
 struct FileServerState {
     token: String,
     file_reader: Arc<dyn FileReader>,
+}
+
+#[derive(serde::Deserialize)]
+struct FileQuery {
+    path: String,
 }
 
 fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
@@ -43,7 +48,12 @@ fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64,
         let mut offset = start;
         while offset <= end {
             let len = std::cmp::min(chunk_size, end - offset + 1);
-            match file_reader.read_range(vfs_path.clone(), offset, len).await {
+            let result = tokio::select! {
+                biased;
+                _ = tx.closed() => break,
+                result = file_reader.read_range(vfs_path.clone(), offset, len) => result,
+            };
+            match result {
                 Ok(chunk) => {
                     if chunk.data.is_empty() {
                         break;
@@ -67,7 +77,7 @@ fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64,
 pub fn start(file_reader: Arc<dyn FileReader>, token: String) -> (u16, JoinHandle<()>) {
     let state = Arc::new(FileServerState { token, file_reader });
     let app = Router::new()
-        .route("/{token}/{vfs_id}/{*path}", get(serve_file))
+        .route("/{token}/{vfs_id}", get(serve_file))
         .with_state(state);
 
     let listener = std::net::TcpListener::bind("localhost:0").unwrap();
@@ -84,7 +94,8 @@ pub fn start(file_reader: Arc<dyn FileReader>, token: String) -> (u16, JoinHandl
 
 async fn serve_file(
     State(state): State<Arc<FileServerState>>,
-    Path((token, vfs_id_str, path)): Path<(String, String, String)>,
+    Path((token, vfs_id_str)): Path<(String, String)>,
+    Query(query): Query<FileQuery>,
     headers: HeaderMap,
 ) -> Response {
     if token != state.token {
@@ -95,7 +106,7 @@ async fn serve_file(
         Ok(id) => VfsId(id),
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let vfs_path = VfsPath::from_wire_str(vfs_id, &path);
+    let vfs_path = VfsPath::from_wire_str(vfs_id, &query.path);
 
     let details = match state.file_reader.file_details(vfs_path.clone()).await {
         Ok(d) => d,

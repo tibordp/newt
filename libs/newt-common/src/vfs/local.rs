@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 #[cfg(unix)]
 use std::os::unix::prelude::MetadataExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::file_reader::{FileChunk, FileDetails};
 use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
@@ -552,6 +553,8 @@ impl Vfs for LocalVfs {
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::VfsFileList, Error> {
         let path = to_native(path);
+        let cancel = CancellationToken::new();
+        let _cancel_on_drop = cancel.clone().drop_guard();
         let files: Vec<File> = tokio::task::spawn_blocking({
             let cache = self.fs_cache.clone();
             move || -> Result<Vec<File>, Error> {
@@ -559,6 +562,10 @@ impl Vfs for LocalVfs {
 
                 let mut ret = Vec::new();
                 let mut batch = Vec::new();
+
+                if cancel.is_cancelled() {
+                    return Ok(ret);
+                }
 
                 if let Some(parent) = path.parent() {
                     // Always emit `..` so up-navigation works even if the
@@ -614,6 +621,9 @@ impl Vfs for LocalVfs {
                 }
 
                 for maybe_entry in std::fs::read_dir(&path)? {
+                    if cancel.is_cancelled() {
+                        return Ok(ret);
+                    }
                     // A dirent we can't even read — skip it rather than
                     // aborting the whole listing.
                     let Ok(entry) = maybe_entry else {
@@ -1118,7 +1128,9 @@ impl Vfs for LocalVfs {
                 let _ = std::fs::remove_file(&to);
             }
 
-            // Fall back to kernel-level copy
+            // Fall back to the platform's kernel-assisted path
+            // (copy_file_range/sendfile, fcopyfile, or CopyFileEx). This also
+            // preserves sparse-file behavior where the platform supports it.
             std::fs::copy(&from, &to)?;
             Ok(())
         })

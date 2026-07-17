@@ -25,6 +25,8 @@ All filesystem, terminal, and operation functionality is accessed through traits
 
 Both modes use the exact same traits, so the Tauri backend and frontend code is identical regardless of connection mode. The agent exists purely to run operations on a different host or with different privileges — it is not needed for process isolation in the local case.
 
+There is no need to guard against API drift between the host and the agent. While drift can happen in dev, the bootstrap process always ensures that the agent and the host were built from the same source tree, so they are tightly coupled. There is no need to build compatibility layers in the RPC and it is fine to panic if a condition can only emerge through drift.
+
 ### VFS (Virtual Filesystem)
 
 Remote VFSes (S3 today, SFTP planned) are orthogonal to the session mode. A VFS is mounted into the `VfsRegistry` and accessed through the same `Filesystem` trait. In a local session, the VFS connection originates from the Tauri process; in a remote session, it originates from the agent — so e.g. an S3 mount in a remote session uses the remote host's AWS credentials and network.
@@ -93,6 +95,16 @@ When adding state that affects the UI beyond a single component (e.g. a new pane
 2. Derive/implement `Serialize` so the patch system picks it up.
 3. Modify it via `with_update` / `with_update_async` in a command handler.
 4. Read it from `remoteState` on the frontend — do not duplicate it into `useState`.
+
+## Async and cancellability
+
+We prefer async code over sync code, even at the slight expense of efficiency. The main reason for this is ease of cancellation (by dropping the pending future). We are willing to go above and beyond to make things async-friendly, including reimplementation of popular crates. Dropping a future to cancel is preferred over cancellation tokens, though cancellation tokens are acceptable. 
+
+In general all file operations, both on the read path and the write path should be cancellable and cancellation should propagate across the RPC boundary when using remoting. This is not always 100% possible - we are often bridging sync and async code and sometimes a synchronous operation may be legitimately stuck on a syscall or cancellation may not be feasible. When this happens we need to consider the following guidance:
+
+1. If an operation is doing something potentially destructive (like overwriting a file) or expensive (listing billions of blobs on S3), we should not remove a visual indicator that an operation is in progress. User may want to go and kill the process to terminate it. 
+2. We should not continue pumping bytes over the RPC boundary when the receiver no longer cares about them, even if producing them cannot be cleanly interrupted
+3. If a stuck operation is doing something innocuous or inert and it's only consuming a blocking-pool thread (never a runtime worker — stuck sync work must live in `spawn_blocking`), it's fine to leave it orphaned, but it should not prevent other operations from making progress.
 
 ## Communication
 
