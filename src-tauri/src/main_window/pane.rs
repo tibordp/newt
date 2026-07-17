@@ -2197,6 +2197,24 @@ impl PaneViewState {
         self.recompute_stats();
     }
 
+    /// Toggle the selection state of every visible entry. Entries hidden
+    /// by an active visual filter keep their selection (unlike
+    /// `select_all`, which replaces the set wholesale) — inverting is a
+    /// per-entry operation, so it only touches what the user can see.
+    pub fn invert_selection(&mut self) {
+        self.drag_base = None;
+        self.clear_quick_search();
+        for key in self.file_lookup.keys() {
+            if key == ".." {
+                continue;
+            }
+            if !self.all_selected.remove(key) {
+                self.all_selected.insert(key.clone());
+            }
+        }
+        self.recompute_stats();
+    }
+
     pub fn end_drag_selection(&mut self) {
         self.drag_base = None;
     }

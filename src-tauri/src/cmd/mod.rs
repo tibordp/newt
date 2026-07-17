@@ -285,6 +285,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             pane::cmd_open_in_right_pane,
             pane::cmd_select_all,
             pane::cmd_deselect_all,
+            pane::cmd_invert_selection,
             pane::cmd_compute_size,
             pane::cmd_compute_all_sizes,
             pane::cmd_copy_to_clipboard,

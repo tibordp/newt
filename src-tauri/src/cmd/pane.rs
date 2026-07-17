@@ -135,6 +135,15 @@ pub fn cmd_select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 
 #[tauri::command]
 #[specta::specta]
+pub fn cmd_invert_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.view_state_mut().invert_selection();
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().deselect_all();

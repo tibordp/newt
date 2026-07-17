@@ -169,6 +169,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Insert | Toggle selection on current file and advance focus to next |
 | Mod+A | Select all files (except `..`) |
 | Mod+D | Deselect all |
+| (unbound) | Invert Selection (command palette) — toggles every visible entry; filtered-out selections are left alone |
 | Escape | Clear filter text, or clear selection if no filter active |
 | Shift+Enter | Follow symlink (navigate to its target) |
 

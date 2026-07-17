@@ -970,6 +970,14 @@ async cmdDeselectAll(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdInvertSelection(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_invert_selection", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdComputeSize(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_compute_size", { paneHandle }) };

@@ -100,6 +100,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "invert_selection".into(),
+            name: "Invert Selection".into(),
+            short_name: None,
+            category: "Selection".into(),
+            default_key: None,
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "view".into(),
             name: "View".into(),
             short_name: None,
