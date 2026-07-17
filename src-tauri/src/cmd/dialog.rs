@@ -34,6 +34,8 @@ pub enum DialogKind {
     #[serde(rename = "mount_k8s")]
     #[specta(rename = "mount_k8s")]
     MountK8s,
+    /// The connect dialog, but scoped to a pane mount (VFS selector entry).
+    MountRemote,
     QuickConnect,
     SelectVfs,
     HistoryBack,
@@ -398,14 +400,23 @@ pub fn dialog(
                         },
                     }
                 }
-                DialogKind::ConnectRemote => ModalDataKind::ConnectRemote {
-                    initial: crate::connections::ConnectionKind::Ssh {
-                        host: String::new(),
-                        forward_agent: false,
-                        login_shell: true,
-                    },
-                    default_open_in,
-                },
+                DialogKind::ConnectRemote | DialogKind::MountRemote => {
+                    ModalDataKind::ConnectRemote {
+                        initial: crate::connections::ConnectionKind::Ssh {
+                            host: String::new(),
+                            forward_agent: false,
+                            login_shell: true,
+                        },
+                        // MountRemote comes from the VFS selector, whose other
+                        // entries all mount into the pane — default to that
+                        // scope regardless of session.
+                        default_open_in: if dialog == DialogKind::MountRemote {
+                            crate::connections::OpenIn::Pane
+                        } else {
+                            default_open_in
+                        },
+                    }
+                }
                 DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),
                 },

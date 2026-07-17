@@ -56,7 +56,7 @@ Each pane is an independent file browser with its own path, selection, filter, s
 
 ### Pane Header
 
-- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes show an unmount (×) button. Unmounted types (S3, SFTP) show "connect..." entries that open mount dialogs.
+- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes sort first and show an unmount (×) button; below a separator, unmounted types (S3, SFTP, Kubernetes, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
 - **Breadcrumb path**: Current directory path displayed as clickable breadcrumb segments. Clicking any segment navigates to that directory. Clicking the *last* segment opens the Navigate (Go To) dialog instead of navigating. Breadcrumb format varies by VFS type:
   - Local: `/home/user/documents`
   - S3: `s3://bucket/prefix/key`
@@ -1020,10 +1020,11 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
 ### VFS Selector Dialog (Mod+Shift+L)
 
 - Lists all currently **mounted** VFS instances (with VFS ID, type, and mount label).
-- Lists **available** VFS types to mount:
+- Lists **available** VFS types to mount, as a trailing "connect" section (separator + ellipsis-suffixed entries):
   - S3: Mounts immediately on selection (uses ambient credentials).
   - SFTP: Opens hostname input dialog.
   - Kubernetes: Opens a context input dialog (defaults to current kubectl context).
+  - Remote: Opens the Connect dialog (`DialogKind::MountRemote`) with "Open as a new session" defaulted off, i.e. pre-scoped to a pane mount whatever the session mode. Always offered, even inside a remote session.
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
 - **Ephemeral VFSes** (archives, search results) are hidden from the dropdown: they're reachable via navigation history, auto-unmount when no pane references them, and listing them as switch targets would just be noise.

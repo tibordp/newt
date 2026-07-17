@@ -286,6 +286,8 @@ const VFS_ICONS: Record<string, string> = {
   archive: "\u{eaa0}",
   archive_zip: "\u{eaa0}",
   k8s: "\u{f10fe}",
+  remote: "\u{f048d}",
+  agent: "\u{f048d}",
 };
 
 function VfsSelector({
@@ -367,10 +369,21 @@ function VfsSelector({
             const groupEnd =
               isSplit &&
               (!next || next.vfs_id !== target.vfs_id || next.root == null);
+            // Mounted targets sort first; the connect entries (unmounted
+            // types) form a trailing section opened by a separator — unless
+            // a split-root group just closed with one.
+            const connectStart =
+              target.vfs_id == null &&
+              prev != null &&
+              prev.vfs_id != null &&
+              prev.root == null;
             return (
               <Fragment
-                key={`${target.type_name}-${target.vfs_id ?? i}-${target.root ?? ""}`}
+                key={`${target.type_name}-${target.vfs_id ?? `u${i}`}-${target.root ?? ""}`}
               >
+                {connectStart && (
+                  <DropdownMenu.Separator className={menuStyles.separator} />
+                )}
                 {groupStart && (
                   <DropdownMenu.Label className={menuStyles.sectionHeader}>
                     {target.display_name}
@@ -387,7 +400,10 @@ function VfsSelector({
                       openingDialogRef.current = true;
                       commands.dialog(
                         target.mount_dialog as
-                          "mount_s3" | "mount_sftp" | "mount_k8s",
+                          | "mount_s3"
+                          | "mount_sftp"
+                          | "mount_k8s"
+                          | "mount_remote",
                         paneHandle,
                       );
                     } else {
@@ -411,7 +427,7 @@ function VfsSelector({
                       <>
                         {target.display_name}
                         {target.label && ` (${target.label})`}
-                        {target.vfs_id == null && " (connect...)"}
+                        {target.vfs_id == null && "…"}
                       </>
                     )}
                   </span>

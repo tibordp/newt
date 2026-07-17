@@ -1585,7 +1585,11 @@ export type DeleteConfirmMode =
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | 
+/**
+ * The connect dialog, but scoped to a pane mount (VFS selector entry).
+ */
+"mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
 export type DiscoveryResult<T> = { items: T[]; 
 /**
  * Best-effort failure note. When present, the dialog should show this

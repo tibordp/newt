@@ -1399,6 +1399,18 @@ impl MainWindowContext {
             }
         }
 
+        // Not a VFS descriptor: opens the connect dialog scoped to a pane
+        // mount. Offered unconditionally — even inside a remote session the
+        // user may want to peek at another host.
+        targets.push(VfsTarget {
+            vfs_id: None,
+            type_name: "remote".to_string(),
+            display_name: "Remote".to_string(),
+            label: None,
+            mount_dialog: Some("mount_remote".to_string()),
+            root: None,
+        });
+
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
             // Same VFS → keep split-root drives in a stable order.
             (Some(id_a), Some(id_b)) => id_a.cmp(&id_b).then_with(|| a.root.cmp(&b.root)),
