@@ -19,6 +19,7 @@
 /// and the one distros override via pam_env, so it travels harmlessly.
 ///
 /// Call from `main` before spawning any threads — `set_var` is not thread-safe.
+#[allow(clippy::needless_return)]
 pub fn ensure_locale() {
     if !cfg!(target_os = "macos") {
         return;

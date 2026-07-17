@@ -302,8 +302,11 @@ pub fn dialog(
                 }
                 DialogKind::Rename => {
                     let pane = pane.unwrap();
-                    let name = match pane.view_state().focused {
-                        Some(ref selected) => selected.clone(),
+                    // Focused rather than the selection — F2 renames what's
+                    // under the cursor. `actionable_focus` so that `..` opens
+                    // no dialog at all.
+                    let name = match pane.view_state().actionable_focus() {
+                        Some(name) => name.clone(),
                         None => return Ok(()),
                     };
                     ModalDataKind::Rename {

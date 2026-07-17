@@ -1324,7 +1324,7 @@ impl Pane {
     /// wrappers below, never `focused` directly.
     fn effective_keys(view_state: &PaneViewState) -> Vec<String> {
         let keys: Vec<&String> = if view_state.all_selected.is_empty() {
-            view_state.focused.iter().collect()
+            view_state.actionable_focus().into_iter().collect()
         } else if view_state.filter_mode == FilterMode::Filter {
             view_state
                 .all_selected
@@ -1589,6 +1589,17 @@ impl PaneViewState {
     /// dereferencing.
     pub fn files(&self) -> &[File] {
         &self.files
+    }
+
+    /// The focused entry's key, when it is a legitimate *operation* target —
+    /// `None` when focus is on [`PARENT_KEY`].
+    ///
+    /// Actions that target the focused entry rather than the selection
+    /// (Rename) must read focus through this. Navigation wants the opposite
+    /// and reads `focused` / [`Pane::get_focused_file`] directly, because
+    /// Enter on `..` is the whole point of `..`.
+    pub fn actionable_focus(&self) -> Option<&String> {
+        self.focused.as_ref().filter(|k| k.as_str() != PARENT_KEY)
     }
 
     fn recompute_stats(&mut self) {
@@ -2403,6 +2414,26 @@ mod tests {
     fn parent_only_selection_yields_nothing() {
         let vs = view_state(Some(PARENT_KEY), &[PARENT_KEY]);
         assert!(Pane::effective_keys(&vs).is_empty());
+    }
+
+    /// F2 renames what's under the cursor, ignoring the selection — so it
+    /// reads focus directly and needs its own gate.
+    #[test]
+    fn actionable_focus_rejects_parent() {
+        assert_eq!(view_state(Some(PARENT_KEY), &[]).actionable_focus(), None);
+    }
+
+    #[test]
+    fn actionable_focus_passes_regular_entry() {
+        let vs = view_state(Some("file.txt"), &[]);
+        assert_eq!(vs.actionable_focus(), Some(&"file.txt".to_string()));
+    }
+
+    /// Focus-based actions ignore the selection entirely.
+    #[test]
+    fn actionable_focus_ignores_selection() {
+        let vs = view_state(Some(PARENT_KEY), &["a.txt", "b.txt"]);
+        assert_eq!(vs.actionable_focus(), None);
     }
 
     /// In filter mode, selected-but-hidden entries don't piggyback.
