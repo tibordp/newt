@@ -118,7 +118,7 @@ Click a column header to sort ascending by that key; click the same header again
 - Hidden files: dimmed styling. Hidden-ness is platform-native — the leading-`.` convention on Unix, the filesystem `HIDDEN`/`SYSTEM` attributes on Windows.
 - Symlinks: special styling (CSS class).
 - Git status: filename color per working-tree status (VSCode-style palette, theme-aware) — modified/deleted-under = amber, untracked/added/renamed = green, conflicted = red, ignored = dimmed muted. Directories carry rollups of everything beneath them. See "Enrichers" below.
-- `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected.
+- `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected, and is never an operation target: it is a navigation affordance only. It can still be *focused*, so Delete / Copy / Move / Pack / Properties with `..` under the cursor and nothing selected do nothing at all — no confirmation, no dialog. Enforced centrally in `Pane::effective_keys`, which every action reads its targets through; navigation (Enter, open-in-other-pane) goes via `get_focused_*` and legitimately sees `..`.
 
 **Status bar** (bottom of each pane) — content changes dynamically:
 

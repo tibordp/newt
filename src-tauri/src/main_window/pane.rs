@@ -33,6 +33,14 @@ use super::DisplayOptions;
 use super::DisplayOptionsInner;
 use super::MainWindowState;
 
+/// Entry key of the `..` pseudo-entry.
+///
+/// `..` is a *navigation* affordance, never an operation target: Enter on it
+/// must go up, Delete on it must do nothing at all. Navigation asks via
+/// `get_focused_*` and legitimately sees it; actions ask via
+/// [`Pane::effective_keys`] and never do.
+pub const PARENT_KEY: &str = "..";
+
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum SortingKey {
@@ -1302,35 +1310,44 @@ impl Pane {
         result.map(|_| ())
     }
 
-    /// If the selection is empty, returns the focused file.
-    /// Otherwise, returns the selected files. The focused file is NOT included
-    /// in the selection in this case.
+    /// The entry keys an action operates on: the selection if there is one,
+    /// else the focused entry — and never [`PARENT_KEY`], in either case.
     ///
-    /// In filter mode, only files visible in the current filtered view are
+    /// In filter mode, only entries visible in the current filtered view are
     /// included, so hidden selected files don't piggyback on operations.
-    pub fn get_effective_selection(&self) -> Vec<VfsPath> {
-        let view_state = self.view_state.read();
-
-        if view_state.all_selected.is_empty() {
-            view_state
-                .focused
-                .iter()
-                .map(|s| view_state.path.join(s))
-                .collect()
+    ///
+    /// `..` is excluded *here* rather than at each call site. The selection
+    /// mutators already keep it out of `all_selected`, but the fall back to
+    /// `focused` had no such gate, which is how Delete came to prompt for it.
+    /// Every consumer already treats an empty result as "do nothing", so this
+    /// one guarantee is all they need. Actions must ask through this or its
+    /// wrappers below, never `focused` directly.
+    fn effective_keys(view_state: &PaneViewState) -> Vec<String> {
+        let keys: Vec<&String> = if view_state.all_selected.is_empty() {
+            view_state.focused.iter().collect()
         } else if view_state.filter_mode == FilterMode::Filter {
             view_state
                 .all_selected
                 .iter()
                 .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
-                .map(|s: &String| view_state.path.join(s))
                 .collect()
         } else {
-            view_state
-                .all_selected
-                .iter()
-                .map(|s: &String| view_state.path.join(s))
-                .collect()
-        }
+            view_state.all_selected.iter().collect()
+        };
+
+        keys.into_iter()
+            .filter(|k| k.as_str() != PARENT_KEY)
+            .cloned()
+            .collect()
+    }
+
+    /// Paths of the effective selection. See [`Self::effective_keys`].
+    pub fn get_effective_selection(&self) -> Vec<VfsPath> {
+        let view_state = self.view_state.read();
+        Self::effective_keys(&view_state)
+            .iter()
+            .map(|s| view_state.path.join(s))
+            .collect()
     }
 
     /// Entry keys of the effective selection (same rules as
@@ -1339,19 +1356,7 @@ impl Pane {
     /// per-entry enrichment triggers, which address entries by key.
     pub fn effective_selection_keys(&self) -> Vec<String> {
         let view_state = self.view_state.read();
-
-        if view_state.all_selected.is_empty() {
-            view_state.focused.iter().cloned().collect()
-        } else if view_state.filter_mode == FilterMode::Filter {
-            view_state
-                .all_selected
-                .iter()
-                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
-                .cloned()
-                .collect()
-        } else {
-            view_state.all_selected.iter().cloned().collect()
-        }
+        Self::effective_keys(&view_state)
     }
 
     pub fn get_focused_file(&self) -> Option<VfsPath> {
@@ -1384,36 +1389,17 @@ impl Pane {
     /// entries to their underlying source paths. See `get_focused_source`.
     pub fn get_effective_selection_dereferenced(&self) -> Vec<VfsPath> {
         let view_state = self.view_state.read();
-
-        let lookup_source = |key: &str| -> VfsPath {
-            view_state
-                .files
-                .iter()
-                .find(|f| f.key() == key)
-                .and_then(|f| f.source.clone())
-                .unwrap_or_else(|| view_state.path.join(key))
-        };
-
-        if view_state.all_selected.is_empty() {
-            view_state
-                .focused
-                .iter()
-                .map(|s| lookup_source(s))
-                .collect()
-        } else if view_state.filter_mode == FilterMode::Filter {
-            view_state
-                .all_selected
-                .iter()
-                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
-                .map(|s| lookup_source(s))
-                .collect()
-        } else {
-            view_state
-                .all_selected
-                .iter()
-                .map(|s| lookup_source(s))
-                .collect()
-        }
+        Self::effective_keys(&view_state)
+            .iter()
+            .map(|key| {
+                view_state
+                    .files
+                    .iter()
+                    .find(|f| f.key() == key)
+                    .and_then(|f| f.source.clone())
+                    .unwrap_or_else(|| view_state.path.join(key))
+            })
+            .collect()
     }
 
     pub fn get_focused_file_info(&self) -> Option<newt_common::filesystem::File> {
@@ -1608,7 +1594,7 @@ impl PaneViewState {
     fn recompute_stats(&mut self) {
         let mut stats = PaneStats::default();
         for f in &self.files {
-            if f.name == ".." {
+            if f.name == PARENT_KEY {
                 continue;
             }
             // Directories contribute their computed recursive size when
@@ -1632,8 +1618,12 @@ impl PaneViewState {
         }
         if self.filter_mode == FilterMode::Filter {
             // Exclude ".." from both counts for a meaningful "N of M" display
-            let visible = self.files.iter().filter(|f| f.name != "..").count();
-            let total = self.all_files.iter().filter(|f| f.name != "..").count();
+            let visible = self.files.iter().filter(|f| f.name != PARENT_KEY).count();
+            let total = self
+                .all_files
+                .iter()
+                .filter(|f| f.name != PARENT_KEY)
+                .count();
             if visible != total {
                 stats.total_count = Some(total);
             }
@@ -1915,9 +1905,9 @@ impl PaneViewState {
         self.folders_first = folders_first;
         let enrichments = &self.enrichments;
         self.files.sort_by(|a, b| {
-            if a.name == ".." {
+            if a.name == PARENT_KEY {
                 return std::cmp::Ordering::Less;
-            } else if b.name == ".." {
+            } else if b.name == PARENT_KEY {
                 return std::cmp::Ordering::Greater;
             }
 
@@ -2043,7 +2033,7 @@ impl PaneViewState {
             .all_files
             .iter()
             .filter(|f| {
-                f.name == ".."
+                f.name == PARENT_KEY
                     || self
                         .filter_regex
                         .as_ref()
@@ -2100,7 +2090,7 @@ impl PaneViewState {
         self.files = file_list
             .files()
             .iter()
-            .filter(|f| !f.is_hidden || display_options.show_hidden || f.name == "..")
+            .filter(|f| !f.is_hidden || display_options.show_hidden || f.name == PARENT_KEY)
             .cloned()
             .collect();
 
@@ -2145,7 +2135,7 @@ impl PaneViewState {
         if !self.all_selected.remove(&filename) && self.file_lookup.contains_key(&filename) {
             self.all_selected.insert(filename.clone());
         }
-        self.all_selected.remove("..");
+        self.all_selected.remove(PARENT_KEY);
 
         self.clear_quick_search();
         if focus_next {
@@ -2175,7 +2165,7 @@ impl PaneViewState {
         for i in start_index.min(end_index)..=start_index.max(end_index) {
             self.all_selected.insert(self.files[i].key().to_string());
         }
-        self.all_selected.remove("..");
+        self.all_selected.remove(PARENT_KEY);
 
         self.focused = Some(filename);
         self.recompute_stats();
@@ -2186,7 +2176,7 @@ impl PaneViewState {
         self.clear_quick_search();
         self.all_selected = self.file_lookup.keys().cloned().collect();
         // ".." is its own key (unset → falls back to name) so this still works.
-        self.all_selected.remove("..");
+        self.all_selected.remove(PARENT_KEY);
         self.recompute_stats();
     }
 
@@ -2205,7 +2195,7 @@ impl PaneViewState {
         self.drag_base = None;
         self.clear_quick_search();
         for key in self.file_lookup.keys() {
-            if key == ".." {
+            if key == PARENT_KEY {
                 continue;
             }
             if !self.all_selected.remove(key) {
@@ -2237,7 +2227,7 @@ impl PaneViewState {
             let lo = start.min(end).min(last);
             let hi = start.max(end).min(last);
             for i in lo..=hi {
-                if self.files[i].name != ".." {
+                if self.files[i].name != PARENT_KEY {
                     selected.insert(self.files[i].key().to_string());
                 }
             }
@@ -2250,7 +2240,7 @@ impl PaneViewState {
         self.drag_base = None;
         self.clear_quick_search();
         self.all_selected = selected;
-        self.all_selected.remove("..");
+        self.all_selected.remove(PARENT_KEY);
         if let Some(ref f) = focused
             && self.file_lookup.contains_key(f)
         {
@@ -2339,7 +2329,7 @@ impl PaneViewState {
             self.all_selected
                 .insert(self.files[new_index as usize].key().to_string());
         }
-        self.all_selected.remove("..");
+        self.all_selected.remove(PARENT_KEY);
 
         loop {
             i += direction;
@@ -2363,5 +2353,64 @@ impl PaneViewState {
         } else {
             self.recompute_focused_index_and_viewport();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view_state(focused: Option<&str>, selected: &[&str]) -> PaneViewState {
+        PaneViewState {
+            focused: focused.map(str::to_string),
+            all_selected: selected.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// The bug: `..` never enters `all_selected`, but the fall back to
+    /// `focused` had no such gate — so Delete on `..` prompted for it.
+    #[test]
+    fn focused_parent_is_not_actionable() {
+        let vs = view_state(Some(PARENT_KEY), &[]);
+        assert!(Pane::effective_keys(&vs).is_empty());
+    }
+
+    #[test]
+    fn focused_regular_entry_is_actionable() {
+        let vs = view_state(Some("file.txt"), &[]);
+        assert_eq!(Pane::effective_keys(&vs), vec!["file.txt".to_string()]);
+    }
+
+    /// A selection wins over focus, and `..` is stripped even if it somehow
+    /// got in — the guarantee is the accessor's, not the mutators'.
+    #[test]
+    fn parent_is_stripped_from_a_selection() {
+        let vs = view_state(Some("a.txt"), &[PARENT_KEY, "b.txt"]);
+        assert_eq!(Pane::effective_keys(&vs), vec!["b.txt".to_string()]);
+    }
+
+    /// Focus is not merged into a non-empty selection.
+    #[test]
+    fn selection_excludes_the_focused_entry() {
+        let vs = view_state(Some("focused.txt"), &["picked.txt"]);
+        assert_eq!(Pane::effective_keys(&vs), vec!["picked.txt".to_string()]);
+    }
+
+    /// A selection of only `..` is the same as no selection at all, and the
+    /// focus fallback must not resurrect it.
+    #[test]
+    fn parent_only_selection_yields_nothing() {
+        let vs = view_state(Some(PARENT_KEY), &[PARENT_KEY]);
+        assert!(Pane::effective_keys(&vs).is_empty());
+    }
+
+    /// In filter mode, selected-but-hidden entries don't piggyback.
+    #[test]
+    fn filter_mode_drops_entries_outside_the_view() {
+        let mut vs = view_state(None, &["visible.txt", "hidden.txt"]);
+        vs.filter_mode = FilterMode::Filter;
+        vs.file_lookup = [("visible.txt".to_string(), 0)].into_iter().collect();
+        assert_eq!(Pane::effective_keys(&vs), vec!["visible.txt".to_string()]);
     }
 }
