@@ -1611,19 +1611,23 @@ impl PaneViewState {
             if f.name == ".." {
                 continue;
             }
+            // Directories contribute their computed recursive size when
+            // the du enricher has produced one, so a ⌘A after Calculate
+            // All Sizes totals the whole directory in the status bar.
+            let size = Self::effective_size(&self.enrichments, f).unwrap_or(0);
             if f.is_dir {
                 stats.dir_count += 1;
             } else {
                 stats.file_count += 1;
-                stats.bytes += f.size.unwrap_or(0);
             }
+            stats.bytes += size;
             if self.all_selected.contains(f.key()) {
                 if f.is_dir {
                     stats.selected_dir_count += 1;
                 } else {
                     stats.selected_file_count += 1;
-                    stats.selected_bytes += f.size.unwrap_or(0);
                 }
+                stats.selected_bytes += size;
             }
         }
         if self.filter_mode == FilterMode::Filter {
@@ -1831,8 +1835,14 @@ impl PaneViewState {
         }
         self.rebuild_context_badges();
 
-        if sizes_touched && matches!(self.sorting.key, SortingKey::Size) {
-            self.sort(self.folders_first);
+        if sizes_touched {
+            // Computed sizes feed both sort-by-size and the selection
+            // totals — keep them live while a walk streams.
+            if matches!(self.sorting.key, SortingKey::Size) {
+                self.sort(self.folders_first);
+            } else {
+                self.file_generation += 1;
+            }
             self.recompute_stats();
         } else {
             self.file_generation += 1;

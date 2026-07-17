@@ -185,19 +185,13 @@ fn enrichment_event_bincode_round_trip() {
                     },
                 ),
             ],
-            badges: vec![
-                ContextBadge::GitBranch {
-                    name: "main".into(),
-                    detached: false,
-                    ahead: 1,
-                    behind: 2,
-                    dirty: true,
-                },
-                ContextBadge::DirTotalSize {
-                    bytes: 42,
-                    complete: true,
-                },
-            ],
+            badges: vec![ContextBadge::GitBranch {
+                name: "main".into(),
+                detached: false,
+                ahead: 1,
+                behind: 2,
+                dirty: true,
+            }],
         }),
         EnrichmentEvent::Finished {
             enricher: "git".into(),
@@ -441,13 +435,14 @@ async fn du_enricher_end_to_end() {
     let expected_b = disk_usage(&dir.join("b/f3"));
     #[cfg(not(unix))] // no nlink metadata on Windows — no dedup
     let expected_b = 2 * disk_usage(&dir.join("b/f3"));
-    let expected_total = expected_a + expected_b + disk_usage(&dir.join("top.txt"));
 
     let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
     let enrichers = Enrichers::new(registry.clone()).with(Arc::new(super::du::DuEnricher));
     let root_path = VfsPath::new(VfsId::ROOT, local_path_from_native(&dir));
 
-    // Whole-listing run: every directory sized, badge totals the lot.
+    // Whole-listing run: every directory sized. No badges — the
+    // directory total is read via select-all (selection stats include
+    // computed sizes).
     let (entries, badges, lifecycle) = collect_scoped_events(
         &enrichers,
         root_path.clone(),
@@ -460,16 +455,10 @@ async fn du_enricher_end_to_end() {
     assert_eq!(sizes.get("b"), Some(&(expected_b, true)));
     // Symlinked directories are neither sized nor followed.
     assert_eq!(sizes.get("link"), None);
-    assert_eq!(
-        badges,
-        vec![ContextBadge::DirTotalSize {
-            bytes: expected_total,
-            complete: true,
-        }]
-    );
+    assert!(badges.is_empty());
     assert_eq!(lifecycle, vec!["start:du", "finish:du"]);
 
-    // Scoped run: only the named entry, no directory-total badge.
+    // Scoped run: only the named entry.
     let (entries, badges, _) = collect_scoped_events(
         &enrichers,
         root_path.clone(),

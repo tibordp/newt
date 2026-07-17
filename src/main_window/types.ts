@@ -80,8 +80,7 @@ export type GitBranch = {
   dirty: boolean;
 };
 
-export type ContextBadge =
-  { git_branch: GitBranch } | { dir_total_size: RecursiveSize };
+export type ContextBadge = { git_branch: GitBranch };
 
 /// Display projection of `File` produced by the host: same fields as
 /// `File`, with `source_display` pre-rendered through the source VFS's

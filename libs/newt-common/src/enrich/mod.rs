@@ -99,10 +99,6 @@ pub enum ContextBadge {
         /// (repo-wide, not just the listed directory).
         dirty: bool,
     },
-    /// Total size of the listed directory, accumulating while a
-    /// "calculate all sizes" walk runs. Rendered in the pane status
-    /// bar, with a trailing `+` while `complete` is false.
-    DirTotalSize { bytes: u64, complete: bool },
 }
 
 /// Which entries a request is about. Automatic enrichment covers the

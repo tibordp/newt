@@ -9,9 +9,11 @@
 //! Streams running totals per sized entry (replace-by-key,
 //! `complete: false`, throttled by the sink) so directories visibly
 //! grow while the walk runs, flipping to `complete: true` per subtree.
-//! A whole-listing run also accumulates a `DirTotalSize` badge for the
-//! status bar. Cancellation is by drop, like every enricher; values
-//! already applied stay displayed (marked partial) until navigation.
+//! No directory-total badge: the pane's selection totals include
+//! computed sizes, so select-all after a whole-listing run reads the
+//! directory total off the status bar. Cancellation is by drop, like
+//! every enricher; values already applied stay displayed (marked
+//! partial) until navigation.
 //!
 //! Sizing matches `du`: allocated bytes (`File::allocated_size`) when
 //! the filesystem reports them — so sparse files (VM disk images,
@@ -26,13 +28,11 @@
 //! works and stops at further nested mounts.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::StreamExt;
 
 use super::{
-    Annotation, ContextBadge, EnrichScope, EnrichSink, Enricher, EnricherDescriptor,
-    RegisteredEnricher,
+    Annotation, EnrichScope, EnrichSink, Enricher, EnricherDescriptor, RegisteredEnricher,
 };
 use crate::Error;
 use crate::vfs::path::PathBuf;
@@ -83,38 +83,17 @@ impl Enricher for DuEnricher {
         let (vfs, dir) = registry.resolve(path)?;
         let listing = vfs.list_files(&dir, None).await?;
 
-        // The badge (total of the listed directory) only makes sense
-        // for a whole-listing run.
-        let badge = matches!(scope, EnrichScope::AllEntries);
-        let selected: Vec<_> = listing
+        // Futures are built eagerly (they run nothing until polled);
+        // in-future concurrency (no spawns) so dropping this future
+        // cancels every walk.
+        let walks: Vec<_> = listing
             .files
             .iter()
-            .filter(|f| f.name != "..")
+            .filter(|f| f.name != ".." && f.is_dir && !f.is_symlink)
             .filter(|f| match scope {
                 EnrichScope::AllEntries => true,
                 EnrichScope::Entries(keys) => keys.iter().any(|k| k == f.key()),
             })
-            .collect();
-
-        // Grand total accumulator: direct files up front, walked bytes
-        // as they are discovered.
-        let total = AtomicU64::new(0);
-        for f in selected.iter().filter(|f| !f.is_dir) {
-            total.fetch_add(occupied(f), Ordering::Relaxed);
-        }
-        if badge {
-            sink.emit_badge(ContextBadge::DirTotalSize {
-                bytes: total.load(Ordering::Relaxed),
-                complete: false,
-            });
-        }
-
-        // Futures are built eagerly (they run nothing until polled);
-        // in-future concurrency (no spawns) so dropping this future
-        // cancels every walk.
-        let walks: Vec<_> = selected
-            .iter()
-            .filter(|f| f.is_dir && !f.is_symlink)
             .map(|f| {
                 walk_entry(
                     vfs.as_ref(),
@@ -125,8 +104,6 @@ impl Enricher for DuEnricher {
                     // stops at the next boundary down.
                     f.device_id,
                     sink,
-                    &total,
-                    badge,
                 )
             })
             .collect();
@@ -135,12 +112,6 @@ impl Enricher for DuEnricher {
             .collect::<Vec<()>>()
             .await;
 
-        if badge {
-            sink.emit_badge(ContextBadge::DirTotalSize {
-                bytes: total.load(Ordering::Relaxed),
-                complete: true,
-            });
-        }
         Ok(())
     }
 }
@@ -152,16 +123,13 @@ fn occupied(f: &crate::filesystem::File) -> u64 {
 }
 
 /// Size one directory entry: serial DFS summing file sizes, emitting a
-/// growing running total for the entry (and the shared grand total)
-/// after every directory listed.
+/// growing running total for the entry after every directory listed.
 async fn walk_entry(
     vfs: &dyn Vfs,
     key: String,
     root: PathBuf,
     root_device: Option<u64>,
     sink: &EnrichSink,
-    total: &AtomicU64,
-    badge: bool,
 ) {
     let mut bytes = 0u64;
     let mut listed_any = false;
@@ -205,9 +173,7 @@ async fn walk_entry(
                 {
                     continue;
                 }
-                let size = occupied(&entry);
-                bytes += size;
-                total.fetch_add(size, Ordering::Relaxed);
+                bytes += occupied(&entry);
             }
         }
         sink.emit_entry(
@@ -217,12 +183,6 @@ async fn walk_entry(
                 complete: false,
             },
         );
-        if badge {
-            sink.emit_badge(ContextBadge::DirTotalSize {
-                bytes: total.load(Ordering::Relaxed),
-                complete: false,
-            });
-        }
         sink.maybe_flush().await;
     }
     // An entry we couldn't list at all stays unannotated — a final

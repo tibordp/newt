@@ -1,6 +1,6 @@
 # Newt
 
-*"If Altap Salamander and vscode had a baby..."*
+*"If Altap Salamander and VS Code had a baby..."*
 
 A dual-pane file manager for Linux, macOS, and Windows in the orthodox tradition — two panes, a
 terminal underneath, and your hands never leaving the keyboard. Local files are only the start:

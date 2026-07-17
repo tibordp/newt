@@ -704,15 +704,6 @@ function PaneInner(
     };
   }, [pending_path, loading]);
 
-  // Computed total of the current directory ("calculate all sizes").
-  const duTotalBadge = (context_badges ?? []).find(
-    (b) => "dir_total_size" in b,
-  );
-  const duTotal =
-    duTotalBadge && "dir_total_size" in duTotalBadge
-      ? duTotalBadge.dir_total_size
-      : undefined;
-
   // Enrichment activity line, shown with a grace delay so sub-200ms runs
   // (a typical git status) don't flash the status bar on every navigation.
   const activityLabels = Object.values(enrichment_activity ?? {});
@@ -1731,13 +1722,6 @@ function PaneInner(
                     ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
                 </>
               )}
-            {!showSpinner && !loading && duTotal && (
-              <>
-                {" · "}
-                {duTotal.bytes.toLocaleString()} bytes total
-                {!duTotal.complete && "+"}
-              </>
-            )}
             {!showSpinner && !loading && partial && (
               <span className={styles.partial}> (partial)</span>
             )}
