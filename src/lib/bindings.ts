@@ -65,6 +65,19 @@ async closeWindow() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Called by an editor window when its unsaved-changes prompt is refused —
+ * an in-flight quit, or a pending close of the editor's parent main window,
+ * must not proceed once an editor declined to close.
+ */
+async cancelQuit() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_quit") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async destroyWindow() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("destroy_window") };
@@ -375,6 +388,14 @@ async setEditorLanguage(language: string) : Promise<Result<null, string>> {
 async setEditorWrap(wrap: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_editor_wrap", { wrap }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setEditorDirty(dirty: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_editor_dirty", { dirty }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -815,6 +836,14 @@ async cmdToggleHidden(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 async cmdCloseWindow(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_close_window", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdQuit(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_quit", { paneHandle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

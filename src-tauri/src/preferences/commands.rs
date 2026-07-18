@@ -345,7 +345,18 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Close Window".into(),
             short_name: Some("Close".into()),
             category: "File".into(),
-            default_key: Some("mod+w".into()),
+            // Shifted on every platform (gnome-terminal convention): a
+            // session window is too heavy to close on a stray mod+w.
+            default_key: Some("mod+shift+w".into()),
+            default_when: None,
+            needs_pane: false,
+        },
+        CommandDef {
+            id: "quit".into(),
+            name: "Quit Newt".into(),
+            short_name: None,
+            category: "File".into(),
+            default_key: Some("mod+q".into()),
             default_when: None,
             needs_pane: false,
         },

@@ -1,5 +1,7 @@
 #[cfg(windows)]
 pub mod elevate;
+#[cfg(target_os = "macos")]
+pub mod menu;
 pub mod pane;
 pub mod session;
 pub mod terminal;
@@ -1699,28 +1701,8 @@ pub fn spawn_main_window(
         .lock()
         .insert(label.clone(), ctx.clone());
 
-    // On macOS, a menu with Edit > Paste (etc.) is required so that Cmd+V /
-    // Cmd+C / Cmd+A reach the webview as native events. Keep one menu per
-    // window in `GlobalContext.window_menus` so `on_window_event Focused` can
-    // swap the app-wide menu when this window takes focus.
     #[cfg(target_os = "macos")]
-    {
-        use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
-        let edit_submenu = Submenu::with_items(
-            app_handle,
-            "Edit",
-            true,
-            &[
-                &PredefinedMenuItem::cut(app_handle, None)?,
-                &PredefinedMenuItem::copy(app_handle, None)?,
-                &PredefinedMenuItem::paste(app_handle, None)?,
-                &PredefinedMenuItem::select_all(app_handle, None)?,
-            ],
-        )?;
-        let menu = Menu::with_items(app_handle, &[&edit_submenu])?;
-        global_ctx.set_window_menu(&label, menu.clone());
-        let _ = app_handle.set_menu(menu);
-    }
+    menu::setup(app_handle, &label)?;
 
     // Live title-bar theme updates when the user changes preferences.
     crate::spawn_theme_sync(&window, prefs_handle.clone());

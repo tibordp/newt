@@ -25,7 +25,8 @@ use main_window::MainWindowContext;
 use main_window::spawn_main_window;
 use main_window::{AgentResolver, TauriAgentResolver};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 use tauri::State;
@@ -148,6 +149,12 @@ pub struct GlobalContext {
     prewarmed_editors: Mutex<HashMap<String, PrewarmedWindow>>,
     agent_resolver: OnceLock<Arc<dyn AgentResolver>>,
     preferences: OnceLock<preferences::PreferencesManager>,
+    /// A quit is in flight, waiting for the editor sweep (unsaved-changes
+    /// prompts) to finish before the main windows close.
+    pending_quit: AtomicBool,
+    /// Main windows whose close is waiting for their own editor children's
+    /// sweep to finish.
+    pending_close: Mutex<HashSet<String>>,
     #[cfg(target_os = "macos")]
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
 }
@@ -162,6 +169,8 @@ impl Default for GlobalContext {
             prewarmed_editors: Mutex::new(HashMap::new()),
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
+            pending_quit: AtomicBool::new(false),
+            pending_close: Mutex::new(HashSet::new()),
             #[cfg(target_os = "macos")]
             window_menus: Mutex::new(HashMap::new()),
         }
@@ -226,6 +235,7 @@ impl GlobalContext {
         let was_main = self.main_windows.lock().remove(label).is_some();
         self.viewer_windows.lock().remove(label);
         self.editor_windows.lock().remove(label);
+        self.pending_close.lock().remove(label);
         #[cfg(target_os = "macos")]
         self.window_menus.lock().remove(label);
 
@@ -285,6 +295,119 @@ impl GlobalContext {
         }
     }
 
+    /// Labels of real main windows. `main_windows` also aliases viewer/editor
+    /// child labels to their parent's ctx, so filter to self-parented entries.
+    pub fn real_main_window_labels(&self) -> Vec<String> {
+        self.main_windows
+            .lock()
+            .iter()
+            .filter(|(k, ctx)| *k == ctx.main_window_label())
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    /// Editor windows that are actually showing a document (not pre-warmed
+    /// hidden spares).
+    fn active_editor_labels(&self) -> Vec<String> {
+        let prewarmed: Vec<String> = self
+            .prewarmed_editors
+            .lock()
+            .values()
+            .map(|pw| pw.label.clone())
+            .collect();
+        self.editor_windows
+            .lock()
+            .keys()
+            .filter(|l| !prewarmed.contains(l))
+            .cloned()
+            .collect()
+    }
+
+    /// Of `labels` (child window labels), those parented to `main_label` —
+    /// resolved through the parent-ctx aliases in `main_windows`.
+    fn children_of(&self, labels: Vec<String>, main_label: &str) -> Vec<String> {
+        let mains = self.main_windows.lock();
+        labels
+            .into_iter()
+            .filter(|l| {
+                mains
+                    .get(l)
+                    .is_some_and(|ctx| ctx.main_window_label() == main_label)
+            })
+            .collect()
+    }
+
+    /// Non-prewarmed editor windows parented to `main_label`.
+    fn active_editor_children(&self, main_label: &str) -> Vec<String> {
+        self.children_of(self.active_editor_labels(), main_label)
+    }
+
+    /// Non-prewarmed viewer windows parented to `main_label`.
+    fn active_viewer_children(&self, main_label: &str) -> Vec<String> {
+        let prewarmed: Vec<String> = self
+            .prewarmed_viewers
+            .lock()
+            .values()
+            .map(|pw| pw.label.clone())
+            .collect();
+        let viewers: Vec<String> = self
+            .viewer_windows
+            .lock()
+            .keys()
+            .filter(|l| !prewarmed.contains(l))
+            .cloned()
+            .collect();
+        self.children_of(viewers, main_label)
+    }
+
+    /// Close (not destroy) every real main window; the app exits when the
+    /// last one is destroyed, taking viewer/editor children with it.
+    ///
+    /// Open editors are swept first so their unsaved-changes prompts fire:
+    /// the quit resumes from the `Destroyed` handler once the last editor is
+    /// gone, and `cancel_pending_quit` aborts it when a prompt is refused.
+    pub fn quit(&self, app_handle: &tauri::AppHandle) {
+        let editors = self.active_editor_labels();
+        if editors.is_empty() {
+            self.pending_quit.store(false, Ordering::SeqCst);
+            for label in self.real_main_window_labels() {
+                if let Some(window) = app_handle.get_webview_window(&label) {
+                    let _ = window.close();
+                }
+            }
+        } else if !self.pending_quit.swap(true, Ordering::SeqCst) {
+            // Not already sweeping — a second quit while a prompt is up
+            // must not stack another prompt onto each dirty editor.
+            for label in editors {
+                if let Some(window) = app_handle.get_webview_window(&label) {
+                    let _ = window.close();
+                }
+            }
+        }
+    }
+
+    /// An editor refused to close: abort any pending quit and any pending
+    /// close of its parent main window.
+    pub fn cancel_pending_quit(&self, editor_label: &str) {
+        self.pending_quit.store(false, Ordering::SeqCst);
+        let parent = self
+            .main_windows
+            .lock()
+            .get(editor_label)
+            .map(|ctx| ctx.main_window_label().to_string());
+        if let Some(parent) = parent {
+            self.pending_close.lock().remove(&parent);
+        }
+    }
+
+    /// Any editor window whose frontend has reported unsaved changes.
+    pub fn any_dirty_editor(&self) -> bool {
+        self.editor_windows
+            .lock()
+            .values()
+            .any(|ctx| ctx.0.is_dirty())
+    }
+
     #[cfg(target_os = "macos")]
     pub fn set_window_menu(&self, label: &str, menu: tauri::menu::Menu<tauri::Wry>) {
         self.window_menus.lock().insert(label.to_string(), menu);
@@ -293,6 +416,79 @@ impl GlobalContext {
     #[cfg(target_os = "macos")]
     pub fn get_window_menu(&self, label: &str) -> Option<tauri::menu::Menu<tauri::Wry>> {
         self.window_menus.lock().get(label).cloned()
+    }
+}
+
+/// macOS Dock quit / logout sends `terminate:` to NSApp, and tao's app
+/// delegate doesn't implement `applicationShouldTerminate:` — Cocoa's default
+/// (`NSTerminateNow`) then kills the process before the event loop hears
+/// anything: no window-close events, no unsaved-changes prompts. This is a
+/// known Tauri gap, not a misuse of the API: `RunEvent::ExitRequested` is
+/// emitted only for `exit()` and last-window-destroyed, never for OS
+/// termination — tracked upstream in
+/// <https://github.com/tauri-apps/tauri/issues/9198>.
+///
+/// Until that lands, inject the method into the delegate class at runtime: a
+/// dirty editor cancels the termination and runs the graceful quit (editor
+/// sweep) instead, while a clean app lets the termination proceed so it never
+/// blocks logout. If a tao upgrade starts implementing the selector itself,
+/// `install` panics on `class_addMethod` — delete this module then; the
+/// `ExitRequested { code: None }` arm in the run callback picks up the
+/// mapped event.
+#[cfg(target_os = "macos")]
+// objc 0.2's macros expand `cfg(feature = "cargo-clippy")` checks that
+// trip `unexpected_cfgs` on modern rustc.
+#[allow(unexpected_cfgs)]
+mod terminate_guard {
+    use std::os::raw::c_char;
+    use std::sync::OnceLock;
+
+    use objc::runtime::{BOOL, Class, Imp, NO, Object, Sel};
+    use objc::{class, msg_send, sel, sel_impl};
+    use tauri::Manager;
+
+    static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    const NS_TERMINATE_CANCEL: usize = 0;
+    const NS_TERMINATE_NOW: usize = 1;
+
+    extern "C" fn application_should_terminate(
+        _this: &mut Object,
+        _sel: Sel,
+        _sender: *mut Object,
+    ) -> usize {
+        let app_handle = APP_HANDLE.get().unwrap();
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        if global_ctx.any_dirty_editor() {
+            global_ctx.quit(app_handle);
+            NS_TERMINATE_CANCEL
+        } else {
+            NS_TERMINATE_NOW
+        }
+    }
+
+    pub fn install(app_handle: &tauri::AppHandle) {
+        APP_HANDLE.set(app_handle.clone()).ok();
+        unsafe {
+            let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            let delegate: *mut Object = msg_send![app, delegate];
+            let class = (*delegate).class() as *const Class as *mut Class;
+            let imp = std::mem::transmute::<
+                extern "C" fn(&mut Object, Sel, *mut Object) -> usize,
+                Imp,
+            >(application_should_terminate);
+            let added: BOOL = objc::runtime::class_addMethod(
+                class,
+                sel!(applicationShouldTerminate:),
+                imp,
+                // NSApplicationTerminateReply (NSUInteger) (id, SEL, id)
+                c"Q@:@".as_ptr() as *const c_char,
+            );
+            assert_ne!(
+                added, NO,
+                "delegate already implements applicationShouldTerminate:"
+            );
+        }
     }
 }
 
@@ -718,6 +914,19 @@ fn main() {
                 }
             }
 
+            // Menu accelerators mirror the resolved keybindings, so rebuild
+            // the window menus whenever preferences change.
+            #[cfg(target_os = "macos")]
+            {
+                let app_handle = app.handle().clone();
+                let mut prefs_rx = global_ctx.preferences().handle().subscribe();
+                tauri::async_runtime::spawn(async move {
+                    while prefs_rx.changed().await.is_ok() {
+                        main_window::menu::rebuild_all(&app_handle);
+                    }
+                });
+            }
+
             Ok(())
         })
         .on_window_event(
@@ -727,20 +936,63 @@ fn main() {
                 let global_ctx: State<GlobalContext> = app_handle.state();
 
                 match event {
-                    tauri::WindowEvent::Destroyed => {
-                        global_ctx.destroy_window(window.label()).unwrap();
-                        // Exit when the last real main window is gone (on
-                        // macOS, Tauri would otherwise keep the process alive
-                        // per standard Cocoa behavior). `main_windows` also
-                        // contains aliased entries for prewarmed/active
-                        // viewer/editor children (value is the parent's ctx),
-                        // so filter to self-parented entries.
-                        let has_real_main = global_ctx
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // Viewer/editor children can't outlive the session
+                        // they were spawned from, so a closing main window
+                        // takes them along — editors via the graceful sweep
+                        // (unsaved-changes prompts): the close is prevented,
+                        // resumes from the Destroyed handler once the last
+                        // child editor is gone, and is aborted by
+                        // `cancel_quit` when a prompt is refused.
+                        let label = window.label();
+                        let is_real_main = global_ctx
                             .main_windows
                             .lock()
-                            .iter()
-                            .any(|(k, ctx)| k == ctx.main_window_label());
-                        if !has_real_main {
+                            .get(label)
+                            .is_some_and(|ctx| ctx.main_window_label() == label);
+                        if is_real_main {
+                            for viewer in global_ctx.active_viewer_children(label) {
+                                if let Some(w) = app_handle.get_webview_window(&viewer) {
+                                    let _ = w.close();
+                                }
+                            }
+                            let editors = global_ctx.active_editor_children(label);
+                            if !editors.is_empty() {
+                                api.prevent_close();
+                                global_ctx.pending_close.lock().insert(label.to_string());
+                                for editor in editors {
+                                    if let Some(w) = app_handle.get_webview_window(&editor) {
+                                        let _ = w.close();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        global_ctx.destroy_window(window.label()).unwrap();
+                        // A pending quit resumes once its editor sweep is
+                        // done (the last editor window is gone).
+                        if global_ctx.pending_quit.load(Ordering::SeqCst)
+                            && global_ctx.active_editor_labels().is_empty()
+                        {
+                            global_ctx.quit(app_handle);
+                        }
+                        // Per-window closes resume once their own sweep is
+                        // done.
+                        let pending: Vec<String> =
+                            global_ctx.pending_close.lock().iter().cloned().collect();
+                        for main_label in pending {
+                            if global_ctx.active_editor_children(&main_label).is_empty() {
+                                global_ctx.pending_close.lock().remove(&main_label);
+                                if let Some(w) = app_handle.get_webview_window(&main_label) {
+                                    let _ = w.close();
+                                }
+                            }
+                        }
+                        // Exit when the last real main window is gone (on
+                        // macOS, Tauri would otherwise keep the process alive
+                        // per standard Cocoa behavior).
+                        if global_ctx.real_main_window_labels().is_empty() {
                             app_handle.exit(0);
                         }
                     }
@@ -818,8 +1070,26 @@ fn main() {
             },
         )
         .invoke_handler(handler)
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| match event {
+            // The app delegate exists only once the app has launched.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Ready => terminate_guard::install(app_handle),
+            // Safety net: an exit request that isn't our own `exit(0)`
+            // (which carries a code) while main windows are still open is
+            // rerouted through the graceful quit (editor sweep).
+            tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } => {
+                let global_ctx: State<GlobalContext> = app_handle.state();
+                if !global_ctx.real_main_window_labels().is_empty() {
+                    api.prevent_exit();
+                    global_ctx.quit(app_handle);
+                }
+            }
+            _ => {}
+        });
 }
 
 #[cfg(test)]

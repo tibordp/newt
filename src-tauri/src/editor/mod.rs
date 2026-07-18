@@ -2,6 +2,7 @@ use newt_common::vfs::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::ipc::CommandArg;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, State, WebviewWindow, Wry};
@@ -62,6 +63,9 @@ pub struct EditorWindow {
     window: WebviewWindow,
     publisher: Arc<UpdatePublisher<EditorState>>,
     menu: RwLock<Option<Menu<Wry>>>,
+    /// Unsaved changes, as last reported by the frontend. Read by the quit
+    /// paths to decide whether an unsaved-changes sweep is needed.
+    dirty: AtomicBool,
 }
 
 impl EditorWindow {
@@ -72,7 +76,12 @@ impl EditorWindow {
         // Reset state for new file
         *state.language.write() = "plaintext".to_string();
         *state.word_wrap.write() = false;
+        self.dirty.store(false, Ordering::SeqCst);
         let _ = self.publisher.publish_full();
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(Ordering::SeqCst)
     }
 
     pub fn set_language(&self, lang: &str) {
@@ -157,6 +166,7 @@ pub fn create_editor_window(window: &WebviewWindow) -> Arc<EditorWindow> {
         window: window.clone(),
         publisher,
         menu: RwLock::new(None),
+        dirty: AtomicBool::new(false),
     })
 }
 
@@ -193,6 +203,13 @@ pub fn activate_editor_window(
 
         // Only handle events with our prefix
         if !id.starts_with(prefix.as_str()) {
+            return;
+        }
+
+        #[cfg(target_os = "macos")]
+        if id == format!("{}quit", prefix) {
+            let global_ctx: State<GlobalContext> = _app_handle.state();
+            global_ctx.quit(_app_handle);
             return;
         }
 
@@ -313,11 +330,29 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
         .collect();
     let lang_submenu = Submenu::with_items(app_handle, "Language", true, &lang_refs)?;
 
+    // The menubar's first submenu is the application menu; give it a Quit
+    // item so ⌘Q works from an editor window too.
     #[cfg(target_os = "macos")]
-    let ret = Menu::with_items(
-        app_handle,
-        &[&file_submenu, &edit_submenu, &view_submenu, &lang_submenu],
-    );
+    let ret = {
+        let quit_item = MenuItem::with_id(
+            app_handle,
+            format!("{}quit", prefix),
+            "Quit Newt",
+            true,
+            Some("Cmd+Q"),
+        )?;
+        let app_submenu = Submenu::with_items(app_handle, "Newt", true, &[&quit_item])?;
+        Menu::with_items(
+            app_handle,
+            &[
+                &app_submenu,
+                &file_submenu,
+                &edit_submenu,
+                &view_submenu,
+                &lang_submenu,
+            ],
+        )
+    };
 
     #[cfg(not(target_os = "macos"))]
     let ret = Menu::with_items(app_handle, &[&file_submenu, &view_submenu, &lang_submenu]);
@@ -331,6 +366,13 @@ fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, 
 #[specta::specta]
 pub fn set_editor_language(ctx: EditorWindowContext, language: String) -> Result<(), Error> {
     ctx.0.set_language(&language);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_editor_dirty(ctx: EditorWindowContext, dirty: bool) -> Result<(), Error> {
+    ctx.0.dirty.store(dirty, Ordering::SeqCst);
     Ok(())
 }
 

@@ -212,6 +212,24 @@ function App() {
     return () => window.removeEventListener("keydown", onkeydown);
   }, [onkeydown]);
 
+  // Native menu items (macOS) arrive as window-scoped `menu-command` events
+  // carrying a command id, dispatched through the same path as keybindings.
+  // Subscribed once; the ref keeps the handler on fresh state.
+  const menuDispatchRef = useRef({ remoteState, preferences });
+  menuDispatchRef.current = { remoteState, preferences };
+  useEffect(() => {
+    const appWindow = getCurrentWebviewWindow();
+    const unlisten = appWindow.listen<string>("menu-command", (event) => {
+      const { remoteState, preferences } = menuDispatchRef.current;
+      if (remoteState && preferences) {
+        executeCommandById(event.payload, remoteState, preferences);
+      }
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
   // Suppress the default browser context menu except on text inputs,
   // so only our custom Radix context menus are used.
   useEffect(() => {

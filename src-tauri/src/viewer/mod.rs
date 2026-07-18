@@ -229,6 +229,13 @@ pub fn activate_viewer_window(
             None => return,
         };
 
+        #[cfg(target_os = "macos")]
+        if suffix == "quit" {
+            let global_ctx: State<GlobalContext> = _app_handle.state();
+            global_ctx.quit(_app_handle);
+            return;
+        }
+
         // Handle edit menu items by emitting events to the frontend
         if suffix == "copy" || suffix == "select_all" || suffix == "goto" {
             let _ = window_clone.emit_to(window_clone.label(), "viewer-menu", suffix);
@@ -295,7 +302,7 @@ fn build_menu(
     )?;
     let file_submenu = Submenu::with_items(app_handle, "File", true, &[&close_item])?;
 
-    let ret = if has_edit_menu(mode) {
+    let edit_submenu = if has_edit_menu(mode) {
         // No native accelerators — the webview handles Ctrl+C/A/G directly
         // and the menu event handler bridges menu clicks via viewer-menu events.
         // Registering native accelerators causes GTK warnings on menu rebuild.
@@ -321,19 +328,39 @@ fn build_menu(
             None::<&str>,
         )?;
         let edit_sep = tauri::menu::PredefinedMenuItem::separator(app_handle)?;
-        let edit_submenu = Submenu::with_items(
+        Some(Submenu::with_items(
             app_handle,
             "Edit",
             true,
             &[&copy_item, &select_all_item, &edit_sep, &goto_item],
-        )?;
-
-        Menu::with_items(app_handle, &[&file_submenu, &edit_submenu, &view_submenu])
+        )?)
     } else {
-        Menu::with_items(app_handle, &[&file_submenu, &view_submenu])
+        None
     };
 
-    Ok(ret?)
+    // The menubar's first submenu is the application menu; give it a Quit
+    // item so ⌘Q works from a viewer window too.
+    #[cfg(target_os = "macos")]
+    let app_submenu = {
+        let quit_item = MenuItem::with_id(
+            app_handle,
+            format!("{}quit", prefix),
+            "Quit Newt",
+            true,
+            Some("Cmd+Q"),
+        )?;
+        Submenu::with_items(app_handle, "Newt", true, &[&quit_item])?
+    };
+
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&file_submenu];
+    if let Some(edit) = &edit_submenu {
+        items.push(edit);
+    }
+    items.push(&view_submenu);
+    #[cfg(target_os = "macos")]
+    items.insert(0, &app_submenu);
+
+    Ok(Menu::with_items(app_handle, &items)?)
 }
 
 // --- Tauri commands ---

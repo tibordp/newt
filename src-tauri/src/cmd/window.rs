@@ -432,6 +432,25 @@ pub fn cmd_close_window(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Res
 
 #[tauri::command]
 #[specta::specta]
+pub fn cmd_quit(app_handle: tauri::AppHandle, _pane_handle: PaneHandle) -> Result<(), Error> {
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    global_ctx.quit(&app_handle);
+    Ok(())
+}
+
+/// Called by an editor window when its unsaved-changes prompt is refused —
+/// an in-flight quit, or a pending close of the editor's parent main window,
+/// must not proceed once an editor declined to close.
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_quit(window: Window, app_handle: tauri::AppHandle) -> Result<(), Error> {
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    global_ctx.cancel_pending_quit(window.label());
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
     webview
         .set_zoom(factor)

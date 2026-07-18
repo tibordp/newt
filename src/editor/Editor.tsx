@@ -185,6 +185,12 @@ function Editor() {
   dirtyRef.current = dirty;
   const suppressDirtyRef = useRef(false);
 
+  // Mirror dirty state into Rust so quit/terminate paths (Dock quit, logout)
+  // can tell whether an unsaved-changes sweep is needed.
+  useEffect(() => {
+    safeSilent(commands.setEditorDirty(dirty));
+  }, [dirty]);
+
   const language = editorState?.language ?? "plaintext";
   const wordWrap = editorState?.word_wrap ? "on" : "off";
 
@@ -292,7 +298,12 @@ function Editor() {
         "You have unsaved changes. Close without saving?",
         { title: "Unsaved Changes", kind: "warning" },
       );
-      if (!ok) return;
+      if (!ok) {
+        // A quit sweep may be waiting on this window — refusing to close
+        // aborts it.
+        safeSilent(commands.cancelQuit());
+        return;
+      }
     }
     safe(commands.destroyWindow());
   }, []);

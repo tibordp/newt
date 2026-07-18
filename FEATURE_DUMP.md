@@ -42,11 +42,23 @@ Zoom is applied as frontend-side CSS scaling.
 ### Window Management
 
 - **New Window** (Mod+N): Opens a fresh Newt window (new session).
-- **Close Window** (Mod+W): Closes the current window.
+- **Close Window** (Mod+Shift+W): Closes the current window. Shifted (gnome-terminal convention) so a session window can't be closed on a stray Mod+W. Viewer/editor children can't outlive the session they were spawned from, so closing a main window takes them along: a Rust-side `CloseRequested` interceptor (covers the command, the menu item, and the OS close button alike) closes viewer children outright and sweeps editor children — dirty ones prompt, the window close resumes once the last child editor is gone, and refusing a prompt aborts the close.
+- **Quit Newt** (Mod+Q): Closes all main windows, exiting the app. Open editor windows are swept first so their unsaved-changes prompts fire: the quit waits (event-driven, via the `Destroyed` handler) for the last editor to close before the main windows go, and refusing any editor's prompt aborts the quit (`cancel_quit`), leaving all remaining windows open. Pre-warmed hidden editors are exempt from the sweep. OS-initiated termination (macOS Dock quit, logout) goes through the same sweep via an `applicationShouldTerminate:` method injected into tao's app delegate at runtime (`terminate_guard` in `main.rs` — tao doesn't implement the selector and `RunEvent::ExitRequested` never fires for OS termination, see tauri#9198): a dirty editor cancels the termination and runs the sweep, a clean app terminates immediately so it never blocks logout. Editor dirty state is mirrored to Rust for this via `set_editor_dirty`. The `ExitRequested { code: None }` handler remains as a safety net for the all-windows-closed path.
 - **Reload Window**: Available in the Debug dialog (debug builds only).
 - **Refresh File List** (Mod+R): Force-refreshes the active pane's directory listing.
 
 Multiple main windows coexist in the same process: "New Window", remote connections, and elevated sessions all create additional windows within the running app. Each window has its own independent session, panes, terminals, and operations; closing the last main window exits the app.
+
+### Main Window Menu Bar (macOS only)
+
+Main windows carry a minimal native menu on macOS (Windows/Linux main windows have no menu bar). Menu items dispatch window-scoped `menu-command` events to the frontend, which routes them through the same `executeCommandById` path as keybindings, and item accelerators are derived from the *resolved* keybindings at build time — a task subscribed to the preferences watcher rebuilds all main-window menus on preference changes, so rebinds are reflected live.
+
+- **App menu**: About Newt, Settings… (Mod+,), Quit Newt (Mod+Q). Deliberately no Hide/Hide Others — their fixed Cmd+H would shadow Toggle Hidden Files.
+- **File**: New Window, Connect to Remote Host…, Close Window.
+- **Edit**: predefined Cut/Copy/Paste/Select All (required so macOS routes Cmd+C/V/X/A to the webview — previously the sole content of the main-window menu).
+- **Window**: predefined Minimize, Zoom.
+
+Viewer and editor windows prepend an app submenu with Quit Newt (Cmd+Q) on macOS, so quit works whichever window is focused.
 
 ---
 
@@ -630,6 +642,7 @@ The `+` after the line count indicates the file is still loading. Selection info
 
 ### Viewer Menu Bar
 
+- **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Close (Escape)
 - **Edit** (Text/Hex modes only): Copy, Select All, separator, Go to Line / Go to Offset
 - **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
@@ -726,6 +739,7 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 
 ### Editor Menu Bar
 
+- **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Save (Ctrl+S), Close (Ctrl+W)
 - **View**: Word Wrap (checkbox toggle)
 - **Language**: Radio buttons for all supported languages (Plain Text, C, C++, C#, CSS, Dockerfile, Go, HTML, INI/TOML, Java, JavaScript, JSON, Kotlin, Lua, Markdown, Perl, PHP, Python, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
@@ -1651,7 +1665,8 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Shortcut | Action | Context |
 |----------|--------|---------|
 | Mod+N | New window | Any |
-| Mod+W | Close window | Any |
+| Mod+Shift+W | Close window | Any |
+| Mod+Q | Quit (close all windows) | Any |
 | Mod+Shift+R | Connect remote | Any |
 | Ctrl+R | Quick Connect | Pane focused |
 | Ctrl+= | Zoom in | Any |
