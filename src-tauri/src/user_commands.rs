@@ -182,7 +182,7 @@ fn setup_template_env(
         env.add_function(
             "prompt",
             move |_label: String, _default: Option<String>| -> String {
-                let i = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let i = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 responses.get(i).cloned().unwrap_or_default()
             },
         );
@@ -206,7 +206,7 @@ fn setup_template_env(
     if let Some(responses) = confirm_responses {
         let counter = std::sync::atomic::AtomicUsize::new(0);
         env.add_function("confirm", move |_message: String| -> bool {
-            let i = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let i = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             responses.get(i).copied().unwrap_or(true)
         });
     } else if let Some(ref collected) = collected {

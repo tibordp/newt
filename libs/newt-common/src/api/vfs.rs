@@ -119,7 +119,12 @@ impl Dispatcher for VfsDispatcher {
                             if n == 0 {
                                 break;
                             }
-                            let chunk = buf[..n].to_vec();
+                            // serde_bytes for all chunk payloads: bincode's
+                            // serde path walks Vec<u8> per byte (~30x slower
+                            // than memcpy) and only `serialize_bytes` /
+                            // `deserialize_byte_buf` hit its fast path. The
+                            // wire format is identical.
+                            let chunk = serde_bytes::Bytes::new(&buf[..n]);
                             if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
                                 outbox
                                     .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
@@ -129,7 +134,9 @@ impl Dispatcher for VfsDispatcher {
                             seq += 1;
                         }
                         // Send empty sentinel to signal EOF.
-                        if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
+                        if let Some(bytes) =
+                            try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
+                        {
                             outbox
                                 .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
                                 .await
@@ -149,7 +156,9 @@ impl Dispatcher for VfsDispatcher {
                         );
                         let mut seq: u64 = 0;
                         while let Some(chunk) = chunks.recv().await {
-                            if let Some(bytes) = try_encode(&(stream_id, seq, chunk?)) {
+                            if let Some(bytes) =
+                                try_encode(&(stream_id, seq, serde_bytes::ByteBuf::from(chunk?)))
+                            {
                                 outbox
                                     .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
                                     .await
@@ -158,7 +167,9 @@ impl Dispatcher for VfsDispatcher {
                             seq += 1;
                         }
                         read_task.await?;
-                        if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
+                        if let Some(bytes) =
+                            try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
+                        {
                             outbox
                                 .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
                                 .await
@@ -196,7 +207,7 @@ impl Dispatcher for VfsDispatcher {
                     let writer = self.vfs.overwrite_async(&path).await?;
                     let stream_id = StreamId(
                         self.next_stream_id
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                     );
 
                     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<WriteCommand>(4);
@@ -235,7 +246,7 @@ impl Dispatcher for VfsDispatcher {
                     let writer = self.vfs.overwrite_sync(&path).await?;
                     let stream_id = StreamId(
                         self.next_stream_id
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                     );
 
                     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<WriteCommand>(4);
@@ -375,7 +386,7 @@ impl Dispatcher for VfsDispatcher {
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
         if api == API_HOST_VFS_WRITE_CHUNK {
-            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) = decode(&req[..])?;
+            let (stream_id, seq, data): (StreamId, u64, serde_bytes::ByteBuf) = decode(&req[..])?;
 
             let command_tx = {
                 let mut sessions = self.write_sessions.lock();
@@ -398,7 +409,7 @@ impl Dispatcher for VfsDispatcher {
                                 .remove(&stream_id)
                                 .map(|session| (session.tx, WriteCommand::Finish))
                         } else {
-                            Some((session.tx.clone(), WriteCommand::Data(data)))
+                            Some((session.tx.clone(), WriteCommand::Data(data.into_vec())))
                         }
                     }
                     None => None,
@@ -458,7 +469,7 @@ impl Dispatcher for VfsReadChunkDispatcher {
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
         if api == self.api {
-            let (stream_id, seq, data): (StreamId, u64, Vec<u8>) = decode(&req[..])?;
+            let (stream_id, seq, data): (StreamId, u64, serde_bytes::ByteBuf) = decode(&req[..])?;
 
             let tx = {
                 let mut streams = self.pending_read_streams.lock();
@@ -487,7 +498,7 @@ impl Dispatcher for VfsReadChunkDispatcher {
             };
             if let Some(tx) = tx {
                 // Send the chunk (or empty sentinel) — the reader distinguishes.
-                let _ = tx.send(data).await;
+                let _ = tx.send(data.into_vec()).await;
             }
             Ok(true)
         } else {
@@ -513,7 +524,7 @@ mod tests {
 
     impl Read for EndlessReader {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.reads.fetch_add(1, Ordering::Relaxed);
             buf.fill(1);
             Ok(buf.len())
         }

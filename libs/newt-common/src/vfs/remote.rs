@@ -198,7 +198,7 @@ impl RemoteVfs {
     fn next_stream_id(&self) -> StreamId {
         StreamId(
             self.next_stream_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         )
     }
 }
@@ -584,9 +584,11 @@ impl VfsAsyncWriter for RemoteVfsWriter {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         let seq = self.next_seq;
         self.next_seq += 1;
-        let data = buf.to_vec();
         self.communicator
-            .notify(API_HOST_VFS_WRITE_CHUNK, &(self.stream_id, seq, data))
+            .notify(
+                API_HOST_VFS_WRITE_CHUNK,
+                &(self.stream_id, seq, serde_bytes::Bytes::new(buf)),
+            )
             .await?;
         Ok(buf.len())
     }
@@ -599,7 +601,7 @@ impl VfsAsyncWriter for RemoteVfsWriter {
         self.communicator
             .notify(
                 API_HOST_VFS_WRITE_CHUNK,
-                &(self.stream_id, seq, Vec::<u8>::new()),
+                &(self.stream_id, seq, serde_bytes::Bytes::new(&[])),
             )
             .await?;
 

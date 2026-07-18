@@ -418,7 +418,7 @@ impl EnricherClient for Remote {
     ) -> Result<(), Error> {
         let id = EnrichmentId(
             self.next_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
         self.pending.lock().insert(id, tx);
 

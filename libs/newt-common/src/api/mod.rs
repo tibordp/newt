@@ -298,7 +298,7 @@ impl Dispatcher for TerminalDispatcher {
                 let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
                 let ret = self.terminal.read(handle).await;
 
-                encode(&ret)?
+                encode(&ret.map(|data| data.map(serde_bytes::ByteBuf::from)))?
             }
             API_TERMINAL_WAIT => {
                 let handle: crate::terminal::TerminalHandle = decode(&req[..])?;
@@ -315,8 +315,9 @@ impl Dispatcher for TerminalDispatcher {
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
         match api {
             API_TERMINAL_INPUT => {
-                let (handle, input): (crate::terminal::TerminalHandle, Vec<u8>) = decode(&req[..])?;
-                if let Err(e) = self.terminal.input(handle, input).await {
+                let (handle, input): (crate::terminal::TerminalHandle, serde_bytes::ByteBuf) =
+                    decode(&req[..])?;
+                if let Err(e) = self.terminal.input(handle, input.into_vec()).await {
                     log::error!("terminal input failed: {}", e);
                 }
                 Ok(true)
@@ -372,11 +373,11 @@ impl Dispatcher for FileReaderDispatcher {
                 let (path, max_size): (VfsPath, u64) = decode(&req[..])?;
                 let ret = self.file_reader.read_file(path, max_size).await;
 
-                encode(&ret)?
+                encode(&ret.map(serde_bytes::ByteBuf::from))?
             }
             API_WRITE_FILE => {
-                let (path, data): (VfsPath, Vec<u8>) = decode(&req[..])?;
-                let ret = self.file_reader.write_file(path, data).await;
+                let (path, data): (VfsPath, serde_bytes::ByteBuf) = decode(&req[..])?;
+                let ret = self.file_reader.write_file(path, data.into_vec()).await;
 
                 encode(&ret)?
             }
@@ -661,9 +662,11 @@ impl Dispatcher for AgentFetchDispatcher {
                                 match read {
                                     Ok(0) => break,
                                     Ok(n) => {
-                                        if let Some(bytes) =
-                                            try_encode(&(stream_id, seq, &buf[..n]))
-                                        {
+                                        if let Some(bytes) = try_encode(&(
+                                            stream_id,
+                                            seq,
+                                            serde_bytes::Bytes::new(&buf[..n]),
+                                        )) {
                                             let send = outbox.send(Message::Notify(
                                                 API_HOST_FETCH_AGENT_CHUNK,
                                                 bytes.into(),
@@ -692,7 +695,9 @@ impl Dispatcher for AgentFetchDispatcher {
                             if cancel.is_cancelled() {
                                 return;
                             }
-                            if let Some(bytes) = try_encode(&(stream_id, seq, Vec::<u8>::new())) {
+                            if let Some(bytes) =
+                                try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
+                            {
                                 let _ = outbox
                                     .send(Message::Notify(API_HOST_FETCH_AGENT_CHUNK, bytes.into()))
                                     .await;

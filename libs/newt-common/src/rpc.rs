@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut};
 use log::{error, info};
 use parking_lot::Mutex;
 use tokio::{
@@ -177,8 +177,8 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(15 + len - src.len());
                     return Ok(None);
                 }
-                let slice = Bytes::copy_from_slice(&src[15..15 + len]);
-                src.advance(15 + len);
+                src.advance(15);
+                let slice = src.split_to(len).freeze();
 
                 Ok(Some(Message::InvokeRequest(
                     Api(api),
@@ -197,8 +197,8 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(13 + len - src.len());
                     return Ok(None);
                 }
-                let slice = Bytes::copy_from_slice(&src[13..13 + len]);
-                src.advance(13 + len);
+                src.advance(13);
+                let slice = src.split_to(len).freeze();
 
                 Ok(Some(Message::InvokeResponse(RequestId(request_id), slice)))
             }
@@ -221,8 +221,8 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(7 + len - src.len());
                     return Ok(None);
                 }
-                let slice = Bytes::copy_from_slice(&src[7..7 + len]);
-                src.advance(7 + len);
+                src.advance(7);
+                let slice = src.split_to(len).freeze();
 
                 Ok(Some(Message::Notify(Api(api), slice)))
             }
@@ -237,8 +237,8 @@ impl tokio_util::codec::Decoder for MessageCodec {
                     src.reserve(7 + len - src.len());
                     return Ok(None);
                 }
-                let slice = Bytes::copy_from_slice(&src[7..7 + len]);
-                src.advance(7 + len);
+                src.advance(7);
+                let slice = src.split_to(len).freeze();
 
                 Ok(Some(Message::Signal(Api(api), slice)))
             }
@@ -407,24 +407,27 @@ impl CommunicatorInner {
                     Message::InvokeRequest(api, id, payload) => {
                         let dispatcher = self.dispatcher.clone();
                         let outbox = self.outbox.clone();
-                        self.tasks.lock().insert(
-                            id,
-                            tokio::spawn(async move {
-                                match dispatcher.invoke(api, payload).await {
-                                    Ok(Some(resp)) => {
-                                        let _ =
-                                            outbox.send(Message::InvokeResponse(id, resp)).await;
-                                    }
-                                    Ok(None) => {
-                                        error!("unknown API invoked");
-                                    }
-                                    Err(e) => {
-                                        error!("error handling request: {}", e);
-                                    }
+                        let inner = self.clone();
+                        // Hold the map lock across spawn+insert: the task's
+                        // final action is removing its own entry, and if it
+                        // completed before the insert the finished task's
+                        // handle would sit in the map forever.
+                        let mut tasks = self.tasks.lock();
+                        let handle = tokio::spawn(async move {
+                            match dispatcher.invoke(api, payload).await {
+                                Ok(Some(resp)) => {
+                                    let _ = outbox.send(Message::InvokeResponse(id, resp)).await;
                                 }
-                            })
-                            .abort_handle(),
-                        );
+                                Ok(None) => {
+                                    error!("unknown API invoked");
+                                }
+                                Err(e) => {
+                                    error!("error handling request: {}", e);
+                                }
+                            }
+                            inner.tasks.lock().remove(&id);
+                        });
+                        tasks.insert(id, handle.abort_handle());
                     }
                     Message::InvokeResponse(id, payload) => {
                         if let Some(sender) = self.response.lock().remove(&id) {
@@ -541,7 +544,7 @@ impl Communicator {
         Req: serde::Serialize + std::fmt::Debug,
         Resp: for<'de> serde::Deserialize<'de> + std::fmt::Debug,
     {
-        let id = RequestId(self.0.request_id.fetch_add(1, Ordering::SeqCst));
+        let id = RequestId(self.0.request_id.fetch_add(1, Ordering::Relaxed));
         let bytes =
             bincode::serialize(req).map_err(|e| Error::custom(format!("RPC encode: {}", e)))?;
 

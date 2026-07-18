@@ -350,7 +350,7 @@ impl AgentResolver for Remote {
         let communicator = self.communicator()?;
         let stream_id = StreamId(
             self.next_stream_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
         let (tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
         self.pending_streams.lock().insert(

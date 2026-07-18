@@ -42,6 +42,9 @@ pub struct FileDetails {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileChunk {
+    // serde_bytes: bincode's serde path walks Vec<u8> per byte; this hits
+    // its bytes fast path with an identical wire format.
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
     pub offset: u64,
     pub total_size: u64,
@@ -109,18 +112,21 @@ impl FileReader for Remote {
     }
 
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
-        let ret: Result<Vec<u8>, Error> = self
+        let ret: Result<serde_bytes::ByteBuf, Error> = self
             .communicator
             .invoke(crate::api::API_READ_FILE, &(path, max_size))
             .await?;
 
-        Ok(ret?)
+        Ok(ret?.into_vec())
     }
 
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(crate::api::API_WRITE_FILE, &(path, data))
+            .invoke(
+                crate::api::API_WRITE_FILE,
+                &(path, serde_bytes::Bytes::new(&data)),
+            )
             .await?;
 
         Ok(ret?)

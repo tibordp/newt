@@ -419,7 +419,7 @@ impl Filesystem for Remote {
         if let Some(batch_tx) = batch_tx {
             let stream_id = StreamId(
                 self.next_stream_id
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             );
 
             // Register the batch sender so notifications can be routed to it.

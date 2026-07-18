@@ -779,7 +779,7 @@ impl VfsRegistry {
     /// allocate first, hand the id to the VFS (via a scoped progress
     /// reporter etc.), then `insert`.
     pub fn allocate_id(&self) -> VfsId {
-        VfsId(self.next_id.fetch_add(1, Ordering::SeqCst))
+        VfsId(self.next_id.fetch_add(1, Ordering::Relaxed))
     }
 
     /// Insert a freshly-constructed VFS under a previously-allocated id.

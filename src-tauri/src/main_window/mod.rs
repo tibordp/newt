@@ -1317,7 +1317,7 @@ impl MainWindowContext {
     }
 
     pub fn next_operation_id(&self) -> Result<OperationId, Error> {
-        self.with_session(|s| s.next_operation_id.fetch_add(1, Ordering::SeqCst))
+        self.with_session(|s| s.next_operation_id.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn operations(&self) -> &Operations {

@@ -525,7 +525,7 @@ impl ProgressReporter {
             return Ok(action);
         }
 
-        let issue_id = self.next_issue_id.fetch_add(1, Ordering::SeqCst);
+        let issue_id = self.next_issue_id.fetch_add(1, Ordering::Relaxed);
 
         let (tx, rx) = oneshot::channel();
         self.issue_resolvers.lock().insert(issue_id, tx);

@@ -146,7 +146,7 @@ impl TerminalClient for Local {
         let handle = TerminalHandle(
             self.0
                 .handle
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
 
         // No explicit command ⇒ the user's default shell. COMSPEC always
@@ -239,7 +239,7 @@ impl TerminalClient for Local {
             let handle = TerminalHandle(
                 inner
                     .handle
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             );
 
             debug!("allocating PTY for handle {:?}", handle);
@@ -434,16 +434,18 @@ impl TerminalClient for Remote {
         // not be queued behind bulk `notify` streams (e.g. VFS write chunks),
         // and the frontend has no use for an ack — loss is observed via the
         // absence of echoed output.
-        self.communicator
-            .signal(crate::api::API_TERMINAL_INPUT, &(handle, data))
+        self.communicator.signal(
+            crate::api::API_TERMINAL_INPUT,
+            &(handle, serde_bytes::Bytes::new(&data)),
+        )
     }
     async fn read(&self, handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
-        let ret: Result<Option<Vec<u8>>, Error> = self
+        let ret: Result<Option<serde_bytes::ByteBuf>, Error> = self
             .communicator
             .invoke(crate::api::API_TERMINAL_READ, &handle)
             .await?;
 
-        Ok(ret?)
+        Ok(ret?.map(serde_bytes::ByteBuf::into_vec))
     }
     async fn wait(&self, handle: TerminalHandle) -> Result<ExitStatus, Error> {
         let ret: Result<ExitStatus, Error> = self
