@@ -2,11 +2,59 @@ name: Package
 
 on:
   workflow_dispatch:
+    inputs:
+      set:
+        description: Artifact set
+        type: choice
+        options: [lean, full]
+        default: lean
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ─── Stage 0: Resolve the artifact set into build matrices ───
+  #
+  # lean (default): x86_64 Windows + Linux (AppImage + latest major of
+  # each supported distro) and aarch64 macOS.
+  # full: everything — all distro releases, the arm64 Linux mirror,
+  # aarch64 Windows and x86_64 macOS.
+  # Linux legs live in .github/package-matrix.yml (tier-tagged).
+
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      linux: ${{ steps.plan.outputs.linux }}
+      macos: ${{ steps.plan.outputs.macos }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: plan
+        env:
+          SET: ${{ inputs.set }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, yaml
+
+          full = os.environ["SET"] == "full"
+          linux = []
+          for leg in yaml.safe_load(open(".github/package-matrix.yml")):
+              if not full and leg["tier"] != "lean":
+                  continue
+              if not full and leg.get("lean_pkg") is False:
+                  leg["skip_pkg"] = True
+              linux.append(leg)
+
+          macos = [{"arch": "aarch64", "target": "aarch64-apple-darwin"}]
+          windows = [{"arch": "x86_64", "target": "x86_64-pc-windows-msvc"}]
+          if full:
+              macos.append({"arch": "x86_64", "target": "x86_64-apple-darwin"})
+              windows.append({"arch": "aarch64", "target": "aarch64-pc-windows-msvc"})
+
+          for key, legs in {"linux": linux, "macos": macos, "windows": windows}.items():
+              print(f"{key}={json.dumps(legs)}")
+          EOF
   # ─── Stage 1: Build agent binaries ───
 
   agent:
@@ -93,99 +141,34 @@ jobs:
 
   package:
     name: Package (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
-    needs: [agent, frontend]
+    needs: [plan, agent, frontend]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Debian 12
-            container: debian:12
-            distro: debian12
-            pkg_type: deb
-            install_deps: |
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
-
-          - name: Debian 13
-            container: debian:13
-            distro: debian13
-            pkg_type: deb
-            install_deps: |
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
-
-          - name: Ubuntu 22.04
-            container: ubuntu:22.04
-            distro: ubuntu2204
-            pkg_type: deb
-            # Oldest glibc baseline in the matrix → this leg also builds
-            # the slim AppImage (see packaging/appimage/).
-            appimage: true
-            install_deps: |
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
-
-          - name: Ubuntu 24.04
-            container: ubuntu:24.04
-            distro: ubuntu2404
-            pkg_type: deb
-            install_deps: |
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
-
-          - name: Ubuntu 26.04
-            container: ubuntu:26.04
-            distro: ubuntu2604
-            pkg_type: deb
-            install_deps: |
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl build-essential pkg-config git python3 \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-            runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
-
-          - name: Fedora 43
-            container: fedora:43
-            distro: fedora43
-            pkg_type: rpm
-            install_deps: |
-              dnf install -y gcc g++ make pkg-config git python3 \
-                webkit2gtk4.1-devel gtk3-devel librsvg2-devel rpm-build
-
-          - name: Fedora 44
-            container: fedora:44
-            distro: fedora44
-            pkg_type: rpm
-            install_deps: |
-              dnf install -y gcc g++ make pkg-config git python3 \
-                webkit2gtk4.1-devel gtk3-devel librsvg2-devel rpm-build
-
-          - name: Arch Linux
-            container: archlinux:latest
-            distro: arch
-            pkg_type: arch
-            install_deps: |
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm base-devel pkgconf git python \
-                webkit2gtk-4.1 gtk3 librsvg libarchive
+        include: ${{ fromJSON(needs.plan.outputs.linux) }}
 
     steps:
       - name: Install system dependencies
-        run: ${{ matrix.install_deps }}
+        run: |
+          case "${{ matrix.pkg_type }}" in
+            deb)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y curl build-essential pkg-config git python3 \
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+              ;;
+            rpm)
+              dnf install -y gcc g++ make pkg-config git python3 \
+                webkit2gtk4.1-devel gtk3-devel librsvg2-devel rpm-build
+              ;;
+            arch)
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm base-devel pkgconf git python \
+                webkit2gtk-4.1 gtk3 librsvg libarchive
+              ;;
+          esac
 
       - uses: actions/checkout@v6
 
@@ -239,11 +222,12 @@ jobs:
           cargo build --release -p newt --features custom-protocol
 
       - name: Build .deb
-        if: matrix.pkg_type == 'deb'
+        if: matrix.pkg_type == 'deb' && !matrix.skip_pkg
         env:
           VERSION: ${{ needs.frontend.outputs.version }}
           DEPS: ${{ matrix.runtime_deps }}
           DISTRO: ${{ matrix.distro }}
+          ARCH: ${{ matrix.deb_arch || 'amd64' }}
         run: packaging/debian/build-deb.sh
 
       - name: Build .rpm
@@ -257,7 +241,7 @@ jobs:
             --define "_newt_version $VERSION" \
             --define "_newt_binary $(pwd)/target/release/newt" \
             --define "_newt_agent_dir $(pwd)/agents"
-          cp rpmbuild/RPMS/x86_64/*.rpm .
+          cp "rpmbuild/RPMS/$(uname -m)"/*.rpm .
 
       - name: Build .pkg.tar.zst
         if: matrix.pkg_type == 'arch'
@@ -275,24 +259,26 @@ jobs:
         if: matrix.appimage
         env:
           VERSION: ${{ needs.frontend.outputs.version }}
+          ARCH: ${{ matrix.appimage_arch }}
           # The container has no FUSE; run appimagetool extracted.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           apt-get install -y file
           curl -fsSL --retry 3 -o /usr/local/bin/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${ARCH}.AppImage"
           chmod +x /usr/local/bin/appimagetool
           packaging/appimage/build-appimage.sh
 
       - uses: actions/upload-artifact@v6
         if: matrix.appimage
         with:
-          name: package-appimage-x86_64
+          name: package-appimage-${{ matrix.appimage_arch }}
           path: "*.AppImage"
           retention-days: 7
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v6
+        if: ${{ !matrix.skip_pkg }}
         with:
           name: package-${{ matrix.distro }}
           path: |
@@ -304,18 +290,34 @@ jobs:
 
   # ─── Stage 3b: macOS .dmg ───
 
+  # Both legs build on the arm runner; the x86_64 leg (full set only)
+  # cross-compiles, so --target is always explicit.
   package-macos:
-    name: Package (macOS aarch64)
+    name: Package (macOS ${{ matrix.arch }})
     runs-on: macos-latest
-    needs: [agent, frontend]
+    needs: [plan, agent, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.macos) }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: app-macos
+          key: app-macos-${{ matrix.arch }}
+      # Prebuilt from the tauri-cli release — compiling it via
+      # `cargo install` costs minutes per cache miss.
       - name: Install tauri-cli
-        run: cargo install tauri-cli --locked
+        run: |
+          curl -fsSL --retry 3 -o cargo-tauri.zip \
+            https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.11.4/cargo-tauri-aarch64-apple-darwin.zip
+          tar -xf cargo-tauri.zip -C "$HOME/.cargo/bin" cargo-tauri
+          chmod +x "$HOME/.cargo/bin/cargo-tauri"
+          rm cargo-tauri.zip
+          cargo tauri --version
       - name: Download frontend
         uses: actions/download-artifact@v8
         with:
@@ -339,11 +341,15 @@ jobs:
           done
           chmod +x */newt-agent
       - name: Build Tauri app
-        run: cargo tauri build --bundles dmg --config '{"build":{"beforeBuildCommand":""}}'
+        run: >
+          cargo tauri build
+          --target ${{ matrix.target }}
+          --bundles dmg
+          --config '{"build":{"beforeBuildCommand":""}}'
       - uses: actions/upload-artifact@v6
         with:
-          name: package-macos-aarch64
-          path: target/release/bundle/dmg/*.dmg
+          name: package-macos-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           retention-days: 7
           if-no-files-found: error
 
@@ -361,7 +367,7 @@ jobs:
   package-windows:
     name: Package (Windows ${{ matrix.arch }})
     runs-on: windows-latest
-    needs: [agent, frontend]
+    needs: [plan, agent, frontend]
     # Shared target dir so the inline agent build and the Tauri app
     # build reuse deps and are both covered by rust-cache (xtask honours
     # this instead of its local per-triple split). Must be absolute: a
@@ -374,11 +380,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            target: x86_64-pc-windows-msvc
-          - arch: aarch64
-            target: aarch64-pc-windows-msvc
+        include: ${{ fromJSON(needs.plan.outputs.windows) }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -390,8 +392,18 @@ jobs:
       # aws-lc-sys / ring assemble with NASM on Windows MSVC targets.
       - name: Install NASM
         run: choco install nasm --no-progress -y
+      # Prebuilt from the tauri-cli release — compiling it via
+      # `cargo install` costs minutes per cache miss. x86_64 CLI on
+      # both legs: the aarch64 app build cross-compiles on this
+      # x86_64 runner.
       - name: Install tauri-cli
-        run: cargo install tauri-cli --locked
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 -o cargo-tauri.zip \
+            https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.11.4/cargo-tauri-x86_64-pc-windows-msvc.zip
+          tar -xf cargo-tauri.zip -C "$HOME/.cargo/bin" cargo-tauri.exe
+          rm cargo-tauri.zip
+          cargo tauri --version
       - name: Download frontend
         uses: actions/download-artifact@v8
         with:

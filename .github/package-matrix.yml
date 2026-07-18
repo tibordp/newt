@@ -1,0 +1,145 @@
+# Linux packaging legs for the Package workflow. Filtered by the `plan`
+# job on the workflow's `set` input:
+#   lean — legs tagged `tier: lean`: the AppImage plus the latest major
+#          of each supported distro. `lean_pkg: false` marks a leg that
+#          runs in lean only for its AppImage (its native package is
+#          skipped — Ubuntu 22.04 is the AppImage's glibc baseline, not
+#          a "latest major").
+#   full — every leg, including the arm64 mirror. No Arch arm64 leg:
+#          Arch Linux ARM is a separate port and the archlinux container
+#          image is x86_64-only.
+#
+# Per-leg fields: `runtime_deps` feeds the .deb Depends: line (t64
+# naming varies by release), `deb_arch`/`appimage_arch` feed
+# build-deb.sh / build-appimage.sh, `distro` keys artifact names and
+# caches. Install-time deps are derived from pkg_type in the workflow.
+
+# ─── x86_64 ───
+
+- name: Debian 12
+  tier: full
+  runner: ubuntu-latest
+  container: debian:12
+  distro: debian12
+  pkg_type: deb
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
+
+- name: Debian 13
+  tier: lean
+  runner: ubuntu-latest
+  container: debian:13
+  distro: debian13
+  pkg_type: deb
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Ubuntu 22.04
+  tier: lean
+  lean_pkg: false
+  runner: ubuntu-latest
+  container: ubuntu:22.04
+  distro: ubuntu2204
+  pkg_type: deb
+  # Oldest glibc baseline in the matrix → this leg builds the AppImage.
+  appimage: true
+  appimage_arch: x86_64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
+
+- name: Ubuntu 24.04
+  tier: full
+  runner: ubuntu-latest
+  container: ubuntu:24.04
+  distro: ubuntu2404
+  pkg_type: deb
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Ubuntu 26.04
+  tier: lean
+  runner: ubuntu-latest
+  container: ubuntu:26.04
+  distro: ubuntu2604
+  pkg_type: deb
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Fedora 43
+  tier: full
+  runner: ubuntu-latest
+  container: fedora:43
+  distro: fedora43
+  pkg_type: rpm
+
+- name: Fedora 44
+  tier: lean
+  runner: ubuntu-latest
+  container: fedora:44
+  distro: fedora44
+  pkg_type: rpm
+
+- name: Arch Linux
+  tier: lean
+  runner: ubuntu-latest
+  container: archlinux:latest
+  distro: arch
+  pkg_type: arch
+
+# ─── arm64 (full set only) ───
+
+- name: Debian 12 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: debian:12
+  distro: debian12-arm64
+  pkg_type: deb
+  deb_arch: arm64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
+
+- name: Debian 13 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: debian:13
+  distro: debian13-arm64
+  pkg_type: deb
+  deb_arch: arm64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Ubuntu 22.04 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: ubuntu:22.04
+  distro: ubuntu2204-arm64
+  pkg_type: deb
+  deb_arch: arm64
+  appimage: true
+  appimage_arch: aarch64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1"
+
+- name: Ubuntu 24.04 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: ubuntu:24.04
+  distro: ubuntu2404-arm64
+  pkg_type: deb
+  deb_arch: arm64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Ubuntu 26.04 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: ubuntu:26.04
+  distro: ubuntu2604-arm64
+  pkg_type: deb
+  deb_arch: arm64
+  runtime_deps: "libwebkit2gtk-4.1-0, libgtk-3-0t64, libayatana-appindicator3-1"
+
+- name: Fedora 43 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: fedora:43
+  distro: fedora43-arm64
+  pkg_type: rpm
+
+- name: Fedora 44 (arm64)
+  tier: full
+  runner: ubuntu-24.04-arm
+  container: fedora:44
+  distro: fedora44-arm64
+  pkg_type: rpm
