@@ -60,12 +60,15 @@ jobs:
           name: agent-${{ matrix.target }}
           path: agents/${{ matrix.target }}/
           retention-days: 7
+          if-no-files-found: error
 
   # ─── Stage 2: Build frontend once ───
 
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -79,15 +82,12 @@ jobs:
           name: frontend-dist
           path: dist/
           retention-days: 7
+          if-no-files-found: error
       - name: Extract version
+        id: version
         run: |
           VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          echo "$VERSION" > version.txt
-      - uses: actions/upload-artifact@v6
-        with:
-          name: build-metadata
-          path: version.txt
-          retention-days: 7
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   # ─── Stage 3: Per-distro build + package ───
 
@@ -105,6 +105,7 @@ jobs:
             distro: debian12
             pkg_type: deb
             install_deps: |
+              export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
                 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
@@ -115,6 +116,7 @@ jobs:
             distro: debian13
             pkg_type: deb
             install_deps: |
+              export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y curl build-essential pkg-config git python3 \
                 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
@@ -124,6 +126,9 @@ jobs:
             container: ubuntu:22.04
             distro: ubuntu2204
             pkg_type: deb
+            # Oldest glibc baseline in the matrix → this leg also builds
+            # the slim AppImage (see packaging/appimage/).
+            appimage: true
             install_deps: |
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
@@ -206,11 +211,6 @@ jobs:
           name: frontend-dist
           path: dist/
 
-      - name: Download build metadata
-        uses: actions/download-artifact@v8
-        with:
-          name: build-metadata
-
       - name: Download agent artifacts
         uses: actions/download-artifact@v8
         with:
@@ -244,15 +244,13 @@ jobs:
           VERSION: ${{ needs.frontend.outputs.version }}
           DEPS: ${{ matrix.runtime_deps }}
           DISTRO: ${{ matrix.distro }}
-        run: |
-          export VERSION=$(cat version.txt)
-          packaging/debian/build-deb.sh
+        run: packaging/debian/build-deb.sh
 
       - name: Build .rpm
         if: matrix.pkg_type == 'rpm'
+        env:
+          VERSION: ${{ needs.frontend.outputs.version }}
         run: |
-          . "$HOME/.cargo/env"
-          VERSION=$(cat version.txt)
           rpmbuild -bb packaging/rpm/newt.spec \
             --define "_topdir $(pwd)/rpmbuild" \
             --define "_newt_srcdir $(pwd)" \
@@ -263,9 +261,36 @@ jobs:
 
       - name: Build .pkg.tar.zst
         if: matrix.pkg_type == 'arch'
+        env:
+          VERSION: ${{ needs.frontend.outputs.version }}
+        run: packaging/arch/build-pkg.sh
+
+      # Slim try-it-out artifact: same binary/payload as the .deb, no
+      # bundled libraries (needs system WebKitGTK 4.1 — same runtime
+      # deps as the native packages). Deliberately not `cargo tauri
+      # build --bundles appimage`: tauri's bundler forces
+      # GDK_BACKEND=x11 / GTK_THEME and its exports leak into shells
+      # spawned from Newt's terminal.
+      - name: Build AppImage
+        if: matrix.appimage
+        env:
+          VERSION: ${{ needs.frontend.outputs.version }}
+          # The container has no FUSE; run appimagetool extracted.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          export VERSION=$(cat version.txt)
-          packaging/arch/build-pkg.sh
+          apt-get install -y file
+          curl -fsSL --retry 3 -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+          packaging/appimage/build-appimage.sh
+
+      - uses: actions/upload-artifact@v6
+        if: matrix.appimage
+        with:
+          name: package-appimage-x86_64
+          path: "*.AppImage"
+          retention-days: 7
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v6
         with:
@@ -275,6 +300,7 @@ jobs:
             *.rpm
             *.pkg.tar.zst
           retention-days: 7
+          if-no-files-found: error
 
   # ─── Stage 3b: macOS .dmg ───
 
@@ -319,6 +345,7 @@ jobs:
           name: package-macos-aarch64
           path: target/release/bundle/dmg/*.dmg
           retention-days: 7
+          if-no-files-found: error
 
   # ─── Stage 3c: Windows .msi ───
   #
@@ -337,9 +364,13 @@ jobs:
     needs: [agent, frontend]
     # Shared target dir so the inline agent build and the Tauri app
     # build reuse deps and are both covered by rust-cache (xtask honours
-    # this instead of its local per-triple split).
+    # this instead of its local per-triple split). Must be absolute: a
+    # relative CARGO_TARGET_DIR resolves against each cargo invocation's
+    # cwd, and `cargo tauri build` runs cargo from src-tauri/ — so
+    # `target` would split the builds and strand the .msi in
+    # src-tauri/target/ where the upload step never looks.
     env:
-      CARGO_TARGET_DIR: target
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     strategy:
       fail-fast: false
       matrix:
@@ -404,3 +435,4 @@ jobs:
           name: package-windows-${{ matrix.arch }}
           path: target/${{ matrix.target }}/release/bundle/msi/*.msi
           retention-days: 7
+          if-no-files-found: error

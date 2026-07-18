@@ -1,0 +1,27 @@
+#!/bin/sh
+# Slim AppRun: nothing is bundled — Newt uses the system GTK/WebKitGTK,
+# so there are no GDK_BACKEND/GTK_THEME/LD_LIBRARY_PATH exports here.
+# The app follows the session's display backend (Wayland stays Wayland)
+# and theme, and shells spawned from the built-in terminal inherit a
+# clean environment.
+set -e
+
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# Friendlier than the dynamic linker's error when WebKitGTK is absent.
+# Only refuse when ldconfig is available and definitively lacks the lib.
+libs="$(ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null || true)"
+if [ -n "$libs" ] && ! printf '%s\n' "$libs" | grep -q 'libwebkit2gtk-4\.1\.so'; then
+    cat >&2 <<'EOF'
+Newt needs the system WebKitGTK 4.1 libraries, which were not found.
+Install them and run this AppImage again:
+  Debian/Ubuntu:  sudo apt install libwebkit2gtk-4.1-0
+  Fedora:         sudo dnf install webkit2gtk4.1
+  Arch:           sudo pacman -S webkit2gtk-4.1
+EOF
+    exit 127
+fi
+
+# Agents resolve from the mounted AppDir (runtime override; the
+# compiled-in /usr/share/newt/agents only exists once installed).
+NEWT_AGENT_DIR="$HERE/usr/share/newt/agents" exec "$HERE/usr/bin/newt" "$@"
