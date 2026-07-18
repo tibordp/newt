@@ -222,6 +222,10 @@ export default function Properties({
   paths,
   name,
   size,
+  allocated_size,
+  hard_links,
+  inode,
+  device_id,
   is_dir,
   is_symlink,
   symlink_target,
@@ -349,6 +353,12 @@ export default function Properties({
                 />
               )}
               <InfoRow label="Size" value={formatSize(size)} />
+              {allocated_size != null && (
+                <InfoRow
+                  label="Size on disk"
+                  value={formatSize(allocated_size)}
+                />
+              )}
               {(owner != null || !isSingle) && (
                 <InfoRow
                   label="Owner"
@@ -382,6 +392,19 @@ export default function Properties({
                   )}
                 </dl>
               )}
+            {(hard_links != null || inode != null || device_id != null) && (
+              <dl className={styles.infoList}>
+                {hard_links != null && (
+                  <InfoRow label="Hard links" value={String(hard_links)} />
+                )}
+                {inode != null && (
+                  <InfoRow label="Inode" value={String(inode)} />
+                )}
+                {device_id != null && (
+                  <InfoRow label="Device" value={String(device_id)} />
+                )}
+              </dl>
+            )}
           </div>
 
           {canEdit && (

@@ -124,6 +124,10 @@ pub fn dialog(
                         can_set_metadata,
                         name,
                         size: dir_entry.and_then(|f| f.size),
+                        allocated_size: dir_entry.and_then(|f| f.allocated_size),
+                        hard_links: dir_entry.and_then(|f| f.hard_links),
+                        inode: dir_entry.and_then(|f| f.inode),
+                        device_id: dir_entry.and_then(|f| f.device_id),
                         is_dir: true,
                         is_symlink: false,
                         symlink_target: None,
@@ -195,6 +199,18 @@ pub fn dialog(
                         Some(files.iter().map(|f| f.size.unwrap_or(0)).sum())
                     } else {
                         None
+                    };
+
+                    let allocated_size = if files.iter().all(|f| f.allocated_size.is_some()) {
+                        Some(files.iter().map(|f| f.allocated_size.unwrap_or(0)).sum())
+                    } else {
+                        None
+                    };
+
+                    let (hard_links, inode, device_id) = if files.len() == 1 {
+                        (files[0].hard_links, files[0].inode, files[0].device_id)
+                    } else {
+                        (None, None, None)
                     };
 
                     let is_dir = files.len() == 1 && files[0].is_dir;
@@ -286,6 +302,10 @@ pub fn dialog(
                         can_set_metadata,
                         name,
                         size,
+                        allocated_size,
+                        hard_links,
+                        inode,
+                        device_id,
                         is_dir,
                         is_symlink,
                         symlink_target,

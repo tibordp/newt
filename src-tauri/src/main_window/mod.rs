@@ -484,6 +484,13 @@ pub enum ModalDataKind {
         paths: Vec<VfsPath>,
         name: String,
         size: Option<u64>,
+        /// Bytes allocated on disk (`File::allocated_size`); summed across
+        /// a multi-selection the same way `size` is.
+        allocated_size: Option<u64>,
+        /// Single-selection only, like the timestamps.
+        hard_links: Option<u64>,
+        inode: Option<u64>,
+        device_id: Option<u64>,
         is_dir: bool,
         is_symlink: bool,
         symlink_target: Option<String>,

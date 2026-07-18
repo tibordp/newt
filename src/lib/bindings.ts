@@ -1747,7 +1747,16 @@ export type IssueAction = "skip" | "overwrite" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
 export type ModalContext = { pane_handle: PaneHandle | null }
-export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
+/**
+ * Bytes allocated on disk (`File::allocated_size`); summed across
+ * a multi-selection the same way `size` is.
+ */
+allocated_size: number | null; 
+/**
+ * Single-selection only, like the timestamps.
+ */
+hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
  */
@@ -1829,7 +1838,16 @@ initial_direction: number;
  * alt-held mode).
  */
 persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
-export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
+export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
+/**
+ * Bytes allocated on disk (`File::allocated_size`); summed across
+ * a multi-selection the same way `size` is.
+ */
+allocated_size: number | null; 
+/**
+ * Single-selection only, like the timestamps.
+ */
+hard_links: number | null; inode: number | null; device_id: number | null; is_dir: boolean; is_symlink: boolean; symlink_target: string | null; 
 /**
  * Whether the VFS supports metadata changes (chmod/chown)
  */

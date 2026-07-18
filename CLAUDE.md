@@ -1,6 +1,6 @@
 # Newt - Development Guidelines
 
-Newt is a dual-pane file manager desktop app (think Midnight Commander / Altap Salamander meets modern UI). Built with Tauri 2 (Rust backend, React/TypeScript frontend).
+Newt is a dual-pane orthodox file manager desktop app. Built with Tauri 2 (Rust backend, React/TypeScript frontend) for Mac, Linux and Windows. 
 
 ## Architecture
 
@@ -16,6 +16,10 @@ Frontend (React/TS)  ──Tauri IPC──>  Tauri Backend (Rust)  ──stdin/s
 - **Agent** (`libs/newt-agent/`): Separate binary for remoting scenarios (SSH, elevated/pkexec). Communicates with the Tauri backend via a custom binary RPC protocol (bincode over stdin/stdout).
 - **Common library** (`libs/newt-common/`): Shared types, RPC protocol, filesystem/terminal/operation trait abstractions with both Local and Remote implementations.
 
+### Sessions
+
+One OS process hosts every window. A **session** is a MainWindow together with the viewer/editor windows opened from it: one `MainWindowState`, one connection (local, or one agent subprocess when remote/elevated), one set of VFS mounts, terminals, and operations. Sessions are fully independent of each other — a local session and a remote one coexist in the same process — but they *do* share the process, so nothing process-global (event emits, statics, per-session counters) is implicitly scoped to one session or window. The only genuinely app-wide state is preferences. Prefer "session" over "app" when describing scope: most state that feels app-wide is actually session-wide.
+
 ### Local vs Remote mode
 
 All filesystem, terminal, and operation functionality is accessed through traits (`Filesystem`, `TerminalClient`, `OperationsClient`, etc.) defined in `newt-common`. These have two implementations:
@@ -25,35 +29,19 @@ All filesystem, terminal, and operation functionality is accessed through traits
 
 Both modes use the exact same traits, so the Tauri backend and frontend code is identical regardless of connection mode. The agent exists purely to run operations on a different host or with different privileges — it is not needed for process isolation in the local case.
 
-There is no need to guard against API drift between the host and the agent. While drift can happen in dev, the bootstrap process always ensures that the agent and the host were built from the same source tree, so they are tightly coupled. There is no need to build compatibility layers in the RPC and it is fine to panic if a condition can only emerge through drift.
-
 ### VFS (Virtual Filesystem)
 
 Remote VFSes (S3 today, SFTP planned) are orthogonal to the session mode. A VFS is mounted into the `VfsRegistry` and accessed through the same `Filesystem` trait. In a local session, the VFS connection originates from the Tauri process; in a remote session, it originates from the agent — so e.g. an S3 mount in a remote session uses the remote host's AWS credentials and network.
 
 ### RPC boundary
 
+All host↔agent and agent↔agent communication is **tightly coupled**. Every participant in a session is always an artifact built from the same source tree. The protocol is an internal distributed ABI, not a public API, an independently versioned service boundary, or an untrusted interoperability surface. 
+
+Do not add protocol-version negotiation, backward-compatibility layers, tolerant decoding, or recovery paths for structurally invalid payloads. Underlying transport (SSH, ...) is responsible for ensuring the integrity. A payload that successfully crosses the transport boundary but cannot be decoded or violates protocol invariants indicates a programming error, corrupted process state, or a broken internal ABI contract. **Panic is the correct response.** Do not turn these failures into ordinary `Result` errors or attempt to continue the session.
+
+Transport-level failures such as EOF, subprocess termination, or an unavailable connection may still be represented as operational errors where appropriate. This does not apply to malformed or semantically impossible protocol data. The agent lives only for the duration of the session, then terminates. 
+
 `std::path::Path`/`PathBuf` must **never** appear on a serde-serialized type that crosses the agent↔host RPC boundary (anything sent via the `Communicator` or an `api`/`VfsDescriptor` payload). Use `newt_common::vfs::path::PathBuf` (implements `specta::Type` + serde) or `String`. Native conversion happens only on the side that physically owns the filesystem. Treat this as a litmus test whenever touching an RPC/`api` type or adding a path field — audit the whole type, don't symptom-fix one field (`agent_resolver` host-local paths are exempt — never serialized).
-
-### Window-targeted events
-
-Multiple MainWindows (plus viewers/editors) share **one process**. They used to be a process each, which made every broadcast accidentally window-scoped — a lot of event code still carries that assumption, and nothing in the type system catches it.
-
-Tauri 2's `Emitter::emit` **always emits to every target**, whatever you call it on: `window.emit(…)` is *not* window-scoped. That was v1 semantics; v2 changed the meaning while keeping the call compiling. Anything destined for one window must be `window.emit_to(window.label(), …)`.
-
-The targeting is asymmetric, and that asymmetry is the trap:
-
-| Backend | Frontend listener | Delivered to |
-|---|---|---|
-| `emit` | either | **every** window (cross-talk) |
-| `emit_to(label)` | `getCurrentWebviewWindow().listen` | that window ✓ |
-| `emit_to(label)` | bare `listen` from `@tauri-apps/api/event` | **nothing** |
-
-A bare `listen()` registers as `EventTarget::Any`, and Tauri's `emit_to(AnyLabel)` matcher falls through to `_ => false` for `Any` candidates. So scoping an emit *without* moving its listener to `getCurrentWebviewWindow().listen()` silently trades cross-talk for a dead event — no compile error, no test failure, and each side looks correct read on its own. **Change both ends in the same commit**, and grep for the event name to find every listener first.
-
-Only genuinely global state (`update:preferences`) legitimately uses `app_handle.emit`. That pairing is safe because a broadcast *does* reach scoped listeners — the hazard only runs the other way.
-
-Same root cause, still live: identifiers minted per session (`TerminalHandle`) restart at 0 in every window, so they're unique only *within* a session. Never route by one alone across windows.
 
 ## UX: Keyboard-Centric Design
 
@@ -68,12 +56,18 @@ Focus management is critical — broken focus means the user has to reach for th
 - **Between panes**: Tab switches panes. The active pane is tracked in `DisplayOptions.active_pane` (Rust state), not in React focus state.
 - **Pane ↔ Terminal**: Focus ownership is tracked in `DisplayOptions.panes_focused`. Clicking a terminal or pressing the toggle shortcut updates this in Rust, and the frontend follows.
 
+### Footgun: Window-targeted events
+
+All sessions share **one process** (see Sessions above).
+
+Tauri 2's `Emitter::emit` **always emits to every target**, whatever you call it on: `window.emit(…)` is *not* window-scoped. Anything destined for one window must be `window.emit_to(window.label(), …)`. Only genuinely app-wide events (like preference changes) can use `emit`.
+
 ## State Ownership
 
 Be intentional about where state is kept:
 
 - **React (local state)**: Purely local/ephemeral state — form inputs, hover states, drag tracking, scroll position. If it doesn't need to survive a re-render from Rust or be visible to other components, it belongs here.
-- **Rust (MainWindowState)**: Any state with app-wide consequences — this is the primary source of truth, pushed to the frontend via `UpdatePublisher` (treediff → Immer patches). The frontend is a **rendering layer**: it receives state and renders it, it does not own app state.
+- **Rust (MainWindowState)**: Any state with session-wide consequences — this is the primary source of truth, pushed to the frontend via `UpdatePublisher` (treediff → Immer patches). The frontend is a **rendering layer**: it receives state and renders it, it does not own session state.
 - **Agent**: Some state can live in the agent process if it makes sense (e.g. per-operation progress tracking), but the bar is higher — prefer Rust unless the agent is the natural owner.
 
 ### Modals and Dialogs
@@ -87,9 +81,9 @@ Be intentional about where state is kept:
 
 The `cmd_*` middleware automatically closes any open modal before dispatching, so individual commands never need to manage modal lifecycle. The frontend's `Dialog.Root` opens/closes based on `remoteState.modal` — there is no `useState` for open/closed.
 
-### Adding New App-Wide State
+### Adding New Session-Wide State
 
-When adding state that affects the UI beyond a single component (e.g. a new panel, a toggle, a mode):
+When adding state that affects the session's UI beyond a single component (e.g. a new panel, a toggle, a mode):
 
 1. Add the field to the appropriate Rust struct (`MainWindowState`, `DisplayOptions`, etc.).
 2. Derive/implement `Serialize` so the patch system picks it up.
@@ -119,8 +113,8 @@ When a task or direction is unclear — especially around architecture or design
 
 ## Git Commits
 
-When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: tick off / delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added).
+When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: tick off / delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added). TODO.md should always be actionable future work, known limitations and implementation details belong into FEATURE_DUMP.md or code comments.
 
-Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any, and fix the issues it surfaces. Never `git stash` to satisfy the hook's whole-tree gate; if several logical commits are pending, sequence them instead.
+Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any, and fix the issues it surfaces. Never `git stash` to satisfy the hook's whole-tree gate; if several logical commits are pending, sequence them instead. With regards to commit hygiene, it is fine for small drive-by or tangentially related changes to piggyback on the larger change; do not waste effort to cleanly split them, just commit as a single commit and add a note to the commit message.
 
 Do not add `Co-Authored-By` lines to commit messages.
