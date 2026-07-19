@@ -275,12 +275,10 @@ pub async fn cmd_open_in_other_pane(
         },
     };
 
-    if newt_common::vfs::is_archive_name(&file.name) {
-        let response = ctx
-            .mount_vfs(MountRequest::Archive {
-                origin: target_path.clone(),
-            })
-            .await?;
+    if let Some(request) =
+        newt_common::vfs::enterable_mount_request(&file.name, target_path.clone())
+    {
+        let response = ctx.mount_vfs(request).await?;
         target_path = VfsPath::root(response.vfs_id);
     }
 
@@ -343,7 +341,9 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
         }
     }
 
-    if newt_common::vfs::is_archive_name(&file.name) {
+    if newt_common::vfs::is_archive_name(&file.name)
+        || newt_common::vfs::is_disc_image_name(&file.name)
+    {
         return cmd_open_archive(ctx, pane_handle).await;
     }
 
@@ -413,17 +413,24 @@ pub async fn cmd_open_archive(
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
+    let file = match pane.get_focused_file_info() {
+        Some(f) => f,
+        None => return Ok(()),
+    };
     // Mount on the *real* archive path, not the in-SearchVfs alias.
     let origin = match pane.get_focused_source() {
         Some(s) => s,
         None => return Ok(()),
     };
 
-    let response = ctx
-        .mount_vfs(MountRequest::Archive {
+    // Explicit invocation on a name no matcher claims still tries the
+    // archive path (its tar fallback handles odd extensions).
+    let request = newt_common::vfs::enterable_mount_request(&file.name, origin.clone()).unwrap_or(
+        MountRequest::Archive {
             origin: origin.clone(),
-        })
-        .await?;
+        },
+    );
+    let response = ctx.mount_vfs(request).await?;
     let vfs_path = VfsPath::root(response.vfs_id);
 
     ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {

@@ -3690,6 +3690,7 @@ dependencies = [
  "mime_guess",
  "mimetype-detector",
  "newt-archive",
+ "newt-disc",
  "nix",
  "notify",
  "openssh-sftp-client",
@@ -3714,6 +3715,13 @@ dependencies = [
  "url",
  "windows-sys 0.59.0",
  "zip",
+]
+
+[[package]]
+name = "newt-disc"
+version = "0.1.0"
+dependencies = [
+ "flate2",
 ]
 
 [[package]]

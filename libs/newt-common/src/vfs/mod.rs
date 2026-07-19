@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod archive;
 pub mod background_job;
+pub mod disc;
 pub mod k8s;
 pub mod local;
 pub mod path;
@@ -19,6 +20,7 @@ mod tests;
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
+pub use disc::{DiscVfs, is_disc_image_name};
 pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use path_style::{
@@ -1162,6 +1164,10 @@ pub enum MountRequest {
     Archive {
         origin: VfsPath,
     },
+    /// Browse into an ISO 9660 / UDF disc image file.
+    Disc {
+        origin: VfsPath,
+    },
     Search {
         root: VfsPath,
         params: search::SearchParams,
@@ -1176,6 +1182,18 @@ pub enum MountRequest {
         /// Mount target shown as the VFS label, e.g. the container name.
         label: String,
     },
+}
+
+/// The mount request for entering a file entry as a browsable VFS
+/// (archives, disc images), or `None` when the name isn't enterable.
+pub fn enterable_mount_request(name: &str, origin: VfsPath) -> Option<MountRequest> {
+    if is_archive_name(name) {
+        Some(MountRequest::Archive { origin })
+    } else if is_disc_image_name(name) {
+        Some(MountRequest::Disc { origin })
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

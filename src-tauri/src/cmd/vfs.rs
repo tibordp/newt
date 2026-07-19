@@ -20,6 +20,7 @@ async fn mount_and_navigate(
         MountRequest::Sftp { .. } => "sftp",
         MountRequest::Kubernetes { .. } => "k8s",
         MountRequest::Archive { .. } => "archive",
+        MountRequest::Disc { .. } => "disc",
         MountRequest::Search { .. } => "search",
         MountRequest::Remote => "remote",
         MountRequest::Agent { .. } => "agent",

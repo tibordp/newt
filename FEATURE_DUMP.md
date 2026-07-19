@@ -187,7 +187,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 
 **Enter behavior** depends on what's focused:
 - **Directory**: Navigate into it.
-- **Archive file** (`.tar.gz`, `.zip`, etc.): Mount as VFS and navigate into the archive root.
+- **Archive file** (`.tar.gz`, `.zip`, etc.) or **disc image** (`.iso`, `.udf`): Mount as VFS and navigate into its root.
 - **Symlink to directory**: Follow the symlink and enter the target directory.
 - **Regular file**: Open with system default application. For host-local files this opens directly via the OS opener; for files on a non-host-local VFS (S3, SFTP, archives, remote), the file is first downloaded to a temp directory on the host using the standard Copy operation, and the system handler is launched on completion.
 - **`..`**: Navigate to parent directory.
@@ -941,6 +941,16 @@ Mount and browse archive files as virtual read-only filesystems.
 
 **Limitations**: Read-only. No create, modify, delete, rename, or metadata changes inside archives. Tar archives support symlinks; ZIP archives do not. (Creating new archives is a separate operation — see Pack to Archive under File Operations.)
 
+### Disc Images (ISO 9660 / UDF, Read-Only)
+
+Mount and browse optical disc images (`.iso`, `.udf`) as virtual read-only filesystems, exactly like archives: Enter on a disc image mounts it and navigates into its root; `..` at the root exits back to the image file. Same ephemeral-mount lifecycle, origin-styled breadcrumbs, and read-only capability surface as archive mounts.
+
+**Formats**: ISO 9660 with Joliet and Rock Ridge extensions (Rock Ridge preferred over Joliet when both exist — real POSIX names, permissions, uid/gid, timestamps, symlinks), and UDF 1.02–2.60 including the Metadata Partition used by Blu-ray-era images (Type-1 and metadata partition maps; logical sector sizes 512–4096, so both optical `.iso` dumps and hard-disk-profile UDF images work). Hybrid/bridge images carrying both filesystems use the UDF view (the authoritative one, and the only correct one for >4 GB files). Multi-extent ISO files (the >4 GB mechanism), inline UDF data, sparse UDF extents, and UDF/Rock Ridge symlinks (resolved internally like archive symlinks) are all supported.
+
+**Fully range-read native — no downloading, no indexing pass**: unlike archives, disc-image file data is stored as raw contiguous extents, so every read inside the image translates directly into a range read on the image file. Combined with S3's HTTP-Range `read_range`, a Blu-ray-sized ISO on S3 can be browsed and its files viewed/copied out without the image ever being downloaded. Directory metadata is parsed *lazily per-directory* (no upfront tree walk; entering a 100 GB image costs a handful of small reads) through a 16 MiB block cache that coalesces the structure walk into few upstream GETs; listings are cached permanently since the image is immutable. The in-tree sans-IO `newt-disc` parser crate hands the VFS layer byte ranges to fetch, which are issued concurrently per round — high-latency backends pay round-trips, not per-structure reads.
+
+**Limitations**: Read-only. VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW media), El Torito boot image exposure, zisofs compression, interleaved ISO files, and multi-session images are not supported (clean errors where detectable). Raw-sector formats (`.bin`/`.cue`, `.nrg`) are out of scope.
+
 ### Kubernetes (Read-Only)
 
 Browse a Kubernetes cluster as a navigable directory tree of YAML manifests.
@@ -1376,7 +1386,7 @@ title = "My Command"
 run = "echo {{ file.name }}"
 key = "alt+z"               # Optional
 terminal = true             # Optional, default false
-when = "file"               # Optional
+applies_to = "file"         # Optional
 ```
 
 ### Profile System

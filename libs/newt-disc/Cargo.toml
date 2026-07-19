@@ -1,0 +1,11 @@
+[package]
+name = "newt-disc"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Sans-IO ISO 9660 / UDF disc image reader for Newt"
+
+[dependencies]
+
+[dev-dependencies]
+flate2 = "1"

@@ -896,6 +896,7 @@ impl VfsManager for VfsRegistryManager {
                 crate::vfs::agent::mount(spec, kind, label, &ctx).await?
             }
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
+            MountRequest::Disc { origin } => crate::vfs::disc::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
                 // Content matching needs a FileReader; use the
                 // registry-backed reader so search inside a SearchVfs's

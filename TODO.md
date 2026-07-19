@@ -37,6 +37,17 @@ Drag-out shipped (escalation at the window edge → native OS drag via the `drag
 
 A dedicated extract operation with conflict handling, not a VFS — packing shipped as Pack to Archive / Alt+F5; today unpacking means copying out of a mounted archive VFS.
 
+## Sans-IO zip reader
+
+Replace the `zip` crate in `ZipArchiveVfs` with an in-tree sans-IO reader on the `newt-disc` model (batched range requests, async-native — no `RangeReadAdapter`/`spawn_blocking` bridge). Fixes the structural inefficiencies the crate forces: every `read_range` re-opens the archive and decompresses the whole entry (the F3 viewer's chunked fan-out makes that quadratic), and central-directory indexing issues a hail of tiny upstream reads instead of a few coalesced ones. Natural home for a shared block cache and a decompressed-entry LRU; `newt-archive` already owns the write side.
+
+## Disc image VFS follow-ups
+
+ISO 9660 (+Joliet/Rock Ridge) and UDF through 2.60 shipped as the `disc` VFS (`newt-disc` sans-IO parser + `vfs/disc.rs` driver). Remaining ideas:
+- VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW dumps) — currently a clean "unsupported" error.
+- `.img` support via content sniffing: the extension is ambiguous (raw disk images with partition tables vs raw ISO9660/UDF), so claiming it needs a cheap probe before mount rather than an extension match.
+- El Torito boot catalog: expose boot images as synthetic entries at the mount root.
+
 ## Enrichers
 
 Subsystem + git + du enrichers shipped (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`). Remaining:

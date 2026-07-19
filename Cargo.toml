@@ -6,6 +6,7 @@ members = [
     "libs/newt-agent/",
     "libs/newt-archive/",
     "libs/newt-common/",
+    "libs/newt-disc/",
     "xtask/",
 ]
 # Plain `cargo build` builds only the app shell + common lib. The agent is

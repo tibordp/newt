@@ -87,25 +87,7 @@ pub async fn mount(
 ) -> Result<Arc<dyn Vfs>, Error> {
     log::info!("mounting archive VFS for origin={}", origin);
     let (upstream_vfs, archive_path) = ctx.registry.resolve(&origin)?;
-
-    let upstream_desc = upstream_vfs.descriptor();
-    let upstream_meta = upstream_vfs.mount_meta();
-    let display_path = upstream_desc.format_path(&origin.path, &upstream_meta);
-    // Capture the upstream's *own* breadcrumb segmentation/styling for
-    // the origin so the archive renders it in the upstream's convention
-    // instead of assuming Unix `/`.
-    let origin_crumbs: Vec<String> = upstream_desc
-        .breadcrumbs(&origin.path, &upstream_meta)
-        .into_iter()
-        .map(|b| b.label)
-        .collect();
-    let sep = upstream_sep(&origin_crumbs);
-    let mount_meta = bincode::serialize(&ArchiveMeta {
-        display: display_path.clone(),
-        origin_crumbs,
-        sep,
-    })
-    .unwrap_or_default();
+    let (mount_meta, display_path) = build_origin_meta(upstream_vfs.as_ref(), &origin);
 
     let vfs: Arc<dyn Vfs> = if is_zip_name(archive_path.as_wire_str()) {
         Arc::new(ZipArchiveVfs::new(
@@ -134,6 +116,32 @@ fn not_found(msg: impl Into<String>) -> Error {
         kind: ErrorKind::NotFound,
         message: msg.into(),
     }
+}
+
+/// Build the `mount_meta` blob + display path for a VFS derived from an
+/// entry in an upstream VFS. The origin is rendered through the *upstream*
+/// descriptor so the derived mount keeps the upstream's path style (see
+/// [`ArchiveMeta`]). Shared by archive and disc-image mounts.
+pub(in crate::vfs) fn build_origin_meta(upstream: &dyn Vfs, origin: &VfsPath) -> (Vec<u8>, String) {
+    let upstream_desc = upstream.descriptor();
+    let upstream_meta = upstream.mount_meta();
+    let display_path = upstream_desc.format_path(&origin.path, &upstream_meta);
+    // Capture the upstream's *own* breadcrumb segmentation/styling for
+    // the origin so the derived mount renders it in the upstream's
+    // convention instead of assuming Unix `/`.
+    let origin_crumbs: Vec<String> = upstream_desc
+        .breadcrumbs(&origin.path, &upstream_meta)
+        .into_iter()
+        .map(|b| b.label)
+        .collect();
+    let sep = upstream_sep(&origin_crumbs);
+    let mount_meta = bincode::serialize(&ArchiveMeta {
+        display: display_path.clone(),
+        origin_crumbs,
+        sep,
+    })
+    .unwrap_or_default();
+    (mount_meta, display_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +193,7 @@ fn detect_compression_from_name(name: &str) -> iluvatar::CompressionFormat {
 // Shared descriptor helpers
 // ---------------------------------------------------------------------------
 
-fn archive_format_path(path: &Path, mount_meta: &[u8]) -> String {
+pub(in crate::vfs) fn archive_format_path(path: &Path, mount_meta: &[u8]) -> String {
     let meta = decode_meta(mount_meta);
     if path.is_root() {
         meta.display
@@ -196,7 +204,7 @@ fn archive_format_path(path: &Path, mount_meta: &[u8]) -> String {
     }
 }
 
-fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
+pub(in crate::vfs) fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
     let ArchiveMeta {
         display,
         origin_crumbs,
@@ -271,7 +279,10 @@ fn archive_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
     crumbs
 }
 
-fn archive_try_parse_display_path(input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+pub(in crate::vfs) fn archive_try_parse_display_path(
+    input: &str,
+    mount_meta: &[u8],
+) -> Option<DisplayPathMatch> {
     let display = decode_meta(mount_meta).display;
     if input == display {
         return Some(DisplayPathMatch::exact(PathBuf::root()));
@@ -281,7 +292,7 @@ fn archive_try_parse_display_path(input: &str, mount_meta: &[u8]) -> Option<Disp
     Some(DisplayPathMatch::exact(PathBuf::from_wire_str(rest)))
 }
 
-fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
+pub(in crate::vfs) fn archive_mount_label(mount_meta: &[u8]) -> Option<String> {
     let display = decode_meta(mount_meta).display;
     (!display.is_empty()).then_some(display)
 }
