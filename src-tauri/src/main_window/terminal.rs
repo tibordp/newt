@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use log::info;
 
 use newt_common::terminal::TerminalClient;
-use newt_common::terminal::TerminalOptions;
 use tauri::Emitter;
 use tauri::WebviewWindow;
 
@@ -49,15 +48,14 @@ impl serde::Serialize for Terminal {
 }
 
 impl Terminal {
-    /// Create a Terminal wrapper from an already-created handle.
-    /// Spawns the reader/waiter task just like `create`.
-    pub fn from_handle(
-        context: MainWindowContext,
-        window: WebviewWindow,
-        handle: TerminalHandle,
-    ) -> Self {
+    /// Create a Terminal wrapper from an already-created handle. Does not
+    /// start pumping output — the caller must insert the terminal into
+    /// session state and then call [`Terminal::spawn_reader`]. Inserting
+    /// first guarantees the reader's exit cleanup always finds the entry
+    /// (a fast-exiting process could otherwise race the insert, leaving a
+    /// zombie terminal behind).
+    pub fn from_handle(context: &MainWindowContext, handle: TerminalHandle) -> Self {
         let terminal_client = context.terminal_client().expect("terminal_client required");
-        Self::spawn_reader(context, window, handle, terminal_client.clone());
         Self {
             handle,
             terminal_client,
@@ -65,29 +63,13 @@ impl Terminal {
         }
     }
 
-    pub async fn create(
-        context: MainWindowContext,
-        window: WebviewWindow,
-        working_dir: Option<&newt_common::vfs::path::Path>,
-    ) -> Result<Self, Error> {
-        let terminal_client = context.terminal_client()?;
-        let handle = terminal_client
-            .create(TerminalOptions {
-                working_dir: working_dir.map(|p| p.to_owned()),
-                ..Default::default()
-            })
-            .await?;
-
-        Self::spawn_reader(context, window, handle, terminal_client.clone());
-
-        Ok(Self {
-            handle,
-            terminal_client,
-            defunct: AtomicBool::new(false),
-        })
+    /// Start the output-pump / exit-watcher task. See [`Terminal::from_handle`]
+    /// for the required ordering.
+    pub fn spawn_reader(&self, context: MainWindowContext, window: WebviewWindow) {
+        Self::spawn_reader_task(context, window, self.handle, self.terminal_client.clone());
     }
 
-    fn spawn_reader(
+    fn spawn_reader_task(
         context: MainWindowContext,
         window: WebviewWindow,
         handle: TerminalHandle,

@@ -383,17 +383,17 @@ async fn execute_rendered(
         };
 
         let handle = terminal_client.create(options).await?;
-        let terminal =
-            crate::main_window::terminal::Terminal::from_handle(ctx.clone(), ctx.window(), handle);
+        let terminal = crate::main_window::terminal::Terminal::from_handle(ctx, handle);
 
-        ctx.with_update(|s| {
+        let terminal = ctx.with_update(|s| {
             let terminal = s.terminals.insert(handle, terminal);
             let mut opts = s.display_options.0.write();
-            opts.active_terminal = Some(terminal.handle);
+            opts.active_terminal = Some(handle);
             opts.panes_focused = false;
             opts.terminal_panel_visible = true;
-            Ok(())
+            Ok(terminal)
         })?;
+        terminal.spawn_reader(ctx.clone(), ctx.window());
     } else {
         let id = ctx.next_operation_id()?;
 

@@ -80,6 +80,9 @@ pub struct PaneStats {
     pub selected_dir_count: usize,
     pub selected_bytes: u64,
     pub total_count: Option<usize>,
+    /// Entries filtered out because hidden files are not shown. Always 0
+    /// while `show_hidden` is on.
+    pub hidden_count: usize,
 }
 
 #[derive(Clone)]
@@ -1549,6 +1552,9 @@ pub struct PaneViewState {
     enrichments: std::collections::BTreeMap<String, HashMap<String, Annotation>>,
     #[serde(skip)]
     enrichment_badges: std::collections::BTreeMap<String, Vec<ContextBadge>>,
+    /// Hidden entries dropped from the listing (see `PaneStats::hidden_count`).
+    #[serde(skip)]
+    hidden_count: usize,
 
     /// Full sorted/filtered file list (not serialized — only the window is sent).
     #[serde(skip)]
@@ -1603,7 +1609,10 @@ impl PaneViewState {
     }
 
     fn recompute_stats(&mut self) {
-        let mut stats = PaneStats::default();
+        let mut stats = PaneStats {
+            hidden_count: self.hidden_count,
+            ..PaneStats::default()
+        };
         for f in &self.files {
             if f.name == PARENT_KEY {
                 continue;
@@ -2098,6 +2107,15 @@ impl PaneViewState {
         }
         self.path = file_list.path().clone();
         self.fs_stats = file_list.fs_stats().cloned();
+        self.hidden_count = if display_options.show_hidden {
+            0
+        } else {
+            file_list
+                .files()
+                .iter()
+                .filter(|f| f.is_hidden && f.name != PARENT_KEY)
+                .count()
+        };
         self.files = file_list
             .files()
             .iter()

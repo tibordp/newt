@@ -126,7 +126,7 @@ export type TerminalData = {
 
 export const TerminalData = createContext({});
 
-function deepUpdate(original: any, received: any): any {
+export function deepUpdate(original: any, received: any): any {
   if (
     original === null ||
     received === null ||
@@ -151,7 +151,11 @@ function deepUpdate(original: any, received: any): any {
 
     ret = isChanged ? result : original;
   } else if (typeof original === "object") {
-    const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
+    // Only received's keys survive — a key absent from received was
+    // removed, not set to undefined (map-entry removals in full-state
+    // payloads must actually delete, or Object.values grows holes).
+    const keys = Object.keys(received);
+    isChanged = keys.length !== Object.keys(original).length;
 
     const result: Record<string, any> = {};
     for (const key of keys) {

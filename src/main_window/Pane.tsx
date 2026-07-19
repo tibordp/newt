@@ -1816,6 +1816,7 @@ function PaneInner(
               stats.selected_file_count + stats.selected_dir_count === 0 && (
                 <>
                   {stats.file_count} files, {stats.dir_count} directories
+                  {stats.hidden_count > 0 && `, ${stats.hidden_count} hidden`}
                   {stats.total_count != null &&
                     ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
                 </>

@@ -144,7 +144,7 @@ Click a column header to sort ascending by that key; click the same header again
 |-------|---------|
 | Loading (first 200ms) | (nothing — grace period to avoid flicker) |
 | Loading (after 200ms) | "Loading... (X items so far)" |
-| Loaded, no selection | "X files, Y directories" |
+| Loaded, no selection | "X files, Y directories", plus ", N hidden" when hidden files exist but Show Hidden is off |
 | Loaded, with selection | "X files, Y directories selected, Z bytes total" — Z includes computed recursive sizes of selected directories, so ⌘A after Calculate All Sizes totals the whole directory |
 | Filter active | "(showing X of Y)" appended |
 | Partial results | "(partial)" appended when directory listing was truncated |

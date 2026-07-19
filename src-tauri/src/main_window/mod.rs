@@ -1307,16 +1307,25 @@ impl MainWindowContext {
         &self,
         path: Option<&newt_common::vfs::path::Path>,
     ) -> Result<Arc<Terminal>, Error> {
-        let terminal = Terminal::create(self.clone(), self.inner.window.clone(), path).await?;
+        let handle = self
+            .terminal_client()?
+            .create(newt_common::terminal::TerminalOptions {
+                working_dir: path.map(|p| p.to_owned()),
+                ..Default::default()
+            })
+            .await?;
+        let terminal = Terminal::from_handle(self, handle);
 
-        self.with_update(|s| {
-            let terminal = s.terminals.insert(terminal.handle, terminal);
+        let terminal = self.with_update(|s| {
+            let terminal = s.terminals.insert(handle, terminal);
             let mut opts = s.display_options.0.write();
-            opts.active_terminal = Some(terminal.handle);
+            opts.active_terminal = Some(handle);
             opts.panes_focused = false;
             opts.terminal_panel_visible = true;
             Ok(terminal)
-        })
+        })?;
+        terminal.spawn_reader(self.clone(), self.inner.window.clone());
+        Ok(terminal)
     }
 
     pub fn operations_client(&self) -> Result<Arc<dyn OperationsClient>, Error> {

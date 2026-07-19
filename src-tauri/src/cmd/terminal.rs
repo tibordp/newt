@@ -79,6 +79,14 @@ pub async fn terminal_resize(
 #[specta::specta]
 pub fn terminal_focus(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|gs| {
+        // The frontend's focusin can land after the terminal already exited
+        // and was cleaned up (fast-exiting command in an auto-close terminal).
+        // A stale claim must not hand focus ownership to a dead terminal —
+        // it would strand the session with panes_focused=false and no
+        // terminal to focus.
+        if gs.terminals.get(handle).is_none() {
+            return Ok(());
+        }
         let mut opts = gs.display_options.0.write();
         opts.active_terminal = Some(handle);
         opts.panes_focused = false;
@@ -162,6 +170,11 @@ pub async fn cmd_toggle_terminal_panel(
 #[specta::specta]
 pub fn activate_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {
     ctx.with_update(|c| {
+        // Same stale-handle guard as terminal_focus: a click on a tab that
+        // just auto-closed must not claim focus for a dead terminal.
+        if c.terminals.get(handle).is_none() {
+            return Ok(());
+        }
         let mut opts = c.display_options.0.write();
         opts.active_terminal = Some(handle);
         opts.panes_focused = false;

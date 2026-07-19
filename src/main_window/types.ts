@@ -53,6 +53,7 @@ export type PaneStats = {
   selected_dir_count: number;
   selected_bytes: number;
   total_count?: number;
+  hidden_count: number;
 };
 
 /// Git working-tree status of an entry (directories carry rollups of

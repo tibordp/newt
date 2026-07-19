@@ -1,46 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-// deepUpdate is not exported, so we re-implement it here for testing.
-// This tests the exact logic from ipc.ts.
-function deepUpdate(original: any, received: any): any {
-  if (
-    original === null ||
-    received === null ||
-    Array.isArray(original) !== Array.isArray(received) ||
-    typeof original !== typeof received
-  ) {
-    return received;
-  }
-
-  let isChanged = false;
-  let ret;
-  if (Array.isArray(original)) {
-    if (original.length !== received.length) {
-      return received;
-    }
-
-    const result = Array(original.length);
-    for (let i = 0; i < original.length; i++) {
-      result[i] = deepUpdate(original[i], received[i]);
-      isChanged = isChanged || result[i] !== original[i];
-    }
-
-    ret = isChanged ? result : original;
-  } else if (typeof original === "object") {
-    const keys = new Set([...Object.keys(original), ...Object.keys(received)]);
-
-    const result: Record<string, any> = {};
-    for (const key of keys) {
-      result[key] = deepUpdate(original[key], received[key]);
-      isChanged = isChanged || result[key] !== original[key];
-    }
-    ret = isChanged ? result : original;
-  } else {
-    ret = received;
-  }
-
-  return ret;
-}
+import { deepUpdate } from "./ipc";
 
 describe("deepUpdate", () => {
   it("returns received when original is null", () => {
@@ -120,13 +80,19 @@ describe("deepUpdate", () => {
     expect(result).not.toBe(original);
   });
 
-  it("handles keys removed in received (becomes undefined)", () => {
+  it("drops keys removed in received", () => {
     const original = { a: 1, b: 2 };
     const received = { a: 1 };
     const result = deepUpdate(original, received);
-    // The key "b" will be set to deepUpdate(2, undefined).
-    // Since typeof 2 !== typeof undefined, returns undefined.
-    expect(result.a).toBe(1);
-    expect(result.b).toBeUndefined();
+    expect(result).toEqual({ a: 1 });
+    expect("b" in result).toBe(false);
+  });
+
+  it("handles simultaneous key add and remove", () => {
+    const original = { a: 1, b: 2 };
+    const received = { a: 1, c: 3 };
+    const result = deepUpdate(original, received);
+    expect(result).toEqual({ a: 1, c: 3 });
+    expect("b" in result).toBe(false);
   });
 });
