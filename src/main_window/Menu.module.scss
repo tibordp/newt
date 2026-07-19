@@ -20,7 +20,8 @@
   cursor: default;
   user-select: none;
 
-  &[data-highlighted] {
+  &[data-highlighted],
+  &[data-state="open"] {
     background: var(--color-selected-bg);
     outline: none;
   }
@@ -67,6 +68,15 @@
 
 .itemCheck {
   flex-shrink: 0;
+  color: var(--color-accent);
+}
+
+/* Fixed-width indicator slot so checkbox-item labels stay aligned
+   whether or not the check is present. */
+.checkColumn {
+  flex-shrink: 0;
+  width: 1em;
+  text-align: center;
   color: var(--color-accent);
 }
 

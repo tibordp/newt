@@ -29,6 +29,19 @@
   color: var(--color-fg-muted);
 }
 
+// Header drag-to-reorder insertion marker.
+.dropIndicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--color-accent);
+  display: none;
+  pointer-events: none;
+  z-index: 11;
+}
+
 .subcolumn {
   padding-left: 0.4em;
   padding-right: 0.4em;
@@ -48,6 +61,18 @@
 .sortable:hover {
   background: var(--color-button-bg);
   cursor: pointer;
+}
+
+// Dragged header flares up (selection treatment), matching the accent
+// drop indicator. The whole column paints as one piece — the subcolumn
+// hover is suppressed for the duration so it can't carve chips out of
+// the flare.
+.reordering {
+  background: var(--color-selected-bg);
+}
+
+.reordering .sortable:hover {
+  background: transparent;
 }
 
 .filename {

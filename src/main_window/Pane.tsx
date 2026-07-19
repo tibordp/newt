@@ -28,12 +28,14 @@ import {
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
 import { getSiPrefixedNumber } from "./utils";
-import { ColumnHeader, getVisibleColumns } from "./columns";
+import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
 import { usePreferences } from "../lib/preferences";
+import { useRuntimeState } from "../lib/runtimeState";
 import {
   FileContextMenuContent,
   PaneContextMenuContent,
   BreadcrumbContextMenuContent,
+  ColumnsContextMenuContent,
 } from "./ContextMenu";
 import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
@@ -204,6 +206,8 @@ type FileRowProps = {
   filter: string | null;
   filterMode: FilterMode;
   widthPrefix: string;
+  dateFormat?: string;
+  timeFormat?: string;
   onClick: React.MouseEventHandler<HTMLLIElement>;
   onMouseDown: React.MouseEventHandler<HTMLLIElement>;
   onOpen: (file: FileView) => void;
@@ -218,11 +222,19 @@ const FileRow = memo(
     filter,
     filterMode,
     widthPrefix,
+    dateFormat,
+    timeFormat,
     onClick,
     onMouseDown,
     onOpen,
   }: FileRowProps) {
-    const ctx: FileRowContext = { isFocused, filter, filterMode };
+    const ctx: FileRowContext = {
+      isFocused,
+      filter,
+      filterMode,
+      dateFormat,
+      timeFormat,
+    };
     return (
       <li
         data-name={row.key ?? row.name}
@@ -263,6 +275,8 @@ const FileRow = memo(
     prev.filter === next.filter &&
     prev.filterMode === next.filterMode &&
     prev.widthPrefix === next.widthPrefix &&
+    prev.dateFormat === next.dateFormat &&
+    prev.timeFormat === next.timeFormat &&
     prev.onClick === next.onClick &&
     prev.onMouseDown === next.onMouseDown &&
     prev.onOpen === next.onOpen,
@@ -1512,6 +1526,42 @@ function PaneInner(
   const widthPrefix = `pane-${paneHandle}-column-`;
   const paneRef = useRef<HTMLDivElement>(null);
 
+  const runtimeState = useRuntimeState();
+  const savedWidths = runtimeState?.column_widths?.[String(paneHandle)];
+
+  const commitColumnWidth = (key: string, px: number) => {
+    safe(
+      commands.updateRuntimeState(
+        `column_widths.${paneHandle}.${key}`,
+        Math.round(px),
+      ),
+    );
+  };
+
+  // Excel-style fit-to-content: widest rendered cell of the column (the
+  // list is virtualized, so this is the visible window — by design), with
+  // the header's own content as a floor. The column's width var is
+  // temporarily set to max-content so cells report intrinsic width (both
+  // growing and shrinking); everything is synchronous, so only the final
+  // width is ever painted.
+  const autoSizeColumn = (index: number, key: string) => {
+    const root = document.querySelector(":root") as HTMLElement;
+    const varName = `--${widthPrefix}-${key}`;
+    root.style.setProperty(varName, "max-content");
+    let width = 0;
+    const headerCell = tableHeaderRef.current?.querySelectorAll<HTMLElement>(
+      `.${columnStyles.column}`,
+    )[index];
+    if (headerCell) width = headerCell.getBoundingClientRect().width;
+    containerRef.current?.querySelectorAll("li").forEach((li) => {
+      const cell = li.children[index] as HTMLElement | undefined;
+      if (cell) width = Math.max(width, cell.getBoundingClientRect().width);
+    });
+    const px = Math.max(30, Math.ceil(width) + 2);
+    root.style.setProperty(varName, `${px}px`);
+    commitColumnWidth(key, px);
+  };
+
   // External drag-and-drop (files from outside the app).
   // MainWindow dispatches custom events on the [data-pane-handle] element.
   useEffect(() => {
@@ -1631,28 +1681,58 @@ function PaneInner(
           open={isHistoryNavigatorOpen}
         />
       </div>
-      <div className={styles.tableHeader} ref={tableHeaderRef}>
-        <div className={styles.tableHeaderInner}>
-          {columns.map((column) => (
-            <ColumnHeader
-              key={column.key}
-              widthPrefix={widthPrefix}
-              sorting={sorting}
-              column={column}
-              onSort={(key, asc) => {
-                guarded(() =>
-                  commands.setSorting(paneHandle, {
-                    key: key as Parameters<
-                      typeof commands.setSorting
-                    >[1]["key"],
-                    asc,
-                  }),
-                );
-              }}
-            />
-          ))}
-        </div>
-      </div>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          <div className={styles.tableHeader} ref={tableHeaderRef}>
+            <div className={styles.tableHeaderInner}>
+              {columns.map((column, i) => (
+                <ColumnHeader
+                  key={column.key}
+                  widthPrefix={widthPrefix}
+                  sorting={sorting}
+                  column={column}
+                  index={i}
+                  savedWidth={savedWidths?.[column.key]}
+                  onWidthCommit={(px) => commitColumnWidth(column.key, px)}
+                  onAutoSize={() => autoSizeColumn(i, column.key)}
+                  onSort={(key, asc) => {
+                    guarded(() =>
+                      commands.setSorting(paneHandle, {
+                        key: key as Parameters<
+                          typeof commands.setSorting
+                        >[1]["key"],
+                        asc,
+                      }),
+                    );
+                  }}
+                  onReorder={(from, to) => {
+                    const cfg = preferences?.settings?.appearance?.columns;
+                    if (!cfg || cfg.length === 0) return;
+                    safe(
+                      commands.updatePreference(
+                        "appearance.columns",
+                        moveColumn(cfg, from, to),
+                      ),
+                    );
+                  }}
+                />
+              ))}
+              <div className={columnStyles.dropIndicator} />
+            </div>
+          </div>
+        </ContextMenu.Trigger>
+        <ColumnsContextMenuContent
+          columns={preferences?.settings?.appearance?.columns}
+          onCloseAutoFocus={(e) => {
+            // The header is not focusable — mirror the pane focus effect
+            // instead of letting Radix focus the trigger div.
+            e.preventDefault();
+            if (active && !modalOpen) {
+              (filter != null ? inputRef : containerRef).current?.focus();
+            }
+          }}
+        />
+      </ContextMenu.Root>
       {file_window && (
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
@@ -1683,6 +1763,8 @@ function PaneInner(
                     filter={isFocused ? filter : null}
                     filterMode={filter_mode}
                     widthPrefix={widthPrefix}
+                    dateFormat={preferences?.settings?.appearance?.date_format}
+                    timeFormat={preferences?.settings?.appearance?.time_format}
                     onClick={onClick}
                     onMouseDown={onDndMouseDown}
                     onOpen={onOpen}

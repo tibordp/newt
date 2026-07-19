@@ -4,6 +4,16 @@ import * as CM from "@radix-ui/react-context-menu";
 import { commands as ipc } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { usePreferences, CommandInfo } from "../lib/preferences";
+import {
+  COLUMN_CHOICES,
+  TIMESTAMP_BASES,
+  TIMESTAMP_STATE_LABELS,
+  TimestampColumnState,
+  getTimestampState,
+  insertColumnKey,
+  isTimestampPart,
+  setTimestampState,
+} from "./columns";
 import styles from "./Menu.module.scss";
 
 function Shortcut({ commands, id }: { commands?: CommandInfo[]; id: string }) {
@@ -162,6 +172,133 @@ export function PaneContextMenuContent({
         >
           Directory Properties
         </CM.Item>
+      </CM.Content>
+    </CM.Portal>
+  );
+}
+
+type ColumnsContextMenuProps = {
+  columns?: string[];
+  onCloseAutoFocus?: (e: Event) => void;
+};
+
+function TimestampSubmenu({
+  base,
+  label,
+  current,
+  onChange,
+}: {
+  base: string;
+  label: string;
+  current: string[];
+  onChange: (base: string, state: TimestampColumnState) => void;
+}) {
+  const state = getTimestampState(current, base);
+  return (
+    <CM.Sub>
+      <CM.SubTrigger className={styles.item}>
+        <span className={styles.checkColumn}>{state !== "hidden" && "✓"}</span>
+        {label}
+        <span className={styles.shortcut}>
+          {TIMESTAMP_STATE_LABELS[state]} ›
+        </span>
+      </CM.SubTrigger>
+      <CM.Portal>
+        <CM.SubContent className={styles.content} loop>
+          <CM.RadioGroup
+            value={state}
+            onValueChange={(v) => onChange(base, v as TimestampColumnState)}
+          >
+            {(
+              Object.keys(TIMESTAMP_STATE_LABELS) as TimestampColumnState[]
+            ).map((s) => (
+              <CM.RadioItem
+                key={s}
+                value={s}
+                className={styles.item}
+                onSelect={(e) => e.preventDefault()}
+              >
+                <span className={styles.checkColumn}>
+                  <CM.ItemIndicator>•</CM.ItemIndicator>
+                </span>
+                {TIMESTAMP_STATE_LABELS[s]}
+              </CM.RadioItem>
+            ))}
+          </CM.RadioGroup>
+        </CM.SubContent>
+      </CM.Portal>
+    </CM.Sub>
+  );
+}
+
+/// Quick column visibility picker for the column header row. Writes the
+/// `appearance.columns` preference; the preference reload then re-renders
+/// every pane. Simple columns are checkboxes; each timestamp gets a
+/// submenu choosing between compound, date-only, split, and hidden. Stays
+/// open across toggles so several columns can be flipped in one visit.
+export function ColumnsContextMenuContent({
+  columns,
+  onCloseAutoFocus,
+}: ColumnsContextMenuProps) {
+  // An empty preference list means "all columns" (getVisibleColumns fallback).
+  const current =
+    columns && columns.length > 0 ? columns : COLUMN_CHOICES.map((c) => c.key);
+
+  const toggle = (key: string, checked: boolean) => {
+    const next = checked
+      ? insertColumnKey(current, key)
+      : current.filter((k) => k !== key);
+    safe(ipc.updatePreference("appearance.columns", next));
+  };
+
+  const setTimestamp = (base: string, state: TimestampColumnState) => {
+    safe(
+      ipc.updatePreference(
+        "appearance.columns",
+        setTimestampState(current, base, state),
+      ),
+    );
+  };
+
+  return (
+    <CM.Portal>
+      <CM.Content
+        className={styles.content}
+        loop
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        {COLUMN_CHOICES.map((col) => {
+          if (TIMESTAMP_BASES.includes(col.key)) {
+            return (
+              <TimestampSubmenu
+                key={col.key}
+                base={col.key}
+                label={col.label}
+                current={current}
+                onChange={setTimestamp}
+              />
+            );
+          }
+          // Date/time parts are covered by their base's submenu
+          if (isTimestampPart(col.key)) {
+            return null;
+          }
+          return (
+            <CM.CheckboxItem
+              key={col.key}
+              className={styles.item}
+              checked={current.includes(col.key)}
+              disabled={col.key === "name"}
+              onSelect={(e) => e.preventDefault()}
+              onCheckedChange={(checked) => toggle(col.key, checked === true)}
+            >
+              <span className={styles.checkColumn}>
+                <CM.ItemIndicator>✓</CM.ItemIndicator>
+              </span>
+              {col.label}
+            </CM.CheckboxItem>
+          );
+        })}
       </CM.Content>
     </CM.Portal>
   );

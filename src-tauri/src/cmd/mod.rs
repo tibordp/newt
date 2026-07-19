@@ -22,6 +22,7 @@ pub mod dnd;
 pub mod operations;
 pub mod pane;
 pub mod preferences;
+pub mod runtime_state;
 pub mod terminal;
 pub mod vfs;
 pub mod window;
@@ -240,6 +241,9 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::set_command_keybinding,
             preferences::reset_command_keybinding,
             preferences::open_config_file,
+            // Runtime state (ephemeral UI state, not settings.toml)
+            runtime_state::get_runtime_state,
+            runtime_state::update_runtime_state,
             // Hot paths
             preferences::get_hot_paths,
             preferences::add_bookmark,

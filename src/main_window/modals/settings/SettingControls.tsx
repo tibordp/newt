@@ -1,6 +1,17 @@
 import { useState } from "react";
 
 import styles from "../SettingsEditor.module.scss";
+import {
+  COLUMN_CHOICES,
+  TIMESTAMP_BASES,
+  TIMESTAMP_STATE_LABELS,
+  TimestampColumnState,
+  columnRowId,
+  getTimestampState,
+  insertColumnKey,
+  isTimestampPart,
+  setTimestampState,
+} from "../../columns";
 import { SettingDef } from "./schema";
 
 export function SettingControl({
@@ -55,80 +66,9 @@ export function SettingControl({
   }
 }
 
-const ALL_COLUMN_KEYS = [
-  { key: "name", label: "Name" },
-  { key: "size", label: "Size" },
-  { key: "extension", label: "Extension" },
-  { key: "modified_date", label: "Modified Date" },
-  { key: "modified_time", label: "Modified Time" },
-  { key: "accessed_date", label: "Accessed Date" },
-  { key: "accessed_time", label: "Accessed Time" },
-  { key: "created_date", label: "Created Date" },
-  { key: "created_time", label: "Created Time" },
-  { key: "user", label: "User" },
-  { key: "group", label: "Group" },
-  { key: "mode", label: "Mode" },
-  { key: "symlink_target", label: "Link Target" },
-];
-
-function TransferPanel({
-  items,
-  selected,
-  onSelect,
-  onAction,
-  emptyLabel,
-  label,
-}: {
-  items: { key: string; label: string; note?: string }[];
-  selected: string | null;
-  onSelect: (key: string) => void;
-  onAction: (key: string) => void;
-  emptyLabel: string;
-  label: string;
-}) {
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const idx = items.findIndex((c) => c.key === selected);
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (idx < items.length - 1) onSelect(items[idx + 1].key);
-      else if (idx < 0 && items.length > 0) onSelect(items[0].key);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (idx > 0) onSelect(items[idx - 1].key);
-    } else if (e.key === "Enter" && selected) {
-      e.preventDefault();
-      onAction(selected);
-    }
-  };
-
-  return (
-    <div className={styles.transferPanel}>
-      <div className={styles.transferHeader}>{label}</div>
-      <div className={styles.transferItems} tabIndex={0} onKeyDown={onKeyDown}>
-        {items.length === 0 && (
-          <div className={styles.transferEmpty}>{emptyLabel}</div>
-        )}
-        {items.map((col) => (
-          <div
-            key={col.key}
-            className={
-              selected === col.key
-                ? styles.transferItemSelected
-                : styles.transferItem
-            }
-            onClick={() => onSelect(col.key)}
-            onDoubleClick={() => onAction(col.key)}
-          >
-            {col.label}
-            {col.note && (
-              <span className={styles.transferRequired}> {col.note}</span>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+/// Rows of the columns widget: the pickable columns with timestamp
+/// date/time parts collapsed onto their base, like the header context menu.
+const COLUMN_ROWS = COLUMN_CHOICES.filter((c) => !isTimestampPart(c.key));
 
 function ColumnsEditor({
   value,
@@ -139,112 +79,175 @@ function ColumnsEditor({
   onUpdate: (key: string, value: any) => void;
   settingKey: string;
 }) {
-  const current = value ?? ALL_COLUMN_KEYS.map((c) => c.key);
-  const [selectedVisible, setSelectedVisible] = useState<string | null>(null);
-  const [selectedAvailable, setSelectedAvailable] = useState<string | null>(
+  const current = value ?? COLUMN_CHOICES.map((c) => c.key);
+  const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(
     null,
   );
 
-  const visible = current
-    .map((key) => {
-      const col = ALL_COLUMN_KEYS.find((c) => c.key === key);
-      if (!col) return null;
-      return { ...col, note: col.key === "name" ? "(required)" : undefined };
-    })
-    .filter(Boolean) as { key: string; label: string; note?: string }[];
-  const available = ALL_COLUMN_KEYS.filter((c) => !current.includes(c.key));
+  // Visible rows in configured order; hidden rows below in canonical order.
+  const visibleIds: string[] = [];
+  for (const k of current) {
+    const id = columnRowId(k);
+    if (COLUMN_ROWS.some((r) => r.key === id) && !visibleIds.includes(id)) {
+      visibleIds.push(id);
+    }
+  }
+  if (!visibleIds.includes("name")) visibleIds.unshift("name");
+  const hiddenIds = COLUMN_ROWS.map((r) => r.key).filter(
+    (id) => !visibleIds.includes(id),
+  );
+  const displayIds = drag?.order ?? visibleIds;
 
-  const add = (key: string) => {
-    onUpdate(settingKey, [...current, key]);
-    setSelectedAvailable(null);
-  };
+  /// Rebuild the config list from a visible-row order, expanding timestamp
+  /// rows to their current presentation's keys.
+  const configFor = (order: string[]): string[] =>
+    order.flatMap((id) => {
+      if (!TIMESTAMP_BASES.includes(id)) return [id];
+      switch (getTimestampState(current, id)) {
+        case "datetime":
+          return [id];
+        case "date":
+          return [`${id}_date`];
+        case "split":
+          return [`${id}_date`, `${id}_time`];
+        case "hidden":
+          return [];
+      }
+    });
 
-  const remove = (key: string) => {
-    if (key === "name") return;
+  const setSimple = (id: string, checked: boolean) => {
     onUpdate(
       settingKey,
-      current.filter((k) => k !== key),
+      checked ? insertColumnKey(current, id) : current.filter((k) => k !== id),
     );
-    setSelectedVisible(null);
   };
 
-  const visibleIdx = selectedVisible ? current.indexOf(selectedVisible) : -1;
-
-  const moveUp = () => {
-    if (visibleIdx <= 0) return;
-    const next = [...current];
-    [next[visibleIdx - 1], next[visibleIdx]] = [
-      next[visibleIdx],
-      next[visibleIdx - 1],
-    ];
-    onUpdate(settingKey, next);
+  const setTimestamp = (id: string, state: TimestampColumnState) => {
+    onUpdate(settingKey, setTimestampState(current, id, state));
   };
 
-  const moveDown = () => {
-    if (visibleIdx < 0 || visibleIdx >= current.length - 1) return;
-    const next = [...current];
-    [next[visibleIdx], next[visibleIdx + 1]] = [
-      next[visibleIdx + 1],
-      next[visibleIdx],
-    ];
-    onUpdate(settingKey, next);
+  const moveRow = (id: string, delta: number) => {
+    const idx = visibleIds.indexOf(id);
+    const to = idx + delta;
+    if (idx < 0 || to < 0 || to >= visibleIds.length) return;
+    const next = [...visibleIds];
+    [next[idx], next[to]] = [next[to], next[idx]];
+    onUpdate(settingKey, configFor(next));
+  };
+
+  const startDrag = (id: string) => (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    let order = visibleIds;
+    setDrag({ id, order });
+    const onMove = (ev: MouseEvent) => {
+      const rows = document.querySelectorAll<HTMLElement>(`[data-column-row]`);
+      for (const el of rows) {
+        const rowId = el.dataset.columnRow!;
+        if (rowId === id || !order.includes(rowId)) continue;
+        const r = el.getBoundingClientRect();
+        if (ev.clientY < r.top || ev.clientY > r.bottom) continue;
+        const without = order.filter((k) => k !== id);
+        const idx = without.indexOf(rowId);
+        const insertAt = ev.clientY > r.top + r.height / 2 ? idx + 1 : idx;
+        const next = [...without];
+        next.splice(insertAt, 0, id);
+        if (next.join() !== order.join()) {
+          order = next;
+          setDrag({ id, order });
+        }
+        break;
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      setDrag(null);
+      if (order.join() !== visibleIds.join()) {
+        onUpdate(settingKey, configFor(order));
+      }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const renderRow = (id: string, visible: boolean) => {
+    const isTs = TIMESTAMP_BASES.includes(id);
+    const label = COLUMN_ROWS.find((r) => r.key === id)?.label ?? id;
+    return (
+      <div
+        key={id}
+        data-column-row={id}
+        className={`${styles.columnRow} ${
+          drag?.id === id ? styles.columnRowDragging : ""
+        } ${visible ? "" : styles.columnRowHidden}`}
+      >
+        {visible && (
+          <button
+            type="button"
+            className={styles.columnDragHandle}
+            title="Drag to reorder (arrow keys move)"
+            onMouseDown={startDrag(id)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                moveRow(id, -1);
+              } else if (e.key === "ArrowDown") {
+                e.preventDefault();
+                moveRow(id, 1);
+              }
+            }}
+          >
+            ⠿
+          </button>
+        )}
+        <label className={styles.columnRowLabel}>
+          <input
+            type="checkbox"
+            checked={visible}
+            disabled={id === "name"}
+            onChange={(e) =>
+              isTs
+                ? setTimestamp(id, e.target.checked ? "datetime" : "hidden")
+                : setSimple(id, e.target.checked)
+            }
+          />
+          {label}
+          {id === "name" && (
+            <span className={styles.columnRequired}>(required)</span>
+          )}
+        </label>
+        {isTs && visible && (
+          <select
+            value={getTimestampState(current, id)}
+            onChange={(e) =>
+              setTimestamp(id, e.target.value as TimestampColumnState)
+            }
+          >
+            {(["datetime", "date", "split"] as const).map((s) => (
+              <option key={s} value={s}>
+                {TIMESTAMP_STATE_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
   };
 
   return (
-    <div className={styles.transferList}>
-      <TransferPanel
-        label="Visible"
-        items={visible}
-        selected={selectedVisible}
-        onSelect={setSelectedVisible}
-        onAction={remove}
-        emptyLabel="No columns"
-      />
-
-      <div className={styles.transferButtons}>
-        <button
-          type="button"
-          disabled={visibleIdx <= 0}
-          onClick={moveUp}
-          title="Move up"
-        >
-          ▲
-        </button>
-        <button
-          type="button"
-          disabled={visibleIdx < 0 || visibleIdx >= current.length - 1}
-          onClick={moveDown}
-          title="Move down"
-        >
-          ▼
-        </button>
-        <div className={styles.transferSpacer} />
-        <button
-          type="button"
-          disabled={!selectedVisible || selectedVisible === "name"}
-          onClick={() => selectedVisible && remove(selectedVisible)}
-          title="Remove column"
-        >
-          &rsaquo;
-        </button>
-        <button
-          type="button"
-          disabled={!selectedAvailable}
-          onClick={() => selectedAvailable && add(selectedAvailable)}
-          title="Add column"
-        >
-          &lsaquo;
-        </button>
+    <div className={styles.columnPanels}>
+      <div className={styles.columnList}>
+        <div className={styles.columnListHeader}>Visible</div>
+        {displayIds.map((id) => renderRow(id, true))}
       </div>
-
-      <TransferPanel
-        label="Available"
-        items={available}
-        selected={selectedAvailable}
-        onSelect={setSelectedAvailable}
-        onAction={add}
-        emptyLabel="All columns visible"
-      />
+      <div className={styles.columnList}>
+        <div className={styles.columnListHeader}>Hidden</div>
+        {hiddenIds.map((id) => renderRow(id, false))}
+        {hiddenIds.length === 0 && (
+          <div className={styles.columnListEmpty}>All columns visible</div>
+        )}
+      </div>
     </div>
   );
 }

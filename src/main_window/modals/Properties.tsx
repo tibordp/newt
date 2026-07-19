@@ -5,6 +5,8 @@ import {
   type UserGroup,
 } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
+import { formatDateTime } from "../../lib/datetime";
+import { usePreferences } from "../../lib/preferences";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import { PropertySheetSection } from "./PropertySheetSection";
 import {
@@ -43,9 +45,13 @@ function formatSize(bytes: number | null): string {
   return `${val.toFixed(1)} ${unit} (${bytes.toLocaleString()} bytes)`;
 }
 
-function formatTimestamp(ms: number | null): string {
+function formatTimestamp(
+  ms: number | null,
+  dateFmt?: string,
+  timeFmt?: string,
+): string {
   if (ms == null) return "-";
-  return new Date(Number(ms)).toLocaleString();
+  return formatDateTime(Number(ms), dateFmt, timeFmt);
 }
 
 // Permission bit positions
@@ -256,6 +262,9 @@ export default function Properties({
     enabled: false,
     value: "",
   });
+  const preferences = usePreferences();
+  const dateFormat = preferences?.settings?.appearance?.date_format;
+  const timeFormat = preferences?.settings?.appearance?.time_format;
   const isSingle = paths.length === 1;
   const hasDirs = is_dir || paths.length > 1;
 
@@ -378,17 +387,20 @@ export default function Properties({
                   {modified != null && (
                     <InfoRow
                       label="Modified"
-                      value={formatTimestamp(modified)}
+                      value={formatTimestamp(modified, dateFormat, timeFormat)}
                     />
                   )}
                   {accessed != null && (
                     <InfoRow
                       label="Accessed"
-                      value={formatTimestamp(accessed)}
+                      value={formatTimestamp(accessed, dateFormat, timeFormat)}
                     />
                   )}
                   {created != null && (
-                    <InfoRow label="Created" value={formatTimestamp(created)} />
+                    <InfoRow
+                      label="Created"
+                      value={formatTimestamp(created, dateFormat, timeFormat)}
+                    />
                   )}
                 </dl>
               )}

@@ -53,6 +53,12 @@ pub struct AppearancePreferences {
     /// Visible columns and their order.
     #[schemars(title = "Columns")]
     pub columns: Vec<String>,
+    /// strftime-style format for date columns (e.g. "%Y-%m-%d"). Empty uses the system locale.
+    #[schemars(title = "Date Format")]
+    pub date_format: String,
+    /// strftime-style format for time columns (e.g. "%H:%M"). Empty uses the system locale.
+    #[schemars(title = "Time Format")]
+    pub time_format: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -92,6 +98,8 @@ impl Default for AppearancePreferences {
                 "group".into(),
                 "mode".into(),
             ],
+            date_format: String::new(),
+            time_format: String::new(),
         }
     }
 }

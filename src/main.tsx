@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { ErrorBoundary, RouteErrorBoundary } from "./ErrorBoundary";
 
@@ -10,6 +10,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles/globals.scss";
 import { safe } from "./lib/ipc";
 import { commands } from "./lib/bindings";
+import { useRuntimeState } from "./lib/runtimeState";
 
 const router = createBrowserRouter([
   {
@@ -42,26 +43,39 @@ const router = createBrowserRouter([
 ]);
 
 function App({ children }: { children: React.ReactNode }) {
-  const [zoom, setZoom] = useState(1.0);
-  const onkeydown = (e: KeyboardEvent) => {
-    if (e.key == "=" && e.ctrlKey) {
-      setZoom((z) => z * 1.1);
-    } else if (e.key == "-" && e.ctrlKey) {
-      setZoom((z) => z / 1.1);
-    } else if (e.key == "0" && e.ctrlKey) {
-      setZoom(1.0);
-    } else {
-      return;
-    }
-
-    e.preventDefault();
-  };
+  // Zoom is app-wide runtime state: every window applies the stored
+  // factor, so it survives reloads and new windows start at it.
+  const zoom = useRuntimeState()?.zoom ?? 1.0;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   useEffect(() => {
     safe(commands.zoom(zoom));
   }, [zoom]);
 
   useEffect(() => {
+    // Platform "mod": ⌘ on macOS, Ctrl elsewhere.
+    const isMac = navigator.platform.startsWith("Mac");
+    const onkeydown = (e: KeyboardEvent) => {
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      let next: number;
+      if ((e.key == "=" || e.key == "+") && mod) {
+        next = zoomRef.current * 1.1;
+      } else if (e.key == "-" && mod) {
+        next = zoomRef.current / 1.1;
+      } else if (e.key == "0" && mod) {
+        next = 1.0;
+      } else {
+        return;
+      }
+
+      e.preventDefault();
+      next = Math.round(next * 10000) / 10000;
+      // Apply immediately for latency; the broadcast re-applies the same
+      // value everywhere (including here) once persisted.
+      safe(commands.zoom(next));
+      safe(commands.updateRuntimeState("zoom", next));
+    };
     window.addEventListener("keydown", onkeydown);
     return () => window.removeEventListener("keydown", onkeydown);
   }, []);

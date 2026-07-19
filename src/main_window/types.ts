@@ -26,6 +26,9 @@ export type FileRowContext = {
   isFocused: boolean;
   filter: string | null;
   filterMode: FilterMode;
+  /// strftime-style formats from preferences; empty/undefined = system locale.
+  dateFormat?: string;
+  timeFormat?: string;
 };
 
 export type ColumnDef = {

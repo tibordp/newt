@@ -633,6 +633,22 @@ async openConfigFile() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getRuntimeState() : Promise<Result<RuntimeState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_runtime_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateRuntimeState(key: string, value: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_runtime_state", { key, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getHotPaths() : Promise<Result<HotPathEntry[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_hot_paths") };
@@ -1433,7 +1449,15 @@ theme: ThemeMode;
 /**
  * Visible columns and their order.
  */
-columns: string[] }
+columns: string[]; 
+/**
+ * strftime-style format for date columns (e.g. "%Y-%m-%d"). Empty uses the system locale.
+ */
+date_format: string; 
+/**
+ * strftime-style format for time columns (e.g. "%H:%M"). Empty uses the system locale.
+ */
+time_format: string }
 /**
  * Pack-dialog defaults sourced from `ArchivePreferences`.
  */
@@ -2060,6 +2084,22 @@ export type ResolvedPreferences = { settings: AppPreferences; schema: JsonValue;
  * (i.e. not inherited from defaults or profile).
  */
 modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; bookmarks: BookmarkEntry[]; user_commands: UserCommandEntry[] }
+/**
+ * App-wide runtime state persisted to `state.json` in the config dir.
+ * Every field must default so old files keep deserializing as the
+ * struct grows. Unknown fields are rejected so `update_key` can't
+ * silently write garbage; a newer file read by an older binary just
+ * falls back to defaults, which is fine for ephemeral state.
+ */
+export type RuntimeState = { 
+/**
+ * Pane handle ("0"/"1") → column key → width in px.
+ */
+column_widths: Partial<{ [key in string]: Partial<{ [key in string]: number }> }>; 
+/**
+ * Webview zoom factor, applied to every window.
+ */
+zoom: number }
 export type S3Credentials = { 
 /**
  * AWS access key ID (IAM user or assumed role).

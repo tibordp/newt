@@ -13,6 +13,7 @@ pub mod file_server;
 pub mod keychain;
 pub mod main_window;
 pub mod preferences;
+pub mod runtime_state;
 pub mod user_commands;
 pub mod viewer;
 
@@ -149,6 +150,7 @@ pub struct GlobalContext {
     prewarmed_editors: Mutex<HashMap<String, PrewarmedWindow>>,
     agent_resolver: OnceLock<Arc<dyn AgentResolver>>,
     preferences: OnceLock<preferences::PreferencesManager>,
+    runtime_state: OnceLock<runtime_state::RuntimeStateManager>,
     /// A quit is in flight, waiting for the editor sweep (unsaved-changes
     /// prompts) to finish before the main windows close.
     pending_quit: AtomicBool,
@@ -169,6 +171,7 @@ impl Default for GlobalContext {
             prewarmed_editors: Mutex::new(HashMap::new()),
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
+            runtime_state: OnceLock::new(),
             pending_quit: AtomicBool::new(false),
             pending_close: Mutex::new(HashSet::new()),
             #[cfg(target_os = "macos")]
@@ -208,6 +211,22 @@ impl GlobalContext {
         self.preferences
             .get()
             .expect("PreferencesManager not initialized")
+    }
+
+    /// Must run after `init_preferences` — reuses its resolved config dir.
+    pub fn init_runtime_state(&self, app_handle: &tauri::AppHandle) {
+        self.runtime_state
+            .set(runtime_state::RuntimeStateManager::new(
+                app_handle,
+                self.preferences().config_dir(),
+            ))
+            .ok();
+    }
+
+    pub fn runtime_state(&self) -> &runtime_state::RuntimeStateManager {
+        self.runtime_state
+            .get()
+            .expect("RuntimeStateManager not initialized")
     }
 
     pub fn main_window(&self, webview: &Webview) -> Option<MainWindowContext> {
@@ -863,6 +882,7 @@ fn main() {
             let global_ctx: State<GlobalContext> = app.state();
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle(), config_dir_arg.clone());
+            global_ctx.init_runtime_state(app.handle());
 
             if print_config {
                 print_resolved_config(&global_ctx);

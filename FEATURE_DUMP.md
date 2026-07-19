@@ -33,11 +33,11 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 
 ### Zoom
 
-- **Ctrl+=**: Zoom in.
-- **Ctrl+-**: Zoom out.
-- **Ctrl+0**: Reset zoom to default.
+- **Mod+=** (or **Mod++**): Zoom in.
+- **Mod+-**: Zoom out.
+- **Mod+0**: Reset zoom to default.
 
-Zoom is applied as frontend-side CSS scaling.
+Zoom is applied via the webview zoom factor and persisted app-wide in the runtime-state file (`state.json`, `zoom` key): it survives reloads, new windows (including viewers/editors) start at it, and changing it in one window follows through to all others via the runtime-state broadcast.
 
 ### Window Management
 
@@ -93,8 +93,8 @@ Server-side windowed list with 22px fixed row height. Rust sends only a ~150-ite
 |--------|-------|-----------|---------|
 | Name | 250px | Left | File type icon (color-coded, VSCode icon set) + filename |
 | Size | 100px | Right | Locale-formatted byte count, "DIR" for directories, "???" if unknown |
-| Modified Date | 80px | Right | Locale-formatted date |
-| Modified Time | 80px | Right | Locale-formatted time |
+| Modified Date | 80px | Right | Date of last modification |
+| Modified Time | 80px | Right | Time of last modification |
 | User | 70px | Left | Owner name (or numeric UID if name unavailable) |
 | Group | 70px | Left | Group name (or numeric GID) |
 | Mode | 70px | Left | Unix permissions string, e.g., `drwxr-xr-x` |
@@ -104,15 +104,21 @@ Server-side windowed list with 22px fixed row height. Rust sends only a ~150-ite
 | Column | Content |
 |--------|---------|
 | Extension | File extension only |
-| Accessed Date/Time | Access timestamp |
-| Created Date/Time | Creation timestamp |
+| Modified / Accessed / Created | Compound date + time in one column (145px) |
+| Accessed/Created Date and Time | Access / creation timestamp, date-only or split |
 | Link Target | Symlink target path |
 
-When the Extension column is visible, the Name column automatically shows just the file stem (name without extension).
+Compound-column swaps: when the Extension column is visible, the Name column automatically shows just the file stem (name without extension). The timestamp columns follow the same pattern — a compound column (`modified` etc.) shows date + time in one cell and swaps down to date-only when the paired Time column is also in the list. Each timestamp thus has four presentations: compound date & time, date only (`modified_date`), separate date and time columns (`modified_date` + `modified_time`, or equivalently `modified` + `modified_time` via the swap — the default for Modified), and hidden.
 
-Column visibility and order are configurable via `appearance.columns` preference (transfer list widget in Settings dialog).
+Column visibility and order are configurable via the `appearance.columns` preference, edited from three places that all write the same list:
 
-Column widths are resizable by dragging the grip between column headers. Minimum width: 10px. Widths are stored in per-pane CSS custom properties and reset to their defaults whenever the column header component re-mounts (e.g. on window reload); they are not persisted to preferences.
+- **Header context menu** (mouse-only): right-clicking the column header row opens a menu where simple columns are checkboxes and each timestamp (Modified/Accessed/Created) is a submenu with radio choices — Date & time / Date only / Separate columns / Hidden — with the current state shown on the submenu trigger. Newly enabled columns are inserted at their canonical position relative to the currently visible ones (timestamp rewrites happen in place). The Name column cannot be removed; the menu stays open so several columns can be flipped in one visit.
+- **Header drag-to-reorder**: dragging a column header horizontally (5px threshold, so plain clicks still sort) shows an accent insertion marker and dims the dragged header; dropping persists the new order to the preference. Dragging onto the column's own position is a no-op (marker hidden).
+- **Settings dialog widget**: a full-width row (title/description on top) with two side-by-side panels below — Visible columns in display order (each with a drag handle: mouse drag with live preview, or focus it and use ArrowUp/Down), Hidden columns greyed out beside them. Simple columns are checkboxes; timestamps are a checkbox plus a presentation dropdown (Date & time / Date only / Separate columns). Checking a hidden timestamp enables the compound presentation.
+
+Timestamp columns honor the `appearance.date_format` / `appearance.time_format` preferences — strftime-style format strings (supported specifiers: `%Y %y %m %d %e %j %b %B %a %A %H %I %M %S %p %%`; month/weekday names are locale-aware). Empty (the default) falls back to the system locale rendering. Compound columns render as "date time" (`date_format` + `time_format`, or the locale's combined rendering when both are unset); split Date/Time columns each use their own format. The same formats apply to the timestamps in the Properties dialog.
+
+Column widths are resizable by dragging the grip between column headers (minimum 10px during the drag). Widths persist per pane and per column key in the runtime-state file (`state.json`, see Configuration) — not in `settings.toml` — and are restored on window reload / new windows; a zero-movement click on the grip writes nothing. Double-clicking a grip auto-sizes its column Excel-style: the width fits the widest currently rendered cell (the list is virtualized, so this is the visible window plus overscan, not the whole directory) with the header's own labels as a floor, clamped to ≥30px, then persists. Widths are applied via per-pane CSS custom properties; runtime-state updates broadcast app-wide, so the same pane slot in other windows follows (last write wins).
 
 Click a column header to sort ascending by that key; click the same header again to toggle descending. A triangle indicator (▲/▼) shows the active sort column and direction.
 
@@ -1331,6 +1337,10 @@ When a template uses `prompt()` or `confirm()`, a modal dialog appears before ex
 
 Located at `~/.config/newt/settings.toml`. Hot-reloaded — changes to the file are picked up within 200ms and applied without restart.
 
+### Runtime State File
+
+`~/.config/newt/state.json` — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Currently holds per-pane column widths (`column_widths.<pane>.<column>`) and the app-wide webview zoom factor (`zoom`); intended home for future layout state (window geometry, splitter positions). No file watcher — external edits apply on next launch.
+
 ### Full Settings Structure
 
 ```toml
@@ -1344,6 +1354,8 @@ show_pane_header = true     # Show breadcrumb / VFS selector / free-space header
 show_pane_status = true     # Show file count / selection size status bar per pane
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
+date_format = ""            # strftime-style date column format (e.g. "%Y-%m-%d"); "" = system locale
+time_format = ""            # strftime-style time column format (e.g. "%H:%M"); "" = system locale
 
 [behavior]
 confirm_delete = true       # Ask for confirmation before deleting
@@ -1406,7 +1418,7 @@ Three tabs:
   - Number → number input.
   - String → text input.
   - Custom widgets for complex preferences (rendered below the description):
-    - **Columns**: Transfer list with Available/Visible panels, arrow buttons for reorder, keyboard navigation (arrow keys + Enter).
+    - **Columns**: Visible/Hidden panels side by side — visible rows carry a drag handle (mouse drag to reorder, arrow keys when focused); checkboxes toggle simple columns; timestamps get a presentation dropdown (Date & time / Date only / Separate columns).
     - **Default Sort**: Dropdown for sort key + ascending checkbox.
 - **Reset button**: Appears next to settings that have been explicitly set in `settings.toml`. Clicking removes the key from the file, reverting to the cascade default.
 - Changes are saved immediately to `settings.toml` and proactively reloaded (not relying solely on file watcher).
@@ -1681,9 +1693,9 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+Q | Quit (close all windows) | Any |
 | Mod+Shift+R | Connect remote | Any |
 | Ctrl+R | Quick Connect | Pane focused |
-| Ctrl+= | Zoom in | Any |
-| Ctrl+- | Zoom out | Any |
-| Ctrl+0 | Reset zoom | Any |
+| Mod+= (or Mod++) | Zoom in | Any |
+| Mod+- | Zoom out | Any |
+| Mod+0 | Reset zoom | Any |
 
 Note: Refresh (Mod+R) is unbound by default to avoid conflict with Quick Connect (Ctrl+R). Rebind via settings if needed.
 
