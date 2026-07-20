@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { safe, unwrap } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
@@ -135,55 +135,70 @@ export default function SettingsEditor({
                   No settings found
                 </div>
               )}
-              {filteredSettings.map((setting) => (
-                <div
-                  key={setting.key}
-                  className={
-                    setting.customWidget === "columns"
-                      ? styles.settingRowFull
-                      : styles.settingRow
-                  }
-                >
-                  <div className={styles.settingInfo}>
-                    <div className={styles.settingLabel}>
-                      {setting.title}
-                      {/* Always render so the row's height stays
+              {filteredSettings.map((setting, i) => (
+                <Fragment key={setting.key}>
+                  {/* With "All" selected the list spans every category, so
+                      break it into labelled sections; settings arrive grouped
+                      by category, so a header rides each category's first row. */}
+                  {activeCategory === null &&
+                    (i === 0 ||
+                      filteredSettings[i - 1].category !==
+                        setting.category) && (
+                      <div className={styles.categoryHeader}>
+                        {setting.categoryTitle}
+                      </div>
+                    )}
+                  <div
+                    className={
+                      setting.customWidget === "columns"
+                        ? styles.settingRowFull
+                        : styles.settingRow
+                    }
+                  >
+                    <div className={styles.settingInfo}>
+                      <div className={styles.settingLabel}>
+                        {setting.title}
+                        {/* Always render so the row's height stays
                           constant when modified flips on/off — visibility
                           rather than display preserves the slot. */}
-                      <button
-                        type="button"
-                        className={styles.resetButton}
-                        onClick={() => onReset(setting.key)}
-                        title="Reset to default"
-                        style={
-                          setting.modified
-                            ? undefined
-                            : { visibility: "hidden" }
-                        }
-                        tabIndex={setting.modified ? 0 : -1}
-                        aria-hidden={!setting.modified}
-                      >
-                        Reset
-                      </button>
+                        <button
+                          type="button"
+                          className={styles.resetButton}
+                          onClick={() => onReset(setting.key)}
+                          title="Reset to default"
+                          style={
+                            setting.modified
+                              ? undefined
+                              : { visibility: "hidden" }
+                          }
+                          tabIndex={setting.modified ? 0 : -1}
+                          aria-hidden={!setting.modified}
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      {setting.description && (
+                        <div className={styles.settingDescription}>
+                          {setting.description}
+                        </div>
+                      )}
                     </div>
-                    {setting.description && (
-                      <div className={styles.settingDescription}>
-                        {setting.description}
+                    {setting.customWidget === "columns" ? (
+                      <CustomWidget setting={setting} onUpdate={onUpdate} />
+                    ) : (
+                      <div className={styles.settingControl}>
+                        {setting.type === "custom" ? (
+                          <CustomWidget setting={setting} onUpdate={onUpdate} />
+                        ) : (
+                          <SettingControl
+                            setting={setting}
+                            onUpdate={onUpdate}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
-                  {setting.customWidget === "columns" ? (
-                    <CustomWidget setting={setting} onUpdate={onUpdate} />
-                  ) : (
-                    <div className={styles.settingControl}>
-                      {setting.type === "custom" ? (
-                        <CustomWidget setting={setting} onUpdate={onUpdate} />
-                      ) : (
-                        <SettingControl setting={setting} onUpdate={onUpdate} />
-                      )}
-                    </div>
-                  )}
-                </div>
+                </Fragment>
               ))}
             </div>
           </>

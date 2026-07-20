@@ -8,10 +8,40 @@ export type SettingDef = {
   categoryTitle: string;
   type: "boolean" | "string" | "number" | "enum" | "custom";
   enumValues?: string[];
+  enumLabels?: Record<string, string>;
   customWidget?: string;
   value: any;
   modified: boolean;
 };
+
+/// Extract enum values (and optional per-value labels) from a resolved schema
+/// node. schemars emits two shapes for unit enums: the compact
+/// `{ type: "string", enum: [...] }`, and — when variants carry a `title`
+/// (or doc comment) — a `oneOf` of `{ title, enum: [oneValue] }`. The `title`
+/// becomes the dropdown label (e.g. `.tar.zst` for the archive format).
+function extractEnum(propSchema: any): {
+  values?: string[];
+  labels?: Record<string, string>;
+} {
+  if (propSchema.type === "string" && Array.isArray(propSchema.enum)) {
+    return { values: propSchema.enum };
+  }
+  if (Array.isArray(propSchema.oneOf)) {
+    const values: string[] = [];
+    const labels: Record<string, string> = {};
+    for (const variant of propSchema.oneOf) {
+      const v = variant?.enum?.[0] ?? variant?.const;
+      if (typeof v !== "string") return {};
+      values.push(v);
+      if (typeof variant.title === "string") labels[v] = variant.title;
+    }
+    return {
+      values,
+      labels: Object.keys(labels).length ? labels : undefined,
+    };
+  }
+  return {};
+}
 
 export function resolveRef(schema: any, refPath: string): any {
   // Resolve "#/definitions/Foo" style $ref pointers
@@ -64,11 +94,8 @@ export function extractSettings(preferences: PreferencesState): SettingDef[] {
       const description =
         rawPropSchema.description || propSchema.description || "";
 
-      // Detect string enums (schemars emits { type: "string", enum: [...] })
-      const enumValues: string[] | undefined =
-        propSchema.type === "string" && Array.isArray(propSchema.enum)
-          ? propSchema.enum
-          : undefined;
+      const { values: enumValues, labels: enumLabels } =
+        extractEnum(propSchema);
 
       // Custom widget registry: keys that get special UI instead of generic controls
       const customWidgets: Record<string, string> = {
@@ -97,6 +124,7 @@ export function extractSettings(preferences: PreferencesState): SettingDef[] {
         categoryTitle,
         type,
         enumValues,
+        enumLabels,
         customWidget,
         value,
         modified: preferences.modified_keys.includes(key),

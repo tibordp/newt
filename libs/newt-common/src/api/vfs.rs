@@ -1,12 +1,15 @@
-//! `VfsDispatcher` (host-side) and `VfsReadChunkDispatcher` (agent-side):
-//! the API_HOST_VFS_* surface that lets a `RemoteVfs` running on the agent
-//! drive a real VFS on the host.
+//! `VfsDispatcher` and `VfsReadChunkDispatcher`: the API_VFS_* surface that
+//! lets a `RemoteVfs` on one side of a connection drive a real VFS on the
+//! other. `VfsDispatcher` serves the VFS; `VfsReadChunkDispatcher` runs on the
+//! caller's side to route read-chunk notifications back into the stream.
+//! Direction is symmetric — the caller may be the agent reaching the host's
+//! VFS, or the host reaching a spawned sub-agent's VFS (an agent mount).
 //!
 //! `VfsDispatcher::invoke` handles request/response calls; chunk streams are
 //! split across notifications:
-//!   - reads: handler streams chunks via `API_HOST_VFS_READ_CHUNK` notifications,
+//!   - reads: handler streams chunks via `API_VFS_READ_CHUNK` notifications,
 //!     terminating with an empty payload as the EOF sentinel.
-//!   - writes: agent sends `API_HOST_VFS_WRITE_CHUNK` notifications until an
+//!   - writes: caller sends `API_VFS_WRITE_CHUNK` notifications until an
 //!     empty sentinel; `OVERWRITE_ASYNC_BEGIN` returns a fresh `StreamId`,
 //!     `OVERWRITE_ASYNC_FINISH` awaits the writer task.
 
@@ -17,16 +20,13 @@ use std::sync::atomic::AtomicU64;
 use parking_lot::Mutex;
 
 use super::{
-    API_HOST_VFS_AVAILABLE_SPACE, API_HOST_VFS_COPY_WITHIN, API_HOST_VFS_CREATE_DIRECTORY,
-    API_HOST_VFS_CREATE_SYMLINK, API_HOST_VFS_FILE_DETAILS, API_HOST_VFS_FILE_INFO,
-    API_HOST_VFS_FS_STATS, API_HOST_VFS_GET_METADATA, API_HOST_VFS_HARD_LINK,
-    API_HOST_VFS_LIST_FILES, API_HOST_VFS_OPEN_READ_ASYNC, API_HOST_VFS_OVERWRITE_ASYNC_ABORT,
-    API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, API_HOST_VFS_OVERWRITE_ASYNC_FINISH,
-    API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_CHUNK, API_HOST_VFS_READ_RANGE,
-    API_HOST_VFS_REMOVE_DIR, API_HOST_VFS_REMOVE_FILE, API_HOST_VFS_REMOVE_TREE,
-    API_HOST_VFS_RENAME, API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRASH_ITEM,
-    API_HOST_VFS_TRUNCATE, API_HOST_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode,
-    try_encode,
+    API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
+    API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
+    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OVERWRITE_ASYNC_ABORT,
+    API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH, API_VFS_POLL_CHANGES,
+    API_VFS_READ_CHUNK, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
+    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
+    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode, try_encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -86,22 +86,22 @@ impl Dispatcher for VfsDispatcher {
         use crate::vfs::path::PathBuf;
 
         let ret = match api {
-            API_HOST_VFS_LIST_FILES => {
+            API_VFS_LIST_FILES => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.list_files(&path, None).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_POLL_CHANGES => {
+            API_VFS_POLL_CHANGES => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.poll_changes(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_FS_STATS => {
+            API_VFS_FS_STATS => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.fs_stats(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_OPEN_READ_ASYNC => {
+            API_VFS_OPEN_READ_ASYNC => {
                 let (path, stream_id): (PathBuf, StreamId) = decode(&req[..])?;
                 let descriptor = self.vfs.descriptor();
                 let outbox = self.outbox.clone();
@@ -127,7 +127,7 @@ impl Dispatcher for VfsDispatcher {
                             let chunk = serde_bytes::Bytes::new(&buf[..n]);
                             if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
                                 outbox
-                                    .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                                    .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
                                     .await
                                     .map_err(|_| Error::connection())?;
                             }
@@ -138,7 +138,7 @@ impl Dispatcher for VfsDispatcher {
                             try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
                         {
                             outbox
-                                .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                                .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
                                 .await
                                 .map_err(|_| Error::connection())?;
                         }
@@ -160,7 +160,7 @@ impl Dispatcher for VfsDispatcher {
                                 try_encode(&(stream_id, seq, serde_bytes::ByteBuf::from(chunk?)))
                             {
                                 outbox
-                                    .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                                    .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
                                     .await
                                     .map_err(|_| Error::connection())?;
                             }
@@ -171,7 +171,7 @@ impl Dispatcher for VfsDispatcher {
                             try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
                         {
                             outbox
-                                .send(Message::Notify(API_HOST_VFS_READ_CHUNK, bytes.into()))
+                                .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
                                 .await
                                 .map_err(|_| Error::connection())?;
                         }
@@ -184,22 +184,22 @@ impl Dispatcher for VfsDispatcher {
 
                 encode(&ret)?
             }
-            API_HOST_VFS_READ_RANGE => {
+            API_VFS_READ_RANGE => {
                 let (path, offset, length): (PathBuf, u64, u64) = decode(&req[..])?;
                 let ret = self.vfs.read_range(&path, offset, length).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_FILE_DETAILS => {
+            API_VFS_FILE_DETAILS => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.file_details(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_FILE_INFO => {
+            API_VFS_FILE_INFO => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.file_info(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_OVERWRITE_ASYNC_BEGIN => {
+            API_VFS_OVERWRITE_ASYNC_BEGIN => {
                 let path: PathBuf = decode(&req[..])?;
                 let descriptor = self.vfs.descriptor();
 
@@ -291,7 +291,7 @@ impl Dispatcher for VfsDispatcher {
 
                 encode(&ret)?
             }
-            API_HOST_VFS_OVERWRITE_ASYNC_FINISH => {
+            API_VFS_OVERWRITE_ASYNC_FINISH => {
                 let stream_id: StreamId = decode(&req[..])?;
                 // The sentinel (empty chunk) already closed the data channel.
                 // Wait for the writer task to finish and propagate its result.
@@ -308,72 +308,72 @@ impl Dispatcher for VfsDispatcher {
                 };
                 encode(&ret)?
             }
-            API_HOST_VFS_CREATE_DIRECTORY => {
+            API_VFS_CREATE_DIRECTORY => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.create_directory(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_CREATE_SYMLINK => {
+            API_VFS_CREATE_SYMLINK => {
                 let (link, target): (PathBuf, String) = decode(&req[..])?;
                 let ret = self.vfs.create_symlink(&link, &target).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_TOUCH => {
+            API_VFS_TOUCH => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.touch(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_TRUNCATE => {
+            API_VFS_TRUNCATE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.truncate(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_REMOVE_FILE => {
+            API_VFS_REMOVE_FILE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_file(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_REMOVE_DIR => {
+            API_VFS_REMOVE_DIR => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_dir(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_REMOVE_TREE => {
+            API_VFS_REMOVE_TREE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.remove_tree(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_TRASH_ITEM => {
+            API_VFS_TRASH_ITEM => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.trash_item(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_GET_METADATA => {
+            API_VFS_GET_METADATA => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.get_metadata(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_SET_METADATA => {
+            API_VFS_SET_METADATA => {
                 let (path, meta): (PathBuf, crate::vfs::VfsMetadata) = decode(&req[..])?;
                 let ret = self.vfs.set_metadata(&path, &meta).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_AVAILABLE_SPACE => {
+            API_VFS_AVAILABLE_SPACE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.available_space(&path).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_RENAME => {
+            API_VFS_RENAME => {
                 let (from, to): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.rename(&from, &to).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_COPY_WITHIN => {
+            API_VFS_COPY_WITHIN => {
                 let (from, to): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.copy_within(&from, &to).await;
                 encode(&ret)?
             }
-            API_HOST_VFS_HARD_LINK => {
+            API_VFS_HARD_LINK => {
                 let (link, target): (PathBuf, PathBuf) = decode(&req[..])?;
                 let ret = self.vfs.hard_link(&link, &target).await;
                 encode(&ret)?
@@ -385,7 +385,7 @@ impl Dispatcher for VfsDispatcher {
     }
 
     async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
-        if api == API_HOST_VFS_WRITE_CHUNK {
+        if api == API_VFS_WRITE_CHUNK {
             let (stream_id, seq, data): (StreamId, u64, serde_bytes::ByteBuf) = decode(&req[..])?;
 
             let command_tx = {
@@ -419,7 +419,7 @@ impl Dispatcher for VfsDispatcher {
                 let _ = tx.send(command).await;
             }
             Ok(true)
-        } else if api == API_HOST_VFS_OVERWRITE_ASYNC_ABORT {
+        } else if api == API_VFS_OVERWRITE_ASYNC_ABORT {
             let stream_id: StreamId = decode(&req[..])?;
             // Removing the last sender wakes a running sync writer. Aborting
             // also stops an async writer and prevents a queued spawn_blocking
@@ -437,8 +437,8 @@ impl Dispatcher for VfsDispatcher {
 }
 
 // ---------------------------------------------------------------------------
-// VfsReadChunkDispatcher — agent-side: routes read-chunk notifications
-// from the host into the correct RemoteVfs stream.
+// VfsReadChunkDispatcher — caller-side: routes read-chunk notifications
+// from the VFS-serving end into the correct RemoteVfs stream.
 // ---------------------------------------------------------------------------
 
 pub struct VfsReadChunkDispatcher {
@@ -448,7 +448,7 @@ pub struct VfsReadChunkDispatcher {
 
 impl VfsReadChunkDispatcher {
     pub fn new(pending_read_streams: PendingVfsReadStreams) -> Self {
-        Self::for_api(API_HOST_VFS_READ_CHUNK, pending_read_streams)
+        Self::for_api(API_VFS_READ_CHUNK, pending_read_streams)
     }
 
     /// The same sequenced-chunk routing for another notification verb
@@ -579,7 +579,7 @@ mod tests {
 
         let response = dispatcher
             .invoke(
-                super::API_HOST_VFS_OVERWRITE_ASYNC_BEGIN,
+                super::API_VFS_OVERWRITE_ASYNC_BEGIN,
                 super::encode(&PathBuf::from_wire_str("/partial"))
                     .unwrap()
                     .into(),
@@ -600,7 +600,7 @@ mod tests {
 
         dispatcher
             .notify(
-                super::API_HOST_VFS_OVERWRITE_ASYNC_ABORT,
+                super::API_VFS_OVERWRITE_ASYNC_ABORT,
                 super::encode(&stream_id).unwrap().into(),
             )
             .await
@@ -635,7 +635,7 @@ mod tests {
         // invoke() produces no InvokeResponse and hangs the remote reader.
         let response = dispatcher
             .invoke(
-                super::API_HOST_VFS_OPEN_READ_ASYNC,
+                super::API_VFS_OPEN_READ_ASYNC,
                 super::encode(&(PathBuf::from_wire_str("/f"), crate::filesystem::StreamId(7)))
                     .unwrap()
                     .into(),

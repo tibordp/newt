@@ -47,7 +47,8 @@ export function SettingControl({
         >
           {setting.enumValues?.map((v) => (
             <option key={v} value={v}>
-              {v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+              {setting.enumLabels?.[v] ??
+                v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
             </option>
           ))}
         </select>

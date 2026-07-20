@@ -204,15 +204,13 @@ impl RemoteVfs {
 }
 
 use crate::api::{
-    API_HOST_VFS_AVAILABLE_SPACE, API_HOST_VFS_COPY_WITHIN, API_HOST_VFS_CREATE_DIRECTORY,
-    API_HOST_VFS_CREATE_SYMLINK, API_HOST_VFS_FILE_DETAILS, API_HOST_VFS_FILE_INFO,
-    API_HOST_VFS_FS_STATS, API_HOST_VFS_GET_METADATA, API_HOST_VFS_HARD_LINK,
-    API_HOST_VFS_LIST_FILES, API_HOST_VFS_OPEN_READ_ASYNC, API_HOST_VFS_OVERWRITE_ASYNC_ABORT,
-    API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, API_HOST_VFS_OVERWRITE_ASYNC_FINISH,
-    API_HOST_VFS_POLL_CHANGES, API_HOST_VFS_READ_RANGE, API_HOST_VFS_REMOVE_DIR,
-    API_HOST_VFS_REMOVE_FILE, API_HOST_VFS_REMOVE_TREE, API_HOST_VFS_RENAME,
-    API_HOST_VFS_SET_METADATA, API_HOST_VFS_TOUCH, API_HOST_VFS_TRASH_ITEM, API_HOST_VFS_TRUNCATE,
-    API_HOST_VFS_WRITE_CHUNK,
+    API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
+    API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
+    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OVERWRITE_ASYNC_ABORT,
+    API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH, API_VFS_POLL_CHANGES,
+    API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
+    API_VFS_RENAME, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
+    API_VFS_WRITE_CHUNK,
 };
 
 #[async_trait::async_trait]
@@ -232,7 +230,7 @@ impl Vfs for RemoteVfs {
     ) -> Result<super::VfsFileList, Error> {
         let ret: Result<super::VfsFileList, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_LIST_FILES, &path.to_owned())
+            .invoke(API_VFS_LIST_FILES, &path.to_owned())
             .await?;
         ret
     }
@@ -240,7 +238,7 @@ impl Vfs for RemoteVfs {
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_POLL_CHANGES, &path.to_owned())
+            .invoke(API_VFS_POLL_CHANGES, &path.to_owned())
             .await?;
         ret
     }
@@ -248,7 +246,7 @@ impl Vfs for RemoteVfs {
     async fn fs_stats(&self, path: &Path) -> Result<Option<crate::filesystem::FsStats>, Error> {
         let ret: Result<Option<crate::filesystem::FsStats>, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FS_STATS, &path.to_owned())
+            .invoke(API_VFS_FS_STATS, &path.to_owned())
             .await?;
         ret
     }
@@ -283,7 +281,7 @@ impl Vfs for RemoteVfs {
         let path = path.to_owned();
         let invoke_handle = tokio::spawn(async move {
             let ret: Result<Result<(), Error>, _> = communicator
-                .invoke(API_HOST_VFS_OPEN_READ_ASYNC, &(path, stream_id))
+                .invoke(API_VFS_OPEN_READ_ASYNC, &(path, stream_id))
                 .await;
             ret
         });
@@ -300,7 +298,7 @@ impl Vfs for RemoteVfs {
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let ret: Result<FileChunk, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_READ_RANGE, &(path.to_owned(), offset, length))
+            .invoke(API_VFS_READ_RANGE, &(path.to_owned(), offset, length))
             .await?;
         ret
     }
@@ -308,7 +306,7 @@ impl Vfs for RemoteVfs {
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let ret: Result<FileDetails, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FILE_DETAILS, &path.to_owned())
+            .invoke(API_VFS_FILE_DETAILS, &path.to_owned())
             .await?;
         ret
     }
@@ -316,7 +314,7 @@ impl Vfs for RemoteVfs {
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let ret: Result<File, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_FILE_INFO, &path.to_owned())
+            .invoke(API_VFS_FILE_INFO, &path.to_owned())
             .await?;
         ret
     }
@@ -324,7 +322,7 @@ impl Vfs for RemoteVfs {
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let stream_id: Result<StreamId, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_owned())
+            .invoke(API_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_owned())
             .await?;
         let stream_id = stream_id?;
 
@@ -339,7 +337,7 @@ impl Vfs for RemoteVfs {
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_CREATE_DIRECTORY, &path.to_owned())
+            .invoke(API_VFS_CREATE_DIRECTORY, &path.to_owned())
             .await?;
         ret
     }
@@ -348,7 +346,7 @@ impl Vfs for RemoteVfs {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(
-                API_HOST_VFS_CREATE_SYMLINK,
+                API_VFS_CREATE_SYMLINK,
                 &(link.to_owned(), target.to_string()),
             )
             .await?;
@@ -358,7 +356,7 @@ impl Vfs for RemoteVfs {
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_TOUCH, &path.to_owned())
+            .invoke(API_VFS_TOUCH, &path.to_owned())
             .await?;
         ret
     }
@@ -366,7 +364,7 @@ impl Vfs for RemoteVfs {
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_TRUNCATE, &path.to_owned())
+            .invoke(API_VFS_TRUNCATE, &path.to_owned())
             .await?;
         ret
     }
@@ -374,7 +372,7 @@ impl Vfs for RemoteVfs {
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_FILE, &path.to_owned())
+            .invoke(API_VFS_REMOVE_FILE, &path.to_owned())
             .await?;
         ret
     }
@@ -382,7 +380,7 @@ impl Vfs for RemoteVfs {
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_DIR, &path.to_owned())
+            .invoke(API_VFS_REMOVE_DIR, &path.to_owned())
             .await?;
         ret
     }
@@ -390,7 +388,7 @@ impl Vfs for RemoteVfs {
     async fn remove_tree(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_REMOVE_TREE, &path.to_owned())
+            .invoke(API_VFS_REMOVE_TREE, &path.to_owned())
             .await?;
         ret
     }
@@ -398,7 +396,7 @@ impl Vfs for RemoteVfs {
     async fn trash_item(&self, path: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_TRASH_ITEM, &path.to_owned())
+            .invoke(API_VFS_TRASH_ITEM, &path.to_owned())
             .await?;
         ret
     }
@@ -406,7 +404,7 @@ impl Vfs for RemoteVfs {
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let ret: Result<VfsMetadata, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_GET_METADATA, &path.to_owned())
+            .invoke(API_VFS_GET_METADATA, &path.to_owned())
             .await?;
         ret
     }
@@ -414,7 +412,7 @@ impl Vfs for RemoteVfs {
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_SET_METADATA, &(path.to_owned(), meta.clone()))
+            .invoke(API_VFS_SET_METADATA, &(path.to_owned(), meta.clone()))
             .await?;
         ret
     }
@@ -422,7 +420,7 @@ impl Vfs for RemoteVfs {
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let ret: Result<VfsSpaceInfo, Error> = self
             .communicator
-            .invoke(API_HOST_VFS_AVAILABLE_SPACE, &path.to_owned())
+            .invoke(API_VFS_AVAILABLE_SPACE, &path.to_owned())
             .await?;
         ret
     }
@@ -430,7 +428,7 @@ impl Vfs for RemoteVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_RENAME, &(from.to_owned(), to.to_owned()))
+            .invoke(API_VFS_RENAME, &(from.to_owned(), to.to_owned()))
             .await?;
         ret
     }
@@ -438,7 +436,7 @@ impl Vfs for RemoteVfs {
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_HOST_VFS_COPY_WITHIN, &(from.to_owned(), to.to_owned()))
+            .invoke(API_VFS_COPY_WITHIN, &(from.to_owned(), to.to_owned()))
             .await?;
         ret
     }
@@ -446,10 +444,7 @@ impl Vfs for RemoteVfs {
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(
-                API_HOST_VFS_HARD_LINK,
-                &(link.to_owned(), target.to_owned()),
-            )
+            .invoke(API_VFS_HARD_LINK, &(link.to_owned(), target.to_owned()))
             .await?;
         ret
     }
@@ -574,7 +569,7 @@ impl Drop for RemoteVfsWriter {
         if self.active {
             let _ = self
                 .communicator
-                .signal(API_HOST_VFS_OVERWRITE_ASYNC_ABORT, &self.stream_id);
+                .signal(API_VFS_OVERWRITE_ASYNC_ABORT, &self.stream_id);
         }
     }
 }
@@ -586,7 +581,7 @@ impl VfsAsyncWriter for RemoteVfsWriter {
         self.next_seq += 1;
         self.communicator
             .notify(
-                API_HOST_VFS_WRITE_CHUNK,
+                API_VFS_WRITE_CHUNK,
                 &(self.stream_id, seq, serde_bytes::Bytes::new(buf)),
             )
             .await?;
@@ -600,7 +595,7 @@ impl VfsAsyncWriter for RemoteVfsWriter {
         let seq = self.next_seq;
         self.communicator
             .notify(
-                API_HOST_VFS_WRITE_CHUNK,
+                API_VFS_WRITE_CHUNK,
                 &(self.stream_id, seq, serde_bytes::Bytes::new(&[])),
             )
             .await?;
@@ -610,7 +605,7 @@ impl VfsAsyncWriter for RemoteVfsWriter {
         // shutdown — the sentinel does that.
         match self
             .communicator
-            .invoke(API_HOST_VFS_OVERWRITE_ASYNC_FINISH, &self.stream_id)
+            .invoke(API_VFS_OVERWRITE_ASYNC_FINISH, &self.stream_id)
             .await
         {
             Ok(ret) => {
@@ -642,7 +637,7 @@ mod tests {
             api: crate::rpc::Api,
             _req: bytes::Bytes,
         ) -> Result<Option<bytes::Bytes>, Error> {
-            if api == API_HOST_VFS_OVERWRITE_ASYNC_FINISH {
+            if api == API_VFS_OVERWRITE_ASYNC_FINISH {
                 if let Some(tx) = self.finish_started.lock().take() {
                     let _ = tx.send(());
                 }
@@ -653,13 +648,13 @@ mod tests {
         }
 
         async fn notify(&self, api: crate::rpc::Api, req: bytes::Bytes) -> Result<bool, Error> {
-            if api == API_HOST_VFS_OVERWRITE_ASYNC_ABORT {
+            if api == API_VFS_OVERWRITE_ASYNC_ABORT {
                 let stream_id: StreamId = bincode::deserialize(&req).unwrap();
                 if let Some(tx) = self.abort.lock().take() {
                     let _ = tx.send(stream_id);
                 }
                 Ok(true)
-            } else if api == API_HOST_VFS_WRITE_CHUNK {
+            } else if api == API_VFS_WRITE_CHUNK {
                 Ok(true)
             } else {
                 Ok(false)
@@ -678,7 +673,7 @@ mod tests {
         }
 
         async fn notify(&self, api: crate::rpc::Api, req: bytes::Bytes) -> Result<bool, Error> {
-            if api == API_HOST_VFS_OVERWRITE_ASYNC_ABORT {
+            if api == API_VFS_OVERWRITE_ASYNC_ABORT {
                 let stream_id: StreamId = bincode::deserialize(&req).unwrap();
                 if let Some(tx) = self.0.lock().take() {
                     let _ = tx.send(stream_id);

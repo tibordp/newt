@@ -173,7 +173,7 @@ impl newt_common::askpass::AskpassProvider for NoAskpass {
 /// Full spawn path: bootstrap.sh runs locally (custom-shell transport),
 /// negotiates the agent upload, and execs it. Passing this proves the
 /// `NEWT_AGENT_MODE` injection reaches the script's exec line — a
-/// full-session agent would not answer the host-VFS verbs the proxy uses.
+/// full-session agent would not answer the VFS verbs the proxy uses.
 #[tokio::test]
 async fn bootstrap_spawns_serve_vfs_agent() {
     let cache = tempfile::tempdir().unwrap();

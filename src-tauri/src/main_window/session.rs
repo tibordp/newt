@@ -425,11 +425,23 @@ impl Filesystem for HairpinFs {
     }
 
     async fn touch(&self, path: VfsPath) -> Result<(), newt_common::Error> {
-        self.inner.touch(path).await
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_fs
+                .touch(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.touch(path).await
+        }
     }
 
     async fn create_directory(&self, path: VfsPath) -> Result<(), newt_common::Error> {
-        self.inner.create_directory(path).await
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_fs
+                .create_directory(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.create_directory(path).await
+        }
     }
 
     async fn revalidate(
@@ -459,7 +471,13 @@ impl FileReader for HairpinFileReader {
         &self,
         path: VfsPath,
     ) -> Result<newt_common::file_reader::FileDetails, newt_common::Error> {
-        self.inner.file_details(path).await
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_reader
+                .file_details(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.file_details(path).await
+        }
     }
 
     async fn get_property_sheet(

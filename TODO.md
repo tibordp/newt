@@ -8,10 +8,10 @@ Shipped (design: `design_docs/DESIGN_SHELL_INTEGRATION.md`). Follow-ups:
 - Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, `newt select <glob>`, user-command invocation by title.
 - Windows is compiled but untested end-to-end: named-pipe HTTP server/client, `newt.cmd` shim (`NEWT_CLI` marker), ConPTY env merge.
 
-## Host VFS (local ↔ remote bridge)
+## Remote VFS (local ↔ remote bridge)
 
 Basic Remote VFS is implemented. Remaining work:
-- Hairpin diversion for additional methods (touch, create_directory, etc.) — only `list_files`, `poll_changes`, `read_range`, `read_file`, `write_file` are diverted today. (Rename is no longer a `Filesystem` verb — it runs as `OperationRequest::Rename`.)
+- Every path-targeted `Filesystem`/`FileReader` verb is now hairpinned (`list_files`, `poll_changes`, `touch`, `create_directory`, `file_details`, `read_range`, `read_file`, `write_file`, `find_in_file`; `revalidate` is trivially fresh). The one holdout is `get_property_sheet` — diverting it is gated on `RemoteVfsDescriptor::has_extended_properties()` (false today, and `RemoteVfs` doesn't remote the verb), i.e. it needs the "local property sheets in a remote session" feature, not just a hairpin arm. (Rename is no longer a `Filesystem` verb — it runs as `OperationRequest::Rename`.)
 
 ## Generalized remote session transport
 
@@ -29,7 +29,7 @@ Shipped (design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`). Follow-ups:
 ## VFS property sheets (S3 ACLs / metadata)
 
 Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`). Follow-ups:
-- `Vfs`-level remoting of the two verbs (`API_HOST_VFS_*` constants + `RemoteVfs`/`VfsHostDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today.
+- `Vfs`-level remoting of the two verbs (`API_VFS_*` constants + `RemoteVfs`/`VfsDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today.
 
 ## Dialog visual uplift
 

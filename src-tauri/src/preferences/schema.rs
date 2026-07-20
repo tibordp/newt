@@ -253,11 +253,19 @@ impl Default for HotPathsPreferences {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveFormatPref {
+    // `title` is the dropdown label in the settings UI (extension form),
+    // emitted per-variant into the JSON Schema `oneOf`.
+    #[cfg_attr(windows, default)]
+    #[schemars(title = ".zip")]
     Zip,
+    #[schemars(title = ".tar")]
     Tar,
+    #[schemars(title = ".tar.gz")]
     TarGz,
+    #[schemars(title = ".tar.xz")]
     TarXz,
-    #[default]
+    #[cfg_attr(not(windows), default)]
+    #[schemars(title = ".tar.zst")]
     TarZst,
 }
 

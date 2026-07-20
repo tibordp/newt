@@ -66,34 +66,36 @@ pub const API_DISCOVER_CONTAINERS: Api = Api(511);
 pub const API_DISCOVER_KUBE_CONTEXTS: Api = Api(512);
 pub const API_DISCOVER_KUBE_PODS: Api = Api(513);
 
-// Host VFS APIs — invoked by the agent, handled by the Tauri host.
-// Used by RemoteVfs to access the client-local filesystem.
-pub const API_HOST_VFS_LIST_FILES: Api = Api(600);
-pub const API_HOST_VFS_POLL_CHANGES: Api = Api(601);
-pub const API_HOST_VFS_FS_STATS: Api = Api(602);
-pub const API_HOST_VFS_OPEN_READ_ASYNC: Api = Api(603);
-pub const API_HOST_VFS_READ_CHUNK: Api = Api(621);
-pub const API_HOST_VFS_READ_RANGE: Api = Api(604);
-pub const API_HOST_VFS_FILE_DETAILS: Api = Api(605);
-pub const API_HOST_VFS_FILE_INFO: Api = Api(606);
-pub const API_HOST_VFS_OVERWRITE_ASYNC_BEGIN: Api = Api(607);
-pub const API_HOST_VFS_WRITE_CHUNK: Api = Api(622);
-pub const API_HOST_VFS_OVERWRITE_ASYNC_FINISH: Api = Api(623);
-pub const API_HOST_VFS_OVERWRITE_ASYNC_ABORT: Api = Api(629);
-pub const API_HOST_VFS_CREATE_DIRECTORY: Api = Api(608);
-pub const API_HOST_VFS_CREATE_SYMLINK: Api = Api(609);
-pub const API_HOST_VFS_TOUCH: Api = Api(610);
-pub const API_HOST_VFS_TRUNCATE: Api = Api(611);
-pub const API_HOST_VFS_REMOVE_FILE: Api = Api(612);
-pub const API_HOST_VFS_REMOVE_DIR: Api = Api(613);
-pub const API_HOST_VFS_REMOVE_TREE: Api = Api(614);
-pub const API_HOST_VFS_GET_METADATA: Api = Api(615);
-pub const API_HOST_VFS_SET_METADATA: Api = Api(616);
-pub const API_HOST_VFS_AVAILABLE_SPACE: Api = Api(617);
-pub const API_HOST_VFS_RENAME: Api = Api(618);
-pub const API_HOST_VFS_COPY_WITHIN: Api = Api(619);
-pub const API_HOST_VFS_HARD_LINK: Api = Api(620);
-pub const API_HOST_VFS_TRASH_ITEM: Api = Api(628);
+// Remote VFS APIs — `RemoteVfs` (the caller) drives a real VFS living on the
+// other end of a connection. Direction is symmetric: the caller may run on the
+// agent and reach the Tauri host's VFS, or run on the host and reach a spawned
+// FS-only sub-agent's VFS (an agent mount).
+pub const API_VFS_LIST_FILES: Api = Api(600);
+pub const API_VFS_POLL_CHANGES: Api = Api(601);
+pub const API_VFS_FS_STATS: Api = Api(602);
+pub const API_VFS_OPEN_READ_ASYNC: Api = Api(603);
+pub const API_VFS_READ_CHUNK: Api = Api(621);
+pub const API_VFS_READ_RANGE: Api = Api(604);
+pub const API_VFS_FILE_DETAILS: Api = Api(605);
+pub const API_VFS_FILE_INFO: Api = Api(606);
+pub const API_VFS_OVERWRITE_ASYNC_BEGIN: Api = Api(607);
+pub const API_VFS_WRITE_CHUNK: Api = Api(622);
+pub const API_VFS_OVERWRITE_ASYNC_FINISH: Api = Api(623);
+pub const API_VFS_OVERWRITE_ASYNC_ABORT: Api = Api(629);
+pub const API_VFS_CREATE_DIRECTORY: Api = Api(608);
+pub const API_VFS_CREATE_SYMLINK: Api = Api(609);
+pub const API_VFS_TOUCH: Api = Api(610);
+pub const API_VFS_TRUNCATE: Api = Api(611);
+pub const API_VFS_REMOVE_FILE: Api = Api(612);
+pub const API_VFS_REMOVE_DIR: Api = Api(613);
+pub const API_VFS_REMOVE_TREE: Api = Api(614);
+pub const API_VFS_GET_METADATA: Api = Api(615);
+pub const API_VFS_SET_METADATA: Api = Api(616);
+pub const API_VFS_AVAILABLE_SPACE: Api = Api(617);
+pub const API_VFS_RENAME: Api = Api(618);
+pub const API_VFS_COPY_WITHIN: Api = Api(619);
+pub const API_VFS_HARD_LINK: Api = Api(620);
+pub const API_VFS_TRASH_ITEM: Api = Api(628);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);

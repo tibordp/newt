@@ -97,6 +97,22 @@
   }
 }
 
+// Section header interleaved into the "All" list to label each category.
+.categoryHeader {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+  padding-bottom: var(--space-3);
+  margin-top: var(--space-6);
+  border-bottom: 2px solid var(--color-border);
+
+  &:first-child {
+    margin-top: 0;
+  }
+}
+
 .settingInfo {
   flex: 1;
   min-width: 0;
