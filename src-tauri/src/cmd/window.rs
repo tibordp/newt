@@ -288,20 +288,24 @@ pub async fn connect_target(
     kind: crate::connections::ConnectionKind,
     open_in: crate::connections::OpenIn,
 ) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
     if open_in == crate::connections::OpenIn::Pane {
         let request = crate::connections::agent_mount_request_for(&kind)
             .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
-        return crate::connections::mount_into_pane(&ctx, pane_handle, request).await;
+        crate::connections::mount_into_pane(&ctx, pane_handle, request).await?;
+        crate::connections::record_recent(&app_handle, kind, open_in);
+        return Ok(());
     }
 
     let (target, label) = crate::connections::connection_target_for(&kind)
         .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
     crate::main_window::spawn_main_window(
-        ctx.window().app_handle(),
+        &app_handle,
         target,
         format!("Newt [{}]", label),
         [None, None],
     )?;
+    crate::connections::record_recent(&app_handle, kind, open_in);
     Ok(())
 }
 

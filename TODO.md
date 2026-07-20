@@ -31,6 +31,11 @@ Shipped (design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`). Follow-ups:
 Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`). Follow-ups:
 - `Vfs`-level remoting of the two verbs (`API_VFS_*` constants + `RemoteVfs`/`VfsDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today.
 
+## Persisted UI state (runtime-state / `state.json`)
+
+- Add S3 ad-hoc mounts to Quick Connect recents (spawn kinds + SFTP are recorded today). Needs a reconnect flow that re-prompts for credentials — or reopens the Mount S3 dialog prefilled with the non-secret fields — since S3 keys can't live in `state.json`.
+- Persist window geometry (main + viewer/editor size/position/maximized) via `tauri-plugin-window-state`. Must handle the pre-warmed hidden viewer/editor windows (`PrewarmedWindow`, keyed per main-window label) so restore lands on the window that actually shows the file.
+
 ## Dialog visual uplift
 
 Shipped (shared dialog primitives in `modals/primitives/`, all ~26 dialogs migrated). Remaining:

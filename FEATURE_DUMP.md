@@ -368,6 +368,7 @@ Opens a modal dialog with:
   - **Preserve timestamps** — maintains file modification and access times.
   - **Preserve owner** — maintains UID.
   - **Preserve group** — maintains GID.
+  - The three preserve toggles are **sticky**: the last-used values are remembered in `state.json` (`copy_move.*`) and seed the next Copy/Move. "Create symbolic link" is deliberately not sticky — a remembered value would silently change what Copy does.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
 **Copy execution**:
@@ -750,7 +751,7 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Save (Ctrl+S), Close (Ctrl+W)
-- **View**: Word Wrap (checkbox toggle)
+- **View**: Word Wrap (checkbox toggle). Each newly opened file starts from the `editor.word_wrap` preference (default off); toggling wrap on an open file overrides it for that file only.
 - **Language**: Radio buttons for all supported languages (Plain Text, C, C++, C#, CSS, Dockerfile, Go, HTML, INI/TOML, Java, JavaScript, JSON, Kotlin, Lua, Markdown, Perl, PHP, Python, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
 
 ### Status Bar
@@ -769,7 +770,7 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 
 ### Terminal Panel
 
-- Collapsible panel at the bottom of the main window.
+- Collapsible panel at the bottom of the main window. Its height is resizable by dragging the splitter and persists app-wide in `state.json` (`layout.terminal_height`), restored when the panel is next shown; the file-pane split above it always opens 50/50.
 - **Tab bar**: Lists all terminal tabs ("Terminal 1", "Terminal 2", etc.). Active tab has a distinct style. Defunct terminals show "(exited)" suffix.
 - **"+" button**: Creates a new terminal.
 - **"×" button** on each tab: Closes that terminal.
@@ -1055,6 +1056,8 @@ A search becomes a mounted VFS — results show up as a flat directory the user 
 - **Case-sensitive**: applies to both name glob and content search.
 - **Follow symlinks**: off by default (avoids loops and double-counting).
 
+The content-is-regex / case-sensitive / follow-symlinks toggles are **sticky** — the last-used values are remembered in `state.json` (`search.*`) and seed the next fresh search. Refining an existing search (below) instead restores that search's own params, which takes precedence.
+
 Submitting mounts a `SearchVfs` and navigates the active pane to its root. The walker runs in the background; matches stream into the pane as they're found, with the secondary "where from" hint inline next to each filename (formatted through the source VFS's descriptor — so an archive entry shows `/path/to/foo.zip/inner/dir`, not a raw inner-archive path).
 
 **Display & navigation**:
@@ -1108,12 +1111,13 @@ Spawn-style profiles additionally carry **`open_in`** (`window` default, or `pan
 
 Profiles are created via the **Save as connection profile** checkbox in the S3 Mount, SFTP Mount, and Connect dialogs.
 
-**Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing all saved connection profiles.
+**Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing recent ad-hoc connections and all saved connection profiles.
 
 - **Search**: Searches across name, ID, bucket, host, region, and endpoint URL.
 - **Each entry shows**: Connection name, type badge, and relevant details (bucket, host, region, etc.).
+- **Recent section**: Ad-hoc connections — ones connected without ticking "Save as connection profile" — are remembered in a bounded MRU (`recent_connections` in `state.json`, most-recent first, capped at 12) and shown in a separate "Recent" section above the saved profiles. Only the secret-free target is stored (SSH auth, S3 keys, etc. never land in `state.json`); spawn kinds (SSH/Docker/Podman/Kubernetes agent/Custom) and SFTP are recorded, S3 is not (its keys can't be replayed). A recent that now matches a saved profile is filtered out — the profile already covers it. Selecting a recent reconnects it exactly as the connect dialog would; **Delete** (or the ×) forgets it.
 - **Enter**: Activates the selected connection (mounts VFS, opens a new session window, or mounts a pane-scoped agent VFS per the profile's `open_in`; pane-scoped spawn profiles are marked "pane mount").
-- **Delete**: Removes the selected profile (with inline Yes/No confirmation). Also removes associated keychain secrets.
+- **Delete**: Removes the selected saved profile (also its keychain secrets) or forgets the selected recent — with inline Yes/No confirmation.
 - **Escape**: Closes the palette.
 - Empty state: "No saved connections. Use the connect or mount dialogs to save one."
 
@@ -1362,7 +1366,7 @@ Located at `~/.config/newt/settings.toml`. Hot-reloaded — changes to the file 
 
 ### Runtime State File
 
-`~/.config/newt/state.json` — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Currently holds per-pane column widths (`column_widths.<pane>.<column>`) and the app-wide webview zoom factor (`zoom`); intended home for future layout state (window geometry, splitter positions). No file watcher — external edits apply on next launch.
+`~/.config/newt/state.json` — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Intended home for future layout state (window geometry). No file watcher — external edits apply on next launch.
 
 ### Full Settings Structure
 
@@ -1407,6 +1411,9 @@ standard_folders = true     # Show Home, Downloads, Documents, etc.
 system_bookmarks = true     # Show GTK bookmarks (Linux)
 mounts = true               # Show mounted volumes
 recent_folders = true       # Show recently visited directories
+
+[editor]
+word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
 [[bookmark]]
 path = "/home/user/projects"

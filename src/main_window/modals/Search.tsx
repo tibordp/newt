@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { commands } from "../../lib/bindings";
-import { tryRun } from "../../lib/ipc";
+import { safe, tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   DialogShell,
@@ -21,6 +21,7 @@ export default function SearchDialog({
   path,
   display_path,
   prefill,
+  defaults,
   cancel,
   context,
 }: SearchProps) {
@@ -28,19 +29,28 @@ export default function SearchDialog({
   const [contentPattern, setContentPattern] = useState(
     prefill?.content_pattern ?? "",
   );
+  // Refine (prefill) restores the live search's options; a fresh search seeds
+  // from the sticky last-used defaults.
   const [contentIsRegex, setContentIsRegex] = useState(
-    prefill?.content_is_regex ?? false,
+    prefill?.content_is_regex ?? defaults.content_is_regex,
   );
   const [caseSensitive, setCaseSensitive] = useState(
-    prefill?.case_sensitive ?? false,
+    prefill?.case_sensitive ?? defaults.case_sensitive,
   );
   const [followSymlinks, setFollowSymlinks] = useState(
-    prefill?.follow_symlinks ?? false,
+    prefill?.follow_symlinks ?? defaults.follow_symlinks,
   );
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { pending, error, run } = useAsyncAction(async () =>
-    tryRun(
+  const { pending, error, run } = useAsyncAction(async () => {
+    safe(
+      commands.updateRuntimeState("search", {
+        case_sensitive: caseSensitive,
+        content_is_regex: contentIsRegex,
+        follow_symlinks: followSymlinks,
+      }),
+    );
+    return tryRun(
       commands.mountSearch(
         context?.pane_handle ?? 0,
         path,
@@ -50,8 +60,8 @@ export default function SearchDialog({
         caseSensitive,
         followSymlinks,
       ),
-    ),
-  );
+    );
+  });
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

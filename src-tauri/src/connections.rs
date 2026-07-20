@@ -27,7 +27,7 @@ pub enum OpenIn {
     Pane,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
     S3 {
@@ -102,6 +102,66 @@ pub enum ConnectionKind {
         #[serde(default)]
         skip_bootstrap: bool,
     },
+}
+
+impl ConnectionKind {
+    /// Stable key identifying the connection *target* — excludes behavior
+    /// flags (login shell, agent forwarding, …) and secrets. Used to de-dupe
+    /// recents and to match a recent against a saved profile.
+    pub fn identity(&self) -> String {
+        let opt = |o: &Option<String>| o.as_deref().unwrap_or("").to_string();
+        match self {
+            ConnectionKind::S3 {
+                region,
+                bucket,
+                endpoint_url,
+                credential_mode,
+                profile,
+                role_arn,
+                external_id,
+            } => format!(
+                "s3:{}|{}|{}|{}|{}|{}|{}",
+                opt(region),
+                opt(bucket),
+                opt(endpoint_url),
+                credential_mode,
+                opt(profile),
+                opt(role_arn),
+                opt(external_id),
+            ),
+            ConnectionKind::Sftp { host } => format!("sftp:{host}"),
+            ConnectionKind::Ssh { host, .. } => format!("ssh:{host}"),
+            ConnectionKind::Docker {
+                container, user, ..
+            } => format!("docker:{}@{}", opt(user), container),
+            ConnectionKind::Podman {
+                container, user, ..
+            } => format!("podman:{}@{}", opt(user), container),
+            ConnectionKind::Kube {
+                context,
+                namespace,
+                pod,
+                container,
+            } => format!(
+                "kube:{}|{}|{}|{}",
+                opt(context),
+                opt(namespace),
+                pod,
+                opt(container)
+            ),
+            ConnectionKind::Custom { command, .. } => format!("custom:{command}"),
+        }
+    }
+}
+
+/// Record an ad-hoc connection into the recent-connections MRU. Called from
+/// the connect commands, so both fresh connects and reconnects-from-recents
+/// bump the entry to the front.
+pub fn record_recent(app_handle: &tauri::AppHandle, kind: ConnectionKind, open_in: OpenIn) {
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    global_ctx
+        .runtime_state()
+        .record_recent_connection(kind, open_in);
 }
 
 fn default_credential_mode() -> String {
@@ -523,4 +583,31 @@ pub async fn mount_into_pane(
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_ignores_behavior_flags_and_secrets() {
+        // Same host, different login-shell/agent flags → same target.
+        let a = ConnectionKind::Ssh {
+            host: "box".into(),
+            forward_agent: false,
+            login_shell: true,
+        };
+        let b = ConnectionKind::Ssh {
+            host: "box".into(),
+            forward_agent: true,
+            login_shell: false,
+        };
+        assert_eq!(a.identity(), b.identity());
+
+        // Different targets differ; kind is part of the key.
+        assert_ne!(
+            a.identity(),
+            ConnectionKind::Sftp { host: "box".into() }.identity()
+        );
+    }
 }

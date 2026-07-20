@@ -62,6 +62,11 @@ pub fn dialog(
     } else {
         crate::connections::OpenIn::Window
     };
+    let rt_state = {
+        let app_handle = ctx.window().app_handle().clone();
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx.runtime_state().state()
+    };
     // Set when a Properties modal wants its extended-property sheet
     // fetched after opening (open-then-fill): (modal paths — the write
     // guard, sheet paths — the file entries to actually fetch).
@@ -373,6 +378,7 @@ pub fn dialog(
                         destination,
                         display_destination,
                         summary,
+                        defaults: rt_state.copy_move.clone(),
                     }
                 }
                 DialogKind::CreateArchive => {
@@ -466,6 +472,7 @@ pub fn dialog(
                         path,
                         display_path,
                         prefill,
+                        defaults: rt_state.search.clone(),
                     }
                 }
                 DialogKind::MountK8s => ModalDataKind::MountK8s {
@@ -475,8 +482,20 @@ pub fn dialog(
                     let app_handle = ctx.window().app_handle().clone();
                     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
+                    let connections = crate::connections::list_connections(&config_dir);
+                    // Hide any recent that now matches a saved profile — the
+                    // profile is already one keystroke away in this palette.
+                    let saved: std::collections::HashSet<String> =
+                        connections.iter().map(|c| c.kind.identity()).collect();
+                    let recent_connections = rt_state
+                        .recent_connections
+                        .iter()
+                        .filter(|r| !saved.contains(&r.kind.identity()))
+                        .cloned()
+                        .collect();
                     ModalDataKind::QuickConnect {
-                        connections: crate::connections::list_connections(&config_dir),
+                        connections,
+                        recent_connections,
                     }
                 }
                 DialogKind::SelectVfs => ModalDataKind::SelectVfs {

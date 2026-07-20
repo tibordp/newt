@@ -2,7 +2,12 @@ import { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 
-import { commands, type ConnectionProfile } from "../../lib/bindings";
+import {
+  commands,
+  type ConnectionKind,
+  type ConnectionProfile,
+  type RecentConnection,
+} from "../../lib/bindings";
 import { safe, safeSilent } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { Palette, Highlight, fuzzyMatch } from "./Palette";
@@ -10,10 +15,11 @@ import styles from "./HotPaths.module.scss";
 
 type QuickConnectProps = {
   connections: ConnectionProfile[];
+  recentConnections: RecentConnection[];
   state: MainWindowState | null;
 };
 
-const TYPE_LABELS: Record<ConnectionProfile["type"], string> = {
+const TYPE_LABELS: Record<ConnectionKind["type"], string> = {
   s3: "S3",
   sftp: "SFTP",
   ssh: "SSH",
@@ -25,7 +31,9 @@ const TYPE_LABELS: Record<ConnectionProfile["type"], string> = {
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
-function connectionDetail(c: ConnectionProfile): string {
+// Reads only the (flattened) kind fields, so it works for both a saved
+// profile and a recent connection.
+function connectionDetail(c: ConnectionKind): string {
   switch (c.type) {
     case "s3": {
       const parts: string[] = [];
@@ -58,68 +66,100 @@ function subtitle(c: ConnectionProfile): string {
   if (c.open_in === "pane" && c.type !== "s3" && c.type !== "sftp") {
     parts.push("pane mount");
   }
-  return parts.join(" \u2014 ");
+  return parts.join(" — ");
 }
 
-function searchableText(c: ConnectionProfile): string {
-  return [c.name, c.id, connectionDetail(c)].filter(Boolean).join(" ");
+function recentLabel(rc: RecentConnection): string {
+  return connectionDetail(rc) || TYPE_LABELS[rc.type];
+}
+
+function recentSubtitle(rc: RecentConnection): string {
+  const parts = [TYPE_LABELS[rc.type] || rc.type];
+  if (rc.open_in === "pane" && rc.type !== "sftp") parts.push("pane mount");
+  return parts.join(" — ");
 }
 
 export default function QuickConnect({
   connections,
+  recentConnections,
   state,
 }: QuickConnectProps) {
   const [filter, setFilter] = useState("");
+  // Holds the cmdk value of the row pending delete-confirmation, or null.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const paneHandle =
     state?.display_options.panes_focused && state?.display_options.active_pane;
+  const ph = typeof paneHandle === "number" ? paneHandle : 0;
 
-  const filtered = useMemo(() => {
+  const filteredRecents = useMemo(() => {
+    return recentConnections
+      .map((rc) => ({
+        rc,
+        ...fuzzyMatch(filter, `${recentLabel(rc)} ${TYPE_LABELS[rc.type]}`),
+      }))
+      .filter(({ matches }) => matches)
+      .sort((a, b) => b.score - a.score);
+  }, [recentConnections, filter]);
+
+  const filteredSaved = useMemo(() => {
     return connections
-      .map((c) => {
-        const text = searchableText(c);
-        const result = fuzzyMatch(filter, text);
-        return { connection: c, ...result };
-      })
+      .map((c) => ({
+        c,
+        ...fuzzyMatch(filter, `${c.name} ${c.id} ${connectionDetail(c)}`),
+      }))
       .filter(({ matches }) => matches)
       .sort((a, b) => b.score - a.score);
   }, [connections, filter]);
 
+  const reconnect = (rc: RecentConnection) => {
+    switch (rc.type) {
+      case "sftp":
+        safe(commands.mountSftp(ph, rc.host));
+        break;
+      case "s3":
+        break; // S3 is never recorded (keys aren't persisted); defensive.
+      default:
+        safe(commands.connectTarget(ph, rc, rc.open_in ?? "window"));
+    }
+  };
+
   const onSelect = (value: string) => {
     if (pendingDelete !== null) return;
-    safe(
-      commands.connectProfile(
-        typeof paneHandle === "number" ? paneHandle : 0,
-        value,
-      ),
-    );
+    if (value.startsWith("recent:")) {
+      const rc = filteredRecents[parseInt(value.slice(7), 10)]?.rc;
+      if (rc) reconnect(rc);
+    } else if (value.startsWith("saved:")) {
+      safe(commands.connectProfile(ph, value.slice(6)));
+    }
   };
 
-  const requestDelete = (id: string, e?: React.MouseEvent) => {
+  const requestDelete = (value: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     e?.preventDefault();
-    setPendingDelete(id);
+    setPendingDelete(value);
   };
 
-  const confirmDelete = async (id: string) => {
-    setPendingDelete(null);
-    await safeSilent(commands.cmdDeleteConnection(id));
-    // Re-open to refresh the list
-    await safeSilent(
+  const reopen = () =>
+    safeSilent(
       commands.dialog(
         "quick_connect",
         typeof paneHandle === "number" ? paneHandle : null,
       ),
     );
+
+  const confirmDelete = async (value: string) => {
+    setPendingDelete(null);
+    if (value.startsWith("recent:")) {
+      const rc = filteredRecents[parseInt(value.slice(7), 10)]?.rc;
+      if (rc) await safeSilent(commands.forgetRecentConnection(rc));
+    } else if (value.startsWith("saved:")) {
+      await safeSilent(commands.cmdDeleteConnection(value.slice(6)));
+    }
+    await reopen();
   };
 
   const cancelDelete = () => setPendingDelete(null);
-
-  const getSelectedId = (): string | null => {
-    const el = document.querySelector('[cmdk-item][data-selected="true"]');
-    return el?.getAttribute("data-value") ?? null;
-  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (pendingDelete !== null) {
@@ -139,13 +179,42 @@ export default function QuickConnect({
     }
 
     if (e.key === "Delete") {
-      const id = getSelectedId();
-      if (id) {
+      const el = document.querySelector('[cmdk-item][data-selected="true"]');
+      const value = el?.getAttribute("data-value");
+      if (value) {
         e.preventDefault();
-        requestDelete(id);
+        requestDelete(value);
       }
     }
   };
+
+  const confirmRow = (label: string) => (
+    <div className={styles.confirmRow}>
+      <span>{label}</span>
+      <span className={styles.confirmActions}>
+        <button
+          className={styles.confirmYes}
+          onClick={(e) => {
+            e.stopPropagation();
+            confirmDelete(pendingDelete!);
+          }}
+          tabIndex={-1}
+        >
+          Yes
+        </button>
+        <button
+          className={styles.confirmNo}
+          onClick={(e) => {
+            e.stopPropagation();
+            cancelDelete();
+          }}
+          tabIndex={-1}
+        >
+          No
+        </button>
+      </span>
+    </div>
+  );
 
   return (
     <Dialog.Content
@@ -169,71 +238,92 @@ export default function QuickConnect({
         </div>
         <Command.List>
           <Command.Empty>
-            {connections.length === 0
+            {connections.length === 0 && recentConnections.length === 0
               ? "No saved connections. Use the connect or mount dialogs to save one."
               : "No matching connections."}
           </Command.Empty>
-          {filtered.map(({ connection: c }) => {
-            const isConfirming = pendingDelete === c.id;
-            return (
-              <Command.Item key={c.id} value={c.id} onSelect={onSelect}>
-                {isConfirming ? (
-                  <div className={styles.confirmRow}>
-                    <span>Remove connection?</span>
-                    <span className={styles.confirmActions}>
-                      <button
-                        className={styles.confirmYes}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          confirmDelete(c.id);
-                        }}
-                        tabIndex={-1}
-                      >
-                        Yes
-                      </button>
-                      <button
-                        className={styles.confirmNo}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          cancelDelete();
-                        }}
-                        tabIndex={-1}
-                      >
-                        No
-                      </button>
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    <div className={styles.itemContent}>
-                      <span className={styles.name}>
-                        <Highlight
-                          text={c.name}
-                          filter={filter}
-                          highlightClass={styles.highlight}
-                        />
-                      </span>
-                      <span className={styles.path}>
-                        <Highlight
-                          text={subtitle(c)}
-                          filter={filter}
-                          highlightClass={styles.highlight}
-                        />
-                      </span>
-                    </div>
-                    <button
-                      className={styles.deleteBtn}
-                      onClick={(e) => requestDelete(c.id, e)}
-                      title="Remove connection"
-                      tabIndex={-1}
-                    >
-                      &times;
-                    </button>
-                  </>
-                )}
-              </Command.Item>
-            );
-          })}
+
+          {filteredRecents.length > 0 && (
+            <Command.Group heading="Recent">
+              {filteredRecents.map(({ rc }, i) => {
+                const value = `recent:${i}`;
+                return (
+                  <Command.Item key={value} value={value} onSelect={onSelect}>
+                    {pendingDelete === value ? (
+                      confirmRow("Forget this connection?")
+                    ) : (
+                      <>
+                        <div className={styles.itemContent}>
+                          <span className={styles.name}>
+                            <Highlight
+                              text={recentLabel(rc)}
+                              filter={filter}
+                              highlightClass={styles.highlight}
+                            />
+                          </span>
+                          <span className={styles.path}>
+                            {recentSubtitle(rc)}
+                          </span>
+                        </div>
+                        <button
+                          className={styles.deleteBtn}
+                          onClick={(e) => requestDelete(value, e)}
+                          title="Forget connection"
+                          tabIndex={-1}
+                        >
+                          &times;
+                        </button>
+                      </>
+                    )}
+                  </Command.Item>
+                );
+              })}
+            </Command.Group>
+          )}
+
+          {filteredSaved.length > 0 && (
+            <Command.Group
+              heading={filteredRecents.length > 0 ? "Saved" : undefined}
+            >
+              {filteredSaved.map(({ c }) => {
+                const value = `saved:${c.id}`;
+                return (
+                  <Command.Item key={value} value={value} onSelect={onSelect}>
+                    {pendingDelete === value ? (
+                      confirmRow("Remove connection?")
+                    ) : (
+                      <>
+                        <div className={styles.itemContent}>
+                          <span className={styles.name}>
+                            <Highlight
+                              text={c.name}
+                              filter={filter}
+                              highlightClass={styles.highlight}
+                            />
+                          </span>
+                          <span className={styles.path}>
+                            <Highlight
+                              text={subtitle(c)}
+                              filter={filter}
+                              highlightClass={styles.highlight}
+                            />
+                          </span>
+                        </div>
+                        <button
+                          className={styles.deleteBtn}
+                          onClick={(e) => requestDelete(value, e)}
+                          title="Remove connection"
+                          tabIndex={-1}
+                        >
+                          &times;
+                        </button>
+                      </>
+                    )}
+                  </Command.Item>
+                );
+              })}
+            </Command.Group>
+          )}
         </Command.List>
       </Palette>
     </Dialog.Content>

@@ -1,4 +1,5 @@
 use newt_common::vfs::{MountRequest, VfsId, VfsPath, lookup_descriptor, search::SearchParams};
+use tauri::Manager;
 
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, PaneHandle};
@@ -77,7 +78,21 @@ pub async fn mount_sftp(
     pane_handle: PaneHandle,
     host: String,
 ) -> Result<(), Error> {
-    mount_and_navigate(ctx, pane_handle, MountRequest::Sftp { host }, false).await
+    let app_handle = ctx.window().app_handle().clone();
+    mount_and_navigate(
+        ctx,
+        pane_handle,
+        MountRequest::Sftp { host: host.clone() },
+        false,
+    )
+    .await?;
+    // SFTP always mounts into the pane; record only on a successful mount.
+    crate::connections::record_recent(
+        &app_handle,
+        crate::connections::ConnectionKind::Sftp { host },
+        crate::connections::OpenIn::Pane,
+    );
+    Ok(())
 }
 
 #[tauri::command]

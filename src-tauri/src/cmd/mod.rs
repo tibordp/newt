@@ -244,6 +244,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             // Runtime state (ephemeral UI state, not settings.toml)
             runtime_state::get_runtime_state,
             runtime_state::update_runtime_state,
+            runtime_state::forget_recent_connection,
             // Hot paths
             preferences::get_hot_paths,
             preferences::add_bookmark,

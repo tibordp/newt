@@ -9,6 +9,11 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
+use crate::connections::{ConnectionKind, OpenIn};
+
+/// Cap on remembered ad-hoc connections; oldest roll off.
+const RECENT_CONNECTIONS_MAX: usize = 12;
+
 /// App-wide runtime state persisted to `state.json` in the config dir.
 /// Every field must default so old files keep deserializing as the
 /// struct grows. Unknown fields are rejected so `update_key` can't
@@ -21,6 +26,16 @@ pub struct RuntimeState {
     pub column_widths: BTreeMap<String, BTreeMap<String, f64>>,
     /// Webview zoom factor, applied to every window.
     pub zoom: f64,
+    /// Persisted panel layout sizes.
+    pub layout: LayoutState,
+    /// Sticky last-used Copy/Move option toggles.
+    pub copy_move: CopyMoveDefaults,
+    /// Sticky last-used Search option toggles.
+    pub search: SearchDefaults,
+    /// Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
+    /// never stored here (they live in connections.toml); the Quick Connect
+    /// palette filters any recent that matches a saved profile.
+    pub recent_connections: Vec<RecentConnection>,
 }
 
 impl Default for RuntimeState {
@@ -28,8 +43,53 @@ impl Default for RuntimeState {
         Self {
             column_widths: BTreeMap::new(),
             zoom: 1.0,
+            layout: LayoutState::default(),
+            copy_move: CopyMoveDefaults::default(),
+            search: SearchDefaults::default(),
+            recent_connections: Vec::new(),
         }
     }
+}
+
+/// A remembered ad-hoc connection target. Carries only the secret-free
+/// `ConnectionKind` (S3 keys, SSH auth, etc. never land here) plus how it
+/// opened, so it can be re-launched exactly like the connect dialog would.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct RecentConnection {
+    #[serde(default)]
+    pub open_in: OpenIn,
+    #[serde(flatten)]
+    pub kind: ConnectionKind,
+}
+
+/// Persisted sizes for resizable panels. The file-pane split is intentionally
+/// absent — it always opens 50/50.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(default, deny_unknown_fields)]
+pub struct LayoutState {
+    /// Terminal panel height in px. `None` uses the built-in default.
+    pub terminal_height: Option<f64>,
+}
+
+/// Last-used Copy/Move toggles, re-seeded into the dialog on open.
+/// `create_symlink` is deliberately not here — a sticky "create symlink"
+/// would silently change what Copy does.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(default, deny_unknown_fields)]
+pub struct CopyMoveDefaults {
+    pub preserve_timestamps: bool,
+    pub preserve_owner: bool,
+    pub preserve_group: bool,
+}
+
+/// Last-used Search toggles, re-seeded into fresh searches (the refine flow
+/// still restores from the live search VFS instead).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(default, deny_unknown_fields)]
+pub struct SearchDefaults {
+    pub case_sensitive: bool,
+    pub content_is_regex: bool,
+    pub follow_symlinks: bool,
 }
 
 pub struct RuntimeStateManager {
@@ -74,14 +134,54 @@ impl RuntimeStateManager {
             *guard = new_state.clone();
             new_state
         };
+        self.persist_and_broadcast(&new_state)
+    }
+
+    /// Record an ad-hoc connection at the front of the MRU list, de-duped by
+    /// target identity and capped. Best-effort — a persistence failure only
+    /// warns, since the connection itself already succeeded.
+    pub fn record_recent_connection(&self, kind: ConnectionKind, open_in: OpenIn) {
+        let new_state = {
+            let mut guard = self.state.write();
+            push_recent(&mut guard.recent_connections, kind, open_in);
+            guard.clone()
+        };
+        if let Err(e) = self.persist_and_broadcast(&new_state) {
+            warn!("failed to persist recent connection: {}", e);
+        }
+    }
+
+    /// Drop the recent connection with the given target identity.
+    pub fn forget_recent_connection(&self, identity: &str) -> Result<(), String> {
+        let new_state = {
+            let mut guard = self.state.write();
+            guard
+                .recent_connections
+                .retain(|r| r.kind.identity() != identity);
+            guard.clone()
+        };
+        self.persist_and_broadcast(&new_state)
+    }
+
+    fn persist_and_broadcast(&self, new_state: &RuntimeState) -> Result<(), String> {
         std::fs::write(
             &self.path,
-            serde_json::to_string_pretty(&new_state).expect("RuntimeState serializes"),
+            serde_json::to_string_pretty(new_state).expect("RuntimeState serializes"),
         )
         .map_err(|e| format!("Failed to write {:?}: {}", self.path, e))?;
-        let _ = self.app_handle.emit("update:runtime-state", &new_state);
+        let _ = self.app_handle.emit("update:runtime-state", new_state);
         Ok(())
     }
+}
+
+/// Prepend an ad-hoc connection, de-duped by target identity (an existing
+/// entry for the same target is removed first, so the list stays MRU) and
+/// capped at `RECENT_CONNECTIONS_MAX`.
+fn push_recent(list: &mut Vec<RecentConnection>, kind: ConnectionKind, open_in: OpenIn) {
+    let identity = kind.identity();
+    list.retain(|r| r.kind.identity() != identity);
+    list.insert(0, RecentConnection { open_in, kind });
+    list.truncate(RECENT_CONNECTIONS_MAX);
 }
 
 /// Set `value` at a dotted path inside a JSON object tree, creating
@@ -148,6 +248,41 @@ mod tests {
         let mut json = serde_json::to_value(RuntimeState::default()).unwrap();
         set_dotted_path(&mut json, "bogus_field.x", serde_json::json!(1)).unwrap();
         assert!(serde_json::from_value::<RuntimeState>(json).is_err());
+    }
+
+    fn ssh(host: &str) -> ConnectionKind {
+        ConnectionKind::Ssh {
+            host: host.to_string(),
+            forward_agent: false,
+            login_shell: true,
+        }
+    }
+
+    #[test]
+    fn push_recent_dedups_and_bumps_to_front() {
+        let mut list = Vec::new();
+        push_recent(&mut list, ssh("a"), OpenIn::Window);
+        push_recent(&mut list, ssh("b"), OpenIn::Window);
+        // Re-connecting to `a` moves it to the front without duplicating.
+        push_recent(&mut list, ssh("a"), OpenIn::Pane);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].kind.identity(), "ssh:a");
+        assert_eq!(list[0].open_in, OpenIn::Pane);
+        assert_eq!(list[1].kind.identity(), "ssh:b");
+    }
+
+    #[test]
+    fn push_recent_caps_oldest_out() {
+        let mut list = Vec::new();
+        for i in 0..(RECENT_CONNECTIONS_MAX + 3) {
+            push_recent(&mut list, ssh(&format!("h{i}")), OpenIn::Window);
+        }
+        assert_eq!(list.len(), RECENT_CONNECTIONS_MAX);
+        // Newest first, oldest three rolled off.
+        assert_eq!(
+            list[0].kind.identity(),
+            format!("ssh:h{}", RECENT_CONNECTIONS_MAX + 2)
+        );
     }
 
     #[test]

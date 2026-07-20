@@ -27,6 +27,18 @@ pub struct AppPreferences {
     #[serde(default)]
     #[schemars(title = "Environment")]
     pub environment: EnvironmentPreferences,
+    #[serde(default)]
+    #[schemars(title = "Editor")]
+    pub editor: EditorPreferences,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct EditorPreferences {
+    /// Wrap long lines in the built-in text editor by default. Toggling wrap
+    /// on an open file still overrides this for that file.
+    #[schemars(title = "Word Wrap")]
+    pub word_wrap: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]

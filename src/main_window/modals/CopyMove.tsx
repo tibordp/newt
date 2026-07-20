@@ -22,12 +22,17 @@ export default function CopyMove({
   display_destination,
   summary: itemSummary,
   default_name,
+  defaults,
   cancel,
   context,
 }: CopyMoveProps) {
-  const [preserveTimestamps, setPreserveTimestamps] = useState(false);
-  const [preserveOwner, setPreserveOwner] = useState(false);
-  const [preserveGroup, setPreserveGroup] = useState(false);
+  const [preserveTimestamps, setPreserveTimestamps] = useState(
+    defaults.preserve_timestamps,
+  );
+  const [preserveOwner, setPreserveOwner] = useState(defaults.preserve_owner);
+  const [preserveGroup, setPreserveGroup] = useState(defaults.preserve_group);
+  // Deliberately not sticky — a remembered "create symlink" would silently
+  // change what Copy does.
   const [createSymlink, setCreateSymlink] = useState(false);
   const [name, setName] = useState(default_name ?? "");
 
@@ -48,6 +53,15 @@ export default function CopyMove({
 
     const renameTo =
       default_name != null && name !== default_name ? name : null;
+    // Remember the preserve toggles for the next Copy/Move (create_symlink
+    // stays excluded).
+    safe(
+      commands.updateRuntimeState("copy_move", {
+        preserve_timestamps: preserveTimestamps,
+        preserve_owner: preserveOwner,
+        preserve_group: preserveGroup,
+      }),
+    );
     safe(
       commands.startCopyMove(
         kind,

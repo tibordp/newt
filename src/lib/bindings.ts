@@ -649,6 +649,14 @@ async updateRuntimeState(key: string, value: JsonValue) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+async forgetRecentConnection(kind: ConnectionKind) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("forget_recent_connection", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getHotPaths() : Promise<Result<HotPathEntry[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_hot_paths") };
@@ -1420,7 +1428,7 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1618,6 +1626,12 @@ export type CopyFormat =
  * Printable ASCII (0x20–0x7e); other bytes become `.`.
  */
 "ascii"
+/**
+ * Last-used Copy/Move toggles, re-seeded into the dialog on open.
+ * `create_symlink` is deliberately not here — a sticky "create symlink"
+ * would silently change what Copy does.
+ */
+export type CopyMoveDefaults = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean }
 export type CopyOptions = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean; create_symlink: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
@@ -1658,6 +1672,12 @@ warning: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
+export type EditorPreferences = { 
+/**
+ * Wrap long lines in the built-in text editor by default. Toggling wrap
+ * on an open file still overrides this for that file.
+ */
+word_wrap: boolean }
 export type EnricherPreferences = { 
 /**
  * Show git status in file listings: per-row colors for
@@ -1776,6 +1796,15 @@ recent_folders: boolean }
 export type IssueAction = "skip" | "overwrite" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
+/**
+ * Persisted sizes for resizable panels. The file-pane split is intentionally
+ * absent — it always opens 50/50.
+ */
+export type LayoutState = { 
+/**
+ * Terminal panel height in px. `None` uses the built-in default.
+ */
+terminal_height: number | null }
 export type ModalContext = { pane_handle: PaneHandle | null }
 export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
@@ -1815,7 +1844,11 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
  */
-default_name: string | null } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+default_name: string | null; 
+/**
+ * Sticky last-used preserve toggles, seeded from runtime state.
+ */
+defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1858,7 +1891,17 @@ display_path: string;
  * the dialog opens pre-filled with these. `None` for a fresh
  * search.
  */
-prefill: SearchParams | null } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+prefill: SearchParams | null; 
+/**
+ * Sticky last-used toggles for a fresh search, seeded from runtime
+ * state. Ignored when `prefill` is present (refine restores instead).
+ */
+defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
+/**
+ * Ad-hoc (unsaved) targets, most-recent first, already filtered to
+ * exclude any that match a saved profile.
+ */
+recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -1911,7 +1954,11 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
  */
-default_name: string | null } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+default_name: string | null; 
+/**
+ * Sticky last-used preserve toggles, seeded from runtime state.
+ */
+defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1954,7 +2001,17 @@ display_path: string;
  * the dialog opens pre-filled with these. `None` for a fresh
  * search.
  */
-prefill: SearchParams | null } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+prefill: SearchParams | null; 
+/**
+ * Sticky last-used toggles for a fresh search, seeded from runtime
+ * state. Ignored when `prefill` is present (refine restores instead).
+ */
+defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
+/**
+ * Ad-hoc (unsaved) targets, most-recent first, already filtered to
+ * exclude any that match a saved profile.
+ */
+recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -2098,6 +2155,12 @@ export type PropertyValuePatch =
  */
 { replace_grants: { grants: PropertyGrant[] } }
 /**
+ * A remembered ad-hoc connection target. Carries only the secret-free
+ * `ConnectionKind` (S3 keys, SSH auth, etc. never land here) plus how it
+ * opened, so it can be re-launched exactly like the connect dialog would.
+ */
+export type RecentConnection = ({ type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean; login_shell?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }) & { open_in?: OpenIn }
+/**
  * A resolved keybinding after `mod+` expansion and cascading.
  */
 export type ResolvedBinding = { key: string; command: string; when: string | null }
@@ -2125,7 +2188,25 @@ column_widths: Partial<{ [key in string]: Partial<{ [key in string]: number }> }
 /**
  * Webview zoom factor, applied to every window.
  */
-zoom: number }
+zoom: number; 
+/**
+ * Persisted panel layout sizes.
+ */
+layout: LayoutState; 
+/**
+ * Sticky last-used Copy/Move option toggles.
+ */
+copy_move: CopyMoveDefaults; 
+/**
+ * Sticky last-used Search option toggles.
+ */
+search: SearchDefaults; 
+/**
+ * Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
+ * never stored here (they live in connections.toml); the Quick Connect
+ * palette filters any recent that matches a saved profile.
+ */
+recent_connections: RecentConnection[] }
 export type S3Credentials = { 
 /**
  * AWS access key ID (IAM user or assumed role).
@@ -2157,6 +2238,11 @@ role_arn: string | null;
  * External ID for AssumeRole (optional, for cross-account access).
  */
 external_id: string | null }
+/**
+ * Last-used Search toggles, re-seeded into fresh searches (the refine flow
+ * still restores from the live search VFS instead).
+ */
+export type SearchDefaults = { case_sensitive: boolean; content_is_regex: boolean; follow_symlinks: boolean }
 export type SearchMatch = { offset: number; length: number }
 /**
  * Parameters for a search. Captured at mount time and immutable for

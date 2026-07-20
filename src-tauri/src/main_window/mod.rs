@@ -530,6 +530,8 @@ pub enum ModalDataKind {
         /// Single-source transfers offer a rename field prefilled with the
         /// source's leaf name; `None` (multi-selection) hides it.
         default_name: Option<String>,
+        /// Sticky last-used preserve toggles, seeded from runtime state.
+        defaults: crate::runtime_state::CopyMoveDefaults,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -570,6 +572,9 @@ pub enum ModalDataKind {
         /// the dialog opens pre-filled with these. `None` for a fresh
         /// search.
         prefill: Option<newt_common::vfs::search::SearchParams>,
+        /// Sticky last-used toggles for a fresh search, seeded from runtime
+        /// state. Ignored when `prefill` is present (refine restores instead).
+        defaults: crate::runtime_state::SearchDefaults,
     },
     // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
     // the wire format serde emits.
@@ -580,6 +585,9 @@ pub enum ModalDataKind {
     },
     QuickConnect {
         connections: Vec<crate::connections::ConnectionProfile>,
+        /// Ad-hoc (unsaved) targets, most-recent first, already filtered to
+        /// exclude any that match a saved profile.
+        recent_connections: Vec<crate::runtime_state::RecentConnection>,
     },
     SelectVfs {
         targets: Vec<VfsTarget>,

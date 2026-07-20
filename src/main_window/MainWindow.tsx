@@ -41,6 +41,7 @@ import { MainWindowState } from "./types";
 import Pane from "./Pane";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
+import { useRuntimeState } from "../lib/runtimeState";
 import CommandBar from "./CommandBar";
 
 enablePatches();
@@ -143,6 +144,9 @@ function App() {
   const remoteState = useRemoteState<MainWindowState>("main_window", []);
   const terminalData = useTerminalData([]);
   const preferences = usePreferences();
+  const runtimeState = useRuntimeState();
+  // Persisted terminal panel height; the file-pane split stays 50/50.
+  const terminalHeight = runtimeState?.layout?.terminal_height ?? 300;
 
   // Trigger connect for remote/elevated; no-op for local (already connected).
   const initCalled = useRef(false);
@@ -347,7 +351,23 @@ function App() {
                   }
                 }}
               >
-                <Allotment vertical separator proportionalLayout={false}>
+                <Allotment
+                  vertical
+                  separator
+                  proportionalLayout={false}
+                  onDragEnd={(sizes) => {
+                    // [fileArea, terminal]; persist the terminal pane height.
+                    const h = sizes[1];
+                    if (h != null && h > 0) {
+                      safeSilent(
+                        commands.updateRuntimeState(
+                          "layout.terminal_height",
+                          h,
+                        ),
+                      );
+                    }
+                  }}
+                >
                   <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
                     <Allotment>
                       {remoteState.panes.map((props, i) => (
@@ -371,7 +391,7 @@ function App() {
                     </Allotment>
                   </Allotment.Pane>
                   <Allotment.Pane
-                    preferredSize={300}
+                    preferredSize={terminalHeight}
                     minSize={100}
                     priority={LayoutPriority.Low}
                     visible={remoteState.display_options.terminal_panel_visible}

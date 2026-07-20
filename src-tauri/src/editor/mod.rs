@@ -73,9 +73,16 @@ impl EditorWindow {
         let state = self.publisher.state();
         *state.file_path.write() = Some(file_path);
         *state.display_path.write() = Some(display_path);
-        // Reset state for new file
+        // Reset state for new file; word wrap falls back to the preference.
         *state.language.write() = "plaintext".to_string();
-        *state.word_wrap.write() = false;
+        *state.word_wrap.write() = self
+            .window
+            .app_handle()
+            .state::<GlobalContext>()
+            .preferences()
+            .settings()
+            .editor
+            .word_wrap;
         self.dirty.store(false, Ordering::SeqCst);
         let _ = self.publisher.publish_full();
     }
