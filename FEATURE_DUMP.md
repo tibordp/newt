@@ -122,6 +122,8 @@ Column widths are resizable by dragging the grip between column headers (minimum
 
 Click a column header to sort ascending by that key; click the same header again to toggle descending. A triangle indicator (▲/▼) shows the active sort column and direction.
 
+**Sort menu (keyboard, Mod+Shift+S)**: opens a compact menu anchored under the pane header listing every sort key, the current one marked with its ▲/▼. Each row has an underlined accelerator letter (and 1–9 by position); pressing it sorts by that key and closes the menu — a poor-man's chord, so `Mod+Shift+S` then `m` sorts by Modified. Pressing the same key again reverses direction (same toggle as a header click), so `Mod+Shift+S m m` flips to descending. **Holding Shift arms reverse**: `Shift+<key>` sorts by that key *descending* outright (`Mod+Shift+S`, then Shift+M → Modified descending), and while Shift is held the Reverse row lights up (with a `Shift` hint badge) to show it's in effect. Arrow keys + Enter also work; the highlight seeds on the current key so a bare Enter reverses it. `R` reverses without changing the key; `F` toggles "Folders first" (mutating the `appearance.folders_first` preference, like column reordering mutates prefs). Esc dismisses; focus returns to the pane. The menu is per-pane and keyboard-launched only (no click target). The command (`sort`) is rebindable and appears once in the command palette.
+
 **Available sort keys**: Name, Extension, Size, User, Group, Mode, Modified, Accessed, Created.
 
 **Sort behavior**:

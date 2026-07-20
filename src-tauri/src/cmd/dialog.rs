@@ -34,6 +34,8 @@ pub enum DialogKind {
     #[serde(rename = "mount_k8s")]
     #[specta(rename = "mount_k8s")]
     MountK8s,
+    /// Keyboard-launched quick sort menu, anchored to the pane header.
+    Sort,
     /// The connect dialog, but scoped to a pane mount (VFS selector entry).
     MountRemote,
     QuickConnect,
@@ -478,6 +480,13 @@ pub fn dialog(
                 DialogKind::MountK8s => ModalDataKind::MountK8s {
                     k8s_context: String::new(),
                 },
+                DialogKind::Sort => {
+                    let pane = pane.unwrap();
+                    ModalDataKind::SortMenu {
+                        sorting: pane.view_state().sorting.clone(),
+                        folders_first: ctx.preferences().load().appearance.folders_first,
+                    }
+                }
                 DialogKind::QuickConnect => {
                     let app_handle = ctx.window().app_handle().clone();
                     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
@@ -654,6 +663,7 @@ cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
 cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
 cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
+cmd_dialog!(cmd_sort, DialogKind::Sort);
 /// cmd+f. Unlike the other dialog shims this one isn't built with
 /// `cmd_dialog!`: on a search VFS the dialog reopens pre-filled to refine
 /// the current search (`VfsDescriptor::search_params`); on any other VFS

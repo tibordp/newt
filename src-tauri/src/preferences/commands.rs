@@ -341,6 +341,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: false,
         },
         CommandDef {
+            id: "sort".into(),
+            name: "Sort...".into(),
+            short_name: Some("Sort".into()),
+            category: "View".into(),
+            default_key: Some("mod+shift+s".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "close_window".into(),
             name: "Close Window".into(),
             short_name: Some("Close".into()),

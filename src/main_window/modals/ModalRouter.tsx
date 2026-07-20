@@ -17,7 +17,7 @@ const preventAutoFocus = (e: Event) => e.preventDefault();
 
 // Anchored per-pane (rendered inline by Pane via Radix DropdownMenu, with
 // their own dismissal behavior), so not routed here.
-const EXCLUDED_MODAL_TYPES = ["select_vfs", "history_navigator"];
+const EXCLUDED_MODAL_TYPES = ["select_vfs", "history_navigator", "sort_menu"];
 
 export default function ModalRouter({
   state,

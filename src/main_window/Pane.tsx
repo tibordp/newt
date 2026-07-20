@@ -16,6 +16,7 @@ import { safe, safeSilent } from "../lib/ipc";
 import { modifiers } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
+import SortMenu from "./modals/SortMenu";
 import type { ModalData } from "../lib/bindings";
 import {
   FileView,
@@ -685,6 +686,10 @@ function PaneInner(
     modal?.type === "select_vfs" && modal?.context?.pane_handle === paneHandle;
   const vfsTargets: VfsTarget[] =
     (isVfsSelectorOpen && modal?.data?.targets) || [];
+  const isSortMenuOpen =
+    modal?.type === "sort_menu" && modal?.context?.pane_handle === paneHandle;
+  const sortFoldersFirst: boolean =
+    (isSortMenuOpen && modal?.data?.folders_first) || false;
   const isHistoryNavigatorOpen =
     modal?.type === "history_navigator" &&
     modal?.context?.pane_handle === paneHandle;
@@ -1679,6 +1684,12 @@ function PaneInner(
           paneHandle={paneHandle}
           persistent={historyPersistent}
           open={isHistoryNavigatorOpen}
+        />
+        <SortMenu
+          sorting={sorting}
+          foldersFirst={sortFoldersFirst}
+          paneHandle={paneHandle}
+          open={isSortMenuOpen}
         />
       </div>
       <ContextMenu.Root>

@@ -583,6 +583,13 @@ pub enum ModalDataKind {
     MountK8s {
         k8s_context: String,
     },
+    /// Quick sort menu (keyboard-launched, anchored to the pane header).
+    SortMenu {
+        sorting: crate::main_window::pane::Sorting,
+        /// The `appearance.folders_first` preference, so the menu can show
+        /// and toggle it inline.
+        folders_first: bool,
+    },
     QuickConnect {
         connections: Vec<crate::connections::ConnectionProfile>,
         /// Ad-hoc (unsaved) targets, most-recent first, already filtered to

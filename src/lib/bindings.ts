@@ -809,6 +809,14 @@ async cmdSelectVfs(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdSort(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_sort", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdCommandPalette(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_command_palette", { paneHandle }) };
@@ -1660,6 +1668,10 @@ export type DeleteConfirmMode =
  */
 export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | 
 /**
+ * Keyboard-launched quick sort menu, anchored to the pane header.
+ */
+"sort" | 
+/**
  * The connect dialog, but scoped to a pane mount (VFS selector entry).
  */
 "mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
@@ -1896,7 +1908,16 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
+defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | 
+/**
+ * Quick sort menu (keyboard-launched, anchored to the pane header).
+ */
+{ type: "sort_menu"; data: { sorting: Sorting; 
+/**
+ * The `appearance.folders_first` preference, so the menu can show
+ * and toggle it inline.
+ */
+folders_first: boolean } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
 /**
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.
@@ -2006,7 +2027,16 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
+defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | 
+/**
+ * Quick sort menu (keyboard-launched, anchored to the pane header).
+ */
+{ type: "sort_menu"; data: { sorting: Sorting; 
+/**
+ * The `appearance.folders_first` preference, so the menu can show
+ * and toggle it inline.
+ */
+folders_first: boolean } } | { type: "quick_connect"; data: { connections: ConnectionProfile[]; 
 /**
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.

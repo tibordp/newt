@@ -1,0 +1,108 @@
+// Hidden trigger anchor — the dropdown is keyboard-launched (mod+shift+s) so
+// it has no visible click target. Stretched across the pane header area so
+// Radix's `--radix-dropdown-menu-trigger-width` bounds the content width.
+.anchor {
+  display: block;
+  position: absolute;
+  top: 100%;
+  left: 5px;
+  right: 5px;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.content {
+  width: max(var(--radix-dropdown-menu-trigger-width), 220px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.header {
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-fg-muted);
+  flex-shrink: 0;
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  min-height: 0;
+}
+
+.item {
+  white-space: nowrap;
+  height: 26px;
+  min-height: 26px;
+  box-sizing: border-box;
+  padding: 0 var(--space-3);
+}
+
+.itemHighlighted {
+  background: var(--color-accent) !important;
+  color: var(--color-accent-fg) !important;
+}
+
+.itemCurrent {
+  font-weight: 600;
+}
+
+.label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// The accelerator letter, underlined within its label.
+.accel {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.arrow {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--color-fg-muted);
+}
+
+.itemHighlighted .arrow {
+  color: var(--color-accent-fg);
+}
+
+// "Shift" hint on the Reverse row — teaches the reverse modifier.
+.kbd {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  line-height: 1.6;
+}
+
+.itemHighlighted .kbd {
+  color: var(--color-accent-fg);
+  border-color: var(--color-accent-fg);
+  background: transparent;
+}
+
+// Reverse row lit up while Shift is held (and it isn't the selected row).
+.itemReverseArmed:not(.itemHighlighted) {
+  background: var(--color-selected-bg);
+
+  .kbd {
+    color: var(--color-fg);
+    border-color: var(--color-accent);
+  }
+}
