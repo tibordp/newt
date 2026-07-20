@@ -360,8 +360,9 @@ Deletes all selected files and directories (recursive for directories).
 
 Opens a modal dialog with:
 
-- **Destination path** display (read-only, pre-filled with the other pane's directory).
+- **Destination path**: static label showing the other pane's directory (not an input — the destination is always the other pane).
 - **Summary**: Shows the filename (single file) or "N items" (multiple selection).
+- **New name** field (single item only, copy and move): pre-filled with the source's leaf name; edit it to land under a different name in the destination (`rename_to` on the operation — same-VFS moves rename directly to the new name, and the copy fallback plans the tree under it). Left unchanged it sends nothing. Also names the symlink when "Create symbolic link" is checked.
 - **Options** (checkboxes):
   - **Create symbolic link** — only available for single-file copies. Creates a symlink at the destination pointing to the source. Disables the other options when checked.
   - **Preserve timestamps** — maintains file modification and access times.
@@ -836,6 +837,28 @@ When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus ter
 | Enter (in defunct terminal) | Close the terminal tab |
 
 These shortcuts are handled by the terminal's custom key event handler and bubble through to the main window handler where appropriate.
+
+### Shell Integration (`newt` CLI)
+
+Every spawned terminal (and every user command, both terminal- and operation-mode) gets a `newt` CLI that remote-controls the owning session (design: `design_docs/DESIGN_SHELL_INTEGRATION.md`). Gated by `behavior.shell_integration` (default on; currently gates local sessions — remote agents always provide it).
+
+**Plumbing**: the PTY-owning side (host in local sessions, agent in remote/elevated) creates one fresh 0700 temp dir per session holding the control endpoint and the shim, and injects `NEWT_SHELL_SOCK` (socket path / pipe name), `NEWT_TERMINAL` (handle), and a PATH prepend of that dir into every spawned child. Unix: a Unix-domain socket plus a `newt` symlink to the agent binary; Windows: a named pipe (`\\.\pipe\newt-shell-…`) and a generated `newt.cmd` (which sets `NEWT_CLI=1`, since a .cmd shim can't control argv[0]). The agent binary enters CLI mode only when invoked *as* `newt` (argv[0] / `NEWT_CLI`) with the env var set — `newt-agent` invoked by its own name always behaves as the agent. The main `newt` executable answers the same modality when `NEWT_SHELL_SOCK` is set and argv[1] is a known verb, so an already-on-PATH `newt` works on Linux without the shim.
+
+**Protocol**: HTTP/1.1 over the socket/pipe (hyper connection-level; no axum in the shared code), deliberately version-tolerant (unknown route → 404, never a panic) because shells outlive app upgrades. On Unix, `curl --unix-socket "$NEWT_SHELL_SOCK" http://newt/v1/panes/active/cwd` works. In remote sessions the agent forwards control-plane verbs to the host over `API_HOST_SHELL_CONTROL`; `cat` bytes stream from the agent-side VfsRegistry without a host round-trip.
+
+**Verbs** (`--pane active|other|left|right`, default active; exit codes 0 ok / 1 error / 2 no session):
+
+| Verb | Behavior |
+|------|----------|
+| `newt pwd` | Print the pane's directory (display path — native on the root VFS, `s3://…` etc. otherwise). |
+| `newt cd [path]` | Navigate the pane (non-strict: a leaf path lands on the parent with the entry focused). Bare `newt cd` syncs the pane to the shell's cwd. Relative paths resolve against the shell's cwd. |
+| `newt focus <path>` | Alias for the leaf-focus form of `cd`. |
+| `newt cat <path>` | Stream a file to stdout through the session VFS. Relative paths resolve against the *pane* — works inside archives/S3 mounts. |
+| `newt open <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). |
+| `newt cp <src>… <dest>` / `newt mv` | Enqueue a copy/move through the operations framework (fire-and-forget; prints the operation id). Multiple sources need an existing dir; single source to a non-existent leaf copies/moves under the new name (a same-directory `mv` is a plain rename). Trailing slash asserts directory-ness; existence checks go through the session VFS. |
+| `newt cmd [id]` | Tier-1 mechanical dispatch of any command-registry id (same ids as `[[bind]]`/palette): closes any open modal first, exactly like a keybinding. Bare `newt cmd` lists ids + names (including user commands). Excluded: `new_window`, `quit`, `open_elevated`, `connect_wsl` (non-uniform signatures). |
+
+Path arguments resolve exactly like the Go To dialog (`resolve_display_path`: mounted-VFS URLs, native absolutes, `~` expansion on the session side), so `newt cd "$(newt pwd)"` round-trips on any pane. A URL matching no mounted VFS is an error (no auto-mounting).
 
 ---
 
@@ -1366,6 +1389,7 @@ quick_search = true         # Use prefix quick-search; when false, typing opens 
 expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
 default_sort = { key = "name", ascending = true }
 history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
+shell_integration = true    # `newt` CLI in built-in terminals / user commands (local sessions; remote always on)
 
 [enrichers]
 git_status = true           # Git enricher: per-row status colors + branch badge

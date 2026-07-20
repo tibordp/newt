@@ -527,6 +527,9 @@ pub enum ModalDataKind {
         destination: VfsPath,
         display_destination: String,
         summary: String,
+        /// Single-source transfers offer a rename field prefilled with the
+        /// source's leaf name; `None` (multi-selection) hides it.
+        default_name: Option<String>,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -1276,6 +1279,15 @@ impl MainWindowContext {
 
     pub fn panes(&self) -> &Panes {
         &self.inner.main_window_state.panes
+    }
+
+    pub fn active_pane_handle(&self) -> PaneHandle {
+        self.inner
+            .main_window_state
+            .display_options
+            .0
+            .read()
+            .active_pane
     }
 
     pub fn active_pane(&self) -> Option<Arc<Pane>> {

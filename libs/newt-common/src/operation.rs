@@ -124,12 +124,20 @@ pub enum OperationRequest {
         destination: VfsPath,
         #[serde(default)]
         options: CopyOptions,
+        /// Copy a single source under a different leaf name in
+        /// `destination` (shell `cp src dest-that-does-not-exist`).
+        #[serde(default)]
+        rename_to: Option<String>,
     },
     Move {
         sources: Vec<VfsPath>,
         destination: VfsPath,
         #[serde(default)]
         options: CopyOptions,
+        /// Move a single source under a different leaf name in
+        /// `destination` (shell `mv src dest-that-does-not-exist`).
+        #[serde(default)]
+        rename_to: Option<String>,
     },
     /// Give `source` a new leaf name in its parent. Uses native
     /// `Vfs::rename` when available, else copy+delete (so S3 objects and
@@ -258,6 +266,9 @@ pub struct OperationHandle {
 
 pub struct OperationContext {
     pub registry: Arc<VfsRegistry>,
+    /// When present, `RunCommand` children get the `newt` CLI env/PATH, so
+    /// operation-mode user commands can control the session too.
+    pub shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
 }
 
 // --- OperationsClient trait ---
@@ -598,6 +609,7 @@ async fn execute_run_command(
     reporter: &mut ProgressReporter,
     command: &str,
     working_dir: Option<&crate::vfs::path::Path>,
+    shell_integration: Option<&crate::shell_control::ShellIntegration>,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     reporter.send_prepared(0, 0);
@@ -613,6 +625,9 @@ async fn execute_run_command(
             // the FS is (the agent in a remote session). `launch_cwd`
             // (not `to_native`) so cmd.exe accepts a local directory.
             cmd.current_dir(crate::vfs::local::launch_cwd(dir));
+        }
+        if let Some(si) = shell_integration {
+            cmd.envs(si.spawn_env(None));
         }
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
@@ -763,6 +778,7 @@ pub async fn execute_operation(
             sources,
             destination,
             options,
+            rename_to,
         } => {
             execute_copy(
                 &mut reporter,
@@ -773,7 +789,7 @@ pub async fn execute_operation(
                 cancel.clone(),
                 false,
                 0,
-                None,
+                rename_to.as_deref(),
             )
             .await
         }
@@ -781,6 +797,7 @@ pub async fn execute_operation(
             sources,
             destination,
             options,
+            rename_to,
         } => {
             execute_move(
                 &mut reporter,
@@ -789,6 +806,7 @@ pub async fn execute_operation(
                 destination,
                 options,
                 cancel.clone(),
+                rename_to.as_deref(),
             )
             .await
         }
@@ -854,6 +872,7 @@ pub async fn execute_operation(
                 &mut reporter,
                 &command,
                 working_dir.as_deref(),
+                context.shell_integration.as_deref(),
                 cancel.clone(),
             )
             .await
@@ -1616,7 +1635,7 @@ async fn execute_copy(
             Some(f) => f,
             None => return Err(crate::Error::custom("source has no file name".to_string())),
         };
-        let dest = dst_path.join(file_name);
+        let dest = dst_path.join(rename_to.unwrap_or(file_name));
         reporter.send_prepared(0, 1);
         dst_vfs.create_symlink(&dest, source.as_wire_str()).await?;
         return Ok(());
@@ -2733,7 +2752,12 @@ async fn execute_move(
     destination: VfsPath,
     options: CopyOptions,
     cancel: CancellationToken,
+    rename_to: Option<&str>,
 ) -> Result<(), crate::Error> {
+    debug_assert!(
+        rename_to.is_none() || sources.len() == 1,
+        "rename_to requires exactly one source"
+    );
     // Follow redirect_target so moves from a SearchVfs operate on real files.
     let mut sources = sources;
     for s in sources.iter_mut() {
@@ -2768,7 +2792,7 @@ async fn execute_move(
                 Some(f) => f,
                 None => return Err(crate::Error::custom("source has no file name".to_string())),
             };
-            let dest_local = dst_path.join(file_name);
+            let dest_local = dst_path.join(rename_to.unwrap_or(file_name));
             let source_local = source.path.clone();
             let mut overwrite_approved = false;
 
@@ -2906,7 +2930,7 @@ async fn execute_move(
         cancel,
         true,
         renamed_count,
-        None,
+        rename_to,
     )
     .await
 }

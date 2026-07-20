@@ -561,14 +561,18 @@ pub async fn start_copy_move(
     sources: Vec<VfsPath>,
     destination: VfsPath,
     options: CopyOptions,
+    rename_to: Option<String>,
 ) -> Result<OperationId, Error> {
+    let rename_to = rename_to.filter(|_| sources.len() == 1);
     let request = match kind.as_str() {
         "copy" => OperationRequest::Copy {
+            rename_to,
             sources,
             destination,
             options,
         },
         "move" => OperationRequest::Move {
+            rename_to,
             sources,
             destination,
             options,

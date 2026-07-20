@@ -97,6 +97,10 @@ pub const API_HOST_VFS_TRASH_ITEM: Api = Api(628);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);
+// Shell-integration control plane: the agent's `newt` CLI server forwards
+// verbs to the host's session state (payload: shell_control::ControlRequest,
+// reply: shell_control::ControlResult).
+pub const API_HOST_SHELL_CONTROL: Api = Api(631);
 
 // Agent-binary provisioning — invoked by the agent (nested spawns for
 // pane-scoped agent mounts), served from the host's agents dir.
@@ -111,11 +115,11 @@ pub use vfs::{VfsDispatcher, VfsReadChunkDispatcher};
 // bincode helpers — propagate decode/encode failures as structured errors so
 // a malformed payload (bad agent, version skew, …) doesn't crash the process.
 
-pub(super) fn decode<'a, T: serde::Deserialize<'a>>(req: &'a [u8]) -> Result<T, Error> {
+pub fn decode<'a, T: serde::Deserialize<'a>>(req: &'a [u8]) -> Result<T, Error> {
     bincode::deserialize(req).map_err(|e| Error::custom(format!("RPC decode: {}", e)))
 }
 
-pub(super) fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, Error> {
+pub fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, Error> {
     bincode::serialize(value).map_err(|e| Error::custom(format!("RPC encode: {}", e)))
 }
 

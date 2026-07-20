@@ -94,12 +94,14 @@ pub async fn execute_dnd(
 
     let request = if is_move {
         OperationRequest::Move {
+            rename_to: None,
             sources,
             destination,
             options: Default::default(),
         }
     } else {
         OperationRequest::Copy {
+            rename_to: None,
             sources,
             destination,
             options: Default::default(),
@@ -266,6 +268,7 @@ pub async fn external_drop(
             return Ok(None);
         }
         let request = OperationRequest::Copy {
+            rename_to: None,
             sources,
             destination,
             options: Default::default(),
@@ -303,6 +306,7 @@ pub async fn external_drop(
     };
 
     let request = OperationRequest::Copy {
+        rename_to: None,
         sources,
         destination,
         options: Default::default(),

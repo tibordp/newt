@@ -15,6 +15,7 @@ pub mod operation;
 pub mod proc;
 pub mod rpc;
 pub mod shell;
+pub mod shell_control;
 pub mod sys;
 pub mod terminal;
 pub mod vfs;

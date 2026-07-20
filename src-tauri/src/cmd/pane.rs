@@ -383,6 +383,7 @@ async fn download_and_open(
     let op_id = super::operations::start_operation(
         ctx.clone(),
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![source],
             destination: dest_vfs_path,
             options: CopyOptions::default(),

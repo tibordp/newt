@@ -356,7 +356,13 @@ pub fn dialog(
                     } else {
                         format!("{} items", sources.len())
                     };
+                    let default_name = if sources.len() == 1 {
+                        sources[0].file_name().map(str::to_string)
+                    } else {
+                        None
+                    };
                     ModalDataKind::CopyMove {
+                        default_name,
                         // Frontend distinguishes copy/move by this string.
                         kind: match dialog {
                             DialogKind::Copy => "copy".to_string(),

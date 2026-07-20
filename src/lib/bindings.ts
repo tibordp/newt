@@ -254,9 +254,9 @@ async startOperation(request: OperationRequest) : Promise<Result<number, string>
     else return { status: "error", error: e  as any };
 }
 },
-async startCopyMove(kind: string, sources: VfsPath[], destination: VfsPath, options: CopyOptions) : Promise<Result<number, string>> {
+async startCopyMove(kind: string, sources: VfsPath[], destination: VfsPath, options: CopyOptions, renameTo: string | null) : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_copy_move", { kind, sources, destination, options }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_copy_move", { kind, sources, destination, options, renameTo }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1543,7 +1543,13 @@ default_sort: DefaultSort;
  * session). When the cap is reached, the oldest entries roll out as
  * new ones are pushed.
  */
-history_retention: number }
+history_retention: number; 
+/**
+ * Expose the `newt` CLI inside built-in terminals and user commands
+ * (per-session control socket + PATH shim). Applies to local sessions;
+ * remote sessions currently always provide it.
+ */
+shell_integration: boolean }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */
@@ -1804,7 +1810,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+/**
+ * Single-source transfers offer a rename field prefilled with the
+ * source's leaf name; `None` (multi-selection) hides it.
+ */
+default_name: string | null } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1895,7 +1906,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+/**
+ * Single-source transfers offer a rename field prefilled with the
+ * source's leaf name; `None` (multi-selection) hides it.
+ */
+default_name: string | null } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -1956,7 +1972,17 @@ persistent: boolean } } | { type: "command_palette"; data: { category_filter: st
 export type Mode = number
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
-export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions } } | 
+export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 
+/**
+ * Copy a single source under a different leaf name in
+ * `destination` (shell `cp src dest-that-does-not-exist`).
+ */
+rename_to?: string | null } } | { Move: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 
+/**
+ * Move a single source under a different leaf name in
+ * `destination` (shell `mv src dest-that-does-not-exist`).
+ */
+rename_to?: string | null } } | 
 /**
  * Give `source` a new leaf name in its parent. Uses native
  * `Vfs::rename` when available, else copy+delete (so S3 objects and

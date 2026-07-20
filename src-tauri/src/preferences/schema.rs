@@ -167,6 +167,11 @@ pub struct BehaviorPreferences {
     /// new ones are pushed.
     #[schemars(title = "History Retention", range(min = 0, max = 100000))]
     pub history_retention: u32,
+    /// Expose the `newt` CLI inside built-in terminals and user commands
+    /// (per-session control socket + PATH shim). Applies to local sessions;
+    /// remote sessions currently always provide it.
+    #[schemars(title = "Shell Integration")]
+    pub shell_integration: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -180,6 +185,7 @@ impl Default for BehaviorPreferences {
             expose_local_fs: false,
             default_sort: DefaultSort::default(),
             history_retention: 200,
+            shell_integration: true,
         }
     }
 }

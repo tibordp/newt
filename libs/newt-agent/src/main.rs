@@ -152,6 +152,23 @@ fn run_askpass(sock_path: &str) -> i32 {
 }
 
 fn main() {
+    // Shell-integration CLI mode short-circuits first: invoked as `newt`
+    // through the per-session shim (argv[0] symlink on Unix, NEWT_CLI from
+    // the .cmd shim on Windows). Invoked as `newt-agent`, the binary always
+    // behaves as the agent — so inspecting it from inside an integrated
+    // terminal (where NEWT_SHELL_SOCK is always set) stays unsurprising.
+    let invoked_as_newt = std::env::args()
+        .next()
+        .map(|argv0| {
+            std::path::Path::new(&argv0)
+                .file_stem()
+                .is_some_and(|stem| stem == "newt")
+        })
+        .unwrap_or(false);
+    if newt_common::shell_control::is_cli_invocation(invoked_as_newt, false) {
+        std::process::exit(newt_common::shell_control::run_cli());
+    }
+
     // Askpass mode short-circuits before any heavy init.
     if let Ok(sock_path) = std::env::var("NEWT_ASKPASS_SOCK") {
         std::process::exit(run_askpass(&sock_path));
@@ -255,9 +272,6 @@ async fn run_agent() -> Result<(), Error> {
 
     let root_vfs = Arc::new(LocalVfs::new());
     let registry = Arc::new(VfsRegistry::with_root(root_vfs));
-    let op_context = Arc::new(OperationContext {
-        registry: registry.clone(),
-    });
     let filesystem = VfsRegistryFs::new(registry.clone());
 
     // OnceLock for the host communicator — set after the RPC loop starts,
@@ -278,6 +292,8 @@ async fn run_agent() -> Result<(), Error> {
         fetch_streams.clone(),
     ));
     let askpass_binary = resolver.find_local_agent_binary()?;
+    // Shell-integration shim target: this very executable (invoked as `newt`).
+    let cli_binary = askpass_binary.clone();
 
     let askpass_provider: Arc<dyn askpass::AskpassProvider> =
         Arc::new(askpass::Remote::new(host_communicator.clone()));
@@ -308,10 +324,33 @@ async fn run_agent() -> Result<(), Error> {
             .with(Arc::new(DuEnricher)),
     );
 
+    // Shell integration: the control server the `newt` CLI talks to.
+    // Control-plane verbs forward to the host over the RPC channel; the
+    // `cat` data plane reads from this side's registry.
+    let shell_handler = Arc::new(AgentShellHandler {
+        host: host_communicator.clone(),
+        file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
+    });
+    let shell_integration =
+        match newt_common::shell_control::ShellIntegration::start(&cli_binary, shell_handler) {
+            Ok(si) => Some(si),
+            Err(e) => {
+                log::warn!("shell integration disabled: {e}");
+                None
+            }
+        };
+
+    let op_context = Arc::new(OperationContext {
+        registry: registry.clone(),
+        shell_integration: shell_integration.clone(),
+    });
+
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
-        .chain(TerminalDispatcher::new(newt_common::terminal::Local::new()))
+        .chain(TerminalDispatcher::new(
+            newt_common::terminal::Local::with_shell_integration(shell_integration),
+        ))
         .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(
             registry.clone(),
         )))
@@ -338,4 +377,41 @@ async fn run_agent() -> Result<(), Error> {
 
     info!("RPC connection closed, agent exiting");
     Ok(())
+}
+
+/// Shell-integration verb handler on the agent: control plane forwards to
+/// the host's session state over the RPC channel; the `cat` data plane
+/// reads from the agent-side VFS registry (where the session's mounts
+/// live), so file bytes never round-trip through the host.
+struct AgentShellHandler {
+    host: Arc<std::sync::OnceLock<Communicator>>,
+    file_reader: Arc<dyn newt_common::file_reader::FileReader>,
+}
+
+#[async_trait::async_trait]
+impl newt_common::shell_control::ShellControlHandler for AgentShellHandler {
+    async fn control(
+        &self,
+        req: newt_common::shell_control::ControlRequest,
+    ) -> newt_common::shell_control::ControlResult {
+        let Some(host) = self.host.get() else {
+            return Err("session not connected".to_string());
+        };
+        host.invoke::<_, newt_common::shell_control::ControlResult>(
+            newt_common::api::API_HOST_SHELL_CONTROL,
+            &req,
+        )
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    async fn read_file(
+        &self,
+        path: newt_common::vfs::VfsPath,
+    ) -> Result<newt_common::shell_control::ByteStream, String> {
+        Ok(newt_common::shell_control::file_reader_stream(
+            self.file_reader.clone(),
+            path,
+        ))
+    }
 }

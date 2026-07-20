@@ -972,7 +972,7 @@ impl Pane {
     /// ourselves rather than going through `std::path::Component`, whose
     /// model would — on Windows — fabricate a drive `Prefix` and silently
     /// corrupt the path. The VFS path domain has no drive/UNC concept.
-    fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
+    pub(crate) fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
         let mut vfs_id = base.vfs_id;
         let mut path = if rel.starts_with(['/', '\\']) {
             // Defensive: an absolute fragment resets to the VFS root.

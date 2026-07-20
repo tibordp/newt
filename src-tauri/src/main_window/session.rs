@@ -741,8 +741,32 @@ fn create_local_services(
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
 
     let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+
+    // Shell integration for the local session: this process owns the PTYs,
+    // so it also owns the control socket the `newt` CLI talks to. The shim
+    // points at the bundled agent binary (the main exe answers the same
+    // modality when it happens to be on PATH).
+    let shell_integration = if preferences.load().behavior.shell_integration {
+        let handler = Arc::new(crate::shell_control::HostShellHandler {
+            window: publisher.window().clone(),
+            file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
+        });
+        agent_resolver
+            .find_local_agent_binary()
+            .map_err(|e| e.to_string())
+            .and_then(|cli_binary| {
+                newt_common::shell_control::ShellIntegration::start(&cli_binary, handler)
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(|e| log::warn!("shell integration disabled: {e}"))
+            .ok()
+    } else {
+        None
+    };
+
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
+        shell_integration: shell_integration.clone(),
     });
 
     let operations = operations.clone();
@@ -774,7 +798,9 @@ fn create_local_services(
                 mgr
             }
         }),
-        terminal_client: Arc::new(newt_common::terminal::Local::new()),
+        terminal_client: Arc::new(newt_common::terminal::Local::with_shell_integration(
+            shell_integration,
+        )),
         file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         enricher_client: Arc::new(newt_common::enrich::Local::new(Arc::new(
@@ -853,9 +879,13 @@ fn create_rpc_services(
     let (outbox, inbox) = Communicator::create_outbox();
     let fetch_dispatcher =
         newt_common::api::AgentFetchDispatcher::new(agent_resolver, outbox.clone());
+    let shell_control_dispatcher = crate::shell_control::ShellControlDispatcher {
+        window: publisher.window().clone(),
+    };
     let base = host_dispatcher
         .chain(askpass_dispatcher)
-        .chain(fetch_dispatcher);
+        .chain(fetch_dispatcher)
+        .chain(shell_control_dispatcher);
     let communicator = if expose_local_fs {
         use newt_common::api::VfsDispatcher;
         use newt_common::vfs::LocalVfs;

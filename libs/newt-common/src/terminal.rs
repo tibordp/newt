@@ -82,16 +82,7 @@ struct LocalTerminal {
 struct LocalInner {
     handle: AtomicU32,
     terminals: Mutex<HashMap<TerminalHandle, Arc<LocalTerminal>>>,
-}
-
-#[cfg(unix)]
-impl LocalInner {
-    fn new() -> Self {
-        Self {
-            handle: AtomicU32::new(0),
-            terminals: Mutex::new(HashMap::new()),
-        }
-    }
+    shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
 }
 
 #[cfg(unix)]
@@ -101,6 +92,7 @@ pub struct Local(Arc<LocalInner>);
 struct WinInner {
     handle: AtomicU32,
     terminals: Mutex<HashMap<TerminalHandle, Arc<crate::conpty::Conpty>>>,
+    shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
 }
 
 #[cfg(windows)]
@@ -115,16 +107,33 @@ impl Default for Local {
 #[cfg(unix)]
 impl Local {
     pub fn new() -> Self {
-        Self(Arc::new(LocalInner::new()))
+        Self::with_shell_integration(None)
+    }
+
+    pub fn with_shell_integration(
+        shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
+    ) -> Self {
+        Self(Arc::new(LocalInner {
+            handle: AtomicU32::new(0),
+            terminals: Mutex::new(HashMap::new()),
+            shell_integration,
+        }))
     }
 }
 
 #[cfg(windows)]
 impl Local {
     pub fn new() -> Self {
+        Self::with_shell_integration(None)
+    }
+
+    pub fn with_shell_integration(
+        shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
+    ) -> Self {
         Self(Arc::new(WinInner {
             handle: AtomicU32::new(0),
             terminals: Mutex::new(HashMap::new()),
+            shell_integration,
         }))
     }
 
@@ -168,21 +177,26 @@ impl TerminalClient for Local {
             .as_ref()
             .map(|p| crate::vfs::local::launch_cwd(p));
 
+        // Shell-integration env first, so caller-specified env can still
+        // override it.
+        let mut env = self
+            .0
+            .shell_integration
+            .as_ref()
+            .map(|si| si.spawn_env(Some(handle)))
+            .unwrap_or_default();
+        env.extend(options.env.unwrap_or_default());
+        let env = (!env.is_empty()).then_some(env);
+
         // ConPTY needs an initial size; the frontend issues a real resize
         // as soon as the xterm mounts, so the default is transient.
-        let conpty = crate::conpty::Conpty::spawn(
-            &program,
-            &args,
-            options.env.as_deref(),
-            cwd.as_deref(),
-            24,
-            80,
-        )
-        .await
-        .map_err(|e| {
-            error!("conpty spawn failed: {e}");
-            Error::from(e)
-        })?;
+        let conpty =
+            crate::conpty::Conpty::spawn(&program, &args, env.as_deref(), cwd.as_deref(), 24, 80)
+                .await
+                .map_err(|e| {
+                    error!("conpty spawn failed: {e}");
+                    Error::from(e)
+                })?;
 
         self.0.terminals.lock().insert(handle, Arc::new(conpty));
         info!("terminal {:?} created successfully", handle);
@@ -280,6 +294,11 @@ impl TerminalClient for Local {
                 cmd.current_dir(crate::vfs::local::launch_cwd(&working_dir));
             }
 
+            // Shell-integration env first, so caller-specified env can
+            // still override it.
+            if let Some(si) = &inner.shell_integration {
+                cmd.envs(si.spawn_env(Some(handle)));
+            }
             if let Some(env) = options.env {
                 cmd.envs(env);
             }

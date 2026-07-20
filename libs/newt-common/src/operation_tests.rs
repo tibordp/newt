@@ -62,6 +62,7 @@ async fn run_operation_inner(
     let next_issue_id = Arc::new(AtomicU64::new(1));
     let context = Arc::new(OperationContext {
         registry: registry.clone(),
+        shell_integration: None,
     });
 
     let issue_resolvers2 = issue_resolvers.clone();
@@ -116,7 +117,10 @@ async fn run_operation_cancellable(
         tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
     let issue_resolvers: IssueResolvers = Arc::new(Mutex::new(HashMap::new()));
     let next_issue_id = Arc::new(AtomicU64::new(1));
-    let context = Arc::new(OperationContext { registry });
+    let context = Arc::new(OperationContext {
+        registry,
+        shell_integration: None,
+    });
 
     let op_handle = tokio::spawn(execute_operation(
         1,
@@ -644,6 +648,7 @@ async fn test_copy_single_file_sync() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -673,6 +678,7 @@ async fn test_copy_single_file_async() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -683,6 +689,59 @@ async fn test_copy_single_file_async() {
 
     assert!(has_completed(&result.events));
     assert_eq!(result.vfs.read_content("/dst/a.txt"), b"async content");
+}
+
+#[tokio::test]
+async fn test_copy_rename_to() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: Some("b.txt".into()),
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.read_content("/dst/b.txt"), b"hello");
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_copy_directory_rename_to() {
+    let vfs = MockVfs::builder()
+        .dir("/src")
+        .file("/src/a.txt", b"aaa")
+        .dir("/src/sub")
+        .file("/src/sub/b.txt", b"bbb")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: Some("renamed".into()),
+            sources: vec![vfs_path("/src")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/renamed/a.txt"), b"aaa");
+    assert_eq!(result.vfs.read_content("/dst/renamed/sub/b.txt"), b"bbb");
+    assert!(!result.vfs.exists("/dst/src"));
 }
 
 #[tokio::test]
@@ -698,6 +757,7 @@ async fn test_copy_directory_recursive() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -726,6 +786,7 @@ async fn test_copy_with_symlinks() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/link")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -754,6 +815,7 @@ async fn test_copy_conflict_skip() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -778,6 +840,7 @@ async fn test_copy_conflict_overwrite() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -804,6 +867,7 @@ async fn test_copy_conflict_dir_merge() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -833,6 +897,7 @@ async fn test_copy_conflict_apply_to_all() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt"), vfs_path("/src/b.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -871,6 +936,7 @@ async fn test_copy_preserves_metadata() {
                 preserve_timestamps: true,
                 ..Default::default()
             },
+            rename_to: None,
         },
         skip_all,
     )
@@ -896,6 +962,7 @@ async fn test_copy_create_symlink_option() {
                 create_symlink: true,
                 ..Default::default()
             },
+            rename_to: None,
         },
         skip_all,
     )
@@ -923,6 +990,7 @@ async fn test_move_same_vfs_rename() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -937,6 +1005,66 @@ async fn test_move_same_vfs_rename() {
 }
 
 #[tokio::test]
+async fn test_move_rename_to_fast_path() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: Some("b.txt".into()),
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.read_content("/dst/b.txt"), b"hello");
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_move_rename_to_copy_fallback() {
+    use crate::test_support::mock_vfs::FailureSpec;
+
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"hello")
+        .dir("/dst")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/src/a.txt"),
+            operation: "rename",
+            error: crate::Error {
+                kind: crate::ErrorKind::NotSupported,
+                message: "cross-device link".into(),
+            },
+            remaining: None,
+        })
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: Some("b.txt".into()),
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.read_content("/dst/b.txt"), b"hello");
+}
+
+#[tokio::test]
 async fn test_move_cross_vfs() {
     let src_vfs = MockVfs::builder().file("/data/a.txt", b"cross-vfs").build();
 
@@ -946,6 +1074,7 @@ async fn test_move_cross_vfs() {
         src_vfs,
         dst_vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path_id(0, "/data/a.txt")],
             destination: vfs_path_id(1, "/target"),
             options: Default::default(),
@@ -982,6 +1111,7 @@ async fn test_move_rename_fails_fallback() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1018,6 +1148,7 @@ async fn test_move_rename_real_error_raises_issue() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1048,6 +1179,7 @@ async fn test_move_file_overwrite() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1086,6 +1218,7 @@ async fn test_move_overwrite_no_replace_backend() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1114,6 +1247,7 @@ async fn test_move_directory_merge_into_existing() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1146,6 +1280,7 @@ async fn test_move_directory_cleanup() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1182,6 +1317,7 @@ async fn test_move_partial_skip() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1214,6 +1350,7 @@ async fn test_move_symlink_not_followed_top_level() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src/link_to_dir")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1258,6 +1395,7 @@ async fn test_move_symlink_not_followed_inside_dir() {
     let result = run_operation(
         vfs,
         OperationRequest::Move {
+            rename_to: None,
             sources: vec![vfs_path("/src")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1318,6 +1456,7 @@ async fn test_copy_within_unsupported_falls_back_to_streaming() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1358,6 +1497,7 @@ async fn test_copy_within_real_error_raises_issue() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1911,6 +2051,7 @@ async fn test_copy_cancelled() {
     let events = run_operation_cancellable(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),
@@ -1933,6 +2074,7 @@ async fn test_progress_events_correct() {
     let result = run_operation(
         vfs,
         OperationRequest::Copy {
+            rename_to: None,
             sources: vec![vfs_path("/src/a.txt"), vfs_path("/src/b.txt")],
             destination: vfs_path("/dst"),
             options: Default::default(),

@@ -139,6 +139,14 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         None => return Ok(()),
     };
 
+    open_viewer_window(&ctx, &full_path)
+}
+
+pub(crate) fn open_viewer_window(
+    ctx: &MainWindowContext,
+    full_path: &VfsPath,
+) -> Result<(), Error> {
+    let full_path = full_path.clone();
     let app_handle = ctx.window().app_handle().clone();
     let main_label = ctx.main_window_label().to_string();
     let path_display = ctx.format_vfs_path(&full_path);
@@ -163,7 +171,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         let title = format!("{} - Viewer", path_display);
         let (label, window) = build_child_window(
             &app_handle,
-            &ctx,
+            ctx,
             "/viewer",
             &title,
             VIEWER_WINDOW_SIZE,
@@ -176,7 +184,7 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     }
 
     // Always replenish the pre-warm slot for the next F3.
-    prewarm_viewer(&app_handle, &ctx, &main_label);
+    prewarm_viewer(&app_handle, ctx, &main_label);
 
     Ok(())
 }

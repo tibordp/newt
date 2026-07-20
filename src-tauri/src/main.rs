@@ -14,6 +14,7 @@ pub mod keychain;
 pub mod main_window;
 pub mod preferences;
 pub mod runtime_state;
+pub mod shell_control;
 pub mod user_commands;
 pub mod viewer;
 
@@ -231,6 +232,10 @@ impl GlobalContext {
 
     pub fn main_window(&self, webview: &Webview) -> Option<MainWindowContext> {
         self.main_windows.lock().get(webview.label()).cloned()
+    }
+
+    pub fn main_window_by_label(&self, label: &str) -> Option<MainWindowContext> {
+        self.main_windows.lock().get(label).cloned()
     }
 
     pub fn register_viewer_window(&self, label: &str, ctx: viewer::ViewerWindowContext) {
@@ -765,6 +770,15 @@ fn parse_kube_spec(spec: &str) -> Result<crate::connections::ConnectionKind, Err
 }
 
 fn main() {
+    // Shell-integration CLI mode: inside a Newt terminal (NEWT_SHELL_SOCK
+    // set) with a known verb as argv[1], `newt pwd` etc. remote-control the
+    // owning session instead of launching the app. The verb requirement
+    // keeps ordinary launches (`newt --target ssh:…`) untouched even when
+    // run from an integrated terminal.
+    if newt_common::shell_control::is_cli_invocation(true, true) {
+        std::process::exit(newt_common::shell_control::run_cli());
+    }
+
     let args = Args::parse();
 
     #[cfg(feature = "specta-bindings")]

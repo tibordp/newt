@@ -1,5 +1,13 @@
 # TODO
 
+## Shell integration (`newt` CLI in built-in terminals)
+
+Shipped (design: `design_docs/DESIGN_SHELL_INTEGRATION.md`). Follow-ups:
+- `behavior.shell_integration = false` currently gates local sessions only; agents always create the control server (they can't see host preferences). Propagate the flag at agent spawn (env for bootstrap transports like `NEWT_AGENT_MODE`, an arg for direct spawns) if disabling remotely turns out to matter.
+- `newt cp --wait` (long-poll an operations endpoint for completion, exit code from the operation result).
+- Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, `newt select <glob>`, user-command invocation by title.
+- Windows is compiled but untested end-to-end: named-pipe HTTP server/client, `newt.cmd` shim (`NEWT_CLI` marker), ConPTY env merge.
+
 ## Host VFS (local ↔ remote bridge)
 
 Basic Remote VFS is implemented. Remaining work:
