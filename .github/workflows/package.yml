@@ -103,6 +103,33 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
         run: cargo xtask agents ${{ matrix.target }}
+      # Sign the darwin agents at the build stage, not in the macOS package
+      # job: the darwin agents are bundled into *every* platform's package
+      # (remoting into a Mac uploads and runs them there, where Gatekeeper
+      # wants a valid signature), so signing here means all platforms ship the
+      # identical signed binary. It also has to happen here — Tauri seals but
+      # never signs these nested Resources/ executables, so the .app build is
+      # too late. Sign after the strip so it's the last mutation of the bytes.
+      - name: Sign agent (macOS)
+        if: contains(matrix.target, 'apple-darwin')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE not set — shipping an unsigned agent."
+            exit 0
+          fi
+          packaging/macos/import-signing-cert.sh
+          AGENT="agents/${{ matrix.target }}/newt-agent"
+          codesign --force --timestamp --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" "$AGENT"
+          codesign --verify --strict --verbose=2 "$AGENT"
+          # Refresh the informational sidecar to match the signed bytes.
+          # (Runtime agent integrity uses a live blake3 of the executed bytes,
+          # not this file — but keep it truthful.)
+          shasum -a 256 "$AGENT" > "$AGENT.sha256"
       - uses: actions/upload-artifact@v6
         with:
           name: agent-${{ matrix.target }}
@@ -340,7 +367,31 @@ jobs:
             rm -rf "$dir"
           done
           chmod +x */newt-agent
+      # Import the identity for signing the .app and stage the App Store
+      # Connect API key that Tauri's notarytool call reads via
+      # APPLE_API_KEY_PATH. The bundled agents are already signed (agent
+      # stage); Tauri seals them into the .app it signs and notarizes. No-op
+      # (unsigned .dmg) when the secret is absent, e.g. on a fork run.
+      - name: Set up code signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          packaging/macos/import-signing-cert.sh
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          fi
+      # With the identity already in our keychain, Tauri needs only the
+      # identity name plus the notarization creds — deliberately NOT
+      # APPLE_CERTIFICATE (see import-signing-cert.sh). All empty on forks →
+      # unsigned build.
       - name: Build Tauri app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: >
           cargo tauri build
           --target ${{ matrix.target }}
