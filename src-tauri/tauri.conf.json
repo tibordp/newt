@@ -17,6 +17,11 @@
     "targets": "all",
     "resources": {
       "../agents": "agents" 
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "both"
+      }
     }
   },
   "productName": "Newt",

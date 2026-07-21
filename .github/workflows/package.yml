@@ -9,6 +9,10 @@ on:
         options: [lean, full]
         default: lean
 
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -502,3 +506,66 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/msi/*.msi
           retention-days: 7
           if-no-files-found: error
+
+  # ─── Stage 4: Publish immutable packages, then replace latest.json ───
+
+  publish:
+    name: Publish snapshot
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: [package, package-macos, package-windows, frontend]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: eu-west-1
+      AWS_ROLE_ARN: ${{ secrets.NEWT_AWS_ROLE_ARN }}
+      S3_BUCKET: ${{ secrets.NEWT_S3_BUCKET }}
+      ARTIFACT_PREFIX: ${{ github.sha }}/${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          path: package-artifacts
+          merge-multiple: false
+
+      - name: Build download manifest
+        run: >-
+          python3 packaging/publish/build-manifest.py
+          --artifacts-dir package-artifacts
+          --output-dir publish
+          --artifact-prefix "$ARTIFACT_PREFIX"
+          --commit "${{ github.sha }}"
+          --version "${{ needs.frontend.outputs.version }}"
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+          --artifact-set "${{ inputs.set }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: newt-package-${{ github.run_id }}
+
+      - name: Upload immutable packages
+        run: >-
+          aws s3 cp publish/artifacts/
+          "s3://$S3_BUCKET/downloads/artifacts/$ARTIFACT_PREFIX/"
+          --recursive
+          --only-show-errors
+          --cache-control "public,max-age=31536000,immutable"
+          --content-disposition attachment
+
+      # Publish the manifest only after every package and checksum is present.
+      - name: Publish latest manifest
+        run: >-
+          aws s3 cp publish/latest.json
+          "s3://$S3_BUCKET/downloads/latest.json"
+          --only-show-errors
+          --cache-control "no-store"
+          --content-type "application/json"
