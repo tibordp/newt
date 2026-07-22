@@ -424,6 +424,19 @@ impl Filesystem for HairpinFs {
         }
     }
 
+    async fn fs_stats(
+        &self,
+        path: VfsPath,
+    ) -> Result<Option<newt_common::filesystem::FsStats>, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_fs
+                .fs_stats(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.fs_stats(path).await
+        }
+    }
+
     async fn touch(&self, path: VfsPath) -> Result<(), newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs

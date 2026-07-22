@@ -41,6 +41,13 @@ export const getSiPrefixedNumber = (number: number): string => {
   return `${baseNumber} ${prefix}`;
 };
 
+// "1.5 GB", "512 B" — getSiPrefixedNumber leaves no trailing prefix (and
+// thus no space) below 1k, so add the separator ourselves in that case.
+export const formatBytes = (bytes: number): string => {
+  const si = getSiPrefixedNumber(bytes);
+  return /\d$/.test(si) ? `${si} B` : `${si}B`;
+};
+
 export const modeString = (mode: number) => {
   const TYPE_CHARS = "?pc?d?b?-?l?s???";
   const MODE_CHARS = "rwxSTst";
@@ -79,4 +86,14 @@ export const modeString = (mode: number) => {
   }
 
   return ret.join("");
+};
+
+// Human-readable labels for VolumeKind (drive classification).
+export const VOLUME_KIND_LABELS: Record<string, string> = {
+  Fixed: "Local disk",
+  Removable: "Removable drive",
+  Optical: "Optical disc",
+  Network: "Network drive",
+  RamDisk: "RAM disk",
+  Substituted: "Substituted drive",
 };

@@ -470,6 +470,9 @@ pub enum PropertySheetState {
     },
 }
 
+// One short-lived instance exists at a time; the size spread between
+// variants doesn't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ModalDataKind {
@@ -512,6 +515,9 @@ pub enum ModalDataKind {
         accessed: Option<i64>,
         created: Option<i64>,
         sheet: PropertySheetState,
+        /// Volume stats + classification. `Some` only for a volume root
+        /// (DirectoryProperties at a root, or the RootProperties dialog).
+        fs_stats: Option<newt_common::filesystem::FsStats>,
     },
     Navigate {
         path: VfsPath,
@@ -746,6 +752,13 @@ pub struct VfsTarget {
     /// (one target per drive); selecting it navigates straight there
     /// instead of the VFS's default `initial_path`.
     pub root: Option<newt_common::vfs::path::PathBuf>,
+    /// Volume classification for a split-root entry (drive kind, label,
+    /// UNC/subst target), recorded at mount time on the owning side.
+    pub volume: Option<newt_common::vfs::VolumeInfo>,
+    /// Free bytes on the target's volume. Always `None` at open — the
+    /// selector opens instantly and a background fetch fills these in
+    /// (a dead network drive must not stall the dropdown).
+    pub available_bytes: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,6 +1422,8 @@ impl MainWindowContext {
                         label: info.descriptor.mount_label(&info.mount_meta),
                         mount_dialog: None,
                         root: None,
+                        volume: None,
+                        available_bytes: None,
                     });
                 } else {
                     // Split-root FS (Windows drives): one entry per root,
@@ -1418,9 +1433,11 @@ impl MainWindowContext {
                             vfs_id: Some(*vfs_id),
                             type_name: info.descriptor.type_name().to_string(),
                             display_name: display_name.clone(),
-                            label: Some(info.descriptor.format_path(&root, &info.mount_meta)),
+                            label: Some(info.descriptor.format_path(&root.path, &info.mount_meta)),
                             mount_dialog: None,
-                            root: Some(root),
+                            root: Some(root.path),
+                            volume: root.volume,
+                            available_bytes: None,
                         });
                     }
                 }
@@ -1440,6 +1457,8 @@ impl MainWindowContext {
                     label: None,
                     mount_dialog,
                     root: None,
+                    volume: None,
+                    available_bytes: None,
                 });
             }
         }
@@ -1454,6 +1473,8 @@ impl MainWindowContext {
             label: None,
             mount_dialog: Some("mount_remote".to_string()),
             root: None,
+            volume: None,
+            available_bytes: None,
         });
 
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {

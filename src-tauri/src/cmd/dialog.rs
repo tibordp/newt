@@ -20,6 +20,9 @@ pub enum DialogKind {
     CreateFile,
     CreateAndEdit,
     DirectoryProperties,
+    /// Properties of the volume root containing the pane's current path
+    /// (opened by clicking the free-space label in the pane header).
+    RootProperties,
     Properties,
     Rename,
     Copy,
@@ -73,6 +76,9 @@ pub fn dialog(
     // fetched after opening (open-then-fill): (modal paths — the write
     // guard, sheet paths — the file entries to actually fetch).
     let mut sheet_fetch: Option<(Vec<VfsPath>, Vec<VfsPath>)> = None;
+    // Set when a SelectVfs modal wants per-target free space fetched
+    // after opening: (target index, volume path to stat).
+    let mut free_space_fetch: Option<Vec<(usize, VfsPath)>> = None;
     ctx.with_update(|gs| {
         let pane = pane_handle.map(|h| gs.panes.get(h).unwrap());
         let mut modal_state = gs.modal.0.write();
@@ -126,6 +132,25 @@ pub fn dialog(
 
                     let mode = dir_entry.and_then(|f| f.mode.as_ref().map(|m| m.0));
 
+                    // Volume details only at the volume's own root (the
+                    // stats' mount point where known, else the navigable
+                    // root) — the header's free-space label opens
+                    // RootProperties for the deep case.
+                    let stats = pane.view_state().fs_stats.clone();
+                    let at_volume_root = match stats
+                        .as_ref()
+                        .and_then(|s| s.volume())
+                        .and_then(|v| v.mount_point.as_deref())
+                    {
+                        Some(mp) => {
+                            pane_path.path == newt_common::vfs::path::PathBuf::from_wire_str(mp)
+                        }
+                        None => descriptor.as_ref().is_some_and(|(d, meta)| {
+                            d.navigable_parent(&pane_path.path, meta).is_none()
+                        }),
+                    };
+                    let fs_stats = at_volume_root.then_some(stats).flatten();
+
                     ModalDataKind::Properties {
                         paths: vec![pane_path],
                         can_set_metadata,
@@ -149,6 +174,70 @@ pub fn dialog(
                         accessed: dir_entry.and_then(|f| f.accessed),
                         created: dir_entry.and_then(|f| f.created),
                         sheet,
+                        fs_stats,
+                    }
+                }
+                DialogKind::RootProperties => {
+                    let pane = pane.unwrap();
+                    let pane_path = pane.path();
+                    let fs_stats = pane.view_state().fs_stats.clone();
+
+                    // The volume root the stats actually describe (the
+                    // statvfs mount point — `/proc`, not `/`). Fall back
+                    // to walking up to the navigable root for stats
+                    // without one.
+                    let root = match fs_stats
+                        .as_ref()
+                        .and_then(|s| s.volume())
+                        .and_then(|v| v.mount_point.as_deref())
+                    {
+                        Some(mp) => newt_common::vfs::path::PathBuf::from_wire_str(mp),
+                        None => {
+                            let Some((descriptor, mount_meta)) = ctx
+                                .vfs_info()
+                                .ok()
+                                .and_then(|vi| vi.descriptor(pane_path.vfs_id))
+                            else {
+                                return Ok(());
+                            };
+                            let mut root = pane_path.path.clone();
+                            while let Some(parent) = descriptor.navigable_parent(&root, &mount_meta)
+                            {
+                                root = parent;
+                            }
+                            root
+                        }
+                    };
+                    let root_path = VfsPath::new(pane_path.vfs_id, root);
+                    let name = ctx.format_vfs_path(&root_path);
+
+                    // The pane's listing stats describe this same volume;
+                    // no stat of the root itself, so the file rows
+                    // (mode/owner/times) stay hidden.
+                    ModalDataKind::Properties {
+                        paths: vec![root_path],
+                        can_set_metadata: false,
+                        name,
+                        size: None,
+                        allocated_size: None,
+                        hard_links: None,
+                        inode: None,
+                        device_id: None,
+                        is_dir: true,
+                        is_symlink: false,
+                        symlink_target: None,
+                        mode_set: 0,
+                        mode_clear: 0,
+                        has_mode: false,
+                        owner: None,
+                        group: None,
+                        owner_id: None,
+                        group_id: None,
+                        modified: None,
+                        accessed: None,
+                        created: None,
+                        sheet: PropertySheetState::Hidden,
+                        fs_stats,
                     }
                 }
                 DialogKind::Properties => {
@@ -327,6 +416,7 @@ pub fn dialog(
                         accessed,
                         created,
                         sheet,
+                        fs_stats: None,
                     }
                 }
                 DialogKind::Rename => {
@@ -507,9 +597,35 @@ pub fn dialog(
                         recent_connections,
                     }
                 }
-                DialogKind::SelectVfs => ModalDataKind::SelectVfs {
-                    targets: ctx.compute_vfs_targets()?,
-                },
+                DialogKind::SelectVfs => {
+                    let targets = ctx.compute_vfs_targets()?;
+                    // Free space is filled in after opening — see
+                    // `spawn_free_space_fetch`.
+                    free_space_fetch = Some(
+                        targets
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, t)| {
+                                let vfs_id = t.vfs_id?;
+                                let path = match &t.root {
+                                    Some(root) => root.clone(),
+                                    None => {
+                                        // Unified-root mounts: only where
+                                        // the VFS reports stats at all
+                                        // (skips pointless RPCs on S3 & co).
+                                        let (d, _) = ctx.vfs_info().ok()?.descriptor(vfs_id)?;
+                                        if !d.can_fs_stats() {
+                                            return None;
+                                        }
+                                        newt_common::vfs::path::PathBuf::root()
+                                    }
+                                };
+                                Some((i, VfsPath::new(vfs_id, path)))
+                            })
+                            .collect(),
+                    );
+                    ModalDataKind::SelectVfs { targets }
+                }
                 DialogKind::HistoryBack | DialogKind::HistoryForward | DialogKind::History => {
                     let pane = pane.unwrap();
                     let (entries, current_index) = pane.history_entries();
@@ -559,8 +675,53 @@ pub fn dialog(
     if let Some((modal_paths, sheet_paths)) = sheet_fetch {
         spawn_property_sheet_fetch(&ctx, modal_paths, sheet_paths);
     }
+    if let Some(queries) = free_space_fetch {
+        spawn_free_space_fetch(&ctx, queries);
+    }
 
     Ok(())
+}
+
+/// Fill per-target free space in an open SelectVfs modal (open-then-fill,
+/// one patch per result as it lands — a dead network drive delays only its
+/// own entry, never the dropdown). Each write is guarded on the modal
+/// still being a SelectVfs whose target at that index matches the queried
+/// volume.
+fn spawn_free_space_fetch(ctx: &MainWindowContext, queries: Vec<(usize, VfsPath)>) {
+    let ctx = ctx.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(fs) = ctx.fs() else { return };
+        let mut join_set = tokio::task::JoinSet::new();
+        for (idx, path) in queries {
+            let fs = fs.clone();
+            join_set.spawn(async move {
+                let stats = fs.fs_stats(path.clone()).await;
+                (idx, path, stats)
+            });
+        }
+        while let Some(res) = join_set.join_next().await {
+            let Ok((idx, path, Ok(Some(stats)))) = res else {
+                continue;
+            };
+            let _ = ctx.with_update(|gs| {
+                let mut modal = gs.modal.0.write();
+                if let Some(ModalData {
+                    kind: ModalDataKind::SelectVfs { targets },
+                    ..
+                }) = modal.as_mut()
+                    && let Some(target) = targets.get_mut(idx)
+                    && target.vfs_id == Some(path.vfs_id)
+                    && target.root.as_ref().map_or_else(
+                        || path.path == newt_common::vfs::path::PathBuf::root(),
+                        |r| *r == path.path,
+                    )
+                {
+                    target.available_bytes = Some(stats.available_bytes());
+                }
+                Ok(())
+            });
+        }
+    });
 }
 
 /// Fetch per-file property sheets for an open Properties modal, fold

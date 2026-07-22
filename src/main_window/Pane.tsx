@@ -28,7 +28,7 @@ import {
   FileRowContext,
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
-import { getSiPrefixedNumber } from "./utils";
+import { formatBytes } from "./utils";
 import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
 import { usePreferences } from "../lib/preferences";
 import { useRuntimeState } from "../lib/runtimeState";
@@ -305,6 +305,16 @@ const VFS_ICONS: Record<string, string> = {
   agent: "\u{f048d}",
 };
 
+// Per-drive icons for split-root entries, keyed by VolumeKind.
+const VOLUME_KIND_ICONS: Record<string, string> = {
+  Fixed: "\u{f02ca}", // md-harddisk
+  Removable: "\u{f129e}", // md-usb_flash_drive
+  Optical: "\u{ede9}", // fa-compact_disc
+  Network: "\u{f0870}", // md-folder_network
+  RamDisk: "\u{f035b}", // md-memory
+  Substituted: "\u{f0337}", // md-link
+};
+
 function VfsSelector({
   vfsDisplayName,
   vfsTargets,
@@ -378,6 +388,8 @@ function VfsSelector({
             const prev = vfsTargets[i - 1];
             const next = vfsTargets[i + 1];
             const isSplit = target.vfs_id != null && target.root != null;
+            const kindIcon =
+              (target.volume && VOLUME_KIND_ICONS[target.volume.kind]) || icon;
             const groupStart =
               isSplit &&
               (!prev || prev.vfs_id !== target.vfs_id || prev.root == null);
@@ -433,11 +445,21 @@ function VfsSelector({
                     }
                   }}
                 >
-                  <span className={menuStyles.itemIcon}>{icon}</span>
+                  <span className={menuStyles.itemIcon}>{kindIcon}</span>
                   <span className={menuStyles.itemLabel}>
                     {isSplit ? (
-                      // Under the group header, just the drive.
-                      target.label
+                      // Under the group header: the drive, its volume
+                      // label, and a dimmed target for the drives that
+                      // point elsewhere (mapped UNC path, subst alias).
+                      <>
+                        {target.label}
+                        {target.volume?.label && ` (${target.volume.label})`}
+                        {target.volume?.target && (
+                          <span className={menuStyles.itemDetail}>
+                            {target.volume.target}
+                          </span>
+                        )}
+                      </>
                     ) : (
                       <>
                         {target.display_name}
@@ -446,6 +468,11 @@ function VfsSelector({
                       </>
                     )}
                   </span>
+                  {target.available_bytes != null && (
+                    <span className={menuStyles.itemMeta}>
+                      {formatBytes(target.available_bytes)} free
+                    </span>
+                  )}
                   {isActive && (
                     <span className={menuStyles.itemCheck}>{"\u2713"}</span>
                   )}
@@ -1662,7 +1689,21 @@ function PaneInner(
               <GitBranchBadge key={i} badge={badge} />
             ))}
             {fs_stats?.available_bytes !== undefined && (
-              <div>{getSiPrefixedNumber(fs_stats.available_bytes)}B free</div>
+              <button
+                type="button"
+                className={styles.freeSpace}
+                tabIndex={-1}
+                onMouseDown={(e) => {
+                  // Don't let the pane's click handler steal focus.
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  commands.dialog("root_properties", paneHandle);
+                }}
+              >
+                {formatBytes(fs_stats.available_bytes)} free
+              </button>
             )}
           </div>
         ) : (

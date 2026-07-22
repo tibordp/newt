@@ -1,9 +1,11 @@
 import { useState, useMemo } from "react";
 import {
   commands,
+  type FsStats,
   type PropertyPatchOp,
   type UserGroup,
 } from "../../lib/bindings";
+import { VOLUME_KIND_LABELS } from "../utils";
 import { safe } from "../../lib/ipc";
 import { formatDateTime } from "../../lib/datetime";
 import { usePreferences } from "../../lib/preferences";
@@ -224,6 +226,30 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+// Volume classification + space, shown for volume-root properties.
+function VolumeSection({ fsStats }: { fsStats: FsStats }) {
+  const volume = fsStats.volume;
+  const used = fsStats.total_bytes - fsStats.free_bytes;
+  return (
+    <dl className={styles.infoList}>
+      {volume && (
+        <InfoRow
+          label="Volume type"
+          value={VOLUME_KIND_LABELS[volume.kind] ?? volume.kind}
+        />
+      )}
+      {volume?.fs_type && (
+        <InfoRow label="File system" value={volume.fs_type} />
+      )}
+      {volume?.label && <InfoRow label="Volume label" value={volume.label} />}
+      {volume?.target && <InfoRow label="Target" value={volume.target} />}
+      <InfoRow label="Capacity" value={formatSize(fsStats.total_bytes)} />
+      <InfoRow label="Used" value={formatSize(used)} />
+      <InfoRow label="Free" value={formatSize(fsStats.available_bytes)} />
+    </dl>
+  );
+}
+
 export default function Properties({
   paths,
   name,
@@ -247,6 +273,7 @@ export default function Properties({
   accessed,
   created,
   sheet,
+  fs_stats,
   cancel,
   context,
 }: PropertiesProps) {
@@ -361,7 +388,11 @@ export default function Properties({
                   }
                 />
               )}
-              <InfoRow label="Size" value={formatSize(size)} />
+              {/* A volume-root dialog has no meaningful entry size —
+                  the Volume section carries the numbers instead. */}
+              {!(fs_stats && size == null) && (
+                <InfoRow label="Size" value={formatSize(size)} />
+              )}
               {allocated_size != null && (
                 <InfoRow
                   label="Size on disk"
@@ -417,6 +448,7 @@ export default function Properties({
                 )}
               </dl>
             )}
+            {fs_stats && <VolumeSection fsStats={fs_stats} />}
           </div>
 
           {canEdit && (

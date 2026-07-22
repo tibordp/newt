@@ -12,6 +12,7 @@ pub mod remote;
 pub mod s3;
 pub mod search;
 pub mod sftp;
+pub mod volume;
 
 #[cfg(test)]
 #[path = "../vfs_tests.rs"]
@@ -25,7 +26,7 @@ pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
-    mount_roots,
+    mount_root_infos, mount_roots,
 };
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
@@ -39,6 +40,7 @@ pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Vfs, S3VfsDescriptor};
 pub use search::{SEARCH_VFS_DESCRIPTOR, SearchParams, SearchVfs, SearchVfsDescriptor};
 pub use sftp::SftpVfs;
+pub use volume::{RootInfo, VolumeInfo, VolumeKind};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -336,12 +338,13 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         path.parent().map(Path::to_owned)
     }
 
-    /// The filesystem's root paths. One `/` for a unified-root FS (every
-    /// network/archive VFS, and Unix local); one per drive/share for a
-    /// split-root FS (Windows local, incl. a Windows client's FS exposed
-    /// into a remote session). Recorded in `mount_meta` at mount time.
-    fn roots(&self, _mount_meta: &[u8]) -> Vec<PathBuf> {
-        vec![PathBuf::root()]
+    /// The filesystem's root paths, each with its volume classification
+    /// where known. One `/` for a unified-root FS (every network/archive
+    /// VFS, and Unix local); one per drive/share for a split-root FS
+    /// (Windows local, incl. a Windows client's FS exposed into a remote
+    /// session). Recorded in `mount_meta` at mount time.
+    fn roots(&self, _mount_meta: &[u8]) -> Vec<volume::RootInfo> {
+        vec![volume::RootInfo::root()]
     }
 
     /// Whether the FS has a single `/` root. When false the VFS selector
@@ -362,6 +365,7 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
             self.roots(mount_meta)
                 .into_iter()
                 .next()
+                .map(|r| r.path)
                 .unwrap_or_else(PathBuf::root)
         }
     }
@@ -907,6 +911,17 @@ impl Filesystem for VfsRegistryFs {
                 }
             }
         }
+    }
+
+    async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error> {
+        let vfs = self
+            .registry
+            .get(path.vfs_id)
+            .ok_or_else(|| Error::custom(format!("VFS {} not found", path.vfs_id)))?;
+        if !vfs.descriptor().can_fs_stats() {
+            return Ok(None);
+        }
+        vfs.fs_stats(&path.path).await
     }
 
     async fn touch(&self, path: VfsPath) -> Result<(), Error> {

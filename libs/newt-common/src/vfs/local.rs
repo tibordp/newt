@@ -19,8 +19,8 @@ use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
 use crate::{Error, ToUnix};
 
 use super::{
-    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsDescriptor, VfsMetadata,
-    VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, RootInfo, Vfs, VfsDescriptor,
+    VfsMetadata, VfsSpaceInfo,
 };
 
 /// Bytes read from a file head when sniffing for a MIME type without an
@@ -125,7 +125,7 @@ impl VfsDescriptor for LocalVfsDescriptor {
         None
     }
 
-    fn roots(&self, mount_meta: &[u8]) -> Vec<PathBuf> {
+    fn roots(&self, mount_meta: &[u8]) -> Vec<RootInfo> {
         roots_from_meta(mount_meta)
     }
     fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
@@ -139,10 +139,10 @@ impl VfsDescriptor for LocalVfsDescriptor {
 /// FS roots from `mount_meta`, defaulting to a single `/` when none were
 /// recorded (a style-only mount, e.g. a remote Unix root). Shared by
 /// `LocalVfsDescriptor` and `RemoteVfsDescriptor`.
-pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<PathBuf> {
-    let roots = super::mount_roots(mount_meta);
+pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<RootInfo> {
+    let roots = super::mount_root_infos(mount_meta);
     if roots.is_empty() {
-        vec![PathBuf::root()]
+        vec![RootInfo::root()]
     } else {
         roots
     }
@@ -196,37 +196,45 @@ pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
 /// Root paths of the local filesystem, enumerated once on the side that
 /// owns it (the host for a local session, the agent for a remote one;
 /// also the host for its FS exposed into a remote session). Unix has the
-/// single `/`; Windows has one per logical drive (`\\?\C:`, …). Baked
-/// into `mount_meta` at mount time — a drive added afterwards needs a
-/// restart, the accepted tradeoff for keeping this RPC-free.
+/// single `/`; Windows has one per logical drive (`\\?\C:`, …), each
+/// classified via [`volume::probe_native`]. Baked into `mount_meta` at
+/// mount time — a drive added afterwards needs a restart, the accepted
+/// tradeoff for keeping this RPC-free.
 #[cfg(unix)]
-pub fn local_roots() -> Vec<PathBuf> {
-    vec![PathBuf::root()]
+pub fn local_roots() -> Vec<RootInfo> {
+    vec![RootInfo::root()]
 }
 
 #[cfg(windows)]
-pub fn local_roots() -> Vec<PathBuf> {
+pub fn local_roots() -> Vec<RootInfo> {
     use windows_sys::Win32::Storage::FileSystem::GetLogicalDriveStringsW;
 
     // First call with a zero length returns the required buffer size.
     let needed = unsafe { GetLogicalDriveStringsW(0, std::ptr::null_mut()) };
     if needed == 0 {
-        return vec![PathBuf::root()];
+        return vec![RootInfo::root()];
     }
     let mut buf = vec![0u16; needed as usize];
     let written = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) };
     if written == 0 {
-        return vec![PathBuf::root()];
+        return vec![RootInfo::root()];
     }
     // Buffer is a sequence of NUL-terminated `X:\` strings, double-NUL
     // terminated. Decode each into the `["?","X:"]` sentinel form.
-    let roots: Vec<PathBuf> = buf[..written as usize]
+    let roots: Vec<RootInfo> = buf[..written as usize]
         .split(|&c| c == 0)
         .filter(|s| !s.is_empty())
-        .map(|s| local_path_from_native(StdPath::new(&String::from_utf16_lossy(s))))
+        .map(|s| {
+            let native = String::from_utf16_lossy(s);
+            let native = StdPath::new(&native);
+            RootInfo {
+                path: local_path_from_native(native),
+                volume: super::volume::probe_native(native),
+            }
+        })
         .collect();
     if roots.is_empty() {
-        vec![PathBuf::root()]
+        vec![RootInfo::root()]
     } else {
         roots
     }
@@ -1198,7 +1206,9 @@ fn unix_meta_ids(_meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option
 
 #[cfg(unix)]
 fn platform_fs_stats(path: &StdPath) -> Option<FsStats> {
-    nix::sys::statvfs::statvfs(path).ok().map(FsStats::from)
+    nix::sys::statvfs::statvfs(path)
+        .ok()
+        .map(|s| FsStats::from(s).with_volume(super::volume::probe_native(path)))
 }
 
 #[cfg(windows)]
@@ -1208,6 +1218,7 @@ fn platform_fs_stats(path: &StdPath) -> Option<FsStats> {
             /* free_bytes */ free, /* available_bytes */ available,
             /* total_bytes */ total,
         )
+        .with_volume(super::volume::probe_native(path))
     })
 }
 

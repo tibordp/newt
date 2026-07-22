@@ -221,6 +221,26 @@
   }
 }
 
+/* Free-space label in the pane header; clicking opens the volume-root
+   properties. Link-styled, like the path breadcrumbs. The hover/active
+   overrides beat the global button chrome from _base.scss. */
+.freeSpace {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  font: inherit;
+  text-decoration: none;
+
+  &:hover,
+  &:active {
+    background: none;
+    text-decoration: underline;
+  }
+}
+
 .headerArea {
   position: relative;
   flex-shrink: 0;

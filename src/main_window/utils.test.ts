@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getSiPrefixedNumber, modeString } from "./utils";
+import { formatBytes, getSiPrefixedNumber, modeString } from "./utils";
 
 describe("getSiPrefixedNumber", () => {
   it("returns '0' for zero", () => {
@@ -32,6 +32,15 @@ describe("getSiPrefixedNumber", () => {
 
   it("handles small fractions with m prefix", () => {
     expect(getSiPrefixedNumber(0.001)).toBe("1 m");
+  });
+});
+
+describe("formatBytes", () => {
+  it("separates the unit with a space at every magnitude", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1500)).toBe("1.5 kB");
+    expect(formatBytes(2_500_000_000)).toBe("2.5 GB");
   });
 });
 

@@ -71,6 +71,22 @@
   color: var(--color-accent);
 }
 
+/* Dimmed inline detail after an item label (e.g. a mapped drive's UNC
+   path or a subst target in the VFS selector). */
+.itemDetail {
+  margin-left: var(--space-3);
+  color: var(--color-fg-muted);
+  font-size: 0.85em;
+}
+
+/* Right-aligned muted annotation on a menu item (e.g. free space in the
+   VFS selector). The label's flex: 1 pushes it to the trailing edge. */
+.itemMeta {
+  flex-shrink: 0;
+  color: var(--color-fg-muted);
+  font-size: 0.85em;
+}
+
 /* Fixed-width indicator slot so checkbox-item labels stay aligned
    whether or not the check is present. */
 .checkColumn {

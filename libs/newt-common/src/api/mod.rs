@@ -27,6 +27,7 @@ pub const API_SHELL_EXPAND: Api = Api(6);
 pub const API_LIST_FILES_STREAMING: Api = Api(7);
 pub const API_LIST_FILES_BATCH: Api = Api(8);
 pub const API_REVALIDATE: Api = Api(9);
+pub const API_FS_STATS: Api = Api(10);
 
 pub const API_START_OPERATION: Api = Api(200);
 pub const API_CANCEL_OPERATION: Api = Api(201);
@@ -227,6 +228,11 @@ impl Dispatcher for FilesystemDispatcher {
             API_REVALIDATE => {
                 let vfs_id: VfsId = decode(&req[..])?;
                 let ret = self.filesystem.revalidate(vfs_id).await;
+                encode(&ret)?
+            }
+            API_FS_STATS => {
+                let path: VfsPath = decode(&req[..])?;
+                let ret = self.filesystem.fs_stats(path).await;
                 encode(&ret)?
             }
             _ => return Ok(None),
@@ -1098,6 +1104,13 @@ mod cancellation_tests {
 
         async fn create_directory(&self, _path: VfsPath) -> Result<(), Error> {
             Ok(())
+        }
+
+        async fn fs_stats(
+            &self,
+            _path: VfsPath,
+        ) -> Result<Option<crate::filesystem::FsStats>, Error> {
+            Ok(None)
         }
 
         async fn revalidate(

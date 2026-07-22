@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::path::PathBuf;
+use super::volume::{RootInfo, VolumeInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PathStyle {
@@ -39,7 +40,7 @@ pub enum PathStyle {
 #[derive(Serialize, Deserialize)]
 struct MountMeta {
     style: PathStyle,
-    roots: Vec<String>,
+    roots: Vec<RootMeta>,
     /// Human-readable mount target (agent mounts: the container name,
     /// host, or pod). `None` for style-only metas.
     label: Option<String>,
@@ -48,8 +49,16 @@ struct MountMeta {
     kind: Option<String>,
 }
 
+/// Wire form of one FS root: the path (VFS wire string) plus its volume
+/// classification, probed on the owning side at mount time.
+#[derive(Serialize, Deserialize)]
+struct RootMeta {
+    path: String,
+    volume: Option<VolumeInfo>,
+}
+
 /// Encode `mount_meta` carrying both the path style and the FS roots.
-pub fn encode_mount_meta(style: PathStyle, roots: &[PathBuf]) -> Vec<u8> {
+pub fn encode_mount_meta(style: PathStyle, roots: &[RootInfo]) -> Vec<u8> {
     encode_mount_meta_labeled(style, roots, None, None)
 }
 
@@ -57,13 +66,19 @@ pub fn encode_mount_meta(style: PathStyle, roots: &[PathBuf]) -> Vec<u8> {
 /// `MountMeta::label`).
 pub fn encode_mount_meta_labeled(
     style: PathStyle,
-    roots: &[PathBuf],
+    roots: &[RootInfo],
     kind: Option<&str>,
     label: Option<&str>,
 ) -> Vec<u8> {
     bincode::serialize(&MountMeta {
         style,
-        roots: roots.iter().map(|r| r.as_wire_str().to_string()).collect(),
+        roots: roots
+            .iter()
+            .map(|r| RootMeta {
+                path: r.path.as_wire_str().to_string(),
+                volume: r.volume.clone(),
+            })
+            .collect(),
         label: label.map(|l| l.to_string()),
         kind: kind.map(|k| k.to_string()),
     })
@@ -87,11 +102,25 @@ pub fn mount_meta_kind(meta: &[u8]) -> Option<String> {
 /// The FS roots from `mount_meta`. Empty when none were recorded
 /// (legacy / style-only mount) — callers fall back to a single `/`.
 pub fn mount_roots(meta: &[u8]) -> Vec<PathBuf> {
+    mount_root_infos(meta).into_iter().map(|r| r.path).collect()
+}
+
+/// The FS roots with their volume classification. Empty when none were
+/// recorded (style-only mount) — callers fall back to a single `/`.
+pub fn mount_root_infos(meta: &[u8]) -> Vec<RootInfo> {
     if meta.is_empty() {
         return Vec::new();
     }
     bincode::deserialize::<MountMeta>(meta)
-        .map(|m| m.roots.iter().map(|s| PathBuf::from_wire_str(s)).collect())
+        .map(|m| {
+            m.roots
+                .into_iter()
+                .map(|r| RootInfo {
+                    path: PathBuf::from_wire_str(&r.path),
+                    volume: r.volume,
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -149,13 +178,28 @@ mod tests {
 
     #[test]
     fn roots_round_trip() {
+        use super::super::volume::{VolumeInfo, VolumeKind};
+
         let roots = [
-            PathBuf::from_wire_str("/?/C:"),
-            PathBuf::from_wire_str("/?/D:"),
+            RootInfo {
+                path: PathBuf::from_wire_str("/?/C:"),
+                volume: Some(VolumeInfo {
+                    kind: VolumeKind::Fixed,
+                    fs_type: Some("NTFS".into()),
+                    label: Some("Data".into()),
+                    target: None,
+                    mount_point: Some("/?/C:".into()),
+                }),
+            },
+            RootInfo::bare(PathBuf::from_wire_str("/?/D:")),
         ];
         let meta = encode_mount_meta(PathStyle::Windows, &roots);
         assert_eq!(PathStyle::from_mount_meta(&meta), PathStyle::Windows);
-        assert_eq!(mount_roots(&meta), roots);
+        assert_eq!(
+            mount_roots(&meta),
+            roots.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(mount_root_infos(&meta), roots);
         // Style-only / empty / garbage → no roots recorded.
         assert!(mount_roots(&PathStyle::Unix.encode()).is_empty());
         assert!(mount_roots(&[]).is_empty());

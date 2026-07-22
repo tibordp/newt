@@ -1666,7 +1666,12 @@ export type DeleteConfirmMode =
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | 
+export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | 
+/**
+ * Properties of the volume root containing the pane's current path
+ * (opened by clicking the free-space label in the pane header).
+ */
+"root_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | 
 /**
  * Keyboard-launched quick sort menu, anchored to the pane header.
  */
@@ -1770,7 +1775,13 @@ export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[];
  */
 partial: boolean }
 export type FilterMode = "quick_search" | "filter"
-export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number }
+export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number; 
+/**
+ * Classification of the volume containing the listed directory,
+ * probed on the FS-owning side. `None` where probing failed or the
+ * VFS has no volume notion.
+ */
+volume: VolumeInfo | null }
 /**
  * Frontend-visible view of a single history entry. Sent via the
  * HistoryNavigator modal. `is_alive` reflects whether the entry's VFS is
@@ -1851,7 +1862,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState; 
+/**
+ * Volume stats + classification. `Some` only for a volume root
+ * (DirectoryProperties at a root, or the RootProperties dialog).
+ */
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
@@ -1970,7 +1986,12 @@ owner_id: number | null;
 /**
  * Group GID (resolved from name if needed)
  */
-group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+group_id: number | null; modified: number | null; accessed: number | null; created: number | null; sheet: PropertySheetState; 
+/**
+ * Volume stats + classification. `Some` only for a volume root
+ * (DirectoryProperties at a root, or the RootProperties dialog).
+ */
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
@@ -2378,12 +2399,58 @@ mount_dialog: string | null;
  * (one target per drive); selecting it navigates straight there
  * instead of the VFS's default `initial_path`.
  */
-root: string | null }
+root: string | null; 
+/**
+ * Volume classification for a split-root entry (drive kind, label,
+ * UNC/subst target), recorded at mount time on the owning side.
+ */
+volume: VolumeInfo | null; 
+/**
+ * Free bytes on the target's volume. Always `None` at open — the
+ * selector opens instantly and a background fetch fills these in
+ * (a dead network drive must not stall the dropdown).
+ */
+available_bytes: number | null }
 /**
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.
  */
 export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf"
+export type VolumeInfo = { kind: VolumeKind; 
+/**
+ * Filesystem name (NTFS, ext4, apfs, …).
+ */
+fs_type: string | null; 
+/**
+ * Volume label, when the platform records one.
+ */
+label: string | null; 
+/**
+ * Where the volume actually points: `\\server\share` for a mapped
+ * network drive, the aliased directory for a subst drive, the mount
+ * source (`server:/export`) for a Unix network mount.
+ */
+target: string | null; 
+/**
+ * Root of this volume within the owning VFS, in wire path form: the
+ * drive/share root on Windows, the mount point on Unix (`/proc`, not
+ * `/`, when that's what the stats describe).
+ */
+mount_point: string | null }
+export type VolumeKind = 
+/**
+ * Physical disk / partition (or anything local we can't prove is
+ * something more specific).
+ */
+"Fixed" | "Removable" | "Optical" | 
+/**
+ * Network filesystem: mapped drive on Windows, nfs/cifs/sshfs/… on Unix.
+ */
+"Network" | "RamDisk" | 
+/**
+ * Windows `subst` drive — a letter aliasing a local directory.
+ */
+"Substituted" | "Unknown"
 /**
  * One installed WSL distribution. Serialized into the picker modal payload.
  */

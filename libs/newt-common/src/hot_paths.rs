@@ -103,11 +103,11 @@ fn collect_system_paths() -> Vec<HotPathEntry> {
 #[cfg(windows)]
 fn collect_windows_drives(out: &mut Vec<HotPathEntry>) {
     for root in crate::vfs::local::local_roots() {
-        // `root` is the sentinel form `["?", "C:"]`; the drive is the
+        // `root.path` is the sentinel form `["?", "C:"]`; the drive is the
         // second component (`C:`), which doubles as the display name.
-        let name = root.components().nth(1).map(|c| c.to_string());
+        let name = root.path.components().nth(1).map(|c| c.to_string());
         out.push(HotPathEntry {
-            path: VfsPath::new(crate::vfs::VfsId::ROOT, root),
+            path: VfsPath::new(crate::vfs::VfsId::ROOT, root.path),
             display_path: String::new(),
             name,
             category: HotPathCategory::Mount,
@@ -236,7 +236,7 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
             continue;
         }
 
-        let mount_point = unescape_mountinfo(fields[4]);
+        let mount_point = crate::vfs::volume::unescape_mountinfo(fields[4]);
         let fs_type = fields[separator_pos + 1];
 
         if pseudo_fs_types.contains(&fs_type) {
@@ -261,27 +261,6 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
             out.push(make_entry(mount_path, name, HotPathCategory::Mount));
         }
     }
-}
-
-/// Unescape octal escapes in mountinfo fields (e.g. `\040` → space).
-#[cfg(target_os = "linux")]
-fn unescape_mountinfo(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            let oct: String = chars.by_ref().take(3).collect();
-            if let Ok(byte) = u8::from_str_radix(&oct, 8) {
-                result.push(byte as char);
-            } else {
-                result.push('\\');
-                result.push_str(&oct);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }
 
 // ---------------------------------------------------------------------------

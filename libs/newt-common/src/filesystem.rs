@@ -129,6 +129,10 @@ pub struct FsStats {
     free_bytes: u64,
     available_bytes: u64,
     total_bytes: u64,
+    /// Classification of the volume containing the listed directory,
+    /// probed on the FS-owning side. `None` where probing failed or the
+    /// VFS has no volume notion.
+    volume: Option<crate::vfs::VolumeInfo>,
 }
 
 impl FsStats {
@@ -137,7 +141,21 @@ impl FsStats {
             free_bytes,
             available_bytes,
             total_bytes,
+            volume: None,
         }
+    }
+
+    pub fn with_volume(mut self, volume: Option<crate::vfs::VolumeInfo>) -> Self {
+        self.volume = volume;
+        self
+    }
+
+    pub fn available_bytes(&self) -> u64 {
+        self.available_bytes
+    }
+
+    pub fn volume(&self) -> Option<&crate::vfs::VolumeInfo> {
+        self.volume.as_ref()
     }
 }
 
@@ -149,6 +167,7 @@ impl From<nix::sys::statvfs::Statvfs> for FsStats {
             free_bytes: ((stats.blocks_available() as u64) * (stats.fragment_size() as u64)),
             available_bytes: ((stats.blocks_available() as u64) * (stats.fragment_size() as u64)),
             total_bytes: ((stats.blocks() as u64) * (stats.fragment_size() as u64)),
+            volume: None,
         }
     }
 }
@@ -300,6 +319,10 @@ pub trait Filesystem: Send + Sync {
     async fn touch(&self, path: VfsPath) -> Result<(), Error>;
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error>;
 
+    /// Volume stats (free/total bytes + classification) for the volume
+    /// containing `path`. `Ok(None)` where the VFS has no volume notion.
+    async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error>;
+
     /// Revalidate the VFS identified by `vfs_id`. The navigation layer
     /// calls this when a pane is about to land on a path inside `vfs_id`
     /// after having been outside of it, giving the VFS a chance to detect
@@ -360,6 +383,10 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.create_directory(path).await
+    }
+    async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.fs_stats(path).await
     }
     async fn revalidate(
         &self,
@@ -471,6 +498,15 @@ impl Filesystem for Remote {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_CREATE_DIRECTORY, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error> {
+        let ret: Result<Option<FsStats>, Error> = self
+            .communicator
+            .invoke(crate::api::API_FS_STATS, &path)
             .await?;
 
         Ok(ret?)
