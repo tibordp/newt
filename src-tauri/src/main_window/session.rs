@@ -1307,9 +1307,21 @@ pub(super) async fn connect(
     // Also set up hairpin diversion so list_files/read/write for the remote
     // VFS are handled locally without round-tripping through the agent.
     if connection_target.is_remote() && preferences.load().behavior.expose_local_fs {
+        // This VFS surfaces *this host's* local FS into the remote
+        // session, and only the host can describe it: host path style,
+        // and the host's drives so a Windows client lands on a drive
+        // instead of the unlistable `/`. The meta rides in the request so
+        // the agent's `RemoteVfs` answers descriptor queries correctly,
+        // and round-trips back in the response for our own bookkeeping.
+        let client_local_meta = newt_common::vfs::encode_mount_meta(
+            PathStyle::host(),
+            &newt_common::vfs::local::local_roots(),
+        );
         match services
             .vfs_manager
-            .mount(newt_common::vfs::MountRequest::Remote)
+            .mount(newt_common::vfs::MountRequest::Remote {
+                mount_meta: client_local_meta,
+            })
             .await
         {
             Ok(resp) => {
@@ -1320,14 +1332,7 @@ pub(super) async fn connect(
                         MountedVfsInfo {
                             vfs_id: resp.vfs_id,
                             descriptor: desc,
-                            // This VFS surfaces *this host's* local FS into
-                            // the remote session: host path style, and the
-                            // host's drives so a Windows client lands on a
-                            // drive instead of the unlistable `/`.
-                            mount_meta: newt_common::vfs::encode_mount_meta(
-                                PathStyle::host(),
-                                &newt_common::vfs::local::local_roots(),
-                            ),
+                            mount_meta: resp.mount_meta.clone(),
                             origin: None,
                         },
                     );

@@ -1,4 +1,6 @@
 #[cfg(windows)]
+pub mod drives;
+#[cfg(windows)]
 pub mod elevate;
 #[cfg(target_os = "macos")]
 pub mod menu;
@@ -1583,6 +1585,34 @@ impl MainWindowContext {
         self.inner.main_window_state.vfs_progress.clear_for(vfs_id);
         self.refresh_mount_summary();
         Ok(())
+    }
+
+    /// Logical remount of `vfs_id` (see `VfsManager::remount`): refresh
+    /// its `mount_meta` and, if it changed, update our cached copy and
+    /// the pushed mount summary. Returns whether anything changed —
+    /// callers decide what downstream state (an open VFS selector) to
+    /// rebuild.
+    pub async fn remount_vfs(
+        &self,
+        vfs_id: VfsId,
+        mount_meta: Option<Vec<u8>>,
+    ) -> Result<bool, Error> {
+        let vfs_manager = self.with_session(|s| s.vfs_manager.clone())?;
+        let new_meta = vfs_manager.remount(vfs_id, mount_meta).await?;
+        let changed = self.with_session(|s| {
+            let mut mounted = s.mounted_vfs.write();
+            match mounted.get_mut(&vfs_id) {
+                Some(info) if info.mount_meta != new_meta => {
+                    info.mount_meta = new_meta;
+                    true
+                }
+                _ => false,
+            }
+        })?;
+        if changed {
+            self.refresh_mount_summary();
+        }
+        Ok(changed)
     }
 
     /// Recompute the pushed [`MountSummary`] from the session's mounted

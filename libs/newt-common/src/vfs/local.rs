@@ -193,13 +193,14 @@ pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
     }
 }
 
-/// Root paths of the local filesystem, enumerated once on the side that
-/// owns it (the host for a local session, the agent for a remote one;
-/// also the host for its FS exposed into a remote session). Unix has the
+/// Root paths of the local filesystem, enumerated on the side that owns
+/// it (the host for a local session, the agent for a remote one; also
+/// the host for its FS exposed into a remote session). Unix has the
 /// single `/`; Windows has one per logical drive (`\\?\C:`, …), each
 /// classified via [`volume::probe_native`]. Baked into `mount_meta` at
-/// mount time — a drive added afterwards needs a restart, the accepted
-/// tradeoff for keeping this RPC-free.
+/// mount time so root lookups stay descriptor-only (no per-call RPC);
+/// drive changes re-enumerate via `VfsManager::remount`, driven by the
+/// host's device-change/focus triggers.
 #[cfg(unix)]
 pub fn local_roots() -> Vec<RootInfo> {
     vec![RootInfo::root()]

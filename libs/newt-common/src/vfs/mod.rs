@@ -1187,7 +1187,14 @@ pub enum MountRequest {
         root: VfsPath,
         params: search::SearchParams,
     },
-    Remote,
+    /// Expose the requesting side's own filesystem (the client-local FS
+    /// in a remote session). `mount_meta` is supplied by the requester —
+    /// only the owner can describe its FS (style, drive roots), and the
+    /// resulting `RemoteVfs` can't derive it (its `mount_meta()` is sync,
+    /// no RPC). Refreshed via `VfsManager::remount` on drive changes.
+    Remote {
+        mount_meta: Vec<u8>,
+    },
     /// Spawn an FS-only sub-agent over a transport (SSH, docker, …) and
     /// mount its local filesystem. See `vfs::agent`.
     Agent {
@@ -1238,6 +1245,16 @@ pub struct MountedVfsInfo {
 pub trait VfsManager: Send + Sync {
     async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error>;
     async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error>;
+
+    /// Logical remount: refresh a mount's `mount_meta` in place, keeping
+    /// its identity (`VfsId`, descriptor, origin). Returns the new meta.
+    ///
+    /// `mount_meta: None` asks the VFS to re-derive it (revalidate where
+    /// supported, then a fresh `Vfs::mount_meta()` — for a local FS that
+    /// re-enumerates drive roots). `Some` injects owner-supplied meta and
+    /// is only valid for `MountRequest::Remote` mounts, whose meta the
+    /// requesting side owns (see the variant docs).
+    async fn remount(&self, vfs_id: VfsId, mount_meta: Option<Vec<u8>>) -> Result<Vec<u8>, Error>;
 }
 
 pub struct VfsManagerRemote {
@@ -1264,6 +1281,14 @@ impl VfsManager for VfsManagerRemote {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_UNMOUNT_VFS, &vfs_id)
+            .await?;
+        Ok(ret?)
+    }
+
+    async fn remount(&self, vfs_id: VfsId, mount_meta: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
+        let ret: Result<Vec<u8>, Error> = self
+            .communicator
+            .invoke(crate::api::API_REMOUNT_VFS, &(vfs_id, mount_meta))
             .await?;
         Ok(ret?)
     }

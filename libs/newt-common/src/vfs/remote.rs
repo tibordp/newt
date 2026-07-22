@@ -153,7 +153,10 @@ pub struct RemoteVfs {
     pending_read_streams: PendingVfsReadStreams,
     next_stream_id: AtomicU64,
     descriptor: &'static dyn VfsDescriptor,
-    mount_meta: Vec<u8>,
+    /// Owner-supplied: the proxied side describes its own filesystem
+    /// (style + roots), so the meta arrives with the mount request and
+    /// can be replaced on remount (drive changes) — see `set_mount_meta`.
+    mount_meta: parking_lot::RwLock<Vec<u8>>,
     /// Keeps a spawned sub-agent (process, askpass listener) alive for the
     /// lifetime of the mount. `None` for the host-communicator flavor.
     _connection: Option<super::agent::AgentConnectionGuard>,
@@ -162,10 +165,14 @@ pub struct RemoteVfs {
 impl RemoteVfs {
     /// Build a `RemoteVfs` from a `MountRequest::Remote`. Pulls the host
     /// communicator (set up at session start by the agent) and the
-    /// shared pending-stream map out of the mount context.
+    /// shared pending-stream map out of the mount context; the meta comes
+    /// with the request — only the host can describe its own FS. Returns
+    /// the concrete type so the mounting manager can keep a typed handle
+    /// for later `set_mount_meta` (remount) dispatch.
     pub fn mount(
         ctx: &crate::api::MountContext<'_>,
-    ) -> Result<std::sync::Arc<dyn super::Vfs>, crate::Error> {
+        mount_meta: Vec<u8>,
+    ) -> Result<std::sync::Arc<Self>, crate::Error> {
         let communicator = ctx
             .host_communicator
             .get()
@@ -174,16 +181,28 @@ impl RemoteVfs {
         Ok(std::sync::Arc::new(Self::new(
             communicator,
             ctx.pending_read_streams.clone(),
+            mount_meta,
         )))
     }
 
-    pub fn new(communicator: Communicator, pending_read_streams: PendingVfsReadStreams) -> Self {
+    /// Replace the owner-supplied `mount_meta` (logical remount: the host
+    /// re-enumerated its drives and pushed the fresh description). Not a
+    /// `Vfs` trait operation — every other VFS derives its own meta.
+    pub fn set_mount_meta(&self, mount_meta: Vec<u8>) {
+        *self.mount_meta.write() = mount_meta;
+    }
+
+    pub fn new(
+        communicator: Communicator,
+        pending_read_streams: PendingVfsReadStreams,
+        mount_meta: Vec<u8>,
+    ) -> Self {
         Self {
             communicator,
             pending_read_streams,
             next_stream_id: AtomicU64::new(1),
             descriptor: &REMOTE_VFS_DESCRIPTOR,
-            mount_meta: Vec::new(),
+            mount_meta: parking_lot::RwLock::new(mount_meta),
             _connection: None,
         }
     }
@@ -201,7 +220,7 @@ impl RemoteVfs {
             pending_read_streams,
             next_stream_id: AtomicU64::new(1),
             descriptor: &super::agent::AGENT_VFS_DESCRIPTOR,
-            mount_meta,
+            mount_meta: parking_lot::RwLock::new(mount_meta),
             _connection: Some(connection),
         }
     }
@@ -231,7 +250,7 @@ impl Vfs for RemoteVfs {
     }
 
     fn mount_meta(&self) -> Vec<u8> {
-        self.mount_meta.clone()
+        self.mount_meta.read().clone()
     }
 
     async fn list_files(

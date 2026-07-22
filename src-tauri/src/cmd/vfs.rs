@@ -23,7 +23,7 @@ async fn mount_and_navigate(
         MountRequest::Archive { .. } => "archive",
         MountRequest::Disc { .. } => "disc",
         MountRequest::Search { .. } => "search",
-        MountRequest::Remote => "remote",
+        MountRequest::Remote { .. } => "remote",
         MountRequest::Agent { .. } => "agent",
     };
     log::info!("cmd: mount {} pane={:?}", kind, pane_handle);

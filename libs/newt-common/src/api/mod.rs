@@ -51,6 +51,7 @@ pub const API_GET_PROPERTY_SHEET: Api = Api(305);
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
 pub const API_VFS_PROGRESS: Api = Api(402);
+pub const API_REMOUNT_VFS: Api = Api(403);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
@@ -802,6 +803,10 @@ pub struct VfsRegistryManager {
     /// on spawn-style agent mounts. Host sessions populate this from
     /// preferences; the agent's ambient PATH is used otherwise.
     extra_path: Vec<String>,
+    /// Typed handles to `MountRequest::Remote` mounts, kept at
+    /// construction so `remount` can inject owner-supplied meta via the
+    /// `RemoteVfs`-only setter without downcasting through the registry.
+    remote_mounts: parking_lot::Mutex<HashMap<VfsId, Arc<crate::vfs::RemoteVfs>>>,
 }
 
 impl VfsRegistryManager {
@@ -815,6 +820,7 @@ impl VfsRegistryManager {
             progress_sink: Arc::new(crate::vfs::NoopProgressSink),
             agent_resolver: None,
             extra_path: Vec::new(),
+            remote_mounts: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 
@@ -832,6 +838,7 @@ impl VfsRegistryManager {
             progress_sink: Arc::new(crate::vfs::NoopProgressSink),
             agent_resolver: None,
             extra_path: Vec::new(),
+            remote_mounts: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 
@@ -903,7 +910,11 @@ impl VfsManager for VfsRegistryManager {
             MountRequest::Kubernetes { context } => {
                 crate::vfs::K8sVfs::mount(context, &ctx).await?
             }
-            MountRequest::Remote => crate::vfs::RemoteVfs::mount(&ctx)?,
+            MountRequest::Remote { mount_meta } => {
+                let remote = crate::vfs::RemoteVfs::mount(&ctx, mount_meta)?;
+                self.remote_mounts.lock().insert(vfs_id, remote.clone());
+                remote
+            }
             MountRequest::Agent { spec, kind, label } => {
                 crate::vfs::agent::mount(spec, kind, label, &ctx).await?
             }
@@ -936,10 +947,41 @@ impl VfsManager for VfsRegistryManager {
     }
 
     async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
+        self.remote_mounts.lock().remove(&vfs_id);
         self.registry
             .unmount(vfs_id)
             .map(|_| ())
             .ok_or_else(|| Error::custom(format!("cannot unmount VFS {}", vfs_id)))
+    }
+
+    async fn remount(&self, vfs_id: VfsId, mount_meta: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
+        let vfs = self
+            .registry
+            .get(vfs_id)
+            .ok_or_else(|| Error::custom(format!("VFS {} not found", vfs_id)))?;
+        match mount_meta {
+            Some(meta) => {
+                let remote = self
+                    .remote_mounts
+                    .lock()
+                    .get(&vfs_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        Error::custom(format!(
+                            "mount_meta override is only valid for a Remote mount (VFS {})",
+                            vfs_id
+                        ))
+                    })?;
+                remote.set_mount_meta(meta.clone());
+                Ok(meta)
+            }
+            None => {
+                if vfs.descriptor().can_revalidate() {
+                    vfs.revalidate().await?;
+                }
+                Ok(vfs.mount_meta())
+            }
+        }
     }
 }
 
@@ -967,6 +1009,11 @@ impl Dispatcher for VfsMountDispatcher {
             API_UNMOUNT_VFS => {
                 let vfs_id: VfsId = decode(&req[..])?;
                 let ret = self.vfs_manager.unmount(vfs_id).await;
+                encode(&ret)?
+            }
+            API_REMOUNT_VFS => {
+                let (vfs_id, mount_meta): (VfsId, Option<Vec<u8>>) = decode(&req[..])?;
+                let ret = self.vfs_manager.remount(vfs_id, mount_meta).await;
                 encode(&ret)?
             }
             _ => return Ok(None),
@@ -1052,6 +1099,30 @@ impl Dispatcher for HotPathsDispatcher {
 
     async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod remount_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn remount_rederives_local_meta_and_rejects_override() {
+        let registry = Arc::new(VfsRegistry::with_root(
+            Arc::new(crate::vfs::LocalVfs::new()),
+        ));
+        let manager = VfsRegistryManager::new(registry.clone());
+
+        let meta = manager.remount(VfsId::ROOT, None).await.unwrap();
+        assert_eq!(meta, registry.get(VfsId::ROOT).unwrap().mount_meta());
+
+        // Owner-supplied meta is only valid for Remote mounts.
+        assert!(
+            manager
+                .remount(VfsId::ROOT, Some(vec![1, 2, 3]))
+                .await
+                .is_err()
+        );
     }
 }
 

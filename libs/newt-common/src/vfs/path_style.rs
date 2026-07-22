@@ -33,10 +33,10 @@ pub enum PathStyle {
 /// what `style`/`roots` carry.
 ///
 /// `roots` are the filesystem's root paths (VFS wire strings), captured
-/// once at mount/launch time on the side that owns the FS — a single
-/// `["/"]` for Unix, one per drive/share on Windows. A drive added after
-/// launch needs a restart to appear; the deliberate tradeoff for keeping
-/// this a descriptor-only lookup with no per-call RPC.
+/// at mount/launch time on the side that owns the FS — a single `["/"]`
+/// for Unix, one per drive/share on Windows. Kept a descriptor-only
+/// lookup (no per-call RPC); drive changes refresh the whole meta via
+/// `VfsManager::remount`.
 #[derive(Serialize, Deserialize)]
 struct MountMeta {
     style: PathStyle,

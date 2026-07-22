@@ -961,6 +961,11 @@ fn main() {
                 });
             }
 
+            // Drive letters change under us (USB, net use); refresh the
+            // affected mounts' roots when Windows broadcasts it.
+            #[cfg(windows)]
+            main_window::drives::spawn_drive_watcher(app.handle().clone());
+
             Ok(())
         })
         .on_window_event(
@@ -1044,7 +1049,15 @@ fn main() {
                         if let Some(ctx) =
                             global_ctx.main_windows.lock().get(window.label()).cloned()
                         {
-                            tauri::async_runtime::spawn(async move { ctx.refresh(false).await });
+                            tauri::async_runtime::spawn(async move {
+                                // Catch-all for drive changes that don't
+                                // broadcast WM_DEVICECHANGE (subst): sweep
+                                // the roots on focus regain, like the pane
+                                // auto-refresh below.
+                                #[cfg(windows)]
+                                main_window::drives::refresh_host_drive_mounts(&ctx).await;
+                                ctx.refresh(false).await
+                            });
                         }
                     }
                     tauri::WindowEvent::DragDrop(event) => {
