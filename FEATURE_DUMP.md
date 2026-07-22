@@ -197,7 +197,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 **Enter behavior** depends on what's focused:
 - **Directory**: Navigate into it.
 - **Archive file** (`.tar.gz`, `.zip`, etc.) or **disc image** (`.iso`, `.udf`): Mount as VFS and navigate into its root.
-- **Symlink to directory**: Follow the symlink and enter the target directory.
+- **Symlink to directory**: Enter it logically — the pane keeps the link path, listing goes through the link (both Unix and healthy Windows links, `mklink /D`/`/J`). On Windows-shaped FSes, if the logical entry fails, Enter falls back to the resolved link *target*: the app-compat junctions (`C:\Users\<user>\Cookies` & co.) carry an `Everyone:(DENY)(RD)` ACE and are unlistable by design, so resolving is the only useful move (TC resolves; Salamander errors). Deliberately shallow: direct navigation to a link path (Ctrl+L, breadcrumb) is unchanged and may error.
 - **Regular file**: Open with system default application. For host-local files this opens directly via the OS opener; for files on a non-host-local VFS (S3, SFTP, archives, remote), the file is first downloaded to a temp directory on the host using the standard Copy operation, and the system handler is launched on completion.
 - **`..`**: Navigate to parent directory.
 
