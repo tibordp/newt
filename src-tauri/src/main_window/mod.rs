@@ -607,6 +607,15 @@ pub enum ModalDataKind {
     SelectVfs {
         targets: Vec<VfsTarget>,
     },
+    /// "Disconnect X:?" for the unmap-network-drive command. Constructed
+    /// on Windows only; plain data, so no cfg (keeps bindings.ts
+    /// host-independent without a gate).
+    ConfirmUnmapDrive {
+        /// Drive letter (`X:`).
+        drive: String,
+        /// The share it maps to (`\\server\share`), when recorded.
+        target: Option<String>,
+    },
     // Specta-visible, so compiled under the bindings feature too (keeps
     // bindings.ts host-independent). Constructed only on Windows; the
     // allow covers the off-Windows bindings build.

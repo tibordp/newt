@@ -244,3 +244,69 @@ pub async fn unmount_vfs(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Map / Unmap network drive (Windows). Doc comments on the #[cfg(windows)]
+// and stub definitions must stay identical: tauri-specta emits them as
+// JSDoc, so a mismatch makes `bindings.ts` depend on the build host.
+// ---------------------------------------------------------------------------
+
+/// Open the system "Map Network Drive" wizard (F11).
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_map_network_drive(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    crate::main_window::drives::map_network_drive(&ctx, pane_handle).await
+}
+
+/// Confirm-and-disconnect the network drive the pane is on (Alt+F11).
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_unmap_network_drive(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    crate::main_window::drives::open_unmap_confirmation(&ctx, pane_handle)
+}
+
+/// The unmap confirmation dialog's "Disconnect" button.
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn confirm_unmap_drive(ctx: MainWindowContext) -> Result<(), Error> {
+    crate::main_window::drives::confirm_unmap_drive(&ctx).await
+}
+
+/// Open the system "Map Network Drive" wizard (F11).
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_map_network_drive(_pane_handle: PaneHandle) -> Result<(), Error> {
+    Err(Error::Custom(
+        "Network drive mapping is only available on Windows".into(),
+    ))
+}
+
+/// Confirm-and-disconnect the network drive the pane is on (Alt+F11).
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_unmap_network_drive(_pane_handle: PaneHandle) -> Result<(), Error> {
+    Err(Error::Custom(
+        "Network drive mapping is only available on Windows".into(),
+    ))
+}
+
+/// The unmap confirmation dialog's "Disconnect" button.
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn confirm_unmap_drive() -> Result<(), Error> {
+    Err(Error::Custom(
+        "Network drive mapping is only available on Windows".into(),
+    ))
+}

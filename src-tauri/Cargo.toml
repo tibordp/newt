@@ -62,6 +62,7 @@ pty-process = { path = "../libs/pty-process" }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_WNet",
     "Win32_System_SystemInformation",
     "Win32_System_LibraryLoader",
     "Win32_System_Pipes",

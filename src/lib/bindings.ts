@@ -481,6 +481,39 @@ async unmountVfs(paneHandle: PaneHandle, vfsId: VfsId) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Open the system "Map Network Drive" wizard (F11).
+ */
+async cmdMapNetworkDrive(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_map_network_drive", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Confirm-and-disconnect the network drive the pane is on (Alt+F11).
+ */
+async cmdUnmapNetworkDrive(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_unmap_network_drive", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The unmap confirmation dialog's "Disconnect" button.
+ */
+async confirmUnmapDrive() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_unmap_drive") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async terminalWrite(handle: TerminalHandle, data: number[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("terminal_write", { handle, data }) };
@@ -1938,7 +1971,21 @@ folders_first: boolean } } | { type: "quick_connect"; data: { connections: Conne
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.
  */
-recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
+/**
+ * "Disconnect X:?" for the unmap-network-drive command. Constructed
+ * on Windows only; plain data, so no cfg (keeps bindings.ts
+ * host-independent without a gate).
+ */
+{ type: "confirm_unmap_drive"; data: { 
+/**
+ * Drive letter (`X:`).
+ */
+drive: string; 
+/**
+ * The share it maps to (`\\server\share`), when recorded.
+ */
+target: string | null } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview
@@ -2062,7 +2109,21 @@ folders_first: boolean } } | { type: "quick_connect"; data: { connections: Conne
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.
  */
-recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
+recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
+/**
+ * "Disconnect X:?" for the unmap-network-drive command. Constructed
+ * on Windows only; plain data, so no cfg (keeps bindings.ts
+ * host-independent without a gate).
+ */
+{ type: "confirm_unmap_drive"; data: { 
+/**
+ * Drive letter (`X:`).
+ */
+drive: string; 
+/**
+ * The share it maps to (`\\server\share`), when recorded.
+ */
+target: string | null } } | { type: "select_wsl_distro"; data: { distros: WslDistro[] } } | { type: "history_navigator"; data: { entries: HistoryEntryView[]; current_index: number; 
 /**
  * Direction of the keypress that opened the overlay: -1 for back,
  * +1 for forward. The overlay uses this to set the initial preview

@@ -6,6 +6,7 @@ import {
 import { safe } from "../../lib/ipc";
 import About from "./About";
 import ConfirmDelete from "./ConfirmDelete";
+import ConfirmUnmapDrive from "./ConfirmUnmapDrive";
 import ConnectRemote from "./ConnectRemote";
 import CopyMove from "./CopyMove";
 import CreateArchive from "./CreateArchive";
@@ -76,6 +77,8 @@ export function ModalContent({
       return <SearchDialog {...state.data} {...commonProps} />;
     case "confirm_delete":
       return <ConfirmDelete {...state.data} {...commonProps} />;
+    case "confirm_unmap_drive":
+      return <ConfirmUnmapDrive {...state.data} {...commonProps} />;
     case "properties":
       return <Properties {...state.data} {...commonProps} />;
     case "user_command_input":

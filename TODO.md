@@ -36,6 +36,12 @@ Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`). Follow-ups:
 - Add S3 ad-hoc mounts to Quick Connect recents (spawn kinds + SFTP are recorded today). Needs a reconnect flow that re-prompts for credentials — or reopens the Mount S3 dialog prefilled with the non-secret fields — since S3 keys can't live in `state.json`.
 - Persist window geometry (main + viewer/editor size/position/maximized) via `tauri-plugin-window-state`. Must handle the pre-warmed hidden viewer/editor windows (`PrewarmedWindow`, keyed per main-window label) so restore lands on the window that actually shows the file.
 
+## Windows integration
+
+Shipped: volume classification + live drive-roots refresh (logical remount), Windows-path resolution in remote sessions, Enter-through-junction fallback, Map/Unmap network drive (F11 / Alt+F11). Planned next:
+- Shell context menu (classic `IContextMenu`): trailing item in our custom context menu + modifier+right-click direct path. `windows` 0.61 + `webview2-com` already in-tree; needs STA COM init, `SHParseDisplayName` on de-verbatimed paths, `QueryContextMenu`/`TrackPopupMenuEx`/`InvokeCommand`, and a temporary HWND subclass forwarding `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MENUCHAR` to `IContextMenu2/3` for "Open with"/"Send to" submenus.
+- VFS-aware columns: global `appearance.columns` stays the superset/order; panes filter by per-pane column traits (unix owner/mode vs Windows attributes) surfaced from descriptor + path style into `PaneViewState`. Windows "Attr" column needs a new `File.attributes` field (raw `FILE_ATTRIBUTE_*` bits are currently discarded after the hidden/system check in `local.rs`).
+
 ## Dialog visual uplift
 
 Shipped (shared dialog primitives in `modals/primitives/`, all ~26 dialogs migrated). Remaining:

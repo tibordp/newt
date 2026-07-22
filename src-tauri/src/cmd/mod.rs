@@ -221,6 +221,9 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::discovery::discover_kube_pods,
             vfs::switch_vfs,
             vfs::unmount_vfs,
+            vfs::cmd_map_network_drive,
+            vfs::cmd_unmap_network_drive,
+            vfs::confirm_unmap_drive,
             // Terminal
             terminal::terminal_write,
             terminal::terminal_resize,

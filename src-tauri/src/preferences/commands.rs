@@ -437,6 +437,24 @@ pub fn default_commands() -> Vec<CommandDef> {
                 default_when: None,
                 needs_pane: false,
             },
+            CommandDef {
+                id: "map_network_drive".into(),
+                name: "Map Network Drive...".into(),
+                short_name: None,
+                category: "Navigation".into(),
+                default_key: Some("f11".into()),
+                default_when: None,
+                needs_pane: false,
+            },
+            CommandDef {
+                id: "unmap_network_drive".into(),
+                name: "Unmap Network Drive...".into(),
+                short_name: None,
+                category: "Navigation".into(),
+                default_key: Some("alt+f11".into()),
+                default_when: Some("pane_focused".into()),
+                needs_pane: true,
+            },
         }
         CommandDef {
             id: "select_vfs".into(),
