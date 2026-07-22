@@ -1,6 +1,6 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::vfs::local::{local_path_from_native, to_native};
-use newt_common::vfs::{MountRequest, VfsId, VfsPath};
+use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
 
 use crate::common::Error;
 use crate::main_window::pane::{FilterMode, Sorting};
@@ -30,14 +30,25 @@ pub async fn navigate(
     // the VFS-domain code below the `Pane::navigate` call never sees a
     // drive letter / separator skew.
     let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
-        // A VFS display path (s3://, archive, k8s, …).
+        // A VFS display path (s3://, archive, k8s, …, or a Windows-syntax
+        // path claimed by a Windows-styled client-local mount).
         Some(vfs_path)
     } else if exact {
         // Verbatim: no shell expansion/fuzzing. A breadcrumb hands us a
         // native display path (`C:\Users\Tibor`, `/home/x`); `..` and
         // other relative fragments fall through to relative resolution.
+        // Host-native decode is only sound when the session root speaks
+        // the host's path syntax (local and elevated sessions). On a
+        // Windows host in a Unix remote session a stray `C:\` — Shift+
+        // <drive> with no Windows-styled mount — must fall through
+        // harmlessly, not decode against the agent's `/`.
+        let root_is_host_style = ctx
+            .vfs_info()
+            .ok()
+            .and_then(|vi| vi.descriptor(VfsId::ROOT))
+            .is_some_and(|(_, meta)| PathStyle::from_mount_meta(&meta) == PathStyle::host());
         let native = std::path::Path::new(path);
-        if native.is_absolute() {
+        if root_is_host_style && native.is_absolute() {
             Some(VfsPath::new(VfsId::ROOT, local_path_from_native(native)))
         } else {
             None

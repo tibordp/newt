@@ -121,8 +121,19 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         super::local::unified_root_from_meta(mount_meta)
     }
 
-    fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
-        None
+    fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
+        // Windows syntax is distinctive (`C:\…`, `\\server\share`), and a
+        // Windows-styled client-local mount is the only place it can mean
+        // anything in a Unix-rooted remote session — so claim it here and
+        // Ctrl+L / Shift+<drive> land on the right VFS. Unix-style input
+        // deliberately stays unclaimed: it belongs to the session root via
+        // shell expansion on the agent.
+        if PathStyle::from_mount_meta(mount_meta) != PathStyle::Windows {
+            return None;
+        }
+        Some(DisplayPathMatch::exact(
+            super::local::local_path_from_typed_display(input)?,
+        ))
     }
 }
 

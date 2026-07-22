@@ -495,6 +495,57 @@ pub fn local_path_from_native(path: &StdPath) -> PathBuf {
     PathBuf::from_components(local_segments_from_native(path))
 }
 
+/// [`local_path_from_native`] for *user-typed* input: the same decoding,
+/// behind vetting the native decode doesn't do. Only distinctively
+/// absolute Windows shapes are claimed — `X:` + separator/end (drive) or
+/// a leading `\\` (UNC/verbatim). Drive-relative (`C:foo`) and plain
+/// relative inputs return `None` instead of being silently absolutized,
+/// as do `..` segments (the native decode drops them, which is only
+/// sound for canonicalized paths) and the non-filesystem `\\?\`/`\\.\`
+/// namespaces beyond verbatim drive/UNC forms.
+///
+/// Windows-hosted by construction: the caller gates on a Windows-styled
+/// `mount_meta`, which for a client-local mount implies this process
+/// *is* the Windows side — so `std::path` parses the syntax natively.
+/// Compiled to `None` elsewhere rather than let `std::path` misread the
+/// input as a single relative component.
+#[cfg(windows)]
+pub fn local_path_from_typed_display(input: &str) -> Option<PathBuf> {
+    let (s, verbatim) = match input.strip_prefix(r"\\?\") {
+        Some(rest) => (rest, true),
+        None => (input, false),
+    };
+    let b = s.as_bytes();
+    let drive = b.len() >= 2
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b.len() == 2 || b[2] == b'\\' || b[2] == b'/');
+    if !drive {
+        // UNC: require server + share, and reject the `?`/`.` device
+        // namespaces (`//?/…` is not parsed as verbatim by std::path).
+        let rest = if verbatim {
+            s.strip_prefix("UNC\\").or_else(|| s.strip_prefix("UNC/"))?
+        } else {
+            s.strip_prefix(r"\\").or_else(|| s.strip_prefix("//"))?
+        };
+        let mut parts = rest.split(['/', '\\']).filter(|p| !p.is_empty());
+        let server = parts.next()?;
+        parts.next()?;
+        if server == "?" || server == "." {
+            return None;
+        }
+    }
+    if s.split(['/', '\\']).any(|seg| seg == "..") {
+        return None;
+    }
+    Some(local_path_from_native(StdPath::new(input)))
+}
+
+#[cfg(not(windows))]
+pub fn local_path_from_typed_display(_input: &str) -> Option<PathBuf> {
+    None
+}
+
 pub fn local_segments_from_native(path: &StdPath) -> Vec<String> {
     use std::path::Component;
 
@@ -1324,6 +1375,54 @@ mod windows_path_tests {
             let crumbs = local_breadcrumbs(&p(comps), PathStyle::Windows);
             let joined: String = crumbs.iter().map(|c| c.label.as_str()).collect();
             assert_eq!(joined, expected);
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn typed_display_accepts_distinctive_absolute_shapes() {
+        for (input, comps) in [
+            (r"C:\Users\X", &["?", "C:", "Users", "X"][..]),
+            ("c:/x", &["?", "C:", "x"][..]),
+            ("C:", &["?", "C:"][..]),
+            (r"C:\", &["?", "C:"][..]),
+            (r"\\server\share", &["?", "UNC", "server", "share"][..]),
+            (
+                r"\\server\share\a",
+                &["?", "UNC", "server", "share", "a"][..],
+            ),
+            (
+                "//server/share/a",
+                &["?", "UNC", "server", "share", "a"][..],
+            ),
+            (r"\\?\C:\x", &["?", "C:", "x"][..]),
+            (
+                r"\\?\UNC\server\share\a",
+                &["?", "UNC", "server", "share", "a"][..],
+            ),
+        ] {
+            assert_eq!(
+                local_path_from_typed_display(input).as_ref(),
+                Some(&p(comps)),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn typed_display_rejects_relative_and_exotic_shapes() {
+        for input in [
+            "foo",
+            r"foo\bar",
+            "C:foo",   // drive-relative — no per-drive cwd to resolve against
+            "/unix/x", // unix absolute stays with the session shell
+            r"\\server",
+            r"\\.\COM1",
+            "//?/C:/x",
+            r"C:\a\..\b", // native decode would drop the `..`, not resolve it
+        ] {
+            assert_eq!(local_path_from_typed_display(input), None, "{input}");
         }
     }
 }

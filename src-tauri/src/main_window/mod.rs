@@ -860,6 +860,29 @@ pub struct MainWindowState {
     pub window_title: String,
     pub vfs_progress: VfsProgressState,
     pub mount_log: MountLogState,
+    pub mount_summary: MountSummaryState,
+}
+
+/// Session-level facts about the mounted VFS set that the frontend needs
+/// outside the selector modal. Refreshed on mount/unmount and at session
+/// init; reset on disconnect.
+#[derive(Clone, Default, serde::Serialize, specta::Type)]
+pub struct MountSummary {
+    /// Whether any mounted VFS is split-root (Windows drive letters) —
+    /// gates the Shift+<drive> shortcut, independent of the host OS.
+    pub has_split_root_vfs: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct MountSummaryState(pub Arc<RwLock<MountSummary>>);
+
+impl serde::Serialize for MountSummaryState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.0.read().serialize(serializer)
+    }
 }
 
 impl serde::Serialize for MainWindowState {
@@ -869,7 +892,7 @@ impl serde::Serialize for MainWindowState {
     {
         use serde::ser::SerializeStruct;
         let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 12)?;
+        let mut s = serializer.serialize_struct("MainWindowState", 13)?;
         s.serialize_field("connection_status", &self.connection_status)?;
         s.serialize_field("askpass", &self.askpass)?;
         s.serialize_field("panes", &self.panes)?;
@@ -882,6 +905,7 @@ impl serde::Serialize for MainWindowState {
         s.serialize_field("foreground_operation_id", &foreground_id)?;
         s.serialize_field("vfs_progress", &self.vfs_progress)?;
         s.serialize_field("mount_log", &self.mount_log)?;
+        s.serialize_field("mount_summary", &self.mount_summary)?;
         s.end()
     }
 }
@@ -902,6 +926,7 @@ impl MainWindowState {
             window_title: "Newt".to_string(),
             vfs_progress: VfsProgressState::default(),
             mount_log: MountLogState::default(),
+            mount_summary: MountSummaryState::default(),
         }
     }
 
@@ -1542,6 +1567,7 @@ impl MainWindowContext {
                 },
             );
         })?;
+        self.refresh_mount_summary();
         Ok(response)
     }
 
@@ -1555,7 +1581,28 @@ impl MainWindowContext {
         // behind. A well-behaved VFS sends a final `None`, but we
         // don't trust that across the RPC boundary.
         self.inner.main_window_state.vfs_progress.clear_for(vfs_id);
+        self.refresh_mount_summary();
         Ok(())
+    }
+
+    /// Recompute the pushed [`MountSummary`] from the session's mounted
+    /// set. The value rides out with the next state publish (every mount/
+    /// unmount is followed by one — a navigation or a modal update).
+    pub fn refresh_mount_summary(&self) {
+        let has_split_root_vfs = self
+            .with_session(|s| {
+                s.mounted_vfs
+                    .read()
+                    .values()
+                    .any(|i| !i.descriptor.has_unified_root(&i.mount_meta))
+            })
+            .unwrap_or(false);
+        self.inner
+            .main_window_state
+            .mount_summary
+            .0
+            .write()
+            .has_split_root_vfs = has_split_root_vfs;
     }
 
     /// Fully-qualified path to land on when selecting/mounting `vfs_id`

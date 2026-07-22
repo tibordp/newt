@@ -356,6 +356,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<crate::main_window::ModalData>()
         .typ::<crate::main_window::ModalDataKind>()
         .typ::<crate::main_window::ModalContext>()
+        .typ::<crate::main_window::MountSummary>()
         .typ::<crate::main_window::OperationIssueInfo>()
         .typ::<crate::main_window::OperationState>()
         .typ::<crate::main_window::OperationStatus>()

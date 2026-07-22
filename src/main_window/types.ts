@@ -10,6 +10,7 @@ import type {
   FilterMode,
   FsStats,
   ModalData,
+  MountSummary,
   OperationState,
   PaneHandle,
   Sorting,
@@ -172,4 +173,5 @@ export type MainWindowState = {
   /// Rolling connect/bootstrap transcript of the mount in flight; rendered
   /// by the Connect dialog. Cleared when a new connect/mount starts.
   mount_log?: string[];
+  mount_summary?: MountSummary;
 };

@@ -283,10 +283,6 @@ const FileRow = memo(
     prev.onOpen === next.onOpen,
 );
 
-// Reflects the machine running the app (the host webview), *not* the
-// session/remote — so Shift+<drive> is offered on a Windows host only,
-// and never on a Linux/Mac host connected to a Windows remote.
-const IS_WINDOWS_HOST = navigator.platform.startsWith("Win");
 const IS_MAC_HOST = navigator.platform.startsWith("Mac");
 
 // Platform "mod" for mouse interactions (add-to-selection): ⌘ on macOS —
@@ -683,12 +679,14 @@ function PaneInner(
     modalOpen: boolean;
     modal?: ModalData;
     vfsProgress?: VfsProgress;
+    windowsDrives: boolean;
   },
 ) {
   const {
     paneHandle,
     active,
     modalOpen,
+    windowsDrives,
     filter,
     filter_mode,
     path,
@@ -1361,7 +1359,7 @@ function PaneInner(
       guarded(() => commands.setFilter(paneHandle, "", "filter"));
       inputRef.current?.focus();
     } else if (
-      IS_WINDOWS_HOST &&
+      windowsDrives &&
       e.shiftKey &&
       !e.ctrlKey &&
       !e.altKey &&

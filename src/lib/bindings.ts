@@ -2078,6 +2078,17 @@ initial_direction: number;
  */
 persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
 export type Mode = number
+/**
+ * Session-level facts about the mounted VFS set that the frontend needs
+ * outside the selector modal. Refreshed on mount/unmount and at session
+ * init; reset on disconnect.
+ */
+export type MountSummary = { 
+/**
+ * Whether any mounted VFS is split-root (Windows drive letters) —
+ * gates the Shift+<drive> shortcut, independent of the host OS.
+ */
+has_split_root_vfs: boolean }
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 

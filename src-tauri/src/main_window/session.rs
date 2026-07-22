@@ -1355,6 +1355,13 @@ pub(super) async fn connect(
 
     let mounted_vfs = Arc::new(RwLock::new(initial_mounted));
 
+    // Seed the pushed mount summary from the initial set; mount/unmount
+    // keep it fresh from here (`refresh_mount_summary`).
+    state.mount_summary.0.write().has_split_root_vfs = mounted_vfs
+        .read()
+        .values()
+        .any(|i| !i.descriptor.has_unified_root(&i.mount_meta));
+
     let vfs_info: Arc<dyn VfsInfo> = Arc::new(MountedVfsInfoService {
         mounted_vfs: mounted_vfs.clone(),
         remote_session: connection_target.is_remote(),

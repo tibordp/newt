@@ -192,6 +192,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | (unbound) | Invert Selection (command palette) — toggles every visible entry; filtered-out selections are left alone |
 | Escape | Clear filter text, or clear selection if no filter active |
 | Shift+Enter | Follow symlink (navigate to its target) |
+| Shift+\<drive letter\> | Jump to that drive's root. Offered whenever the session has a split-root (Windows drive-lettered) mount — `MainWindowState.mount_summary.has_split_root_vfs`, refreshed on mount/unmount — not gated on the host OS. With no such mount the keystroke types into the quick filter as usual. |
 
 **Enter behavior** depends on what's focused:
 - **Directory**: Navigate into it.
@@ -1603,6 +1604,8 @@ Text input for jumping directly to any path. Pre-filled with the current path (a
 - VFS display paths (`s3://bucket/path`, `sftp://host/path`).
 
 Path resolution priority: First checks if any mounted VFS claims the path (e.g., `s3://` prefix), then falls back to shell expansion for local paths.
+
+In a remote session with the client-local Windows FS exposed, that mount claims distinctively Windows-shaped absolute input (`C:\…`, bare `X:`, `\\server\share`, verbatim `\\?\` forms) via `RemoteVfsDescriptor::try_parse_display_path` (gated on the mount's `PathStyle`, parsed by `local_path_from_typed_display`) — so typed Windows paths and Shift+\<drive letter\> land on the client-local mount instead of dying against the agent's Unix shell. Drive-relative (`C:foo`) and `..`-carrying inputs are deliberately not claimed. Unix-style absolutes keep resolving through agent-side shell expansion (so `$VAR` expansion works there; `%WINDIR%` in remote sessions does not — accepted tradeoff). Without a Windows-styled mount, Windows-shaped exact input is a harmless near-no-op: the host-native ROOT decode in `cmd::pane::navigate` only applies when the session root's `PathStyle` matches the host's (local and elevated sessions), so a stray `C:\` can't decode against a Unix agent's `/`.
 
 ### Navigation History
 
