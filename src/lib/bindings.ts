@@ -1777,7 +1777,12 @@ hard_links: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: bool
  * it crosses the agent↔host RPC boundary — no `std::path` there, its
  * meaning belongs to the source OS, not the receiver's.
  */
-symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null; 
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
+/**
+ * Raw Windows `FILE_ATTRIBUTE_*` bits, populated only by
+ * Windows-shaped local listings (the Attr column renders them).
+ */
+attributes: number | null; modified: number | null; accessed: number | null; created: number | null; 
 /**
  * Directory-scoped identifier. When `None`, `name` is used as the
  * identifier — the common case. Set explicitly by synthetic VFSes
@@ -1861,6 +1866,23 @@ export type LayoutState = {
  * Terminal panel height in px. `None` uses the built-in default.
  */
 terminal_height: number | null }
+/**
+ * Which optional per-entry metadata families a VFS actually populates
+ * on its `File`s — drives which file-list columns a pane offers (see
+ * `VfsDescriptor::metadata_traits`). A column whose family is absent
+ * would only ever render empty cells.
+ */
+export type MetadataTraits = { 
+/**
+ * `File::user`/`group`/`mode` are real: Unix-shaped local/remote
+ * FSes, SFTP, tar archives, Rock Ridge disc images.
+ */
+unix_owner: boolean; 
+/**
+ * `File::attributes` carries Windows `FILE_ATTRIBUTE_*` bits
+ * (Windows-shaped local/remote FSes only).
+ */
+windows_attributes: boolean }
 export type ModalContext = { pane_handle: PaneHandle | null }
 export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
@@ -2408,7 +2430,7 @@ follow_symlinks: boolean;
 content_size_cap: number }
 export type SearchPattern = { Literal: number[] } | { Regex: string }
 export type Sorting = { key: SortingKey; asc: boolean }
-export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "modified" | "accessed" | "created"
+export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
 export type TerminalHandle = number
 export type ThemeMode = "system" | "light" | "dark"

@@ -38,9 +38,8 @@ Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`). Follow-ups:
 
 ## Windows integration
 
-Shipped: volume classification + live drive-roots refresh (logical remount), Windows-path resolution in remote sessions, Enter-through-junction fallback, Map/Unmap network drive (F11 / Alt+F11). Planned next:
+Shipped: volume classification + live drive-roots refresh (logical remount), Windows-path resolution in remote sessions, Enter-through-junction fallback, Map/Unmap network drive (F11 / Alt+F11), VFS-aware columns (`metadata_traits` + Attr column). Planned next:
 - Shell context menu (classic `IContextMenu`): trailing item in our custom context menu + modifier+right-click direct path. `windows` 0.61 + `webview2-com` already in-tree; needs STA COM init, `SHParseDisplayName` on de-verbatimed paths, `QueryContextMenu`/`TrackPopupMenuEx`/`InvokeCommand`, and a temporary HWND subclass forwarding `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MENUCHAR` to `IContextMenu2/3` for "Open with"/"Send to" submenus.
-- VFS-aware columns: global `appearance.columns` stays the superset/order; panes filter by per-pane column traits (unix owner/mode vs Windows attributes) surfaced from descriptor + path style into `PaneViewState`. Windows "Attr" column needs a new `File.attributes` field (raw `FILE_ATTRIBUTE_*` bits are currently discarded after the hidden/system check in `local.rs`).
 
 ## Dialog visual uplift
 
@@ -84,3 +83,7 @@ Subsystem + git + du enrichers shipped (design: `design_docs/DESIGN_ENRICHERS_AN
 - Local macOS is the one place the app's own `PATH` is still patched by hand (`[environment] extra_path`) rather than inherited. Everywhere else the environment now arrives ambiently — a login-shell bootstrap for agents, PAM/systemd on a Linux desktop, the registry on Windows — but a Finder-launched `.app` has no login shell above it to inherit from, so there's nothing to hang off. The visible seam: the terminal gets `-l` and so has the user's full `PATH`, while a Newt-spawned command gets launchd's plus `extra_path`, so a tool can work when typed and fail as a command. The cure is what VS Code does — probe once at startup (`$SHELL -ilc`, marker-delimited JSON on stdout so profile chatter can't corrupt it, bounded by a timeout since a profile can block forever on a prompt) and thread the result as a base env rather than `set_var` (edition 2024, and `shell.rs` deliberately doesn't mutate our own environment). Not worth it until the manual patching actually bites.
 - Auto-remount VFSes when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 - Implement `Vfs::revalidate` for archive VFSes (zip + tar). Trait is wired through to the navigation layer (called when a pane crosses into a VFS that advertises `VfsDescriptor::can_revalidate`); the archive impl should stat the origin file's mtime against the value captured at mount time and rebuild the central directory / entry index in place if it drifted, returning `Refreshed`. Mount identity (`VfsId`, `mount_meta`, `origin`) must be preserved so history entries remain valid. Don't forget to flip `can_revalidate` to true on the descriptors.
+
+# Editing saved connections
+
+As it says on the tin - a small pencil button in the ctrl+r palette + even for recent, the ability to edit before connecting. 

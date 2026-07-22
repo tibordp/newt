@@ -701,6 +701,7 @@ function PaneInner(
     stats,
     breadcrumbs,
     vfs_display_name,
+    metadata_traits,
     context_badges,
     enrichment_activity,
     modal,
@@ -743,8 +744,12 @@ function PaneInner(
 
   const preferences = usePreferences();
   const columns = useMemo(
-    () => getVisibleColumns(preferences?.settings?.appearance?.columns),
-    [preferences?.settings?.appearance?.columns],
+    () =>
+      getVisibleColumns(
+        preferences?.settings?.appearance?.columns,
+        metadata_traits,
+      ),
+    [preferences?.settings?.appearance?.columns, metadata_traits],
   );
 
   const [showSpinner, setShowSpinner] = useState(false);
@@ -1761,7 +1766,7 @@ function PaneInner(
                     safe(
                       commands.updatePreference(
                         "appearance.columns",
-                        moveColumn(cfg, from, to),
+                        moveColumn(cfg, from, to, metadata_traits),
                       ),
                     );
                   }}
@@ -1773,6 +1778,7 @@ function PaneInner(
         </ContextMenu.Trigger>
         <ColumnsContextMenuContent
           columns={preferences?.settings?.appearance?.columns}
+          traits={metadata_traits}
           onCloseAutoFocus={(e) => {
             // The header is not focusable — mirror the pane focus effect
             // instead of letting Radix focus the trigger div.

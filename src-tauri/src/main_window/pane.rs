@@ -51,6 +51,7 @@ pub enum SortingKey {
     User,
     Mode,
     Group,
+    Attributes,
     Modified,
     Accessed,
     Created,
@@ -883,9 +884,11 @@ impl Pane {
                 .vfs_info
                 .display_name(ws.path.vfs_id)
                 .unwrap_or_default();
+            ws.metadata_traits = desc.metadata_traits(&meta);
         } else {
             ws.display_path = ws.path.to_string();
             ws.vfs_display_name = String::new();
+            ws.metadata_traits = Default::default();
         }
         ws.is_host_local = self.vfs_info.is_host_local(ws.path.vfs_id);
         let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
@@ -1537,6 +1540,10 @@ pub struct PaneViewState {
     pub display_path: String,
     pub vfs_display_name: String,
     pub is_host_local: bool,
+    /// Which metadata families the pane's VFS populates — the frontend
+    /// filters the configured column set by these (no mode/user/group
+    /// on S3, an Attr column only on Windows-shaped FSes).
+    pub metadata_traits: newt_common::vfs::MetadataTraits,
     pub breadcrumbs: Vec<Breadcrumb>,
     /// Per-location badges from enrichers (branch indicator, …), in
     /// stable per-enricher order.
@@ -1959,6 +1966,7 @@ impl PaneViewState {
                     .partial_cmp(&b.group)
                     .unwrap_or(std::cmp::Ordering::Less),
                 SortingKey::Mode => a.mode.cmp(&b.mode),
+                SortingKey::Attributes => a.attributes.cmp(&b.attributes),
                 SortingKey::Modified => a.modified.unwrap_or(0).cmp(&b.modified.unwrap_or(0)),
                 SortingKey::Accessed => a.accessed.unwrap_or(0).cmp(&b.accessed.unwrap_or(0)),
                 SortingKey::Created => a.created.unwrap_or(0).cmp(&b.created.unwrap_or(0)),

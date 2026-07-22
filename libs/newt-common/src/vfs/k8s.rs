@@ -606,6 +606,7 @@ impl K8sVfs {
                 .any(|r| r.name == *plural && r.namespaced == namespaced);
             if target_namespaced {
                 files.push(File {
+                    attributes: None,
                     name: plural.clone(),
                     size: None,
                     allocated_size: None,
@@ -664,6 +665,7 @@ impl K8sVfs {
 
 fn dotdot_entry() -> File {
     File {
+        attributes: None,
         name: "..".to_string(),
         size: None,
         allocated_size: None,
@@ -687,6 +689,7 @@ fn dotdot_entry() -> File {
 
 fn dir_entry(name: &str) -> File {
     File {
+        attributes: None,
         name: name.to_string(),
         size: None,
         allocated_size: None,
@@ -710,6 +713,7 @@ fn dir_entry(name: &str) -> File {
 
 fn yaml_file_entry(name: &str) -> File {
     File {
+        attributes: None,
         name: format!("{}.yaml", name),
         size: None,
         allocated_size: None,

@@ -365,6 +365,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<crate::main_window::OperationStatus>()
         .typ::<crate::main_window::UserCommandPrompt>()
         .typ::<crate::main_window::VfsTarget>()
+        .typ::<newt_common::vfs::MetadataTraits>()
         .typ::<newt_common::vfs::VfsProgress>()
         .typ::<crate::main_window::pane::HistoryEntryView>()
         .typ::<crate::main_window::session::ConnectionStatus>()

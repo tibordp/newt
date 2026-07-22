@@ -328,6 +328,7 @@ impl DirectoryTree {
         };
 
         let mut files = vec![File {
+            attributes: None,
             name: "..".to_string(),
             size: None,
             allocated_size: None,
@@ -562,6 +563,7 @@ fn ensure_ancestors(
             .unwrap_or_default();
         if !name.is_empty() {
             dirs.entry(parent.to_path_buf()).or_default().push(File {
+                attributes: None,
                 name,
                 size: None,
                 allocated_size: None,
@@ -726,6 +728,7 @@ fn build_directory_tree_from_iluvatar(entries: Vec<&iluvatar::IndexEntry>) -> Di
         };
 
         let file = File {
+            attributes: None,
             name: name.clone(),
             size,
             allocated_size: None,

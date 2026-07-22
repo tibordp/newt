@@ -19,8 +19,8 @@ use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
 use crate::{Error, ToUnix};
 
 use super::{
-    Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, RootInfo, Vfs, VfsDescriptor,
-    VfsMetadata, VfsSpaceInfo,
+    Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
+    VfsDescriptor, VfsMetadata, VfsSpaceInfo,
 };
 
 /// Bytes read from a file head when sniffing for a MIME type without an
@@ -133,6 +133,24 @@ impl VfsDescriptor for LocalVfsDescriptor {
         // still split-root. `initial_path` (trait default) then lands on
         // the first drive instead of the unlistable `/`.
         unified_root_from_meta(mount_meta)
+    }
+    fn metadata_traits(&self, mount_meta: &[u8]) -> MetadataTraits {
+        metadata_traits_from_meta(mount_meta)
+    }
+}
+
+/// `MetadataTraits` for a `Local`/`Remote`/`Agent` mount, decided by the
+/// path style recorded in `mount_meta`.
+pub fn metadata_traits_from_meta(mount_meta: &[u8]) -> MetadataTraits {
+    match PathStyle::from_mount_meta(mount_meta) {
+        PathStyle::Unix => MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        },
+        PathStyle::Windows => MetadataTraits {
+            unix_owner: false,
+            windows_attributes: true,
+        },
     }
 }
 
@@ -648,6 +666,7 @@ impl Vfs for LocalVfs {
                                 user: user_field,
                                 group: group_field,
                                 mode: mode_field,
+                                attributes: file_attributes(&metadata),
                                 modified: metadata.modified().map(|t| t.to_unix()).ok(),
                                 accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                                 created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -669,6 +688,7 @@ impl Vfs for LocalVfs {
                             user: None,
                             group: None,
                             mode: None,
+                            attributes: None,
                             modified: None,
                             accessed: None,
                             created: None,
@@ -734,6 +754,7 @@ impl Vfs for LocalVfs {
                                 user: user_field,
                                 group: group_field,
                                 mode: mode_field,
+                                attributes: file_attributes(&metadata),
                                 modified: metadata.modified().map(|t| t.to_unix()).ok(),
                                 accessed: metadata.accessed().map(|t| t.to_unix()).ok(),
                                 created: metadata.created().map(|t| t.to_unix()).ok(),
@@ -763,6 +784,7 @@ impl Vfs for LocalVfs {
                                 user: None,
                                 group: None,
                                 mode: None,
+                                attributes: None,
                                 modified: None,
                                 accessed: None,
                                 created: None,
@@ -995,6 +1017,7 @@ impl Vfs for LocalVfs {
                 user: user_field,
                 group: group_field,
                 mode: mode_field,
+                attributes: file_attributes(&meta),
                 modified: meta.modified().map(|t| t.to_unix()).ok(),
                 accessed: meta.accessed().map(|t| t.to_unix()).ok(),
                 created: meta.created().map(|t| t.to_unix()).ok(),
@@ -1237,6 +1260,18 @@ fn unix_owner_bits(
 #[cfg(unix)]
 fn is_hidden(name: &str, _meta: &std::fs::Metadata) -> bool {
     name.starts_with('.')
+}
+
+/// Raw `FILE_ATTRIBUTE_*` bits for the Attr column (Windows only).
+#[cfg(windows)]
+fn file_attributes(meta: &std::fs::Metadata) -> Option<u32> {
+    use std::os::windows::fs::MetadataExt;
+    Some(meta.file_attributes())
+}
+
+#[cfg(unix)]
+fn file_attributes(_meta: &std::fs::Metadata) -> Option<u32> {
+    None
 }
 
 #[cfg(windows)]

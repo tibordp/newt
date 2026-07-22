@@ -96,6 +96,14 @@ impl VfsDescriptor for DiscVfsDescriptor {
     fn display_name(&self) -> &'static str {
         "Disc image"
     }
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> super::MetadataTraits {
+        // Rock Ridge / UDF record POSIX ownership; plain ISO 9660 images
+        // just yield empty cells for these, same as before.
+        super::MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        }
+    }
     fn auto_mount_request(&self) -> Option<super::MountRequest> {
         None
     }
@@ -358,6 +366,7 @@ fn normalize_components(s: &str) -> Vec<String> {
 
 fn entry_to_file(e: &Entry) -> File {
     File {
+        attributes: None,
         name: e.name.clone(),
         size: (e.kind != EntryKind::Dir).then_some(e.size),
         allocated_size: None,
@@ -381,6 +390,7 @@ fn entry_to_file(e: &Entry) -> File {
 
 fn dotdot() -> File {
     File {
+        attributes: None,
         name: "..".to_string(),
         size: None,
         allocated_size: None,

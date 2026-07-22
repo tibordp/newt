@@ -40,6 +40,12 @@ impl VfsDescriptor for SftpVfsDescriptor {
     fn display_name(&self) -> &'static str {
         "SFTP"
     }
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> super::MetadataTraits {
+        super::MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        }
+    }
     fn auto_mount_request(&self) -> Option<MountRequest> {
         None
     }
@@ -498,6 +504,7 @@ fn metadata_to_file(
     let mode = meta.permissions().map(|p| Mode(permissions_to_mode(&p)));
 
     File {
+        attributes: None,
         is_hidden: name.starts_with('.'),
         name,
         size,
@@ -591,6 +598,7 @@ impl Vfs for SftpVfs {
         // shows it immediately.
         if !path.is_root() {
             let dotdot = File {
+                attributes: None,
                 name: "..".to_string(),
                 size: None,
                 allocated_size: None,

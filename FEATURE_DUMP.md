@@ -106,7 +106,10 @@ Server-side windowed list with 22px fixed row height. Rust sends only a ~150-ite
 | Extension | File extension only |
 | Modified / Accessed / Created | Compound date + time in one column (145px) |
 | Accessed/Created Date and Time | Access / creation timestamp, date-only or split |
+| Attr | Windows `FILE_ATTRIBUTE_*` letters: `R`eadonly `H`idden `S`ystem `A`rchive + `L` (reparse point) `C`ompressed `E`ncrypted; sortable by raw bits |
 | Link Target | Symlink target path |
+
+**VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3, Kubernetes, zip, and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
 
 Compound-column swaps: when the Extension column is visible, the Name column automatically shows just the file stem (name without extension). The timestamp columns follow the same pattern — a compound column (`modified` etc.) shows date + time in one cell and swaps down to date-only when the paired Time column is also in the list. Each timestamp thus has four presentations: compound date & time, date only (`modified_date`), separate date and time columns (`modified_date` + `modified_time`, or equivalently `modified` + `modified_time` via the swap — the default for Modified), and hidden.
 
@@ -882,7 +885,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Mounting**: Via command palette ("Mount S3"), VFS selector dropdown, or Quick Connect. Opens a dialog with:
 
-- **Region** (optional): AWS region (e.g., `us-east-1`).
+- **Region** (optional): AWS region (e.g., `us-east-1`). When given, it pins every bucket — no `GetBucketLocation` discovery calls (IAM policies frequently don't grant it). When empty, per-bucket regions are discovered and cached via `GetBucketLocation`.
 - **Bucket** (optional): Scope the mount to a specific bucket instead of listing all buckets.
 - **Endpoint URL** (optional): Custom S3-compatible endpoint (Minio, Ceph, etc.).
 - **Credentials** dropdown with four modes:

@@ -353,6 +353,7 @@ pub struct SearchVfs {
 /// selection like every other VFS's `..` entry.
 fn dotdot_entry() -> File {
     File {
+        attributes: None,
         name: "..".to_string(),
         size: None,
         allocated_size: None,

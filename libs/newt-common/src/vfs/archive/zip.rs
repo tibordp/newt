@@ -473,6 +473,7 @@ fn build_zip_index(
         ensure_ancestors(&mut dirs, &mut seen_dirs, &parent);
 
         let file = File {
+            attributes: None,
             name: name.clone(),
             size: if is_dir { None } else { Some(size) },
             allocated_size: None,

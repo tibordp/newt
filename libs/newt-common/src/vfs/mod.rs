@@ -158,6 +158,20 @@ pub struct Breadcrumb {
 // VfsDescriptor — type-level metadata for a VFS implementation
 // ---------------------------------------------------------------------------
 
+/// Which optional per-entry metadata families a VFS actually populates
+/// on its `File`s — drives which file-list columns a pane offers (see
+/// `VfsDescriptor::metadata_traits`). A column whose family is absent
+/// would only ever render empty cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, specta::Type)]
+pub struct MetadataTraits {
+    /// `File::user`/`group`/`mode` are real: Unix-shaped local/remote
+    /// FSes, SFTP, tar archives, Rock Ridge disc images.
+    pub unix_owner: bool,
+    /// `File::attributes` carries Windows `FILE_ATTRIBUTE_*` bits
+    /// (Windows-shaped local/remote FSes only).
+    pub windows_attributes: bool,
+}
+
 /// Result of `try_parse_display_path`. Lower priority values are preferred.
 /// Within the same priority, mount order (first mounted wins) is used as
 /// a tiebreaker via stable sort.
@@ -382,6 +396,13 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     /// next to the VFS display name.
     fn mount_label(&self, _mount_meta: &[u8]) -> Option<String> {
         None
+    }
+
+    /// Which optional metadata families this VFS populates (see
+    /// [`MetadataTraits`]). Default: none — right for S3, Kubernetes,
+    /// zip archives, and search results.
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> MetadataTraits {
+        MetadataTraits::default()
     }
 }
 

@@ -101,6 +101,9 @@ impl Default for AppearancePreferences {
             show_pane_header: true,
             show_pane_status: true,
             theme: ThemeMode::default(),
+            // A superset: panes filter by their VFS's metadata traits, so
+            // user/group/mode show on Unix-shaped panes and attributes on
+            // Windows-shaped ones, out of the same default list.
             columns: vec![
                 "name".into(),
                 "size".into(),
@@ -109,6 +112,7 @@ impl Default for AppearancePreferences {
                 "user".into(),
                 "group".into(),
                 "mode".into(),
+                "attributes".into(),
             ],
             date_format: String::new(),
             time_format: String::new(),

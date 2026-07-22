@@ -118,6 +118,10 @@ impl VfsDescriptor for AgentVfsDescriptor {
     fn try_parse_display_path(&self, _input: &str, _mount_meta: &[u8]) -> Option<DisplayPathMatch> {
         None
     }
+
+    fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
+        super::local::metadata_traits_from_meta(mount_meta)
+    }
 }
 
 pub static AGENT_VFS_DESCRIPTOR: AgentVfsDescriptor = AgentVfsDescriptor;

@@ -344,6 +344,7 @@ impl MockVfs {
                     }
                 };
                 children.push(File {
+                    attributes: None,
                     name,
                     size,
                     allocated_size: None,
@@ -546,6 +547,7 @@ impl Vfs for MockVfs {
                 uid,
                 gid,
             }) => Ok(File {
+                attributes: None,
                 name,
                 size: Some(content.len() as u64),
                 allocated_size: None,
@@ -566,6 +568,7 @@ impl Vfs for MockVfs {
                 source: None,
             }),
             Some(MockEntry::Directory { mode, uid, gid }) => Ok(File {
+                attributes: None,
                 name,
                 size: None,
                 allocated_size: None,
@@ -586,6 +589,7 @@ impl Vfs for MockVfs {
                 source: None,
             }),
             Some(MockEntry::Symlink { target }) => Ok(File {
+                attributes: None,
                 name,
                 size: None,
                 allocated_size: None,

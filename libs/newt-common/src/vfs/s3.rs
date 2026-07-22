@@ -173,7 +173,9 @@ inventory::submit!(RegisteredDescriptor(&S3_VFS_DESCRIPTOR));
 // ---------------------------------------------------------------------------
 
 pub struct S3Vfs {
-    /// Default client (us-east-1) — used for ListBuckets and GetBucketLocation.
+    /// Default client (the mount's region, us-east-1 when none given) —
+    /// used for ListBuckets and GetBucketLocation, and for everything
+    /// when the region is pinned.
     default_client: aws_sdk_s3::Client,
     /// Shared AWS config (credentials, etc.) — used to build per-region clients.
     sdk_config: aws_sdk_s3::config::Builder,
@@ -183,6 +185,9 @@ pub struct S3Vfs {
     bucket_regions: Mutex<HashMap<String, String>>,
     /// When set, the VFS is scoped to this bucket (root = bucket contents).
     scoped_bucket: Option<String>,
+    /// An explicitly configured mount region pins every bucket to it —
+    /// no GetBucketLocation discovery (the IAM policy may not grant it).
+    pinned_region: bool,
     /// Change notifier for self-notification on mutations.
     notifier: VfsChangeNotifier,
 }
@@ -197,6 +202,7 @@ impl S3Vfs {
         credentials: S3Credentials,
         _ctx: &MountContext<'_>,
     ) -> Result<Arc<dyn Vfs>, Error> {
+        let pinned_region = region.is_some();
         let region = aws_config::Region::new(region.unwrap_or_else(|| "us-east-1".to_string()));
 
         let mut config_loader = aws_config::from_env().region(region.clone());
@@ -264,13 +270,19 @@ impl S3Vfs {
         }
 
         let client = aws_sdk_s3::Client::new(&sdk_config);
-        Ok(Arc::new(S3Vfs::new(client, sdk_config, bucket)))
+        Ok(Arc::new(S3Vfs::new(
+            client,
+            sdk_config,
+            bucket,
+            pinned_region,
+        )))
     }
 
     pub fn new(
         default_client: aws_sdk_s3::Client,
         sdk_config: aws_config::SdkConfig,
         scoped_bucket: Option<String>,
+        pinned_region: bool,
     ) -> Self {
         Self {
             default_client,
@@ -278,12 +290,19 @@ impl S3Vfs {
             region_clients: Mutex::new(HashMap::new()),
             bucket_regions: Mutex::new(HashMap::new()),
             scoped_bucket,
+            pinned_region,
             notifier: VfsChangeNotifier::new(),
         }
     }
 
     /// Get or create an S3 client for the given bucket's region.
     async fn client_for_bucket(&self, bucket: &str) -> Result<aws_sdk_s3::Client, Error> {
+        // An explicit mount region answers for every bucket — the user
+        // said where the data lives, and GetBucketLocation may be denied.
+        if self.pinned_region {
+            return Ok(self.default_client.clone());
+        }
+
         // Check cache first
         if let Some(region) = self.bucket_regions.lock().get(bucket).cloned()
             && let Some(client) = self.region_clients.lock().get(&region).cloned()
@@ -399,6 +418,7 @@ impl S3Vfs {
             });
 
             files.push(File {
+                attributes: None,
                 name,
                 size: None,
                 allocated_size: None,
@@ -451,6 +471,7 @@ impl S3Vfs {
         let at_scoped_root = self.scoped_bucket.is_some() && prefix.is_none();
         if !at_scoped_root {
             files.push(File {
+                attributes: None,
                 name: "..".to_string(),
                 size: None,
                 allocated_size: None,
@@ -507,6 +528,7 @@ impl S3Vfs {
                     let name = name.trim_end_matches('/');
                     if !name.is_empty() {
                         batch.push(File {
+                            attributes: None,
                             name: name.to_string(),
                             size: None,
                             allocated_size: None,
@@ -547,6 +569,7 @@ impl S3Vfs {
                     });
 
                     batch.push(File {
+                        attributes: None,
                         name: name.to_string(),
                         size: Some(obj.size().unwrap_or(0) as u64),
                         allocated_size: None,
@@ -1062,6 +1085,7 @@ impl Vfs for S3Vfs {
         let name = path.file_name().map(|n| n.to_string()).unwrap_or_default();
 
         Ok(File {
+            attributes: None,
             name,
             size: Some(size),
             allocated_size: None,

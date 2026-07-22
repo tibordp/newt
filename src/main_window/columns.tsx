@@ -9,6 +9,7 @@ import {
 } from "./types";
 import { modeString } from "./utils";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
+import type { MetadataTraits } from "../lib/bindings";
 import styles from "./Columns.module.scss";
 
 const fileNames = iconMapping.light.fileNames as Record<string, string>;
@@ -24,6 +25,25 @@ const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<
 function fileStem(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.substring(0, dot) : name;
+}
+
+// Windows FILE_ATTRIBUTE_* bits rendered in the Attr column, in display
+// order: Readonly, Hidden, System, Archive, reparse point (Link),
+// Compressed, Encrypted.
+const ATTRIBUTE_FLAGS: [number, string][] = [
+  [0x1, "R"],
+  [0x2, "H"],
+  [0x4, "S"],
+  [0x20, "A"],
+  [0x400, "L"],
+  [0x800, "C"],
+  [0x4000, "E"],
+];
+
+function attributesString(attributes: number): string {
+  return ATTRIBUTE_FLAGS.filter(([bit]) => attributes & bit)
+    .map(([, letter]) => letter)
+    .join("");
 }
 
 function FileName({
@@ -267,6 +287,20 @@ export const allColumns: ColumnDef[] = [
     render: (info) => <>{info.mode != null ? modeString(info.mode) : ""}</>,
   },
   {
+    align: "right",
+    initialWidth: 60,
+    key: "attributes",
+    subcolumns: [
+      {
+        name: "Attr",
+        sortKey: "attributes",
+      },
+    ],
+    render: (info) => (
+      <>{info.attributes != null ? attributesString(info.attributes) : ""}</>
+    ),
+  },
+  {
     align: "left",
     initialWidth: 60,
     key: "extension",
@@ -417,8 +451,31 @@ export const COLUMN_CHOICES = [
   { key: "user", label: "User" },
   { key: "group", label: "Group" },
   { key: "mode", label: "Mode" },
+  { key: "attributes", label: "Attributes" },
   { key: "symlink_target", label: "Link Target" },
 ];
+
+/// Columns that only exist where the pane's VFS populates their metadata
+/// family (see `MetadataTraits`). Unlisted keys are trait-free.
+export const TRAIT_GATES: Record<string, keyof MetadataTraits> = {
+  user: "unix_owner",
+  group: "unix_owner",
+  mode: "unix_owner",
+  attributes: "windows_attributes",
+};
+
+/// Drop config keys whose metadata family the pane's VFS doesn't
+/// populate. No traits (settings previews, etc.) means no filtering.
+function traitFiltered(
+  columnKeys: string[],
+  traits?: MetadataTraits,
+): string[] {
+  if (!traits) return columnKeys;
+  return columnKeys.filter((k) => {
+    const gate = TRAIT_GATES[k];
+    return !gate || traits[gate];
+  });
+}
 
 const canonicalOrder = COLUMN_CHOICES.map((c) => c.key);
 
@@ -503,8 +560,13 @@ export function setTimestampState(
 }
 
 /// The config key behind each rendered column, index-aligned with
-/// `getVisibleColumns` (unresolvable keys dropped, "name" forced in).
-export function visibleConfigKeys(columnKeys: string[]): string[] {
+/// `getVisibleColumns` (unresolvable keys dropped, "name" forced in,
+/// trait-gated keys the pane's VFS lacks filtered out).
+export function visibleConfigKeys(
+  allColumnKeys: string[],
+  traits?: MetadataTraits,
+): string[] {
+  const columnKeys = traitFiltered(allColumnKeys, traits);
   const hasExtension = columnKeys.includes("extension");
   const result: string[] = [];
   for (const key of columnKeys) {
@@ -519,18 +581,29 @@ export function visibleConfigKeys(columnKeys: string[]): string[] {
 }
 
 /// Reorder the config list by moving the rendered column at visible index
-/// `from` to insertion boundary `to` (0..visible count).
+/// `from` to insertion boundary `to` (0..visible count). Keys hidden on
+/// this pane (trait-gated, unresolvable) keep their config positions —
+/// reordering on an S3 pane must not drop `mode` from the global list.
 export function moveColumn(
   columnKeys: string[],
   from: number,
   to: number,
+  traits?: MetadataTraits,
 ): string[] {
-  const ordered = visibleConfigKeys(columnKeys);
+  const ordered = visibleConfigKeys(columnKeys, traits);
   if (from < 0 || from >= ordered.length) return ordered;
   const insert = from < to ? to - 1 : to;
   const [key] = ordered.splice(from, 1);
   ordered.splice(insert, 0, key);
-  return ordered;
+
+  // Weave the reordered visible keys back through the full config,
+  // leaving invisible keys in place.
+  const visibleSet = new Set(visibleConfigKeys(columnKeys, traits));
+  let vi = 0;
+  const woven = columnKeys.map((k) => (visibleSet.has(k) ? ordered[vi++] : k));
+  // A forced-in "name" exists in `ordered` but not in `columnKeys`.
+  woven.push(...ordered.slice(vi));
+  return woven;
 }
 
 /// Insert a column after the last visible column that canonically precedes
@@ -549,9 +622,19 @@ export function insertColumnKey(current: string[], key: string): string[] {
  *  Falls back to all columns if the list is empty or missing.
  *  When "extension" is in the list, "name" is swapped for "stem"; likewise
  *  a compound timestamp column ("modified" etc.) is swapped for its
- *  date-only variant when the paired time column is in the list. */
-export function getVisibleColumns(columnKeys?: string[]): ColumnDef[] {
-  if (!columnKeys || columnKeys.length === 0) return allColumns;
+ *  date-only variant when the paired time column is in the list.
+ *  Trait-gated columns the pane's VFS doesn't populate are dropped. */
+export function getVisibleColumns(
+  allColumnKeys?: string[],
+  traits?: MetadataTraits,
+): ColumnDef[] {
+  if (!allColumnKeys || allColumnKeys.length === 0) {
+    return allColumns.filter((c) => {
+      const gate = TRAIT_GATES[c.key];
+      return !gate || !traits || traits[gate];
+    });
+  }
+  const columnKeys = traitFiltered(allColumnKeys, traits);
   const hasExtension = columnKeys.includes("extension");
   const result: ColumnDef[] = [];
   for (const key of columnKeys) {

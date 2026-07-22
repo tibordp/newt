@@ -97,6 +97,9 @@ pub struct File {
     pub user: Option<UserGroup>,
     pub group: Option<UserGroup>,
     pub mode: Option<Mode>,
+    /// Raw Windows `FILE_ATTRIBUTE_*` bits, populated only by
+    /// Windows-shaped local listings (the Attr column renders them).
+    pub attributes: Option<u32>,
     pub modified: Option<i64>,
     pub accessed: Option<i64>,
     pub created: Option<i64>,

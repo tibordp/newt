@@ -9,6 +9,7 @@ import type {
   File,
   FilterMode,
   FsStats,
+  MetadataTraits,
   ModalData,
   MountSummary,
   OperationState,
@@ -132,6 +133,7 @@ export type PaneState = {
   display_path: string;
   vfs_display_name: string;
   is_host_local: boolean;
+  metadata_traits: MetadataTraits;
   breadcrumbs: Breadcrumb[];
   context_badges: ContextBadge[];
   /// Enricher id → status-bar label, present while that enricher runs.

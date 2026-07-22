@@ -1,13 +1,14 @@
 import { useMemo } from "react";
 import * as CM from "@radix-ui/react-context-menu";
 
-import { commands as ipc } from "../lib/bindings";
+import { commands as ipc, type MetadataTraits } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { usePreferences, CommandInfo } from "../lib/preferences";
 import {
   COLUMN_CHOICES,
   TIMESTAMP_BASES,
   TIMESTAMP_STATE_LABELS,
+  TRAIT_GATES,
   TimestampColumnState,
   getTimestampState,
   insertColumnKey,
@@ -179,6 +180,9 @@ export function PaneContextMenuContent({
 
 type ColumnsContextMenuProps = {
   columns?: string[];
+  /// The pane's VFS metadata traits — trait-gated columns the VFS can't
+  /// populate are omitted from the picker (they wouldn't render anyway).
+  traits?: MetadataTraits;
   onCloseAutoFocus?: (e: Event) => void;
 };
 
@@ -238,11 +242,16 @@ function TimestampSubmenu({
 /// open across toggles so several columns can be flipped in one visit.
 export function ColumnsContextMenuContent({
   columns,
+  traits,
   onCloseAutoFocus,
 }: ColumnsContextMenuProps) {
   // An empty preference list means "all columns" (getVisibleColumns fallback).
   const current =
     columns && columns.length > 0 ? columns : COLUMN_CHOICES.map((c) => c.key);
+  const choices = COLUMN_CHOICES.filter((col) => {
+    const gate = TRAIT_GATES[col.key];
+    return !gate || !traits || traits[gate];
+  });
 
   const toggle = (key: string, checked: boolean) => {
     const next = checked
@@ -267,7 +276,7 @@ export function ColumnsContextMenuContent({
         loop
         onCloseAutoFocus={onCloseAutoFocus}
       >
-        {COLUMN_CHOICES.map((col) => {
+        {choices.map((col) => {
           if (TIMESTAMP_BASES.includes(col.key)) {
             return (
               <TimestampSubmenu

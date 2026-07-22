@@ -135,6 +135,10 @@ impl VfsDescriptor for RemoteVfsDescriptor {
             super::local::local_path_from_typed_display(input)?,
         ))
     }
+
+    fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
+        super::local::metadata_traits_from_meta(mount_meta)
+    }
 }
 
 pub static REMOTE_VFS_DESCRIPTOR: RemoteVfsDescriptor = RemoteVfsDescriptor;

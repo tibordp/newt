@@ -44,6 +44,14 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn display_name(&self) -> &'static str {
         "Archive"
     }
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> super::super::MetadataTraits {
+        // Tar headers carry mode/uid/gid; zip stays at the default (its
+        // unix bits are only present when the archive was made there).
+        super::super::MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        }
+    }
     fn auto_mount_request(&self) -> Option<super::super::MountRequest> {
         None
     }
