@@ -1099,7 +1099,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 ### Connection Profiles and Quick Connect
 
-**Connection profiles** are saved connection configurations stored in `~/.config/newt/connections.toml`. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Linux Secret Service via `keyring` crate) under the service name `com.newt.credentials`.
+**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `io.github.tibordp.newt`: `~/Library/Application Support/io.github.tibordp.newt/` on macOS, `$XDG_CONFIG_HOME/io.github.tibordp.newt/` (falling back to `~/.config/io.github.tibordp.newt/`) on Linux, and `%APPDATA%\io.github.tibordp.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Linux Secret Service via `keyring` crate) under the service name `com.newt.credentials`.
 
 **Profile types**:
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
@@ -1364,16 +1364,24 @@ When a template uses `prompt()` or `confirm()`, a modal dialog appears before ex
 
 ### Settings File
 
-Located at `~/.config/newt/settings.toml`. Hot-reloaded — changes to the file are picked up within 200ms and applied without restart.
+Stored as `settings.toml` under Tauri's platform-specific application configuration directory for `io.github.tibordp.newt`:
+
+| Platform | Configuration directory |
+|----------|-------------------------|
+| macOS | `~/Library/Application Support/io.github.tibordp.newt/` |
+| Linux | `$XDG_CONFIG_HOME/io.github.tibordp.newt/`, falling back to `~/.config/io.github.tibordp.newt/` |
+| Windows | `%APPDATA%\io.github.tibordp.newt\` |
+
+The file is hot-reloaded — changes are picked up within 200ms and applied without restart.
 
 ### Runtime State File
 
-`~/.config/newt/state.json` — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Intended home for future layout state (window geometry). No file watcher — external edits apply on next launch.
+`state.json` in the same platform-specific application configuration directory — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Intended home for future layout state (window geometry). No file watcher — external edits apply on next launch.
 
 ### Full Settings Structure
 
 ```toml
-profile = "work"  # Optional: loads ~/.config/newt/profiles/work.toml overlay
+profile = "work"  # Optional: loads profiles/work.toml under the app configuration directory
 
 [appearance]
 show_hidden = false         # Show files starting with "."
@@ -1436,7 +1444,7 @@ applies_to = "file"         # Optional
 
 ### Profile System
 
-The `profile` field in `settings.toml` loads an additional TOML file from `~/.config/newt/profiles/<name>.toml`. Profile settings deep-merge on top of user settings (scalars are replaced, tables are merged).
+The `profile` field in `settings.toml` loads an additional TOML file from `profiles/<name>.toml` under the same platform-specific application configuration directory. Profile settings deep-merge on top of user settings (scalars are replaced, tables are merged).
 
 ### Settings Dialog (Mod+,)
 
@@ -1618,7 +1626,7 @@ A single dialog showing the pane's full back/forward timeline. Forward (redo) en
 
 **Robustness**: History stack mutation happens at the moment the displayed path actually changes (the first batch arrives during streaming, or the final swap if no streaming), not at the start of navigation. A back-press to an unreachable target — unmounted VFS, deleted directory, permission revoked — that errors before any batch lands leaves the history stack untouched, so the user can simply press Back again. Stacks are also restored if a multi-step history jump fails to land.
 
-### Open in Left/Right Pane (Ctrl+Left / Ctrl+Right)
+### Open in Left/Right Pane (Mod+Left / Mod+Right)
 
 Opens the directory under the cursor in the left or right pane respectively, regardless of which pane is currently active. Useful for quickly setting up both panes for a copy/move operation.
 
@@ -1663,8 +1671,8 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+L | Navigate (Go To...) | Pane focused |
 | Alt+Left | History overlay (back direction) — tap for single back step, hold + step + release to commit | Pane focused |
 | Alt+Right | History overlay (forward direction) — tap for single forward step, hold + step + release to commit | Pane focused |
-| Ctrl+Left | Open in left pane | Pane focused |
-| Ctrl+Right | Open in right pane | Pane focused |
+| Mod+Left | Open in left pane | Pane focused |
+| Mod+Right | Open in right pane | Pane focused |
 | Mod+. | Copy pane path to other pane | Pane focused |
 | Mod+P | Hot paths | Any |
 | Mod+B | Add bookmark | Pane focused |
