@@ -38,8 +38,7 @@ Shipped (design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`). Follow-ups:
 
 ## Windows integration
 
-Shipped: volume classification + live drive-roots refresh (logical remount), Windows-path resolution in remote sessions, Enter-through-junction fallback, Map/Unmap network drive (F11 / Alt+F11), VFS-aware columns (`metadata_traits` + Attr column). Planned next:
-- Shell context menu (classic `IContextMenu`): trailing item in our custom context menu + modifier+right-click direct path. `windows` 0.61 + `webview2-com` already in-tree; needs STA COM init, `SHParseDisplayName` on de-verbatimed paths, `QueryContextMenu`/`TrackPopupMenuEx`/`InvokeCommand`, and a temporary HWND subclass forwarding `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MENUCHAR` to `IContextMenu2/3` for "Open with"/"Send to" submenus.
+Shipped: volume classification + live drive-roots refresh (logical remount), Windows-path resolution in remote sessions, Enter-through-junction fallback, Map/Unmap network drive (F11 / Alt+F11), VFS-aware columns (`metadata_traits` + Attr column), shell context menu (classic `IContextMenu`, trailing "Windows Menu" item + Shift+right-click).
 
 ## Dialog visual uplift
 

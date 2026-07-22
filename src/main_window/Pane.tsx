@@ -284,6 +284,7 @@ const FileRow = memo(
 );
 
 const IS_MAC_HOST = navigator.platform.startsWith("Mac");
+const IS_WINDOWS_HOST = navigator.platform.startsWith("Win");
 
 // Platform "mod" for mouse interactions (add-to-selection): ⌘ on macOS —
 // where Ctrl+click is the native context-menu gesture — Ctrl elsewhere.
@@ -1470,15 +1471,45 @@ function PaneInner(
   );
 
   const contextMenuFileRef = useRef<string | null>(null);
+  const contextMenuPosRef = useRef({ x: 0, y: 0 });
   const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
 
   const [contextMenuOnFile, setContextMenuOnFile] = useState(true);
+
+  // Whether the native Windows shell menu applies to this pane.
+  const shellMenuAvailable = IS_WINDOWS_HOST && props.is_host_local;
+
+  /// Pop the classic shell context menu at the last right-click position.
+  /// `fileName` null means the pane background (and `..` also targets the
+  /// directory itself — the shell has no concept of a parent-dir row).
+  const openShellMenu = useCallback(
+    async (fileName: string | null) => {
+      const { x, y } = contextMenuPosRef.current;
+      const onBackground = fileName === null || fileName === "..";
+      if (!onBackground && !selectedLookupRef.current.has(fileName)) {
+        // Focus must land before the backend reads the selection.
+        await safeSilent(commands.focus(paneHandle, fileName));
+      }
+      safe(commands.shellContextMenu(paneHandle, x, y, onBackground));
+    },
+    [paneHandle],
+  );
 
   const onContextMenu = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {
       // Find which file row was right-clicked
       const target = e.target as HTMLElement;
       const li = target.closest("li[data-name]") as HTMLElement | null;
+      contextMenuPosRef.current = { x: e.clientX, y: e.clientY };
+
+      // Shift+right-click skips our menu and goes straight to the shell
+      // menu; preventDefault keeps the Radix trigger from opening.
+      if (shellMenuAvailable && e.shiftKey) {
+        e.preventDefault();
+        void openShellMenu(li ? li.dataset.name! : null);
+        return;
+      }
+
       if (!li) {
         // Right-clicked on empty space — show the pane-level context menu
         setContextMenuOnFile(false);
@@ -1496,7 +1527,7 @@ function PaneInner(
         safeSilent(commands.focus(paneHandle, fileName));
       }
     },
-    [paneHandle],
+    [paneHandle, shellMenuAvailable, openShellMenu],
   );
 
   const lastViewportReportRef = useRef<[number, number, number]>([-1, -1, -1]);
@@ -1835,11 +1866,19 @@ function PaneInner(
             <FileContextMenuContent
               paneHandle={paneHandle}
               isParentDir={contextMenuIsParentDir}
+              onShellMenu={
+                shellMenuAvailable
+                  ? () => void openShellMenu(contextMenuFileRef.current)
+                  : undefined
+              }
             />
           ) : (
             <PaneContextMenuContent
               paneHandle={paneHandle}
               isHostLocal={props.is_host_local}
+              onShellMenu={
+                shellMenuAvailable ? () => void openShellMenu(null) : undefined
+              }
             />
           )}
         </ContextMenu.Root>

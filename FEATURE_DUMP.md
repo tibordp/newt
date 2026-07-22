@@ -243,6 +243,7 @@ The default browser context menu is suppressed in the main window (but not in th
 | Delete Permanently | Shift+Delete |
 | Open in Terminal | Mod+Enter |
 | Properties | Alt+Enter |
+| Windows Menu | Shift+RClick (Windows host + host-local files only) |
 
 **Right-click empty space** in the file list:
 
@@ -252,6 +253,9 @@ The default browser context menu is suppressed in the main window (but not in th
 | New Directory | F7 |
 | New File | |
 | Directory Properties | |
+| Windows Menu | Shift+RClick (Windows host + host-local files only) |
+
+**Windows shell context menu** (Windows host, host-local files): the trailing "Windows Menu" item — or Shift+right-click to skip our menu entirely — pops the classic `IContextMenu` shell menu (not the Windows 11 abbreviated one) for the effective selection; on empty space (or the `..` row) it targets the current directory itself. Implementation (`main_window/shell_menu.rs`, `shell_context_menu` command): runs synchronously on the main thread (`TrackPopupMenuEx` pumps its own modal loop), `SHParseDisplayName` on de-verbatimed paths (`launch_cwd`) → parent `IShellFolder::GetUIObjectOf` → `QueryContextMenu` → `TrackPopupMenuEx(TPM_RETURNCMD)` → `InvokeCommand`, with the Tauri window temporarily subclassed to forward `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MEASUREITEM`/`WM_MENUCHAR` to `IContextMenu2/3` so dynamic submenus ("Open with", "Send to") populate. User-cancelled verbs (`ERROR_CANCELLED`) are not errors; shell-side mutations (delete, rename, …) reach the pane through the directory watcher. In **elevated sessions** the menu is still built and invoked by the non-elevated UI process — items the desktop user can't read (e.g. `C:\Windows\System32\config\*`) fail at `SHParseDisplayName` with an error, and any verb that did run would run non-elevated. Deliberate: an agent-side menu (feasible for the UAC transport, which shares the interactive desktop) would invoke *every* verb elevated — "Open"/"Open with" silently spawning admin-token processes — which is why Explorer refuses to run elevated too. Power users who need shell verbs on admin-only files can just run `newt.exe` itself elevated.
 
 **Right-click a breadcrumb** in the path bar:
 

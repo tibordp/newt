@@ -6,6 +6,8 @@ pub mod elevate;
 pub mod menu;
 pub mod pane;
 pub mod session;
+#[cfg(windows)]
+pub mod shell_menu;
 pub mod terminal;
 #[cfg(windows)]
 pub mod win_proc;

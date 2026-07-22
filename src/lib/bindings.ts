@@ -1320,6 +1320,19 @@ async cmdRefresh(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Show the native Windows shell context menu (classic `IContextMenu`)
+ * for the pane's selection — or for the directory itself when
+ * `on_background`. `x`/`y` are CSS-pixel client coordinates.
+ */
+async shellContextMenu(paneHandle: PaneHandle, x: number, y: number, onBackground: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("shell_context_menu", { paneHandle, x, y, onBackground }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdDeleteSelected(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_delete_selected", { paneHandle }) };

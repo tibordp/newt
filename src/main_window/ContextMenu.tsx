@@ -28,14 +28,32 @@ function useCommands() {
   return useMemo(() => preferences?.commands, [preferences?.commands]);
 }
 
+/// Trailing "Windows Menu" entry — the classic shell context menu.
+/// Rendered only when the pane can offer it (Windows host + host-local
+/// files); Shift+right-click reaches it directly.
+function ShellMenuItem({ onShellMenu }: { onShellMenu?: () => void }) {
+  if (!onShellMenu) return null;
+  return (
+    <>
+      <CM.Separator className={styles.separator} />
+      <CM.Item className={styles.item} onSelect={onShellMenu}>
+        Windows Menu
+        <span className={styles.shortcut}>Shift+RClick</span>
+      </CM.Item>
+    </>
+  );
+}
+
 type FileContextMenuProps = {
   paneHandle: number;
   isParentDir: boolean;
+  onShellMenu?: () => void;
 };
 
 export function FileContextMenuContent({
   paneHandle,
   isParentDir,
+  onShellMenu,
 }: FileContextMenuProps) {
   const commands = useCommands();
 
@@ -118,6 +136,8 @@ export function FileContextMenuContent({
           Properties
           <Shortcut commands={commands} id="properties" />
         </CM.Item>
+
+        <ShellMenuItem onShellMenu={onShellMenu} />
       </CM.Content>
     </CM.Portal>
   );
@@ -126,11 +146,13 @@ export function FileContextMenuContent({
 type PaneContextMenuProps = {
   paneHandle: number;
   isHostLocal: boolean;
+  onShellMenu?: () => void;
 };
 
 export function PaneContextMenuContent({
   paneHandle,
   isHostLocal,
+  onShellMenu,
 }: PaneContextMenuProps) {
   const commands = useCommands();
 
@@ -173,6 +195,8 @@ export function PaneContextMenuContent({
         >
           Directory Properties
         </CM.Item>
+
+        <ShellMenuItem onShellMenu={onShellMenu} />
       </CM.Content>
     </CM.Portal>
   );

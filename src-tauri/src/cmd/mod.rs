@@ -326,6 +326,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::cmd_add_bookmark,
             preferences::cmd_open_config_file,
             pane::cmd_refresh,
+            pane::shell_context_menu,
             operations::cmd_delete_selected,
             operations::cmd_delete_permanent,
             operations::cmd_show_next_operation,

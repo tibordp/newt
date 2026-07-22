@@ -750,3 +750,43 @@ pub async fn cmd_refresh(ctx: MainWindowContext, pane_handle: PaneHandle) -> Res
     ctx.publish()?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Shell context menu (Windows). Doc comments on the #[cfg(windows)] and
+// stub definitions must stay identical: tauri-specta emits them as JSDoc,
+// so a mismatch makes `bindings.ts` depend on the build host.
+// ---------------------------------------------------------------------------
+
+/// Show the native Windows shell context menu (classic `IContextMenu`)
+/// for the pane's selection — or for the directory itself when
+/// `on_background`. `x`/`y` are CSS-pixel client coordinates.
+#[cfg(windows)]
+#[tauri::command]
+#[specta::specta]
+pub async fn shell_context_menu(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    x: f64,
+    y: f64,
+    on_background: bool,
+) -> Result<(), Error> {
+    crate::main_window::shell_menu::show_shell_context_menu(&ctx, pane_handle, x, y, on_background)
+        .await
+}
+
+/// Show the native Windows shell context menu (classic `IContextMenu`)
+/// for the pane's selection — or for the directory itself when
+/// `on_background`. `x`/`y` are CSS-pixel client coordinates.
+#[cfg(not(windows))]
+#[tauri::command]
+#[specta::specta]
+pub async fn shell_context_menu(
+    _pane_handle: PaneHandle,
+    _x: f64,
+    _y: f64,
+    _on_background: bool,
+) -> Result<(), Error> {
+    Err(Error::Custom(
+        "The shell context menu is only available on Windows".into(),
+    ))
+}
