@@ -32,15 +32,13 @@ export default function ModalRouter({
   const closeModal = useCallback(() => safe(commands.closeModal()), []);
 
   function renderContent() {
-    // Gating the sole import reference behind the build-time `__WINDOWS__`
-    // literal lets Rollup DCE drop this branch and SelectWslDistro.tsx from
-    // non-Windows bundles.
-    if (__WINDOWS__ && modalType === "select_wsl_distro") {
-      return (
-        <SelectWslDistroContent distros={state?.modal?.data?.distros ?? []} />
-      );
-    }
     switch (modalType) {
+      // The frontend bundle is platform-independent (built once for all
+      // targets); off-Windows this modal is simply never opened.
+      case "select_wsl_distro":
+        return (
+          <SelectWslDistroContent distros={state?.modal?.data?.distros ?? []} />
+        );
       case "command_palette":
         return (
           <CommandPaletteContent

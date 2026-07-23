@@ -26,7 +26,7 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 
 use super::win_proc::WinProcess;
@@ -63,6 +63,62 @@ fn wsl_launch_fn() -> Option<WslLaunchFn> {
         GetProcAddress(module, c"WslLaunch".as_ptr() as *const u8).map(|f| f as usize)
     });
     cached.map(|v| unsafe { std::mem::transmute::<usize, WslLaunchFn>(v) })
+}
+
+/// `WslLaunch`'s relay process attaches to the caller's console, and a
+/// windows-subsystem build has none — so the OS would allocate a fresh
+/// *visible* console window per launch. Pre-own a hidden one instead:
+/// `AllocConsoleWithOptions(NO_WINDOW)` where available (Win11 24H2+),
+/// else `AllocConsole` + hide (one brief flash, first WSL session only).
+/// No-op when a console already exists (console-subsystem dev builds,
+/// launches from a terminal).
+fn ensure_hidden_console() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        use windows_sys::Win32::System::Console::{AllocConsole, GetConsoleWindow};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+
+        if !GetConsoleWindow().is_null() {
+            return;
+        }
+
+        // From consoleapi.h; absent from windows-sys 0.59, and it has to
+        // be resolved dynamically regardless — older Windows lacks it.
+        #[repr(C)]
+        struct AllocConsoleOptions {
+            mode: u32, // 2 = ALLOC_CONSOLE_MODE_NO_WINDOW
+            use_show_window: i32,
+            show_window: u16,
+        }
+        type AllocConsoleWithOptionsFn =
+            unsafe extern "system" fn(*const AllocConsoleOptions, *mut u32) -> i32;
+        let kernel32 = GetModuleHandleW(wide("kernel32.dll").as_ptr());
+        if !kernel32.is_null()
+            && let Some(f) =
+                GetProcAddress(kernel32, c"AllocConsoleWithOptions".as_ptr() as *const u8)
+        {
+            let f = std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                AllocConsoleWithOptionsFn,
+            >(f);
+            let opts = AllocConsoleOptions {
+                mode: 2,
+                use_show_window: 0,
+                show_window: 0,
+            };
+            let mut result = 0u32;
+            if f(&opts, &mut result) >= 0 {
+                return;
+            }
+        }
+
+        if AllocConsole() != 0 {
+            let hwnd = GetConsoleWindow();
+            if !hwnd.is_null() {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    });
 }
 
 /// Translate a Windows drive path to its default-automount WSL path:
@@ -134,6 +190,7 @@ pub async fn spawn_wsl(
 ) -> Result<WslSpawn, Error> {
     let launch = wsl_launch_fn()
         .ok_or_else(|| Error::Custom("WSL is not available on this system".into()))?;
+    ensure_hidden_console();
 
     // WSL2's kernel arch always equals the Windows host arch, and WSL1 is
     // x64-only — so the host arch is the correct agent triple.

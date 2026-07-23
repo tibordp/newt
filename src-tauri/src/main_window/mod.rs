@@ -1851,7 +1851,7 @@ pub fn spawn_main_window(
             .inner_size(1100.0, 800.0)
             .theme(theme)
             .build()?;
-    crate::disable_webview_autofill(&window);
+    crate::tune_webview_settings(&window);
 
     let ctx = MainWindowContext::new(
         window.clone(),

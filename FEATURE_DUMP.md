@@ -1205,6 +1205,8 @@ Distributions are enumerated by reading the `HKCU\Software\Microsoft\Windows\Cur
 
 No bootstrap or upload: the bundled Linux-musl agent already lives on the Windows filesystem, so it is exec'd directly from its translated `/mnt/<drive>/…` path (DrvFs default-mounts world-exec). The agent architecture is taken from the Windows host arch (correct for WSL2 and x64 WSL1). The `WslLaunch` process is a normal Win32 process handle wrapped in a small adapter (Rust's `Child` can't adopt a pre-existing handle); closing the window terminates it. WSL is a remote-style session — `behavior.expose_local_fs` mounts the client-local filesystem as a Remote VFS, same as SSH. There are no saved WSL connection profiles by design.
 
+`WslLaunch`'s relay process attaches to the caller's console, so a windows-subsystem (production) build — which has none — would get a visible console window popped per launch. Before the first launch the process pre-owns a hidden console: `AllocConsoleWithOptions(NO_WINDOW)` where available (Win11 24H2+, resolved dynamically), else `AllocConsole` + hide (one brief flash, first WSL session only). Console-subsystem dev builds and terminal launches already have a console and are untouched.
+
 ### Connection Status
 
 Displayed as an overlay on the main window during connection:

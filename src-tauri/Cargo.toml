@@ -63,6 +63,7 @@ pty-process = { path = "../libs/pty-process" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_WNet",
+    "Win32_System_Console",
     "Win32_System_SystemInformation",
     "Win32_System_LibraryLoader",
     "Win32_System_Pipes",

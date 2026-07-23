@@ -59,7 +59,7 @@ fn build_child_window(
     // that no `WindowEvent::Destroyed` ever cleans up. The webview hasn't
     // started loading at this point, so no IPC has fired yet.
     let window = builder.build()?;
-    crate::disable_webview_autofill(&window);
+    crate::tune_webview_settings(&window);
 
     // Live title-bar updates on theme-preference changes. (Webview
     // content already follows globally via the shared WebView2 profile /

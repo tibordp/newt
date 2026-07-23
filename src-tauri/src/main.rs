@@ -544,14 +544,25 @@ pub fn detect_theme() -> Option<tauri::Theme> {
     None
 }
 
-/// WebView2 (Edge Chromium) ships autofill: a "saved info" popover appears
-/// over text inputs (path bar, rename dialog, …). `autocomplete="off"` only
-/// partially suppresses it — Chromium ignores it for many field kinds — so
-/// turn the feature off at the WebView2 settings level. No-op if the
-/// installed runtime is too old to expose `ICoreWebView2Settings4`.
+/// Turn off the browser-isms WebView2 (Edge Chromium) ships enabled:
+///
+/// * Autofill — a "saved info" popover appears over text inputs (path
+///   bar, rename dialog, …). `autocomplete="off"` only partially
+///   suppresses it — Chromium ignores it for many field kinds — so turn
+///   the feature off at the settings level (`ICoreWebView2Settings4`).
+/// * Browser accelerator keys — Ctrl+P (print!), Ctrl+F, F5, Ctrl+S, …
+///   fire whenever the frontend doesn't consume the keydown
+///   (`ICoreWebView2Settings3`). Editing keys (Ctrl+C/V/X/A) are
+///   unaffected. This also kills F12/Ctrl+Shift+I for DevTools; debug
+///   builds keep the Debug dialog's Toggle DevTools button (F12 opens
+///   the dialog — the app command, not the browser accelerator).
+///
+/// Each cast no-ops independently if the installed runtime is too old.
 #[cfg(windows)]
-pub(crate) fn disable_webview_autofill(window: &tauri::WebviewWindow) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+pub(crate) fn tune_webview_settings(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Settings3, ICoreWebView2Settings4,
+    };
     use windows::core::Interface;
 
     let _ = window.with_webview(|pw| unsafe {
@@ -561,16 +572,18 @@ pub(crate) fn disable_webview_autofill(window: &tauri::WebviewWindow) {
         let Ok(settings) = core.Settings() else {
             return;
         };
-        let Ok(s4) = settings.cast::<ICoreWebView2Settings4>() else {
-            return;
-        };
-        let _ = s4.SetIsGeneralAutofillEnabled(false);
-        let _ = s4.SetIsPasswordAutosaveEnabled(false);
+        if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+            let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+        }
+        if let Ok(s4) = settings.cast::<ICoreWebView2Settings4>() {
+            let _ = s4.SetIsGeneralAutofillEnabled(false);
+            let _ = s4.SetIsPasswordAutosaveEnabled(false);
+        }
     });
 }
 
 #[cfg(not(windows))]
-pub(crate) fn disable_webview_autofill(_window: &tauri::WebviewWindow) {}
+pub(crate) fn tune_webview_settings(_window: &tauri::WebviewWindow) {}
 
 /// Spawn a task that keeps `window`'s title-bar theme in sync with the
 /// theme preference. Shared by the main window and the child
@@ -844,11 +857,12 @@ fn main() {
                     }
                 }
             };
+            // Bare label — the setup hook wraps it into `Newt [<label>]`.
             Some((
                 ConnectionTarget::Wsl {
                     distro: distro.clone(),
                 },
-                format!("Newt [WSL: {}]", distro),
+                format!("WSL: {}", distro),
             ))
         }
         None => non_profile,
@@ -858,7 +872,7 @@ fn main() {
     // `--target`/`--profile`/`--wsl`, so this just overrides the default.
     #[cfg(any(target_os = "linux", windows))]
     let non_profile = if args.elevated {
-        Some((ConnectionTarget::Elevated, "Newt [Elevated]".to_string()))
+        Some((ConnectionTarget::Elevated, "Elevated".to_string()))
     } else {
         non_profile
     };
