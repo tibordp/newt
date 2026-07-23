@@ -68,9 +68,9 @@ export function ModalContent({
         <ConnectRemote {...state.data} {...commonProps} mountLog={mountLog} />
       );
     case "mount_s3":
-      return <MountS3 {...state.data} {...commonProps} />;
+      return <MountS3 {...state.data} {...commonProps} mountLog={mountLog} />;
     case "mount_sftp":
-      return <MountSftp {...state.data} {...commonProps} />;
+      return <MountSftp {...state.data} {...commonProps} mountLog={mountLog} />;
     case "mount_k8s":
       return <MountK8s {...state.data} {...commonProps} />;
     case "search":

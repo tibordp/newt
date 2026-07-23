@@ -14,6 +14,9 @@ async fn mount_and_navigate(
     request: MountRequest,
     replace: bool,
 ) -> Result<(), Error> {
+    // The mount dialogs surface the mount log while connecting — show only
+    // the attempt in flight.
+    ctx.clear_mount_log();
     // Log the variant discriminant only — the S3 variant carries credentials,
     // and Debug-formatting the whole request would leak them into logs.
     let kind = match &request {
@@ -58,6 +61,27 @@ pub async fn mount_s3(
     bucket: Option<String>,
     credentials: newt_common::vfs::S3Credentials,
 ) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    // Secret-free target for the recents MRU; the mode is recovered from
+    // which credential fields the dialog filled in.
+    let credential_mode = if credentials.access_key_id.is_some() {
+        "iam_user"
+    } else if credentials.role_arn.is_some() {
+        "assume_role"
+    } else if credentials.profile.is_some() {
+        "profile"
+    } else {
+        "default"
+    };
+    let recent_kind = crate::connections::ConnectionKind::S3 {
+        region: region.clone(),
+        bucket: bucket.clone(),
+        endpoint_url: credentials.endpoint_url.clone(),
+        credential_mode: credential_mode.to_string(),
+        profile: credentials.profile.clone(),
+        role_arn: credentials.role_arn.clone(),
+        external_id: credentials.external_id.clone(),
+    };
     mount_and_navigate(
         ctx,
         pane_handle,
@@ -68,7 +92,9 @@ pub async fn mount_s3(
         },
         false,
     )
-    .await
+    .await?;
+    crate::connections::record_recent(&app_handle, recent_kind, crate::connections::OpenIn::Pane);
+    Ok(())
 }
 
 #[tauri::command]

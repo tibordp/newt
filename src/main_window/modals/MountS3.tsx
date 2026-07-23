@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { safeSilent, tryRun } from "../../lib/ipc";
+import { useEffect, useRef, useState } from "react";
+import { tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   DialogShell,
@@ -7,11 +7,13 @@ import {
   DialogBody,
   DialogFooter,
   DialogSubmitButton,
+  DialogSaveButton,
   DialogError,
   Field,
-  FieldGroup,
-  CheckboxField,
+  MountLogView,
+  ProfileNameField,
   useAsyncAction,
+  useSaveFlash,
 } from "./primitives";
 import { commands } from "../../lib/bindings";
 
@@ -19,13 +21,16 @@ type CredentialMode = "default" | "iam_user" | "assume_role" | "profile";
 
 import type { S3Credentials } from "../../lib/bindings";
 
-type MountS3Props = CommonDialogProps & ModalDataOf<"mount_s3">;
+type MountS3Props = CommonDialogProps &
+  ModalDataOf<"mount_s3"> & { mountLog?: string[] };
 
 export default function MountS3({
   initial,
   edit,
+  connect_on_open,
   cancel,
   context,
+  mountLog,
 }: MountS3Props) {
   const s3 = initial?.type === "s3" ? initial : null;
   const [region, setRegion] = useState(s3?.region ?? "");
@@ -39,28 +44,62 @@ export default function MountS3({
   const [endpointUrl, setEndpointUrl] = useState(s3?.endpoint_url ?? "");
   const [roleArn, setRoleArn] = useState(s3?.role_arn ?? "");
   const [externalId, setExternalId] = useState(s3?.external_id ?? "");
-  const [saveProfile, setSaveProfile] = useState(!!edit);
   const [connectionNameEdited, setConnectionNameEdited] = useState(!!edit);
   const [connectionName, setConnectionName] = useState(edit?.name ?? "");
+  // Save updates in place once the form has an identity: the edited
+  // profile's, or the one minted by the first Save.
+  const [savedId, setSavedId] = useState<string | null>(edit?.id ?? null);
+  const [savedFlash, flashSaved] = useSaveFlash();
+  // The profile-name row is hidden until save-intent; editing a saved
+  // profile pins it open.
+  const [saveIntent, setSaveIntent] = useState(false);
+  const nameRevealed = !!edit || saveIntent;
+  // While the name row is focused, Enter means Save — the button emphasis
+  // follows.
+  const [nameFocused, setNameFocused] = useState(false);
+  const firstInputRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  // Activation flow: submit on open, deferred one render so keychain keys
+  // land in state before the submit closure reads them. If IAM-user keys
+  // are missing, the dialog simply stays open for re-entry.
+  const [autoConnect, setAutoConnect] = useState(false);
 
-  // Editing an IAM-user profile: prefill the key pair from the keychain so
-  // saving without touching the fields keeps the stored secret.
+  // Editing/activating an IAM-user profile: prefill the key pair from the
+  // keychain so saving without touching the fields keeps the stored secret.
   useEffect(() => {
-    if (!edit || s3?.credential_mode !== "iam_user") return;
-    (async () => {
-      const r = await commands.cmdGetConnectionSecret(edit.id);
-      if (r.status !== "ok" || !r.data) return;
-      try {
-        const parsed = JSON.parse(r.data);
-        setAccessKeyId(parsed.access_key_id ?? "");
-        setSecretAccessKey(parsed.secret_access_key ?? "");
-      } catch {
-        // Unparseable secret — leave the fields empty for re-entry.
-      }
-    })();
+    if (edit && s3?.credential_mode === "iam_user") {
+      (async () => {
+        const r = await commands.cmdGetConnectionSecret(edit.id);
+        if (r.status !== "ok" || !r.data) return;
+        try {
+          const parsed = JSON.parse(r.data);
+          setAccessKeyId(parsed.access_key_id ?? "");
+          setSecretAccessKey(parsed.secret_access_key ?? "");
+          if (
+            connect_on_open &&
+            parsed.access_key_id &&
+            parsed.secret_access_key
+          ) {
+            setAutoConnect(true);
+          }
+        } catch {
+          // Unparseable secret — leave the fields empty for re-entry.
+        }
+      })();
+    } else if (connect_on_open) {
+      setAutoConnect(true);
+    }
     // Runs once per dialog open; `edit`/`s3` never change while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (autoConnect) {
+      setAutoConnect(false);
+      connecting.run();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConnect]);
 
   // Auto-generate connection name from fields until user manually edits it
   const suggestedName = bucket
@@ -107,62 +146,52 @@ export default function MountS3({
     }
   }
 
-  const { pending, error, run } = useAsyncAction(async (connect: boolean) => {
-    const credentials = buildCredentials();
-
-    const finalName = displayedConnectionName;
-    if (saveProfile && finalName) {
-      // Editing keeps the profile's id stable across renames.
-      const id =
-        edit?.id ?? finalName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      const secret =
-        credentialMode === "iam_user" && accessKeyId && secretAccessKey
-          ? JSON.stringify({
-              access_key_id: accessKeyId,
-              secret_access_key: secretAccessKey,
-            })
-          : null;
-      await safeSilent(
-        commands.cmdSaveConnection(
-          {
-            id,
-            name: finalName,
-            type: "s3",
-            region: region || null,
-            bucket: bucket || null,
-            endpoint_url: endpointUrl || null,
-            credential_mode: credentialMode,
-            profile: awsProfileName || null,
-            role_arn: roleArn || null,
-            external_id: externalId || null,
-          },
-          secret,
-        ),
-      );
-    }
-
-    if (!connect) {
-      // Save-only: back to Quick Connect, which re-reads the profiles.
-      await safeSilent(
-        commands.dialog("quick_connect", context?.pane_handle ?? null),
-      );
-      return null;
-    }
-
-    return tryRun(
+  const connecting = useAsyncAction(async () =>
+    tryRun(
       commands.mountS3(
         context?.pane_handle ?? 0,
         region || null,
         bucket || null,
-        credentials,
+        buildCredentials(),
+      ),
+    ),
+  );
+
+  const saving = useAsyncAction(async () => {
+    const name = displayedConnectionName.trim();
+    if (!name) return "Profile name is required";
+    const id = savedId ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const secret =
+      credentialMode === "iam_user" && accessKeyId && secretAccessKey
+        ? JSON.stringify({
+            access_key_id: accessKeyId,
+            secret_access_key: secretAccessKey,
+          })
+        : null;
+    const err = await tryRun(
+      commands.cmdSaveConnection(
+        {
+          id,
+          name,
+          type: "s3",
+          region: region || null,
+          bucket: bucket || null,
+          endpoint_url: endpointUrl || null,
+          credential_mode: credentialMode,
+          profile: awsProfileName || null,
+          role_arn: roleArn || null,
+          external_id: externalId || null,
+        },
+        secret,
       ),
     );
+    if (err) return err;
+    setSavedId(id);
+    flashSaved();
+    return null;
   });
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    run(true);
-  }
+  const pending = connecting.pending || saving.pending;
 
   const canSubmit =
     credentialMode === "default" ||
@@ -170,12 +199,41 @@ export default function MountS3({
     (credentialMode === "iam_user" && accessKeyId && secretAccessKey) ||
     (credentialMode === "assume_role" && !!roleArn);
 
+  // First Save… reveals the name row (focused, preselected); once visible,
+  // Save persists.
+  const onSaveAction = () => {
+    if (!canSubmit) return;
+    if (!nameRevealed) {
+      setSaveIntent(true);
+      return;
+    }
+    if (!pending) saving.run();
+  };
+
+  useEffect(() => {
+    if (saveIntent) {
+      nameRef.current?.focus();
+      nameRef.current?.select();
+    }
+  }, [saveIntent]);
+
+  const dismissSave = () => {
+    setSaveIntent(false);
+    firstInputRef.current?.focus();
+  };
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    connecting.run();
+  }
+
   return (
-    <DialogShell onSubmit={onSubmit}>
-      <DialogHeader title={edit ? "Edit Connection" : "Mount S3"} />
+    <DialogShell onSubmit={onSubmit} onSave={onSaveAction}>
+      <DialogHeader title={edit ? `Mount S3 — ${edit.name}` : "Mount S3"} />
       <DialogBody>
         <Field label="Region (optional)" htmlFor="s3-region">
           <input
+            ref={firstInputRef}
             id="s3-region"
             type="text"
             value={region}
@@ -289,44 +347,36 @@ export default function MountS3({
           </>
         )}
 
-        <FieldGroup>
-          <CheckboxField
-            label={
-              edit ? "Update connection profile" : "Save as connection profile"
-            }
-            checked={saveProfile}
-            onChange={setSaveProfile}
-          />
-          {saveProfile && (
-            <input
-              type="text"
-              value={displayedConnectionName}
-              onChange={(e) => {
-                setConnectionName(e.target.value);
-                setConnectionNameEdited(true);
-              }}
-              placeholder="Connection name"
-              size={30}
-              autoComplete="off"
-            />
-          )}
-        </FieldGroup>
-        <DialogError error={error} />
+        <ProfileNameField
+          value={displayedConnectionName}
+          onChange={(v) => {
+            setConnectionName(v);
+            setConnectionNameEdited(true);
+          }}
+          visible={nameRevealed}
+          onSave={onSaveAction}
+          onDismiss={edit ? undefined : dismissSave}
+          onFocusChange={setNameFocused}
+          disabled={pending}
+          inputRef={nameRef}
+        />
+        <MountLogView lines={mountLog} visible={connecting.pending} />
+        <DialogError error={connecting.error ?? saving.error} />
       </DialogBody>
       <DialogFooter onCancel={cancel} cancelDisabled={pending}>
-        {edit && saveProfile && (
-          <button
-            type="button"
-            onClick={() => run(false)}
-            disabled={pending || !canSubmit}
-          >
-            Save
-          </button>
-        )}
+        <DialogSaveButton
+          pending={saving.pending}
+          saved={savedFlash}
+          disabled={connecting.pending || !canSubmit}
+          label={nameRevealed ? "Save" : "Save…"}
+          variant={nameFocused ? "suggested" : "normal"}
+          onClick={onSaveAction}
+        />
         <DialogSubmitButton
-          pending={pending}
+          pending={connecting.pending}
           pendingLabel="Connecting…"
-          disabled={!canSubmit}
+          disabled={!canSubmit || saving.pending}
+          variant={nameFocused ? "normal" : "suggested"}
         >
           Mount
         </DialogSubmitButton>

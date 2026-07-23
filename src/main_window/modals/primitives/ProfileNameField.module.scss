@@ -1,0 +1,16 @@
+// The profile-name row is deliberately subordinate to the connection form:
+// separated by a rule and muted, so it reads as "metadata for Save", not as
+// another field required to connect.
+.profileRow {
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.profileLabel {
+  padding-bottom: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+}

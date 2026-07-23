@@ -434,56 +434,6 @@ pub fn delete_connection_secret(id: &str) -> Result<(), Error> {
     crate::keychain::keychain_delete(format!("{}{}", KEYCHAIN_PREFIX, id))
 }
 
-/// Build a MountRequest from a connection profile, loading secrets from keychain.
-pub fn build_mount_request(
-    profile: &ConnectionProfile,
-) -> Result<Option<newt_common::vfs::MountRequest>, Error> {
-    match &profile.kind {
-        ConnectionKind::S3 {
-            region,
-            bucket,
-            endpoint_url,
-            credential_mode,
-            profile: aws_profile,
-            role_arn,
-            external_id,
-        } => {
-            let mut creds = newt_common::vfs::S3Credentials {
-                profile: aws_profile.clone(),
-                endpoint_url: endpoint_url.clone(),
-                role_arn: role_arn.clone(),
-                external_id: external_id.clone(),
-                ..Default::default()
-            };
-
-            // Load IAM user secrets from keychain if applicable
-            if credential_mode == "iam_user"
-                && let Some(secret_json) = get_connection_secret(&profile.id)?
-                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&secret_json)
-            {
-                creds.access_key_id = parsed["access_key_id"].as_str().map(|s| s.to_string());
-                creds.secret_access_key =
-                    parsed["secret_access_key"].as_str().map(|s| s.to_string());
-            }
-
-            Ok(Some(newt_common::vfs::MountRequest::S3 {
-                region: region.clone(),
-                bucket: bucket.clone(),
-                credentials: creds,
-            }))
-        }
-        ConnectionKind::Sftp { host } => Ok(Some(newt_common::vfs::MountRequest::Sftp {
-            host: host.clone(),
-        })),
-        // Spawn-style transports — not VFS mounts.
-        ConnectionKind::Ssh { .. }
-        | ConnectionKind::Docker { .. }
-        | ConnectionKind::Podman { .. }
-        | ConnectionKind::Kube { .. }
-        | ConnectionKind::Custom { .. } => Ok(None),
-    }
-}
-
 // --- Tauri commands ---
 
 #[tauri::command]
@@ -547,16 +497,11 @@ pub async fn connect_profile(
         .find(|c| c.id == id)
         .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", id)))?;
 
-    if let Some((target, _label)) = connection_target_for(&profile.kind) {
-        // Pane-scoped agent mount: the connection is established by the
-        // current session (its docker/ssh/kubectl, credentials, network),
-        // not necessarily this machine.
-        if profile.open_in == OpenIn::Pane {
-            let request = agent_mount_request_for(&profile.kind)
-                .expect("spawn-style kind always yields an agent mount request");
-            return mount_into_pane(&ctx, pane_handle, request).await;
-        }
-
+    if profile.open_in == OpenIn::Window
+        && let Some((target, _label)) = connection_target_for(&profile.kind)
+    {
+        // Full session: connect directly — the new window has its own
+        // connection screen with the live log.
         let app_handle = ctx.window().app_handle().clone();
         crate::main_window::spawn_main_window(
             &app_handle,
@@ -569,9 +514,23 @@ pub async fn connect_profile(
             Ok(())
         })
     } else {
-        let request = build_mount_request(&profile)?
-            .ok_or_else(|| Error::Custom("unsupported connection type".into()))?;
-        mount_into_pane(&ctx, pane_handle, request).await
+        // VFS-bound (S3/SFTP, or a pane-scoped agent mount established by
+        // the current session): activate through the dialog, which
+        // auto-submits — mount log, errors, and edit-and-retry all live
+        // there. IAM-user S3 fetches its keys from the keychain first and
+        // stays open if they're gone.
+        let edit = EditingProfile {
+            id: profile.id,
+            name: profile.name,
+        };
+        open_connection_editor(
+            &ctx,
+            Some(pane_handle),
+            profile.kind,
+            profile.open_in,
+            Some(edit),
+            true,
+        )
     }
 }
 
@@ -595,7 +554,14 @@ pub fn edit_connection(
         id: profile.id,
         name: profile.name,
     };
-    open_connection_editor(&ctx, pane_handle, profile.kind, profile.open_in, Some(edit))
+    open_connection_editor(
+        &ctx,
+        pane_handle,
+        profile.kind,
+        profile.open_in,
+        Some(edit),
+        false,
+    )
 }
 
 #[tauri::command]
@@ -605,28 +571,38 @@ pub fn edit_recent_connection(
     pane_handle: Option<crate::main_window::PaneHandle>,
     recent: crate::runtime_state::RecentConnection,
 ) -> Result<(), Error> {
-    open_connection_editor(&ctx, pane_handle, recent.kind, recent.open_in, None)
+    open_connection_editor(&ctx, pane_handle, recent.kind, recent.open_in, None, false)
 }
 
-/// Open the connect/mount dialog matching `kind`, prefilled with it.
+/// Open the connect/mount dialog matching `kind`, prefilled with it. With
+/// `connect_on_open` the dialog submits itself immediately — activation
+/// runs *through* the dialog so the mount log, errors, and edit-and-retry
+/// all live on one surface.
 fn open_connection_editor(
     ctx: &crate::main_window::MainWindowContext,
     pane_handle: Option<crate::main_window::PaneHandle>,
     kind: ConnectionKind,
     open_in: OpenIn,
     edit: Option<EditingProfile>,
+    connect_on_open: bool,
 ) -> Result<(), Error> {
     use crate::main_window::{ModalContext, ModalData, ModalDataKind};
     let kind = match kind {
         ConnectionKind::S3 { .. } => ModalDataKind::MountS3 {
             initial: Some(kind),
             edit,
+            connect_on_open,
         },
-        ConnectionKind::Sftp { host } => ModalDataKind::MountSftp { host, edit },
+        ConnectionKind::Sftp { host } => ModalDataKind::MountSftp {
+            host,
+            edit,
+            connect_on_open,
+        },
         _ => ModalDataKind::ConnectRemote {
             initial: kind,
             default_open_in: open_in,
             edit,
+            connect_on_open,
         },
     };
     ctx.with_update(|gs| {
@@ -636,6 +612,74 @@ fn open_connection_editor(
         });
         Ok(())
     })
+}
+
+/// Activate a connection kind directly: spawn a session window, or mount a
+/// pane-scoped agent VFS, per `open_in`. Records the target in the recents
+/// MRU on success. Shared by the connect dialog (`connect_target`) and
+/// recent/profile activation.
+pub async fn connect_kind(
+    ctx: &crate::main_window::MainWindowContext,
+    pane_handle: crate::main_window::PaneHandle,
+    kind: ConnectionKind,
+    open_in: OpenIn,
+) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    if open_in == OpenIn::Pane {
+        let request = agent_mount_request_for(&kind)
+            .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
+        mount_into_pane(ctx, pane_handle, request).await?;
+        record_recent(&app_handle, kind, open_in);
+        return Ok(());
+    }
+
+    let (target, label) = connection_target_for(&kind)
+        .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
+    crate::main_window::spawn_main_window(
+        &app_handle,
+        target,
+        format!("Newt [{}]", label),
+        [None, None],
+    )?;
+    record_recent(&app_handle, kind, open_in);
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn connect_recent(
+    ctx: crate::main_window::MainWindowContext,
+    pane_handle: crate::main_window::PaneHandle,
+    recent: crate::runtime_state::RecentConnection,
+) -> Result<(), Error> {
+    // VFS-bound targets (S3/SFTP, and spawn kinds mounting into the pane)
+    // activate through their dialog, which auto-submits. IAM-user S3 can't
+    // auto-connect — the keys were never persisted (the user declined to
+    // save a profile), so the dialog waits for re-entry instead of silently
+    // falling back to the default credential chain. Window sessions connect
+    // directly — the new window has its own connection screen.
+    let connect_on_open = match &recent.kind {
+        ConnectionKind::S3 {
+            credential_mode, ..
+        } => Some(credential_mode != "iam_user"),
+        ConnectionKind::Sftp { .. } => Some(true),
+        _ if recent.open_in == OpenIn::Pane => Some(true),
+        _ => None,
+    };
+    match connect_on_open {
+        Some(connect_on_open) => open_connection_editor(
+            &ctx,
+            Some(pane_handle),
+            recent.kind,
+            recent.open_in,
+            None,
+            connect_on_open,
+        ),
+        None => connect_kind(&ctx, pane_handle, recent.kind, recent.open_in).await,
+    }
 }
 
 /// Mount `request` and navigate the pane into it, closing the open modal.

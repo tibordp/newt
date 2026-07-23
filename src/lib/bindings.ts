@@ -1478,6 +1478,14 @@ async editRecentConnection(paneHandle: PaneHandle | null, recent: RecentConnecti
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async connectRecent(paneHandle: PaneHandle, recent: RecentConnection) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("connect_recent", { paneHandle, recent }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1990,11 +1998,16 @@ default_open_in: OpenIn;
 /**
  * Present when editing a saved profile from Quick Connect.
  */
-edit: EditingProfile | null } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null } } | { type: "mount_s3"; data: { 
+edit: EditingProfile | null; 
+/**
+ * Activation flow: the dialog submits itself on open, doubling as
+ * the connection-progress surface (log, errors, edit-and-retry).
+ */
+connect_on_open: boolean } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null; connect_on_open: boolean } } | { type: "mount_s3"; data: { 
 /**
  * Prefill (always the `S3` variant) when editing a saved profile.
  */
-initial: ConnectionKind | null; edit: EditingProfile | null } } | 
+initial: ConnectionKind | null; edit: EditingProfile | null; connect_on_open: boolean } } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.
@@ -2136,11 +2149,16 @@ default_open_in: OpenIn;
 /**
  * Present when editing a saved profile from Quick Connect.
  */
-edit: EditingProfile | null } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null } } | { type: "mount_s3"; data: { 
+edit: EditingProfile | null; 
+/**
+ * Activation flow: the dialog submits itself on open, doubling as
+ * the connection-progress surface (log, errors, edit-and-retry).
+ */
+connect_on_open: boolean } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null; connect_on_open: boolean } } | { type: "mount_s3"; data: { 
 /**
  * Prefill (always the `S3` variant) when editing a saved profile.
  */
-initial: ConnectionKind | null; edit: EditingProfile | null } } | 
+initial: ConnectionKind | null; edit: EditingProfile | null; connect_on_open: boolean } } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.

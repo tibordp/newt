@@ -13,9 +13,11 @@
   container-type: inline-size;
 }
 
+// Custom tab: no discovery column, but keep the full dialog width — a
+// custom command line wants the room, and a stable width also keeps the
+// fit-content dialog from re-fitting when footer button labels change.
 .layoutCompact {
   composes: layout;
-  width: 360px;
   flex-wrap: nowrap;
 }
 
@@ -25,16 +27,6 @@
   gap: var(--space-4);
   flex: 1 1 280px;
   min-width: 0;
-}
-
-.mountLog {
-  max-height: 7em;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  color: var(--color-fg-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .openInLabel {

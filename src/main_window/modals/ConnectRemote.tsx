@@ -7,20 +7,23 @@ import {
   type OpenIn,
   type SshHostEntry,
 } from "../../lib/bindings";
-import { safe, safeSilent, tryRun } from "../../lib/ipc";
+import { tryRun } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   useAsyncAction,
+  useSaveFlash,
   DialogShell,
   DialogHeader,
   DialogBody,
   DialogFooter,
   DialogError,
   DialogSubmitButton,
+  DialogSaveButton,
   DialogTabs,
   Field,
-  FieldGroup,
   CheckboxField,
+  MountLogView,
+  ProfileNameField,
 } from "./primitives";
 import styles from "./ConnectRemote.module.scss";
 
@@ -56,8 +59,8 @@ type FormState = {
   customSkipBootstrap: boolean;
   // Session scope
   openIn: OpenIn;
-  // Profile
-  saveProfile: boolean;
+  // Profile name: auto-derived from the target until the user touches it.
+  nameEdited: boolean;
   connectionName: string;
 };
 
@@ -85,7 +88,7 @@ function initialForm(
     customCommand: "",
     customSkipBootstrap: false,
     openIn: defaultOpenIn,
-    saveProfile: false,
+    nameEdited: false,
     connectionName: "",
   };
   switch (initial.type) {
@@ -201,16 +204,15 @@ export default function ConnectRemote({
   initial,
   default_open_in,
   edit,
+  connect_on_open,
   cancel,
   context,
   mountLog,
 }: ConnectRemoteProps) {
   const [form, setForm] = useState<FormState>(() => {
     const f = initialForm(initial, default_open_in);
-    if (edit) {
-      f.saveProfile = true;
-      f.connectionName = edit.name;
-    }
+    f.connectionName = edit?.name ?? defaultProfileName(f);
+    f.nameEdited = !!edit;
     return f;
   });
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -218,7 +220,7 @@ export default function ConnectRemote({
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => {
       const next = { ...f, [key]: value };
-      if (!f.saveProfile) {
+      if (!f.nameEdited) {
         next.connectionName = defaultProfileName(next);
       }
       return next;
@@ -231,45 +233,87 @@ export default function ConnectRemote({
     firstInputRef.current?.focus();
   }, [form.transport]);
 
-  const { pending, error, run } = useAsyncAction(async (connect: boolean) => {
+  // Save updates in place once the form has an identity: the edited
+  // profile's, or the one minted by the first Save.
+  const [savedId, setSavedId] = useState<string | null>(edit?.id ?? null);
+  const [savedFlash, flashSaved] = useSaveFlash();
+  // The profile-name row is hidden until save-intent; editing a saved
+  // profile pins it open.
+  const [saveIntent, setSaveIntent] = useState(false);
+  const nameRevealed = !!edit || saveIntent;
+  // While the name row is focused, Enter means Save — the button emphasis
+  // follows.
+  const [nameFocused, setNameFocused] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // Success closes the modal backend-side (window spawn and pane mount
+  // both do); failure keeps the dialog open with the error.
+  const connecting = useAsyncAction(async () => {
     const kind = buildKind(form);
     if (typeof kind === "string") return kind;
-    if (form.saveProfile && form.connectionName.trim()) {
-      // Editing keeps the profile's id stable across renames.
-      const id =
-        edit?.id ??
-        form.connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      await safeSilent(
-        commands.cmdSaveConnection(
-          {
-            id,
-            name: form.connectionName.trim(),
-            open_in: form.openIn,
-            ...kind,
-          },
-          null,
-        ),
-      );
-    }
-    if (!connect) {
-      // Save-only: back to Quick Connect, which re-reads the profiles.
-      await safeSilent(
-        commands.dialog("quick_connect", context?.pane_handle ?? null),
-      );
-      return null;
-    }
-    const err = await tryRun(
+    return tryRun(
       commands.connectTarget(context?.pane_handle ?? 0, kind, form.openIn),
     );
+  });
+
+  const saving = useAsyncAction(async () => {
+    const kind = buildKind(form);
+    if (typeof kind === "string") return kind;
+    const name = form.connectionName.trim();
+    if (!name) return "Profile name is required";
+    const id = savedId ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const err = await tryRun(
+      commands.cmdSaveConnection(
+        { id, name, open_in: form.openIn, ...kind },
+        null,
+      ),
+    );
     if (err) return err;
-    await safe(commands.closeModal());
+    setSavedId(id);
+    flashSaved();
     return null;
   });
 
+  const pending = connecting.pending || saving.pending;
+
+  // The per-transport primary target (host, container, pod, command) must be
+  // filled in before Save/Connect make sense.
+  const canSubmit = typeof buildKind(form) !== "string";
+
+  // First Save… reveals the name row (focused, preselected); once visible,
+  // Save persists.
+  const onSaveAction = () => {
+    if (!canSubmit) return;
+    if (!nameRevealed) {
+      setSaveIntent(true);
+      return;
+    }
+    if (!pending) saving.run();
+  };
+
+  useEffect(() => {
+    if (saveIntent) {
+      nameRef.current?.focus();
+      nameRef.current?.select();
+    }
+  }, [saveIntent]);
+
+  const dismissSave = () => {
+    setSaveIntent(false);
+    firstInputRef.current?.focus();
+  };
+
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    run(true);
+    connecting.run();
   }
+
+  // Activation flow: the dialog doubles as the connection-progress surface.
+  // Submit immediately; on failure it stays open, prefilled, for a retry.
+  useEffect(() => {
+    if (connect_on_open) connecting.run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const TABS: { tag: TransportTag; label: string }[] = [
     { tag: "ssh", label: "SSH" },
@@ -280,8 +324,8 @@ export default function ConnectRemote({
   ];
 
   return (
-    <DialogShell onSubmit={onSubmit}>
-      <DialogHeader title={edit ? "Edit Connection" : "Connect"} />
+    <DialogShell onSubmit={onSubmit} onSave={onSaveAction}>
+      <DialogHeader title={edit ? `Connect — ${edit.name}` : "Connect"} />
       <DialogBody>
         <DialogTabs
           tabs={TABS.map((t) => ({ value: t.tag, label: t.label }))}
@@ -329,40 +373,23 @@ export default function ConnectRemote({
               />
             )}
 
-            <FieldGroup>
-              <CheckboxField
-                label={
-                  edit
-                    ? "Update connection profile"
-                    : "Save as connection profile"
-                }
-                checked={form.saveProfile}
-                onChange={(checked) =>
-                  setForm((f) => ({
-                    ...f,
-                    saveProfile: checked,
-                    connectionName: f.connectionName || defaultProfileName(f),
-                  }))
-                }
-                disabled={pending}
-              />
-              {form.saveProfile && (
-                <input
-                  type="text"
-                  value={form.connectionName}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, connectionName: e.target.value }))
-                  }
-                  placeholder="Connection name"
-                  disabled={pending}
-                />
-              )}
-            </FieldGroup>
+            <ProfileNameField
+              value={form.connectionName}
+              onChange={(v) =>
+                setForm((f) => ({ ...f, connectionName: v, nameEdited: true }))
+              }
+              visible={nameRevealed}
+              onSave={onSaveAction}
+              onDismiss={edit ? undefined : dismissSave}
+              onFocusChange={setNameFocused}
+              disabled={pending}
+              inputRef={nameRef}
+            />
             <MountLogView
               lines={mountLog}
-              visible={pending && form.openIn === "pane"}
+              visible={connecting.pending && form.openIn === "pane"}
             />
-            <DialogError error={error} />
+            <DialogError error={connecting.error ?? saving.error} />
           </div>
 
           {form.transport !== "custom" && (
@@ -397,41 +424,24 @@ export default function ConnectRemote({
           </label>
         }
       >
-        {edit && form.saveProfile && (
-          <button type="button" onClick={() => run(false)} disabled={pending}>
-            Save
-          </button>
-        )}
-        <DialogSubmitButton pending={pending} pendingLabel="Connecting…">
+        <DialogSaveButton
+          pending={saving.pending}
+          saved={savedFlash}
+          disabled={connecting.pending || !canSubmit}
+          label={nameRevealed ? "Save" : "Save…"}
+          variant={nameFocused ? "suggested" : "normal"}
+          onClick={onSaveAction}
+        />
+        <DialogSubmitButton
+          pending={connecting.pending}
+          pendingLabel="Connecting…"
+          disabled={saving.pending || !canSubmit}
+          variant={nameFocused ? "normal" : "suggested"}
+        >
           Connect
         </DialogSubmitButton>
       </DialogFooter>
     </DialogShell>
-  );
-}
-
-/// Streaming connect/bootstrap log, shown while a pane mount is in
-/// flight. Failures don't need it live — the error message carries the
-/// transcript.
-function MountLogView({
-  lines,
-  visible,
-}: {
-  lines?: string[];
-  visible: boolean;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = boxRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines]);
-  if (!visible || !lines || lines.length === 0) return null;
-  return (
-    <div ref={boxRef} className={styles.mountLog}>
-      {lines.map((l, i) => (
-        <div key={i}>{l}</div>
-      ))}
-    </div>
   );
 }
 
@@ -653,7 +663,7 @@ function selectFormUpdate(
 ) {
   setForm((f) => {
     const merged = { ...f, ...fn(f) };
-    if (!f.saveProfile) merged.connectionName = defaultProfileName(merged);
+    if (!f.nameEdited) merged.connectionName = defaultProfileName(merged);
     return merged;
   });
 }

@@ -22,9 +22,7 @@ Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 
 Design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`.
 
-- Quick Connect affordance to override a profile's `open_in` at activation time (modifier key, submenu, or two entries).
 - Auto-reconnect for dead agent mounts — folds into the dead-history-entry remount item below.
-- Real-world pass over double-hop askpass and foreign-arch provisioning (unit/e2e covered; not yet exercised against a live remote+container).
 
 ## VFS property sheets (S3 ACLs / metadata)
 
@@ -32,7 +30,6 @@ Design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`.
 
 ## Persisted UI state (runtime-state / `state.json`)
 
-- Add S3 ad-hoc mounts to Quick Connect recents (spawn kinds + SFTP are recorded today). Needs a reconnect flow that re-prompts for credentials — or reopens the Mount S3 dialog prefilled with the non-secret fields — since S3 keys can't live in `state.json`.
 - Persist window geometry (main + viewer/editor size/position/maximized) via `tauri-plugin-window-state`. Must handle the pre-warmed hidden viewer/editor windows (`PrewarmedWindow`, keyed per main-window label) so restore lands on the window that actually shows the file.
 
 ## Dialog visual uplift

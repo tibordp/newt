@@ -7,20 +7,35 @@ import styles from "./DialogShell.module.scss";
 
 export function DialogShell({
   onSubmit,
+  onSave,
   children,
 }: {
   // Renders a <form> when given, a plain <div> otherwise.
   onSubmit?: React.FormEventHandler<HTMLFormElement>;
+  // Mod+S handler (the dialog's secondary save action).
+  onSave?: () => void;
   children: React.ReactNode;
 }) {
+  const onKeyDown = onSave
+    ? (e: React.KeyboardEvent) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+          e.preventDefault();
+          onSave();
+        }
+      }
+    : undefined;
   if (onSubmit) {
     return (
-      <form className={styles.shell} onSubmit={onSubmit}>
+      <form className={styles.shell} onSubmit={onSubmit} onKeyDown={onKeyDown}>
         {children}
       </form>
     );
   }
-  return <div className={styles.shell}>{children}</div>;
+  return (
+    <div className={styles.shell} onKeyDown={onKeyDown}>
+      {children}
+    </div>
+  );
 }
 
 export function DialogHeader({

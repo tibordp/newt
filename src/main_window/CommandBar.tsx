@@ -6,6 +6,7 @@ import styles from "./CommandBar.module.scss";
 
 /** Commands to show in the bar, in display order. */
 const BAR_COMMANDS = [
+  "connect_remote",
   "command_palette",
   "rename",
   "view",

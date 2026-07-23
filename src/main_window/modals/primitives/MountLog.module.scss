@@ -1,0 +1,9 @@
+.mountLog {
+  max-height: 7em;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -75,7 +75,9 @@ function recentLabel(rc: RecentConnection): string {
 
 function recentSubtitle(rc: RecentConnection): string {
   const parts = [TYPE_LABELS[rc.type] || rc.type];
-  if (rc.open_in === "pane" && rc.type !== "sftp") parts.push("pane mount");
+  // VFS kinds are always pane mounts — no point flagging them.
+  if (rc.open_in === "pane" && rc.type !== "sftp" && rc.type !== "s3")
+    parts.push("pane mount");
   return parts.join(" — ");
 }
 
@@ -112,16 +114,11 @@ export default function QuickConnect({
       .sort((a, b) => b.score - a.score);
   }, [connections, filter]);
 
+  // All per-kind activation policy lives in the Rust command: VFS-bound
+  // targets re-open their dialog (auto-submitting when possible), window
+  // sessions connect directly.
   const reconnect = (rc: RecentConnection) => {
-    switch (rc.type) {
-      case "sftp":
-        safe(commands.mountSftp(ph, rc.host));
-        break;
-      case "s3":
-        break; // S3 is never recorded (keys aren't persisted); defensive.
-      default:
-        safe(commands.connectTarget(ph, rc, rc.open_in ?? "window"));
-    }
+    safe(commands.connectRecent(ph, rc));
   };
 
   const onSelect = (value: string) => {

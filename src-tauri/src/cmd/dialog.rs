@@ -540,15 +540,18 @@ pub fn dialog(
                             default_open_in
                         },
                         edit: None,
+                        connect_on_open: false,
                     }
                 }
                 DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),
                     edit: None,
+                    connect_on_open: false,
                 },
                 DialogKind::MountS3 => ModalDataKind::MountS3 {
                     initial: None,
                     edit: None,
+                    connect_on_open: false,
                 },
                 DialogKind::Search => {
                     let pane = pane.unwrap();

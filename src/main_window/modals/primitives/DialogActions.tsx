@@ -1,10 +1,13 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./DialogActions.module.scss";
 
 type DialogSubmitButtonProps = {
   pending?: boolean;
   disabled?: boolean;
   pendingLabel?: string;
-  variant?: "suggested" | "destructive";
+  // "normal" demotes the button to plain styling (while another action —
+  // e.g. Save in the focused profile-name row — holds the emphasis).
+  variant?: "suggested" | "destructive" | "normal";
   autoFocus?: boolean;
   children: React.ReactNode;
 };
@@ -23,13 +26,63 @@ export function DialogSubmitButton({
   return (
     <button
       type="submit"
-      className={variant}
+      className={variant === "normal" ? undefined : variant}
       disabled={disabled || pending}
       aria-busy={pending}
       autoFocus={autoFocus}
     >
       {pending && <span className={styles.spinner} aria-hidden />}
       {pending && pendingLabel ? pendingLabel : children}
+    </button>
+  );
+}
+
+// Transient "Saved" acknowledgement for a save-in-place action that keeps
+// the dialog open. Returns the flag and a trigger that raises it briefly.
+export function useSaveFlash(): [boolean, () => void] {
+  const [saved, setSaved] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const flash = useCallback(() => {
+    setSaved(true);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setSaved(false), 1500);
+  }, []);
+  return [saved, flash];
+}
+
+type DialogSaveButtonProps = {
+  pending?: boolean;
+  saved?: boolean;
+  disabled?: boolean;
+  /// "Save…" while the profile-name row is still hidden (the press reveals
+  /// it), plain "Save" once it's visible.
+  label?: string;
+  // "suggested" while the profile-name row is focused (Enter means Save).
+  variant?: "suggested" | "normal";
+  onClick: () => void;
+};
+
+// Secondary "Save" action for connect/mount dialogs: persists the form as a
+// connection profile without connecting. Pair with useSaveFlash.
+export function DialogSaveButton({
+  pending = false,
+  saved = false,
+  disabled = false,
+  label = "Save",
+  variant = "normal",
+  onClick,
+}: DialogSaveButtonProps) {
+  return (
+    <button
+      type="button"
+      className={variant === "suggested" ? "suggested" : undefined}
+      onClick={onClick}
+      disabled={disabled || pending}
+      aria-busy={pending}
+      title="Save as connection profile (Mod+S)"
+    >
+      {saved ? "Saved" : label}
     </button>
   );
 }

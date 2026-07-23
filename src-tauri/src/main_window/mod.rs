@@ -565,15 +565,20 @@ pub enum ModalDataKind {
         default_open_in: crate::connections::OpenIn,
         /// Present when editing a saved profile from Quick Connect.
         edit: Option<crate::connections::EditingProfile>,
+        /// Activation flow: the dialog submits itself on open, doubling as
+        /// the connection-progress surface (log, errors, edit-and-retry).
+        connect_on_open: bool,
     },
     MountSftp {
         host: String,
         edit: Option<crate::connections::EditingProfile>,
+        connect_on_open: bool,
     },
     MountS3 {
         /// Prefill (always the `S3` variant) when editing a saved profile.
         initial: Option<crate::connections::ConnectionKind>,
         edit: Option<crate::connections::EditingProfile>,
+        connect_on_open: bool,
     },
     /// Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
     /// rooted at `path`. The pane navigates to the mount root on submit.
