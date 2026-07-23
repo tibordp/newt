@@ -279,6 +279,14 @@ impl GlobalContext {
         Ok(())
     }
 
+    /// Whether pre-warmed viewer/editor windows exist for the given main
+    /// window. Guards `init`-time prewarm against webview reloads, which
+    /// would otherwise leak the previous hidden windows.
+    pub fn has_prewarmed(&self, main_label: &str) -> bool {
+        self.prewarmed_viewers.lock().contains_key(main_label)
+            || self.prewarmed_editors.lock().contains_key(main_label)
+    }
+
     /// Take a pre-warmed viewer window for the given main window.
     pub fn take_prewarmed_viewer(&self, main_label: &str) -> Option<PrewarmedWindow> {
         self.prewarmed_viewers.lock().remove(main_label)
@@ -628,6 +636,10 @@ fn print_resolved_config(global_ctx: &GlobalContext) {
     let agent_hash = tauri::async_runtime::block_on(global_ctx.agent_resolver().agent_hash())
         .unwrap_or_else(|e| format!("(unavailable: {})", e));
     println!("Agents hash: {}", agent_hash);
+    println!(
+        "Webview runtime: {}",
+        tauri::webview_version().unwrap_or_else(|e| format!("(unavailable: {})", e))
+    );
 }
 
 /// Resolve a `--profile` argument against the saved-connections store. Only
@@ -952,13 +964,14 @@ fn main() {
                 // killing the process: the frontend's `init` command will
                 // also try to connect once the webview loads, which is the
                 // path that handles errors visibly.
+                // No prewarm here: creating more webview windows while the
+                // main webview hasn't presented its first frame intermittently
+                // wedges WebView2's composition into a permanently blank
+                // window (~50% of Explorer launches on slow machines). The
+                // `init` command prewarms once the webview is provably alive.
                 if let Err(e) = tauri::async_runtime::block_on(ctx.connect(agent_resolver)) {
                     log::error!("local connect failed during setup: {}", e);
                     ctx.set_connection_failed(e.to_string());
-                } else {
-                    // Pre-warm viewer and editor windows
-                    cmd::prewarm_viewer(app.handle(), &ctx, "main");
-                    cmd::prewarm_editor(app.handle(), &ctx, "main");
                 }
             }
 

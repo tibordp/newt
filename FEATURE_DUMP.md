@@ -524,6 +524,8 @@ Opens in a separate window (1100×800 pixels). Automatically detects the file's 
 
 Viewer windows are **pre-warmed** for instant opening. A hidden window is created in the background with all web content and static UI already loaded. When F3 is pressed, the pre-warmed window receives the file path via the existing `UpdatePublisher` state mechanism, attaches its menu bar, and is made visible — avoiding the WebKit startup and JavaScript initialization latency. A replacement pre-warmed window is spawned immediately in the background. Falls back to direct window creation if no pre-warmed window is available.
 
+Pre-warms are created only from the `init` command — i.e. after the main window's frontend has demonstrably booted — never during setup. Creating additional WebView2 windows while the main webview is still in its early composition phase intermittently wedged it into a permanently blank (white) window on Windows, at up to ~50% of Explorer launches on slow machines. Do not move prewarm creation back into the startup path.
+
 ### Mode Selection
 
 The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Image, Audio, Video, PDF. The initial mode is chosen automatically:

@@ -91,22 +91,34 @@ pub async fn init(
         .main_window(&webview)
         .ok_or_else(|| Error::Custom("window not initialized".into()))?;
 
-    // Already connected (e.g. local mode via on_page_load).
-    if ctx.is_connected() {
-        return Ok(());
+    if !ctx.is_connected() {
+        let agent_resolver = global_ctx.agent_resolver();
+        if let Err(e) = ctx.connect(agent_resolver).await {
+            ctx.set_connection_failed(e.to_string());
+            return Err(e);
+        }
     }
 
-    let agent_resolver = global_ctx.agent_resolver();
-    if let Err(e) = ctx.connect(agent_resolver).await {
-        ctx.set_connection_failed(e.to_string());
-        return Err(e);
-    }
-
-    // Pre-warm viewer and editor windows now that we're connected
-    let app_handle = webview.app_handle().clone();
+    // Prewarm only from here — never during setup: this command running
+    // proves the main webview booted its frontend, i.e. webview creation
+    // is long past its fragile early-composition phase (see the
+    // blank-window note in `main.rs::setup`). Each prewarm in its own
+    // spawn so neither blocks this command or the other. Guarded so a
+    // webview reload doesn't leak a second set of hidden windows.
     let main_label = ctx.main_window_label().to_string();
-    prewarm_viewer(&app_handle, &ctx, &main_label);
-    prewarm_editor(&app_handle, &ctx, &main_label);
+    if !global_ctx.has_prewarmed(&main_label) {
+        let app_handle = webview.app_handle().clone();
+        let viewer_ctx = ctx.clone();
+        let viewer_label = main_label.clone();
+        tauri::async_runtime::spawn(async move {
+            prewarm_viewer(&app_handle, &viewer_ctx, &viewer_label);
+        });
+        let app_handle = webview.app_handle().clone();
+        let editor_ctx = ctx.clone();
+        tauri::async_runtime::spawn(async move {
+            prewarm_editor(&app_handle, &editor_ctx, &main_label);
+        });
+    }
 
     Ok(())
 }
