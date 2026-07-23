@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Dual-pane file manager"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/tibordp/newt"
+homepage = "https://newt-fm.org"
 edition = "2024"
 
 [build-dependencies]

@@ -192,8 +192,10 @@ pub async fn spawn_wsl(
         .ok_or_else(|| Error::Custom("WSL is not available on this system".into()))?;
     ensure_hidden_console();
 
-    // WSL2's kernel arch always equals the Windows host arch, and WSL1 is
-    // x64-only — so the host arch is the correct agent triple.
+    // Distro arch always equals the Windows host arch: WSL2's kernel is
+    // host-arch, and WSL1 executes native ELF with no emulation (ARM64
+    // Windows runs aarch64 distros) — so the host arch is the correct
+    // agent triple.
     let triple = if cfg!(target_arch = "aarch64") {
         "aarch64-unknown-linux-musl"
     } else {

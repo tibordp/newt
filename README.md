@@ -2,6 +2,8 @@
 
 *"If Altap Salamander and VS Code had a baby..."*
 
+**[newt-fm.org](https://newt-fm.org)** — website and downloads.
+
 A dual-pane file manager for Linux, macOS, and Windows in the orthodox tradition — two panes, a
 terminal underneath, and your hands never leaving the keyboard. Local files are only the start:
 open an SSH session and the whole app runs against the remote machine, mount S3 buckets and

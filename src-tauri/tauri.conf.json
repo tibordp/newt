@@ -6,7 +6,8 @@
     "devUrl": "http://localhost:1420"
   },
   "bundle": {
-    "active": true, 
+    "active": true,
+    "publisher": "Newt",
     "icon": [
       "icons/128x128@2x.png",
       "icons/128x128.png",
@@ -26,7 +27,7 @@
   },
   "productName": "Newt",
   "version": "0.1.0",
-  "identifier": "io.github.tibordp.newt",
+  "identifier": "org.newt-fm.newt",
   "plugins": {},
   "app": {
     "withGlobalTauri": false,
