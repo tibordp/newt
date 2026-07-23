@@ -563,11 +563,18 @@ pub enum ModalDataKind {
         /// reason to connect from inside a remote session is peeking into
         /// one of its containers).
         default_open_in: crate::connections::OpenIn,
+        /// Present when editing a saved profile from Quick Connect.
+        edit: Option<crate::connections::EditingProfile>,
     },
     MountSftp {
         host: String,
+        edit: Option<crate::connections::EditingProfile>,
     },
-    MountS3,
+    MountS3 {
+        /// Prefill (always the `S3` variant) when editing a saved profile.
+        initial: Option<crate::connections::ConnectionKind>,
+        edit: Option<crate::connections::EditingProfile>,
+    },
     /// Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
     /// rooted at `path`. The pane navigates to the mount root on submit.
     Search {

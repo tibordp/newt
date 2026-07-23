@@ -17,15 +17,22 @@ import {
 
 type MountSftpProps = CommonDialogProps & ModalDataOf<"mount_sftp">;
 
-export default function MountSftp({ host, cancel, context }: MountSftpProps) {
+export default function MountSftp({
+  host,
+  edit,
+  cancel,
+  context,
+}: MountSftpProps) {
   const [newHost, setNewHost] = useState(host);
-  const [saveProfile, setSaveProfile] = useState(false);
-  const [connectionName, setConnectionName] = useState(host);
+  const [saveProfile, setSaveProfile] = useState(!!edit);
+  const [connectionName, setConnectionName] = useState(edit?.name ?? host);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { pending, error, run } = useAsyncAction(async () => {
+  const { pending, error, run } = useAsyncAction(async (connect: boolean) => {
     if (saveProfile && connectionName) {
-      const id = connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      // Editing keeps the profile's id stable across renames.
+      const id =
+        edit?.id ?? connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       await safeSilent(
         commands.cmdSaveConnection(
           {
@@ -38,12 +45,19 @@ export default function MountSftp({ host, cancel, context }: MountSftpProps) {
         ),
       );
     }
+    if (!connect) {
+      // Save-only: back to Quick Connect, which re-reads the profiles.
+      await safeSilent(
+        commands.dialog("quick_connect", context?.pane_handle ?? null),
+      );
+      return null;
+    }
     return tryRun(commands.mountSftp(context?.pane_handle ?? 0, newHost));
   });
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    run();
+    run(true);
   }
 
   useEffect(() => {
@@ -52,7 +66,7 @@ export default function MountSftp({ host, cancel, context }: MountSftpProps) {
 
   return (
     <DialogShell onSubmit={onSubmit}>
-      <DialogHeader title="Mount SFTP" />
+      <DialogHeader title={edit ? "Edit Connection" : "Mount SFTP"} />
       <DialogBody>
         <Field label="Host (e.g., user@host)" htmlFor="host">
           <input
@@ -72,7 +86,9 @@ export default function MountSftp({ host, cancel, context }: MountSftpProps) {
         </Field>
         <FieldGroup>
           <CheckboxField
-            label="Save as connection profile"
+            label={
+              edit ? "Update connection profile" : "Save as connection profile"
+            }
             checked={saveProfile}
             onChange={setSaveProfile}
             disabled={pending}
@@ -92,6 +108,15 @@ export default function MountSftp({ host, cancel, context }: MountSftpProps) {
         <DialogError error={error} />
       </DialogBody>
       <DialogFooter onCancel={cancel} cancelDisabled={pending}>
+        {edit && saveProfile && (
+          <button
+            type="button"
+            onClick={() => run(false)}
+            disabled={pending || !newHost}
+          >
+            Save
+          </button>
+        )}
         <DialogSubmitButton
           pending={pending}
           pendingLabel="Connecting…"

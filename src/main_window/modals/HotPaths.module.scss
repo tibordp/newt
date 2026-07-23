@@ -30,7 +30,8 @@
         opacity: 0.7;
       }
 
-      .deleteBtn {
+      .deleteBtn,
+      .editBtn {
         color: var(--color-accent-fg);
         opacity: 0.7;
         &:hover {
@@ -80,7 +81,8 @@
   min-width: 0;
 }
 
-.deleteBtn {
+.deleteBtn,
+.editBtn {
   flex-shrink: 0;
   background: none;
   border: none;
@@ -99,6 +101,10 @@
   &:hover {
     opacity: 1 !important;
   }
+}
+
+.editBtn {
+  font-size: 12px;
 }
 
 .confirmRow {

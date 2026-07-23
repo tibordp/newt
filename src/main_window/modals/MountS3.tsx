@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { safeSilent, tryRun } from "../../lib/ipc";
-import { CommonDialogProps } from "./ModalContent";
+import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   DialogShell,
   DialogHeader,
@@ -19,20 +19,48 @@ type CredentialMode = "default" | "iam_user" | "assume_role" | "profile";
 
 import type { S3Credentials } from "../../lib/bindings";
 
-export default function MountS3({ cancel, context }: CommonDialogProps) {
-  const [region, setRegion] = useState("");
-  const [bucket, setBucket] = useState("");
-  const [credentialMode, setCredentialMode] =
-    useState<CredentialMode>("default");
+type MountS3Props = CommonDialogProps & ModalDataOf<"mount_s3">;
+
+export default function MountS3({
+  initial,
+  edit,
+  cancel,
+  context,
+}: MountS3Props) {
+  const s3 = initial?.type === "s3" ? initial : null;
+  const [region, setRegion] = useState(s3?.region ?? "");
+  const [bucket, setBucket] = useState(s3?.bucket ?? "");
+  const [credentialMode, setCredentialMode] = useState<CredentialMode>(
+    (s3?.credential_mode as CredentialMode) ?? "default",
+  );
   const [accessKeyId, setAccessKeyId] = useState("");
   const [secretAccessKey, setSecretAccessKey] = useState("");
-  const [awsProfileName, setProfileName] = useState("");
-  const [endpointUrl, setEndpointUrl] = useState("");
-  const [roleArn, setRoleArn] = useState("");
-  const [externalId, setExternalId] = useState("");
-  const [saveProfile, setSaveProfile] = useState(false);
-  const [connectionNameEdited, setConnectionNameEdited] = useState(false);
-  const [connectionName, setConnectionName] = useState("");
+  const [awsProfileName, setProfileName] = useState(s3?.profile ?? "");
+  const [endpointUrl, setEndpointUrl] = useState(s3?.endpoint_url ?? "");
+  const [roleArn, setRoleArn] = useState(s3?.role_arn ?? "");
+  const [externalId, setExternalId] = useState(s3?.external_id ?? "");
+  const [saveProfile, setSaveProfile] = useState(!!edit);
+  const [connectionNameEdited, setConnectionNameEdited] = useState(!!edit);
+  const [connectionName, setConnectionName] = useState(edit?.name ?? "");
+
+  // Editing an IAM-user profile: prefill the key pair from the keychain so
+  // saving without touching the fields keeps the stored secret.
+  useEffect(() => {
+    if (!edit || s3?.credential_mode !== "iam_user") return;
+    (async () => {
+      const r = await commands.cmdGetConnectionSecret(edit.id);
+      if (r.status !== "ok" || !r.data) return;
+      try {
+        const parsed = JSON.parse(r.data);
+        setAccessKeyId(parsed.access_key_id ?? "");
+        setSecretAccessKey(parsed.secret_access_key ?? "");
+      } catch {
+        // Unparseable secret — leave the fields empty for re-entry.
+      }
+    })();
+    // Runs once per dialog open; `edit`/`s3` never change while mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-generate connection name from fields until user manually edits it
   const suggestedName = bucket
@@ -79,12 +107,14 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
     }
   }
 
-  const { pending, error, run } = useAsyncAction(async () => {
+  const { pending, error, run } = useAsyncAction(async (connect: boolean) => {
     const credentials = buildCredentials();
 
     const finalName = displayedConnectionName;
     if (saveProfile && finalName) {
-      const id = finalName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      // Editing keeps the profile's id stable across renames.
+      const id =
+        edit?.id ?? finalName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       const secret =
         credentialMode === "iam_user" && accessKeyId && secretAccessKey
           ? JSON.stringify({
@@ -111,6 +141,14 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
       );
     }
 
+    if (!connect) {
+      // Save-only: back to Quick Connect, which re-reads the profiles.
+      await safeSilent(
+        commands.dialog("quick_connect", context?.pane_handle ?? null),
+      );
+      return null;
+    }
+
     return tryRun(
       commands.mountS3(
         context?.pane_handle ?? 0,
@@ -123,7 +161,7 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    run();
+    run(true);
   }
 
   const canSubmit =
@@ -134,7 +172,7 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
 
   return (
     <DialogShell onSubmit={onSubmit}>
-      <DialogHeader title="Mount S3" />
+      <DialogHeader title={edit ? "Edit Connection" : "Mount S3"} />
       <DialogBody>
         <Field label="Region (optional)" htmlFor="s3-region">
           <input
@@ -253,7 +291,9 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
 
         <FieldGroup>
           <CheckboxField
-            label="Save as connection profile"
+            label={
+              edit ? "Update connection profile" : "Save as connection profile"
+            }
             checked={saveProfile}
             onChange={setSaveProfile}
           />
@@ -274,6 +314,15 @@ export default function MountS3({ cancel, context }: CommonDialogProps) {
         <DialogError error={error} />
       </DialogBody>
       <DialogFooter onCancel={cancel} cancelDisabled={pending}>
+        {edit && saveProfile && (
+          <button
+            type="button"
+            onClick={() => run(false)}
+            disabled={pending || !canSubmit}
+          >
+            Save
+          </button>
+        )}
         <DialogSubmitButton
           pending={pending}
           pendingLabel="Connecting…"

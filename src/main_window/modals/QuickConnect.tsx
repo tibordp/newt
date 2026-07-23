@@ -140,6 +140,21 @@ export default function QuickConnect({
     setPendingDelete(value);
   };
 
+  // Replaces this palette with the matching connect/mount dialog, prefilled.
+  // Saved profiles open in edit mode (submit updates in place); recents just
+  // prefill, letting the user tweak the target before connecting.
+  const requestEdit = (value: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    e?.preventDefault();
+    const modalPane = typeof paneHandle === "number" ? paneHandle : null;
+    if (value.startsWith("recent:")) {
+      const rc = filteredRecents[parseInt(value.slice(7), 10)]?.rc;
+      if (rc) safe(commands.editRecentConnection(modalPane, rc));
+    } else if (value.startsWith("saved:")) {
+      safe(commands.editConnection(modalPane, value.slice(6)));
+    }
+  };
+
   const reopen = () =>
     safeSilent(
       commands.dialog(
@@ -178,12 +193,13 @@ export default function QuickConnect({
       return;
     }
 
-    if (e.key === "Delete") {
+    if (e.key === "Delete" || e.key === "F4") {
       const el = document.querySelector('[cmdk-item][data-selected="true"]');
       const value = el?.getAttribute("data-value");
       if (value) {
         e.preventDefault();
-        requestDelete(value);
+        if (e.key === "Delete") requestDelete(value);
+        else requestEdit(value);
       }
     }
   };
@@ -266,6 +282,14 @@ export default function QuickConnect({
                           </span>
                         </div>
                         <button
+                          className={styles.editBtn}
+                          onClick={(e) => requestEdit(value, e)}
+                          title="Edit before connecting (F4)"
+                          tabIndex={-1}
+                        >
+                          &#9998;
+                        </button>
+                        <button
                           className={styles.deleteBtn}
                           onClick={(e) => requestDelete(value, e)}
                           title="Forget connection"
@@ -309,6 +333,14 @@ export default function QuickConnect({
                             />
                           </span>
                         </div>
+                        <button
+                          className={styles.editBtn}
+                          onClick={(e) => requestEdit(value, e)}
+                          title="Edit connection (F4)"
+                          tabIndex={-1}
+                        >
+                          &#9998;
+                        </button>
                         <button
                           className={styles.deleteBtn}
                           onClick={(e) => requestDelete(value, e)}

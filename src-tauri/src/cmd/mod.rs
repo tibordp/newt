@@ -344,6 +344,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::connections::cmd_delete_connection,
             crate::connections::cmd_get_connection_secret,
             crate::connections::connect_profile,
+            crate::connections::edit_connection,
+            crate::connections::edit_recent_connection,
         ])
         // Types that flow through state pushes (UpdatePublisher events) rather
         // than command return values. The frontend assembles MainWindowState

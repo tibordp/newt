@@ -27,6 +27,14 @@ pub enum OpenIn {
     Pane,
 }
 
+/// Marks a connect/mount dialog as editing an existing saved profile. The
+/// id stays stable across renames so the profile is updated in place.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct EditingProfile {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
@@ -565,6 +573,69 @@ pub async fn connect_profile(
             .ok_or_else(|| Error::Custom("unsupported connection type".into()))?;
         mount_into_pane(&ctx, pane_handle, request).await
     }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn edit_connection(
+    ctx: crate::main_window::MainWindowContext,
+    pane_handle: Option<crate::main_window::PaneHandle>,
+    id: String,
+) -> Result<(), Error> {
+    let config_dir = {
+        let app_handle = ctx.window().app_handle().clone();
+        let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+        global_ctx.preferences().config_dir().to_path_buf()
+    };
+    let profile = list_connections(&config_dir)
+        .into_iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", id)))?;
+    let edit = EditingProfile {
+        id: profile.id,
+        name: profile.name,
+    };
+    open_connection_editor(&ctx, pane_handle, profile.kind, profile.open_in, Some(edit))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn edit_recent_connection(
+    ctx: crate::main_window::MainWindowContext,
+    pane_handle: Option<crate::main_window::PaneHandle>,
+    recent: crate::runtime_state::RecentConnection,
+) -> Result<(), Error> {
+    open_connection_editor(&ctx, pane_handle, recent.kind, recent.open_in, None)
+}
+
+/// Open the connect/mount dialog matching `kind`, prefilled with it.
+fn open_connection_editor(
+    ctx: &crate::main_window::MainWindowContext,
+    pane_handle: Option<crate::main_window::PaneHandle>,
+    kind: ConnectionKind,
+    open_in: OpenIn,
+    edit: Option<EditingProfile>,
+) -> Result<(), Error> {
+    use crate::main_window::{ModalContext, ModalData, ModalDataKind};
+    let kind = match kind {
+        ConnectionKind::S3 { .. } => ModalDataKind::MountS3 {
+            initial: Some(kind),
+            edit,
+        },
+        ConnectionKind::Sftp { host } => ModalDataKind::MountSftp { host, edit },
+        _ => ModalDataKind::ConnectRemote {
+            initial: kind,
+            default_open_in: open_in,
+            edit,
+        },
+    };
+    ctx.with_update(|gs| {
+        *gs.modal.0.write() = Some(ModalData {
+            kind,
+            context: ModalContext { pane_handle },
+        });
+        Ok(())
+    })
 }
 
 /// Mount `request` and navigate the pane into it, closing the open modal.

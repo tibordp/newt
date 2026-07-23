@@ -1462,6 +1462,22 @@ async connectProfile(paneHandle: PaneHandle, id: string) : Promise<Result<null, 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async editConnection(paneHandle: PaneHandle | null, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("edit_connection", { paneHandle, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editRecentConnection(paneHandle: PaneHandle | null, recent: RecentConnection) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("edit_recent_connection", { paneHandle, recent }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1735,6 +1751,11 @@ warning: string | null }
 export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
+/**
+ * Marks a connect/mount dialog as editing an existing saved profile. The
+ * id stays stable across renames so the profile is updated in place.
+ */
+export type EditingProfile = { id: string; name: string }
 export type EditorPreferences = { 
 /**
  * Wrap long lines in the built-in text editor by default. Toggling wrap
@@ -1965,7 +1986,15 @@ initial: ConnectionKind;
  * reason to connect from inside a remote session is peeking into
  * one of its containers).
  */
-default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+default_open_in: OpenIn; 
+/**
+ * Present when editing a saved profile from Quick Connect.
+ */
+edit: EditingProfile | null } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null } } | { type: "mount_s3"; data: { 
+/**
+ * Prefill (always the `S3` variant) when editing a saved profile.
+ */
+initial: ConnectionKind | null; edit: EditingProfile | null } } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.
@@ -2103,7 +2132,15 @@ initial: ConnectionKind;
  * reason to connect from inside a remote session is peeking into
  * one of its containers).
  */
-default_open_in: OpenIn } } | { type: "mount_sftp"; data: { host: string } } | { type: "mount_s3" } | 
+default_open_in: OpenIn; 
+/**
+ * Present when editing a saved profile from Quick Connect.
+ */
+edit: EditingProfile | null } } | { type: "mount_sftp"; data: { host: string; edit: EditingProfile | null } } | { type: "mount_s3"; data: { 
+/**
+ * Prefill (always the `S3` variant) when editing a saved profile.
+ */
+initial: ConnectionKind | null; edit: EditingProfile | null } } | 
 /**
  * Recursive-search dialog. Opened from a pane to mount a `SearchVfs`
  * rooted at `path`. The pane navigates to the mount root on submit.

@@ -539,12 +539,17 @@ pub fn dialog(
                         } else {
                             default_open_in
                         },
+                        edit: None,
                     }
                 }
                 DialogKind::MountSftp => ModalDataKind::MountSftp {
                     host: String::new(),
+                    edit: None,
                 },
-                DialogKind::MountS3 => ModalDataKind::MountS3,
+                DialogKind::MountS3 => ModalDataKind::MountS3 {
+                    initial: None,
+                    edit: None,
+                },
                 DialogKind::Search => {
                     let pane = pane.unwrap();
                     let path = pane.path();

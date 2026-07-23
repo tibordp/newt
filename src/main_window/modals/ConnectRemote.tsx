@@ -200,13 +200,19 @@ function defaultProfileName(form: FormState): string {
 export default function ConnectRemote({
   initial,
   default_open_in,
+  edit,
   cancel,
   context,
   mountLog,
 }: ConnectRemoteProps) {
-  const [form, setForm] = useState<FormState>(() =>
-    initialForm(initial, default_open_in),
-  );
+  const [form, setForm] = useState<FormState>(() => {
+    const f = initialForm(initial, default_open_in);
+    if (edit) {
+      f.saveProfile = true;
+      f.connectionName = edit.name;
+    }
+    return f;
+  });
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -225,11 +231,14 @@ export default function ConnectRemote({
     firstInputRef.current?.focus();
   }, [form.transport]);
 
-  const { pending, error, run } = useAsyncAction(async () => {
+  const { pending, error, run } = useAsyncAction(async (connect: boolean) => {
     const kind = buildKind(form);
     if (typeof kind === "string") return kind;
     if (form.saveProfile && form.connectionName.trim()) {
-      const id = form.connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      // Editing keeps the profile's id stable across renames.
+      const id =
+        edit?.id ??
+        form.connectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       await safeSilent(
         commands.cmdSaveConnection(
           {
@@ -242,6 +251,13 @@ export default function ConnectRemote({
         ),
       );
     }
+    if (!connect) {
+      // Save-only: back to Quick Connect, which re-reads the profiles.
+      await safeSilent(
+        commands.dialog("quick_connect", context?.pane_handle ?? null),
+      );
+      return null;
+    }
     const err = await tryRun(
       commands.connectTarget(context?.pane_handle ?? 0, kind, form.openIn),
     );
@@ -252,7 +268,7 @@ export default function ConnectRemote({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    run();
+    run(true);
   }
 
   const TABS: { tag: TransportTag; label: string }[] = [
@@ -265,7 +281,7 @@ export default function ConnectRemote({
 
   return (
     <DialogShell onSubmit={onSubmit}>
-      <DialogHeader title="Connect" />
+      <DialogHeader title={edit ? "Edit Connection" : "Connect"} />
       <DialogBody>
         <DialogTabs
           tabs={TABS.map((t) => ({ value: t.tag, label: t.label }))}
@@ -315,7 +331,11 @@ export default function ConnectRemote({
 
             <FieldGroup>
               <CheckboxField
-                label="Save as connection profile"
+                label={
+                  edit
+                    ? "Update connection profile"
+                    : "Save as connection profile"
+                }
                 checked={form.saveProfile}
                 onChange={(checked) =>
                   setForm((f) => ({
@@ -377,6 +397,11 @@ export default function ConnectRemote({
           </label>
         }
       >
+        {edit && form.saveProfile && (
+          <button type="button" onClick={() => run(false)} disabled={pending}>
+            Save
+          </button>
+        )}
         <DialogSubmitButton pending={pending} pendingLabel="Connecting…">
           Connect
         </DialogSubmitButton>
