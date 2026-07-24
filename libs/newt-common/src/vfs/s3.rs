@@ -270,12 +270,39 @@ impl S3Vfs {
         }
 
         let client = aws_sdk_s3::Client::new(&sdk_config);
-        Ok(Arc::new(S3Vfs::new(
-            client,
-            sdk_config,
-            bucket,
-            pinned_region,
-        )))
+        let vfs = S3Vfs::new(client, sdk_config, bucket, pinned_region);
+        vfs.healthcheck().await?;
+        Ok(Arc::new(vfs))
+    }
+
+    /// One probe request at mount time, mirroring what the first
+    /// navigation will do (so it needs no permissions beyond browsing).
+    /// The SDK client is otherwise fully lazy — without this, bad
+    /// credentials/endpoint/bucket surface only at listing time, after
+    /// the mount dialog is gone.
+    async fn healthcheck(&self) -> Result<(), Error> {
+        match &self.scoped_bucket {
+            Some(bucket) => {
+                let client = self.client_for_bucket(bucket).await?;
+                client
+                    .list_objects_v2()
+                    .bucket(bucket)
+                    .delimiter("/")
+                    .max_keys(1)
+                    .send()
+                    .await
+                    .map_err(sdk_err)?;
+            }
+            None => {
+                self.default_client
+                    .list_buckets()
+                    .max_buckets(1)
+                    .send()
+                    .await
+                    .map_err(sdk_err)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn new(

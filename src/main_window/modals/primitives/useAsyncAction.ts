@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { message } from "@tauri-apps/plugin-dialog";
 
 export type AsyncActionState = {
   pending: boolean;
@@ -26,6 +27,28 @@ export function useAsyncAction<Args extends unknown[]>(
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // The backend can close the modal while the action is still in flight
+  // (e.g. a mount succeeded — closing the dialog — but the follow-up
+  // navigation failed). With the dialog unmounted there is nowhere to
+  // render the error inline, so fall back to a popup instead of
+  // swallowing it.
+  const fail = useCallback((err: string) => {
+    if (mounted.current) {
+      setError(err);
+    } else {
+      void message(err, { kind: "error", title: "Error" });
+    }
+    return false;
+  }, []);
 
   const run = useCallback(
     async (...args: Args): Promise<boolean> => {
@@ -36,19 +59,17 @@ export function useAsyncAction<Args extends unknown[]>(
       try {
         const result = await fn(...args);
         if (typeof result === "string") {
-          setError(result);
-          return false;
+          return fail(result);
         }
         return true;
       } catch (e) {
-        setError(String(e));
-        return false;
+        return fail(String(e));
       } finally {
         inFlight.current = false;
         setPending(false);
       }
     },
-    [fn],
+    [fn, fail],
   );
 
   const clearError = useCallback(() => setError(null), []);

@@ -1161,7 +1161,7 @@ fn compile_regex(pattern: &SearchPattern) -> Result<Option<regex::bytes::Regex>,
 // Mount/unmount RPC types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct S3Credentials {
     /// AWS access key ID (IAM user or assumed role).
     pub access_key_id: Option<String>,
@@ -1179,6 +1179,26 @@ pub struct S3Credentials {
     pub role_arn: Option<String>,
     /// External ID for AssumeRole (optional, for cross-account access).
     pub external_id: Option<String>,
+}
+
+impl std::fmt::Debug for S3Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Credentials")
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("profile", &self.profile)
+            .field("endpoint_url", &self.endpoint_url)
+            .field("role_arn", &self.role_arn)
+            .field("external_id", &self.external_id)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

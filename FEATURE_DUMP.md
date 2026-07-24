@@ -901,7 +901,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
   - **Assume Role**: Enter Role ARN and optional External ID for cross-account access.
 - **Profile name** row: revealed on save-intent (Save… / Mod+S), auto-generated from bucket/endpoint/region until manually edited. Used by the **Save** action (see Connection Profiles — Save and Connect are independent footer actions).
 
-While the mount is in flight the dialog streams the mount log (VFS progress stages), and a failed mount leaves the dialog open with everything editable for a retry.
+While the mount is in flight the dialog streams the mount log (VFS progress stages), and a failed mount leaves the dialog open with everything editable for a retry. The SDK client is lazy, so the mount performs one probe request mirroring the first navigation (`ListObjectsV2` with `max_keys=1` on a scoped bucket — including region discovery — else `ListBuckets` with `max_buckets=1`): bad credentials/endpoint/bucket fail the mount in the dialog instead of surfacing later at listing time. Errors from a dialog-submitted action that settle only after the modal has closed (e.g. mount succeeded but the follow-up navigation failed) fall back to a popup instead of being swallowed with the dialog.
 
 **Browsing**:
 - Root (`/`) lists all buckets.
