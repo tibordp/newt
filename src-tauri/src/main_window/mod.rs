@@ -598,13 +598,6 @@ pub enum ModalDataKind {
         /// state. Ignored when `prefill` is present (refine restores instead).
         defaults: crate::runtime_state::SearchDefaults,
     },
-    // specta's snake_case tokenizer splits `K8s` → `k_8s`; pin both ends to
-    // the wire format serde emits.
-    #[serde(rename = "mount_k8s")]
-    #[specta(rename = "mount_k8s")]
-    MountK8s {
-        k8s_context: String,
-    },
     /// Quick sort menu (keyboard-launched, anchored to the pane header).
     SortMenu {
         sorting: crate::main_window::pane::Sorting,
@@ -1444,7 +1437,6 @@ impl MainWindowContext {
             match type_name {
                 "s3" => Some("mount_s3"),
                 "sftp" => Some("mount_sftp"),
-                "k8s" => Some("mount_k8s"),
                 _ => None,
             }
         }

@@ -25,7 +25,7 @@ handling. Built with Tauri 2 — Rust backend, React/TypeScript frontend.
   over stdin/stdout. Your local filesystem stays reachable inside the session, so local↔remote
   copies are just copies. Elevated sessions (pkexec / UAC) and WSL sessions work the same way.
 - **Virtual filesystems** — mount S3 (with extended properties: ACLs, storage class, user
-  metadata), SFTP, and read-only Kubernetes; browse zip/tar/tar.gz/tar.zst archives and ISO/UDF
+  metadata) and SFTP; browse zip/tar/tar.gz/tar.zst archives and ISO/UDF
   disc images in place, even when they live on S3. VFS mounts are per-pane and orthogonal to the
   session — an S3 mount inside an SSH session uses the remote host's credentials and network.
 - **Recursive search as a filesystem** — Find in Folder streams matches into a flat pane you can
@@ -49,7 +49,7 @@ All filesystem, terminal, and operation functionality sits behind traits with tw
 implementations: a local one that runs in-process, and a remote proxy that forwards each call
 over a bincode RPC protocol to the agent binary. A local session and an SSH/elevated/WSL session
 are therefore the same code — the only difference is which side of the RPC boundary does the
-work. VFS backends (S3, SFTP, archives, disc images, Kubernetes, search) implement one `Vfs`
+work. VFS backends (S3, SFTP, archives, disc images, search) implement one `Vfs`
 trait and mount into either side, and file operations are written once against these traits, so
 a copy from an archive-on-S3 in a remote session to the local disk is the ordinary code path,
 not a special case.

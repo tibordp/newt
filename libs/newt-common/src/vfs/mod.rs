@@ -2,7 +2,6 @@ pub mod agent;
 pub mod archive;
 pub mod background_job;
 pub mod disc;
-pub mod k8s;
 pub mod local;
 pub mod path;
 pub mod path_style;
@@ -22,7 +21,6 @@ pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use disc::{DiscVfs, is_disc_image_name};
-pub use k8s::K8sVfs;
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
@@ -212,7 +210,7 @@ impl DisplayPathMatch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OriginKind {
     /// Standalone — no origin to escape to; `..` clamps at the root
-    /// (local, S3, SFTP, Kubernetes, Remote).
+    /// (local, S3, SFTP, Remote).
     None,
     /// The origin names the *entry* the mount was made of (an archive
     /// file). Escaping `..` pops it, landing beside the entry with it
@@ -399,7 +397,7 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     }
 
     /// Which optional metadata families this VFS populates (see
-    /// [`MetadataTraits`]). Default: none — right for S3, Kubernetes,
+    /// [`MetadataTraits`]). Default: none — right for S3,
     /// zip archives, and search results.
     fn metadata_traits(&self, _mount_meta: &[u8]) -> MetadataTraits {
         MetadataTraits::default()
@@ -1213,9 +1211,6 @@ pub enum MountRequest {
     },
     Sftp {
         host: String,
-    },
-    Kubernetes {
-        context: String,
     },
     Archive {
         origin: VfsPath,

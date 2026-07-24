@@ -3083,7 +3083,7 @@ async fn execute_rename(
         }
     }
 
-    // No native rename (S3, k8s, …) or it failed: copy to the new name and
+    // No native rename (S3, …) or it failed: copy to the new name and
     // delete the source. Same-VFS copies take the copy_within fast path
     // (server-side CopyObject on S3), so no data flows through the app.
     // Timestamps are preserved where the VFS allows it — a rename should

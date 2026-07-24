@@ -297,7 +297,6 @@ const VFS_ICONS: Record<string, string> = {
   sftp: "\u{eb3a}",
   archive: "\u{eaa0}",
   archive_zip: "\u{eaa0}",
-  k8s: "\u{f10fe}",
   remote: "\u{f048d}",
   agent: "\u{f048d}",
 };
@@ -424,10 +423,7 @@ function VfsSelector({
                       openingDialogRef.current = true;
                       commands.dialog(
                         target.mount_dialog as
-                          | "mount_s3"
-                          | "mount_sftp"
-                          | "mount_k8s"
-                          | "mount_remote",
+                          "mount_s3" | "mount_sftp" | "mount_remote",
                         paneHandle,
                       );
                     } else {

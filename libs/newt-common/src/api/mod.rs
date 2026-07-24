@@ -907,9 +907,6 @@ impl VfsManager for VfsRegistryManager {
                 credentials,
             } => crate::vfs::S3Vfs::mount(region, bucket, credentials, &ctx).await?,
             MountRequest::Sftp { host } => crate::vfs::SftpVfs::mount(host, &ctx).await?,
-            MountRequest::Kubernetes { context } => {
-                crate::vfs::K8sVfs::mount(context, &ctx).await?
-            }
             MountRequest::Remote { mount_meta } => {
                 let remote = crate::vfs::RemoteVfs::mount(&ctx, mount_meta)?;
                 self.remote_mounts.lock().insert(vfs_id, remote.clone());

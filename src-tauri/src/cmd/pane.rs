@@ -30,7 +30,7 @@ pub async fn navigate(
     // the VFS-domain code below the `Pane::navigate` call never sees a
     // drive letter / separator skew.
     let resolved = if let Some(vfs_path) = ctx.resolve_display_path(path) {
-        // A VFS display path (s3://, archive, k8s, …, or a Windows-syntax
+        // A VFS display path (s3://, archive, …, or a Windows-syntax
         // path claimed by a Windows-styled client-local mount).
         Some(vfs_path)
     } else if exact {

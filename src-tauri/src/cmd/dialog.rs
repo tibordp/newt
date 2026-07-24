@@ -32,11 +32,6 @@ pub enum DialogKind {
     MountSftp,
     MountS3,
     Search,
-    // specta's snake_case tokenizer splits at digits ("K8s" → "k_8s"), but
-    // serde's keeps it joined; pin both ends to the wire format.
-    #[serde(rename = "mount_k8s")]
-    #[specta(rename = "mount_k8s")]
-    MountK8s,
     /// Keyboard-launched quick sort menu, anchored to the pane header.
     Sort,
     /// The connect dialog, but scoped to a pane mount (VFS selector entry).
@@ -575,9 +570,6 @@ pub fn dialog(
                         defaults: rt_state.search.clone(),
                     }
                 }
-                DialogKind::MountK8s => ModalDataKind::MountK8s {
-                    k8s_context: String::new(),
-                },
                 DialogKind::Sort => {
                     let pane = pane.unwrap();
                     ModalDataKind::SortMenu {
@@ -831,7 +823,6 @@ cmd_dialog!(cmd_history, DialogKind::History);
 cmd_dialog!(cmd_quick_connect, DialogKind::QuickConnect);
 cmd_dialog!(cmd_mount_s3, DialogKind::MountS3);
 cmd_dialog!(cmd_mount_sftp, DialogKind::MountSftp);
-cmd_dialog!(cmd_mount_k8s, DialogKind::MountK8s);
 cmd_dialog!(cmd_sort, DialogKind::Sort);
 /// cmd+f. Unlike the other dialog shims this one isn't built with
 /// `cmd_dialog!`: on a search VFS the dialog reopens pre-filled to refine

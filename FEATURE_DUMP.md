@@ -68,7 +68,7 @@ Each pane is an independent file browser with its own path, selection, filter, s
 
 ### Pane Header
 
-- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes sort first and show an unmount (×) button; below a separator, unmounted types (S3, SFTP, Kubernetes, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
+- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes sort first and show an unmount (×) button; below a separator, unmounted types (S3, SFTP, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
 - **Breadcrumb path**: Current directory path displayed as clickable breadcrumb segments. Clicking any segment navigates to that directory. Clicking the *last* segment opens the Navigate (Go To) dialog instead of navigating. Breadcrumb format varies by VFS type:
   - Local: `/home/user/documents`
   - S3: `s3://bucket/prefix/key`
@@ -109,7 +109,7 @@ Server-side windowed list with 22px fixed row height. Rust sends only a ~150-ite
 | Attr | Windows `FILE_ATTRIBUTE_*` letters: `R`eadonly `H`idden `S`ystem `A`rchive + `L` (reparse point) `C`ompressed `E`ncrypted; sortable by raw bits |
 | Link Target | Symlink target path |
 
-**VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3, Kubernetes, zip, and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
+**VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3, zip, and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
 
 Compound-column swaps: when the Extension column is visible, the Name column automatically shows just the file stem (name without extension). The timestamp columns follow the same pattern — a compound column (`modified` etc.) shows date + time in one cell and swaps down to date-only when the paired Time column is also in the list. Each timestamp thus has four presentations: compound date & time, date only (`modified_date`), separate date and time columns (`modified_date` + `modified_time`, or equivalently `modified` + `modified_time` via the swap — the default for Modified), and hidden.
 
@@ -354,7 +354,7 @@ Modal dialog with the current filename pre-filled and fully selected (so you can
 
 Deletes all selected files and directories (recursive for directories).
 
-- If `behavior.delete_to_trash` is enabled (default: yes), plain Delete moves items to the OS trash instead of deleting them. Only real local filesystems have a trash: the local FS, the remote host's FS in SSH/elevated sessions (freedesktop `~/.local/share/Trash` on the remote machine), and agent mounts — always the trash of the machine that owns the files. S3/SFTP/K8s/archive/search VFSes have no trash.
+- If `behavior.delete_to_trash` is enabled (default: yes), plain Delete moves items to the OS trash instead of deleting them. Only real local filesystems have a trash: the local FS, the remote host's FS in SSH/elevated sessions (freedesktop `~/.local/share/Trash` on the remote machine), and agent mounts — always the trash of the machine that owns the files. S3/SFTP/archive/search VFSes have no trash.
 - **Delete Permanently** (`delete_permanent`, Shift+Delete, ⌥⌘⌫ on macOS, also in the context menu) always bypasses the trash.
 - If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first. For a trash delete it offers three choices: **Move to Trash** (default, focused), **Delete Permanently**, and Cancel.
 - If the trash preference is on but the selection isn't trashable (e.g. on S3), a dialog explains the items will be deleted permanently and offers **Delete Permanently** / Cancel — this dialog is shown even when `confirm_delete` is off, since the recoverability expectation would otherwise be silently violated.
@@ -834,7 +834,7 @@ When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus ter
 
 - **Path on the terminal's filesystem** (the local FS in local mode, the agent's FS in remote/elevated mode): used as cwd directly.
 - **Archive VFS**: walks to the enclosing directory of the archive's origin file (e.g., browsing `/home/user/foo.tar.gz/inner` opens the terminal in `/home/user`). Nested archives walk the chain back to a host path.
-- **VFSes with no origin** (S3, SFTP, Kubernetes, Remote): the spawning process's inherited cwd is used (no `working_dir` is set), since there is no host path that meaningfully corresponds to the pane location.
+- **VFSes with no origin** (S3, SFTP, Remote): the spawning process's inherited cwd is used (no `working_dir` is set), since there is no host path that meaningfully corresponds to the pane location.
 
 ### Keyboard Shortcuts
 
@@ -995,38 +995,6 @@ Mount and browse optical disc images (`.iso`, `.udf`) as virtual read-only files
 
 **Limitations**: Read-only. VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW media), El Torito boot image exposure, zisofs compression, interleaved ISO files, and multi-session images are not supported (clean errors where detectable). Raw-sector formats (`.bin`/`.cue`, `.nrg`) are out of scope.
 
-### Kubernetes (Read-Only)
-
-Browse a Kubernetes cluster as a navigable directory tree of YAML manifests.
-
-**Mounting**: Via VFS selector ("Mount Kubernetes…") or command palette ("Mount Kubernetes"). Opens a dialog with a single field:
-
-- **Context** (optional): kubectl context name. Empty = current context from kubeconfig.
-
-Connection runs `kubectl config current-context` (if needed) and `kubectl api-resources --verbs=list,get -o wide` to enumerate all available resource types in the cluster.
-
-**Path layout**:
-
-- `/cluster/<group>/<version>/<resource>/<name>.yaml` — cluster-scoped resources.
-- `/namespaces/<ns>/<group>/<version>/<resource>/<name>.yaml` — namespaced resources.
-- Core API resources live under the `core` group (e.g. `core/v1/pods`).
-
-**Resource discovery**:
-- All cluster resource types are discovered dynamically, including CRDs.
-- The full API group/version hierarchy is walked, so multiple versions of the same kind appear as separate directories.
-
-**Symlink shortcuts**: At the top level (and per-namespace), unambiguous resource names get symlinks for convenience — e.g. `pods → core/v1/pods`, `deployments → apps/v1/deployments`. When a kind exists under multiple groups/versions, a preferred-version heuristic picks the winning target (core API beats things like `metrics.k8s.io`). Symlinks are resolved internally so navigation is seamless.
-
-**Resources as files**: Each resource is rendered as a YAML file (`<name>.yaml`) generated by `kubectl get -o yaml`. Files are viewable in the built-in viewer (F3).
-
-**Operations supported**: List, read.
-
-**Operations NOT supported**: Write, create, delete, rename, metadata changes. The VFS is strictly read-only.
-
-**Display path**: `k8s://<context>/path`
-
-**Requires**: A working `kubectl` on `PATH` and a configured kubeconfig.
-
 ### Remote VFS (client-local filesystem in SSH sessions)
 
 In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on the remote agent, allowing the user to browse local files alongside remote ones. The root VFS label shows "Remote" in SSH sessions to distinguish it from the client-local VFS which shows "Local".
@@ -1095,7 +1063,6 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
 - Lists **available** VFS types to mount, as a trailing "connect" section (separator + ellipsis-suffixed entries):
   - S3: Mounts immediately on selection (uses ambient credentials).
   - SFTP: Opens hostname input dialog.
-  - Kubernetes: Opens a context input dialog (defaults to current kubectl context).
   - Remote: Opens the Connect dialog (`DialogKind::MountRemote`) with "Open as a new session" defaulted off, i.e. pre-scoped to a pane mount whatever the session mode. Always offered, even inside a remote session.
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.

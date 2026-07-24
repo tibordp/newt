@@ -1223,14 +1223,6 @@ async cmdMountSftp(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async cmdMountK8s(paneHandle: PaneHandle) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cmd_mount_k8s", { paneHandle }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async cmdUnmountVfs(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_unmount_vfs", { paneHandle }) };
@@ -1242,14 +1234,6 @@ async cmdUnmountVfs(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 async mountSftp(paneHandle: PaneHandle, host: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mount_sftp", { paneHandle, host }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async mountK8s(paneHandle: PaneHandle, context: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("mount_k8s", { paneHandle, context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1741,7 +1725,7 @@ export type DialogKind = "navigate" | "create_directory" | "create_file" | "crea
  * Properties of the volume root containing the pane's current path
  * (opened by clicking the free-space label in the pane header).
  */
-"root_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | "mount_k8s" | 
+"root_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | 
 /**
  * Keyboard-launched quick sort menu, anchored to the pane header.
  */
@@ -2034,7 +2018,7 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | 
+defaults: SearchDefaults } } | 
 /**
  * Quick sort menu (keyboard-launched, anchored to the pane header).
  */
@@ -2185,7 +2169,7 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | { type: "mount_k8s"; data: { k8s_context: string } } | 
+defaults: SearchDefaults } } | 
 /**
  * Quick sort menu (keyboard-launched, anchored to the pane header).
  */

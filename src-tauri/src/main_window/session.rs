@@ -273,7 +273,7 @@ pub trait VfsInfo: Send + Sync {
     /// For VFSes that have an origin it steps to the origin and recurses:
     /// the enclosing directory for an entry origin (archives), the origin
     /// directory itself for a directory origin (searches). For VFSes with
-    /// no origin (S3, SFTP, Kubernetes, Remote) this returns `None`, so
+    /// no origin (S3, SFTP, Remote) this returns `None`, so
     /// callers can fall back to the spawning process's inherited cwd.
     fn resolve_terminal_cwd(&self, path: &VfsPath) -> Option<newt_common::vfs::path::PathBuf> {
         let mut current = path.clone();

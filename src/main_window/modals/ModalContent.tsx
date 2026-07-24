@@ -13,7 +13,6 @@ import CreateArchive from "./CreateArchive";
 import CreateDirectory from "./CreateDirectory";
 import CreateFile from "./CreateFile";
 import Debug from "./Debug";
-import MountK8s from "./MountK8s";
 import MountS3 from "./MountS3";
 import MountSftp from "./MountSftp";
 import Navigate from "./Navigate";
@@ -71,8 +70,6 @@ export function ModalContent({
       return <MountS3 {...state.data} {...commonProps} mountLog={mountLog} />;
     case "mount_sftp":
       return <MountSftp {...state.data} {...commonProps} mountLog={mountLog} />;
-    case "mount_k8s":
-      return <MountK8s {...state.data} {...commonProps} />;
     case "search":
       return <SearchDialog {...state.data} {...commonProps} />;
     case "confirm_delete":

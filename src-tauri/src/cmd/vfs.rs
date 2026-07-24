@@ -22,7 +22,6 @@ async fn mount_and_navigate(
     let kind = match &request {
         MountRequest::S3 { .. } => "s3",
         MountRequest::Sftp { .. } => "sftp",
-        MountRequest::Kubernetes { .. } => "k8s",
         MountRequest::Archive { .. } => "archive",
         MountRequest::Disc { .. } => "disc",
         MountRequest::Search { .. } => "search",
@@ -119,22 +118,6 @@ pub async fn mount_sftp(
         crate::connections::OpenIn::Pane,
     );
     Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn mount_k8s(
-    ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-    context: String,
-) -> Result<(), Error> {
-    mount_and_navigate(
-        ctx,
-        pane_handle,
-        MountRequest::Kubernetes { context },
-        false,
-    )
-    .await
 }
 
 /// Submit handler for the search dialog. Builds a `SearchVfs` rooted at
