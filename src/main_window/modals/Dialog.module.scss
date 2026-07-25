@@ -11,6 +11,21 @@
   overflow: hidden;
 }
 
+// Top-right variant (bookmark bubble): sits where a browser's bookmark
+// popover does, out of the way of the pane it is reporting on.
+.dialogContentTopRight {
+  @include dlg.dialog-surface;
+  position: fixed;
+  top: var(--space-6);
+  right: var(--space-6);
+  width: fit-content;
+  max-width: 60%;
+  height: fit-content;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 // Top-anchored variant (askpass): stays put when its content grows, and
 // leaves the panes visible behind the prompt.
 .dialogContentTop {

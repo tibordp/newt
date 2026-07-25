@@ -25,6 +25,16 @@ pub struct ResolvedPreferences {
     pub user_commands: Vec<UserCommandEntry>,
 }
 
+/// Outcome of [`PreferencesManager::add_bookmark`].
+pub struct BookmarkAdded {
+    /// The settings.toml body from before the change — feed it back to
+    /// [`PreferencesManager::restore_bookmarks`] to undo.
+    pub snapshot: String,
+    /// The path was already bookmarked and got bumped to the top rather
+    /// than added.
+    pub was_bookmarked: bool,
+}
+
 /// A resolved keybinding after `mod+` expansion and cascading.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedBinding {
@@ -239,72 +249,46 @@ impl PreferencesManager {
         Ok(())
     }
 
-    /// Add a bookmark entry to settings.toml. Preserves existing content.
-    pub fn add_bookmark(&self, path: &str, name: Option<&str>) -> Result<(), String> {
+    /// Bookmark the path, moving it to the top if it was already bookmarked.
+    /// Returns the pre-change file body (the undo snapshot for
+    /// [`Self::restore_bookmarks`]) plus whether the path was already there.
+    pub fn add_bookmark(&self, path: &str, name: Option<&str>) -> Result<BookmarkAdded, String> {
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-        let mut doc = content
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+        let (new_content, was_bookmarked) = apply_add_bookmark(&content, path, name)?;
 
-        // Build the [[bookmark]] array-of-tables entry
-        let mut entry = toml_edit::Table::new();
-        entry.insert("path", toml_edit::value(path));
-        if let Some(n) = name {
-            entry.insert("name", toml_edit::value(n));
-        }
-        entry.set_implicit(true);
-
-        // Get or create the [[bookmark]] array
-        if !doc.contains_key("bookmark") {
-            doc.insert(
-                "bookmark",
-                toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
-            );
-        }
-
-        if let Some(arr) = doc["bookmark"].as_array_of_tables_mut() {
-            arr.push(entry);
-        } else {
-            return Err("'bookmark' key exists but is not an array of tables".into());
-        }
-
-        std::fs::write(&file_path, doc.to_string())
+        std::fs::write(&file_path, new_content)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        self.reload();
+
+        Ok(BookmarkAdded {
+            snapshot: content,
+            was_bookmarked,
+        })
+    }
+
+    /// Remove every bookmark entry with this path from settings.toml.
+    pub fn remove_bookmark(&self, path: &str) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+
+        std::fs::write(&file_path, apply_remove_bookmark(&content, path)?)
+            .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        self.reload();
 
         Ok(())
     }
 
-    /// Remove a bookmark entry from settings.toml by path.
-    pub fn remove_bookmark(&self, path: &str) -> Result<(), String> {
+    /// Undo primitive: put the `[[bookmark]]` array back the way `snapshot`
+    /// had it, leaving every other key in the current file alone (so an
+    /// unrelated settings edit made in the meantime survives).
+    pub fn restore_bookmarks(&self, snapshot: &str) -> Result<(), String> {
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-        let mut doc = content
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
 
-        if let Some(arr) = doc["bookmark"].as_array_of_tables_mut() {
-            // Find and remove the entry with matching path
-            let mut idx_to_remove = None;
-            for (i, table) in arr.iter().enumerate() {
-                if let Some(p) = table.get("path").and_then(|v| v.as_str())
-                    && p == path
-                {
-                    idx_to_remove = Some(i);
-                    break;
-                }
-            }
-            if let Some(idx) = idx_to_remove {
-                arr.remove(idx);
-            }
-            // If the array is now empty, remove the key entirely
-            if arr.is_empty() {
-                doc.remove("bookmark");
-            }
-        }
-
-        std::fs::write(&file_path, doc.to_string())
+        std::fs::write(&file_path, apply_restore_bookmarks(&content, snapshot)?)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        self.reload();
 
         Ok(())
     }
@@ -613,7 +597,7 @@ impl PreferencesManager {
                     let mut guard = resolved.write();
                     if guard.settings != new_resolved.settings
                         || guard.bindings.len() != new_resolved.bindings.len()
-                        || guard.bookmarks.len() != new_resolved.bookmarks.len()
+                        || guard.bookmarks != new_resolved.bookmarks
                         || guard.user_commands != new_resolved.user_commands
                         || guard.commands.len() != new_resolved.commands.len()
                     {
@@ -1138,6 +1122,94 @@ fn apply_reset_keybinding(
             }
         }
     }
+
+    Ok(doc.to_string())
+}
+
+/// Replace the `[[bookmark]]` array-of-tables of `doc` with `entries`,
+/// dropping the key entirely when the list is empty.
+fn set_bookmark_array(doc: &mut toml_edit::DocumentMut, entries: Vec<toml_edit::Table>) {
+    doc.remove("bookmark");
+    if !entries.is_empty() {
+        let mut arr = toml_edit::ArrayOfTables::new();
+        for t in entries {
+            arr.push(t);
+        }
+        doc.insert("bookmark", toml_edit::Item::ArrayOfTables(arr));
+    }
+}
+
+fn bookmark_tables(doc: &toml_edit::DocumentMut) -> Vec<toml_edit::Table> {
+    doc.get("bookmark")
+        .and_then(|i| i.as_array_of_tables())
+        .map(|arr| arr.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Pure transformation powering `add_bookmark`: prepend an entry for `path`,
+/// dropping any entries that already point at it, so a re-bookmark bumps the
+/// path to the top instead of accumulating duplicates. Returns the rewritten
+/// body and whether the path was bookmarked before.
+fn apply_add_bookmark(
+    content: &str,
+    path: &str,
+    name: Option<&str>,
+) -> Result<(String, bool), String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+    let existing = bookmark_tables(&doc);
+    let mut kept: Vec<toml_edit::Table> = Vec::with_capacity(existing.len() + 1);
+
+    let mut entry = toml_edit::Table::new();
+    entry.insert("path", toml_edit::value(path));
+    if let Some(n) = name {
+        entry.insert("name", toml_edit::value(n));
+    }
+    kept.push(entry);
+
+    let before = existing.len();
+    let retained: Vec<toml_edit::Table> = existing
+        .into_iter()
+        .filter(|t| t.get("path").and_then(|v| v.as_str()) != Some(path))
+        .collect();
+    let was_bookmarked = retained.len() != before;
+    kept.extend(retained);
+
+    set_bookmark_array(&mut doc, kept);
+
+    Ok((doc.to_string(), was_bookmarked))
+}
+
+/// Pure transformation powering `remove_bookmark`. Removes *every* entry for
+/// the path — a hand-edited file can still hold duplicates, and the hot-paths
+/// dialog drops them all from its list on confirm.
+fn apply_remove_bookmark(content: &str, path: &str) -> Result<String, String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+
+    let kept: Vec<toml_edit::Table> = bookmark_tables(&doc)
+        .into_iter()
+        .filter(|t| t.get("path").and_then(|v| v.as_str()) != Some(path))
+        .collect();
+    set_bookmark_array(&mut doc, kept);
+
+    Ok(doc.to_string())
+}
+
+/// Pure transformation powering `restore_bookmarks`: graft `snapshot`'s
+/// `[[bookmark]]` array onto the current body, verbatim.
+fn apply_restore_bookmarks(content: &str, snapshot: &str) -> Result<String, String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+    let snapshot_doc = snapshot
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse bookmark snapshot: {}", e))?;
+
+    set_bookmark_array(&mut doc, bookmark_tables(&snapshot_doc));
 
     Ok(doc.to_string())
 }

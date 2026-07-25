@@ -1230,8 +1230,9 @@ Each category can be independently toggled on/off in preferences (Hot Paths sect
 
 ### Bookmark Operations
 
-- **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory. Optional custom name (defaults to the directory name). Stored as `[[bookmark]]` in `settings.toml`.
-- **Remove Bookmark**: Press Delete on a user bookmark in the Hot Paths dialog. Shows an inline confirmation (Yes/No) — during confirmation, all other keys are swallowed except Enter/Y (confirm), N (cancel), and Escape (cancel).
+- **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory. Optional custom name (defaults to the directory name). Stored as `[[bookmark]]` in `settings.toml`. The new entry goes to the *top* of the list, and bookmarking an already-bookmarked path moves it there instead of adding a second copy (any duplicates a hand-edited file already had are collapsed at the same time).
+- **Bookmark bubble**: Mod+B pops a small acknowledgement dialog ("Bookmark Added" / "Bookmark Moved to Top", with the name and path) anchored top-right, where a browser's bookmark popover lives — it's the one modal that isn't centred. It is *not* a confirmation — the bookmark is already written, so Escape, click-away and **Done** all keep it. **Undo** restores the whole `[[bookmark]]` array as it was, so undoing a move-to-top puts the entry back at its old position with its old name rather than deleting it. The undo snapshot lives in session state, not in the pushed modal payload (no reason to ship the user's settings file to the frontend), and it only rewrites `[[bookmark]]`, so unrelated settings changes made while the bubble is open survive.
+- **Remove Bookmark**: Press Delete on a user bookmark in the Hot Paths dialog. Shows an inline confirmation (Yes/No) — during confirmation, all other keys are swallowed except Enter/Y (confirm), N (cancel), and Escape (cancel). Removes every entry for that path.
 
 ---
 

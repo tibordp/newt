@@ -714,6 +714,19 @@ async removeBookmark(path: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Take back the bookmark the open bubble is reporting, restoring the whole
+ * `[[bookmark]]` array as it was — so undoing a move-to-top puts the entry
+ * back where it was rather than deleting it.
+ */
+async undoAddBookmark() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("undo_add_bookmark") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async runUserCommand(paneHandle: PaneHandle, index: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("run_user_command", { paneHandle, index }) };
@@ -2060,7 +2073,21 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | 
+/**
+ * Post-hoc acknowledgement of Mod+B — the bookmark is already written.
+ * Not a confirmation: dismissing it (Esc, click-away, Done) keeps the
+ * bookmark; only Undo takes it back.
+ */
+{ type: "bookmark_added"; data: { 
+/**
+ * Bookmark label, i.e. the directory's leaf name.
+ */
+name: string | null; display_path: string; 
+/**
+ * The path was already bookmarked and got moved to the top.
+ */
+moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
  * Bytes allocated on disk (`File::allocated_size`); summed across
@@ -2211,7 +2238,21 @@ initial_direction: number;
  * shown. When false, the overlay behaves alt-tab style (the default
  * alt-held mode).
  */
-persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
+persistent: boolean } } | { type: "command_palette"; data: { category_filter: string | null } } | 
+/**
+ * Post-hoc acknowledgement of Mod+B — the bookmark is already written.
+ * Not a confirmation: dismissing it (Esc, click-away, Done) keeps the
+ * bookmark; only Undo takes it back.
+ */
+{ type: "bookmark_added"; data: { 
+/**
+ * Bookmark label, i.e. the directory's leaf name.
+ */
+name: string | null; display_path: string; 
+/**
+ * The path was already bookmarked and got moved to the top.
+ */
+moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
 export type Mode = number
 /**
  * Session-level facts about the mounted VFS set that the frontend needs

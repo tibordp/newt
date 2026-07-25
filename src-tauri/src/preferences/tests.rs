@@ -618,3 +618,194 @@ extra_path = ["/opt/custom/bin"]
     assert_eq!(merged.behavior.history_retention, 200);
     assert_eq!(merged.archives.zip_level, 6);
 }
+
+// ---------------------------------------------------------------------------
+// Bookmarks
+// ---------------------------------------------------------------------------
+
+/// `(path, name)` pairs of the `[[bookmark]]` entries, in file order.
+fn parse_bookmarks(toml_str: &str) -> Vec<(String, Option<String>)> {
+    let doc: toml_edit::DocumentMut = toml_str.parse().expect("valid toml");
+    let arr = match doc.get("bookmark").and_then(|i| i.as_array_of_tables()) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .map(|t| {
+            (
+                t.get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                t.get("name").and_then(|v| v.as_str()).map(String::from),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn apply_add_bookmark_prepends_new_entry() {
+    let (out, was_bookmarked) = apply_add_bookmark("", "/home/u/src", Some("src")).unwrap();
+    assert!(!was_bookmarked);
+    assert_eq!(
+        parse_bookmarks(&out),
+        vec![("/home/u/src".to_string(), Some("src".to_string()))]
+    );
+
+    let (out, was_bookmarked) = apply_add_bookmark(&out, "/tmp", Some("tmp")).unwrap();
+    assert!(!was_bookmarked);
+    assert_eq!(
+        parse_bookmarks(&out),
+        vec![
+            ("/tmp".to_string(), Some("tmp".to_string())),
+            ("/home/u/src".to_string(), Some("src".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn apply_add_bookmark_bumps_existing_instead_of_duplicating() {
+    let content = r#"
+[[bookmark]]
+path = "/a"
+name = "a"
+
+[[bookmark]]
+path = "/b"
+name = "b"
+
+[[bookmark]]
+path = "/c"
+name = "c"
+"#;
+
+    let (out, was_bookmarked) = apply_add_bookmark(content, "/c", Some("c")).unwrap();
+    assert!(was_bookmarked);
+    assert_eq!(
+        parse_bookmarks(&out),
+        vec![
+            ("/c".to_string(), Some("c".to_string())),
+            ("/a".to_string(), Some("a".to_string())),
+            ("/b".to_string(), Some("b".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn apply_add_bookmark_collapses_pre_existing_duplicates() {
+    // A file written before dedup existed (or hand-edited) can hold several
+    // entries for one path; re-bookmarking collapses them into one.
+    let content = r#"
+[[bookmark]]
+path = "/dup"
+name = "old"
+
+[[bookmark]]
+path = "/keep"
+
+[[bookmark]]
+path = "/dup"
+name = "older"
+"#;
+
+    let (out, was_bookmarked) = apply_add_bookmark(content, "/dup", Some("new")).unwrap();
+    assert!(was_bookmarked);
+    assert_eq!(
+        parse_bookmarks(&out),
+        vec![
+            ("/dup".to_string(), Some("new".to_string())),
+            ("/keep".to_string(), None),
+        ]
+    );
+}
+
+#[test]
+fn apply_add_bookmark_without_name_omits_the_key() {
+    let (out, _) = apply_add_bookmark("", "/srv", None).unwrap();
+    assert_eq!(parse_bookmarks(&out), vec![("/srv".to_string(), None)]);
+}
+
+#[test]
+fn apply_remove_bookmark_removes_every_match() {
+    let content = r#"
+[[bookmark]]
+path = "/dup"
+
+[[bookmark]]
+path = "/keep"
+
+[[bookmark]]
+path = "/dup"
+name = "second"
+"#;
+
+    let out = apply_remove_bookmark(content, "/dup").unwrap();
+    assert_eq!(parse_bookmarks(&out), vec![("/keep".to_string(), None)]);
+}
+
+#[test]
+fn apply_remove_bookmark_drops_the_key_when_last_entry_goes() {
+    let content = "[[bookmark]]\npath = \"/only\"\n";
+    let out = apply_remove_bookmark(content, "/only").unwrap();
+    assert!(parse_bookmarks(&out).is_empty());
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    assert!(!doc.contains_key("bookmark"));
+}
+
+#[test]
+fn apply_restore_bookmarks_undoes_a_bump_not_just_the_add() {
+    let before = r#"
+[[bookmark]]
+path = "/a"
+name = "a"
+
+[[bookmark]]
+path = "/b"
+name = "custom name for b"
+"#;
+
+    let (bumped, was_bookmarked) = apply_add_bookmark(before, "/b", Some("b")).unwrap();
+    assert!(was_bookmarked);
+
+    // Undo restores order *and* the original name, rather than deleting the
+    // entry the bump displaced.
+    let restored = apply_restore_bookmarks(&bumped, before).unwrap();
+    assert_eq!(
+        parse_bookmarks(&restored),
+        vec![
+            ("/a".to_string(), Some("a".to_string())),
+            ("/b".to_string(), Some("custom name for b".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn apply_restore_bookmarks_of_an_add_clears_the_key() {
+    let (out, _) = apply_add_bookmark("[appearance]\nshow_hidden = true\n", "/x", None).unwrap();
+    let restored = apply_restore_bookmarks(&out, "[appearance]\nshow_hidden = true\n").unwrap();
+
+    let doc: toml_edit::DocumentMut = restored.parse().unwrap();
+    assert!(!doc.contains_key("bookmark"));
+    assert_eq!(doc["appearance"]["show_hidden"].as_bool(), Some(true));
+}
+
+#[test]
+fn apply_restore_bookmarks_keeps_unrelated_edits_made_since_the_snapshot() {
+    let snapshot = "[[bookmark]]\npath = \"/a\"\n";
+    let (added, _) = apply_add_bookmark(snapshot, "/b", None).unwrap();
+    // Settings edited (and a keybinding added) while the bubble was up.
+    let edited = format!(
+        "{added}\n[appearance]\nshow_hidden = true\n\n[[bind]]\nkey = \"ctrl+g\"\ncommand = \"refresh\"\n"
+    );
+
+    let restored = apply_restore_bookmarks(&edited, snapshot).unwrap();
+    assert_eq!(parse_bookmarks(&restored), vec![("/a".to_string(), None)]);
+
+    let doc: toml_edit::DocumentMut = restored.parse().unwrap();
+    assert_eq!(doc["appearance"]["show_hidden"].as_bool(), Some(true));
+    assert_eq!(
+        doc["bind"].as_array_of_tables().map(|a| a.len()),
+        Some(1),
+        "unrelated [[bind]] entry survived"
+    );
+}

@@ -5,6 +5,7 @@ import {
 } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import About from "./About";
+import BookmarkAdded from "./BookmarkAdded";
 import ConfirmDelete from "./ConfirmDelete";
 import ConfirmUnmapDrive from "./ConfirmUnmapDrive";
 import ConnectRemote from "./ConnectRemote";
@@ -74,6 +75,8 @@ export function ModalContent({
       return <SearchDialog {...state.data} {...commonProps} />;
     case "confirm_delete":
       return <ConfirmDelete {...state.data} {...commonProps} />;
+    case "bookmark_added":
+      return <BookmarkAdded {...state.data} {...commonProps} />;
     case "confirm_unmap_drive":
       return <ConfirmUnmapDrive {...state.data} {...commonProps} />;
     case "properties":

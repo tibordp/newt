@@ -648,6 +648,16 @@ pub enum ModalDataKind {
     CommandPalette {
         category_filter: Option<String>,
     },
+    /// Post-hoc acknowledgement of Mod+B — the bookmark is already written.
+    /// Not a confirmation: dismissing it (Esc, click-away, Done) keeps the
+    /// bookmark; only Undo takes it back.
+    BookmarkAdded {
+        /// Bookmark label, i.e. the directory's leaf name.
+        name: Option<String>,
+        display_path: String,
+        /// The path was already bookmarked and got moved to the top.
+        moved: bool,
+    },
     HotPaths,
     Settings,
     ConfirmDelete {
@@ -1104,6 +1114,10 @@ struct MainWindowContextInner {
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
     clipboard: RwLock<arboard::Clipboard>,
+    /// `settings.toml` body from just before the last Mod+B, backing the
+    /// bookmark bubble's Undo. Kept here rather than in `ModalDataKind` so
+    /// the user's settings file doesn't ride along in every state push.
+    bookmark_undo: Mutex<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -1165,6 +1179,7 @@ impl MainWindowContext {
                 clipboard: RwLock::new(
                     arboard::Clipboard::new().expect("failed to initialize clipboard"),
                 ),
+                bookmark_undo: Mutex::new(None),
             }),
         }
     }
@@ -1221,6 +1236,11 @@ impl MainWindowContext {
 
     pub fn connection_target(&self) -> &ConnectionTarget {
         &self.inner.connection_target
+    }
+
+    /// Undo snapshot for the bookmark bubble; see the field's note.
+    pub fn bookmark_undo(&self) -> &Mutex<Option<String>> {
+        &self.inner.bookmark_undo
     }
 
     pub fn window_title(&self) -> &str {

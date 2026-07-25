@@ -2,7 +2,7 @@ use tauri::Manager;
 
 use crate::GlobalContext;
 use crate::common::Error;
-use crate::main_window::{MainWindowContext, PaneHandle};
+use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle};
 
 #[tauri::command]
 #[specta::specta]
@@ -153,6 +153,7 @@ pub fn add_bookmark(
     global_ctx
         .preferences()
         .add_bookmark(&path, name.as_deref())
+        .map(|_| ())
         .map_err(Error::Custom)
 }
 
@@ -180,10 +181,57 @@ pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
     let path_str = ctx.format_vfs_path(&path);
     let name = path.file_name().map(str::to_string);
 
-    global_ctx
+    let added = global_ctx
         .preferences()
         .add_bookmark(&path_str, name.as_deref())
-        .map_err(Error::Custom)
+        .map_err(Error::Custom)?;
+
+    *ctx.bookmark_undo().lock() = Some(added.snapshot);
+
+    ctx.with_update(|gs| {
+        *gs.modal.0.write() = Some(ModalData {
+            kind: ModalDataKind::BookmarkAdded {
+                name,
+                display_path: path_str,
+                moved: added.was_bookmarked,
+            },
+            context: ModalContext {
+                pane_handle: Some(pane_handle),
+            },
+        });
+        Ok(())
+    })
+}
+
+/// Take back the bookmark the open bubble is reporting, restoring the whole
+/// `[[bookmark]]` array as it was — so undoing a move-to-top puts the entry
+/// back where it was rather than deleting it.
+#[tauri::command]
+#[specta::specta]
+pub fn undo_add_bookmark(ctx: MainWindowContext) -> Result<(), Error> {
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+
+    ctx.with_update(|gs| {
+        match &*gs.modal.0.read() {
+            Some(ModalData {
+                kind: ModalDataKind::BookmarkAdded { .. },
+                ..
+            }) => {}
+            _ => return Err(Error::Custom("modal is not a bookmark bubble".into())),
+        }
+        gs.close_modal();
+        Ok(())
+    })?;
+
+    let snapshot = ctx.bookmark_undo().lock().take();
+    match snapshot {
+        Some(snapshot) => global_ctx
+            .preferences()
+            .restore_bookmarks(&snapshot)
+            .map_err(Error::Custom),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]

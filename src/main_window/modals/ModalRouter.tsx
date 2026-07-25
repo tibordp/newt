@@ -61,6 +61,17 @@ export default function ModalRouter({
         return <SettingsEditorContent preferences={preferences} />;
       case "connection_log":
         return <ConnectionLogContent state={state} />;
+      // Anchored top-right where a browser's bookmark popover lives; the
+      // shared ModalContent body, only the placement differs.
+      case "bookmark_added":
+        return (
+          <Dialog.Content
+            className={dialogStyles.dialogContentTopRight}
+            onCloseAutoFocus={preventAutoFocus}
+          >
+            <ModalContent state={state?.modal ?? null} />
+          </Dialog.Content>
+        );
       default:
         return (
           <Dialog.Content

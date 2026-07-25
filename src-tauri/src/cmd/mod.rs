@@ -264,6 +264,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::get_hot_paths,
             preferences::add_bookmark,
             preferences::remove_bookmark,
+            preferences::undo_add_bookmark,
             // User commands
             crate::user_commands::run_user_command,
             crate::user_commands::execute_user_command,

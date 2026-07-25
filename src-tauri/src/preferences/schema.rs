@@ -470,7 +470,7 @@ pub struct UserCommandEntry {
 }
 
 /// A single `[[bookmark]]` entry in the TOML file.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct BookmarkEntry {
     pub path: String,
     #[serde(default)]
