@@ -427,3 +427,120 @@ mod same_file {
         assert_eq!(names, vec!["foo.txt".to_string()]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// SearchVfs — progress reporting
+// ---------------------------------------------------------------------------
+
+/// The walker is the only thing that knows a long search is alive: until
+/// the first hit there is nothing to put in the pane. These cover the
+/// signal it emits meanwhile.
+mod search_progress {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+
+    use crate::test_support::MockVfs;
+    use crate::vfs::path::PathBuf;
+    use crate::vfs::search::{SearchParams, SearchVfs};
+    use crate::vfs::{ProgressReporter, Vfs, VfsId, VfsPath, VfsProgress, VfsRegistry};
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<Option<VfsProgress>>>);
+
+    impl ProgressReporter for Capture {
+        fn report(&self, progress: Option<VfsProgress>) {
+            self.0.lock().push(progress);
+        }
+    }
+
+    /// Run a search that matches nothing over a small tree, and return
+    /// every progress report it emitted.
+    async fn reports_for_a_fruitless_search() -> Vec<Option<VfsProgress>> {
+        let mut b = MockVfs::builder();
+        for d in 0..3 {
+            b = b.dir(&format!("/dir{d}"));
+            for f in 0..3 {
+                b = b.file(&format!("/dir{d}/f{f}.txt"), b"content");
+            }
+        }
+        let source = b.build();
+        let registry = Arc::new(VfsRegistry::with_root(source.clone()));
+        let reader = Arc::new(crate::vfs::VfsRegistryFileReader::new(registry));
+        let capture = Arc::new(Capture::default());
+
+        let vfs = SearchVfs::new(
+            source,
+            reader,
+            VfsPath::new(VfsId::ROOT, PathBuf::root()),
+            SearchParams {
+                name_pattern: Some("*matches-nothing*".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            capture.clone(),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let _ = vfs.list_files(&PathBuf::root(), Some(tx)).await;
+        let _ = drain.await;
+
+        let reports = capture.0.lock().clone();
+        reports
+    }
+
+    #[tokio::test]
+    async fn a_search_that_finds_nothing_still_reports_where_it_is() {
+        let reports = reports_for_a_fruitless_search().await;
+        let with_path: Vec<&std::collections::BTreeMap<String, String>> = reports
+            .iter()
+            .flatten()
+            .map(|p| &p.extra)
+            .filter(|e| e.contains_key("path"))
+            .collect();
+
+        assert!(
+            !with_path.is_empty(),
+            "the walker never said which directory it was in — a long search \
+             with no hits looks hung"
+        );
+        for extra in with_path {
+            let path = &extra["path"];
+            // Relative to the search root: the root is already named in the
+            // pane header, and an absolute path crowds out the status bar.
+            assert!(
+                !path.starts_with('/'),
+                "progress path should be relative to the search root, got {path}"
+            );
+            assert!(path.starts_with("dir"), "unexpected progress path {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn progress_carries_a_running_count_and_is_cleared_at_the_end() {
+        let reports = reports_for_a_fruitless_search().await;
+
+        assert!(
+            reports.iter().flatten().all(|p| p.stage == "Searching"),
+            "every report should name its stage"
+        );
+        // `processed` must always be set: a counter-less report is treated
+        // as a mount-log line by the host sink, and a search would spam it.
+        assert!(reports.iter().flatten().all(|p| p.processed.is_some()));
+
+        let scanned: Vec<u64> = reports
+            .iter()
+            .flatten()
+            .filter_map(|p| p.processed)
+            .collect();
+        assert!(
+            scanned.windows(2).all(|w| w[1] >= w[0]),
+            "the scanned count should never go backwards: {scanned:?}"
+        );
+        assert!(
+            matches!(reports.last(), Some(None)),
+            "the walker must clear its progress when it finishes"
+        );
+    }
+}

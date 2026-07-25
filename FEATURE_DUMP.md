@@ -1048,6 +1048,8 @@ The content-is-regex / case-sensitive / follow-symlinks toggles are **sticky** �
 
 Submitting mounts a `SearchVfs` and navigates the active pane to its root. The walker runs in the background; matches stream into the pane as they're found, with the secondary "where from" hint inline next to each filename (formatted through the source VFS's descriptor — so an archive entry shows `/path/to/foo.zip/inner/dir`, not a raw inner-archive path).
 
+**Liveness while nothing is found.** A search over a large tree can run for a long time before its first hit, so the walker reports what it is doing through the VFS progress channel — at most 5×/sec, independent of hits — and the pane status bar renders it as `Searching · 48,120 items · src/main_window`. The count is entries *scanned*, not matched (matches are already the pane's own item count), and the directory is shown relative to the search root, which the pane header already names. The pane lands on the (empty) search VFS immediately rather than waiting for the first match, so the line appears at once and the old directory's listing is not left on screen.
+
 **Display & navigation**:
 - The pane's path label and breadcrumb show `<root> [<params summary>]`, e.g. `/home/foo/projects [*.rs · "TODO"]`. No `Search:` prefix — the VFS selector already conveys that.
 - `try_parse_display_path` returns nothing for SearchVfs paths, so the Navigate dialog will never accidentally drop the user back into a search.

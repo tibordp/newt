@@ -592,8 +592,12 @@ struct Walker {
 
 /// How often the walker emits a progress report, regardless of how
 /// many entries it's scanned in between. Pure-frontend cadence — the
-/// numbers themselves are exact.
+/// numbers themselves are exact. Zero under test so the reporting is
+/// exercised deterministically instead of by racing a wall clock.
+#[cfg(not(test))]
 const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
+#[cfg(test)]
+const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::ZERO;
 
 impl Walker {
     async fn run(mut self) {
@@ -759,12 +763,15 @@ impl Walker {
     fn emit_progress(&self, files_scanned: u64, current_dir: Option<&Path>) {
         let mut extra = std::collections::BTreeMap::new();
         if let Some(path) = current_dir {
-            // Render through the source VFS's descriptor so what the
-            // user sees matches the rest of the app's path formatting
-            // (e.g. `s3://bucket/foo` rather than `/foo`).
-            let desc = self.source_vfs.descriptor();
-            let meta = self.source_vfs.mount_meta();
-            extra.insert("path".to_string(), desc.format_path(path, &meta));
+            // Relative to the search root, like the result rows: the root
+            // itself is already named in the pane header, and an absolute
+            // path would crowd everything else out of a one-line status
+            // bar. The root directory has no relative form — it reports
+            // the running count alone.
+            let rel = relative_key(&self.search_root.path, path);
+            if !rel.is_empty() {
+                extra.insert("path".to_string(), rel);
+            }
         }
         self.reporter.report(Some(super::VfsProgress {
             stage: "Searching".into(),

@@ -496,6 +496,13 @@ impl Pane {
                     batch_fs_stats = file_list.fs_stats().cloned();
                     accumulated.extend(file_list.files().iter().cloned());
                     if !silent {
+                        // The landing batch must publish unconditionally: it
+                        // carries the switch to the new path, and a VFS whose
+                        // first batch is empty (a search, which streams hits
+                        // as it finds them) may send nothing more for a long
+                        // time. Sampled before the block below clears the flag
+                        // — reading `first_batch` after it is always false.
+                        let landing_batch = first_batch;
                         // On first batch: clear pending_path, set loading=true,
                         // and reset filter/selection/focus for the new directory.
                         // This is the landing point — commit history here.
@@ -532,7 +539,7 @@ impl Pane {
                             first_batch = false;
                         }
                         // Throttled intermediate publish
-                        if first_batch || last_publish.elapsed() >= throttle {
+                        if landing_batch || last_publish.elapsed() >= throttle {
                             let display_options = self.display_options.0.read().clone();
                             let interim = FileList::new(
                                 batch_path.clone().unwrap_or_else(|| target.clone()),

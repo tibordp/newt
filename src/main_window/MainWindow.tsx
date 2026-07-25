@@ -379,7 +379,10 @@ function App() {
                           modalOpen={modalOpen}
                           vfsProgress={
                             remoteState.vfs_progress?.[
-                              String(props.path.vfs_id)
+                              // While a navigation streams, the pane is
+                              // still *on* the old path — the VFS doing
+                              // the work is the one it is heading to.
+                              String((props.pending_path ?? props.path).vfs_id)
                             ]
                           }
                           active={
