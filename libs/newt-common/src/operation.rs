@@ -1564,6 +1564,82 @@ async fn preserve_metadata(
 
 // --- Execute Copy (async outer loop, uses Vfs) ---
 
+/// Fail the whole operation when a source's destination *is* that source.
+///
+/// Not a per-item conflict: there is no sane resolution. Overwrite would
+/// hand the copy machinery one file as both ends — the destination is
+/// opened truncating while the source read is still pending, which empties
+/// it. So this is refused up front, before any scanning, like `cp`'s
+/// "'x' and 'x' are the same file".
+///
+/// Byte comparison can't answer it — `/a/Foo` and `/a/foo` are one file on
+/// a case-insensitive volume, as are NFC and NFD spellings on HFS+ — so
+/// the filesystem is asked ([`Vfs::same_file`]).
+///
+/// Copy refuses every spelling. Move refuses only the true no-op — same
+/// file *and* byte-identical leaf; a differing leaf (`Foo` → `foo`) is a
+/// re-spelling, which the rename fast path performs.
+///
+/// Costs one filesystem question per distinct source directory — one, for
+/// an ordinary pane selection — since a source can only land on itself
+/// when its own directory is the destination.
+async fn reject_self_destination(
+    context: &OperationContext,
+    sources: &[VfsPath],
+    destination: &VfsPath,
+    rename_to: Option<&str>,
+    is_move: bool,
+) -> Result<(), crate::Error> {
+    let (dst_vfs, dst_dir) = context.registry.resolve(destination)?;
+    let mut parent_is_destination: Vec<(PathBuf, bool)> = Vec::new();
+
+    for source in sources {
+        // Distinct VFSes are distinct storage as far as we can tell; two
+        // mounts of one bucket are the same bytes but `same_file` is a
+        // per-`Vfs` verb and can't see across.
+        if source.vfs_id != destination.vfs_id {
+            continue;
+        }
+        let (Some(parent), Some(leaf)) = (source.parent(), source.file_name()) else {
+            continue;
+        };
+        let final_leaf = rename_to.unwrap_or(leaf);
+
+        let is_destination = match parent_is_destination
+            .iter()
+            .find(|(seen, _)| *seen == parent.path)
+        {
+            Some((_, answer)) => *answer,
+            None => {
+                let answer = dst_vfs.same_file(&parent.path, &dst_dir).await?;
+                parent_is_destination.push((parent.path.clone(), answer));
+                answer
+            }
+        };
+        if !is_destination {
+            continue;
+        }
+
+        // Same directory: an identical leaf is unambiguously the same file;
+        // a differing one still can be, so ask.
+        let onto_itself = final_leaf == leaf
+            || dst_vfs
+                .same_file(&source.path, &dst_dir.join(final_leaf))
+                .await?;
+        if !onto_itself || (is_move && final_leaf != leaf) {
+            continue;
+        }
+
+        return Err(crate::Error::custom(format!(
+            "Cannot {} \"{}\" onto itself",
+            if is_move { "move" } else { "copy" },
+            leaf
+        )));
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_copy(
     reporter: &mut ProgressReporter,
@@ -1587,6 +1663,9 @@ async fn execute_copy(
     for s in sources.iter_mut() {
         *s = context.registry.dereference(s).await;
     }
+
+    reject_self_destination(context, &sources, &destination, rename_to, is_move).await?;
+
     let first_source = sources
         .first()
         .ok_or_else(|| crate::Error::custom("no sources provided"))?;
@@ -2763,6 +2842,9 @@ async fn execute_move(
     for s in sources.iter_mut() {
         *s = context.registry.dereference(s).await;
     }
+
+    reject_self_destination(context, &sources, &destination, rename_to, true).await?;
+
     let src_vfs_id = sources
         .first()
         .ok_or_else(|| crate::Error::custom("no sources provided"))?
@@ -2796,8 +2878,16 @@ async fn execute_move(
             let source_local = source.path.clone();
             let mut overwrite_approved = false;
 
-            // Check for destination conflicts before renaming (rename silently overwrites)
-            if let Ok(dest_file) = src_vfs.file_info(&dest_local).await {
+            // Check for destination conflicts before renaming (rename silently
+            // overwrites). A destination that *is* the source — `Foo` moved to
+            // `foo` on a case-insensitive volume — is a re-spelling, not a
+            // conflict, so let the rename through. Asked only once something
+            // is actually in the way, keeping bulk moves to one probe apiece.
+            // Hard links land here as well; see `execute_rename` for why
+            // that ends in a deliberate no-op.
+            if let Ok(dest_file) = src_vfs.file_info(&dest_local).await
+                && !src_vfs.same_file(&source_local, &dest_local).await?
+            {
                 let source_file = src_vfs.file_info(&source_local).await?;
                 if dest_file.is_dir != source_file.is_dir {
                     // Type mismatch (file vs directory) — can only skip
@@ -2961,10 +3051,21 @@ async fn execute_rename(
 
     if descriptor.can_rename() {
         // Check for destination conflicts before renaming (rename silently
-        // overwrites) — same policy as the Move fast path.
+        // overwrites) — same policy as the Move fast path, including the
+        // re-spelling exemption: `Foo` → `foo` on a case-insensitive volume
+        // (or NFC → NFD on HFS+) resolves to the source itself, which is
+        // the whole point of the rename rather than an obstacle to it.
+        //
+        // Renaming one hard link onto another lands here too, and is a
+        // deliberate no-op: POSIX has `rename` succeed without acting when
+        // both names are links to one file, so both survive and nothing is
+        // reported — BSD `mv` to the letter (GNU `mv` refuses instead).
+        // Rare, and doing nothing is the safe end of the trade.
         let mut attempt_rename = true;
         let mut overwrite_approved = false;
-        if let Ok(dest_file) = vfs.file_info(&new_path.path).await {
+        if let Ok(dest_file) = vfs.file_info(&new_path.path).await
+            && !vfs.same_file(&source.path, &new_path.path).await?
+        {
             let source_file = vfs.file_info(&source.path).await?;
             if dest_file.is_dir != source_file.is_dir {
                 let msg = if dest_file.is_dir {

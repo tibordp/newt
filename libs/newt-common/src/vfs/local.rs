@@ -432,6 +432,81 @@ fn stat_extras(
     }
 }
 
+/// Opaque filesystem identity: `(volume, file)`, equal exactly when two
+/// paths name the same file. `st_dev`/`st_ino` on Unix, volume serial +
+/// 128-bit file id on Windows — the pair `cp` itself uses to refuse a
+/// self-copy.
+type FileIdentity = (u64, u128);
+
+/// Identity of `path`, or `None` if it doesn't exist. Symlinks are
+/// identified as themselves rather than as their target, matching
+/// `file_info`'s `symlink_metadata`.
+#[cfg(unix)]
+fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(Some((meta.dev(), u128::from(meta.ino())))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(windows)]
+fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+    };
+
+    let file = match std::fs::OpenOptions::new()
+        // Attributes only, sharing everything: identifying a file must not
+        // fail because something else has it open.
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        // BACKUP_SEMANTICS to open directories at all; OPEN_REPARSE_POINT
+        // so a symlink identifies as itself, as on Unix.
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let handle = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+
+    let mut id_info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: live handle, and the buffer matches the requested class.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&raw mut id_info).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if ok != 0 {
+        return Ok(Some((
+            id_info.VolumeSerialNumber,
+            u128::from_le_bytes(id_info.FileId.Identifier),
+        )));
+    }
+
+    // Network redirectors and older drivers reject FileIdInfo; the legacy
+    // call's 64-bit index is enough there.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: live handle, caller-owned out param.
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok(Some((
+        u64::from(info.dwVolumeSerialNumber),
+        u128::from(index),
+    )))
+}
+
 pub fn to_native(path: &Path) -> StdPathBuf {
     #[cfg(windows)]
     {
@@ -1164,6 +1239,20 @@ impl Vfs for LocalVfs {
                 }
             }
             Ok(())
+        })
+        .await?
+    }
+
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, Error> {
+        let a = to_native(a);
+        let b = to_native(b);
+        tokio::task::spawn_blocking(move || {
+            // Two absent paths are not "the same file" — hence the match
+            // rather than comparing the Options.
+            Ok(matches!(
+                (file_identity(&a)?, file_identity(&b)?),
+                (Some(x), Some(y)) if x == y
+            ))
         })
         .await?
     }

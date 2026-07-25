@@ -737,6 +737,32 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
+    // --- Identity ---
+    /// Whether two paths in this VFS denote the same file — what the
+    /// *filesystem* thinks, not what string comparison thinks. Case
+    /// folding, Unicode normalization (HFS+ NFD), Windows short names and
+    /// trailing-dot stripping, hardlinks and bind mounts all let distinct
+    /// strings name one file, and no amount of folding on our side gets
+    /// that right: NTFS's uppercase table is frozen per-volume, APFS has
+    /// its own, and ext4 casefold is per-*directory*. So ask the FS.
+    ///
+    /// Callers use this to tell a genuine conflict from a re-spelling:
+    /// copying a file onto itself is refused outright, while renaming
+    /// `Foo` to `foo` on a case-insensitive volume is a legitimate rename
+    /// rather than an `AlreadyExists`.
+    ///
+    /// `false` when either path is absent — a destination that doesn't
+    /// exist is nothing's twin.
+    ///
+    /// The default answers by exact path equality, which is *correct*
+    /// (not merely conservative) for byte-keyed namespaces: S3, archives,
+    /// search results. Implementors backed by a real filesystem must
+    /// override it, `RemoteVfs` included — inheriting the default there
+    /// would quietly answer for the wrong machine.
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, Error> {
+        Ok(a.as_wire_str() == b.as_wire_str())
+    }
+
     // --- Same-VFS fast paths ---
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);

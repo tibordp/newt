@@ -834,6 +834,27 @@ impl Vfs for SftpVfs {
         Ok(())
     }
 
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, Error> {
+        self.check_alive()?;
+        // SFTP exposes no inode, so identity comes from the server's own
+        // `realpath`: it folds case the way that server's filesystem does
+        // (an SFTP server on Windows or a case-insensitive macOS volume is
+        // exactly the case we're here for). It also resolves symlinks, so a
+        // link and its target read as the same file — unlike the local VFS,
+        // which identifies a link as itself. The consequence is confined to
+        // replacing a symlink that points at the source without prompting.
+        let mut fs = self.sftp.fs();
+        let (Ok(a), Ok(b)) = (
+            fs.canonicalize(sftp_path(a)).await,
+            fs.canonicalize(sftp_path(b)).await,
+        ) else {
+            // A path that can't be resolved doesn't exist (or the server
+            // won't say) — nothing's twin either way.
+            return Ok(false);
+        };
+        Ok(a == b)
+    }
+
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         debug!("sftp: rename {} -> {}", from, to);
         self.check_alive()?;

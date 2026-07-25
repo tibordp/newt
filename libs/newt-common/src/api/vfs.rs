@@ -25,8 +25,9 @@ use super::{
     API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OVERWRITE_ASYNC_ABORT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH, API_VFS_POLL_CHANGES,
     API_VFS_READ_CHUNK, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
-    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
-    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode, try_encode,
+    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH,
+    API_VFS_TRASH_ITEM, API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode,
+    encode, try_encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -361,6 +362,11 @@ impl Dispatcher for VfsDispatcher {
             API_VFS_AVAILABLE_SPACE => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.available_space(&path).await;
+                encode(&ret)?
+            }
+            API_VFS_SAME_FILE => {
+                let (a, b): (PathBuf, PathBuf) = decode(&req[..])?;
+                let ret = self.vfs.same_file(&a, &b).await;
                 encode(&ret)?
             }
             API_VFS_RENAME => {

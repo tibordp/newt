@@ -2527,3 +2527,191 @@ async fn test_create_archive_open_failure_skips_entry() {
         Some(&b"good"[..])
     );
 }
+
+// ---------------------------------------------------------------------------
+// Self-destination and re-spelling
+// ---------------------------------------------------------------------------
+
+fn failure_message(events: &[OperationProgress]) -> Option<&str> {
+    events.iter().find_map(|e| match e {
+        OperationProgress::Failed { error, .. } => Some(error.as_str()),
+        _ => None,
+    })
+}
+
+fn raised_an_issue(events: &[OperationProgress]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, OperationProgress::Issue { .. }))
+}
+
+#[tokio::test]
+async fn test_copy_onto_itself_fails_the_operation() {
+    let vfs = MockVfs::builder().file("/src/a.txt", b"hello").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/src"),
+            options: Default::default(),
+        },
+        // Any conflict prompt here would be a bug: overwriting would open
+        // the file truncating while still reading it.
+        overwrite_all,
+    )
+    .await;
+
+    assert!(!raised_an_issue(&result.events));
+    assert!(failure_message(&result.events).is_some_and(|m| m.contains("onto itself")));
+    assert_eq!(result.vfs.read_content("/src/a.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_copy_onto_itself_fails_across_case_on_insensitive_vfs() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/src/Foo.txt", b"hello")
+        .build();
+
+    // Different spelling, same file: `cp Foo.txt foo.txt` is refused.
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: Some("foo.txt".into()),
+            sources: vec![vfs_path("/src/Foo.txt")],
+            destination: vfs_path("/src"),
+            options: Default::default(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(failure_message(&result.events).is_some_and(|m| m.contains("onto itself")));
+    assert_eq!(result.vfs.read_content("/src/Foo.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_copy_to_a_different_name_in_the_same_directory_is_allowed() {
+    let vfs = MockVfs::builder().file("/src/a.txt", b"hello").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: Some("b.txt".into()),
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/src"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/src/b.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_move_onto_itself_fails_the_operation() {
+    let vfs = MockVfs::builder().file("/src/a.txt", b"hello").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/src"),
+            options: Default::default(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(!raised_an_issue(&result.events));
+    assert!(failure_message(&result.events).is_some_and(|m| m.contains("onto itself")));
+    assert_eq!(result.vfs.read_content("/src/a.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_move_across_case_in_place_is_a_respelling_not_a_conflict() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/src/Foo.txt", b"hello")
+        .build();
+
+    // `mv Foo.txt foo.txt` on a case-insensitive volume: the destination
+    // resolves to the source itself, which is the point of the move rather
+    // than an obstacle to it.
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: Some("foo.txt".into()),
+            sources: vec![vfs_path("/src/Foo.txt")],
+            destination: vfs_path("/src"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(!raised_an_issue(&result.events));
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/src/foo.txt"), b"hello");
+}
+
+#[tokio::test]
+async fn test_rename_across_case_only_is_not_a_conflict() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/dir/Foo.txt", b"hello")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/Foo.txt"),
+            new_name: "foo.txt".into(),
+        },
+        // The old behaviour raised "File already exists" here, because the
+        // destination stats successfully — as the source.
+        skip_all,
+    )
+    .await;
+
+    assert!(!raised_an_issue(&result.events));
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dir/foo.txt"), b"hello");
+    assert_eq!(
+        result
+            .vfs
+            .snapshot()
+            .iter()
+            .filter(|(_, k)| *k == "file")
+            .count(),
+        1,
+        "the rename must not have left a second entry behind"
+    );
+}
+
+#[tokio::test]
+async fn test_rename_onto_a_genuinely_different_file_still_conflicts() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/dir/a.txt", b"first")
+        .file("/dir/b.txt", b"second")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/a.txt"),
+            new_name: "b.txt".into(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(raised_an_issue(&result.events));
+    assert_eq!(result.vfs.read_content("/dir/b.txt"), b"second");
+}

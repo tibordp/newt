@@ -304,3 +304,126 @@ fn registry_resolve_returns_error_for_missing_vfs() {
     let result = registry.resolve(&VfsPath::root(VfsId(999)));
     assert!(result.is_err());
 }
+
+// ---------------------------------------------------------------------------
+// LocalVfs::same_file — real filesystem
+// ---------------------------------------------------------------------------
+
+mod same_file {
+    use std::sync::Arc;
+
+    use crate::vfs::Vfs;
+    use crate::vfs::local::{LocalVfs, local_path_from_native};
+    use crate::vfs::path::PathBuf;
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        vfs: Arc<LocalVfs>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                _dir: tempfile::tempdir().expect("tempdir"),
+                vfs: Arc::new(LocalVfs::new()),
+            }
+        }
+
+        /// VFS path of `name` inside the fixture directory.
+        fn path(&self, name: &str) -> PathBuf {
+            local_path_from_native(&self._dir.path().join(name))
+        }
+
+        fn write(&self, name: &str) -> PathBuf {
+            std::fs::write(self._dir.path().join(name), b"x").expect("write");
+            self.path(name)
+        }
+
+        /// Whether the volume under test folds case — a stock macOS or
+        /// Windows volume does, ext4 doesn't, and APFS can be formatted
+        /// either way. Decided by asking the filesystem, so the tests
+        /// below assert what's true *here* rather than what's true on the
+        /// author's laptop.
+        fn volume_folds_case(&self) -> bool {
+            std::fs::write(self._dir.path().join("CaseProbe"), b"x").expect("write");
+            let folds = self._dir.path().join("caseprobe").exists();
+            std::fs::remove_file(self._dir.path().join("CaseProbe")).expect("remove");
+            folds
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_is_itself() {
+        let fx = Fixture::new();
+        let a = fx.write("a.txt");
+        assert!(fx.vfs.same_file(&a, &a).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn distinct_files_are_not_the_same() {
+        let fx = Fixture::new();
+        let (a, b) = (fx.write("a.txt"), fx.write("b.txt"));
+        assert!(!fx.vfs.same_file(&a, &b).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_absent_path_is_nothing_s_twin() {
+        let fx = Fixture::new();
+        let a = fx.write("a.txt");
+        let missing = fx.path("missing.txt");
+        let also_missing = fx.path("also-missing.txt");
+
+        assert!(!fx.vfs.same_file(&a, &missing).await.unwrap());
+        assert!(!fx.vfs.same_file(&missing, &a).await.unwrap());
+        // Two absent paths must not compare equal just because both
+        // resolve to "no identity".
+        assert!(!fx.vfs.same_file(&missing, &also_missing).await.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hardlinks_are_the_same_file() {
+        let fx = Fixture::new();
+        let a = fx.write("a.txt");
+        std::fs::hard_link(
+            fx._dir.path().join("a.txt"),
+            fx._dir.path().join("link.txt"),
+        )
+        .expect("hard_link");
+        let link = fx.path("link.txt");
+
+        // Same inode, different name — what `cp` refuses to copy onto itself.
+        assert!(fx.vfs.same_file(&a, &link).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn case_variants_follow_the_volume() {
+        let fx = Fixture::new();
+        let folds = fx.volume_folds_case();
+        let upper = fx.write("Foo.txt");
+        let lower = fx.path("foo.txt");
+
+        assert_eq!(fx.vfs.same_file(&upper, &lower).await.unwrap(), folds);
+    }
+
+    /// The whole point of the exercise: on a case-insensitive volume the
+    /// rename must actually go through rather than trip over its own
+    /// destination.
+    #[tokio::test]
+    async fn case_only_rename_succeeds_on_a_folding_volume() {
+        let fx = Fixture::new();
+        if !fx.volume_folds_case() {
+            return;
+        }
+        let upper = fx.write("Foo.txt");
+        let lower = fx.path("foo.txt");
+
+        fx.vfs.rename(&upper, &lower).await.expect("rename");
+
+        let names: Vec<String> = std::fs::read_dir(fx._dir.path())
+            .expect("read_dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["foo.txt".to_string()]);
+    }
+}

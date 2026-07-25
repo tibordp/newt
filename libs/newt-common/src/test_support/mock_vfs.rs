@@ -196,6 +196,11 @@ pub struct MockVfs {
     descriptor: &'static dyn VfsDescriptor,
     strict_range_reads: bool,
     trashed: Mutex<Vec<String>>,
+    /// Mimic a case-insensitive volume (NTFS, APFS-CI, exFAT): entries are
+    /// still stored and listed under their exact spelling, but lookups —
+    /// and `same_file` — fold ASCII case, so `/a/Foo` and `/a/foo` are one
+    /// file. Off by default: the mock is case-sensitive like ext4.
+    case_insensitive: bool,
 }
 
 impl MockVfs {
@@ -220,6 +225,28 @@ impl MockVfs {
             }
         }
         None
+    }
+
+    /// The key a requested path is stored under. Identity on a
+    /// case-sensitive mock; on a case-insensitive one, the *stored*
+    /// spelling of a case-variant match — a real case-insensitive volume
+    /// preserves the name it was created with and folds only the lookup.
+    /// Falls back to the requested string when nothing matches, so callers
+    /// still see a plain `NotFound`.
+    fn lookup_key(&self, path: &Path) -> String {
+        let requested = path.as_wire_str().to_string();
+        if !self.case_insensitive {
+            return requested;
+        }
+        let entries = self.entries.lock();
+        if entries.contains_key(&requested) {
+            return requested;
+        }
+        entries
+            .keys()
+            .find(|stored| stored.eq_ignore_ascii_case(&requested))
+            .cloned()
+            .unwrap_or(requested)
     }
 
     // -- State inspection helpers --
@@ -540,7 +567,8 @@ impl Vfs for MockVfs {
             return Err(e);
         }
         let name = path.file_name().unwrap_or_default().to_string();
-        match self.entries.lock().get(path.as_wire_str()) {
+        let key = self.lookup_key(path);
+        match self.entries.lock().get(&key) {
             Some(MockEntry::File {
                 content,
                 mode,
@@ -831,6 +859,12 @@ impl Vfs for MockVfs {
         })
     }
 
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, crate::Error> {
+        let (a, b) = (self.lookup_key(a), self.lookup_key(b));
+        let entries = self.entries.lock();
+        Ok(a == b && entries.contains_key(&a))
+    }
+
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
         if let Some(e) = self.check_failure(from, "rename") {
             return Err(e);
@@ -955,6 +989,7 @@ pub struct MockVfsBuilder {
     entries: BTreeMap<String, MockEntry>,
     failures: Vec<FailureSpec>,
     config: MockVfsConfig,
+    case_insensitive: bool,
 }
 
 impl MockVfsBuilder {
@@ -972,7 +1007,15 @@ impl MockVfsBuilder {
             entries,
             failures: Vec::new(),
             config: MockVfsConfig::default(),
+            case_insensitive: false,
         }
+    }
+
+    /// Treat entry names case-insensitively, like NTFS or a stock APFS
+    /// volume. See [`MockVfs::case_insensitive`].
+    pub fn case_insensitive(mut self) -> Self {
+        self.case_insensitive = true;
+        self
     }
 
     pub fn config(mut self, config: MockVfsConfig) -> Self {
@@ -1117,6 +1160,7 @@ impl MockVfsBuilder {
             descriptor,
             strict_range_reads,
             trashed: Mutex::new(Vec::new()),
+            case_insensitive: self.case_insensitive,
         })
     }
 }

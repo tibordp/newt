@@ -243,8 +243,8 @@ use crate::api::{
     API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OVERWRITE_ASYNC_ABORT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH, API_VFS_POLL_CHANGES,
     API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
-    API_VFS_RENAME, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
-    API_VFS_WRITE_CHUNK,
+    API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
+    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK,
 };
 
 #[async_trait::async_trait]
@@ -455,6 +455,14 @@ impl Vfs for RemoteVfs {
         let ret: Result<VfsSpaceInfo, Error> = self
             .communicator
             .invoke(API_VFS_AVAILABLE_SPACE, &path.to_owned())
+            .await?;
+        ret
+    }
+
+    async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, Error> {
+        let ret: Result<bool, Error> = self
+            .communicator
+            .invoke(API_VFS_SAME_FILE, &(a.to_owned(), b.to_owned()))
             .await?;
         ret
     }
