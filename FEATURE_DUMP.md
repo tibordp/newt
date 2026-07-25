@@ -354,6 +354,8 @@ Modal dialog with the current filename pre-filled and fully selected (so you can
 
 Deletes all selected files and directories (recursive for directories).
 
+**Symlinks and Windows junctions are removed as links, never followed.** `File::is_dir` reports the *target's* type for a link — that's what lets a pane enter one — so every recursive operation (delete, recursive chmod, recursive property apply) classifies its top-level path with `is_dir && !is_symlink` instead, matching what the directory walk has always done for children. On Windows a directory symlink or junction counts as a directory to the Win32 API, so `DeleteFileW` refuses it; `LocalVfs::remove_file` falls back — only once the plain delete has already failed, so ordinary deletes pay nothing — to `RemoveDirectoryW` for a directory-shaped reparse point, which removes the link and not its target.
+
 - If `behavior.delete_to_trash` is enabled (default: yes), plain Delete moves items to the OS trash instead of deleting them. Only real local filesystems have a trash: the local FS, the remote host's FS in SSH/elevated sessions (freedesktop `~/.local/share/Trash` on the remote machine), and agent mounts — always the trash of the machine that owns the files. S3/SFTP/archive/search VFSes have no trash.
 - **Delete Permanently** (`delete_permanent`, Shift+Delete, ⌥⌘⌫ on macOS, also in the context menu) always bypasses the trash.
 - If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first. For a trash delete it offers three choices: **Move to Trash** (default, focused), **Delete Permanently**, and Cancel.

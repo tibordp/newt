@@ -432,6 +432,35 @@ fn stat_extras(
     }
 }
 
+/// Salvage a failed `remove_file`. Reached only once the plain delete has
+/// already failed, so the ordinary path pays nothing for it.
+///
+/// On Windows a directory symlink or junction *is* a directory to the
+/// Win32 API: `DeleteFileW` refuses it and only `RemoveDirectoryW` will
+/// do, which removes the link and never what it points at. Anything else
+/// keeps the original error.
+///
+/// Unix needs no such split — `unlink` takes any symlink — so the error
+/// stands there.
+#[cfg(windows)]
+fn remove_file_fallback(path: &StdPath, err: std::io::Error) -> Result<(), Error> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return Err(err.into());
+    };
+    if meta.file_type().is_symlink() && meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        return std::fs::remove_dir(path).map_err(Error::from);
+    }
+    Err(err.into())
+}
+
+#[cfg(not(windows))]
+fn remove_file_fallback(_path: &StdPath, err: std::io::Error) -> Result<(), Error> {
+    Err(err.into())
+}
+
 /// Opaque filesystem identity: `(volume, file)`, equal exactly when two
 /// paths name the same file. `st_dev`/`st_ino` on Unix, volume serial +
 /// 128-bit file id on Windows — the pair `cp` itself uses to refuse a
@@ -1150,9 +1179,9 @@ impl Vfs for LocalVfs {
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
         let path = to_native(path);
-        tokio::task::spawn_blocking(move || {
-            std::fs::remove_file(&path)?;
-            Ok(())
+        tokio::task::spawn_blocking(move || match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) => remove_file_fallback(&path, e),
         })
         .await?
     }

@@ -2715,3 +2715,136 @@ async fn test_rename_onto_a_genuinely_different_file_still_conflicts() {
     assert!(raised_an_issue(&result.events));
     assert_eq!(result.vfs.read_content("/dir/b.txt"), b"second");
 }
+
+// ---------------------------------------------------------------------------
+// Symlinked directories are never walked into
+// ---------------------------------------------------------------------------
+
+/// Real `LocalVfs` against a temp directory — the mock has no notion of a
+/// symlink whose target is a directory, which is precisely the shape that
+/// went wrong.
+#[cfg(unix)]
+mod local_symlink {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    use parking_lot::Mutex;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::operation::*;
+    use crate::vfs::local::{LocalVfs, local_path_from_native};
+    use crate::vfs::{VfsId, VfsPath, VfsRegistry};
+
+    async fn run(request: OperationRequest) -> Vec<OperationProgress> {
+        let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+        let issue_resolvers: IssueResolvers =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<OperationProgress>();
+        let context = Arc::new(OperationContext {
+            registry,
+            shell_integration: None,
+        });
+
+        let handle = tokio::spawn(execute_operation(
+            1,
+            request,
+            progress_tx,
+            CancellationToken::new(),
+            issue_resolvers.clone(),
+            Arc::new(AtomicU64::new(1)),
+            context,
+        ));
+
+        let mut events = Vec::new();
+        while let Some(event) = progress_rx.recv().await {
+            // Answer any issue, or the operation blocks on its resolver.
+            if let OperationProgress::Issue { issue, .. } = &event
+                && let Some(sender) = issue_resolvers.lock().remove(&issue.issue_id)
+            {
+                let _ = sender.send(IssueResponse {
+                    action: IssueAction::Skip,
+                    apply_to_all: true,
+                });
+            }
+            let terminal = matches!(
+                &event,
+                OperationProgress::Completed { .. }
+                    | OperationProgress::Failed { .. }
+                    | OperationProgress::Cancelled { .. }
+            );
+            events.push(event);
+            if terminal {
+                break;
+            }
+        }
+        let _ = handle.await;
+        events
+    }
+
+    fn vfs_path(path: &std::path::Path) -> VfsPath {
+        VfsPath::new(VfsId::ROOT, local_path_from_native(path))
+    }
+
+    /// Deleting a symlink must remove the link, never the tree it points at.
+    #[tokio::test]
+    async fn delete_does_not_recurse_into_a_symlinked_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("target");
+        std::fs::create_dir(&target).expect("create_dir");
+        std::fs::write(target.join("keep.txt"), b"precious").expect("write");
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        run(OperationRequest::Delete {
+            paths: vec![vfs_path(&link)],
+            to_trash: false,
+        })
+        .await;
+
+        assert!(
+            target.join("keep.txt").exists(),
+            "delete followed the symlink and destroyed the target's contents"
+        );
+        assert!(target.exists(), "the target directory itself was removed");
+        assert!(
+            !link.exists() && std::fs::symlink_metadata(&link).is_err(),
+            "the symlink itself should be gone"
+        );
+    }
+
+    /// Same trap, same fix: a recursive chmod must stop at the link.
+    #[tokio::test]
+    async fn recursive_set_metadata_does_not_recurse_into_a_symlinked_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("target");
+        std::fs::create_dir(&target).expect("create_dir");
+        let inner = target.join("inner.txt");
+        std::fs::write(&inner, b"x").expect("write");
+        std::fs::set_permissions(&inner, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        run(OperationRequest::SetMetadata {
+            paths: vec![vfs_path(&link)],
+            mode_set: 0o777,
+            mode_clear: 0,
+            uid: None,
+            gid: None,
+            recursive: true,
+        })
+        .await;
+
+        let mode = std::fs::metadata(&inner)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o644,
+            "recursive chmod reached through the symlink into the target"
+        );
+    }
+}

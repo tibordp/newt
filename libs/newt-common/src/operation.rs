@@ -2239,7 +2239,15 @@ async fn pack_entries(
 
 // --- Execute Delete (async outer loop, uses Vfs) ---
 
-/// Determine whether a path is a directory.
+/// Whether a path is a directory *to descend into*.
+///
+/// A symlink or Windows junction pointing at a directory is deliberately
+/// **not** one. `File::is_dir` says otherwise — `file_info` reports the
+/// target's type for a link so panes can enter it — but every caller here
+/// is about to walk the path and act on what it finds, and following the
+/// link would delete or chmod the target's contents instead of the link.
+/// The parent-listing branch has always excluded links; the stat branch
+/// must match it.
 ///
 /// When `can_stat_directories` is true (most VFSes), uses `file_info` directly.
 /// When false (e.g. S3), falls back to listing the parent directory.
@@ -2250,7 +2258,8 @@ async fn probe_is_dir(
     cancel: &CancellationToken,
 ) -> Result<bool, crate::Error> {
     if descriptor.can_stat_directories() {
-        return Ok(vfs.file_info(path).await?.is_dir);
+        let file = vfs.file_info(path).await?;
+        return Ok(file.is_dir && !file.is_symlink);
     }
 
     let root = PathBuf::root();
