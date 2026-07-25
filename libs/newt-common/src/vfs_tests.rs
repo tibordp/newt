@@ -486,8 +486,7 @@ mod search_progress {
         let _ = vfs.list_files(&PathBuf::root(), Some(tx)).await;
         let _ = drain.await;
 
-        let reports = capture.0.lock().clone();
-        reports
+        capture.0.lock().clone()
     }
 
     #[tokio::test]

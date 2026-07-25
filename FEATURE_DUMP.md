@@ -31,6 +31,16 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 - Floating containers (centered dialogs, top-anchored palettes, settings editor, progress modal, askpass) share elevation/border/radius via Sass mixins in `src/styles/_dialog-mixins.scss`.
 - Type sizes come from `--font-size-xs/sm/md/lg` tokens; a `--font-mono` token covers log/transcript surfaces.
 
+### Theming
+
+`appearance.theme` (`system` / `light` / `dark`) resolves to a `tauri::Theme` and reaches the UI by three separate routes, which is worth knowing because they fail independently:
+
+- **Page colors** come from CSS reacting to `prefers-color-scheme`. Nothing sets `data-theme` today — the attribute is an escape hatch the cascade honours if something ever does. The media query reflects the *app* theme rather than the OS because the native theme is pushed into the webview (below).
+- **Title bar / window decorations** follow `WebviewWindow::set_theme`, kept live by `spawn_theme_sync` subscribing to preference changes.
+- **UA-rendered chrome — scrollbars, native form controls** — comes from the CSS `color-scheme` property, declared on `:root` in `_reset.scss`. Chromium takes these from the *used* color scheme, which defaults to light no matter what `prefers-color-scheme` says, so WebView2 rendered light scrollbars against a dark page until the property was declared. WebKit (macOS, webkitgtk) infers them from the system appearance, so this only ever showed on Windows.
+
+Platform mechanics behind route 1: on macOS the window's `NSAppearance` propagates to the `WKWebView`; on Linux the GTK theme variant does the same for webkitgtk. On **Windows** the webview color scheme is `ICoreWebView2Profile::SetPreferredColorScheme` — **process-wide**, and set only at webview *creation* (`WebviewWindowBuilder::theme`), since `set_theme` after the fact reaches only the tao window. Two consequences: every window must be built with the resolved app theme or it stamps the shared profile back (see `build_child_window` — a prewarmed F3/F4 window otherwise reset every window's webview), and `detect_theme()` is Linux-only, so `theme = "system"` on Windows passes `None` and leaves the profile on `AUTO`, which follows the OS by itself.
+
 ### Zoom
 
 - **Mod+=** (or **Mod++**): Zoom in.

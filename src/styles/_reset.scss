@@ -6,6 +6,25 @@
   font-size: 13px;
 
   color: var(--color-fg);
+
+  // Chromium picks scrollbar (and native form control) colors from the
+  // *used* `color-scheme`, which defaults to light — `prefers-color-scheme`
+  // alone does not affect them. So WebView2 renders light scrollbars on a
+  // dark system theme however dark the page paints itself. WebKit derives
+  // them from the system appearance instead, which is why macOS and
+  // webkitgtk look right and only Windows doesn't. Declaring the property
+  // is the spec-sanctioned fix rather than a workaround, and it keeps the
+  // native scrollbars. Mirrors the theme cascade in `_theme-dark.scss`:
+  // `data-theme` pins a theme, otherwise follow the system.
+  color-scheme: light dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
