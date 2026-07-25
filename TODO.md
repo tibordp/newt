@@ -28,6 +28,16 @@ Design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`.
 
 - `Vfs`-level remoting of the two verbs (`API_VFS_*` constants + `RemoteVfs`/`VfsDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today. (Design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`.)
 
+## Platform locations (hot paths, promoted)
+
+Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiting a go/no-go on the design**; doctrine (platform mounts → `LocalVfs`, discovery/enrichment only, no native SMB/NFS/FTP clients) is settled, surfaces and scope are the open questions.
+
+- Add `volume: Option<VolumeInfo>` to `HotPathEntry` (Windows collector already has it via `local_roots()` and discards it; Linux/macOS collectors gain the existing `volume.rs` probes).
+- Broaden the Linux Mount collector: include by fs type (cifs/nfs/fuse.sshfs/…) regardless of prefix; enumerate + name-parse `/run/user/$UID/gvfs/`; keep the pseudo-fs blocklist.
+- Classify macOS `/Volumes` entries via the statfs probe; dedupe the boot volume.
+- VFS selector "Locations" section (mounts slice, volume icon/label/target treatment, eject on ×) + mount-table change events on Unix (`mountinfo` is pollable; macOS focus-sweep or DiskArbitration) feeding the existing refresh path.
+- Breadcrumb/header enrichment via a pushed location-prefix → label map (open question whether v1).
+
 ## Persisted UI state (runtime-state / `state.json`)
 
 - Persist window geometry (main + viewer/editor size/position/maximized) via `tauri-plugin-window-state`. Must handle the pre-warmed hidden viewer/editor windows (`PrewarmedWindow`, keyed per main-window label) so restore lands on the window that actually shows the file.
