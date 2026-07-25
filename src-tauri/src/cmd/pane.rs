@@ -252,6 +252,22 @@ pub fn set_filter(
     })
 }
 
+/// Switch the pane to explicit-filter mode, keeping whatever is already
+/// typed. That covers both ways in: from the file list there is no filter
+/// yet so the box opens empty, and from quick-search the typed text
+/// carries over into the filter. The frontend focuses the input off the
+/// state change — see the effect keyed on `filter` in `Pane.tsx`.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_start_filter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        let mut view_state = pane.view_state_mut();
+        let existing = view_state.filter.clone().unwrap_or_default();
+        view_state.set_filter_with_mode(Some(existing), FilterMode::Filter);
+        Ok(())
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_as_other_pane(

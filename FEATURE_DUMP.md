@@ -317,12 +317,14 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 - **Matching**: Case-insensitive **prefix** matching on filenames. Wraps around the file list (searches downward from cursor, then wraps to top).
 - **Live updates**: Results update as you type. The cursor moves to the first match.
 - **Arrow Left/Right**: Adjusts the search string based on the focused file's name. Right extends the search to include more of the focused filename; Left trims it.
-- **Press `/`**: Switches to full Filter mode, keeping the current search text.
+- **Press the filter key** (`/` by default): Switches to full Filter mode, keeping the current search text.
 - **Cleared by**: Escape, any selection action, or navigating to a different directory.
 
 ### Filter Mode (Visual Regex)
 
-- **Activation**: Press `/`, switch from Quick Search by pressing `/`, or start typing when `quick_search = false`.
+- **Activation**: Press the filter key (`/` by default), switch from Quick Search with the same key, or start typing when `quick_search = false`.
+
+  Both routes run the one `start_filter` command — "switch this pane to filter mode, keeping whatever is typed" — so it is rebindable in the Keybindings tab and runnable from the command palette like anything else. That matters for non-US layouts: `/` is Shift+7 on QWERTZ, and the binding is matched as an exact normalized string, so those layouts capture `shift+/` instead. Unlike other commands it is matched inside the pane rather than dispatched from the window-level handler — the pane's own keydown runs first and routes every unmodified printable character into quick-search, so a key left to the dispatcher would be swallowed before reaching it.
 - **UI**: A filter input bar appears at the bottom of the pane.
 - **Matching**: Full **regex** pattern matching (case-insensitive). Files that don't match are hidden entirely.
 - **`..` always visible**: The parent directory entry is never hidden by a filter.
@@ -1704,7 +1706,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| / | Enter filter mode | Pane focused |
+| / | Enter filter mode (`start_filter`, rebindable) | Pane focused |
 | (any printable char) | Start quick search | Pane focused |
 | Escape | Cancel / clear filter | Pane focused |
 | Mod+F | Find in Folder (recursive search) | Pane focused |

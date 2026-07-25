@@ -911,6 +911,21 @@ async cmdToggleHidden(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Switch the pane to explicit-filter mode, keeping whatever is already
+ * typed. That covers both ways in: from the file list there is no filter
+ * yet so the box opens empty, and from quick-search the typed text
+ * carries over into the filter. The frontend focuses the input off the
+ * state change — see the effect keyed on `filter` in `Pane.tsx`.
+ */
+async cmdStartFilter(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_start_filter", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdCloseWindow(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_close_window", { paneHandle }) };

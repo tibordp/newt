@@ -484,6 +484,15 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "start_filter".into(),
+            name: "Filter Files".into(),
+            short_name: Some("Filter".into()),
+            category: "View".into(),
+            default_key: Some("/".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "start_search".into(),
             name: "Find in Folder...".into(),
             short_name: Some("Find".into()),

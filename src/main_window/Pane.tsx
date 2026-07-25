@@ -13,7 +13,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
 import { commands, type Result } from "../lib/bindings";
 import { safe, safeSilent } from "../lib/ipc";
-import { modifiers } from "../lib/commands";
+import { modifiers, normalizeKeyEvent } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
 import SortMenu from "./modals/SortMenu";
@@ -740,6 +740,19 @@ function PaneInner(
   };
 
   const preferences = usePreferences();
+
+  // The key that switches this pane into filter mode. Rebindable like any
+  // other command (`start_filter`), which matters for layouts where `/`
+  // is a shifted key — QWERTZ produces it as Shift+7, so a hardcoded
+  // unmodified `/` never matched there. Resolved here rather than
+  // dispatched from the window-level handler because the pane's own
+  // keydown runs first and swallows every unmodified printable character
+  // into quick-search; matching it here keeps that ordering intact.
+  const startFilterKey = useMemo(
+    () => preferences?.bindings.find((b) => b.command === "start_filter")?.key,
+    [preferences?.bindings],
+  );
+
   const columns = useMemo(
     () =>
       getVisibleColumns(
@@ -1357,9 +1370,19 @@ function PaneInner(
       openContextMenu();
     } else if (e.key == "Backspace" && noModifiers) {
       guarded(() => commands.navigate(paneHandle, "..", true), true);
-    } else if (e.key == "/" && noModifiers) {
-      guarded(() => commands.setFilter(paneHandle, "", "filter"));
+    } else if (
+      startFilterKey &&
+      normalizeKeyEvent(e.nativeEvent) === startFilterKey
+    ) {
+      guarded(() => commands.cmdStartFilter(paneHandle));
+      // The state change focuses the input on its own, but only after the
+      // round trip — focus now so a fast follow-up keystroke isn't typed
+      // at the file list and lost.
       inputRef.current?.focus();
+      // Handled here; the key is also bound at the window level, and
+      // `preventDefault` alone would let the dispatcher run it a second
+      // time.
+      e.stopPropagation();
     } else if (
       windowsDrives &&
       e.shiftKey &&
@@ -1410,8 +1433,15 @@ function PaneInner(
 
     if (onKeyDownCommon(e)) {
       // ...
-    } else if (e.key == "/" && noModifiers && filter_mode === "quick_search") {
-      guarded(() => commands.setFilter(paneHandle, filter || "", "filter"));
+    } else if (
+      filter_mode === "quick_search" &&
+      startFilterKey &&
+      normalizeKeyEvent(e.nativeEvent) === startFilterKey
+    ) {
+      // Same command from inside the box: it keeps whatever is typed, so
+      // quick-search text carries over into the filter.
+      guarded(() => commands.cmdStartFilter(paneHandle));
+      e.stopPropagation();
     } else if (
       filter_mode === "quick_search" &&
       e.key == "ArrowLeft" &&
