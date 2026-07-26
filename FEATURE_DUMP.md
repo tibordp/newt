@@ -49,9 +49,15 @@ The explicitness is load-bearing on Windows, which separates the *display langua
 
 `date_format` / `time_format` pick the date *layout*; the locale still supplies month and weekday names, so `%B` is `Januar` under `de-DE`.
 
-SI-prefixed sizes (the Size column under `si_size_prefixes`, and the free-space readouts in the pane header and VFS selector, which always use them) are localised the same way, so the decimal separator agrees with the exact byte counts beside them — `1,5 GB` under `de-DE`.
+Prefixed sizes are localised the same way, so the decimal separator agrees with the exact byte counts beside them — `1,5 GB` under `de-DE`.
 
 The tag is checked for well-formedness against `Intl` itself (`usableLocale`) before any formatting call, and falls back to the runtime default when it doesn't pass. That guard is load-bearing rather than defensive: settings are written on every keystroke, so typing `sl-SI` puts `s`, `sl` and `sl-` through the file list's formatting in turn, and `Intl` answers a malformed tag with a `RangeError` instead of degrading. It equally covers a system locale the engine won't take. Validation is delegated to the engine that consumes the value rather than hand-rolled from the BCP-47 grammar, so the resolved value in `ResolvedPreferences.locale` is deliberately *not* pre-validated on the Rust side.
+
+### Size Units
+
+Every displayed byte count goes through one formatter (`lib/size.ts`), so base and prefixes always agree: `appearance.size_units = "decimal"` (default) gives powers of 1000 with SI prefixes — `kB`, `MB`, `GB` — and `"binary"` gives powers of 1024 with IEC prefixes — `KiB`, `MiB`, `GiB`. Values carry up to two decimals with trailing zeros dropped, in the resolved locale.
+
+It applies wherever a size appears: the Size column (when `si_size_prefixes` is on), free space in the pane header and VFS selector, operation progress and transfer speed, the Properties dialog, and the viewer and editor status bars. The Properties dialog additionally shows the exact byte count in parentheses, and the Size column shows exact counts by default.
 
 ### Zoom
 
@@ -1306,6 +1312,8 @@ title = "Archive Selection"
 run = "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') | map('shell_quote') | join(' ') }}"
 key = "alt+z"             # Optional keyboard shortcut
 terminal = true           # true = run in terminal tab, false = run as background operation
+keep_terminal_open = true # Terminal commands: hold the tab open past exit
+silent = true             # Non-terminal commands: no progress window
 applies_to = "selection"  # Optional run filter: "file", "directory", "selection" (omit = any)
 ```
 
@@ -1365,12 +1373,16 @@ All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`,
 - Creates a new terminal tab and executes: `sh -c "rendered_command"`.
 - Working directory: the active pane's current path.
 - Terminal becomes visible and focused. Output appears in real-time.
+- `keep_terminal_open = true` holds the tab open after the command exits (the "Press Enter to close" line) even when `behavior.keep_terminal_open` is off. One-way: the effective value is the global setting OR the per-command one, so a command cannot force a tab to close against the global preference.
 
 **Operation mode** (`terminal = false`):
 - Renders the template into a command string.
 - Executes as a background operation (same as copy/move/delete).
 - Shows progress in the Operations Panel.
 - Can be backgrounded.
+- `silent = true` suppresses the operation's UI entirely: no progress modal, no row in the operations panel, so a command that finishes in milliseconds leaves no flicker behind. Distinct from *backgrounded*, which is a visible operation the user pushed aside and which keeps its panel row. A failure clears the flag, so a failed silent command surfaces exactly like any other operation.
+
+The two flags are mode-specific: the Commands tab shows "Keep terminal open" or "Run silently" depending on the "Run in terminal" checkbox, and each is ignored in the other mode.
 
 ### User Command Input Dialog
 
@@ -1415,6 +1427,7 @@ show_pane_status = true     # Show file count / selection size status bar per pa
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
 si_size_prefixes = false    # Size column shows "1.5 GB" instead of exact byte counts
+size_units = "decimal"      # "decimal" (kB/MB/GB, 1000) or "binary" (KiB/MiB/GiB, 1024)
 locale = ""                 # BCP-47 tag for numbers/dates (e.g. "de-DE"); "" = system regional format
 date_format = ""            # strftime-style date column format (e.g. "%Y-%m-%d"); "" = system locale
 time_format = ""            # strftime-style time column format (e.g. "%H:%M"); "" = system locale

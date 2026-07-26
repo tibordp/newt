@@ -1,48 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatBytes, getSiPrefixedNumber, modeString } from "./utils";
-
-describe("getSiPrefixedNumber", () => {
-  it("returns '0' for zero", () => {
-    expect(getSiPrefixedNumber(0)).toBe("0");
-  });
-
-  it("returns small numbers as-is", () => {
-    expect(getSiPrefixedNumber(5)).toBe("5");
-    expect(getSiPrefixedNumber(999)).toBe("999");
-  });
-
-  it("uses k prefix for thousands", () => {
-    expect(getSiPrefixedNumber(1000)).toBe("1 k");
-    expect(getSiPrefixedNumber(1500)).toBe("1.5 k");
-    expect(getSiPrefixedNumber(2500)).toBe("2.5 k");
-  });
-
-  it("uses M prefix for millions", () => {
-    expect(getSiPrefixedNumber(1_000_000)).toBe("1 M");
-    expect(getSiPrefixedNumber(2_500_000)).toBe("2.5 M");
-  });
-
-  it("uses G prefix for billions", () => {
-    expect(getSiPrefixedNumber(1_000_000_000)).toBe("1 G");
-  });
-
-  it("handles negative numbers", () => {
-    expect(getSiPrefixedNumber(-1500)).toBe("-1.5 k");
-  });
-
-  it("handles small fractions with m prefix", () => {
-    expect(getSiPrefixedNumber(0.001)).toBe("1 m");
-  });
-});
-
-describe("formatBytes", () => {
-  it("separates the unit with a space at every magnitude", () => {
-    expect(formatBytes(0)).toBe("0 B");
-    expect(formatBytes(512)).toBe("512 B");
-    expect(formatBytes(1500)).toBe("1.5 kB");
-    expect(formatBytes(2_500_000_000)).toBe("2.5 GB");
-  });
-});
+import { modeString } from "./utils";
 
 describe("modeString", () => {
   it("regular file 644", () => {
@@ -107,23 +64,5 @@ describe("modeString", () => {
 
   it("socket", () => {
     expect(modeString(0o140755)).toBe("srwxr-xr-x");
-  });
-});
-
-describe("getSiPrefixedNumber locale", () => {
-  it("renders the decimal separator in the given locale", () => {
-    // The same column shows exact byte counts through toLocaleString, so a
-    // hardcoded "." would disagree with them under de-DE.
-    expect(getSiPrefixedNumber(1500, "de-DE")).toBe("1,5 k");
-    expect(getSiPrefixedNumber(1500, "en-US")).toBe("1.5 k");
-  });
-
-  it("carries the locale through formatBytes", () => {
-    expect(formatBytes(2_500_000, "de-DE")).toBe("2,5 MB");
-    expect(formatBytes(2_500_000, "en-US")).toBe("2.5 MB");
-  });
-
-  it("leaves sub-k values alone in any locale", () => {
-    expect(formatBytes(512, "de-DE")).toBe("512 B");
   });
 });

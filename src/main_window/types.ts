@@ -2,6 +2,7 @@ import { ReactElement } from "react";
 
 import type {
   AskpassPrompt,
+  SizeUnits,
   Breadcrumb,
   ConnectionStatus,
   DndData,
@@ -33,8 +34,9 @@ export type FileRowContext = {
   timeFormat?: string;
   /// Resolved BCP-47 locale for numbers and dates; undefined = runtime default.
   locale?: string;
-  /// Render the Size column with SI prefixes instead of exact byte counts.
+  /// Render the Size column with unit prefixes instead of exact byte counts.
   siSizePrefixes?: boolean;
+  sizeUnits?: SizeUnits;
 };
 
 export type ColumnDef = {

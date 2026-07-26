@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useFormatBytes } from "../lib/size";
 
 import styles from "./Viewer.module.scss";
-import { formatSize, type ViewerMode } from "./helpers";
+import { type ViewerMode } from "./helpers";
 import { ModeToggle } from "./ModeToggle";
 
 export interface ImageViewerProps {
@@ -38,6 +39,7 @@ export function ImageViewer({
   fileSize,
   autoMode,
 }: ImageViewerProps) {
+  const formatSize = useFormatBytes();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);

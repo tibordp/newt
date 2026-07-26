@@ -28,7 +28,8 @@ import {
   FileRowContext,
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
-import { formatBytes } from "./utils";
+import { useFormatBytes, useSizeUnits } from "../lib/size";
+import type { SizeUnits } from "../lib/bindings";
 import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
 import { usePreferences } from "../lib/preferences";
 import { useLocale } from "../lib/locale";
@@ -212,6 +213,7 @@ type FileRowProps = {
   timeFormat?: string;
   locale?: string;
   siSizePrefixes?: boolean;
+  sizeUnits?: SizeUnits;
   onClick: React.MouseEventHandler<HTMLLIElement>;
   onMouseDown: React.MouseEventHandler<HTMLLIElement>;
   onOpen: (file: FileView) => void;
@@ -230,6 +232,7 @@ const FileRow = memo(
     timeFormat,
     locale,
     siSizePrefixes,
+    sizeUnits,
     onClick,
     onMouseDown,
     onOpen,
@@ -242,6 +245,7 @@ const FileRow = memo(
       timeFormat,
       locale,
       siSizePrefixes,
+      sizeUnits,
     };
     return (
       <li
@@ -287,6 +291,7 @@ const FileRow = memo(
     prev.timeFormat === next.timeFormat &&
     prev.locale === next.locale &&
     prev.siSizePrefixes === next.siSizePrefixes &&
+    prev.sizeUnits === next.sizeUnits &&
     prev.onClick === next.onClick &&
     prev.onMouseDown === next.onMouseDown &&
     prev.onOpen === next.onOpen,
@@ -335,7 +340,7 @@ function VfsSelector({
   activePath: string;
   open: boolean;
 }) {
-  const locale = useLocale();
+  const formatBytes = useFormatBytes();
   // Track when we're opening a mount dialog so we don't steal focus back
   const openingDialogRef = useRef(false);
 
@@ -473,7 +478,7 @@ function VfsSelector({
                   </span>
                   {target.available_bytes != null && (
                     <span className={menuStyles.itemMeta}>
-                      {formatBytes(target.available_bytes, locale)} free
+                      {formatBytes(target.available_bytes)} free
                     </span>
                   )}
                   {isActive && (
@@ -759,6 +764,8 @@ function PaneInner(
   // Passed explicitly to every Intl call rather than letting the runtime
   // pick — see `ResolvedPreferences.locale`.
   const locale = useLocale();
+  const formatBytes = useFormatBytes();
+  const sizeUnits = useSizeUnits();
 
   // The key that switches this pane into filter mode. Rebindable like any
   // other command (`start_filter`), which matters for layouts where `/`
@@ -1781,7 +1788,7 @@ function PaneInner(
                   commands.dialog("root_properties", paneHandle);
                 }}
               >
-                {formatBytes(fs_stats.available_bytes, locale)} free
+                {formatBytes(fs_stats.available_bytes)} free
               </button>
             )}
           </div>
@@ -1903,6 +1910,7 @@ function PaneInner(
                     siSizePrefixes={
                       preferences?.settings?.appearance?.si_size_prefixes
                     }
+                    sizeUnits={sizeUnits}
                     onClick={onClick}
                     onMouseDown={onDndMouseDown}
                     onOpen={onOpen}

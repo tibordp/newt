@@ -80,14 +80,6 @@ export const CHUNK_SIZE = 128 * 1024;
 export const HEX_BYTES_PER_ROW = 16;
 export const MAX_SCROLL_HEIGHT = 16_000_000; // stay under browser element height limit
 
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
 export function formatHexOffset(offset: number): string {
   return offset.toString(16).padStart(8, "0").toUpperCase();
 }

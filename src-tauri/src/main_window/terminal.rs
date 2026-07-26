@@ -65,8 +65,21 @@ impl Terminal {
 
     /// Start the output-pump / exit-watcher task. See [`Terminal::from_handle`]
     /// for the required ordering.
-    pub fn spawn_reader(&self, context: MainWindowContext, window: WebviewWindow) {
-        Self::spawn_reader_task(context, window, self.handle, self.terminal_client.clone());
+    /// `force_keep_open` holds the terminal open past exit even when
+    /// `behavior.keep_terminal_open` is off; it cannot force the reverse.
+    pub fn spawn_reader(
+        &self,
+        context: MainWindowContext,
+        window: WebviewWindow,
+        force_keep_open: bool,
+    ) {
+        Self::spawn_reader_task(
+            context,
+            window,
+            self.handle,
+            self.terminal_client.clone(),
+            force_keep_open,
+        );
     }
 
     fn spawn_reader_task(
@@ -74,6 +87,7 @@ impl Terminal {
         window: WebviewWindow,
         handle: TerminalHandle,
         terminal_client: Arc<dyn TerminalClient>,
+        force_keep_open: bool,
     ) {
         tauri::async_runtime::spawn({
             let terminal_client = terminal_client.clone();
@@ -106,7 +120,8 @@ impl Terminal {
                 terminal_client.kill(handle).await?;
                 info!("Terminal exited.");
 
-                let keep_open = context.preferences().load().behavior.keep_terminal_open;
+                let keep_open =
+                    force_keep_open || context.preferences().load().behavior.keep_terminal_open;
 
                 if keep_open {
                     // Print exit message to the terminal

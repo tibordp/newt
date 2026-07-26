@@ -189,6 +189,42 @@ export function CommandsEditor({
               Run in terminal
             </span>
           </label>
+          <label>
+            <span className={styles.checkboxSpacer} aria-hidden="true">
+              &nbsp;
+            </span>
+            <span className={styles.checkboxRow}>
+              {editForm.terminal ? (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.keep_terminal_open}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        keep_terminal_open: e.target.checked || undefined,
+                      })
+                    }
+                  />
+                  Keep terminal open
+                </>
+              ) : (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.silent}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        silent: e.target.checked || undefined,
+                      })
+                    }
+                  />
+                  Run silently
+                </>
+              )}
+            </span>
+          </label>
         </div>
 
         {!keyValid && (
@@ -282,7 +318,10 @@ export function CommandsEditor({
                 ) : (
                   <pre className={styles.userCmdCodeEmpty}>(no command)</pre>
                 )}
-                {(cmd.applies_to || cmd.terminal) && (
+                {(cmd.applies_to ||
+                  cmd.terminal ||
+                  cmd.silent ||
+                  cmd.keep_terminal_open) && (
                   <div className={styles.userCmdTags}>
                     {cmd.applies_to && (
                       <span className={styles.userCmdTag}>
@@ -291,6 +330,12 @@ export function CommandsEditor({
                     )}
                     {cmd.terminal && (
                       <span className={styles.userCmdTag}>terminal</span>
+                    )}
+                    {cmd.terminal && cmd.keep_terminal_open && (
+                      <span className={styles.userCmdTag}>keeps open</span>
+                    )}
+                    {!cmd.terminal && cmd.silent && (
+                      <span className={styles.userCmdTag}>silent</span>
                     )}
                   </div>
                 )}

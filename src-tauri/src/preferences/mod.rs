@@ -322,6 +322,12 @@ impl PreferencesManager {
         if entry.terminal {
             table.insert("terminal", toml_edit::value(true));
         }
+        if entry.silent {
+            table.insert("silent", toml_edit::value(true));
+        }
+        if entry.keep_terminal_open {
+            table.insert("keep_terminal_open", toml_edit::value(true));
+        }
         if let Some(ref applies) = entry.applies_to {
             table.insert("applies_to", toml_edit::value(applies.as_str()));
         }
@@ -402,6 +408,12 @@ impl PreferencesManager {
         }
         if entry.terminal {
             table.insert("terminal", toml_edit::value(true));
+        }
+        if entry.silent {
+            table.insert("silent", toml_edit::value(true));
+        }
+        if entry.keep_terminal_open {
+            table.insert("keep_terminal_open", toml_edit::value(true));
         }
         if let Some(ref applies) = entry.applies_to
             && !applies.is_empty()

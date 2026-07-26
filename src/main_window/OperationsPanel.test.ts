@@ -4,6 +4,7 @@ import {
   formatProgress,
   type OperationState,
 } from "./OperationsPanel";
+import { formatBytes } from "../lib/size";
 
 function makeOp(overrides: Partial<OperationState> = {}): OperationState {
   return {
@@ -19,6 +20,7 @@ function makeOp(overrides: Partial<OperationState> = {}): OperationState {
     error: null,
     issue: null,
     backgrounded: false,
+    silent: false,
     scanning_items: null,
     scanning_bytes: null,
     ...overrides,
@@ -75,6 +77,15 @@ describe("progressFraction", () => {
 });
 
 describe("formatProgress", () => {
+  it("formats through the supplied formatter", () => {
+    expect(
+      formatProgress(
+        makeOp({ total_bytes: 1024 * 1024, bytes_done: 512 * 1024 }),
+        (b) => formatBytes(b, "binary"),
+      ),
+    ).toBe("50% (512 KiB / 1 MiB)");
+  });
+
   it("returns 'Scanning...' for scanning without info", () => {
     expect(formatProgress(makeOp({ status: "scanning" }))).toBe("Scanning...");
   });
@@ -91,21 +102,21 @@ describe("formatProgress", () => {
         makeOp({
           status: "scanning",
           scanning_items: 42,
-          scanning_bytes: 1024 * 1024,
+          scanning_bytes: 1_000_000,
         }),
       ),
-    ).toBe("Scanning... 42 items, 1.0 MB");
+    ).toBe("Scanning... 42 items, 1 MB");
   });
 
   it("shows percentage and sizes for bytes-based progress", () => {
     expect(
       formatProgress(
         makeOp({
-          total_bytes: 1024 * 1024,
-          bytes_done: 512 * 1024,
+          total_bytes: 1_000_000,
+          bytes_done: 500_000,
         }),
       ),
-    ).toBe("50% (512.0 KB / 1.0 MB)");
+    ).toBe("50% (500 kB / 1 MB)");
   });
 
   it("shows items progress when no bytes", () => {

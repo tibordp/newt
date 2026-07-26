@@ -388,6 +388,7 @@ pub async fn start_operation_with_callback(
                 error: None,
                 issue: None,
                 backgrounded: false,
+                silent: false,
                 scanning_items: None,
                 scanning_bytes: None,
             },

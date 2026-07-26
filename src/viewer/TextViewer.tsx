@@ -7,6 +7,8 @@ import React, {
   useState,
 } from "react";
 
+import { useFormatBytes } from "../lib/size";
+
 import * as CM from "@radix-ui/react-context-menu";
 
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -22,7 +24,6 @@ import {
   LruChunkCache,
   collectBytes,
   formatHexOffset,
-  formatSize,
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
@@ -114,6 +115,7 @@ export function TextViewer({
   loadChunk,
   autoMode,
 }: TextViewerProps) {
+  const formatSize = useFormatBytes();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textPreRef = useRef<HTMLPreElement>(null);

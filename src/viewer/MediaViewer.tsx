@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useFormatBytes } from "../lib/size";
 
 import styles from "./Viewer.module.scss";
-import { formatSize, type ViewerMode } from "./helpers";
+import { type ViewerMode } from "./helpers";
 import { ModeToggle } from "./ModeToggle";
 
 export interface MediaViewerProps {
@@ -19,6 +20,7 @@ export function MediaViewer({
   fileSize,
   autoMode,
 }: MediaViewerProps) {
+  const formatSize = useFormatBytes();
   const viewerRef = useRef<HTMLDivElement>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
 

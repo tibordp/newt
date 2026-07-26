@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useFormatBytes } from "../lib/size";
 
 import * as pdfjsLib from "pdfjs-dist";
 import {
@@ -10,7 +11,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 import styles from "./Viewer.module.scss";
-import { formatSize, type ViewerMode } from "./helpers";
+import { type ViewerMode } from "./helpers";
 import { ModeToggle } from "./ModeToggle";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -28,6 +29,7 @@ export function PdfViewer({
   fileSize,
   autoMode,
 }: PdfViewerProps) {
+  const formatSize = useFormatBytes();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerInstanceRef = useRef<PDFJSViewer | null>(null);
   const eventBusRef = useRef<EventBus | null>(null);

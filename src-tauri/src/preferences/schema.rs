@@ -65,9 +65,12 @@ pub struct AppearancePreferences {
     /// Visible columns and their order.
     #[schemars(title = "Columns")]
     pub columns: Vec<String>,
-    /// Show sizes in the Size column with SI prefixes ("1.5 GB") instead of exact byte counts.
-    #[schemars(title = "SI Size Prefixes")]
+    /// Show sizes in the Size column with unit prefixes ("1.5 GB") instead of exact byte counts.
+    #[schemars(title = "Prefixed Sizes in Size Column")]
     pub si_size_prefixes: bool,
+    /// Unit system for displayed sizes: decimal SI (kB/MB/GB, powers of 1000) or binary IEC (KiB/MiB/GiB, powers of 1024).
+    #[schemars(title = "Size Units")]
+    pub size_units: SizeUnits,
     /// BCP-47 locale for formatting numbers, dates and times (e.g. "de-DE"). Empty follows the system regional format.
     #[schemars(title = "Locale")]
     pub locale: String,
@@ -77,6 +80,19 @@ pub struct AppearancePreferences {
     /// strftime-style format for time columns (e.g. "%H:%M"). Empty uses the system locale.
     #[schemars(title = "Time Format")]
     pub time_format: String,
+}
+
+/// Which unit system displayed sizes use.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeUnits {
+    /// Powers of 1000 — `kB`, `MB`, `GB`.
+    #[default]
+    Decimal,
+    /// Powers of 1024 — `KiB`, `MiB`, `GiB`.
+    Binary,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -121,6 +137,7 @@ impl Default for AppearancePreferences {
                 "attributes".into(),
             ],
             si_size_prefixes: false,
+            size_units: SizeUnits::default(),
             locale: String::new(),
             date_format: String::new(),
             time_format: String::new(),
@@ -469,6 +486,15 @@ pub struct UserCommandEntry {
     pub key: Option<String>,
     #[serde(default)]
     pub terminal: bool,
+    /// Run without the progress window. Non-terminal commands only; a
+    /// failure still surfaces.
+    #[serde(default)]
+    pub silent: bool,
+    /// Keep the terminal open after the command exits even when
+    /// `behavior.keep_terminal_open` is off. Terminal commands only; the
+    /// global setting can't be turned off per command.
+    #[serde(default)]
+    pub keep_terminal_open: bool,
     /// Run-context filter — which file selection state allows this command
     /// to appear in the palette / be invoked. One of "file", "directory",
     /// "selection", or absent (= any). NOT to be confused with `[[bind]].when`,

@@ -7,7 +7,6 @@ import {
   isPdfMime,
   detectAutoMode,
   buildFileUrl,
-  formatSize,
   formatHexOffset,
   hexByte,
   printableAscii,
@@ -137,27 +136,6 @@ describe("isImageMime, isAudioMime, isVideoMime, isPdfMime", () => {
 // ---------------------------------------------------------------------------
 // Format helpers
 // ---------------------------------------------------------------------------
-
-describe("formatSize", () => {
-  it("formats bytes", () => {
-    expect(formatSize(0)).toBe("0 B");
-    expect(formatSize(512)).toBe("512 B");
-    expect(formatSize(1023)).toBe("1023 B");
-  });
-
-  it("formats KB", () => {
-    expect(formatSize(1024)).toBe("1.0 KB");
-    expect(formatSize(1536)).toBe("1.5 KB");
-  });
-
-  it("formats MB", () => {
-    expect(formatSize(1024 * 1024)).toBe("1.0 MB");
-  });
-
-  it("formats GB", () => {
-    expect(formatSize(1024 * 1024 * 1024)).toBe("1.0 GB");
-  });
-});
 
 describe("formatHexOffset", () => {
   it("pads to 8 hex digits", () => {

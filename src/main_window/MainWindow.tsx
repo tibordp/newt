@@ -162,6 +162,15 @@ function App() {
       ? remoteState.operations[remoteState.foreground_operation_id]
       : null;
 
+  // Silent operations produce no panel row. The backend clears the flag
+  // when one fails, so failed ones appear here like any other.
+  const visibleOperations = useMemo(() => {
+    const entries = Object.entries(remoteState?.operations ?? {}).filter(
+      ([, op]) => !op.silent || op.status === "failed",
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }, [remoteState?.operations]);
+
   const modalType = remoteState?.modal?.type;
   const modalOpen = !!modalType || !!foregroundOp || !!remoteState?.askpass;
 
@@ -414,9 +423,9 @@ function App() {
                   </Allotment.Pane>
                 </Allotment>
               </div>
-              {Object.keys(remoteState.operations).length > 0 && (
+              {visibleOperations && (
                 <OperationsPanel
-                  operations={remoteState.operations}
+                  operations={visibleOperations}
                   foregroundOperationId={foregroundOp?.id}
                 />
               )}

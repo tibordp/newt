@@ -6,6 +6,8 @@ import React, {
   useState,
 } from "react";
 
+import { useFormatBytes } from "../lib/size";
+
 import * as CM from "@radix-ui/react-context-menu";
 
 import { safe } from "../lib/ipc";
@@ -21,7 +23,6 @@ import {
   MAX_SCROLL_HEIGHT,
   LruChunkCache,
   formatHexOffset,
-  formatSize,
   hexByte,
   printableAscii,
   type ViewerMode,
@@ -74,6 +75,7 @@ export function HexViewer({
   loadChunk: loadChunkRaw,
   autoMode,
 }: HexViewerProps) {
+  const formatSize = useFormatBytes();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hexColRef = useRef<HTMLDivElement>(null);

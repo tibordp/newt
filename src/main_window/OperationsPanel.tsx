@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../lib/bindings";
 import type { IssueAction, OperationState } from "../lib/bindings";
 import { safe } from "../lib/ipc";
+import { formatBytes, useFormatBytes } from "../lib/size";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
 import {
@@ -26,15 +27,10 @@ export function progressFraction(op: OperationState): number {
   return 0;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-export function formatProgress(op: OperationState): string {
+export function formatProgress(
+  op: OperationState,
+  formatSize: (bytes: number) => string = (b) => formatBytes(b),
+): string {
   if (op.status === "scanning") {
     if (op.scanning_items !== null && op.scanning_items > 0) {
       const parts = [`${op.scanning_items} items`];
@@ -103,6 +99,7 @@ function useTransferSpeed(bytesDone: number, totalBytes: number | null) {
 }
 
 function TransferSpeedInfo({ op }: { op: OperationState }) {
+  const formatSize = useFormatBytes();
   const { speed, eta } = useTransferSpeed(op.bytes_done, op.total_bytes);
   if (speed === null || op.status !== "running") return null;
 
@@ -188,6 +185,7 @@ function IssueResolution({
 }
 
 function OperationRow({ op }: { op: OperationState }) {
+  const formatSize = useFormatBytes();
   const isActive =
     op.status === "scanning" ||
     op.status === "running" ||
@@ -220,7 +218,9 @@ function OperationRow({ op }: { op: OperationState }) {
                   style={{ width: `${progressFraction(op) * 100}%` }}
                 />
               </div>
-              <span className={styles.progressText}>{formatProgress(op)}</span>
+              <span className={styles.progressText}>
+                {formatProgress(op, formatSize)}
+              </span>
             </>
           )}
           {op.status === "completed" && (
@@ -268,6 +268,7 @@ function OperationRow({ op }: { op: OperationState }) {
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 export function OperationProgressModal({ op }: { op: OperationState }) {
+  const formatSize = useFormatBytes();
   const isActive =
     op.status === "scanning" ||
     op.status === "running" ||
@@ -283,7 +284,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
   }, [op.id]);
 
   const fraction = progressFraction(op);
-  const progress = formatProgress(op);
+  const progress = formatProgress(op, formatSize);
 
   return (
     <Dialog.Root

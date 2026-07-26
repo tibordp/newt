@@ -112,9 +112,11 @@ When a task or direction is unclear — especially around architecture or design
 - **Sync↔async bridging is a smell:** `block_on`, `spawn_blocking` wrappers, blocking inside async (or vice versa) need explicit justification — it's not always avoidable, but reach for the async-native or sync-native path first.
 - **No reflexive sleeps/timeouts/retries:** sprinkling `sleep`s, arbitrary timeouts, or "short" retry loops to paper over a race is almost always wrong and needs very high justification. Fix the synchronization (await the actual signal/handle) instead.
 
-## Git Commits
+## Commit checklist
 
 When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added). TODO.md should always be actionable future work, known limitations and implementation details belong into FEATURE_DUMP.md or code comments. Do not preface pending work with a list of things that were already done. I repeat: *Do not leave junk in TODO.md, remove it when done!*
+
+Re-read the changeset in light of the code style once again before commiting. Pay close attention to the comments.
 
 Run `git hook run pre-commit` after staging and before commiting. Re-stage the changes it makes, if any, and fix the issues it surfaces. Never `git stash` to satisfy the hook's whole-tree gate; if several logical commits are pending, sequence them instead. With regards to commit hygiene, it is fine for small drive-by or tangentially related changes to piggyback on the larger change; do not waste effort to cleanly split them, just commit as a single commit and add a note to the commit message.
 

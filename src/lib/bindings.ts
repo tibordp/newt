@@ -1576,9 +1576,13 @@ theme: ThemeMode;
  */
 columns: string[]; 
 /**
- * Show sizes in the Size column with SI prefixes ("1.5 GB") instead of exact byte counts.
+ * Show sizes in the Size column with unit prefixes ("1.5 GB") instead of exact byte counts.
  */
 si_size_prefixes: boolean; 
+/**
+ * Unit system for displayed sizes: decimal SI (kB/MB/GB, powers of 1000) or binary IEC (KiB/MiB/GiB, powers of 1024).
+ */
+size_units: SizeUnits; 
 /**
  * BCP-47 locale for formatting numbers, dates and times (e.g. "de-DE"). Empty follows the system regional format.
  */
@@ -2392,6 +2396,12 @@ working_dir: string | null } } |
 { DebugSleep: { duration_seconds: number } }
 export type OperationState = { id: number; kind: string; description: string; total_bytes: number | null; total_items: number | null; bytes_done: number; items_done: number; current_item: string; status: OperationStatus; error: string | null; issue: OperationIssueInfo | null; backgrounded: boolean; 
 /**
+ * Produces no UI — neither the progress modal nor a panel row.
+ * Cleared if the operation fails, so the failure surfaces like any
+ * other.
+ */
+silent: boolean; 
+/**
  * Running totals from the scanning/planning phase.
  */
 scanning_items: number | null; scanning_bytes: number | null }
@@ -2608,6 +2618,18 @@ follow_symlinks: boolean;
  */
 content_size_cap: number }
 export type SearchPattern = { Literal: number[] } | { Regex: string }
+/**
+ * Which unit system displayed sizes use.
+ */
+export type SizeUnits = 
+/**
+ * Powers of 1000 — `kB`, `MB`, `GB`.
+ */
+"decimal" | 
+/**
+ * Powers of 1024 — `KiB`, `MiB`, `GiB`.
+ */
+"binary"
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
@@ -2617,6 +2639,17 @@ export type ThemeMode = "system" | "light" | "dark"
  * A single `[[command]]` entry in the TOML file.
  */
 export type UserCommandEntry = { title: string; run: string; key?: string | null; terminal?: boolean; 
+/**
+ * Run without the progress window. Non-terminal commands only; a
+ * failure still surfaces.
+ */
+silent?: boolean; 
+/**
+ * Keep the terminal open after the command exits even when
+ * `behavior.keep_terminal_open` is off. Terminal commands only; the
+ * global setting can't be turned off per command.
+ */
+keep_terminal_open?: boolean; 
 /**
  * Run-context filter — which file selection state allows this command
  * to appear in the palette / be invoked. One of "file", "directory",

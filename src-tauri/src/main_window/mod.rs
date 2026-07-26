@@ -254,6 +254,10 @@ pub struct OperationState {
     pub error: Option<String>,
     pub issue: Option<OperationIssueInfo>,
     pub backgrounded: bool,
+    /// Produces no UI — neither the progress modal nor a panel row.
+    /// Cleared if the operation fails, so the failure surfaces like any
+    /// other.
+    pub silent: bool,
     /// Running totals from the scanning/planning phase.
     pub scanning_items: Option<u64>,
     pub scanning_bytes: Option<u64>,
@@ -281,7 +285,7 @@ impl Operations {
         self.state
             .read()
             .values()
-            .filter(|op| !op.backgrounded)
+            .filter(|op| !op.backgrounded && !op.silent)
             .min_by_key(|op| op.id)
             .map(|op| op.id)
     }
@@ -1071,6 +1075,7 @@ pub(crate) fn apply_operation_progress(
             if let Some(op) = ops.get_mut(&id) {
                 op.status = OperationStatus::Failed;
                 op.error = Some(error);
+                op.silent = false;
             }
             operations.take_callback(id); // discard
         }
@@ -1437,7 +1442,7 @@ impl MainWindowContext {
             opts.terminal_panel_visible = true;
             Ok(terminal)
         })?;
-        terminal.spawn_reader(self.clone(), self.inner.window.clone());
+        terminal.spawn_reader(self.clone(), self.inner.window.clone(), false);
         Ok(terminal)
     }
 

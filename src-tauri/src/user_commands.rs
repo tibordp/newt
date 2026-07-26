@@ -364,15 +364,33 @@ fn collect_pane_context(
     Ok((pane_path, other_dir, effective_files))
 }
 
+/// How a user command runs. `silent` applies to operation mode only,
+/// `keep_terminal_open` to terminal mode only.
+struct RunMode {
+    terminal: bool,
+    silent: bool,
+    keep_terminal_open: bool,
+}
+
+impl RunMode {
+    fn of(entry: &crate::preferences::schema::UserCommandEntry) -> Self {
+        Self {
+            terminal: entry.terminal,
+            silent: entry.silent,
+            keep_terminal_open: entry.keep_terminal_open,
+        }
+    }
+}
+
 /// Execute a rendered command (terminal or operation mode).
 async fn execute_rendered(
     ctx: &MainWindowContext,
     title: &str,
     rendered: String,
     pane_path: newt_common::vfs::path::PathBuf,
-    terminal_mode: bool,
+    mode: RunMode,
 ) -> Result<(), Error> {
-    if terminal_mode {
+    if mode.terminal {
         let terminal_client = ctx.terminal_client()?;
         let (shell, shell_args) = newt_common::shell::run_via_shell(&rendered);
         let options = newt_common::terminal::TerminalOptions {
@@ -393,7 +411,7 @@ async fn execute_rendered(
             opts.terminal_panel_visible = true;
             Ok(terminal)
         })?;
-        terminal.spawn_reader(ctx.clone(), ctx.window());
+        terminal.spawn_reader(ctx.clone(), ctx.window(), mode.keep_terminal_open);
     } else {
         let id = ctx.next_operation_id()?;
 
@@ -414,6 +432,7 @@ async fn execute_rendered(
                     error: None,
                     issue: None,
                     backgrounded: false,
+                    silent: mode.silent,
                     scanning_items: None,
                     scanning_bytes: None,
                 },
@@ -490,7 +509,7 @@ pub async fn run_user_command(
         gs.close_modal();
         Ok(())
     })?;
-    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, uc.terminal).await
+    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, RunMode::of(&uc)).await
 }
 
 #[tauri::command]
@@ -536,7 +555,7 @@ pub async fn execute_user_command(
         Ok(())
     })?;
 
-    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, uc.terminal).await
+    execute_rendered(&ctx, &uc.title, rendered, pane_path.path, RunMode::of(&uc)).await
 }
 
 #[tauri::command]

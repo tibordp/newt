@@ -7,7 +7,8 @@ import {
   gitStatus,
   recursiveSize,
 } from "./types";
-import { modeString, formatBytes } from "./utils";
+import { modeString } from "./utils";
+import { formatBytes } from "../lib/size";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
 import type { MetadataTraits } from "../lib/bindings";
 import styles from "./Columns.module.scss";
@@ -177,7 +178,7 @@ export const allColumns: ColumnDef[] = [
       const du = recursiveSize(info);
       const size = (bytes: number) =>
         ctx.siSizePrefixes
-          ? formatBytes(bytes, ctx.locale)
+          ? formatBytes(bytes, ctx.sizeUnits, ctx.locale)
           : bytes.toLocaleString(ctx.locale);
       if (du != null) {
         return (

@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { useFormatBytes } from "../lib/size";
 
 import { commands } from "../lib/bindings";
 import { safeSilent, unwrap } from "../lib/ipc";
@@ -37,14 +38,6 @@ import { useRemoteState, safe } from "../lib/ipc";
 import type { VfsPath } from "../lib/types";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 // Map file extensions to Monaco language IDs
 const EXT_TO_LANGUAGE: Record<string, string> = {
@@ -160,6 +153,7 @@ interface EditorRemoteState {
 }
 
 function Editor() {
+  const formatSize = useFormatBytes();
   const [searchParams] = useSearchParams();
   const editorState = useRemoteState<EditorRemoteState>("editor");
 
