@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import iconMapping from "../assets/mapping.json";
 import {
   FileView,
   ColumnDef,
@@ -9,19 +8,10 @@ import {
 } from "./types";
 import { modeString } from "./utils";
 import { formatBytes } from "../lib/size";
+import { fileIconGlyph } from "../lib/fileIcons";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
 import type { MetadataTraits } from "../lib/bindings";
 import styles from "./Columns.module.scss";
-
-const fileNames = iconMapping.light.fileNames as Record<string, string>;
-const fileExtensions = iconMapping.light.fileExtensions as Record<
-  string,
-  string
->;
-const iconDefinitions = iconMapping.iconDefinitions as unknown as Record<
-  string,
-  { fontCharacter: string; fontColor: string }
->;
 
 function fileStem(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -63,13 +53,7 @@ function FileName({
   const { name, is_dir, is_symlink, is_hidden } = info;
   const git = gitStatus(info);
 
-  const icon =
-    fileNames[name] ||
-    fileExtensions[name.substr(name.indexOf(".") + 1)] ||
-    iconMapping.light.file;
-
-  const { fontCharacter, fontColor } = iconDefinitions[icon];
-  const ch = String.fromCodePoint(parseInt(fontCharacter, 16));
+  const { ch, color } = fileIconGlyph(name);
 
   const nameElement = (
     <>
@@ -90,7 +74,7 @@ function FileName({
   const iconElement = is_dir ? (
     <div className="file-icon folder" />
   ) : (
-    <div className="file-icon" style={{ color: fontColor }}>
+    <div className="file-icon" style={{ color }}>
       {ch}
     </div>
   );

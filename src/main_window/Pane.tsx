@@ -11,6 +11,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import iconMapping from "../assets/mapping.json";
+import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result } from "../lib/bindings";
 import { safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent } from "../lib/commands";
@@ -113,11 +114,6 @@ type LocalDndState = {
   escalating?: boolean;
 };
 
-const fileNames = iconMapping.light.fileNames as Record<string, string>;
-const fileExtensions = iconMapping.light.fileExtensions as Record<
-  string,
-  string
->;
 const iconDefs = iconMapping.iconDefinitions as unknown as Record<
   string,
   { fontCharacter: string; fontColor: string }
@@ -128,15 +124,7 @@ function getFileIconChar(
   isDir: boolean,
 ): { ch: string; color: string } {
   if (isDir) return { ch: "\uE5FF", color: "" };
-  const icon =
-    fileNames[name] ||
-    fileExtensions[name.substr(name.indexOf(".") + 1)] ||
-    iconMapping.light.file;
-  const { fontCharacter, fontColor } = iconDefs[icon];
-  return {
-    ch: String.fromCodePoint(parseInt(fontCharacter, 16)),
-    color: fontColor,
-  };
+  return fileIconGlyph(name);
 }
 
 /**

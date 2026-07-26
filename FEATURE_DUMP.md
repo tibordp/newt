@@ -348,6 +348,7 @@ While rows are hidden, the file list carries a faint accent tint (`--color-bg-fi
 - **UI**: A filter input bar appears at the bottom of the pane.
 - **Matching**: Full **regex** pattern matching (case-insensitive). Files that don't match are hidden entirely.
 - **`..` always visible**: The parent directory entry is never hidden by a filter.
+- **Focus follows the matches**: a non-empty pattern moves the cursor to the first match whenever it would otherwise sit on `..` or nowhere — including when the entry it was on stops matching. A cursor already on a surviving entry stays put, so refining a pattern never yanks it away, and an empty pattern hides nothing and moves nothing.
 - **Status bar**: Shows "(showing X of Y)" when filtering.
 - **Selection persists**: Selection is retained even for files hidden by the filter. However, operations only act on *visible* selected files (`get_effective_selection()`).
 - **Cleared by**: Escape clears the filter text and shows all files. Navigating to a different directory clears the filter.

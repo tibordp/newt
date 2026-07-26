@@ -2117,6 +2117,18 @@ impl PaneViewState {
         }
     }
 
+    /// Move focus to the first match, unless it already rests on a matching
+    /// entry. A narrowed list should put the cursor on something actionable
+    /// rather than on `..`, which survives every filter.
+    fn focus_first_hit(&mut self) {
+        if self.actionable_focus().is_some() {
+            return;
+        }
+        if let Some(first) = self.files.iter().find(|f| f.name != PARENT_KEY) {
+            self.focused = Some(first.key().to_string());
+        }
+    }
+
     // Public API
     pub fn update(
         &mut self,
@@ -2369,9 +2381,13 @@ impl PaneViewState {
                 self.recompute_stats();
             }
             FilterMode::Filter => {
+                let has_pattern = !filter.is_empty();
                 self.filter = Some(filter);
                 self.update_filter_regex();
                 self.apply_visual_filter();
+                if has_pattern {
+                    self.focus_first_hit();
+                }
                 self.recompute_stats();
             }
         }
@@ -2489,6 +2505,68 @@ mod tests {
     fn actionable_focus_ignores_selection() {
         let vs = view_state(Some(PARENT_KEY), &["a.txt", "b.txt"]);
         assert_eq!(vs.actionable_focus(), None);
+    }
+
+    fn filterable(focused: Option<&str>, names: &[&str]) -> PaneViewState {
+        let mut vs = view_state(focused, &[]);
+        vs.all_files = names
+            .iter()
+            .map(|name| File {
+                name: (*name).to_string(),
+                ..Default::default()
+            })
+            .collect();
+        vs.files = vs.all_files.clone();
+        vs
+    }
+
+    #[test]
+    fn filter_moves_focus_off_the_parent_entry() {
+        let mut vs = filterable(Some(PARENT_KEY), &[PARENT_KEY, "a.txt", "beta.txt"]);
+        vs.set_filter_with_mode(Some("bet".into()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some("beta.txt"));
+    }
+
+    #[test]
+    fn filter_focuses_the_first_hit_when_nothing_is_focused() {
+        let mut vs = filterable(None, &[PARENT_KEY, "a.txt", "beta.txt"]);
+        vs.set_filter_with_mode(Some("t".into()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some("a.txt"));
+    }
+
+    /// Opening the filter bar shows everything, so there is no "first hit"
+    /// to speak of and the cursor stays where it was.
+    #[test]
+    fn opening_the_filter_bar_leaves_focus_alone() {
+        let mut vs = filterable(Some(PARENT_KEY), &[PARENT_KEY, "a.txt"]);
+        vs.set_filter_with_mode(Some(String::new()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some(PARENT_KEY));
+    }
+
+    /// Refining a filter must not yank the cursor off the entry the user
+    /// deliberately moved it to.
+    #[test]
+    fn filter_leaves_an_existing_focus_alone() {
+        let mut vs = filterable(Some("beta.txt"), &[PARENT_KEY, "a.txt", "beta.txt"]);
+        vs.set_filter_with_mode(Some("b".into()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some("beta.txt"));
+    }
+
+    /// Once the focused entry stops matching it is no longer "already
+    /// focused" — landing on `..` would leave the cursor on the one row
+    /// every filter keeps.
+    #[test]
+    fn filter_rescues_focus_from_a_vanished_entry() {
+        let mut vs = filterable(Some("a.txt"), &[PARENT_KEY, "a.txt", "beta.txt"]);
+        vs.set_filter_with_mode(Some("bet".into()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some("beta.txt"));
+    }
+
+    #[test]
+    fn filter_with_no_hits_leaves_focus_on_the_parent_entry() {
+        let mut vs = filterable(Some(PARENT_KEY), &[PARENT_KEY, "a.txt"]);
+        vs.set_filter_with_mode(Some("zzz".into()), FilterMode::Filter);
+        assert_eq!(vs.focused.as_deref(), Some(PARENT_KEY));
     }
 
     /// In filter mode, selected-but-hidden entries don't piggyback.
