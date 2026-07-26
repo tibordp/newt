@@ -89,6 +89,10 @@
   }
 }
 
+.filesFiltered {
+  background: var(--color-bg-filtered);
+}
+
 .fileItem {
   display: flex;
   width: fit-content;

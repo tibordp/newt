@@ -77,6 +77,25 @@ pub async fn navigate(
     .await
 }
 
+/// Navigate to an already-resolved `VfsPath`, `vfs_id` included.
+///
+/// For callers holding a path rather than a string: the string-taking
+/// `navigate` parses *display* paths and relative fragments, not VFS wire
+/// paths (`/?/C:/Users/x`).
+#[tauri::command]
+#[specta::specta]
+pub async fn navigate_to_path(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    path: VfsPath,
+) -> Result<(), Error> {
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        pane.navigate_to(path).await
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn focus(
@@ -591,6 +610,29 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     }
 
     Ok(())
+}
+
+/// Jump to the root of the filesystem the pane is on — `/`, or the current
+/// drive or share root where the filesystem has several (Windows).
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_navigate_root(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let vfs_info = ctx.vfs_info()?;
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        let current = pane.path();
+        let Some((descriptor, meta)) = vfs_info.descriptor(current.vfs_id) else {
+            return Ok(());
+        };
+        let root = descriptor.root_of(&current.path, &meta);
+        if root == current.path {
+            return Ok(());
+        }
+        pane.navigate_to(VfsPath::new(current.vfs_id, root)).await
+    })
+    .await
 }
 
 #[tauri::command]

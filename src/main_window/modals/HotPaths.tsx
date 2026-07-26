@@ -91,22 +91,18 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
     const entry = group.items[parseInt(idxStr, 10)];
     if (!entry) return;
 
-    safe(commands.navigate(paneHandle || 0, entry.path.path, false));
+    safe(commands.navigateToPath(paneHandle || 0, entry.path));
   };
 
   const requestDelete = (entry: HotPathEntry, e?: React.MouseEvent) => {
     e?.stopPropagation();
     e?.preventDefault();
-    setPendingDelete(entry.path.path);
+    if (entry.bookmark_key) setPendingDelete(entry.bookmark_key);
   };
 
-  const confirmDelete = (path: string) => {
-    safeSilent(commands.removeBookmark(path)).then(() => {
-      setEntries((prev) =>
-        prev.filter(
-          (e) => !(e.path.path === path && e.category === "UserBookmark"),
-        ),
-      );
+  const confirmDelete = (bookmarkKey: string) => {
+    safeSilent(commands.removeBookmark(bookmarkKey)).then(() => {
+      setEntries((prev) => prev.filter((e) => e.bookmark_key !== bookmarkKey));
       setPendingDelete(null);
     });
   };
@@ -184,8 +180,8 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
             <Command.Group key={category} heading={CATEGORY_LABELS[category]}>
               {items.map((entry, i) => {
                 const isConfirming =
-                  pendingDelete === entry.path.path &&
-                  entry.category === "UserBookmark";
+                  entry.bookmark_key != null &&
+                  pendingDelete === entry.bookmark_key;
 
                 return (
                   <Command.Item
@@ -201,7 +197,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                             className={styles.confirmYes}
                             onClick={(e) => {
                               e.stopPropagation();
-                              confirmDelete(entry.path.path);
+                              confirmDelete(entry.bookmark_key!);
                             }}
                             tabIndex={-1}
                           >

@@ -107,6 +107,7 @@ When a task or direction is unclear — especially around architecture or design
 ## Code Style
 
 - **Comments:** sparse — only non-obvious rationale (a trap, a why). Don't narrate what the code says, and don't repeat a point in both a comment and an adjacent doc. `///` on a `clap` field is `--help` text: one short line.
+- **Comments describe the present, for a reader meeting the code cold.** No before/after, no "used to", no noting that a bug existed, no arguing against the alternative that lost. That is change narrative: it goes in the commit message, where it is dated and scoped. The one exception is a live footgun, stated as a standing fact — "the string API takes display paths, not wire paths", never "passing a wire path only appeared to work on Unix, which is why this exists". Applies to FEATURE_DUMP.md equally.
 - **Match existing patterns over ceremony:** before adding auth/validation/guards/error-handling, check how analogous code here handles the same boundary; justify any deviation with a concrete threat rather than "to be safe".
 - **Sync↔async bridging is a smell:** `block_on`, `spawn_blocking` wrappers, blocking inside async (or vice versa) need explicit justification — it's not always avoidable, but reach for the async-native or sync-native path first.
 - **No reflexive sleeps/timeouts/retries:** sprinkling `sleep`s, arbitrary timeouts, or "short" retry loops to paper over a race is almost always wrong and needs very high justification. Fix the synchronization (await the actual signal/handle) instead.

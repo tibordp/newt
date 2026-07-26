@@ -334,6 +334,8 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 
 ### Filter Mode (Visual Regex)
 
+While rows are hidden, the file list carries a faint accent tint (`--color-bg-filtered`) as a standing reminder that the view is partial. Applies to Filter mode with a non-empty pattern, the only state that hides entries.
+
 - **Activation**: Press the filter key (`/` by default), switch from Quick Search with the same key, or start typing when `quick_search = false`.
 
   Both routes run the one `start_filter` command — "switch this pane to filter mode, keeping whatever is typed" — so it is rebindable in the Keybindings tab and runnable from the command palette like anything else. That matters for non-US layouts: `/` is Shift+7 on QWERTZ, and the binding is matched as an exact normalized string, so those layouts capture `shift+/` instead. Unlike other commands it is matched inside the pane rather than dispatched from the window-level handler — the pane's own keydown runs first and routes every unmodified printable character into quick-search, so a key left to the dispatcher would be swallowed before reaching it.
@@ -1260,6 +1262,8 @@ Each category can be independently toggled on/off in preferences (Hot Paths sect
 
 **Keyboard navigation**: Arrow keys, Page Up/Down, Home/End, Enter to navigate to the selected path, Escape to close.
 
+Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsPath` — `vfs_id` included, so an entry on a mounted VFS lands on that VFS. Removal is keyed by `bookmark_key`, the verbatim `[[bookmark]]` `path` from settings.toml, which is a display path rather than the wire form.
+
 ### Bookmark Operations
 
 - **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory. Optional custom name (defaults to the directory name). Stored as `[[bookmark]]` in `settings.toml`. The new entry goes to the *top* of the list, and bookmarking an already-bookmarked path moves it there instead of adding a second copy (any duplicates a hand-edited file already had are collapsed at the same time).
@@ -1692,6 +1696,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 |----------|--------|---------|
 | Enter | Open / enter directory | Pane focused |
 | Backspace | Parent directory | Pane focused |
+| Ctrl+Backspace | Filesystem root — the current drive or share root where there are several (Windows). Unbound on macOS, where ⌘⌫ is Move to Trash; bind `navigate_root` from the Keybindings tab | Pane focused |
 | Tab | Switch panes | Pane focused |
 | Shift+Enter | Follow symlink | Pane focused |
 | Mod+L | Navigate (Go To...) | Pane focused |

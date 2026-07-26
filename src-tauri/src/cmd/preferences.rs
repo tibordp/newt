@@ -130,6 +130,7 @@ pub async fn get_hot_paths(
             display_path: String::new(),
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
+            bookmark_key: Some(bm.path.clone()),
         });
     }
 

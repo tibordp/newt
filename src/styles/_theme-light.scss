@@ -35,6 +35,10 @@
   --_destructive-600: #a51d2d;
   --_destructive-700: #8c1926;
 
+  // File list while a filter hides rows. Stays well clear of `--_blue-400`
+  // (the selection fill) so a selected row still separates from it.
+  --_bg-filtered: #f3f8fd;
+
   // Borders & shadows
   --_border: rgba(0, 0, 0, 0.15);
   --_border-strong: rgba(0, 0, 0, 0.18);

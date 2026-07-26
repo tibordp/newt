@@ -118,6 +118,21 @@ async navigate(paneHandle: PaneHandle, path: string, exact: boolean) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Navigate to an already-resolved `VfsPath`, `vfs_id` included.
+ * 
+ * For callers holding a path rather than a string: the string-taking
+ * `navigate` parses *display* paths and relative fragments, not VFS wire
+ * paths (`/?/C:/Users/x`).
+ */
+async navigateToPath(paneHandle: PaneHandle, path: VfsPath) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("navigate_to_path", { paneHandle, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async enter(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("enter", { paneHandle }) };
@@ -993,6 +1008,18 @@ async cmdFollowSymlink(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 async cmdNavigateBack(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_navigate_back", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Jump to the root of the filesystem the pane is on — `/`, or the current
+ * drive or share root where the filesystem has several (Windows).
+ */
+async cmdNavigateRoot(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_navigate_root", { paneHandle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1892,13 +1919,7 @@ volume: VolumeInfo | null }
  */
 export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
-export type HotPathEntry = { path: VfsPath; 
-/**
- * User-facing rendering of `path` (via the VFS descriptor). The
- * provider can't format — it has no mounted-VFS context — so it
- * leaves this empty; the host fills it in `get_hot_paths`.
- */
-display_path: string; name: string | null; category: HotPathCategory }
+export type HotPathEntry = { path: VfsPath; display_path: string; name: string | null; category: HotPathCategory; bookmark_key: string | null }
 export type HotPathsPreferences = { 
 /**
  * Show standard folders (Home, Downloads, Documents, etc.)

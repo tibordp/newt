@@ -16,6 +16,9 @@
   --color-accent-active: var(--_blue-700);
   --color-selected-bg: var(--_blue-400);
 
+  // File list while a filter is hiding rows.
+  --color-bg-filtered: var(--_bg-filtered);
+
   // Chrome (headerbars, statusbars)
   --color-chrome: var(--_gray-200);
   --color-chrome-light: var(--_gray-100);

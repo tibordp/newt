@@ -1869,7 +1869,9 @@ function PaneInner(
         <ContextMenu.Root>
           <ContextMenu.Trigger asChild>
             <ul
-              className={styles.files}
+              className={`${styles.files} ${
+                filter && filter_mode === "filter" ? styles.filesFiltered : ""
+              }`}
               ref={containerRef}
               onKeyDown={onkeydown}
               onMouseDown={onMouseDown}

@@ -484,6 +484,17 @@ pub fn default_commands() -> Vec<CommandDef> {
             needs_pane: true,
         },
         CommandDef {
+            id: "navigate_root".into(),
+            name: "Go to Root".into(),
+            short_name: Some("Root".into()),
+            category: "Navigation".into(),
+            // Unbound on macOS: ⌘⌫ is aliased to `delete_selected` there
+            // (Finder's Move to Trash — see `resolve_bindings`).
+            default_key: (!cfg!(target_os = "macos")).then(|| "mod+backspace".into()),
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+        },
+        CommandDef {
             id: "start_filter".into(),
             name: "Filter Files".into(),
             short_name: Some("Filter".into()),
