@@ -41,6 +41,71 @@ pub fn ensure_locale() {
     }
 }
 
+/// The user's locale for *formatting* — numbers, dates, times — as a BCP-47
+/// tag (`de-DE`). `None` when the system has nothing meaningful to say (the
+/// C/POSIX locale), leaving the caller on its own default.
+///
+/// Deliberately not the UI language. Windows keeps the two apart — Settings
+/// › Region › "Regional format" versus the display language — and it is the
+/// former that decides whether a thousands separator is `,` or `.`. WebView2
+/// is initialised from the *UI* language (wry passes
+/// `GetUserDefaultUILanguage`), so a webview left to its own devices formats
+/// US-style for anyone whose display language is English and whose region is
+/// not, which is why the frontend is handed this explicitly rather than
+/// calling `toLocaleString()` bare.
+// Each platform arm returns; only one is ever compiled, so the last one
+// reads as a needless `return` — same shape as `ensure_locale` above.
+#[allow(clippy::needless_return)]
+pub fn system_locale() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+        use windows_sys::Win32::System::SystemServices::LOCALE_NAME_MAX_LENGTH;
+
+        let mut buf = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
+        // SAFETY: buffer and length match what the API expects.
+        let len = unsafe { GetUserDefaultLocaleName(buf.as_mut_ptr(), buf.len() as i32) };
+        if len <= 1 {
+            return None;
+        }
+        // The count includes the terminating NUL.
+        let name = String::from_utf16_lossy(&buf[..len as usize - 1]);
+        return normalize(&name);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return macos::current_locale_id().as_deref().and_then(normalize);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // LC_ALL outranks everything, then the category that actually governs
+        // number formatting, then the catch-all.
+        return ["LC_ALL", "LC_NUMERIC", "LANG"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .find_map(|v| normalize(&v));
+    }
+}
+
+/// POSIX/Windows locale name to BCP-47: strip the `.UTF-8` codeset and any
+/// `@euro`-style modifier, swap `_` for `-`. `C`/`POSIX` mean "no locale",
+/// not a language.
+#[cfg(any(unix, windows))]
+fn normalize(raw: &str) -> Option<String> {
+    let tag = raw
+        .split(['.', '@'])
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .replace('_', "-");
+    if tag.is_empty() || tag.eq_ignore_ascii_case("c") || tag.eq_ignore_ascii_case("posix") {
+        return None;
+    }
+    Some(tag)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::ffi::{CStr, CString};
@@ -57,7 +122,7 @@ mod macos {
 
     /// `CFLocaleCopyCurrent` identifier, minus any ICU keyword suffix —
     /// `en_US@rg=iezzzz` is a perfectly normal thing for it to return.
-    fn current_locale_id() -> Option<String> {
+    pub(super) fn current_locale_id() -> Option<String> {
         use core_foundation::base::TCFType;
         use core_foundation::string::CFString;
         use core_foundation_sys::base::CFRelease;
@@ -132,5 +197,35 @@ mod macos {
             let id = current_locale_id().expect("a current locale");
             assert!(!id.contains('@'), "keyword suffix survived: {id}");
         }
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod normalize_tests {
+    use super::normalize;
+
+    #[test]
+    fn posix_names_become_bcp47_tags() {
+        assert_eq!(normalize("de_DE.UTF-8").as_deref(), Some("de-DE"));
+        assert_eq!(normalize("en_US").as_deref(), Some("en-US"));
+        assert_eq!(normalize("sl_SI.UTF-8@euro").as_deref(), Some("sl-SI"));
+    }
+
+    #[test]
+    fn windows_names_pass_through() {
+        // GetUserDefaultLocaleName already speaks BCP-47.
+        assert_eq!(normalize("de-DE").as_deref(), Some("de-DE"));
+        assert_eq!(normalize("sr-Latn-RS").as_deref(), Some("sr-Latn-RS"));
+    }
+
+    #[test]
+    fn the_c_locale_is_not_a_language() {
+        // "C"/"POSIX" mean "no locale" — formatting should fall back to the
+        // runtime default rather than being told to use a language named C.
+        assert_eq!(normalize("C"), None);
+        assert_eq!(normalize("C.UTF-8"), None);
+        assert_eq!(normalize("POSIX"), None);
+        assert_eq!(normalize(""), None);
+        assert_eq!(normalize("   "), None);
     }
 }

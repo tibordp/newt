@@ -109,3 +109,21 @@ describe("modeString", () => {
     expect(modeString(0o140755)).toBe("srwxr-xr-x");
   });
 });
+
+describe("getSiPrefixedNumber locale", () => {
+  it("renders the decimal separator in the given locale", () => {
+    // The same column shows exact byte counts through toLocaleString, so a
+    // hardcoded "." would disagree with them under de-DE.
+    expect(getSiPrefixedNumber(1500, "de-DE")).toBe("1,5 k");
+    expect(getSiPrefixedNumber(1500, "en-US")).toBe("1.5 k");
+  });
+
+  it("carries the locale through formatBytes", () => {
+    expect(formatBytes(2_500_000, "de-DE")).toBe("2,5 MB");
+    expect(formatBytes(2_500_000, "en-US")).toBe("2.5 MB");
+  });
+
+  it("leaves sub-k values alone in any locale", () => {
+    expect(formatBytes(512, "de-DE")).toBe("512 B");
+  });
+});

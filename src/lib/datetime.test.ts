@@ -42,3 +42,30 @@ describe("format helpers", () => {
     expect(formatDateTime(ms, "%Y", "")).toBe(`2026 ${d.toLocaleTimeString()}`);
   });
 });
+
+describe("locale threading", () => {
+  const ms = Date.UTC(2026, 0, 5, 14, 30, 0);
+
+  it("formats dates in the locale it is given", () => {
+    // German writes 5.1.2026 where en-US writes 1/5/2026 — the point of
+    // passing the locale rather than letting the runtime pick.
+    expect(formatDate(ms, undefined, "de-DE")).toBe(
+      new Date(ms).toLocaleDateString("de-DE"),
+    );
+    expect(formatDate(ms, undefined, "de-DE")).not.toBe(
+      new Date(ms).toLocaleDateString("en-US"),
+    );
+  });
+
+  it("uses the locale for strftime month and weekday names", () => {
+    // A date_format preference picks the layout, not the language.
+    expect(formatDate(ms, "%B", "de-DE")).toBe("Januar");
+    expect(formatDate(ms, "%B", "en-US")).toBe("January");
+  });
+
+  it("formats date-time in the locale it is given", () => {
+    expect(formatDateTime(ms, undefined, undefined, "de-DE")).toBe(
+      new Date(ms).toLocaleString("de-DE"),
+    );
+  });
+});

@@ -9,6 +9,7 @@ import { VOLUME_KIND_LABELS } from "../utils";
 import { safe } from "../../lib/ipc";
 import { formatDateTime } from "../../lib/datetime";
 import { usePreferences } from "../../lib/preferences";
+import { useLocale } from "../../lib/locale";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import { PropertySheetSection } from "./PropertySheetSection";
 import {
@@ -33,7 +34,7 @@ function formatUserGroup(
   return String(ug.id);
 }
 
-function formatSize(bytes: number | null): string {
+function formatSize(bytes: number | null, locale?: string): string {
   if (bytes == null) return "-";
   if (bytes < 1024) return `${bytes} bytes`;
   const units = ["KB", "MB", "GB", "TB"];
@@ -44,7 +45,7 @@ function formatSize(bytes: number | null): string {
     val /= 1024;
     unit = u;
   }
-  return `${val.toFixed(1)} ${unit} (${bytes.toLocaleString()} bytes)`;
+  return `${val.toFixed(1)} ${unit} (${bytes.toLocaleString(locale)} bytes)`;
 }
 
 function formatTimestamp(
@@ -227,7 +228,13 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 // Volume classification + space, shown for volume-root properties.
-function VolumeSection({ fsStats }: { fsStats: FsStats }) {
+function VolumeSection({
+  fsStats,
+  locale,
+}: {
+  fsStats: FsStats;
+  locale?: string;
+}) {
   const volume = fsStats.volume;
   const used = fsStats.total_bytes - fsStats.free_bytes;
   return (
@@ -243,9 +250,15 @@ function VolumeSection({ fsStats }: { fsStats: FsStats }) {
       )}
       {volume?.label && <InfoRow label="Volume label" value={volume.label} />}
       {volume?.target && <InfoRow label="Target" value={volume.target} />}
-      <InfoRow label="Capacity" value={formatSize(fsStats.total_bytes)} />
-      <InfoRow label="Used" value={formatSize(used)} />
-      <InfoRow label="Free" value={formatSize(fsStats.available_bytes)} />
+      <InfoRow
+        label="Capacity"
+        value={formatSize(fsStats.total_bytes, locale)}
+      />
+      <InfoRow label="Used" value={formatSize(used, locale)} />
+      <InfoRow
+        label="Free"
+        value={formatSize(fsStats.available_bytes, locale)}
+      />
     </dl>
   );
 }
@@ -290,6 +303,7 @@ export default function Properties({
     value: "",
   });
   const preferences = usePreferences();
+  const locale = useLocale();
   const dateFormat = preferences?.settings?.appearance?.date_format;
   const timeFormat = preferences?.settings?.appearance?.time_format;
   const isSingle = paths.length === 1;
@@ -391,12 +405,12 @@ export default function Properties({
               {/* A volume-root dialog has no meaningful entry size —
                   the Volume section carries the numbers instead. */}
               {!(fs_stats && size == null) && (
-                <InfoRow label="Size" value={formatSize(size)} />
+                <InfoRow label="Size" value={formatSize(size, locale)} />
               )}
               {allocated_size != null && (
                 <InfoRow
                   label="Size on disk"
-                  value={formatSize(allocated_size)}
+                  value={formatSize(allocated_size, locale)}
                 />
               )}
               {(owner != null || !isSingle) && (
@@ -448,7 +462,7 @@ export default function Properties({
                 )}
               </dl>
             )}
-            {fs_stats && <VolumeSection fsStats={fs_stats} />}
+            {fs_stats && <VolumeSection fsStats={fs_stats} locale={locale} />}
           </div>
 
           {canEdit && (

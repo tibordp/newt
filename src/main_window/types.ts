@@ -31,6 +31,10 @@ export type FileRowContext = {
   /// strftime-style formats from preferences; empty/undefined = system locale.
   dateFormat?: string;
   timeFormat?: string;
+  /// Resolved BCP-47 locale for numbers and dates; undefined = runtime default.
+  locale?: string;
+  /// Render the Size column with SI prefixes instead of exact byte counts.
+  siSizePrefixes?: boolean;
 };
 
 export type ColumnDef = {

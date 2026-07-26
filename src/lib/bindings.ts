@@ -1549,6 +1549,14 @@ theme: ThemeMode;
  */
 columns: string[]; 
 /**
+ * Show sizes in the Size column with SI prefixes ("1.5 GB") instead of exact byte counts.
+ */
+si_size_prefixes: boolean; 
+/**
+ * BCP-47 locale for formatting numbers, dates and times (e.g. "de-DE"). Empty follows the system regional format.
+ */
+locale: string; 
+/**
  * strftime-style format for date columns (e.g. "%Y-%m-%d"). Empty uses the system locale.
  */
 date_format: string; 
@@ -2425,7 +2433,21 @@ export type ResolvedPreferences = { settings: AppPreferences; schema: JsonValue;
  * Dotted keys that are explicitly set in the user's settings file
  * (i.e. not inherited from defaults or profile).
  */
-modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; bookmarks: BookmarkEntry[]; user_commands: UserCommandEntry[] }
+modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; bookmarks: BookmarkEntry[]; user_commands: UserCommandEntry[]; 
+/**
+ * BCP-47 tag the frontend formats numbers and dates with: the
+ * `appearance.locale` preference when set, else the system's regional
+ * format. `None` leaves the choice to the webview — which on Windows
+ * is initialised from the *UI* language rather than the regional
+ * format, so it is not a good default to rely on.
+ * 
+ * A preference value is passed through verbatim, *not* validated: the
+ * settings dialog writes on every keystroke, so this legitimately
+ * carries half-typed tags like `sl-`. The frontend checks
+ * well-formedness against `Intl` before use (`usableLocale`), which is
+ * the engine that would otherwise throw on them.
+ */
+locale: string | null }
 /**
  * App-wide runtime state persisted to `state.json` in the config dir.
  * Every field must default so old files keep deserializing as the

@@ -41,6 +41,18 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 
 Platform mechanics behind route 1: on macOS the window's `NSAppearance` propagates to the `WKWebView`; on Linux the GTK theme variant does the same for webkitgtk. On **Windows** the webview color scheme is `ICoreWebView2Profile::SetPreferredColorScheme` — **process-wide**, and set only at webview *creation* (`WebviewWindowBuilder::theme`), since `set_theme` after the fact reaches only the tao window. Two consequences: every window must be built with the resolved app theme or it stamps the shared profile back (see `build_child_window` — a prewarmed F3/F4 window otherwise reset every window's webview), and `detect_theme()` is Linux-only, so `theme = "system"` on Windows passes `None` and leaves the profile on `AUTO`, which follows the OS by itself.
 
+### Locale
+
+Numbers, dates and times are formatted with an explicitly resolved locale rather than whatever the webview would pick: `appearance.locale` when set, else the system's **regional format** — `GetUserDefaultLocaleName` on Windows, `CFLocaleCopyCurrent` on macOS, `LC_ALL`/`LC_NUMERIC`/`LANG` on Linux, normalised to a BCP-47 tag (`de_DE.UTF-8@euro` → `de-DE`). `C`/`POSIX` resolve to nothing, leaving the runtime default. It arrives as `ResolvedPreferences.locale` and is passed to every `Intl`/`toLocale*` call.
+
+The explicitness is load-bearing on Windows, which separates the *display language* from the *regional format*: wry initialises WebView2 from `GetUserDefaultUILanguage` (the display language), so a bare `toLocaleString()` formats US-style for anyone running an English UI in a non-US region. macOS and Linux don't split the two, which is why it only ever showed there.
+
+`date_format` / `time_format` pick the date *layout*; the locale still supplies month and weekday names, so `%B` is `Januar` under `de-DE`.
+
+SI-prefixed sizes (the Size column under `si_size_prefixes`, and the free-space readouts in the pane header and VFS selector, which always use them) are localised the same way, so the decimal separator agrees with the exact byte counts beside them — `1,5 GB` under `de-DE`.
+
+The tag is checked for well-formedness against `Intl` itself (`usableLocale`) before any formatting call, and falls back to the runtime default when it doesn't pass. That guard is load-bearing rather than defensive: settings are written on every keystroke, so typing `sl-SI` puts `s`, `sl` and `sl-` through the file list's formatting in turn, and `Intl` answers a malformed tag with a `RangeError` instead of degrading. It equally covers a system locale the engine won't take. Validation is delegated to the engine that consumes the value rather than hand-rolled from the BCP-47 grammar, so the resolved value in `ResolvedPreferences.locale` is deliberately *not* pre-validated on the Rust side.
+
 ### Zoom
 
 - **Mod+=** (or **Mod++**): Zoom in.
@@ -102,7 +114,7 @@ Server-side windowed list with 22px fixed row height. Rust sends only a ~150-ite
 | Column | Width | Alignment | Content |
 |--------|-------|-----------|---------|
 | Name | 250px | Left | File type icon (color-coded, VSCode icon set) + filename |
-| Size | 100px | Right | Locale-formatted byte count, "DIR" for directories, "???" if unknown |
+| Size | 100px | Right | Locale-formatted byte count — or SI-prefixed ("1.5 GB") when `appearance.si_size_prefixes` is on (default off) — "DIR" for directories, "???" if unknown |
 | Modified Date | 80px | Right | Date of last modification |
 | Modified Time | 80px | Right | Time of last modification |
 | User | 70px | Left | Owner name (or numeric UID if name unavailable) |
@@ -1398,6 +1410,8 @@ show_pane_header = true     # Show breadcrumb / VFS selector / free-space header
 show_pane_status = true     # Show file count / selection size status bar per pane
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
+si_size_prefixes = false    # Size column shows "1.5 GB" instead of exact byte counts
+locale = ""                 # BCP-47 tag for numbers/dates (e.g. "de-DE"); "" = system regional format
 date_format = ""            # strftime-style date column format (e.g. "%Y-%m-%d"); "" = system locale
 time_format = ""            # strftime-style time column format (e.g. "%H:%M"); "" = system locale
 

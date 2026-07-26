@@ -65,6 +65,12 @@ pub struct AppearancePreferences {
     /// Visible columns and their order.
     #[schemars(title = "Columns")]
     pub columns: Vec<String>,
+    /// Show sizes in the Size column with SI prefixes ("1.5 GB") instead of exact byte counts.
+    #[schemars(title = "SI Size Prefixes")]
+    pub si_size_prefixes: bool,
+    /// BCP-47 locale for formatting numbers, dates and times (e.g. "de-DE"). Empty follows the system regional format.
+    #[schemars(title = "Locale")]
+    pub locale: String,
     /// strftime-style format for date columns (e.g. "%Y-%m-%d"). Empty uses the system locale.
     #[schemars(title = "Date Format")]
     pub date_format: String,
@@ -114,6 +120,8 @@ impl Default for AppearancePreferences {
                 "mode".into(),
                 "attributes".into(),
             ],
+            si_size_prefixes: false,
+            locale: String::new(),
             date_format: String::new(),
             time_format: String::new(),
         }

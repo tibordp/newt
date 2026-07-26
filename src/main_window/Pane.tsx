@@ -31,6 +31,7 @@ import type { VfsProgress } from "../lib/bindings";
 import { formatBytes } from "./utils";
 import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
 import { usePreferences } from "../lib/preferences";
+import { useLocale } from "../lib/locale";
 import { useRuntimeState } from "../lib/runtimeState";
 import {
   FileContextMenuContent,
@@ -209,6 +210,8 @@ type FileRowProps = {
   widthPrefix: string;
   dateFormat?: string;
   timeFormat?: string;
+  locale?: string;
+  siSizePrefixes?: boolean;
   onClick: React.MouseEventHandler<HTMLLIElement>;
   onMouseDown: React.MouseEventHandler<HTMLLIElement>;
   onOpen: (file: FileView) => void;
@@ -225,6 +228,8 @@ const FileRow = memo(
     widthPrefix,
     dateFormat,
     timeFormat,
+    locale,
+    siSizePrefixes,
     onClick,
     onMouseDown,
     onOpen,
@@ -235,6 +240,8 @@ const FileRow = memo(
       filterMode,
       dateFormat,
       timeFormat,
+      locale,
+      siSizePrefixes,
     };
     return (
       <li
@@ -278,6 +285,8 @@ const FileRow = memo(
     prev.widthPrefix === next.widthPrefix &&
     prev.dateFormat === next.dateFormat &&
     prev.timeFormat === next.timeFormat &&
+    prev.locale === next.locale &&
+    prev.siSizePrefixes === next.siSizePrefixes &&
     prev.onClick === next.onClick &&
     prev.onMouseDown === next.onMouseDown &&
     prev.onOpen === next.onOpen,
@@ -326,6 +335,7 @@ function VfsSelector({
   activePath: string;
   open: boolean;
 }) {
+  const locale = useLocale();
   // Track when we're opening a mount dialog so we don't steal focus back
   const openingDialogRef = useRef(false);
 
@@ -463,7 +473,7 @@ function VfsSelector({
                   </span>
                   {target.available_bytes != null && (
                     <span className={menuStyles.itemMeta}>
-                      {formatBytes(target.available_bytes)} free
+                      {formatBytes(target.available_bytes, locale)} free
                     </span>
                   )}
                   {isActive && (
@@ -647,7 +657,13 @@ function GitBranchBadge({ badge }: { badge: ContextBadge }) {
 /// Pulls the well-known `extra.path` key out as a trailing path
 /// fragment (rendered through ellipsis-friendly CSS) and folds the
 /// rest of the `extra` map alongside the dominant counter.
-function VfsProgressLine({ progress }: { progress: VfsProgress }) {
+function VfsProgressLine({
+  progress,
+  locale,
+}: {
+  progress: VfsProgress;
+  locale?: string;
+}) {
   const extra = { ...(progress.extra ?? {}) };
   const path = extra.path;
   delete extra.path;
@@ -656,8 +672,8 @@ function VfsProgressLine({ progress }: { progress: VfsProgress }) {
   if (progress.processed != null) {
     const counter =
       progress.total != null
-        ? `${progress.processed.toLocaleString()}/${progress.total.toLocaleString()}`
-        : `${progress.processed.toLocaleString()} items`;
+        ? `${progress.processed.toLocaleString(locale)}/${progress.total.toLocaleString(locale)}`
+        : `${progress.processed.toLocaleString(locale)} items`;
     parts.push(counter);
   }
   for (const [key, value] of Object.entries(extra)) {
@@ -740,6 +756,9 @@ function PaneInner(
   };
 
   const preferences = usePreferences();
+  // Passed explicitly to every Intl call rather than letting the runtime
+  // pick — see `ResolvedPreferences.locale`.
+  const locale = useLocale();
 
   // The key that switches this pane into filter mode. Rebindable like any
   // other command (`start_filter`), which matters for layouts where `/`
@@ -1762,7 +1781,7 @@ function PaneInner(
                   commands.dialog("root_properties", paneHandle);
                 }}
               >
-                {formatBytes(fs_stats.available_bytes)} free
+                {formatBytes(fs_stats.available_bytes, locale)} free
               </button>
             )}
           </div>
@@ -1878,6 +1897,10 @@ function PaneInner(
                     widthPrefix={widthPrefix}
                     dateFormat={preferences?.settings?.appearance?.date_format}
                     timeFormat={preferences?.settings?.appearance?.time_format}
+                    locale={locale}
+                    siSizePrefixes={
+                      preferences?.settings?.appearance?.si_size_prefixes
+                    }
                     onClick={onClick}
                     onMouseDown={onDndMouseDown}
                     onOpen={onOpen}
@@ -1917,8 +1940,8 @@ function PaneInner(
             {!showSpinner && loading && (
               <>
                 Loading... (
-                {(stats.file_count + stats.dir_count).toLocaleString()} items so
-                far)
+                {(stats.file_count + stats.dir_count).toLocaleString(locale)}{" "}
+                items so far)
               </>
             )}
             {!showSpinner &&
@@ -1926,8 +1949,8 @@ function PaneInner(
               stats.selected_file_count + stats.selected_dir_count > 0 && (
                 <>
                   {stats.selected_file_count} files, {stats.selected_dir_count}{" "}
-                  directories selected, {stats.selected_bytes.toLocaleString()}{" "}
-                  bytes total
+                  directories selected,{" "}
+                  {stats.selected_bytes.toLocaleString(locale)} bytes total
                   {stats.total_count != null &&
                     ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
                 </>
@@ -1954,7 +1977,7 @@ function PaneInner(
             {vfsProgress && (
               <span className={styles.statusbarProgress}>
                 {" · "}
-                <VfsProgressLine progress={vfsProgress} />
+                <VfsProgressLine progress={vfsProgress} locale={locale} />
               </span>
             )}
           </div>

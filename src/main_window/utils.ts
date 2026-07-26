@@ -24,7 +24,10 @@ const siPrefixes: readonly string[] = [
   "Q",
 ];
 
-export const getSiPrefixedNumber = (number: number): string => {
+export const getSiPrefixedNumber = (
+  number: number,
+  locale?: string,
+): string => {
   if (number === 0) return number.toString();
   const EXP_STEP_SIZE = 3;
   const base = Math.floor(Math.log10(Math.abs(number)));
@@ -34,17 +37,19 @@ export const getSiPrefixedNumber = (number: number): string => {
   if (siBase === 0) return number.toString();
 
   // Scale by the prefix's power of 10; round to 2 decimals and re-parse so
-  // trailing zeros drop (10.0 → 10, 10.90 → 10.9, 10.01 → 10.01).
+  // trailing zeros drop (10.0 → 10, 10.90 → 10.9, 10.01 → 10.01). Rendered
+  // through the locale so the decimal separator matches the exact byte
+  // counts in the same column ("1,5 GB" under de-DE, not "1.5 GB").
   const baseNumber = parseFloat(
     (number / Math.pow(10, siBase * EXP_STEP_SIZE)).toFixed(2),
   );
-  return `${baseNumber} ${prefix}`;
+  return `${baseNumber.toLocaleString(locale, { maximumFractionDigits: 2 })} ${prefix}`;
 };
 
 // "1.5 GB", "512 B" — getSiPrefixedNumber leaves no trailing prefix (and
 // thus no space) below 1k, so add the separator ourselves in that case.
-export const formatBytes = (bytes: number): string => {
-  const si = getSiPrefixedNumber(bytes);
+export const formatBytes = (bytes: number, locale?: string): string => {
+  const si = getSiPrefixedNumber(bytes, locale);
   return /\d$/.test(si) ? `${si} B` : `${si}B`;
 };
 

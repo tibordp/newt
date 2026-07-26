@@ -7,7 +7,7 @@ import {
   gitStatus,
   recursiveSize,
 } from "./types";
-import { modeString } from "./utils";
+import { modeString, formatBytes } from "./utils";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
 import type { MetadataTraits } from "../lib/bindings";
 import styles from "./Columns.module.scss";
@@ -171,26 +171,24 @@ export const allColumns: ColumnDef[] = [
         sortKey: "size",
       },
     ],
-    render: (info) => {
+    render: (info, ctx) => {
       // Computed recursive size (du enricher) beats the entry's own
       // size; still-growing / cancelled values get a trailing "+".
       const du = recursiveSize(info);
+      const size = (bytes: number) =>
+        ctx.siSizePrefixes
+          ? formatBytes(bytes, ctx.locale)
+          : bytes.toLocaleString(ctx.locale);
       if (du != null) {
         return (
           <span className={du.complete ? undefined : styles.partialValue}>
-            {du.bytes.toLocaleString()}
+            {size(du.bytes)}
             {!du.complete && "+"}
           </span>
         );
       }
       return (
-        <>
-          {info.size != null
-            ? info.size.toLocaleString()
-            : info.is_dir
-              ? "DIR"
-              : "???"}
-        </>
+        <>{info.size != null ? size(info.size) : info.is_dir ? "DIR" : "???"}</>
       );
     },
   },
@@ -207,7 +205,12 @@ export const allColumns: ColumnDef[] = [
     render: (info, ctx) => (
       <>
         {info.modified != null
-          ? formatDateTime(info.modified, ctx.dateFormat, ctx.timeFormat)
+          ? formatDateTime(
+              info.modified,
+              ctx.dateFormat,
+              ctx.timeFormat,
+              ctx.locale,
+            )
           : ""}
       </>
     ),
@@ -224,7 +227,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.modified != null ? formatDate(info.modified, ctx.dateFormat) : ""}
+        {info.modified != null
+          ? formatDate(info.modified, ctx.dateFormat, ctx.locale)
+          : ""}
       </>
     ),
   },
@@ -240,7 +245,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.modified != null ? formatTime(info.modified, ctx.timeFormat) : ""}
+        {info.modified != null
+          ? formatTime(info.modified, ctx.timeFormat, ctx.locale)
+          : ""}
       </>
     ),
   },
@@ -329,7 +336,12 @@ export const allColumns: ColumnDef[] = [
     render: (info, ctx) => (
       <>
         {info.accessed != null
-          ? formatDateTime(info.accessed, ctx.dateFormat, ctx.timeFormat)
+          ? formatDateTime(
+              info.accessed,
+              ctx.dateFormat,
+              ctx.timeFormat,
+              ctx.locale,
+            )
           : ""}
       </>
     ),
@@ -346,7 +358,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.accessed != null ? formatDate(info.accessed, ctx.dateFormat) : ""}
+        {info.accessed != null
+          ? formatDate(info.accessed, ctx.dateFormat, ctx.locale)
+          : ""}
       </>
     ),
   },
@@ -362,7 +376,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.accessed != null ? formatTime(info.accessed, ctx.timeFormat) : ""}
+        {info.accessed != null
+          ? formatTime(info.accessed, ctx.timeFormat, ctx.locale)
+          : ""}
       </>
     ),
   },
@@ -379,7 +395,12 @@ export const allColumns: ColumnDef[] = [
     render: (info, ctx) => (
       <>
         {info.created != null
-          ? formatDateTime(info.created, ctx.dateFormat, ctx.timeFormat)
+          ? formatDateTime(
+              info.created,
+              ctx.dateFormat,
+              ctx.timeFormat,
+              ctx.locale,
+            )
           : ""}
       </>
     ),
@@ -396,7 +417,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.created != null ? formatDate(info.created, ctx.dateFormat) : ""}
+        {info.created != null
+          ? formatDate(info.created, ctx.dateFormat, ctx.locale)
+          : ""}
       </>
     ),
   },
@@ -412,7 +435,9 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => (
       <>
-        {info.created != null ? formatTime(info.created, ctx.timeFormat) : ""}
+        {info.created != null
+          ? formatTime(info.created, ctx.timeFormat, ctx.locale)
+          : ""}
       </>
     ),
   },

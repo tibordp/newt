@@ -23,6 +23,18 @@ pub struct ResolvedPreferences {
     pub commands: Vec<CommandInfo>,
     pub bookmarks: Vec<BookmarkEntry>,
     pub user_commands: Vec<UserCommandEntry>,
+    /// BCP-47 tag the frontend formats numbers and dates with: the
+    /// `appearance.locale` preference when set, else the system's regional
+    /// format. `None` leaves the choice to the webview — which on Windows
+    /// is initialised from the *UI* language rather than the regional
+    /// format, so it is not a good default to rely on.
+    ///
+    /// A preference value is passed through verbatim, *not* validated: the
+    /// settings dialog writes on every keystroke, so this legitimately
+    /// carries half-typed tags like `sl-`. The frontend checks
+    /// well-formedness against `Intl` before use (`usableLocale`), which is
+    /// the engine that would otherwise throw on them.
+    pub locale: Option<String>,
 }
 
 /// Outcome of [`PreferencesManager::add_bookmark`].
@@ -810,6 +822,10 @@ impl PreferencesManager {
         let schema = schemars::schema_for!(AppPreferences);
         let schema_json = serde_json::to_value(schema).unwrap_or_default();
 
+        let locale = Some(settings.appearance.locale.clone())
+            .filter(|l| !l.is_empty())
+            .or_else(newt_common::locale::system_locale);
+
         ResolvedPreferences {
             settings,
             schema: schema_json,
@@ -818,6 +834,7 @@ impl PreferencesManager {
             commands,
             bookmarks,
             user_commands,
+            locale,
         }
     }
 
