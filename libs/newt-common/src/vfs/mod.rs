@@ -350,6 +350,32 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         path.parent().map(Path::to_owned)
     }
 
+    /// The root *containing* `path`: `/` on a unified-root FS, and the
+    /// drive or share root on a split-root one — `/?/C:` for
+    /// `/?/C:/Users/x`, `/?/UNC/server/share` for a path on that share.
+    ///
+    /// Answers what an absolute path fragment means when it carries no
+    /// drive of its own: on Windows a leading `\` is drive-*relative*, so
+    /// `\` and `\Users` resolve against the drive you are already on
+    /// rather than against the filesystem's abstract root (which is the
+    /// unlistable `\?\` position anyway).
+    ///
+    /// Derived from [`navigable_parent`](Self::navigable_parent) rather
+    /// than from [`roots`](Self::roots) so it lands exactly where holding
+    /// `..` down does, by construction. The walk is bounded by the path's
+    /// own depth — a `navigable_parent` step never lengthens a path, so
+    /// the bound is only ever reached at the root.
+    fn root_of(&self, path: &Path, mount_meta: &[u8]) -> PathBuf {
+        let mut current = path.to_owned();
+        for _ in 0..path.components().count() {
+            match self.navigable_parent(&current, mount_meta) {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+        current
+    }
+
     /// The filesystem's root paths, each with its volume classification
     /// where known. One `/` for a unified-root FS (every network/archive
     /// VFS, and Unix local); one per drive/share for a split-root FS

@@ -1,4 +1,4 @@
-use newt_common::vfs::VfsPath;
+use newt_common::vfs::{PathStyle, VfsPath};
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
@@ -48,6 +48,23 @@ pub enum DialogKind {
     Debug,
     ConnectionLog,
     About,
+}
+
+/// Characters a *leaf name* typed into a dialog must not contain, because
+/// the value is joined under `destination` as a single segment. Taken from
+/// the destination's `PathStyle`: `\` separates on a Windows-styled
+/// filesystem and is an ordinary filename character on a Unix one, where a
+/// directory may legitimately be called `\`. To put an archive (or a copy)
+/// inside a subdirectory, navigate the other pane there instead.
+fn leaf_name_separators(ctx: &MainWindowContext, destination: &VfsPath) -> String {
+    ctx.vfs_info()
+        .ok()
+        .and_then(|vi| vi.descriptor(destination.vfs_id))
+        .map(|(_, meta)| PathStyle::from_mount_meta(&meta))
+        .unwrap_or(PathStyle::Unix)
+        .separators()
+        .iter()
+        .collect()
 }
 
 #[tauri::command]
@@ -453,8 +470,10 @@ pub fn dialog(
                     } else {
                         None
                     };
+                    let name_separators = leaf_name_separators(&ctx, &destination);
                     ModalDataKind::CopyMove {
                         default_name,
+                        name_separators,
                         // Frontend distinguishes copy/move by this string.
                         kind: match dialog {
                             DialogKind::Copy => "copy".to_string(),
@@ -503,8 +522,10 @@ pub fn dialog(
                     };
                     let settings = ctx.preferences().load();
                     let prefs = &settings.archives;
+                    let name_separators = leaf_name_separators(&ctx, &destination);
                     ModalDataKind::CreateArchive {
                         sources,
+                        name_separators,
                         destination,
                         display_destination,
                         summary,

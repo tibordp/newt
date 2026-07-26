@@ -9,7 +9,7 @@ use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
 use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
-use newt_common::vfs::{Breadcrumb, OriginKind, VfsId, VfsPath};
+use newt_common::vfs::{Breadcrumb, OriginKind, PathStyle, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -978,20 +978,42 @@ impl Pane {
     /// native OS path. Absolute inputs (breadcrumb display paths, typed
     /// absolute paths) are decoded into a `VfsPath` at the navigate
     /// boundary (see `cmd::pane::navigate`) and routed through
-    /// `navigate_to`, so they never reach here. We split on `/` and `\`
-    /// ourselves rather than going through `std::path::Component`, whose
-    /// model would — on Windows — fabricate a drive `Prefix` and silently
-    /// corrupt the path. The VFS path domain has no drive/UNC concept.
+    /// `navigate_to`, so they never reach here. We tokenize ourselves
+    /// rather than going through `std::path::Component`, whose model would
+    /// — on Windows — fabricate a drive `Prefix` and silently corrupt the
+    /// path. The VFS path domain has no drive/UNC concept.
+    ///
+    /// Which characters count as separators comes from the *session's*
+    /// path style, not the host's: `\` separates on a Windows filesystem
+    /// and is an ordinary filename character on a Unix one, where a
+    /// directory called `\` must be navigated *into*. Decided once, from
+    /// the VFS the input was typed against — tokenizing is lexical, so a
+    /// `..` that later escapes into a differently-styled origin VFS does
+    /// not retroactively change what the string meant.
     pub(crate) fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
         let mut vfs_id = base.vfs_id;
-        let mut path = if rel.starts_with(['/', '\\']) {
-            // Defensive: an absolute fragment resets to the VFS root.
-            newt_common::vfs::path::PathBuf::root()
+        let separators = self
+            .vfs_info
+            .descriptor(vfs_id)
+            .map(|(_, meta)| PathStyle::from_mount_meta(&meta))
+            .unwrap_or(PathStyle::Unix)
+            .separators();
+        let mut path = if rel.starts_with(separators) {
+            // An absolute fragment carries no drive of its own, so it means
+            // "the root of where I am": `/` on a unified-root FS, and the
+            // current drive or share root on a split-root one — which is
+            // what a leading `\` means on Windows, where it is
+            // drive-*relative*. Resetting to the VFS root instead would
+            // land on the unlistable `\\?\` position there.
+            self.vfs_info
+                .descriptor(vfs_id)
+                .map(|(desc, meta)| desc.root_of(&base.path, &meta))
+                .unwrap_or_else(newt_common::vfs::path::PathBuf::root)
         } else {
             base.path.clone()
         };
 
-        for seg in rel.split(['/', '\\']) {
+        for seg in rel.split(separators) {
             match seg {
                 "" | "." => {}
                 ".." => {

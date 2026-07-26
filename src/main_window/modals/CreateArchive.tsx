@@ -53,6 +53,7 @@ export default function CreateArchive({
   display_destination,
   summary,
   default_name,
+  name_separators,
   defaults,
   cancel,
 }: CreateArchiveProps) {
@@ -77,7 +78,14 @@ export default function CreateArchive({
   const range = LEVEL_RANGE[format];
   const passwordMismatch =
     format === "zip" && password !== "" && password !== confirmPassword;
-  const nameInvalid = name.trim() === "" || name.includes("/");
+  // The archive is a single leaf in the destination, so a separator in the
+  // name would silently write it into a subdirectory. Which characters
+  // those are comes from the destination filesystem — `\` only separates on
+  // a Windows-styled one. To archive into a folder, navigate there in the
+  // other pane.
+  const nameInvalid =
+    name.trim() === "" ||
+    [...name_separators].some((sep) => name.includes(sep));
 
   function switchFormat(next: ArchiveFormat) {
     setName((n) => swapExtension(n, format, next));

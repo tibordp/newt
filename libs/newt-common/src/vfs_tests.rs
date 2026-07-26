@@ -543,3 +543,80 @@ mod search_progress {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// VfsDescriptor::root_of
+// ---------------------------------------------------------------------------
+
+/// What an absolute path fragment resolves against. On Windows a leading
+/// `\` is drive-relative, so it has to land on the current drive's root
+/// rather than the filesystem's abstract (and unlistable) `\\?\` root.
+mod root_of {
+    use crate::vfs::path::PathBuf;
+    use crate::vfs::{LOCAL_VFS_DESCRIPTOR, PathStyle, VfsDescriptor};
+
+    fn root_of(path: &str, style: PathStyle) -> String {
+        let meta = style.encode();
+        LOCAL_VFS_DESCRIPTOR
+            .root_of(&PathBuf::from_wire_str(path), &meta)
+            .as_wire_str()
+            .to_string()
+    }
+
+    #[test]
+    fn a_unified_root_filesystem_resolves_to_slash() {
+        assert_eq!(root_of("/home/tibor/src", PathStyle::Unix), "/");
+        assert_eq!(root_of("/home", PathStyle::Unix), "/");
+        assert_eq!(root_of("/", PathStyle::Unix), "/");
+    }
+
+    #[test]
+    fn a_windows_path_resolves_to_its_drive_root() {
+        assert_eq!(
+            root_of("/?/C:/Users/Tibor/src", PathStyle::Windows),
+            "/?/C:"
+        );
+        assert_eq!(root_of("/?/D:/games", PathStyle::Windows), "/?/D:");
+        // Already at the drive root.
+        assert_eq!(root_of("/?/C:", PathStyle::Windows), "/?/C:");
+    }
+
+    #[test]
+    fn a_unc_path_resolves_to_its_share_root() {
+        assert_eq!(
+            root_of("/?/UNC/server/share/deep/dir", PathStyle::Windows),
+            "/?/UNC/server/share"
+        );
+        assert_eq!(
+            root_of("/?/UNC/server/share", PathStyle::Windows),
+            "/?/UNC/server/share"
+        );
+    }
+
+    /// The `\\?\` position itself is a root: there is no "This PC" view to
+    /// go up to, and `navigable_parent` refuses to leave it.
+    #[test]
+    fn the_windows_sentinel_root_is_its_own_root() {
+        assert_eq!(root_of("/?", PathStyle::Windows), "/?");
+        assert_eq!(root_of("/", PathStyle::Windows), "/");
+    }
+
+    /// Whatever `..` reaches by repetition, `root_of` reaches in one step —
+    /// the two are derived from the same `navigable_parent`, and this pins
+    /// that they cannot drift.
+    #[test]
+    fn agrees_with_walking_up_by_hand() {
+        for (path, style) in [
+            ("/?/C:/Users/Tibor/src/newt", PathStyle::Windows),
+            ("/?/UNC/server/share/a/b", PathStyle::Windows),
+            ("/home/tibor/src/newt", PathStyle::Unix),
+        ] {
+            let meta = style.encode();
+            let mut walked = PathBuf::from_wire_str(path);
+            while let Some(parent) = LOCAL_VFS_DESCRIPTOR.navigable_parent(&walked, &meta) {
+                walked = parent;
+            }
+            assert_eq!(walked.as_wire_str(), root_of(path, style), "{path}");
+        }
+    }
+}

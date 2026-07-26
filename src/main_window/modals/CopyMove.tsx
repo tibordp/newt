@@ -22,6 +22,7 @@ export default function CopyMove({
   display_destination,
   summary: itemSummary,
   default_name,
+  name_separators,
   defaults,
   cancel,
   context,
@@ -39,8 +40,14 @@ export default function CopyMove({
   const isCopy = kind === "copy";
   const title = isCopy ? "Copy" : "Move";
   const isSingleFile = sources.length === 1;
+  // The value becomes a single leaf under the destination, so a separator
+  // in it would silently build a subpath. Which characters those are comes
+  // from the destination filesystem, not from here: `\` is a legal
+  // filename character on Unix, where a directory may be called `\`.
   const nameInvalid =
-    default_name != null && (name.trim() === "" || /[/\\]/.test(name));
+    default_name != null &&
+    (name.trim() === "" ||
+      [...name_separators].some((sep) => name.includes(sep)));
 
   function selectStem(e: React.FocusEvent<HTMLInputElement>) {
     const dot = name.lastIndexOf(".");

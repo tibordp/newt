@@ -540,6 +540,12 @@ pub enum ModalDataKind {
         /// Single-source transfers offer a rename field prefilled with the
         /// source's leaf name; `None` (multi-selection) hides it.
         default_name: Option<String>,
+        /// Characters that cannot appear in the rename field, because the
+        /// value becomes a single leaf under `destination`. Taken from the
+        /// *destination's* `PathStyle`, so `\` is rejected only where it
+        /// actually separates — on a Unix filesystem it is a legal
+        /// filename character and a directory may be called `\`.
+        name_separators: String,
         /// Sticky last-used preserve toggles, seeded from runtime state.
         defaults: crate::runtime_state::CopyMoveDefaults,
     },
@@ -552,6 +558,10 @@ pub enum ModalDataKind {
         summary: String,
         /// Suggested archive name, without extension.
         default_name: String,
+        /// Characters the name field must not contain — see the identical
+        /// field on `CopyMove`. The archive is a leaf in `destination`; to
+        /// write it into a subdirectory, navigate there in the other pane.
+        name_separators: String,
         defaults: ArchiveDialogDefaults,
     },
     ConnectRemote {

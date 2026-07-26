@@ -154,6 +154,35 @@ pub fn file_reader_stream(
 
 static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Render `path` for the `newt.cmd` shim, undoing the `\\?\` verbatim
+/// prefix. cmd.exe's parser rejects verbatim paths outright, but the agent
+/// path arrives with one: Tauri canonicalises its own exe to resolve
+/// symlinks (`tauri-utils` `starting_binary.rs`), and `fs::canonicalize` on
+/// Windows always hands back the `\\?\` form — so the agent found relative
+/// to the resource dir inherits it. Every other consumer is a Win32 API,
+/// which takes verbatim paths happily; only the shell needs this. See the
+/// same strip in `wsl_launch::to_wsl_path`.
+///
+/// Verbatim UNC needs unwrapping rather than merely trimming
+/// (`\\?\UNC\server\share` → `\\server\share`): dropping four
+/// characters would leave `UNC\server\share`, a *relative* path. cmd.exe
+/// can execute a program by UNC path even though it cannot cd to one.
+///
+/// The body is platform-independent so it stays testable on the machines
+/// this is usually written on; only the *compilation* is gated, since the
+/// shim itself is Windows-only.
+#[cfg(any(windows, test))]
+fn shim_command_path(path: &std::path::Path) -> String {
+    let raw = path.to_string_lossy();
+    match raw.strip_prefix(r"\\?\") {
+        Some(rest) => match rest.strip_prefix(r"UNC\") {
+            Some(share) => format!(r"\\{share}"),
+            None => rest.to_string(),
+        },
+        None => raw.into_owned(),
+    }
+}
+
 pub struct ShellIntegration {
     dir: std::path::PathBuf,
     /// Value for NEWT_SHELL_SOCK: socket path (Unix) or pipe name (Windows).
@@ -189,7 +218,7 @@ impl ShellIntegration {
             // shim marks CLI mode via NEWT_CLI instead.
             let shim = format!(
                 "@echo off\r\nset \"NEWT_CLI=1\"\r\n\"{}\" %*\r\n",
-                cli_binary.display()
+                shim_command_path(cli_binary)
             );
             std::fs::write(dir.join("newt.cmd"), shim)?;
         }
@@ -806,6 +835,48 @@ async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// cmd.exe rejects `\\?\` outright, and the agent path arrives with one
+    /// because Tauri canonicalises its exe. Platform-independent so the
+    /// Windows-only shim can still be checked from a Unix host.
+    #[test]
+    fn shim_path_drops_the_verbatim_prefix() {
+        assert_eq!(
+            shim_command_path(std::path::Path::new(
+                r"\\?\C:\Program Files\Newt\agents\newt-agent.exe"
+            )),
+            r"C:\Program Files\Newt\agents\newt-agent.exe"
+        );
+    }
+
+    #[test]
+    fn shim_path_unwraps_verbatim_unc_to_a_real_share() {
+        // Trimming four characters would leave `UNC\server\...`, which cmd
+        // would read as a relative path.
+        assert_eq!(
+            shim_command_path(std::path::Path::new(
+                r"\\?\UNC\build\share\Newt\newt-agent.exe"
+            )),
+            r"\\build\share\Newt\newt-agent.exe"
+        );
+    }
+
+    #[test]
+    fn shim_path_leaves_ordinary_paths_alone() {
+        assert_eq!(
+            shim_command_path(std::path::Path::new(r"C:\Newt\newt-agent.exe")),
+            r"C:\Newt\newt-agent.exe"
+        );
+        // A plain UNC path is already something cmd can execute.
+        assert_eq!(
+            shim_command_path(std::path::Path::new(r"\\build\share\newt-agent.exe")),
+            r"\\build\share\newt-agent.exe"
+        );
+        assert_eq!(
+            shim_command_path(std::path::Path::new("/usr/lib/newt/newt-agent")),
+            "/usr/lib/newt/newt-agent"
+        );
+    }
 
     #[test]
     fn parse_args_basics() {

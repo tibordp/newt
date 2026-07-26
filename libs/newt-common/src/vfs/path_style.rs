@@ -137,6 +137,21 @@ impl PathStyle {
         }
     }
 
+    /// Characters that separate segments in *typed* path input for this
+    /// style, and that mark an input as root-relative when leading.
+    ///
+    /// `\` is a separator only on Windows. On a Unix filesystem it is an
+    /// ordinary filename character — a directory may legitimately be
+    /// called `\`, and navigating to it must enter it rather than jump to
+    /// the root. So the set is a property of the *session's* filesystem,
+    /// not of the host the UI happens to run on.
+    pub fn separators(self) -> &'static [char] {
+        match self {
+            PathStyle::Unix => &['/'],
+            PathStyle::Windows => &['/', '\\'],
+        }
+    }
+
     /// Encode for `mount_meta` with no recorded roots (style-only — e.g.
     /// a remote Unix root, where the single `/` is implied).
     pub fn encode(self) -> Vec<u8> {
@@ -159,6 +174,25 @@ impl PathStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_windows_treats_backslash_as_a_separator() {
+        assert_eq!(PathStyle::Unix.separators(), &['/']);
+        assert_eq!(PathStyle::Windows.separators(), &['/', '\\']);
+        // A Unix directory really can be called `\`.
+        assert_eq!(
+            r"a\b"
+                .split(PathStyle::Unix.separators())
+                .collect::<Vec<_>>(),
+            vec![r"a\b"]
+        );
+        assert_eq!(
+            r"a\b"
+                .split(PathStyle::Windows.separators())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+    }
 
     #[test]
     fn round_trips() {

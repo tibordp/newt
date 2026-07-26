@@ -1991,6 +1991,14 @@ fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; displa
  */
 default_name: string | null; 
 /**
+ * Characters that cannot appear in the rename field, because the
+ * value becomes a single leaf under `destination`. Taken from the
+ * *destination's* `PathStyle`, so `\` is rejected only where it
+ * actually separates — on a Unix filesystem it is a legal
+ * filename character and a directory may be called `\`.
+ */
+name_separators: string; 
+/**
  * Sticky last-used preserve toggles, seeded from runtime state.
  */
 defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
@@ -2002,7 +2010,13 @@ destination: VfsPath; display_destination: string; summary: string;
 /**
  * Suggested archive name, without extension.
  */
-default_name: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
+default_name: string; 
+/**
+ * Characters the name field must not contain — see the identical
+ * field on `CopyMove`. The archive is a leaf in `destination`; to
+ * write it into a subdirectory, navigate there in the other pane.
+ */
+name_separators: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
 /**
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
@@ -2156,6 +2170,14 @@ fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; displa
  */
 default_name: string | null; 
 /**
+ * Characters that cannot appear in the rename field, because the
+ * value becomes a single leaf under `destination`. Taken from the
+ * *destination's* `PathStyle`, so `\` is rejected only where it
+ * actually separates — on a Unix filesystem it is a legal
+ * filename character and a directory may be called `\`.
+ */
+name_separators: string; 
+/**
  * Sticky last-used preserve toggles, seeded from runtime state.
  */
 defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
@@ -2167,7 +2189,13 @@ destination: VfsPath; display_destination: string; summary: string;
 /**
  * Suggested archive name, without extension.
  */
-default_name: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
+default_name: string; 
+/**
+ * Characters the name field must not contain — see the identical
+ * field on `CopyMove`. The archive is a leaf in `destination`; to
+ * write it into a subdirectory, navigate there in the other pane.
+ */
+name_separators: string; defaults: ArchiveDialogDefaults } } | { type: "connect_remote"; data: { 
 /**
  * Pre-populated transport for the dialog. Empty `Ssh { host: "" }`
  * when opened cold from the palette.
