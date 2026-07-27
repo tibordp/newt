@@ -31,7 +31,7 @@ use super::{
     API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE, API_VFS_READ_CHUNK,
     API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
     API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
-    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode, try_encode,
+    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, decode, encode, try_encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -64,6 +64,16 @@ type PendingVfsWriteSessions = Arc<Mutex<HashMap<StreamId, WriteSession>>>;
 /// Shared state for write sessions, accessible from both invoke and notify
 /// handlers. The JoinHandle map lets the FINISH invoke await the writer task.
 type WriteTaskHandles = Arc<Mutex<HashMap<StreamId, tokio::task::JoinHandle<Result<(), Error>>>>>;
+
+/// Caller-side state for one in-flight chunked read stream: sequenced
+/// chunks are routed here by `VfsReadChunkDispatcher` until the empty
+/// EOF sentinel.
+pub struct ReadStream {
+    pub tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    pub expected_seq: u64,
+}
+
+pub type PendingVfsReadStreams = Arc<parking_lot::Mutex<HashMap<StreamId, ReadStream>>>;
 
 pub struct VfsDispatcher {
     vfs: Arc<dyn Vfs>,

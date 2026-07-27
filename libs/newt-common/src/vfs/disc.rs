@@ -26,9 +26,9 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
-use super::archive::{
-    archive_breadcrumbs, archive_format_path, archive_mount_label, archive_try_parse_display_path,
-    build_origin_meta,
+use super::origin::{
+    build_origin_meta, origin_breadcrumbs, origin_format_path, origin_mount_label,
+    origin_try_parse_display_path,
 };
 use super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
@@ -169,16 +169,16 @@ impl VfsDescriptor for DiscVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        archive_format_path(path, mount_meta)
+        origin_format_path(path, mount_meta)
     }
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        archive_breadcrumbs(path, mount_meta)
+        origin_breadcrumbs(path, mount_meta)
     }
     fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
-        archive_try_parse_display_path(input, mount_meta)
+        origin_try_parse_display_path(input, mount_meta)
     }
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
-        archive_mount_label(mount_meta)
+        origin_mount_label(mount_meta)
     }
 }
 

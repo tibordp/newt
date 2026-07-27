@@ -17,16 +17,18 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::super::origin::{
+    origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
+};
 use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
     VfsPath,
 };
-use super::{
-    DirectoryTree, SNAPSHOT_INTERVAL, archive_breadcrumbs, archive_format_path,
-    archive_mount_label, archive_try_parse_display_path, build_directory_tree_from_iluvatar,
-    detect_compression_from_name, index_get, index_path_str, mtime_to_i64, normalize_dir_path,
-    normalized_to_string, not_found,
+use super::tree::{
+    DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
+    index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
 };
+use super::{detect_compression_from_name, not_found};
 
 // ---------------------------------------------------------------------------
 // TarArchiveVfsDescriptor
@@ -112,16 +114,16 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        archive_format_path(path, mount_meta)
+        origin_format_path(path, mount_meta)
     }
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        archive_breadcrumbs(path, mount_meta)
+        origin_breadcrumbs(path, mount_meta)
     }
     fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
-        archive_try_parse_display_path(input, mount_meta)
+        origin_try_parse_display_path(input, mount_meta)
     }
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
-        archive_mount_label(mount_meta)
+        origin_mount_label(mount_meta)
     }
 }
 

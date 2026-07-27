@@ -30,14 +30,15 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::super::origin::{
+    origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
+};
 use super::super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
     VfsPath, VfsRandomReader,
 };
-use super::{
-    DirectoryTree, archive_breadcrumbs, archive_format_path, archive_mount_label,
-    archive_try_parse_display_path, ensure_ancestors, normalized_to_string, not_found,
-};
+use super::not_found;
+use super::tree::{DirectoryTree, ensure_ancestors, normalized_to_string};
 
 /// Symlink targets are read eagerly at index time; anything larger than this
 /// is not a plausible link target.
@@ -123,16 +124,16 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        archive_format_path(path, mount_meta)
+        origin_format_path(path, mount_meta)
     }
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        archive_breadcrumbs(path, mount_meta)
+        origin_breadcrumbs(path, mount_meta)
     }
     fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
-        archive_try_parse_display_path(input, mount_meta)
+        origin_try_parse_display_path(input, mount_meta)
     }
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
-        archive_mount_label(mount_meta)
+        origin_mount_label(mount_meta)
     }
     fn metadata_traits(&self, _mount_meta: &[u8]) -> MetadataTraits {
         // Unix-made zips carry mode (and often uid/gid via the Info-ZIP

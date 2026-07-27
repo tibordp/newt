@@ -374,3 +374,16 @@ mod tests {
         assert!(!folded.groups[0].fields[0].editable);
     }
 }
+
+/// Read-only single-value text field.
+pub fn text_field(key: &str, label: &str, value: &str) -> PropertyField {
+    PropertyField {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: PropertyFieldValue::Text {
+            value: Some(value.to_string()),
+        },
+        editable: true,
+        write_only: false,
+    }
+}
