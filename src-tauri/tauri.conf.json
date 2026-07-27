@@ -23,7 +23,10 @@
       "nsis": {
         "installMode": "both"
       }
-    }
+    },
+    "license": "GPL-3.0-or-later",
+    "licenseFile": "../LICENSE",
+    "copyright": "Copyright © 2023-2026 The Newt Authors"
   },
   "productName": "Newt",
   "version": "0.1.0",

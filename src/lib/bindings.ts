@@ -1800,7 +1800,7 @@ export type DialogKind = "navigate" | "create_directory" | "create_file" | "crea
 /**
  * The connect dialog, but scoped to a pane mount (VFS selector entry).
  */
-"mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about"
+"mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about" | "third_party_notices"
 export type DiscoveryResult<T> = { items: T[]; 
 /**
  * Best-effort failure note. When present, the dialog should show this
@@ -2149,7 +2149,12 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }) & { context: ModalContext }
+moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+/**
+ * The notices text itself is bundled into the frontend at build time,
+ * so the modal carries no payload.
+ */
+{ type: "third_party_notices" }) & { context: ModalContext }
 export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
  * Bytes allocated on disk (`File::allocated_size`); summed across
@@ -2328,7 +2333,12 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } }
+moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+/**
+ * The notices text itself is bundled into the frontend at build time,
+ * so the modal carries no payload.
+ */
+{ type: "third_party_notices" }
 export type Mode = number
 /**
  * Session-level facts about the mounted VFS set that the frontend needs

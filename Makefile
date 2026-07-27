@@ -42,6 +42,8 @@ install:
 			"$(DESTDIR)$(PREFIX)/share/newt/agents/$$triple/newt-agent"; \
 	done
 	install -Dm644 packaging/newt.desktop $(DESTDIR)$(PREFIX)/share/applications/newt.desktop
+	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/doc/newt/LICENSE
+	install -Dm644 THIRD-PARTY-NOTICES.md $(DESTDIR)$(PREFIX)/share/doc/newt/THIRD-PARTY-NOTICES.md
 	install -Dm644 src-tauri/icons/32x32.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/32x32/apps/newt.png
 	install -Dm644 src-tauri/icons/128x128.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/128x128/apps/newt.png
 	install -Dm644 src-tauri/icons/128x128@2x.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/256x256/apps/newt.png

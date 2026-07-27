@@ -48,6 +48,7 @@ pub enum DialogKind {
     Debug,
     ConnectionLog,
     About,
+    ThirdPartyNotices,
 }
 
 /// Characters a *leaf name* typed into a dialog must not contain, because
@@ -686,6 +687,7 @@ pub fn dialog(
                     git_revision: option_env!("NEWT_GIT_REVISION").map(|s| s.to_string()),
                     target_triple: env!("NEWT_TARGET_TRIPLE").to_string(),
                 },
+                DialogKind::ThirdPartyNotices => ModalDataKind::ThirdPartyNotices,
             },
             context: ModalContext { pane_handle },
         });

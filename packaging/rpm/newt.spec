@@ -19,6 +19,8 @@ Tauri, featuring SSH remoting and virtual filesystem support.
 make -C %{_newt_srcdir} install DESTDIR=%{buildroot} PREFIX=/usr BINARY=%{_newt_binary} AGENT_DIR=%{_newt_agent_dir}
 
 %files
+%license /usr/share/doc/newt/LICENSE
+%doc /usr/share/doc/newt/THIRD-PARTY-NOTICES.md
 /usr/bin/newt
 /usr/share/newt/agents/
 /usr/share/applications/newt.desktop

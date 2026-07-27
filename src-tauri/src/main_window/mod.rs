@@ -692,6 +692,9 @@ pub enum ModalDataKind {
         git_revision: Option<String>,
         target_triple: String,
     },
+    /// The notices text itself is bundled into the frontend at build time,
+    /// so the modal carries no payload.
+    ThirdPartyNotices,
 }
 
 #[derive(Clone, Debug, serde::Serialize, specta::Type)]

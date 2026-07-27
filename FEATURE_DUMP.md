@@ -1620,9 +1620,32 @@ Available from the command palette. Shows:
 - **Build date** and **target triple** (e.g., `x86_64-unknown-linux-gnu`).
 - **License**: GNU General Public License v3.0 or later.
 - **GitHub link**: Clickable link to the repository, opens in browser.
+- **Third-Party Notices…**: opens the notices dialog (below).
 - **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation). The icon rotates slightly on activation.
 
 Build metadata (git revision, date, target) is captured at compile time via `build.rs` and gracefully falls back when git is unavailable.
+
+### Third-Party Notices Dialog
+
+Its own dialog, opened by the "Third-Party Notices…" button in the About box —
+deliberately not a command in its own right. Renders `THIRD-PARTY-NOTICES.md`
+in a scrollable monospace view; the scroller takes focus on open so Page/arrow
+keys work immediately.
+
+The notices are `?raw`-imported into the frontend bundle at build time, so the
+text ships inside the app shell and needs no filesystem access at runtime.
+`cargo xtask notices` regenerates the file: it walks the *normal* dependency
+edges out of `newt` and `newt-agent` (dev- and build-only crates are not
+distributed, so they are left out), reads each dependency's own licence files
+for copyright notices, and deduplicates the licence bodies per SPDX id. Asset
+attributions are hand-maintained in `xtask/src/notices_assets.md`. CI runs
+`cargo xtask notices --check`, so the committed file cannot drift from the
+dependency tree.
+
+Linux packages install `LICENSE` and the notices under
+`/usr/share/doc/newt/`; the `.deb` additionally carries a Debian
+machine-readable `copyright` file, and the Arch package mirrors both into
+`/usr/share/licenses/newt-fm/`.
 
 ### Copy Pane (Mod+.)
 

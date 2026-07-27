@@ -27,6 +27,10 @@ trap 'rm -rf "$STAGING"' EXIT
 # Install files via Makefile
 make install DESTDIR="$STAGING" PREFIX=/usr BINARY="$BINARY" AGENT_DIR="$AGENT_DIR"
 
+# Arch looks for licences under /usr/share/licenses/<pkgname>.
+install -Dm644 LICENSE "$STAGING/usr/share/licenses/newt-fm/LICENSE"
+install -Dm644 THIRD-PARTY-NOTICES.md "$STAGING/usr/share/licenses/newt-fm/THIRD-PARTY-NOTICES.md"
+
 # Create .PKGINFO
 cat > "$STAGING/.PKGINFO" <<EOF
 pkgname = newt-fm

@@ -35,6 +35,39 @@ trap 'rm -rf "$STAGING"' EXIT
 # Install files via Makefile
 make install DESTDIR="$STAGING" PREFIX=/usr BINARY="$BINARY" AGENT_DIR="$AGENT_DIR"
 
+# Debian Policy wants the copyright file under the *binary package* name, so
+# it does not fall out of the Makefile's generic /usr/share/doc/newt.
+DOCDIR="$STAGING/usr/share/doc/newt-fm"
+mkdir -p "$DOCDIR"
+cp THIRD-PARTY-NOTICES.md "$DOCDIR/"
+cat > "$DOCDIR/copyright" <<'EOF'
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: newt
+Source: https://github.com/tibordp/newt
+
+Files: *
+Copyright: 2023-2026 The Newt Authors
+License: GPL-3.0-or-later
+
+License: GPL-3.0-or-later
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation, either version 3 of the License, or (at your option)
+ any later version.
+ .
+ This program is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ more details.
+ .
+ On Debian systems the full text of the GNU General Public License version 3
+ can be found in /usr/share/common-licenses/GPL-3.
+
+Comment: Newt bundles third-party components under their own licences, all
+ GPL-compatible. They are credited in THIRD-PARTY-NOTICES.md, installed
+ alongside this file.
+EOF
+
 # Create DEBIAN/control
 mkdir -p "$STAGING/DEBIAN"
 cat > "$STAGING/DEBIAN/control" <<EOF

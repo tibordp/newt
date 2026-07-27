@@ -1,9 +1,11 @@
-//! Cross-platform agent build + layout.
+//! Build tasks: cross-platform agent builds, and the generated files that
+//! must not drift (`src/lib/bindings.ts`, `THIRD-PARTY-NOTICES.md`).
 //!
-//! Builds `newt-agent` per target triple and lays it out as
-//! `agents/<triple>/newt-agent[.exe]` — the tree the host resolver
+//! `cargo xtask agents` builds `newt-agent` per target triple and lays it
+//! out as `agents/<triple>/newt-agent[.exe]` — the tree the host resolver
 //! (`TauriAgentResolver`) loads from the cwd-relative `agents/` dir.
-//! `cargo xtask agents`.
+
+mod notices;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -177,6 +179,8 @@ fn help() {
     println!("      remove agents/ and target-agents/");
     println!("  cargo xtask gen-bindings [--check]");
     println!("      regenerate src/lib/bindings.ts (host-independent)");
+    println!("  cargo xtask notices [--check]");
+    println!("      regenerate THIRD-PARTY-NOTICES.md (needs node_modules)");
 }
 
 fn run() -> Result<(), String> {
@@ -230,6 +234,7 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "gen-bindings" => gen_bindings(rest.iter().any(|a| a == "--check")),
+        "notices" => notices::notices(&workspace_root()?, rest.iter().any(|a| a == "--check")),
         "help" | "-h" | "--help" => {
             help();
             Ok(())
@@ -238,15 +243,19 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn workspace_root() -> Result<PathBuf, String> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "cannot locate workspace root".to_string())
+        .map(Path::to_path_buf)
+}
+
 /// Regenerate `src/lib/bindings.ts` from the Rust command registry, built
 /// with `--features specta-bindings` so platform-gated specta items are
 /// included regardless of host OS (the output must not depend on the build
 /// host). `--check` fails if the committed copy then differs.
 fn gen_bindings(check: bool) -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("cannot locate workspace root")?
-        .to_path_buf();
+    let root = workspace_root()?;
     let out = root.join("src").join("lib").join("bindings.ts");
 
     let status = Command::new("cargo")

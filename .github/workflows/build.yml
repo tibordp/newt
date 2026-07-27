@@ -59,3 +59,12 @@ jobs:
         # platform-gated specta items are host-independent) and fail if the
         # committed src/lib/bindings.ts drifts.
         run: cargo xtask gen-bindings --check
+      # The notices generator reads licence files out of `node_modules`, so
+      # this job needs the npm tree as well as the cargo one.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Third-party notices up to date
+        run: cargo xtask notices --check

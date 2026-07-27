@@ -9,6 +9,7 @@ import HotPathsContent from "./HotPaths";
 import QuickConnectContent from "./QuickConnect";
 import SelectWslDistroContent from "./SelectWslDistro";
 import SettingsEditorContent from "./SettingsEditor";
+import ThirdPartyNoticesContent from "./ThirdPartyNotices";
 import { ModalContent } from "./ModalContent";
 import dialogStyles from "./Dialog.module.scss";
 import { commands } from "../../lib/bindings";
@@ -61,6 +62,8 @@ export default function ModalRouter({
         return <SettingsEditorContent preferences={preferences} />;
       case "connection_log":
         return <ConnectionLogContent state={state} />;
+      case "third_party_notices":
+        return <ThirdPartyNoticesContent />;
       // Anchored top-right where a browser's bookmark popover lives; the
       // shared ModalContent body, only the placement differs.
       case "bookmark_added":

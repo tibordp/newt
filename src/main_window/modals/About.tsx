@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { commands } from "../../lib/bindings";
+import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   DialogShell,
@@ -31,6 +33,7 @@ export default function About({
   git_revision,
   target_triple,
   cancel,
+  context,
 }: AboutProps) {
   const [fact, setFact] = useState<string | null>(null);
   const [clickCount, setClickCount] = useState(0);
@@ -82,6 +85,19 @@ export default function About({
         {fact && <div className={styles.factCard}>{fact}</div>}
       </DialogBody>
       <DialogFooter>
+        <button
+          type="button"
+          onClick={() =>
+            safe(
+              commands.dialog(
+                "third_party_notices",
+                context?.pane_handle ?? null,
+              ),
+            )
+          }
+        >
+          Third-Party Notices…
+        </button>
         <button type="button" onClick={cancel} autoFocus>
           Close
         </button>

@@ -70,6 +70,10 @@ A dedicated extract operation with conflict handling, not a VFS — today unpack
 - **Safer copy / recursive delete: `--one-file-system` guard.** `File.device_id` makes it possible: the operations scanner records the root device per source and refuses to descend across a device boundary (delete especially — a mountpoint hiding under a tree being deleted is the classic footgun; `rm -r --one-file-system` semantics). Decide surface: always-on for delete with a per-operation override, or a behavior preference. Unix-only data, so the guard degrades to today's behavior on Windows. Folds naturally into the unified recursor above.
 - **Operation framework hardening.** (a) Write-to-temp + atomic rename for overwrites instead of truncate-in-place, on VFSes with `can_rename` — a cancelled/failed copy must never leave a half-written destination; temp naming + orphan cleanup on failure; S3 and friends keep the direct write (PUT is already atomic). (b) Xattr preservation on copy (times/mode/owner are covered; sources derive from listings via the `get_metadata` default). (c) Richer conflict handling on the existing issue-resolution channel: keep-if-newer, skip-identical (size+mtime), rename-both, remembered "apply to all" choices per conflict kind.
 
+## Distribution
+
+- Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.
+
 ## Bug fixes and strengthening
 
 - `TerminalHandle` is minted per session (`Local::new()` per `session.rs`), so every window's first terminal is handle 0 — a holdover from when each MainWindow was its own process and handles were therefore process-unique. The cross-window terminal cross-talk this caused is fixed (the `terminal_data` emit is window-scoped now), but the colliding handles remain and will bite the next thing that routes by handle alone. Kill the class rather than the instance: either a process-wide counter, or make `TerminalHandle` carry its session. See "Window-targeted events" in CLAUDE.md.

@@ -1,0 +1,32 @@
+@use "../../styles/dialog-mixins" as dlg;
+
+.content {
+  @include dlg.dialog-surface;
+  @include dlg.dialog-centered;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: 760px;
+  max-width: 90%;
+  height: 560px;
+  max-height: 85%;
+}
+
+.notices {
+  flex: 1;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin: var(--space-5) var(--space-7);
+  padding: var(--space-5);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}

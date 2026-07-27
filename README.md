@@ -73,3 +73,6 @@ and tests every push to master; packaging (bundles for all three OSes) is a manu
 
 Licensed under the [GNU GPL v3.0](LICENSE) (GPL-3.0-or-later). The vendored
 [`pty-process`](libs/pty-process/) fork keeps its original MIT license.
+Bundled dependencies and assets are credited in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (`cargo xtask notices`), also
+viewable in-app from the About box.
