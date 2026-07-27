@@ -7,8 +7,10 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
 use crate::Error;
+use crate::file_reader::{FileChunk, FileDetails, SearchMatch, SearchPattern};
 use crate::rpc::Communicator;
-use crate::vfs::{VfsId, VfsPath};
+use crate::vfs::properties::PropertySheet;
+use crate::vfs::{VfsId, VfsPath, VfsRandomReader};
 
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
@@ -310,6 +312,14 @@ fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
     Ok(UserGroup::Id(uid))
 }
 
+/// The app shell's filesystem surface: the `Vfs` trait adapted for direct
+/// use by the shell (panes, viewer/editor, dialogs, file server, `newt`
+/// CLI). `VfsPath`-addressed — registry resolution and cross-VFS redirects
+/// happen behind it — remoted as one dispatcher, and hairpin-diverted per
+/// method in remote sessions. Membership test for new verbs: needs
+/// session-side data locality, one round trip per user gesture. The
+/// operations framework does not go through this; it sits on the registry
+/// side and speaks `Vfs` directly.
 #[async_trait::async_trait]
 pub trait Filesystem: Send + Sync {
     async fn poll_changes(&self, path: VfsPath) -> Result<(), Error>;
@@ -339,6 +349,36 @@ pub trait Filesystem: Send + Sync {
         &self,
         vfs_id: crate::vfs::VfsId,
     ) -> Result<crate::vfs::RevalidationOutcome, Error>;
+
+    // --- File content ---
+
+    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
+
+    /// Per-VFS extras beyond `FileDetails` (S3 ACLs, user metadata) for
+    /// the Properties dialog. Tolerated exception to the data-plane
+    /// membership test — it lives here because it needs the same
+    /// session-side resolution and there is no better surface for a
+    /// single verb.
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error>;
+
+    async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
+    -> Result<FileChunk, Error>;
+
+    /// Positioned-read handle for multi-chunk loops (see
+    /// `Vfs::open_read_at`). Callers that know they will issue a single
+    /// chunk should stay on `read_range` — one round trip, no session to
+    /// reap.
+    async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error>;
+
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error>;
 }
 
 pub struct Slow<T: Filesystem>(T);
@@ -397,6 +437,45 @@ impl<T: Filesystem> Filesystem for Slow<T> {
     ) -> Result<crate::vfs::RevalidationOutcome, Error> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         self.0.revalidate(vfs_id).await
+    }
+    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.file_details(path).await
+    }
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.get_property_sheet(path).await
+    }
+    async fn read_range(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        length: u64,
+    ) -> Result<FileChunk, Error> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        self.0.read_range(path, offset, length).await
+    }
+    async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.open_read_at(path).await
+    }
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.read_file(path, max_size).await
+    }
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.write_file(path, data).await
+    }
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        self.0.find_in_file(path, offset, pattern, max_length).await
     }
 }
 
@@ -524,6 +603,89 @@ impl Filesystem for Remote {
             .invoke(crate::api::API_REVALIDATE, &vfs_id)
             .await?;
         ret
+    }
+
+    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
+        let ret: Result<FileDetails, Error> = self
+            .communicator
+            .invoke(crate::api::API_FILE_DETAILS, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
+        let ret: Result<PropertySheet, Error> = self
+            .communicator
+            .invoke(crate::api::API_GET_PROPERTY_SHEET, &path)
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn read_range(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        length: u64,
+    ) -> Result<FileChunk, Error> {
+        let ret: Result<FileChunk, Error> = self
+            .communicator
+            .invoke(crate::api::API_READ_RANGE, &(path, offset, length))
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let stream_id: Result<StreamId, Error> = self
+            .communicator
+            .invoke(crate::api::API_OPEN_READ_AT, &path)
+            .await?;
+        Ok(Box::new(crate::api::RemoteRandomReader {
+            stream_id: stream_id?,
+            communicator: self.communicator.clone(),
+            read_api: crate::api::API_READ_AT,
+            close_api: crate::api::API_READ_AT_CLOSE,
+        }))
+    }
+
+    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
+        let ret: Result<serde_bytes::ByteBuf, Error> = self
+            .communicator
+            .invoke(crate::api::API_READ_FILE, &(path, max_size))
+            .await?;
+
+        Ok(ret?.into_vec())
+    }
+
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(
+                crate::api::API_WRITE_FILE,
+                &(path, serde_bytes::Bytes::new(&data)),
+            )
+            .await?;
+
+        Ok(ret?)
+    }
+
+    async fn find_in_file(
+        &self,
+        path: VfsPath,
+        offset: u64,
+        pattern: SearchPattern,
+        max_length: u64,
+    ) -> Result<Option<SearchMatch>, Error> {
+        let ret: Result<Option<SearchMatch>, Error> = self
+            .communicator
+            .invoke(
+                crate::api::API_FIND_IN_FILE,
+                &(path, offset, pattern, max_length),
+            )
+            .await?;
+        Ok(ret?)
     }
 }
 

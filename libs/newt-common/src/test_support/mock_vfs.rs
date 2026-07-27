@@ -50,6 +50,29 @@ pub struct FailureSpec {
     pub remaining: Option<u32>, // None = permanent, Some(n) = fail n times then succeed
 }
 
+/// Shared between the vfs and its issued `MockRandomReader`s, which check
+/// "read_at" specs per call.
+fn check_failure_in(
+    failures: &Mutex<Vec<FailureSpec>>,
+    path: &Path,
+    operation: &str,
+) -> Option<crate::Error> {
+    let mut failures = failures.lock();
+    for spec in failures.iter_mut() {
+        if spec.path == *path && spec.operation == operation {
+            match &mut spec.remaining {
+                None => return Some(spec.error.clone()),
+                Some(0) => continue,
+                Some(n) => {
+                    *n -= 1;
+                    return Some(spec.error.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Config: which capabilities the mock VFS advertises
 // ---------------------------------------------------------------------------
@@ -192,7 +215,7 @@ pub struct MockVfs {
     /// (`Path::as_wire_str`), so lookups are independent of host OS
     /// separators and round-trip through the VFS path type.
     entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
-    failures: Mutex<Vec<FailureSpec>>,
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
     descriptor: &'static dyn VfsDescriptor,
     strict_range_reads: bool,
     trashed: Mutex<Vec<String>>,
@@ -211,20 +234,7 @@ impl MockVfs {
     /// Check if a failure should fire for the given path+operation.
     /// Decrements remaining count; removes exhausted specs.
     fn check_failure(&self, path: &Path, operation: &str) -> Option<crate::Error> {
-        let mut failures = self.failures.lock();
-        for spec in failures.iter_mut() {
-            if spec.path == *path && spec.operation == operation {
-                match &mut spec.remaining {
-                    None => return Some(spec.error.clone()),
-                    Some(0) => continue,
-                    Some(n) => {
-                        *n -= 1;
-                        return Some(spec.error.clone());
-                    }
-                }
-            }
-        }
-        None
+        check_failure_in(&self.failures, path, operation)
     }
 
     /// The key a requested path is stored under. Identity on a
@@ -504,6 +514,29 @@ impl Vfs for MockVfs {
                 message: format!("file not found: {}", path),
             }),
         }
+    }
+
+    async fn open_read_at(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn crate::vfs::VfsRandomReader>, crate::Error> {
+        if let Some(e) = self.check_failure(path, "open_read_at") {
+            return Err(e);
+        }
+        let key = self.lookup_key(path);
+        if !matches!(self.entries.lock().get(&key), Some(MockEntry::File { .. })) {
+            return Err(crate::Error {
+                kind: crate::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            });
+        }
+        Ok(Box::new(MockRandomReader {
+            path: path.to_owned(),
+            key,
+            entries: self.entries.clone(),
+            failures: self.failures.clone(),
+            strict_range_reads: self.strict_range_reads,
+        }))
     }
 
     async fn file_details(
@@ -982,6 +1015,47 @@ impl VfsAsyncWriter for MockWriter {
 }
 
 // ---------------------------------------------------------------------------
+// MockRandomReader
+// ---------------------------------------------------------------------------
+
+/// Reads live entry content (not a snapshot) so failure specs and content
+/// edits made after open still apply; "read_at" specs fire per call.
+struct MockRandomReader {
+    path: PathBuf,
+    key: String,
+    entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
+    strict_range_reads: bool,
+}
+
+#[async_trait]
+impl crate::vfs::VfsRandomReader for MockRandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, crate::Error> {
+        if let Some(e) = check_failure_in(&self.failures, &self.path, "read_at") {
+            return Err(e);
+        }
+        match self.entries.lock().get(&self.key) {
+            Some(MockEntry::File { content, .. }) => {
+                if self.strict_range_reads && offset >= content.len() as u64 {
+                    return Err(crate::Error::custom(format!(
+                        "range start {} is beyond object size {}",
+                        offset,
+                        content.len()
+                    )));
+                }
+                let start = (offset as usize).min(content.len());
+                let end = (offset + len) as usize;
+                Ok(content[start..end.min(content.len())].to_vec())
+            }
+            _ => Err(crate::Error {
+                kind: crate::ErrorKind::NotFound,
+                message: format!("file not found: {}", self.path),
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
 
@@ -1156,7 +1230,7 @@ impl MockVfsBuilder {
 
         Arc::new(MockVfs {
             entries: Arc::new(Mutex::new(self.entries)),
-            failures: Mutex::new(self.failures),
+            failures: Arc::new(Mutex::new(self.failures)),
             descriptor,
             strict_range_reads,
             trashed: Mutex::new(Vec::new()),

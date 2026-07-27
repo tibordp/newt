@@ -409,21 +409,26 @@ pub async fn copy_viewer_range(
         )));
     }
 
-    let mut buf = Vec::with_capacity(length as usize);
-    let mut pos = offset;
-    let end = offset + length;
-    while pos < end {
-        let chunk_len = std::cmp::min(end - pos, 128 * 1024);
-        let chunk = ctx
-            .file_reader()?
-            .read_range(path.clone(), pos, chunk_len)
-            .await?;
-        if chunk.data.is_empty() {
-            break;
+    const CHUNK: u64 = 128 * 1024;
+    let buf = if length <= CHUNK {
+        // Single chunk — one stateless read, no handle session.
+        ctx.fs()?.read_range(path, offset, length).await?.data
+    } else {
+        let mut reader = ctx.fs()?.open_read_at(path).await?;
+        let mut buf = Vec::with_capacity(length as usize);
+        let mut pos = offset;
+        let end = offset + length;
+        while pos < end {
+            let chunk_len = std::cmp::min(end - pos, CHUNK);
+            let data = reader.read_at(pos, chunk_len).await?;
+            if data.is_empty() {
+                break;
+            }
+            pos += data.len() as u64;
+            buf.extend_from_slice(&data);
         }
-        pos += chunk.data.len() as u64;
-        buf.extend_from_slice(&chunk.data);
-    }
+        buf
+    };
 
     let text = match format {
         CopyFormat::Hex => buf
@@ -458,7 +463,7 @@ pub async fn find_in_viewer(
     max_length: u64,
 ) -> Result<Option<SearchMatch>, Error> {
     Ok(ctx
-        .file_reader()?
+        .fs()?
         .find_in_file(path, offset, pattern, max_length)
         .await?)
 }

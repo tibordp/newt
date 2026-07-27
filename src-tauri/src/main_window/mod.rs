@@ -14,7 +14,6 @@ pub mod win_proc;
 #[cfg(windows)]
 pub mod wsl_launch;
 
-use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::terminal::TerminalClient;
@@ -1289,10 +1288,6 @@ impl MainWindowContext {
 
     pub fn terminal_client(&self) -> Result<Arc<dyn TerminalClient>, Error> {
         self.with_session(|s| s.terminal_client.clone())
-    }
-
-    pub fn file_reader(&self) -> Result<Arc<dyn FileReader>, Error> {
-        self.with_session(|s| s.file_reader.clone())
     }
 
     pub fn vfs_info(&self) -> Result<Arc<dyn VfsInfo>, Error> {

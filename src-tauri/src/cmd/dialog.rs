@@ -790,7 +790,7 @@ async fn fetch_folded_sheet(
 ) -> Result<newt_common::vfs::PropertySheet, Error> {
     const CONCURRENCY: usize = 8;
 
-    let reader = ctx.file_reader()?;
+    let reader = ctx.fs()?;
     let mut iter = paths.iter().cloned();
     let mut join_set = tokio::task::JoinSet::new();
     for path in iter.by_ref().take(CONCURRENCY) {

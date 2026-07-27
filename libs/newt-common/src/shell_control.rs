@@ -120,32 +120,43 @@ pub trait ShellControlHandler: Send + Sync + 'static {
     async fn read_file(&self, path: VfsPath) -> Result<ByteStream, String>;
 }
 
-/// Stream a file through a `FileReader` in 1 MiB chunks — the shared `cat`
-/// data plane for both host (local session) and agent (remote session).
+/// Stream a file through the session `Filesystem` in 1 MiB chunks — the
+/// shared `cat` data plane for both host (local session) and agent (remote
+/// session).
+/// One positioned-read handle spans the whole stream; it opens lazily on
+/// the first poll so this stays a plain constructor.
 pub fn file_reader_stream(
-    reader: Arc<dyn crate::file_reader::FileReader>,
+    reader: Arc<dyn crate::filesystem::Filesystem>,
     path: VfsPath,
 ) -> ByteStream {
     const CHUNK: u64 = 1024 * 1024;
-    Box::pin(futures::stream::try_unfold(Some(0u64), move |state| {
-        let reader = reader.clone();
-        let path = path.clone();
-        async move {
-            let Some(offset) = state else {
-                return Ok(None);
-            };
-            let chunk = reader
-                .read_range(path, offset, CHUNK)
-                .await
-                .map_err(|e| e.to_string())?;
-            if chunk.data.is_empty() {
-                return Ok(None);
+    type Handle = Box<dyn crate::vfs::VfsRandomReader>;
+    Box::pin(futures::stream::try_unfold(
+        (None::<Handle>, Some(0u64)),
+        move |(handle, state)| {
+            let reader = reader.clone();
+            let path = path.clone();
+            async move {
+                let Some(offset) = state else {
+                    return Ok(None);
+                };
+                let mut handle = match handle {
+                    Some(handle) => handle,
+                    None => reader.open_read_at(path).await.map_err(|e| e.to_string())?,
+                };
+                let data = handle
+                    .read_at(offset, CHUNK)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if data.is_empty() {
+                    return Ok(None);
+                }
+                // A short chunk is EOF (read_at fills fully otherwise).
+                let next = (data.len() as u64 == CHUNK).then(|| offset + CHUNK);
+                Ok(Some((Bytes::from(data), (Some(handle), next))))
             }
-            let next = offset + chunk.data.len() as u64;
-            let next_state = (next < chunk.total_size).then_some(next);
-            Ok(Some((Bytes::from(chunk.data), next_state)))
-        }
-    }))
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------

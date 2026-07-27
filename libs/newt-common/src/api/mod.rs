@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicU64;
 
 use crate::{
     Error,
-    file_reader::FileReader,
     filesystem::{FileList, Filesystem, ListFilesOptions, ShellService, StreamId},
     hot_paths::HotPathsProvider,
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
@@ -47,6 +46,11 @@ pub const API_READ_FILE: Api = Api(302);
 pub const API_WRITE_FILE: Api = Api(303);
 pub const API_FIND_IN_FILE: Api = Api(304);
 pub const API_GET_PROPERTY_SHEET: Api = Api(305);
+// Filesystem-level positioned-read handles — same open/read/close shape as
+// the API_VFS_* triple, addressed by VfsPath instead of an in-VFS path.
+pub const API_OPEN_READ_AT: Api = Api(306);
+pub const API_READ_AT: Api = Api(307);
+pub const API_READ_AT_CLOSE: Api = Api(308);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
@@ -99,6 +103,12 @@ pub const API_VFS_COPY_WITHIN: Api = Api(619);
 pub const API_VFS_HARD_LINK: Api = Api(620);
 pub const API_VFS_TRASH_ITEM: Api = Api(628);
 pub const API_VFS_SAME_FILE: Api = Api(632);
+// Positioned-read handles: OPEN_READ_AT mints a server-held reader,
+// READ_AT is request/response per chunk, READ_AT_CLOSE (notify, sent on
+// proxy drop) reaps it.
+pub const API_VFS_OPEN_READ_AT: Api = Api(633);
+pub const API_VFS_READ_AT: Api = Api(634);
+pub const API_VFS_READ_AT_CLOSE: Api = Api(635);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);
@@ -114,7 +124,9 @@ pub const API_HOST_FETCH_AGENT: Api = Api(626);
 pub const API_HOST_FETCH_AGENT_CHUNK: Api = Api(627);
 pub const API_HOST_FETCH_AGENT_CANCEL: Api = Api(630);
 
+mod read_at;
 mod vfs;
+pub(crate) use read_at::{ReadAtSessions, RemoteRandomReader};
 pub use vfs::{VfsDispatcher, VfsReadChunkDispatcher};
 
 // bincode helpers — propagate decode/encode failures as structured errors so
@@ -144,6 +156,7 @@ pub(super) fn try_encode<T: serde::Serialize>(value: &T) -> Option<Vec<u8>> {
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
     outbox: Outbox,
+    read_at_sessions: ReadAtSessions,
 }
 
 impl FilesystemDispatcher {
@@ -151,6 +164,7 @@ impl FilesystemDispatcher {
         Self {
             filesystem: Box::new(filesystem),
             outbox,
+            read_at_sessions: ReadAtSessions::new(),
         }
     }
 }
@@ -237,14 +251,80 @@ impl Dispatcher for FilesystemDispatcher {
                 let ret = self.filesystem.fs_stats(path).await;
                 encode(&ret)?
             }
+            API_FILE_DETAILS => {
+                let path: VfsPath = decode(&req[..])?;
+                let ret = self.filesystem.file_details(path).await;
+
+                encode(&ret)?
+            }
+            API_GET_PROPERTY_SHEET => {
+                let path: VfsPath = decode(&req[..])?;
+                let ret = self.filesystem.get_property_sheet(path).await;
+
+                encode(&ret)?
+            }
+            API_READ_RANGE => {
+                let (path, offset, length): (VfsPath, u64, u64) = decode(&req[..])?;
+                let ret = self.filesystem.read_range(path, offset, length).await;
+
+                encode(&ret)?
+            }
+            API_OPEN_READ_AT => {
+                let path: VfsPath = decode(&req[..])?;
+                let ret: Result<StreamId, Error> = self
+                    .filesystem
+                    .open_read_at(path)
+                    .await
+                    .map(|reader| self.read_at_sessions.open(reader));
+
+                encode(&ret)?
+            }
+            API_READ_AT => {
+                let (stream_id, offset, len): (StreamId, u64, u64) = decode(&req[..])?;
+                let ret = self.read_at_sessions.read_at(stream_id, offset, len).await;
+
+                encode(&ret)?
+            }
+            API_READ_FILE => {
+                let (path, max_size): (VfsPath, u64) = decode(&req[..])?;
+                let ret = self.filesystem.read_file(path, max_size).await;
+
+                encode(&ret.map(serde_bytes::ByteBuf::from))?
+            }
+            API_WRITE_FILE => {
+                let (path, data): (VfsPath, serde_bytes::ByteBuf) = decode(&req[..])?;
+                let ret = self.filesystem.write_file(path, data.into_vec()).await;
+
+                encode(&ret)?
+            }
+            API_FIND_IN_FILE => {
+                let (path, offset, pattern, max_length): (
+                    VfsPath,
+                    u64,
+                    crate::file_reader::SearchPattern,
+                    u64,
+                ) = decode(&req[..])?;
+                let ret = self
+                    .filesystem
+                    .find_in_file(path, offset, pattern, max_length)
+                    .await;
+
+                encode(&ret)?
+            }
             _ => return Ok(None),
         };
 
         Ok(Some(ret.into()))
     }
 
-    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        Ok(false)
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api == API_READ_AT_CLOSE {
+            let stream_id: StreamId = decode(&req[..])?;
+            self.read_at_sessions.close(stream_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -346,77 +426,6 @@ impl Dispatcher for TerminalDispatcher {
             }
             _ => Ok(false),
         }
-    }
-}
-
-pub struct FileReaderDispatcher {
-    file_reader: Box<dyn FileReader>,
-}
-
-impl FileReaderDispatcher {
-    pub fn new<F: FileReader + 'static>(file_reader: F) -> Self {
-        Self {
-            file_reader: Box::new(file_reader),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Dispatcher for FileReaderDispatcher {
-    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
-        let ret = match api {
-            API_FILE_DETAILS => {
-                let path: VfsPath = decode(&req[..])?;
-                let ret = self.file_reader.file_details(path).await;
-
-                encode(&ret)?
-            }
-            API_GET_PROPERTY_SHEET => {
-                let path: VfsPath = decode(&req[..])?;
-                let ret = self.file_reader.get_property_sheet(path).await;
-
-                encode(&ret)?
-            }
-            API_READ_RANGE => {
-                let (path, offset, length): (VfsPath, u64, u64) = decode(&req[..])?;
-                let ret = self.file_reader.read_range(path, offset, length).await;
-
-                encode(&ret)?
-            }
-            API_READ_FILE => {
-                let (path, max_size): (VfsPath, u64) = decode(&req[..])?;
-                let ret = self.file_reader.read_file(path, max_size).await;
-
-                encode(&ret.map(serde_bytes::ByteBuf::from))?
-            }
-            API_WRITE_FILE => {
-                let (path, data): (VfsPath, serde_bytes::ByteBuf) = decode(&req[..])?;
-                let ret = self.file_reader.write_file(path, data.into_vec()).await;
-
-                encode(&ret)?
-            }
-            API_FIND_IN_FILE => {
-                let (path, offset, pattern, max_length): (
-                    VfsPath,
-                    u64,
-                    crate::file_reader::SearchPattern,
-                    u64,
-                ) = decode(&req[..])?;
-                let ret = self
-                    .file_reader
-                    .find_in_file(path, offset, pattern, max_length)
-                    .await;
-
-                encode(&ret)?
-            }
-            _ => return Ok(None),
-        };
-
-        Ok(Some(ret.into()))
-    }
-
-    async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
-        Ok(false)
     }
 }
 
@@ -919,13 +928,11 @@ impl VfsManager for VfsRegistryManager {
             MountRequest::Archive { origin } => crate::vfs::archive::mount(origin, &ctx).await?,
             MountRequest::Disc { origin } => crate::vfs::disc::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
-                // Content matching needs a FileReader; use the
-                // registry-backed reader so search inside a SearchVfs's
-                // source follows registry redirects.
-                let file_reader: std::sync::Arc<dyn crate::file_reader::FileReader> =
-                    std::sync::Arc::new(crate::vfs::VfsRegistryFileReader::new(
-                        self.registry.clone(),
-                    ));
+                // Content matching runs `Filesystem::find_in_file`; the
+                // registry-backed impl makes search inside a SearchVfs's
+                // source follow registry redirects.
+                let file_reader: std::sync::Arc<dyn Filesystem> =
+                    std::sync::Arc::new(crate::vfs::VfsRegistryFs::new(self.registry.clone()));
                 crate::vfs::search::mount(root, params, file_reader, &ctx).await?
             }
         };
@@ -1125,6 +1132,50 @@ mod remount_tests {
 }
 
 #[cfg(test)]
+mod filesystem_read_at_tests {
+    use super::*;
+    use crate::rpc::{Communicator, Dispatcher};
+    use crate::test_support::mock_vfs::MockVfs;
+
+    #[tokio::test]
+    async fn dispatcher_serves_read_at_sessions_and_close_reaps() {
+        let registry = Arc::new(VfsRegistry::with_root(
+            MockVfs::builder().file("/f", b"hello world").build(),
+        ));
+        let (outbox, _outbox_rx) = Communicator::create_outbox();
+        let dispatcher =
+            FilesystemDispatcher::new(crate::vfs::VfsRegistryFs::new(registry), outbox);
+
+        let path = VfsPath::from_wire_str(VfsId::ROOT, "/f");
+        let response = dispatcher
+            .invoke(API_OPEN_READ_AT, encode(&path).unwrap().into())
+            .await
+            .unwrap()
+            .unwrap();
+        let stream_id: Result<StreamId, Error> = decode(&response).unwrap();
+        let stream_id = stream_id.unwrap();
+        assert!(dispatcher.read_at_sessions.contains(stream_id));
+
+        let response = dispatcher
+            .invoke(
+                API_READ_AT,
+                encode(&(stream_id, 6u64, 5u64)).unwrap().into(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let data: Result<serde_bytes::ByteBuf, Error> = decode(&response).unwrap();
+        assert_eq!(data.unwrap().as_slice(), b"world");
+
+        dispatcher
+            .notify(API_READ_AT_CLOSE, encode(&stream_id).unwrap().into())
+            .await
+            .unwrap();
+        assert!(!dispatcher.read_at_sessions.contains(stream_id));
+    }
+}
+
+#[cfg(test)]
 mod cancellation_tests {
     use super::*;
     use crate::rpc::Communicator;
@@ -1187,6 +1238,54 @@ mod cancellation_tests {
             _vfs_id: VfsId,
         ) -> Result<crate::vfs::RevalidationOutcome, Error> {
             Ok(crate::vfs::RevalidationOutcome::Fresh)
+        }
+
+        async fn file_details(
+            &self,
+            _path: VfsPath,
+        ) -> Result<crate::file_reader::FileDetails, Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn get_property_sheet(
+            &self,
+            _path: VfsPath,
+        ) -> Result<crate::vfs::properties::PropertySheet, Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn read_range(
+            &self,
+            _path: VfsPath,
+            _offset: u64,
+            _length: u64,
+        ) -> Result<crate::file_reader::FileChunk, Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn open_read_at(
+            &self,
+            _path: VfsPath,
+        ) -> Result<Box<dyn crate::vfs::VfsRandomReader>, Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn read_file(&self, _path: VfsPath, _max_size: u64) -> Result<Vec<u8>, Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn write_file(&self, _path: VfsPath, _data: Vec<u8>) -> Result<(), Error> {
+            Err(Error::not_supported())
+        }
+
+        async fn find_in_file(
+            &self,
+            _path: VfsPath,
+            _offset: u64,
+            _pattern: crate::file_reader::SearchPattern,
+            _max_length: u64,
+        ) -> Result<Option<crate::file_reader::SearchMatch>, Error> {
+            Err(Error::not_supported())
         }
     }
 

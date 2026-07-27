@@ -5,10 +5,9 @@ use newt_common::{
     Error,
     agent_resolver::AgentResolver,
     api::{
-        EnricherDispatcher, FileReaderDispatcher, FilesystemDispatcher, HotPathsDispatcher,
-        OperationDispatcher, PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher,
-        TerminalDispatcher, VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher,
-        VfsRegistryManager,
+        EnricherDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
+        PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
+        VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
     },
     askpass,
     enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
@@ -16,7 +15,7 @@ use newt_common::{
     hot_paths,
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
-    vfs::{LocalVfs, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs},
+    vfs::{LocalVfs, VfsRegistry, VfsRegistryFs},
 };
 
 use async_compression::tokio::{bufread::ZstdDecoder, write::ZstdEncoder};
@@ -329,7 +328,7 @@ async fn run_agent() -> Result<(), Error> {
     // `cat` data plane reads from this side's registry.
     let shell_handler = Arc::new(AgentShellHandler {
         host: host_communicator.clone(),
-        file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
+        fs: Arc::new(VfsRegistryFs::new(registry.clone())),
     });
     let shell_integration =
         match newt_common::shell_control::ShellIntegration::start(&cli_binary, shell_handler) {
@@ -351,9 +350,6 @@ async fn run_agent() -> Result<(), Error> {
         .chain(TerminalDispatcher::new(
             newt_common::terminal::Local::with_shell_integration(shell_integration),
         ))
-        .chain(FileReaderDispatcher::new(VfsRegistryFileReader::new(
-            registry.clone(),
-        )))
         .chain(OperationDispatcher::new(outbox.clone(), op_context))
         .chain(VfsMountDispatcher::new(vfs_manager))
         .chain(VfsReadChunkDispatcher::new(pending_read_streams))
@@ -385,7 +381,7 @@ async fn run_agent() -> Result<(), Error> {
 /// live), so file bytes never round-trip through the host.
 struct AgentShellHandler {
     host: Arc<std::sync::OnceLock<Communicator>>,
-    file_reader: Arc<dyn newt_common::file_reader::FileReader>,
+    fs: Arc<dyn newt_common::filesystem::Filesystem>,
 }
 
 #[async_trait::async_trait]
@@ -410,7 +406,7 @@ impl newt_common::shell_control::ShellControlHandler for AgentShellHandler {
         path: newt_common::vfs::VfsPath,
     ) -> Result<newt_common::shell_control::ByteStream, String> {
         Ok(newt_common::shell_control::file_reader_stream(
-            self.file_reader.clone(),
+            self.fs.clone(),
             path,
         ))
     }

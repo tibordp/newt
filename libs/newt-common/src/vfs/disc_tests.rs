@@ -41,23 +41,37 @@ fn fixture(name: &str) -> Vec<u8> {
     out
 }
 
-/// Delegating wrapper that counts upstream `read_range` calls — the whole
-/// point of this backend is read efficiency on high-latency upstreams.
+/// Delegating wrapper that counts upstream reads (`read_range` one-shots
+/// and per-handle `read_at`s) — the whole point of this backend is read
+/// efficiency on high-latency upstreams.
 struct CountingVfs {
     inner: Arc<dyn Vfs>,
-    read_ranges: AtomicUsize,
+    read_ranges: Arc<AtomicUsize>,
 }
 
 impl CountingVfs {
     fn new(inner: Arc<dyn Vfs>) -> Arc<Self> {
         Arc::new(CountingVfs {
             inner,
-            read_ranges: AtomicUsize::new(0),
+            read_ranges: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     fn reads(&self) -> usize {
         self.read_ranges.load(Ordering::SeqCst)
+    }
+}
+
+struct CountingRandomReader {
+    inner: Box<dyn crate::vfs::VfsRandomReader>,
+    reads: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl crate::vfs::VfsRandomReader for CountingRandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, crate::Error> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.read_at(offset, len).await
     }
 }
 
@@ -98,6 +112,16 @@ impl Vfs for CountingVfs {
     ) -> Result<FileChunk, crate::Error> {
         self.read_ranges.fetch_add(1, Ordering::SeqCst);
         self.inner.read_range(path, offset, length).await
+    }
+
+    async fn open_read_at(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn crate::vfs::VfsRandomReader>, crate::Error> {
+        Ok(Box::new(CountingRandomReader {
+            inner: self.inner.open_read_at(path).await?,
+            reads: self.read_ranges.clone(),
+        }))
     }
 }
 

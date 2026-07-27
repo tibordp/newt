@@ -23,7 +23,7 @@ fn sftp_path(p: &Path) -> std::path::PathBuf {
 
 use super::{
     Breadcrumb, DisplayPathMatch, MountRequest, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs,
-    VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor, VfsMetadata,
+    VfsAsyncWriter, VfsChangeNotifier, VfsDescriptor, VfsMetadata, VfsRandomReader,
 };
 
 // ---------------------------------------------------------------------------
@@ -744,6 +744,17 @@ impl Vfs for SftpVfs {
         Self::read_range_from_file(&mut file, offset, length, total_size).await
     }
 
+    async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
+        debug!("sftp: open_read_at {}", path);
+        self.check_alive()?;
+
+        let meta = self.sftp.fs().metadata(sftp_path(path)).await?;
+        let total_size = meta.len().unwrap_or(0);
+        let file = self.sftp.open(sftp_path(path)).await?;
+
+        Ok(Box::new(SftpRandomReader { file, total_size }))
+    }
+
     async fn open_read_async(
         &self,
         path: &Path,
@@ -989,9 +1000,10 @@ impl SftpVfs {
             });
         }
 
-        if offset > 0 {
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-        }
+        // Seek is client-side bookkeeping (SFTP reads carry explicit
+        // offsets), so always repositioning is free — and required when the
+        // handle is shared across calls (`SftpRandomReader`).
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
 
         const CHUNK_SIZE: u32 = VFS_READ_CHUNK_SIZE as u32;
         let mut data = Vec::with_capacity(to_read);
@@ -1011,6 +1023,27 @@ impl SftpVfs {
             offset,
             total_size,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SftpRandomReader — positioned reads on one held-open SFTP handle
+// ---------------------------------------------------------------------------
+
+/// `total_size` is pinned at open — the handle reads the file as it was
+/// when the session started, and clamping against a stale size is the
+/// caller-visible consequence of that.
+struct SftpRandomReader {
+    file: openssh_sftp_client::file::File,
+    total_size: u64,
+}
+
+#[async_trait::async_trait]
+impl VfsRandomReader for SftpRandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        let chunk =
+            SftpVfs::read_range_from_file(&mut self.file, offset, len, self.total_size).await?;
+        Ok(chunk.data)
     }
 }
 

@@ -20,7 +20,7 @@ use crate::{Error, ToUnix};
 
 use super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
-    VfsDescriptor, VfsMetadata, VfsSpaceInfo,
+    VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
 };
 
 /// Bytes read from a file head when sniffing for a MIME type without an
@@ -1084,6 +1084,16 @@ impl Vfs for LocalVfs {
         Ok(Box::new(file))
     }
 
+    async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let path = to_native(path);
+        let file =
+            tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::from))
+                .await??;
+        Ok(Box::new(LocalRandomReader {
+            file: Arc::new(file),
+        }))
+    }
+
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
         let path = to_native(path);
         let cache = self.fs_cache.clone();
@@ -1344,6 +1354,45 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
     }
+}
+
+// ---------------------------------------------------------------------------
+// LocalRandomReader — pread on a held-open fd
+// ---------------------------------------------------------------------------
+
+struct LocalRandomReader {
+    file: Arc<std::fs::File>,
+}
+
+#[async_trait::async_trait]
+impl VfsRandomReader for LocalRandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        let file = self.file.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut data = vec![0u8; len as usize];
+            let mut total = 0usize;
+            while total < data.len() {
+                let n = pread(&file, &mut data[total..], offset + total as u64)?;
+                if n == 0 {
+                    break;
+                }
+                total += n;
+            }
+            data.truncate(total);
+            Ok(data)
+        })
+        .await?
+    }
+}
+
+#[cfg(unix)]
+fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    std::os::unix::fs::FileExt::read_at(file, buf, offset)
+}
+
+#[cfg(windows)]
+fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    std::os::windows::fs::FileExt::seek_read(file, buf, offset)
 }
 
 // ---------------------------------------------------------------------------

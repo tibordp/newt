@@ -30,7 +30,10 @@ use super::archive::{
     archive_breadcrumbs, archive_format_path, archive_mount_label, archive_try_parse_display_path,
     build_origin_meta,
 };
-use super::{Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath};
+use super::{
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+    VfsRandomReader,
+};
 
 const DISC_EXTENSIONS: &[&str] = &["iso", "udf"];
 
@@ -736,11 +739,12 @@ impl Vfs for DiscVfs {
         path: &Path,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, Error> {
         let entry = self.resolve_file(path).await?;
-        Ok(Box::new(ExtentReader::new(
-            self.upstream.clone(),
-            self.image_path.clone(),
-            entry,
-        )))
+        // Inline entries never touch the image again — no handle for them.
+        let upstream = match entry.data {
+            EntryData::Inline(_) => None,
+            EntryData::Extents(_) => Some(self.upstream.open_read_at(&self.image_path).await?),
+        };
+        Ok(Box::new(ExtentReader::new(upstream, entry)))
     }
 }
 
@@ -748,14 +752,18 @@ impl Vfs for DiscVfs {
 // ExtentReader — AsyncRead over an entry's extents
 // ---------------------------------------------------------------------------
 
-type ChunkFuture = Pin<Box<dyn Future<Output = Result<Vec<u8>, Error>> + Send>>;
+type ChunkFuture = Pin<
+    Box<dyn Future<Output = (Option<Box<dyn VfsRandomReader>>, Result<Vec<u8>, Error>)> + Send>,
+>;
 
-/// Streams a file out of the image by issuing `read_range` calls against
-/// the upstream VFS, one `STREAM_CHUNK` at a time. Dropping the reader
-/// drops any in-flight read — cancellation propagates naturally.
+/// Streams a file out of the image with positioned reads on one held-open
+/// upstream handle, one `STREAM_CHUNK` at a time. The in-flight future owns
+/// the handle and hands it back with the result. Dropping the reader drops
+/// any in-flight read (and with it the handle) — cancellation propagates
+/// naturally.
 struct ExtentReader {
-    upstream: Arc<dyn Vfs>,
-    image_path: PathBuf,
+    /// `None` for inline-only entries, and while a read is in flight.
+    upstream: Option<Box<dyn VfsRandomReader>>,
     /// Remaining (image_offset, len, kind) pieces; inline data is
     /// pre-buffered instead.
     pieces: VecDeque<(u64, u64, ExtentKind)>,
@@ -764,7 +772,7 @@ struct ExtentReader {
 }
 
 impl ExtentReader {
-    fn new(upstream: Arc<dyn Vfs>, image_path: PathBuf, entry: Entry) -> Self {
+    fn new(upstream: Option<Box<dyn VfsRandomReader>>, entry: Entry) -> Self {
         let (pieces, buf) = match entry.data {
             EntryData::Inline(mut data) => {
                 data.truncate(entry.size as usize);
@@ -776,7 +784,6 @@ impl ExtentReader {
         };
         ExtentReader {
             upstream,
-            image_path,
             pieces,
             buf: std::io::Cursor::new(buf),
             inflight: None,
@@ -792,20 +799,26 @@ impl ExtentReader {
             self.pieces.push_front((off + take, len - take, kind));
         }
         match kind {
-            ExtentKind::Sparse => Some(Box::pin(async move { Ok(vec![0u8; take as usize]) })),
+            ExtentKind::Sparse => Some(Box::pin(
+                async move { (None, Ok(vec![0u8; take as usize])) },
+            )),
             ExtentKind::Recorded => {
-                let upstream = self.upstream.clone();
-                let path = self.image_path.clone();
+                let mut handle = self
+                    .upstream
+                    .take()
+                    .expect("extent reader lost its upstream handle");
                 Some(Box::pin(async move {
-                    let chunk = upstream.read_range(&path, off, take).await?;
-                    if (chunk.data.len() as u64) < take {
-                        return Err(Error::custom(
+                    let result = match handle.read_at(off, take).await {
+                        Ok(data) if (data.len() as u64) < take => Err(Error::custom(
                             "disc image truncated: extent read came up short",
-                        ));
-                    }
-                    let mut data = chunk.data;
-                    data.truncate(take as usize);
-                    Ok(data)
+                        )),
+                        Ok(mut data) => {
+                            data.truncate(take as usize);
+                            Ok(data)
+                        }
+                        Err(e) => Err(e),
+                    };
+                    (Some(handle), result)
                 }))
             }
         }
@@ -841,11 +854,18 @@ impl AsyncRead for ExtentReader {
                     self.inflight = Some(fut);
                     return Poll::Pending;
                 }
-                Poll::Ready(Ok(data)) => {
-                    self.buf = std::io::Cursor::new(data);
-                }
-                Poll::Ready(Err(e)) => {
-                    return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                Poll::Ready((handle, result)) => {
+                    if let Some(handle) = handle {
+                        self.upstream = Some(handle);
+                    }
+                    match result {
+                        Ok(data) => {
+                            self.buf = std::io::Cursor::new(data);
+                        }
+                        Err(e) => {
+                            return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                        }
+                    }
                 }
             }
         }

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use newt_common::file_reader::FileReader;
+use newt_common::filesystem::Filesystem;
 use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::rpc::Dispatcher;
 use newt_common::shell_control::{
@@ -33,7 +33,7 @@ fn context_for(window: &tauri::WebviewWindow) -> Result<MainWindowContext, Strin
 /// Handler for local sessions: the control socket lives in this process.
 pub struct HostShellHandler {
     pub window: tauri::WebviewWindow,
-    pub file_reader: Arc<dyn FileReader>,
+    pub fs: Arc<dyn Filesystem>,
 }
 
 #[async_trait::async_trait]
@@ -44,7 +44,7 @@ impl ShellControlHandler for HostShellHandler {
     }
 
     async fn read_file(&self, path: VfsPath) -> Result<ByteStream, String> {
-        Ok(file_reader_stream(self.file_reader.clone(), path))
+        Ok(file_reader_stream(self.fs.clone(), path))
     }
 }
 
@@ -260,8 +260,8 @@ async fn build_transfer(
     let wants_dir = dest.ends_with('/') || dest.ends_with('\\');
     let dest_path = resolve_arg(ctx, pane, dest, ArgBase::Cwd(cwd)).await?;
 
-    let file_reader = ctx.file_reader().map_err(err)?;
-    let dest_details = file_reader.file_details(dest_path.clone()).await.ok();
+    let fs = ctx.fs().map_err(err)?;
+    let dest_details = fs.file_details(dest_path.clone()).await.ok();
 
     match dest_details {
         Some(details) if details.is_dir => {
@@ -282,7 +282,7 @@ async fn build_transfer(
                 .file_name()
                 .ok_or_else(|| format!("destination has no file name: {dest}"))?
                 .to_string();
-            let parent_details = file_reader
+            let parent_details = fs
                 .file_details(parent.clone())
                 .await
                 .map_err(|_| format!("destination directory does not exist: {dest}"))?;

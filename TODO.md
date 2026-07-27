@@ -11,7 +11,7 @@ Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 
 ## Remote VFS (local ↔ remote bridge)
 
-- Hairpin `get_property_sheet` — the one path-targeted `Filesystem`/`FileReader` verb still not diverted. Gated on `RemoteVfsDescriptor::has_extended_properties()` (false today, and `RemoteVfs` doesn't remote the verb), i.e. it needs the "local property sheets in a remote session" feature, not just a hairpin arm.
+- Hairpin `get_property_sheet` — the one path-targeted `Filesystem` verb still not diverted. Gated on `RemoteVfsDescriptor::has_extended_properties()` (false today, and `RemoteVfs` doesn't remote the verb), i.e. it needs the "local property sheets in a remote session" feature, not just a hairpin arm.
 
 ## Generalized remote session transport
 

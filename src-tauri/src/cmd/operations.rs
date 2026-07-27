@@ -645,7 +645,7 @@ pub async fn confirm_delete(ctx: MainWindowContext, to_trash: bool) -> Result<()
 #[tauri::command]
 #[specta::specta]
 pub async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
-    let info = ctx.file_reader()?.file_details(path).await?;
+    let info = ctx.fs()?.file_details(path).await?;
     Ok(info)
 }
 
@@ -657,7 +657,7 @@ pub async fn read_file_range(
     offset: u64,
     length: u64,
 ) -> Result<FileChunk, Error> {
-    let chunk = ctx.file_reader()?.read_range(path, offset, length).await?;
+    let chunk = ctx.fs()?.read_range(path, offset, length).await?;
     Ok(chunk)
 }
 
@@ -668,14 +668,14 @@ pub async fn read_file(
     path: VfsPath,
     max_size: u64,
 ) -> Result<Vec<u8>, Error> {
-    let data = ctx.file_reader()?.read_file(path, max_size).await?;
+    let data = ctx.fs()?.read_file(path, max_size).await?;
     Ok(data)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-    ctx.file_reader()?.write_file(path, data).await?;
+    ctx.fs()?.write_file(path, data).await?;
     Ok(())
 }
 

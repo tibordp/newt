@@ -1,8 +1,7 @@
-use crate::Error;
+//! Data types for the file-content verbs on `filesystem::Filesystem`
+//! (details, chunks, in-file search).
+
 use crate::filesystem::{Mode, UserGroup};
-use crate::rpc::Communicator;
-use crate::vfs::VfsPath;
-use crate::vfs::properties::PropertySheet;
 
 /// Guess MIME type from a file path's extension.
 /// Returns `None` if the extension is not recognized.
@@ -48,104 +47,4 @@ pub struct FileChunk {
     pub data: Vec<u8>,
     pub offset: u64,
     pub total_size: u64,
-}
-
-#[async_trait::async_trait]
-pub trait FileReader: Send + Sync {
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
-    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error>;
-    async fn read_range(&self, path: VfsPath, offset: u64, length: u64)
-    -> Result<FileChunk, Error>;
-    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
-    async fn find_in_file(
-        &self,
-        path: VfsPath,
-        offset: u64,
-        pattern: SearchPattern,
-        max_length: u64,
-    ) -> Result<Option<SearchMatch>, Error>;
-}
-
-pub struct Remote {
-    communicator: Communicator,
-}
-
-impl Remote {
-    pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
-    }
-}
-
-#[async_trait::async_trait]
-impl FileReader for Remote {
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
-        let ret: Result<FileDetails, Error> = self
-            .communicator
-            .invoke(crate::api::API_FILE_DETAILS, &path)
-            .await?;
-
-        Ok(ret?)
-    }
-
-    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
-        let ret: Result<PropertySheet, Error> = self
-            .communicator
-            .invoke(crate::api::API_GET_PROPERTY_SHEET, &path)
-            .await?;
-
-        Ok(ret?)
-    }
-
-    async fn read_range(
-        &self,
-        path: VfsPath,
-        offset: u64,
-        length: u64,
-    ) -> Result<FileChunk, Error> {
-        let ret: Result<FileChunk, Error> = self
-            .communicator
-            .invoke(crate::api::API_READ_RANGE, &(path, offset, length))
-            .await?;
-
-        Ok(ret?)
-    }
-
-    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
-        let ret: Result<serde_bytes::ByteBuf, Error> = self
-            .communicator
-            .invoke(crate::api::API_READ_FILE, &(path, max_size))
-            .await?;
-
-        Ok(ret?.into_vec())
-    }
-
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(
-                crate::api::API_WRITE_FILE,
-                &(path, serde_bytes::Bytes::new(&data)),
-            )
-            .await?;
-
-        Ok(ret?)
-    }
-
-    async fn find_in_file(
-        &self,
-        path: VfsPath,
-        offset: u64,
-        pattern: SearchPattern,
-        max_length: u64,
-    ) -> Result<Option<SearchMatch>, Error> {
-        let ret: Result<Option<SearchMatch>, Error> = self
-            .communicator
-            .invoke(
-                crate::api::API_FIND_IN_FILE,
-                &(path, offset, pattern, max_length),
-            )
-            .await?;
-        Ok(ret?)
-    }
 }

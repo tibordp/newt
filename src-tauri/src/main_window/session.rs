@@ -4,7 +4,6 @@ use newt_common::api::{
 use newt_common::enrich::{
     EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
 };
-use newt_common::file_reader::FileReader;
 use newt_common::filesystem::{
     FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
 };
@@ -15,7 +14,7 @@ use newt_common::rpc::Communicator;
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
     LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
-    VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFileReader, VfsRegistryFs,
+    VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFs,
 };
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -232,7 +231,6 @@ pub struct Session {
     pub(super) vfs_manager: Arc<dyn VfsManager>,
     pub(super) vfs_info: Arc<dyn VfsInfo>,
     pub(super) terminal_client: Arc<dyn TerminalClient>,
-    pub(super) file_reader: Arc<dyn FileReader>,
     pub(super) operations_client: Arc<dyn OperationsClient>,
     pub(super) hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
     pub(super) discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
@@ -366,9 +364,9 @@ impl VfsInfo for MountedVfsInfoService {
 }
 
 // ---------------------------------------------------------------------------
-// Hairpin diversion wrappers — for remote sessions, divert certain calls for
-// the RemoteVfs (client-local filesystem) to a local VfsRegistryFs/FileReader
-// instead of round-tripping through the agent.
+// Hairpin diversion wrapper — for remote sessions, divert certain calls for
+// the RemoteVfs (client-local filesystem) to a local VfsRegistryFs instead
+// of round-tripping through the agent.
 // ---------------------------------------------------------------------------
 
 struct HairpinFs {
@@ -470,22 +468,13 @@ impl Filesystem for HairpinFs {
             self.inner.revalidate(vfs_id).await
         }
     }
-}
 
-struct HairpinFileReader {
-    remote_vfs_id: VfsId,
-    local_reader: VfsRegistryFileReader,
-    inner: Arc<dyn FileReader>,
-}
-
-#[async_trait::async_trait]
-impl FileReader for HairpinFileReader {
     async fn file_details(
         &self,
         path: VfsPath,
     ) -> Result<newt_common::file_reader::FileDetails, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
-            self.local_reader
+            self.local_fs
                 .file_details(VfsPath::new(VfsId::ROOT, path.path))
                 .await
         } else {
@@ -507,7 +496,7 @@ impl FileReader for HairpinFileReader {
         length: u64,
     ) -> Result<newt_common::file_reader::FileChunk, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
-            self.local_reader
+            self.local_fs
                 .read_range(VfsPath::new(VfsId::ROOT, path.path), offset, length)
                 .await
         } else {
@@ -515,9 +504,22 @@ impl FileReader for HairpinFileReader {
         }
     }
 
+    async fn open_read_at(
+        &self,
+        path: VfsPath,
+    ) -> Result<Box<dyn newt_common::vfs::VfsRandomReader>, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            self.local_fs
+                .open_read_at(VfsPath::new(VfsId::ROOT, path.path))
+                .await
+        } else {
+            self.inner.open_read_at(path).await
+        }
+    }
+
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
-            self.local_reader
+            self.local_fs
                 .read_file(VfsPath::new(VfsId::ROOT, path.path), max_size)
                 .await
         } else {
@@ -527,7 +529,7 @@ impl FileReader for HairpinFileReader {
 
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
-            self.local_reader
+            self.local_fs
                 .write_file(VfsPath::new(VfsId::ROOT, path.path), data)
                 .await
         } else {
@@ -543,7 +545,7 @@ impl FileReader for HairpinFileReader {
         max_length: u64,
     ) -> Result<Option<newt_common::file_reader::SearchMatch>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
-            self.local_reader
+            self.local_fs
                 .find_in_file(
                     VfsPath::new(VfsId::ROOT, path.path),
                     offset,
@@ -750,7 +752,6 @@ struct Services {
     shell_service: Arc<dyn ShellService>,
     vfs_manager: Arc<dyn VfsManager>,
     terminal_client: Arc<dyn TerminalClient>,
-    file_reader: Arc<dyn FileReader>,
     operations_client: Arc<dyn OperationsClient>,
     enricher_client: Arc<dyn EnricherClient>,
     hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
@@ -780,7 +781,7 @@ fn create_local_services(
     let shell_integration = if preferences.load().behavior.shell_integration {
         let handler = Arc::new(crate::shell_control::HostShellHandler {
             window: publisher.window().clone(),
-            file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
+            fs: Arc::new(VfsRegistryFs::new(registry.clone())),
         });
         agent_resolver
             .find_local_agent_binary()
@@ -832,7 +833,6 @@ fn create_local_services(
         terminal_client: Arc::new(newt_common::terminal::Local::with_shell_integration(
             shell_integration,
         )),
-        file_reader: Arc::new(VfsRegistryFileReader::new(registry.clone())),
         operations_client: Arc::new(newt_common::operation::Local::new(progress_tx, op_context)),
         enricher_client: Arc::new(newt_common::enrich::Local::new(Arc::new(
             Enrichers::new(registry.clone())
@@ -866,7 +866,6 @@ fn create_remote_services(
         shell_service: Arc::new(ShellRemote::new(communicator.clone())),
         vfs_manager: Arc::new(VfsManagerRemote::new(communicator.clone())),
         terminal_client: Arc::new(newt_common::terminal::Remote::new(communicator.clone())),
-        file_reader: Arc::new(newt_common::file_reader::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
         enricher_client: Arc::new(newt_common::enrich::Remote::new(
             communicator.clone(),
@@ -1346,11 +1345,6 @@ pub(super) async fn connect(
                     local_fs: VfsRegistryFs::new(local_registry.clone()),
                     inner: services.fs,
                 });
-                services.file_reader = Arc::new(HairpinFileReader {
-                    remote_vfs_id: resp.vfs_id,
-                    local_reader: VfsRegistryFileReader::new(local_registry),
-                    inner: services.file_reader,
-                });
             }
             Err(e) => {
                 log::warn!("failed to mount remote VFS: {}", e);
@@ -1408,7 +1402,7 @@ pub(super) async fn connect(
 
     let file_server_token = uuid::Uuid::new_v4().to_string();
     let (file_server_port, file_server_handle) =
-        crate::file_server::start(services.file_reader.clone(), file_server_token.clone());
+        crate::file_server::start(services.fs.clone(), file_server_token.clone());
 
     let event_loop_handle = tokio::spawn({
         let ctx = main_window_ctx;
@@ -1430,7 +1424,6 @@ pub(super) async fn connect(
         shell_service: services.shell_service,
         vfs_manager: services.vfs_manager,
         terminal_client: services.terminal_client,
-        file_reader: services.file_reader,
         operations_client: services.operations_client,
         hot_paths_provider: services.hot_paths_provider,
         discovery_provider: services.discovery_provider,

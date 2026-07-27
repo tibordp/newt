@@ -4,8 +4,10 @@
 //! is a complete index fetched in a few bounded reads at first use, entry
 //! content is random-access (stored entries are pure extents; compressed
 //! ones stream through a resumable decrypt→decompress cursor), and nothing
-//! ever blocks a thread — every upstream access is a plain awaited
-//! `read_range`, so dropping a future cancels the read.
+//! ever blocks a thread — every upstream access is a plain awaited read, so
+//! dropping a future cancels it. Entry reads hold one `open_read_at` handle
+//! on the archive for their whole pipeline; the mount-time probe uses
+//! one-shot `read_range` (its ranges are few and fetched concurrently).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -29,7 +31,8 @@ use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
 
 use super::super::{
-    Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+    Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
+    VfsPath, VfsRandomReader,
 };
 use super::{
     DirectoryTree, archive_breadcrumbs, archive_format_path, archive_mount_label,
@@ -295,11 +298,12 @@ impl ZipArchiveVfs {
                 && matches!(e.encryption, zr::Encryption::None)
         });
         let reads = candidates.map(|entry| async move {
-            let open = drive_open(&self.upstream, &self.archive_path, entry, fs.file_size)
+            let mut upstream = self.upstream.open_read_at(&self.archive_path).await.ok()?;
+            let open = drive_open(upstream.as_mut(), entry, fs.file_size)
                 .await
                 .ok()?;
             let reader = zr::EntryReader::new(entry, &open, None, 0).ok()?;
-            let (data, _) = drive_reader(&self.upstream, &self.archive_path, reader, entry.size)
+            let (data, _) = drive_reader(upstream.as_mut(), reader, entry.size)
                 .await
                 .ok()?;
             Some((
@@ -331,21 +335,20 @@ impl ZipArchiveVfs {
             .ok_or_else(|| not_found(format!("file not found in archive: {}", key)))
     }
 
+    fn cached_open(&self, entry: &zr::ZipEntry) -> Option<zr::OpenEntry> {
+        self.opens.lock().get(&entry.name).cloned()
+    }
+
     async fn open_entry(
         &self,
         state: &ZipState,
         entry: &zr::ZipEntry,
+        upstream: &mut dyn VfsRandomReader,
     ) -> Result<zr::OpenEntry, Error> {
-        if let Some(open) = self.opens.lock().get(&entry.name) {
-            return Ok(open.clone());
+        if let Some(open) = self.cached_open(entry) {
+            return Ok(open);
         }
-        let open = drive_open(
-            &self.upstream,
-            &self.archive_path,
-            entry,
-            state.fs.file_size,
-        )
-        .await?;
+        let open = drive_open(upstream, entry, state.fs.file_size).await?;
         self.opens.lock().insert(entry.name.clone(), open.clone());
         Ok(open)
     }
@@ -503,9 +506,25 @@ async fn fetch_ranges(
     .await
 }
 
+/// Fetch a batch over the held handle. Sequential — a batch here is one or
+/// two small header reads, not worth a handle per range.
+async fn fetch_ranges_at(
+    upstream: &mut dyn VfsRandomReader,
+    ranges: Vec<std::ops::Range<u64>>,
+) -> Result<Vec<zr::Chunk>, Error> {
+    let mut out = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        let data = upstream.read_at(r.start, r.end - r.start).await?;
+        out.push(zr::Chunk {
+            offset: r.start,
+            data,
+        });
+    }
+    Ok(out)
+}
+
 async fn drive_open(
-    upstream: &Arc<dyn Vfs>,
-    archive_path: &PathBuf,
+    upstream: &mut dyn VfsRandomReader,
     entry: &zr::ZipEntry,
     file_size: u64,
 ) -> Result<zr::OpenEntry, Error> {
@@ -515,7 +534,7 @@ async fn drive_open(
         match op.step(fetched).map_err(zip_err)? {
             zr::Step::Done(open) => return Ok(open),
             zr::Step::Need(ranges) => {
-                fetched = fetch_ranges(upstream, archive_path, ranges).await?;
+                fetched = fetch_ranges_at(upstream, ranges).await?;
             }
         }
     }
@@ -524,8 +543,7 @@ async fn drive_open(
 /// Pull up to `want` bytes from the reader's current position, returning the
 /// reader for the caller to park.
 async fn drive_reader(
-    upstream: &Arc<dyn Vfs>,
-    archive_path: &PathBuf,
+    upstream: &mut dyn VfsRandomReader,
     mut reader: zr::EntryReader,
     want: u64,
 ) -> Result<(Vec<u8>, zr::EntryReader), Error> {
@@ -542,13 +560,13 @@ async fn drive_reader(
         match reader.step(pending.take()).map_err(zip_err)? {
             zr::ReadStep::Need(range) => {
                 let len = range.end - range.start;
-                let chunk = upstream.read_range(archive_path, range.start, len).await?;
-                if (chunk.data.len() as u64) < len {
+                let data = upstream.read_at(range.start, len).await?;
+                if (data.len() as u64) < len {
                     return Err(Error::custom("ZIP archive truncated: read came up short"));
                 }
                 pending = Some(zr::Chunk {
                     offset: range.start,
-                    data: chunk.data,
+                    data,
                 });
             }
             zr::ReadStep::Output => {}
@@ -693,12 +711,12 @@ impl Vfs for ZipArchiveVfs {
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let state = self.ensure_state().await?;
         let entry = self.resolve_entry(state, path, true)?;
-        let open = self.open_entry(state, entry).await?;
+        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let open = self.open_entry(state, entry, upstream.as_mut()).await?;
         let key = self.key_if_encrypted(entry, &open).await?;
         let reader = zr::EntryReader::new(entry, &open, key.as_ref(), 0).map_err(zip_err)?;
         Ok(Box::new(ZipStreamingReader {
-            upstream: self.upstream.clone(),
-            archive_path: self.archive_path.clone(),
+            upstream: Some(upstream),
             reader,
             inflight: None,
             done: false,
@@ -717,7 +735,21 @@ impl Vfs for ZipArchiveVfs {
             });
         }
         let want = length.min(total_size - offset);
-        let open = self.open_entry(state, entry).await?;
+
+        // The handle is opened only when something actually pipelines
+        // through it — a cached header + stored extent stays one-shot.
+        let mut upstream: Option<Box<dyn VfsRandomReader>> = None;
+        let open = match self.cached_open(entry) {
+            Some(open) => open,
+            None => {
+                let handle = upstream
+                    .insert(self.upstream.open_read_at(&self.archive_path).await?)
+                    .as_mut();
+                let open = drive_open(handle, entry, state.fs.file_size).await?;
+                self.opens.lock().insert(entry.name.clone(), open.clone());
+                open
+            }
+        };
 
         // Stored, unencrypted entries are extents: one upstream read, no
         // pipeline (mirroring how the disc VFS reads file content).
@@ -736,6 +768,10 @@ impl Vfs for ZipArchiveVfs {
         }
 
         let key = self.key_if_encrypted(entry, &open).await?;
+        let mut upstream = match upstream {
+            Some(handle) => handle,
+            None => self.upstream.open_read_at(&self.archive_path).await?,
+        };
         let reader = match self.take_cursor(&entry.name, offset) {
             Some(mut cursor) => {
                 cursor.seek_forward(offset).map_err(zip_err)?;
@@ -743,7 +779,7 @@ impl Vfs for ZipArchiveVfs {
             }
             None => zr::EntryReader::new(entry, &open, key.as_ref(), offset).map_err(zip_err)?,
         };
-        let (data, reader) = drive_reader(&self.upstream, &self.archive_path, reader, want).await?;
+        let (data, reader) = drive_reader(upstream.as_mut(), reader, want).await?;
         self.park_cursor(entry.name.clone(), reader);
         Ok(FileChunk {
             data,
@@ -757,16 +793,18 @@ impl Vfs for ZipArchiveVfs {
 // ZipStreamingReader — AsyncRead over an entry's plaintext
 // ---------------------------------------------------------------------------
 
-type ChunkFuture = Pin<Box<dyn Future<Output = Result<zr::Chunk, Error>> + Send>>;
+type ChunkFuture =
+    Pin<Box<dyn Future<Output = (Box<dyn VfsRandomReader>, Result<zr::Chunk, Error>)> + Send>>;
 
-/// Drives an [`zr::EntryReader`] with `read_range` calls against the
-/// upstream VFS. Dropping the reader drops any in-flight read —
-/// cancellation propagates naturally. Streams from offset 0, so the
-/// entry's CRC (and AES HMAC) are verified when the stream is read to
+/// Drives an [`zr::EntryReader`] with positioned reads on one held-open
+/// upstream handle. The in-flight future owns the handle and hands it back
+/// with the result — exactly one of `upstream`/`inflight` holds it at any
+/// time. Dropping the reader drops any in-flight read (and with it the
+/// handle) — cancellation propagates naturally. Streams from offset 0, so
+/// the entry's CRC (and AES HMAC) are verified when the stream is read to
 /// completion; failures surface as read errors.
 struct ZipStreamingReader {
-    upstream: Arc<dyn Vfs>,
-    archive_path: PathBuf,
+    upstream: Option<Box<dyn VfsRandomReader>>,
     reader: zr::EntryReader,
     inflight: Option<ChunkFuture>,
     done: bool,
@@ -794,9 +832,14 @@ impl AsyncRead for ZipStreamingReader {
                         self.inflight = Some(fut);
                         return Poll::Pending;
                     }
-                    Poll::Ready(Ok(chunk)) => Some(chunk),
-                    Poll::Ready(Err(e)) => {
-                        return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                    Poll::Ready((handle, result)) => {
+                        self.upstream = Some(handle);
+                        match result {
+                            Ok(chunk) => Some(chunk),
+                            Err(e) => {
+                                return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                            }
+                        }
                     }
                 }
             } else {
@@ -805,18 +848,23 @@ impl AsyncRead for ZipStreamingReader {
 
             match self.reader.step(fetched) {
                 Ok(zr::ReadStep::Need(range)) => {
-                    let upstream = self.upstream.clone();
-                    let path = self.archive_path.clone();
+                    let mut handle = self
+                        .upstream
+                        .take()
+                        .expect("zip streaming reader lost its upstream handle");
                     self.inflight = Some(Box::pin(async move {
                         let len = range.end - range.start;
-                        let chunk = upstream.read_range(&path, range.start, len).await?;
-                        if (chunk.data.len() as u64) < len {
-                            return Err(Error::custom("ZIP archive truncated: read came up short"));
-                        }
-                        Ok(zr::Chunk {
-                            offset: range.start,
-                            data: chunk.data,
-                        })
+                        let result = match handle.read_at(range.start, len).await {
+                            Ok(data) if (data.len() as u64) < len => {
+                                Err(Error::custom("ZIP archive truncated: read came up short"))
+                            }
+                            Ok(data) => Ok(zr::Chunk {
+                                offset: range.start,
+                                data,
+                            }),
+                            Err(e) => Err(e),
+                        };
+                        (handle, result)
                     }));
                 }
                 Ok(zr::ReadStep::Output) => {}

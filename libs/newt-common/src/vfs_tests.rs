@@ -466,7 +466,7 @@ mod search_progress {
         }
         let source = b.build();
         let registry = Arc::new(VfsRegistry::with_root(source.clone()));
-        let reader = Arc::new(crate::vfs::VfsRegistryFileReader::new(registry));
+        let reader = Arc::new(crate::vfs::VfsRegistryFs::new(registry));
         let capture = Arc::new(Capture::default());
 
         let vfs = SearchVfs::new(

@@ -19,7 +19,7 @@ use super::properties::{
 };
 use super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier,
-    VfsDescriptor,
+    VfsDescriptor, VfsRandomReader,
 };
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -1187,58 +1187,23 @@ impl Vfs for S3Vfs {
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
 
-        let end = offset + length - 1;
-        let range = format!("bytes={}-{}", offset, end);
+        let (chunk, _etag) = ranged_get(&client, &bucket, &key, offset, length, None).await?;
+        Ok(chunk)
+    }
 
-        let resp = match client
-            .get_object()
-            .bucket(&bucket)
-            .key(&key)
-            .range(range)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            // A range starting at or past the object size gets 416 rather
-            // than an empty body — map it to POSIX read-at-EOF semantics.
-            // The 416 response still carries the size ("Content-Range:
-            // bytes */12345").
-            Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 416) => {
-                let total_size = e
-                    .raw_response()
-                    .and_then(|r| r.headers().get("content-range"))
-                    .and_then(|v| v.rsplit('/').next())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(offset);
-                return Ok(FileChunk {
-                    data: Vec::new(),
-                    offset,
-                    total_size,
-                });
-            }
-            Err(e) => return Err(sdk_err(e)),
-        };
+    async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let (bucket, prefix) = self.parse_path(path);
+        let bucket = bucket.ok_or(Error::not_supported())?;
+        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
+        let client = self.client_for_bucket(&bucket).await?;
 
-        // Parse total size from content_range header (e.g. "bytes 0-99/12345")
-        let total_size = resp
-            .content_range()
-            .and_then(|r| r.rsplit('/').next())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(resp.content_length().unwrap_or(0) as u64);
-
-        let data = resp
-            .body
-            .collect()
-            .await
-            .map_err(sdk_err)?
-            .into_bytes()
-            .to_vec();
-
-        Ok(FileChunk {
-            data,
-            offset,
-            total_size,
-        })
+        // No request here — the ETag pins on the first read's response.
+        Ok(Box::new(S3RandomReader {
+            client,
+            bucket,
+            key,
+            etag: None,
+        }))
     }
 
     async fn open_read_async(
@@ -1484,6 +1449,121 @@ impl Vfs for S3Vfs {
             .map_err(sdk_err)?;
         self.notifier.notify(path);
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ranged GetObject
+// ---------------------------------------------------------------------------
+
+/// One ranged GetObject. A range starting at or past the object size gets
+/// 416 rather than an empty body — mapped to POSIX read-at-EOF semantics
+/// (the 416 response still carries the size, "Content-Range: bytes
+/// */12345"). `if_match` pins the object generation; a concurrent
+/// overwrite then fails the read instead of mixing generations. Returns
+/// the response's ETag alongside the chunk so callers can establish the pin.
+async fn ranged_get(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    offset: u64,
+    length: u64,
+    if_match: Option<&str>,
+) -> Result<(FileChunk, Option<String>), Error> {
+    let end = offset + length - 1;
+    let range = format!("bytes={}-{}", offset, end);
+
+    let resp = match client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .range(range)
+        .set_if_match(if_match.map(str::to_string))
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 416) => {
+            let total_size = e
+                .raw_response()
+                .and_then(|r| r.headers().get("content-range"))
+                .and_then(|v| v.rsplit('/').next())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(offset);
+            return Ok((
+                FileChunk {
+                    data: Vec::new(),
+                    offset,
+                    total_size,
+                },
+                None,
+            ));
+        }
+        Err(e) if e.raw_response().is_some_and(|r| r.status().as_u16() == 412) => {
+            return Err(Error::custom(format!(
+                "object changed while reading: s3://{}/{}",
+                bucket, key
+            )));
+        }
+        Err(e) => return Err(sdk_err(e)),
+    };
+
+    // Parse total size from content_range header (e.g. "bytes 0-99/12345")
+    let total_size = resp
+        .content_range()
+        .and_then(|r| r.rsplit('/').next())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(resp.content_length().unwrap_or(0) as u64);
+
+    let etag = resp.e_tag().map(str::to_string);
+
+    let data = resp
+        .body
+        .collect()
+        .await
+        .map_err(sdk_err)?
+        .into_bytes()
+        .to_vec();
+
+    Ok((
+        FileChunk {
+            data,
+            offset,
+            total_size,
+        },
+        etag,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// S3RandomReader — ranged GETs pinned to one object generation
+// ---------------------------------------------------------------------------
+
+struct S3RandomReader {
+    client: aws_sdk_s3::Client,
+    bucket: String,
+    key: String,
+    /// Pinned on the first read's response; every later read sends it as
+    /// If-Match.
+    etag: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl VfsRandomReader for S3RandomReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        let (chunk, etag) = ranged_get(
+            &self.client,
+            &self.bucket,
+            &self.key,
+            offset,
+            len,
+            self.etag.as_deref(),
+        )
+        .await?;
+        if self.etag.is_none() {
+            self.etag = etag;
+        }
+        Ok(chunk.data)
     }
 }
 

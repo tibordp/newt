@@ -318,10 +318,11 @@ impl TarArchiveVfs {
             let _ = state.completed_index.set(result);
             state.updated.notify_waiters();
         } else if descriptor.can_read_async() {
-            // Async path: drive engine with read_range on the async runtime
+            // Async path: drive engine over one held-open upstream handle
             let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
                 .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
 
+            let mut reader = upstream.open_read_at(&archive_path).await?;
             let mut position: u64 = 0;
             let mut last_snapshot = tokio::time::Instant::now();
             let mut last_snapshot_entries = 0usize;
@@ -352,14 +353,12 @@ impl TarArchiveVfs {
                             engine.signal_eof();
                             continue;
                         }
-                        let chunk = upstream
-                            .read_range(&archive_path, position, VFS_READ_CHUNK_SIZE as u64)
-                            .await?;
-                        if chunk.data.is_empty() {
+                        let data = reader.read_at(position, VFS_READ_CHUNK_SIZE as u64).await?;
+                        if data.is_empty() {
                             engine.signal_eof();
                         } else {
-                            position += chunk.data.len() as u64;
-                            engine.provide_data(&chunk.data);
+                            position += data.len() as u64;
+                            engine.provide_data(&data);
                         }
                     }
                     iluvatar::EngineRequest::Done => break,
@@ -553,7 +552,7 @@ impl TarArchiveVfs {
         Ok((archive_path, entry))
     }
 
-    /// Drive the sans-I/O ReadEngine using upstream's read_range for I/O.
+    /// Drive the sans-I/O ReadEngine over one held-open upstream handle.
     async fn drive_read_engine(
         &self,
         path_in_archive: &str,
@@ -568,6 +567,7 @@ impl TarArchiveVfs {
         }
         .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
 
+        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
         let mut output = Vec::new();
         let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
         let mut position: u64 = 0;
@@ -575,53 +575,42 @@ impl TarArchiveVfs {
         // stores reject such ranges rather than returning an empty chunk.
         let archive_size = index.metadata.archive_size;
         loop {
-            match engine.step() {
-                iluvatar::EngineRequest::NeedInput => {
-                    if position >= archive_size {
-                        engine.signal_eof();
-                        continue;
-                    }
-                    let chunk = self
-                        .upstream
-                        .read_range(&self.archive_path, position, buf.len() as u64)
-                        .await?;
-                    if chunk.data.is_empty() {
-                        engine.signal_eof();
-                    } else {
-                        position += chunk.data.len() as u64;
-                        engine.provide_data(&chunk.data);
-                    }
-                }
+            let need = match engine.step() {
+                iluvatar::EngineRequest::NeedInput => Some(VFS_READ_CHUNK_SIZE as u64),
                 iluvatar::EngineRequest::SeekAndRead { offset, len } => {
                     position = offset;
-                    if position >= archive_size {
-                        engine.signal_eof();
-                        continue;
-                    }
-                    let chunk = self
-                        .upstream
-                        .read_range(&self.archive_path, position, len as u64)
-                        .await?;
-                    if chunk.data.is_empty() {
-                        engine.signal_eof();
-                    } else {
-                        position += chunk.data.len() as u64;
-                        engine.provide_data(&chunk.data);
-                    }
+                    Some(len as u64)
                 }
-                iluvatar::EngineRequest::OutputReady => loop {
-                    let n = engine.read_output(&mut buf);
-                    if n == 0 {
-                        break;
+                iluvatar::EngineRequest::OutputReady => {
+                    loop {
+                        let n = engine.read_output(&mut buf);
+                        if n == 0 {
+                            break;
+                        }
+                        output.extend_from_slice(&buf[..n]);
                     }
-                    output.extend_from_slice(&buf[..n]);
-                },
+                    continue;
+                }
                 iluvatar::EngineRequest::Done => break,
                 iluvatar::EngineRequest::Error(e) => {
                     return Err(Error::custom(format!(
                         "failed to read file from archive: {}",
                         e
                     )));
+                }
+            };
+
+            if let Some(len) = need {
+                if position >= archive_size {
+                    engine.signal_eof();
+                    continue;
+                }
+                let data = upstream.read_at(position, len).await?;
+                if data.is_empty() {
+                    engine.signal_eof();
+                } else {
+                    position += data.len() as u64;
+                    engine.provide_data(&data);
                 }
             }
         }
@@ -840,8 +829,7 @@ impl Vfs for TarArchiveVfs {
             .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
 
         let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(STREAM_CHANNEL_CAPACITY);
-        let upstream = self.upstream.clone();
-        let archive_file_path = self.archive_path.clone();
+        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
         let archive_size = index.metadata.archive_size;
         // The read holds the consumer guard for its entire lifetime
         // (moved into the streaming task) — if the navigation that
@@ -858,91 +846,28 @@ impl Vfs for TarArchiveVfs {
                 if cancel.is_cancelled() || tx.is_closed() {
                     return;
                 }
-                match engine.step() {
-                    iluvatar::EngineRequest::NeedInput => {
-                        // Same clamp as the indexer: never read at/past the
-                        // end — object stores reject such ranges rather than
-                        // returning an empty chunk.
-                        if position >= archive_size {
-                            engine.signal_eof();
-                            continue;
-                        }
-                        let read = tokio::select! {
-                            biased;
-                            _ = cancel.cancelled() => return,
-                            _ = tx.closed() => return,
-                            read = upstream.read_range(
-                                &archive_file_path,
-                                position,
-                                buf.len() as u64,
-                            ) => read,
-                        };
-                        match read {
-                            Ok(chunk) => {
-                                if chunk.data.is_empty() {
-                                    engine.signal_eof();
-                                } else {
-                                    position += chunk.data.len() as u64;
-                                    engine.provide_data(&chunk.data);
-                                }
-                            }
-                            Err(e) => {
-                                let _ = tx
-                                    .send(Err(std::io::Error::other(format!(
-                                        "upstream read error: {}",
-                                        e
-                                    ))))
-                                    .await;
-                                return;
-                            }
-                        }
-                    }
+                let need = match engine.step() {
+                    // Same clamp as the indexer: never read at/past the
+                    // end — object stores reject such ranges rather than
+                    // returning an empty chunk.
+                    iluvatar::EngineRequest::NeedInput => Some(VFS_READ_CHUNK_SIZE as u64),
                     iluvatar::EngineRequest::SeekAndRead { offset, len } => {
                         position = offset;
-                        if position >= archive_size {
-                            engine.signal_eof();
-                            continue;
-                        }
-                        let read = tokio::select! {
-                            biased;
-                            _ = cancel.cancelled() => return,
-                            _ = tx.closed() => return,
-                            read = upstream.read_range(
-                                &archive_file_path,
-                                position,
-                                len as u64,
-                            ) => read,
-                        };
-                        match read {
-                            Ok(chunk) => {
-                                if chunk.data.is_empty() {
-                                    engine.signal_eof();
-                                } else {
-                                    position += chunk.data.len() as u64;
-                                    engine.provide_data(&chunk.data);
-                                }
+                        Some(len as u64)
+                    }
+                    iluvatar::EngineRequest::OutputReady => {
+                        loop {
+                            let n = engine.read_output(&mut buf);
+                            if n == 0 {
+                                break;
                             }
-                            Err(e) => {
-                                let _ = tx
-                                    .send(Err(std::io::Error::other(format!(
-                                        "upstream read error: {}",
-                                        e
-                                    ))))
-                                    .await;
+                            if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
+                                // Consumer dropped — abort.
                                 return;
                             }
                         }
+                        continue;
                     }
-                    iluvatar::EngineRequest::OutputReady => loop {
-                        let n = engine.read_output(&mut buf);
-                        if n == 0 {
-                            break;
-                        }
-                        if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
-                            // Consumer dropped — abort.
-                            return;
-                        }
-                    },
                     iluvatar::EngineRequest::Done => return,
                     iluvatar::EngineRequest::Error(e) => {
                         let _ = tx
@@ -952,6 +877,38 @@ impl Vfs for TarArchiveVfs {
                             ))))
                             .await;
                         return;
+                    }
+                };
+
+                if let Some(len) = need {
+                    if position >= archive_size {
+                        engine.signal_eof();
+                        continue;
+                    }
+                    let read = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return,
+                        _ = tx.closed() => return,
+                        read = upstream.read_at(position, len) => read,
+                    };
+                    match read {
+                        Ok(data) => {
+                            if data.is_empty() {
+                                engine.signal_eof();
+                            } else {
+                                position += data.len() as u64;
+                                engine.provide_data(&data);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(Err(std::io::Error::other(format!(
+                                    "upstream read error: {}",
+                                    e
+                                ))))
+                                .await;
+                            return;
+                        }
                     }
                 }
             }

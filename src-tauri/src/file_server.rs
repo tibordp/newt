@@ -7,14 +7,14 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use log::info;
-use newt_common::file_reader::FileReader;
+use newt_common::filesystem::Filesystem;
 use newt_common::vfs::{VfsId, VfsPath};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 
 struct FileServerState {
     token: String,
-    file_reader: Arc<dyn FileReader>,
+    fs: Arc<dyn Filesystem>,
 }
 
 #[derive(serde::Deserialize)]
@@ -39,27 +39,50 @@ fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
 }
 
 /// Stream file bytes from `start` to `end` (inclusive) in 1 MB chunks,
-/// without buffering the entire range in memory.
-fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64, end: u64) -> Body {
+/// without buffering the entire range in memory. A range that fits one
+/// chunk goes through a single stateless `read_range`; anything longer
+/// holds one positioned-read handle for the whole response, so media
+/// playback doesn't pay a file open (or S3 request setup) per chunk.
+fn chunk_stream(fs: Arc<dyn Filesystem>, vfs_path: VfsPath, start: u64, end: u64) -> Body {
+    const CHUNK_SIZE: u64 = 1024 * 1024;
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(2);
 
     let _task = tokio::spawn(async move {
-        let chunk_size: u64 = 1024 * 1024;
+        if end - start < CHUNK_SIZE {
+            let result = tokio::select! {
+                biased;
+                _ = tx.closed() => return,
+                result = fs.read_range(vfs_path, start, end - start + 1) => result,
+            };
+            let _ = match result {
+                Ok(chunk) => tx.send(Ok(bytes::Bytes::from(chunk.data))).await,
+                Err(e) => tx.send(Err(std::io::Error::other(e.to_string()))).await,
+            };
+            return;
+        }
+
+        let mut handle = match fs.open_read_at(vfs_path).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
+                return;
+            }
+        };
         let mut offset = start;
         while offset <= end {
-            let len = std::cmp::min(chunk_size, end - offset + 1);
+            let len = std::cmp::min(CHUNK_SIZE, end - offset + 1);
             let result = tokio::select! {
                 biased;
                 _ = tx.closed() => break,
-                result = file_reader.read_range(vfs_path.clone(), offset, len) => result,
+                result = handle.read_at(offset, len) => result,
             };
             match result {
-                Ok(chunk) => {
-                    if chunk.data.is_empty() {
+                Ok(data) => {
+                    if data.is_empty() {
                         break;
                     }
-                    offset += chunk.data.len() as u64;
-                    if tx.send(Ok(bytes::Bytes::from(chunk.data))).await.is_err() {
+                    offset += data.len() as u64;
+                    if tx.send(Ok(bytes::Bytes::from(data))).await.is_err() {
                         break; // receiver dropped — client disconnected
                     }
                 }
@@ -74,8 +97,8 @@ fn chunk_stream(file_reader: Arc<dyn FileReader>, vfs_path: VfsPath, start: u64,
     Body::from_stream(ReceiverStream::new(rx))
 }
 
-pub fn start(file_reader: Arc<dyn FileReader>, token: String) -> (u16, JoinHandle<()>) {
-    let state = Arc::new(FileServerState { token, file_reader });
+pub fn start(fs: Arc<dyn Filesystem>, token: String) -> (u16, JoinHandle<()>) {
+    let state = Arc::new(FileServerState { token, fs });
     let app = Router::new()
         .route("/{token}/{vfs_id}", get(serve_file))
         .with_state(state);
@@ -108,7 +131,7 @@ async fn serve_file(
     };
     let vfs_path = VfsPath::from_wire_str(vfs_id, &query.path);
 
-    let details = match state.file_reader.file_details(vfs_path.clone()).await {
+    let details = match state.fs.file_details(vfs_path.clone()).await {
         Ok(d) => d,
         Err(e) => {
             log::error!("file_server: file_details error: {}", e);
@@ -136,7 +159,7 @@ async fn serve_file(
             range_start, range_end, file_size, length
         );
 
-        let body = chunk_stream(state.file_reader.clone(), vfs_path, range_start, range_end);
+        let body = chunk_stream(state.fs.clone(), vfs_path, range_start, range_end);
 
         Response::builder()
             .status(StatusCode::PARTIAL_CONTENT)
@@ -157,7 +180,7 @@ async fn serve_file(
         let body = if file_size == 0 {
             Body::empty()
         } else {
-            chunk_stream(state.file_reader.clone(), vfs_path, 0, end)
+            chunk_stream(state.fs.clone(), vfs_path, 0, end)
         };
 
         Response::builder()

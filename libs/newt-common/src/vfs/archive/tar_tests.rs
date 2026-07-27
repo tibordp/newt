@@ -326,7 +326,7 @@ async fn upstream_read_range_failure_during_indexing_surfaces() {
         .file(ARCHIVE_PATH, SIMPLE_TAR)
         .failure(FailureSpec {
             path: PathBuf::from_wire_str(ARCHIVE_PATH),
-            operation: "read_range",
+            operation: "read_at",
             error: crate::Error {
                 kind: ErrorKind::Connection,
                 message: "simulated upstream failure".into(),

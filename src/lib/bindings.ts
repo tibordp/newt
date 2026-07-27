@@ -2602,7 +2602,7 @@ export type SearchParams = {
  */
 name_pattern: string | null; 
 /**
- * Optional content pattern — runs `FileReader::find_in_file` on
+ * Optional content pattern — runs `Filesystem::find_in_file` on
  * every entry whose name matched. When `None`, name-match alone is
  * sufficient. A substring unless `content_is_regex` is set.
  */

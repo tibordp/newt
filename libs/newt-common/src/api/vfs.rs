@@ -12,6 +12,10 @@
 //!   - writes: caller sends `API_VFS_WRITE_CHUNK` notifications until an
 //!     empty sentinel; `OVERWRITE_ASYNC_BEGIN` returns a fresh `StreamId`,
 //!     `OVERWRITE_ASYNC_FINISH` awaits the writer task.
+//!   - positioned reads: `OPEN_READ_AT` mints a server-held
+//!     `VfsRandomReader` keyed by `StreamId`, `READ_AT` is plain
+//!     request/response per chunk, and `READ_AT_CLOSE` (sent on proxy
+//!     drop) reaps the handle.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,12 +26,12 @@ use parking_lot::Mutex;
 use super::{
     API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
     API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
-    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OVERWRITE_ASYNC_ABORT,
-    API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH, API_VFS_POLL_CHANGES,
-    API_VFS_READ_CHUNK, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
-    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH,
-    API_VFS_TRASH_ITEM, API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode,
-    encode, try_encode,
+    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
+    API_VFS_OVERWRITE_ASYNC_ABORT, API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH,
+    API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE, API_VFS_READ_CHUNK,
+    API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
+    API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
+    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, PendingVfsReadStreams, decode, encode, try_encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -66,6 +70,7 @@ pub struct VfsDispatcher {
     outbox: Outbox,
     write_sessions: PendingVfsWriteSessions,
     write_task_handles: WriteTaskHandles,
+    read_at_sessions: super::ReadAtSessions,
     next_stream_id: AtomicU64,
 }
 
@@ -76,6 +81,7 @@ impl VfsDispatcher {
             outbox,
             write_sessions: Arc::new(Mutex::new(HashMap::new())),
             write_task_handles: Arc::new(Mutex::new(HashMap::new())),
+            read_at_sessions: super::ReadAtSessions::new(),
             next_stream_id: AtomicU64::new(1),
         }
     }
@@ -188,6 +194,20 @@ impl Dispatcher for VfsDispatcher {
             API_VFS_READ_RANGE => {
                 let (path, offset, length): (PathBuf, u64, u64) = decode(&req[..])?;
                 let ret = self.vfs.read_range(&path, offset, length).await;
+                encode(&ret)?
+            }
+            API_VFS_OPEN_READ_AT => {
+                let path: PathBuf = decode(&req[..])?;
+                let ret: Result<StreamId, Error> = self
+                    .vfs
+                    .open_read_at(&path)
+                    .await
+                    .map(|reader| self.read_at_sessions.open(reader));
+                encode(&ret)?
+            }
+            API_VFS_READ_AT => {
+                let (stream_id, offset, len): (StreamId, u64, u64) = decode(&req[..])?;
+                let ret = self.read_at_sessions.read_at(stream_id, offset, len).await;
                 encode(&ret)?
             }
             API_VFS_FILE_DETAILS => {
@@ -436,6 +456,10 @@ impl Dispatcher for VfsDispatcher {
                 handle.abort();
             }
             Ok(true)
+        } else if api == API_VFS_READ_AT_CLOSE {
+            let stream_id: StreamId = decode(&req[..])?;
+            self.read_at_sessions.close(stream_id);
+            Ok(true)
         } else {
             Ok(false)
         }
@@ -619,6 +643,46 @@ mod tests {
                 .lock()
                 .contains_key(&stream_id)
         );
+    }
+
+    #[tokio::test]
+    async fn read_at_session_serves_reads_and_close_reaps_it() {
+        let vfs = MockVfs::builder().file("/f", b"hello world").build();
+        let (outbox, _outbox_rx) = Communicator::create_outbox();
+        let dispatcher = super::VfsDispatcher::new(vfs, outbox);
+
+        let response = dispatcher
+            .invoke(
+                super::API_VFS_OPEN_READ_AT,
+                super::encode(&PathBuf::from_wire_str("/f")).unwrap().into(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let stream_id: Result<crate::filesystem::StreamId, crate::Error> =
+            super::decode(&response).unwrap();
+        let stream_id = stream_id.unwrap();
+        assert!(dispatcher.read_at_sessions.contains(stream_id));
+
+        let response = dispatcher
+            .invoke(
+                super::API_VFS_READ_AT,
+                super::encode(&(stream_id, 6u64, 5u64)).unwrap().into(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let data: Result<serde_bytes::ByteBuf, crate::Error> = super::decode(&response).unwrap();
+        assert_eq!(data.unwrap().as_slice(), b"world");
+
+        dispatcher
+            .notify(
+                super::API_VFS_READ_AT_CLOSE,
+                super::encode(&stream_id).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        assert!(!dispatcher.read_at_sessions.contains(stream_id));
     }
 
     #[tokio::test]

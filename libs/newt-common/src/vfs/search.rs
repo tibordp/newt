@@ -31,7 +31,7 @@
 //!   archives etc. — are *not* descended into; that falls out for free
 //!   because mounts live in `VfsRegistry`, not the underlying file
 //!   system). Matches by name first; content match (when requested) is
-//!   done via the supplied `FileReader::find_in_file`.
+//!   done via the supplied `Filesystem::find_in_file`.
 //! - **Status surfacing.** `running` flag on the VFS so the frontend can
 //!   show "Searching..." vs "N results"; cancellation token unwinds the
 //!   walker promptly on unmount.
@@ -48,7 +48,8 @@ use crate::vfs::path::{Path, PathBuf};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::file_reader::{FileReader, SearchPattern};
+use crate::file_reader::SearchPattern;
+use crate::filesystem::Filesystem;
 use crate::filesystem::{File, FsStats};
 use crate::{Error, ErrorKind};
 
@@ -71,7 +72,7 @@ pub struct SearchParams {
     /// Glob pattern for the basename (e.g. `*.rs`, `Cargo.*`). When
     /// `None`, matches any name.
     pub name_pattern: Option<String>,
-    /// Optional content pattern — runs `FileReader::find_in_file` on
+    /// Optional content pattern — runs `Filesystem::find_in_file` on
     /// every entry whose name matched. When `None`, name-match alone is
     /// sufficient. A substring unless `content_is_regex` is set.
     pub content_pattern: Option<String>,
@@ -342,7 +343,7 @@ pub struct SearchVfs {
     /// triggered the mount could be cancelled before list_files
     /// runs).
     source_vfs: Arc<dyn Vfs>,
-    file_reader: Arc<dyn FileReader>,
+    file_reader: Arc<dyn Filesystem>,
     search_root: VfsPath,
     params: SearchParams,
     reporter: Arc<dyn super::ProgressReporter>,
@@ -383,7 +384,7 @@ impl SearchVfs {
     /// (unmount).
     pub fn new(
         source_vfs: Arc<dyn Vfs>,
-        file_reader: Arc<dyn FileReader>,
+        file_reader: Arc<dyn Filesystem>,
         search_root: VfsPath,
         params: SearchParams,
         mount_meta: Vec<u8>,
@@ -580,7 +581,7 @@ impl Vfs for SearchVfs {
 
 struct Walker {
     source_vfs: Arc<dyn Vfs>,
-    file_reader: Arc<dyn FileReader>,
+    file_reader: Arc<dyn Filesystem>,
     search_root: VfsPath,
     params: SearchParams,
     results: Arc<RwLock<Vec<File>>>,
@@ -860,7 +861,7 @@ fn compile_content_pattern(params: &SearchParams) -> Result<Option<SearchPattern
 pub async fn mount(
     root: VfsPath,
     params: SearchParams,
-    file_reader: Arc<dyn FileReader>,
+    file_reader: Arc<dyn Filesystem>,
     ctx: &crate::api::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
     // Validate the patterns up front so garbage fails the mount — and

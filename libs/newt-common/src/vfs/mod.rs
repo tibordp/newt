@@ -54,7 +54,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails, FileReader, SearchMatch, SearchPattern};
+use crate::file_reader::{FileChunk, FileDetails, SearchMatch, SearchPattern};
 use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
 use crate::rpc::Communicator;
 
@@ -577,6 +577,22 @@ pub trait VfsAsyncWriter: Send {
     async fn finish(self: Box<Self>) -> Result<(), Error>;
 }
 
+/// Positioned reads over one file, behind a handle held open for the
+/// caller's whole read session. This is the primitive the archive/disc
+/// engines loop on; `Vfs::read_range` stays the one-shot convenience for
+/// sporadic access (a viewer chunk, a mime sniff). The handle pins the
+/// file's identity where the backend can (an open fd, a pinned ETag), so
+/// a file replaced mid-session doesn't get its bytes mixed across calls.
+///
+/// `read_at` fills `len` fully unless the file ends short; empty means
+/// nothing at or past `offset`. Backends where probing past the end is an
+/// error rather than a short read (S3 range GETs) rely on callers clamping
+/// to a known file size — same contract as `read_range`.
+#[async_trait::async_trait]
+pub trait VfsRandomReader: Send {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error>;
+}
+
 /// Outcome of a `Vfs::revalidate` pass. Conveyed back to the navigation
 /// layer so it can decide whether to treat any local caches as stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -695,6 +711,11 @@ pub trait Vfs: Send + Sync {
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let _ = (path, offset, length);
+        Err(Error::not_supported())
+    }
+
+    async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let _ = path;
         Err(Error::not_supported())
     }
 
@@ -872,9 +893,9 @@ impl VfsRegistry {
 
     /// Follow `Vfs::redirect_target` once: if the VFS at `vfs_path.vfs_id`
     /// reports a redirect for `vfs_path`, return the source path; else
-    /// return the input unchanged. Used by `VfsRegistryFs` and
-    /// `VfsRegistryFileReader` to make leaf operations transparent across
-    /// synthetic VFSes (flat search results, etc.).
+    /// return the input unchanged. Used by `VfsRegistryFs` to make leaf
+    /// operations transparent across synthetic VFSes (flat search
+    /// results, etc.).
     pub async fn dereference(&self, vfs_path: &VfsPath) -> VfsPath {
         let Some(vfs) = self.get(vfs_path.vfs_id) else {
             return vfs_path.clone();
@@ -1057,24 +1078,7 @@ impl Filesystem for VfsRegistryFs {
         }
         vfs.revalidate().await
     }
-}
 
-// ---------------------------------------------------------------------------
-// VfsRegistryFileReader — implements FileReader by dispatching through VfsRegistry
-// ---------------------------------------------------------------------------
-
-pub struct VfsRegistryFileReader {
-    registry: Arc<VfsRegistry>,
-}
-
-impl VfsRegistryFileReader {
-    pub fn new(registry: Arc<VfsRegistry>) -> Self {
-        Self { registry }
-    }
-}
-
-#[async_trait::async_trait]
-impl FileReader for VfsRegistryFileReader {
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
@@ -1096,6 +1100,12 @@ impl FileReader for VfsRegistryFileReader {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         vfs.read_range(&local_path, offset, length).await
+    }
+
+    async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
+        let path = self.registry.dereference(&path).await;
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        vfs.open_read_at(&local_path).await
     }
 
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
@@ -1164,15 +1174,16 @@ impl FileReader for VfsRegistryFileReader {
         let mut pos = offset;
         let end = offset.saturating_add(max_length);
 
+        let mut reader = self.open_read_at(path).await?;
         while pos < end {
             let chunk_len = std::cmp::min(SEARCH_CHUNK_SIZE as u64, end - pos);
-            let chunk = self.read_range(path.clone(), pos, chunk_len).await?;
-            if chunk.data.is_empty() {
+            let data = reader.read_at(pos, chunk_len).await?;
+            if data.is_empty() {
                 break;
             }
 
             let carry_len = carry.len();
-            carry.extend_from_slice(&chunk.data);
+            carry.extend_from_slice(&data);
 
             if let Some((match_pos, match_len)) =
                 find_in_buffer(&carry, &pattern, compiled.as_ref())
@@ -1184,7 +1195,7 @@ impl FileReader for VfsRegistryFileReader {
                 }));
             }
 
-            pos += chunk.data.len() as u64;
+            pos += data.len() as u64;
 
             // Keep overlap bytes for next iteration
             if carry.len() > overlap {
@@ -1192,7 +1203,7 @@ impl FileReader for VfsRegistryFileReader {
                 carry.drain(..start);
             }
 
-            if chunk.data.len() < chunk_len as usize {
+            if data.len() < chunk_len as usize {
                 break; // EOF
             }
         }
