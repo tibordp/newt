@@ -1,22 +1,22 @@
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::prelude::MetadataExt;
 use std::path::Path as StdPath;
 use std::sync::Arc;
-
-use crate::vfs::path::{Path, PathBuf};
 
 use log::{debug, warn};
 use notify::event::RemoveKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
-
 #[cfg(unix)]
-use std::os::unix::prelude::MetadataExt;
+use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::Error;
-use crate::vfs::ToUnix;
-use crate::vfs::{File, FsStats, Mode, UserGroup};
-use crate::vfs::{FileChunk, FileDetails};
+use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, FileChunk, FileDetails, FsStats, Mode, ToUnix, UserGroup};
 
 #[cfg(windows)]
 use super::native::local_path_from_native;
@@ -195,87 +195,64 @@ inventory::submit!(RegisteredDescriptor(&LOCAL_VFS_DESCRIPTOR));
 // LocalVfs
 // ---------------------------------------------------------------------------
 
-/// Memoized uid/gid → name resolution over the local user/group database.
+/// Memoized uid/gid → name resolution over the local user/group database,
+/// producing the mode/owner/group fields of a listing entry. Windows has no
+/// POSIX owner concept, so there the type is an empty shim and
+/// [`UidGidCache::owner_bits`] yields `None`s.
+#[derive(Default)]
 struct UidGidCache {
-    local_users: parking_lot::RwLock<std::collections::HashMap<u32, UserGroup>>,
-    local_groups: parking_lot::RwLock<std::collections::HashMap<u32, UserGroup>>,
-}
-
-impl Default for UidGidCache {
-    fn default() -> Self {
-        Self {
-            local_users: parking_lot::RwLock::new(std::collections::HashMap::new()),
-            local_groups: parking_lot::RwLock::new(std::collections::HashMap::new()),
-        }
-    }
+    #[cfg(unix)]
+    users: RwLock<HashMap<u32, UserGroup>>,
+    #[cfg(unix)]
+    groups: RwLock<HashMap<u32, UserGroup>>,
 }
 
 impl UidGidCache {
-    fn new() -> Self {
-        Self::default()
+    #[cfg(unix)]
+    fn owner_bits(
+        &self,
+        meta: &std::fs::Metadata,
+    ) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
+        (
+            Some(Mode(meta.mode())),
+            self.user_name(meta.uid()).ok(),
+            self.group_name(meta.gid()).ok(),
+        )
     }
 
-    fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
-        {
-            let groups = self.local_groups.read();
-            if let Some(group) = groups.get(&gid) {
-                return Ok(group.clone());
-            }
-        }
-
-        let group = lookup_group(gid)?;
-
-        let mut groups = self.local_groups.write();
-        groups.insert(gid, group.clone());
-
-        Ok(group)
+    #[cfg(windows)]
+    fn owner_bits(
+        &self,
+        _meta: &std::fs::Metadata,
+    ) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
+        (None, None, None)
     }
 
+    #[cfg(unix)]
     fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
-        {
-            let users = self.local_users.read();
-            if let Some(user) = users.get(&uid) {
-                return Ok(user.clone());
-            }
+        if let Some(user) = self.users.read().get(&uid) {
+            return Ok(user.clone());
         }
-
-        let user = lookup_user(uid)?;
-
-        let mut users = self.local_users.write();
-        users.insert(uid, user.clone());
-
+        let user = match nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))? {
+            Some(u) => UserGroup::Name(u.name),
+            None => UserGroup::Id(uid),
+        };
+        self.users.write().insert(uid, user.clone());
         Ok(user)
     }
-}
 
-#[cfg(unix)]
-fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
-    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
-    Ok(match group {
-        Some(g) => UserGroup::Name(g.name),
-        None => UserGroup::Id(gid),
-    })
-}
-
-#[cfg(unix)]
-fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
-    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
-    Ok(match user {
-        Some(u) => UserGroup::Name(u.name),
-        None => UserGroup::Id(uid),
-    })
-}
-
-#[cfg(windows)]
-fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
-    // Windows has no POSIX gid space; the local FS never produces real gids
-    // (`VfsMetadata.gid` is None), so this should be unreachable in practice.
-    Ok(UserGroup::Id(gid))
-}
-
-#[cfg(windows)]
-fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
-    Ok(UserGroup::Id(uid))
+    #[cfg(unix)]
+    fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
+        if let Some(group) = self.groups.read().get(&gid) {
+            return Ok(group.clone());
+        }
+        let group = match nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))? {
+            Some(g) => UserGroup::Name(g.name),
+            None => UserGroup::Id(gid),
+        };
+        self.groups.write().insert(gid, group.clone());
+        Ok(group)
+    }
 }
 
 pub struct LocalVfs {
@@ -285,7 +262,7 @@ pub struct LocalVfs {
 impl LocalVfs {
     pub fn new() -> Self {
         Self {
-            fs_cache: Arc::new(UidGidCache::new()),
+            fs_cache: Arc::new(UidGidCache::default()),
         }
     }
 }
@@ -463,8 +440,7 @@ impl Vfs for LocalVfs {
                     // parent can't be stat'd (degrade to null metadata).
                     let file = match parent.symlink_metadata() {
                         Ok(metadata) => {
-                            let (mode_field, user_field, group_field) =
-                                unix_owner_bits(&metadata, &cache);
+                            let (mode_field, user_field, group_field) = cache.owner_bits(&metadata);
                             File {
                                 name: "..".to_string(),
                                 size: None,
@@ -549,8 +525,7 @@ impl Vfs for LocalVfs {
                                 None
                             };
 
-                            let (mode_field, user_field, group_field) =
-                                unix_owner_bits(&metadata, &cache);
+                            let (mode_field, user_field, group_field) = cache.owner_bits(&metadata);
                             let (allocated_size, device_id, inode, hard_links) =
                                 stat_extras(&metadata, is_dir);
                             File {
@@ -709,7 +684,7 @@ impl Vfs for LocalVfs {
 
             let is_dir = meta.is_dir();
             let size = meta.len();
-            let (mode_field, user_field, group_field) = unix_owner_bits(&meta, &cache);
+            let (mode_field, user_field, group_field) = cache.owner_bits(&meta);
 
             // Try extension first, then content sniffing.
             let mime_type = if is_dir {
@@ -820,7 +795,7 @@ impl Vfs for LocalVfs {
             if is_symlink && let Ok(target_meta) = std::fs::metadata(&path) {
                 is_dir = target_meta.is_dir();
             }
-            let (mode_field, user_field, group_field) = unix_owner_bits(&meta, &cache);
+            let (mode_field, user_field, group_field) = cache.owner_bits(&meta);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -1127,26 +1102,6 @@ fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<u
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
 // ---------------------------------------------------------------------------
-
-#[cfg(unix)]
-fn unix_owner_bits(
-    meta: &std::fs::Metadata,
-    cache: &Arc<UidGidCache>,
-) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
-    (
-        Some(Mode(meta.mode())),
-        cache.user_name(meta.uid()).ok(),
-        cache.group_name(meta.gid()).ok(),
-    )
-}
-
-#[cfg(windows)]
-fn unix_owner_bits(
-    _meta: &std::fs::Metadata,
-    _cache: &Arc<UidGidCache>,
-) -> (Option<Mode>, Option<UserGroup>, Option<UserGroup>) {
-    (None, None, None)
-}
 
 /// Whether a directory entry should be treated as hidden.
 ///

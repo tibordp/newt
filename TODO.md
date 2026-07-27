@@ -70,6 +70,10 @@ A dedicated extract operation with conflict handling, not a VFS — today unpack
 - **Safer copy / recursive delete: `--one-file-system` guard.** `File.device_id` makes it possible: the operations scanner records the root device per source and refuses to descend across a device boundary (delete especially — a mountpoint hiding under a tree being deleted is the classic footgun; `rm -r --one-file-system` semantics). Decide surface: always-on for delete with a per-operation override, or a behavior preference. Unix-only data, so the guard degrades to today's behavior on Windows. Folds naturally into the unified recursor above.
 - **Operation framework hardening.** (a) Write-to-temp + atomic rename for overwrites instead of truncate-in-place, on VFSes with `can_rename` — a cancelled/failed copy must never leave a half-written destination; temp naming + orphan cleanup on failure; S3 and friends keep the direct write (PUT is already atomic). (b) Xattr preservation on copy (times/mode/owner are covered; sources derive from listings via the `get_metadata` default). (c) Richer conflict handling on the existing issue-resolution channel: keep-if-newer, skip-identical (size+mtime), rename-both, remembered "apply to all" choices per conflict kind.
 
+## newt-common layout
+
+- Phase 8 of the module reorganization (design: `design_docs/DESIGN_COMMON_REORG.md`): the dedup & polish pass — `File` builders for the 16 hand-spelled 20-field literals, `Error::not_found`, one `ChunkStreamReader` adapter for the five hand-written `poll_read` state machines, a shared `spawn_chunk_stream` producer, `run_capture` reuse in the git enricher, `hot_paths` reusing `vfs/volume.rs` mountinfo parsing, `expand_tilde`/`expanduser` consolidation, and a decision on the xtask `agent_file_name` hand-copy. Behavior-adjacent (not pure code motion), so it wants its own review.
+
 ## Distribution
 
 - Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.

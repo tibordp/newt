@@ -274,6 +274,19 @@ fn fold_field(first: &PropertyField, others: &[PropertyField]) -> Option<Propert
     })
 }
 
+/// Single-value editable text field.
+pub fn text_field(key: &str, label: &str, value: &str) -> PropertyField {
+    PropertyField {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: PropertyFieldValue::Text {
+            value: Some(value.to_string()),
+        },
+        editable: true,
+        write_only: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,18 +385,5 @@ mod tests {
         ro.editable = false;
         let folded = fold_sheets(&[sheet(vec![text_field("a", "v")]), sheet(vec![ro])]);
         assert!(!folded.groups[0].fields[0].editable);
-    }
-}
-
-/// Read-only single-value text field.
-pub fn text_field(key: &str, label: &str, value: &str) -> PropertyField {
-    PropertyField {
-        key: key.to_string(),
-        label: label.to_string(),
-        value: PropertyFieldValue::Text {
-            value: Some(value.to_string()),
-        },
-        editable: true,
-        write_only: false,
     }
 }
