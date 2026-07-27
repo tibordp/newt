@@ -3,8 +3,6 @@ pub mod api;
 mod archive_pack;
 pub mod askpass;
 pub mod connect;
-#[cfg(windows)]
-pub mod conpty;
 pub mod discovery;
 pub mod enrich;
 pub mod file_reader;
@@ -16,7 +14,6 @@ pub mod proc;
 pub mod rpc;
 pub mod shell;
 pub mod shell_control;
-pub mod sys;
 pub mod terminal;
 pub mod vfs;
 

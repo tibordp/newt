@@ -149,7 +149,7 @@ where
 /// (a socket path, or a `\\.\pipe\…` name) and is passed through verbatim
 /// as `NEWT_ASKPASS_SOCK`; the agent's askpass mode dials it back.
 #[cfg(unix)]
-pub mod listener {
+mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -175,50 +175,52 @@ pub mod listener {
         }
     }
 
-    /// Spawn a Unix domain socket askpass listener that forwards each
-    /// `AskpassRequest` to `provider.prompt()` and writes the response back.
-    pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
-        let nonce = SOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
-        let sock_path = std::env::temp_dir().join(format!(
-            "newt-askpass-{}-{}.sock",
-            std::process::id(),
-            nonce
-        ));
+    impl AskpassListener {
+        /// Spawn a Unix domain socket askpass listener that forwards each
+        /// `AskpassRequest` to `provider.prompt()` and writes the response back.
+        pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
+            let nonce = SOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
+            let sock_path = std::env::temp_dir().join(format!(
+                "newt-askpass-{}-{}.sock",
+                std::process::id(),
+                nonce
+            ));
 
-        let _ = std::fs::remove_file(&sock_path);
+            let _ = std::fs::remove_file(&sock_path);
 
-        let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
-        listener.set_nonblocking(true)?;
-        let listener = tokio::net::UnixListener::from_std(listener)?;
+            let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
+            listener.set_nonblocking(true)?;
+            let listener = tokio::net::UnixListener::from_std(listener)?;
 
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        let cleanup_path = sock_path.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown_rx => break,
-                    accept = listener.accept() => {
-                        let (stream, _) = match accept {
-                            Ok(conn) => conn,
-                            Err(_) => break,
-                        };
-                        tokio::spawn(super::serve_askpass_conn(stream, provider.clone()));
+            let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+            let cleanup_path = sock_path.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => break,
+                        accept = listener.accept() => {
+                            let (stream, _) = match accept {
+                                Ok(conn) => conn,
+                                Err(_) => break,
+                            };
+                            tokio::spawn(super::serve_askpass_conn(stream, provider.clone()));
+                        }
                     }
                 }
-            }
 
-            let _ = std::fs::remove_file(&cleanup_path);
-        });
+                let _ = std::fs::remove_file(&cleanup_path);
+            });
 
-        Ok(AskpassListener {
-            socket_path: sock_path,
-            shutdown_tx: Some(shutdown_tx),
-        })
+            Ok(AskpassListener {
+                socket_path: sock_path,
+                shutdown_tx: Some(shutdown_tx),
+            })
+        }
     }
 }
 
 #[cfg(windows)]
-pub mod listener {
+mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -245,48 +247,52 @@ pub mod listener {
         }
     }
 
-    /// Spawn a named-pipe askpass listener. Mirrors the unix UDS listener:
-    /// each accepted connection is handed one `AskpassRequest` and replies
-    /// with the `AskpassResponse`.
-    pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
-        let nonce = PIPE_NONCE.fetch_add(1, Ordering::Relaxed);
-        let pipe_name = format!(r"\\.\pipe\newt-askpass-{}-{}", std::process::id(), nonce);
+    impl AskpassListener {
+        /// Spawn a named-pipe askpass listener. Mirrors the unix UDS listener:
+        /// each accepted connection is handed one `AskpassRequest` and replies
+        /// with the `AskpassResponse`.
+        pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
+            let nonce = PIPE_NONCE.fetch_add(1, Ordering::Relaxed);
+            let pipe_name = format!(r"\\.\pipe\newt-askpass-{}-{}", std::process::id(), nonce);
 
-        // Create the first instance synchronously so the name exists before
-        // `spawn` returns — the caller sets it as NEWT_ASKPASS_SOCK and
-        // launches the child immediately, which would otherwise race the
-        // listener task and hit ERROR_FILE_NOT_FOUND.
-        let mut server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&pipe_name)?;
+            // Create the first instance synchronously so the name exists before
+            // `spawn` returns — the caller sets it as NEWT_ASKPASS_SOCK and
+            // launches the child immediately, which would otherwise race the
+            // listener task and hit ERROR_FILE_NOT_FOUND.
+            let mut server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&pipe_name)?;
 
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        let pipe_name_loop = pipe_name.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown_rx => break,
-                    res = server.connect() => {
-                        if res.is_err() {
-                            break;
+            let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+            let pipe_name_loop = pipe_name.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => break,
+                        res = server.connect() => {
+                            if res.is_err() {
+                                break;
+                            }
+                            // The connected instance becomes this client's
+                            // stream; stand up the next instance before serving
+                            // so a concurrent client isn't refused.
+                            let connected = server;
+                            server = match ServerOptions::new().create(&pipe_name_loop) {
+                                Ok(s) => s,
+                                Err(_) => break,
+                            };
+                            tokio::spawn(super::serve_askpass_conn(connected, provider.clone()));
                         }
-                        // The connected instance becomes this client's
-                        // stream; stand up the next instance before serving
-                        // so a concurrent client isn't refused.
-                        let connected = server;
-                        server = match ServerOptions::new().create(&pipe_name_loop) {
-                            Ok(s) => s,
-                            Err(_) => break,
-                        };
-                        tokio::spawn(super::serve_askpass_conn(connected, provider.clone()));
                     }
                 }
-            }
-        });
+            });
 
-        Ok(AskpassListener {
-            socket_path: PathBuf::from(pipe_name),
-            shutdown_tx: Some(shutdown_tx),
-        })
+            Ok(AskpassListener {
+                socket_path: PathBuf::from(pipe_name),
+                shutdown_tx: Some(shutdown_tx),
+            })
+        }
     }
 }
+
+pub use listener::AskpassListener;

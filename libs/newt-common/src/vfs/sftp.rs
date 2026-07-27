@@ -156,7 +156,7 @@ pub struct SftpVfs {
     /// Askpass listener kept alive for the lifetime of the ssh process so
     /// that resumed prompts (e.g. ServerAliveInterval reauth) keep working.
     /// `None` when no askpass was configured.
-    _askpass_listener: Option<crate::askpass::listener::AskpassListener>,
+    _askpass_listener: Option<crate::askpass::AskpassListener>,
 }
 
 /// Timeout for the SSH connection + SFTP handshake.
@@ -234,7 +234,7 @@ impl SftpVfs {
         let askpass_listener = match askpass {
             Some(cfg) => {
                 let listener =
-                    crate::askpass::listener::spawn(cfg.provider).map_err(|e| Error {
+                    crate::askpass::AskpassListener::spawn(cfg.provider).map_err(|e| Error {
                         kind: ErrorKind::Connection,
                         message: format!("Failed to start askpass listener: {}", e),
                     })?;

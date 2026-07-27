@@ -135,7 +135,7 @@ pub struct AgentConnectionGuard {
 impl AgentConnectionGuard {
     pub fn new(
         mut child: tokio::process::Child,
-        askpass: Option<crate::askpass::listener::AskpassListener>,
+        askpass: Option<crate::askpass::AskpassListener>,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {

@@ -964,7 +964,7 @@ struct ChildConnection {
     stream: DynStream,
     /// Askpass listener tied to the ssh process; dropped when the connection
     /// tears down. `None` for elevated / WSL mode (no askpass).
-    _askpass: Option<newt_common::askpass::listener::AskpassListener>,
+    _askpass: Option<newt_common::askpass::AskpassListener>,
 }
 
 impl From<newt_common::connect::SpawnedAgent> for ChildConnection {
@@ -1038,7 +1038,7 @@ async fn spawn_elevated(_agent_resolver: &dyn AgentResolver) -> Result<ChildConn
 fn spawn_child_watcher(
     mut child: AgentProcess,
     stderr: Option<DynStderr>,
-    askpass_listener: Option<newt_common::askpass::listener::AskpassListener>,
+    askpass_listener: Option<newt_common::askpass::AskpassListener>,
     stderr_log: StderrLog,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
     connection_status: ConnectionState,

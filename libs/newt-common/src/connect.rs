@@ -298,7 +298,7 @@ pub struct SpawnedAgent {
     pub stream: DynStream,
     /// Askpass listener tied to the ssh process; dropped when the connection
     /// tears down. `None` for transports that can't prompt.
-    pub askpass: Option<crate::askpass::listener::AskpassListener>,
+    pub askpass: Option<crate::askpass::AskpassListener>,
 }
 
 pub fn make_stream(
@@ -416,7 +416,7 @@ async fn spawn_bootstrap(
     let script_body = bootstrap_script_body(agent_resolver, mode).await?;
 
     let askpass_listener = if enable_askpass {
-        Some(crate::askpass::listener::spawn(askpass_provider)?)
+        Some(crate::askpass::AskpassListener::spawn(askpass_provider)?)
     } else {
         None
     };
@@ -509,7 +509,7 @@ async fn read_status_line(
 /// argv-appending bootstrap path and the env-var-based custom-shell path.
 async fn perform_bootstrap_handshake(
     mut child: tokio::process::Child,
-    askpass_listener: Option<crate::askpass::listener::AskpassListener>,
+    askpass_listener: Option<crate::askpass::AskpassListener>,
     agent_resolver: &dyn AgentResolver,
     log: Arc<dyn ConnectLog>,
 ) -> Result<SpawnedAgent, Error> {

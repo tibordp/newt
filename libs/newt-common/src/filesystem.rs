@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Duration;
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -226,10 +225,6 @@ impl FileList {
     }
 }
 
-#[cfg(test)]
-#[path = "filesystem_tests.rs"]
-mod tests;
-
 pub struct UidGidCache {
     local_users: RwLock<HashMap<u32, UserGroup>>,
     local_groups: RwLock<HashMap<u32, UserGroup>>,
@@ -379,104 +374,6 @@ pub trait Filesystem: Send + Sync {
         pattern: SearchPattern,
         max_length: u64,
     ) -> Result<Option<SearchMatch>, Error>;
-}
-
-pub struct Slow<T: Filesystem>(T);
-
-impl<T: Filesystem> Slow<T> {
-    pub fn new(inner: T) -> Self {
-        Self(inner)
-    }
-}
-
-#[async_trait::async_trait]
-impl<T: Filesystem> Filesystem for Slow<T> {
-    async fn poll_changes(&self, path: VfsPath) -> Result<(), Error> {
-        self.0.poll_changes(path).await
-    }
-    async fn list_files(
-        &self,
-        path: VfsPath,
-        options: ListFilesOptions,
-        batch_tx: Option<mpsc::Sender<FileList>>,
-    ) -> Result<FileList, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        // Get the full listing from the inner filesystem, then drip-feed it
-        // in batches of 100 with 500ms delays to simulate a slow connection.
-        let file_list = self.0.list_files(path, options, None).await?;
-        if let Some(batch_tx) = batch_tx {
-            for chunk in file_list.files().chunks(100) {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                let batch = FileList::new(
-                    file_list.path().clone(),
-                    chunk.to_vec(),
-                    file_list.fs_stats().cloned(),
-                );
-                if batch_tx.send(batch).await.is_err() {
-                    break;
-                }
-            }
-        }
-        Ok(file_list)
-    }
-    async fn touch(&self, path: VfsPath) -> Result<(), Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.touch(path).await
-    }
-    async fn create_directory(&self, path: VfsPath) -> Result<(), Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.create_directory(path).await
-    }
-    async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.fs_stats(path).await
-    }
-    async fn revalidate(
-        &self,
-        vfs_id: crate::vfs::VfsId,
-    ) -> Result<crate::vfs::RevalidationOutcome, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.revalidate(vfs_id).await
-    }
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.file_details(path).await
-    }
-    async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.get_property_sheet(path).await
-    }
-    async fn read_range(
-        &self,
-        path: VfsPath,
-        offset: u64,
-        length: u64,
-    ) -> Result<FileChunk, Error> {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        self.0.read_range(path, offset, length).await
-    }
-    async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.open_read_at(path).await
-    }
-    async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.read_file(path, max_size).await
-    }
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.write_file(path, data).await
-    }
-    async fn find_in_file(
-        &self,
-        path: VfsPath,
-        offset: u64,
-        pattern: SearchPattern,
-        max_length: u64,
-    ) -> Result<Option<SearchMatch>, Error> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.0.find_in_file(path, offset, pattern, max_length).await
-    }
 }
 
 pub type PendingStreams = Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::Sender<FileList>>>>;
@@ -777,45 +674,4 @@ impl ShellService for ShellRemote {
             .await?;
         Ok(ret?)
     }
-}
-
-/// From busybox.
-pub fn mode_string(mode: u32) -> String {
-    const TYPE_CHARS: &[u8] = b"?pc?d?b?-?l?s???";
-    const MODE_CHARS: &[u8] = b"rwxSTst";
-
-    let mut ret = vec![0; 10];
-    let mut idx = 0usize;
-
-    ret[idx] = TYPE_CHARS[((mode >> 12) & 0xf) as usize];
-    let mut i = 0;
-    let mut m = 0o400;
-    loop {
-        let mut j = 0;
-        let mut k = 0;
-
-        loop {
-            idx += 1;
-            ret[idx] = b'-';
-            if mode & m != 0 {
-                ret[idx] = MODE_CHARS[j];
-                k = j;
-            }
-            m >>= 1;
-            j += 1;
-            if j >= 3 {
-                break;
-            }
-        }
-        i += 1;
-
-        if mode & (0o10000 >> i) != 0 {
-            ret[idx] = MODE_CHARS[3 + (k & 2) + ((i == 3) as usize)];
-        }
-        if i >= 3 {
-            break;
-        }
-    }
-
-    unsafe { String::from_utf8_unchecked(ret) }
 }

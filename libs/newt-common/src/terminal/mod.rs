@@ -28,6 +28,9 @@ use log::{debug, error, info};
 
 use crate::{Error, rpc::Communicator};
 
+#[cfg(windows)]
+mod conpty;
+
 /// Bytes read in one PTY pull. Matches a typical terminal flush; bigger
 /// reads block emitting until they fill, smaller reads waste syscalls.
 #[cfg(any(unix, windows))]
@@ -91,7 +94,7 @@ pub struct Local(Arc<LocalInner>);
 #[cfg(windows)]
 struct WinInner {
     handle: AtomicU32,
-    terminals: Mutex<HashMap<TerminalHandle, Arc<crate::conpty::Conpty>>>,
+    terminals: Mutex<HashMap<TerminalHandle, Arc<conpty::Conpty>>>,
     shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
 }
 
@@ -137,7 +140,7 @@ impl Local {
         }))
     }
 
-    fn get(&self, handle: TerminalHandle) -> Result<Arc<crate::conpty::Conpty>, Error> {
+    fn get(&self, handle: TerminalHandle) -> Result<Arc<conpty::Conpty>, Error> {
         self.0
             .terminals
             .lock()
@@ -190,13 +193,12 @@ impl TerminalClient for Local {
 
         // ConPTY needs an initial size; the frontend issues a real resize
         // as soon as the xterm mounts, so the default is transient.
-        let conpty =
-            crate::conpty::Conpty::spawn(&program, &args, env.as_deref(), cwd.as_deref(), 24, 80)
-                .await
-                .map_err(|e| {
-                    error!("conpty spawn failed: {e}");
-                    Error::from(e)
-                })?;
+        let conpty = conpty::Conpty::spawn(&program, &args, env.as_deref(), cwd.as_deref(), 24, 80)
+            .await
+            .map_err(|e| {
+                error!("conpty spawn failed: {e}");
+                Error::from(e)
+            })?;
 
         self.0.terminals.lock().insert(handle, Arc::new(conpty));
         info!("terminal {:?} created successfully", handle);
