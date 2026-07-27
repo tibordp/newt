@@ -1394,7 +1394,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## npm packages
 
-77 packages from the production dependency tree.
+84 packages from the production dependency tree.
 
   @floating-ui/core 1.8.0 — MIT
       Copyright (c) 2021-present Floating UI contributors
@@ -1410,7 +1410,17 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2018 Suren Atoyan
   @napi-rs/canvas 0.1.100 — MIT
       Copyright (c) 2020 lynweklm@gmail.com
+  @napi-rs/canvas-android-arm64 0.1.100 — MIT
   @napi-rs/canvas-darwin-arm64 0.1.100 — MIT
+  @napi-rs/canvas-darwin-x64 0.1.100 — MIT
+  @napi-rs/canvas-linux-arm-gnueabihf 0.1.100 — MIT
+  @napi-rs/canvas-linux-arm64-gnu 0.1.100 — MIT
+  @napi-rs/canvas-linux-arm64-musl 0.1.100 — MIT
+  @napi-rs/canvas-linux-riscv64-gnu 0.1.100 — MIT
+  @napi-rs/canvas-linux-x64-gnu 0.1.100 — MIT
+  @napi-rs/canvas-linux-x64-musl 0.1.100 — MIT
+  @napi-rs/canvas-win32-arm64-msvc 0.1.100 — MIT
+  @napi-rs/canvas-win32-x64-msvc 0.1.100 — MIT
   @radix-ui/primitive 1.1.5 — MIT
       Copyright (c) 2022 WorkOS
   @radix-ui/react-arrow 1.1.11 — MIT
@@ -1473,10 +1483,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2017 - Present Tauri Apps Contributors
   @tauri-apps/plugin-dialog 2.7.1 — MIT OR Apache-2.0
   @tauri-apps/plugin-shell 2.3.5 — MIT OR Apache-2.0
-  @types/react 19.2.17 — MIT
-      Copyright (c) Microsoft Corporation.
-  @types/react-dom 19.2.3 — MIT
-      Copyright (c) Microsoft Corporation.
   @types/trusted-types 2.0.7 — MIT
       Copyright (c) Microsoft Corporation.
   @xterm/addon-fit 0.11.0 — MIT
@@ -1498,8 +1504,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   cookie 1.1.1 — MIT
       Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com>
       Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
-  csstype 3.2.3 — MIT
-      Copyright (c) 2017-2018 Fredrik Nicol
   detect-node-es 1.1.0 — MIT
       Copyright (c) 2017 Ilya Kantor
   dompurify 3.4.12 — (MPL-2.0 OR Apache-2.0)

@@ -427,6 +427,20 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn cchar_field(buf: &[libc::c_char]) -> Option<String> {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,19 +453,5 @@ mod tests {
         let info = probe_native(&dir).expect("current dir should classify");
         println!("current dir volume: {info:?}");
         assert_ne!(info.kind, VolumeKind::Optical);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn cchar_field(buf: &[libc::c_char]) -> Option<String> {
-    let bytes: Vec<u8> = buf
-        .iter()
-        .take_while(|&&c| c != 0)
-        .map(|&c| c as u8)
-        .collect();
-    if bytes.is_empty() {
-        None
-    } else {
-        Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 }

@@ -2,9 +2,10 @@
 //!
 //! Walks the *normal* dependency edges out of the two shipped binaries
 //! (`newt`, `newt-agent`) — dev- and build-only crates are not distributed
-//! and are left out — plus npm's production tree, and harvests each
-//! dependency's copyright notices and licence text from the files it ships.
-//! The hand-written asset attributions live in `notices_assets.md`.
+//! and are left out — plus the npm production set from `package-lock.json`,
+//! and harvests each dependency's copyright notices and licence text from the
+//! files it ships. The hand-written asset attributions live in
+//! `notices_assets.md`.
 //!
 //! The licence bodies are deduplicated per SPDX id: MIT texts differ only in
 //! their copyright line, so the notices carry every dependency's own
@@ -436,50 +437,60 @@ fn rust_deps(root: &Path) -> Result<Vec<Dep>, String> {
     Ok(deps)
 }
 
-/// npm's production tree (`--omit=dev`), read straight off `node_modules`.
+/// The npm production set, enumerated from `package-lock.json` rather than
+/// from `node_modules`. The lockfile is committed and declares a licence for
+/// every package, including the prebuilt binaries for platforms other than
+/// this one — of which `npm install` only ever unpacks the host's, so a
+/// listing taken off disk would differ per generating platform.
+///
+/// Copyright notices still have to be read from the unpacked packages, so
+/// they are harvested only for packages no `os`/`cpu`/`libc` constraint can
+/// exclude — the ones any host is guaranteed to have. A platform-gated
+/// package missing from disk is therefore expected; a plain one missing means
+/// `node_modules` is stale, and that is an error rather than a silently
+/// uncredited dependency.
 fn npm_deps(root: &Path) -> Result<Vec<Dep>, String> {
-    let out = Command::new("npm")
-        .current_dir(root)
-        .args(["ls", "--omit=dev", "--all", "--parseable"])
-        .output()
-        .map_err(|e| format!("failed to spawn npm: {e}"))?;
-    // `npm ls` exits non-zero on peer-dependency complaints while still
-    // printing a complete tree, so only an empty result is fatal.
-    let listing = String::from_utf8_lossy(&out.stdout);
-    let dirs: BTreeSet<&str> = listing
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.contains("node_modules"))
-        .collect();
-    if dirs.is_empty() {
-        return Err(format!(
-            "npm ls produced no tree — run `npm install` first ({})",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
+    let path = root.join("package-lock.json");
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let lock: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("bad {}: {e}", path.display()))?;
+    let packages = lock["packages"]
+        .as_object()
+        .ok_or("package-lock.json has no `packages` map")?;
 
     let mut deps = Vec::new();
-    for dir in dirs {
-        let dir = Path::new(dir);
-        let manifest = dir.join("package.json");
-        let Ok(raw) = std::fs::read_to_string(&manifest) else {
+    for (key, p) in packages {
+        // The root project itself is keyed by the empty string.
+        let Some(rel) = key.strip_prefix("node_modules/") else {
             continue;
         };
-        let p: Value =
-            serde_json::from_str(&raw).map_err(|e| format!("bad {}: {e}", manifest.display()))?;
-        let name = p["name"].as_str().unwrap_or_default().to_string();
+        if p["dev"].as_bool() == Some(true) || p["devOptional"].as_bool() == Some(true) {
+            continue;
+        }
+        // Nested paths key by the full chain; the package name is the tail.
+        let name = p["name"]
+            .as_str()
+            .unwrap_or_else(|| rel.rsplit("node_modules/").next().unwrap_or(rel))
+            .to_string();
         let version = p["version"].as_str().unwrap_or_default().to_string();
-        let license = match &p["license"] {
-            Value::String(s) => s.clone(),
-            // Deprecated `licenses: [{type, url}]` form.
-            Value::Array(a) => a
-                .iter()
-                .filter_map(|l| l["type"].as_str())
-                .collect::<Vec<_>>()
-                .join(" OR "),
-            _ => return Err(format!("{name} {version} declares no licence")),
+        let license = p["license"]
+            .as_str()
+            .ok_or_else(|| format!("{name} {version} declares no licence in package-lock.json"))?
+            .to_string();
+
+        let gated = !p["os"].is_null() || !p["cpu"].is_null() || !p["libc"].is_null();
+        let dir = root.join(key);
+        let (copyrights, texts) = if dir.is_dir() {
+            harvest(&dir)
+        } else if gated {
+            (Vec::new(), Vec::new())
+        } else {
+            return Err(format!(
+                "{} is in package-lock.json but not installed — run `npm install`",
+                key
+            ));
         };
-        let (copyrights, texts) = harvest(dir);
         deps.push(Dep {
             name,
             version,
