@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Read;
 // The archive index machinery is keyed by Unix-style relative path
 // strings built on std paths; the `Vfs` surface speaks our
 // `vfs::path::Path`. Convert at each trait-method boundary via
@@ -12,7 +11,6 @@ use std::task::{Context, Poll};
 use log::info;
 use tokio::io::AsyncRead;
 use tokio::sync::{Notify, mpsc};
-use tokio_util::sync::CancellationToken;
 
 use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
@@ -67,16 +65,10 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
     fn can_watch(&self) -> bool {
         false
     }
-    fn can_read_sync(&self) -> bool {
-        false
-    }
-    fn can_read_async(&self) -> bool {
+    fn can_read(&self) -> bool {
         true
     }
-    fn can_overwrite_sync(&self) -> bool {
-        false
-    }
-    fn can_overwrite_async(&self) -> bool {
+    fn can_overwrite(&self) -> bool {
         false
     }
     fn can_create_directory(&self) -> bool {
@@ -274,51 +266,15 @@ impl TarArchiveVfs {
     ) -> Result<(), Error> {
         let details = upstream.file_details(&archive_path).await?;
         let file_size = details.size;
-        let descriptor = upstream.descriptor();
 
         let compression = detect_compression_from_name(archive_path.as_wire_str());
         info!(
-            "archive: indexing {} (size={}, compression={:?}, sync={})",
-            archive_path,
-            file_size,
-            compression,
-            descriptor.can_read_sync()
+            "archive: indexing {} (size={}, compression={:?})",
+            archive_path, file_size, compression,
         );
 
-        if descriptor.can_read_sync() {
-            // Sync path: use streaming reader in spawn_blocking
-            let reader = upstream.open_read_sync(&archive_path).await?;
-            let cancel = job.cancel_token();
-            let state_clone = state.clone();
-            let reporter_clone = reporter.clone();
-            let archive_label = archive_path.as_wire_str().to_string();
-
-            let result = tokio::task::spawn_blocking(move || {
-                Self::drive_indexing_sync(
-                    reader,
-                    file_size,
-                    compression,
-                    &cancel,
-                    &state_clone,
-                    &reporter_clone,
-                    &archive_label,
-                )
-            })
-            .await
-            .map_err(|e| Error::custom(format!("indexing task panicked: {}", e)))??;
-
-            // Build final tree and set completed index
-            info!(
-                "archive: indexing finished, {} entries, building final tree",
-                result.entries.len()
-            );
-            let entries: Vec<&iluvatar::IndexEntry> = result.entries.values().collect();
-            let tree = build_directory_tree_from_iluvatar(entries);
-            *state.tree.write() = tree;
-            let _ = state.completed_index.set(result);
-            state.updated.notify_waiters();
-        } else if descriptor.can_read_async() {
-            // Async path: drive engine over one held-open upstream handle
+        {
+            // Drive the engine over one held-open upstream handle.
             let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
                 .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
 
@@ -398,7 +354,7 @@ impl TarArchiveVfs {
 
             let index = engine.finish();
             info!(
-                "archive: async indexing finished, {} entries, building final tree",
+                "archive: indexing finished, {} entries, building final tree",
                 index.entries.len()
             );
             let entries: Vec<&iluvatar::IndexEntry> = index.entries.values().collect();
@@ -406,92 +362,11 @@ impl TarArchiveVfs {
             *state.tree.write() = tree;
             let _ = state.completed_index.set(index);
             state.updated.notify_waiters();
-        } else {
-            return Err(Error::custom(
-                "upstream VFS supports neither sync nor async read",
-            ));
         }
 
         info!("archive: indexing complete for {}", archive_path);
 
         Ok(())
-    }
-
-    /// Drive the IndexingEngine synchronously using a streaming reader.
-    /// Called from within spawn_blocking.
-    #[allow(clippy::too_many_arguments)]
-    fn drive_indexing_sync(
-        mut reader: Box<dyn Read + Send>,
-        file_size: u64,
-        compression: iluvatar::CompressionFormat,
-        cancel: &CancellationToken,
-        state: &TarIndexingState,
-        reporter: &Arc<dyn super::super::ProgressReporter>,
-        archive_label: &str,
-    ) -> Result<iluvatar::ArchiveIndex, Error> {
-        let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
-            .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
-
-        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-        let mut last_snapshot = std::time::Instant::now();
-        let mut last_snapshot_entries = 0usize;
-        let mut bytes_read: u64 = 0;
-        // Initial progress so the spinner is replaced immediately.
-        emit_indexing_progress(reporter, 0, file_size, bytes_read, archive_label);
-
-        loop {
-            if cancel.is_cancelled() {
-                info!("archive: indexing cancelled");
-                return Ok(engine.cancel());
-            }
-
-            match engine.step() {
-                iluvatar::EngineRequest::NeedInput => {
-                    let n = reader
-                        .read(&mut buf)
-                        .map_err(|e| Error::custom(format!("read error: {}", e)))?;
-                    if n == 0 {
-                        engine.signal_eof();
-                    } else {
-                        bytes_read += n as u64;
-                        engine.provide_data(&buf[..n]);
-                    }
-                }
-                iluvatar::EngineRequest::Done => {
-                    return Ok(engine.finish());
-                }
-                iluvatar::EngineRequest::Error(e) => {
-                    return Err(Error::custom(format!("failed to index archive: {}", e)));
-                }
-                _ => {}
-            }
-
-            let progress = engine.progress();
-            if progress.entries_found > last_snapshot_entries
-                && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL
-            {
-                info!(
-                    "archive: sync partial snapshot at {} entries (+{}, {:.1}s)",
-                    progress.entries_found,
-                    progress.entries_found - last_snapshot_entries,
-                    last_snapshot.elapsed().as_secs_f64()
-                );
-                last_snapshot_entries = progress.entries_found;
-                last_snapshot = std::time::Instant::now();
-                let partial_index = engine.snapshot_index();
-                let entries: Vec<&iluvatar::IndexEntry> = partial_index.entries.values().collect();
-                let tree = build_directory_tree_from_iluvatar(entries);
-                *state.tree.write() = tree;
-                state.updated.notify_waiters();
-                emit_indexing_progress(
-                    reporter,
-                    progress.entries_found as u64,
-                    file_size,
-                    bytes_read,
-                    archive_label,
-                );
-            }
-        }
     }
 
     /// Wait for the completed archive index (needed for file reads).

@@ -208,8 +208,6 @@ impl Harness {
     fn new(zip_bytes: &[u8]) -> Self {
         let upstream = MockVfs::builder()
             .config(MockVfsConfig {
-                can_read_sync: true,
-                can_read_async: true,
                 // Model object stores: a range read at/past EOF errors.
                 strict_range_reads: true,
                 ..MockVfsConfig::default()

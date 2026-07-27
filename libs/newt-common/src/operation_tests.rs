@@ -639,7 +639,7 @@ async fn test_trash_not_supported_surfaces_issue() {
 // ===========================================================================
 
 #[tokio::test]
-async fn test_copy_single_file_sync() {
+async fn test_copy_single_file() {
     let vfs = MockVfs::builder()
         .file("/src/a.txt", b"hello world")
         .dir("/dst")
@@ -659,36 +659,6 @@ async fn test_copy_single_file_sync() {
 
     assert!(has_completed(&result.events));
     assert_eq!(result.vfs.read_content("/dst/a.txt"), b"hello world");
-}
-
-#[tokio::test]
-async fn test_copy_single_file_async() {
-    let vfs = MockVfs::builder()
-        .config(MockVfsConfig {
-            can_read_sync: false,
-            can_read_async: true,
-            can_overwrite_sync: false,
-            can_overwrite_async: true,
-            ..Default::default()
-        })
-        .file("/src/a.txt", b"async content")
-        .dir("/dst")
-        .build();
-
-    let result = run_operation(
-        vfs,
-        OperationRequest::Copy {
-            rename_to: None,
-            sources: vec![vfs_path("/src/a.txt")],
-            destination: vfs_path("/dst"),
-            options: Default::default(),
-        },
-        skip_all,
-    )
-    .await;
-
-    assert!(has_completed(&result.events));
-    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"async content");
 }
 
 #[tokio::test]
@@ -2321,54 +2291,6 @@ async fn test_create_archive_password_rejected_for_tar() {
 }
 
 #[tokio::test]
-async fn test_create_archive_capability_matrix() {
-    for (src_async, dst_async) in [(false, false), (false, true), (true, false), (true, true)] {
-        let src = MockVfs::builder()
-            .config(MockVfsConfig {
-                can_read_sync: !src_async,
-                can_read_async: src_async,
-                ..MockVfsConfig::default()
-            })
-            .dir("/data")
-            .file("/data/a.txt", b"alpha")
-            .file("/data/b.txt", b"beta")
-            .build();
-        let dst = MockVfs::builder()
-            .config(MockVfsConfig {
-                can_overwrite_sync: !dst_async,
-                can_overwrite_async: dst_async,
-                ..MockVfsConfig::default()
-            })
-            .build();
-
-        let (result, dst) = run_operation_two_vfs(
-            src,
-            dst,
-            OperationRequest::CreateArchive {
-                sources: vec![vfs_path("/data")],
-                destination: vfs_path_id(1, "/out.tar"),
-                options: archive_options(ArchiveFormat::Tar),
-            },
-            |issue| panic!("unexpected issue: {}", issue.message),
-        )
-        .await;
-        assert!(
-            has_completed(&result.events),
-            "src_async={src_async} dst_async={dst_async}: {:?}",
-            result.events
-        );
-
-        let entries = read_back_tar(&dst.read_content("/out.tar"), "check.tar").await;
-        assert_eq!(
-            entries["data/a.txt"].content.as_deref(),
-            Some(&b"alpha"[..]),
-            "src_async={src_async} dst_async={dst_async}"
-        );
-        assert_eq!(entries["data/b.txt"].content.as_deref(), Some(&b"beta"[..]));
-    }
-}
-
-#[tokio::test]
 async fn test_create_archive_dest_exists_skip_cancels() {
     let vfs = MockVfs::builder()
         .dir("/data")
@@ -2499,7 +2421,7 @@ async fn test_create_archive_open_failure_skips_entry() {
         .file("/data/bad.txt", b"bad")
         .failure(FailureSpec {
             path: PathBuf::from_wire_str("/data/bad.txt"),
-            operation: "open_read_sync",
+            operation: "open_read_async",
             error: crate::Error {
                 kind: crate::ErrorKind::PermissionDenied,
                 message: "denied".to_string(),

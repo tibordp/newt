@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ use crate::{Error, ToUnix};
 
 use super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
-    VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
+    VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
 };
 
 /// Bytes read from a file head when sniffing for a MIME type without an
@@ -54,17 +53,11 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn can_watch(&self) -> bool {
         true
     }
-    fn can_read_sync(&self) -> bool {
+    fn can_read(&self) -> bool {
         true
     }
-    fn can_read_async(&self) -> bool {
-        false
-    }
-    fn can_overwrite_sync(&self) -> bool {
+    fn can_overwrite(&self) -> bool {
         true
-    }
-    fn can_overwrite_async(&self) -> bool {
-        false
     }
     fn can_create_directory(&self) -> bool {
         true
@@ -1076,11 +1069,11 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
-        let path = to_native(path);
-        let file =
-            tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::from))
-                .await??;
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, Error> {
+        let file = tokio::fs::File::open(to_native(path)).await?;
         Ok(Box::new(file))
     }
 
@@ -1142,12 +1135,9 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
-        let path = to_native(path);
-        let file =
-            tokio::task::spawn_blocking(move || std::fs::File::create(&path).map_err(Error::from))
-                .await??;
-        Ok(Box::new(file))
+    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        let file = tokio::fs::File::create(to_native(path)).await?;
+        Ok(Box::new(LocalAsyncWriter { file }))
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
@@ -1353,6 +1343,29 @@ impl Vfs for LocalVfs {
         let target = to_native(target);
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LocalAsyncWriter
+// ---------------------------------------------------------------------------
+
+struct LocalAsyncWriter {
+    file: tokio::fs::File,
+}
+
+#[async_trait::async_trait]
+impl VfsAsyncWriter for LocalAsyncWriter {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+        use tokio::io::AsyncWriteExt;
+        self.file.write_all(buf).await?;
+        Ok(buf.len())
+    }
+
+    async fn finish(mut self: Box<Self>) -> Result<(), Error> {
+        use tokio::io::AsyncWriteExt;
+        self.file.flush().await?;
+        Ok(())
     }
 }
 

@@ -138,8 +138,7 @@ impl Harness {
     fn new(image: &[u8]) -> Self {
         let upstream = MockVfs::builder()
             .config(MockVfsConfig {
-                can_read_sync: false,
-                can_read_async: true,
+                can_read: true,
                 strict_range_reads: true,
                 ..MockVfsConfig::default()
             })
@@ -364,8 +363,7 @@ async fn writes_rejected_by_capabilities() {
     let harness = Harness::new(&fixture("joliet"));
     let vfs = harness.mount().await;
     let desc = vfs.descriptor();
-    assert!(!desc.can_overwrite_sync());
-    assert!(!desc.can_overwrite_async());
+    assert!(!desc.can_overwrite());
     assert!(!desc.can_remove());
     assert!(!desc.can_rename());
     assert!(desc.is_ephemeral());

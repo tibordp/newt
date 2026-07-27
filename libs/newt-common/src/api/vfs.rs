@@ -110,84 +110,45 @@ impl Dispatcher for VfsDispatcher {
             }
             API_VFS_OPEN_READ_ASYNC => {
                 let (path, stream_id): (PathBuf, StreamId) = decode(&req[..])?;
-                let descriptor = self.vfs.descriptor();
                 let outbox = self.outbox.clone();
 
                 // Stream errors must land in `ret` — the encoded response is
                 // the only way the remote reader learns the stream failed.
-                let ret: Result<(), Error> = if descriptor.can_read_async() {
-                    async {
-                        use tokio::io::AsyncReadExt;
-                        let mut reader = self.vfs.open_read_async(&path).await?;
-                        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-                        let mut seq: u64 = 0;
-                        loop {
-                            let n = reader.read(&mut buf).await.map_err(Error::from)?;
-                            if n == 0 {
-                                break;
-                            }
-                            // serde_bytes for all chunk payloads: bincode's
-                            // serde path walks Vec<u8> per byte (~30x slower
-                            // than memcpy) and only `serialize_bytes` /
-                            // `deserialize_byte_buf` hit its fast path. The
-                            // wire format is identical.
-                            let chunk = serde_bytes::Bytes::new(&buf[..n]);
-                            if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
-                                outbox
-                                    .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
-                                    .await
-                                    .map_err(|_| Error::connection())?;
-                            }
-                            seq += 1;
+                let ret: Result<(), Error> = async {
+                    use tokio::io::AsyncReadExt;
+                    let mut reader = self.vfs.open_read_async(&path).await?;
+                    let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+                    let mut seq: u64 = 0;
+                    loop {
+                        let n = reader.read(&mut buf).await.map_err(Error::from)?;
+                        if n == 0 {
+                            break;
                         }
-                        // Send empty sentinel to signal EOF.
-                        if let Some(bytes) =
-                            try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
-                        {
+                        // serde_bytes for all chunk payloads: bincode's
+                        // serde path walks Vec<u8> per byte (~30x slower
+                        // than memcpy) and only `serialize_bytes` /
+                        // `deserialize_byte_buf` hit its fast path. The
+                        // wire format is identical.
+                        let chunk = serde_bytes::Bytes::new(&buf[..n]);
+                        if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
                             outbox
                                 .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
                                 .await
                                 .map_err(|_| Error::connection())?;
                         }
-                        Ok(())
+                        seq += 1;
                     }
-                    .await
-                } else if descriptor.can_read_sync() {
-                    async {
-                        let reader = self.vfs.open_read_sync(&path).await?;
-                        // Receiver drop is the cancellation path; the token is
-                        // never cancelled here.
-                        let (mut chunks, read_task) = crate::operation::bridge_sync_reader(
-                            reader,
-                            tokio_util::sync::CancellationToken::new(),
-                        );
-                        let mut seq: u64 = 0;
-                        while let Some(chunk) = chunks.recv().await {
-                            if let Some(bytes) =
-                                try_encode(&(stream_id, seq, serde_bytes::ByteBuf::from(chunk?)))
-                            {
-                                outbox
-                                    .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
-                                    .await
-                                    .map_err(|_| Error::connection())?;
-                            }
-                            seq += 1;
-                        }
-                        read_task.await?;
-                        if let Some(bytes) =
-                            try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
-                        {
-                            outbox
-                                .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
-                                .await
-                                .map_err(|_| Error::connection())?;
-                        }
-                        Ok(())
+                    // Send empty sentinel to signal EOF.
+                    if let Some(bytes) = try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
+                    {
+                        outbox
+                            .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
+                            .await
+                            .map_err(|_| Error::connection())?;
                     }
-                    .await
-                } else {
-                    Err(Error::not_supported())
-                };
+                    Ok(())
+                }
+                .await;
 
                 encode(&ret)?
             }
@@ -222,92 +183,49 @@ impl Dispatcher for VfsDispatcher {
             }
             API_VFS_OVERWRITE_ASYNC_BEGIN => {
                 let path: PathBuf = decode(&req[..])?;
-                let descriptor = self.vfs.descriptor();
 
-                let ret: Result<StreamId, Error> = if descriptor.can_overwrite_async() {
-                    let writer = self.vfs.overwrite_async(&path).await?;
-                    let stream_id = StreamId(
-                        self.next_stream_id
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                    );
+                let ret: Result<StreamId, Error> = match self.vfs.overwrite_async(&path).await {
+                    Ok(writer) => {
+                        let stream_id = StreamId(
+                            self.next_stream_id
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                        );
 
-                    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<WriteCommand>(4);
-                    self.write_sessions.lock().insert(
-                        stream_id,
-                        WriteSession {
-                            tx: chunk_tx,
-                            expected_seq: 0,
-                        },
-                    );
-
-                    let write_task_handles = self.write_task_handles.clone();
-                    let write_sessions = self.write_sessions.clone();
-                    let handle = tokio::spawn(async move {
-                        let _cleanup = WriteSessionCleanup {
+                        let (chunk_tx, mut chunk_rx) =
+                            tokio::sync::mpsc::channel::<WriteCommand>(4);
+                        self.write_sessions.lock().insert(
                             stream_id,
-                            sessions: write_sessions,
-                        };
-                        let mut writer = writer;
-                        while let Some(command) = chunk_rx.recv().await {
-                            match command {
-                                WriteCommand::Data(data) => {
-                                    writer.write(&data).await?;
-                                }
-                                WriteCommand::Finish => return writer.finish().await,
-                            }
-                        }
-                        // Sender disappearance without Finish is cancellation:
-                        // drop the writer without committing it.
-                        Ok(())
-                    });
-                    write_task_handles.lock().insert(stream_id, handle);
+                            WriteSession {
+                                tx: chunk_tx,
+                                expected_seq: 0,
+                            },
+                        );
 
-                    Ok(stream_id)
-                } else if descriptor.can_overwrite_sync() {
-                    let writer = self.vfs.overwrite_sync(&path).await?;
-                    let stream_id = StreamId(
-                        self.next_stream_id
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                    );
-
-                    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<WriteCommand>(4);
-                    self.write_sessions.lock().insert(
-                        stream_id,
-                        WriteSession {
-                            tx: chunk_tx,
-                            expected_seq: 0,
-                        },
-                    );
-
-                    let write_task_handles = self.write_task_handles.clone();
-                    let write_sessions = self.write_sessions.clone();
-                    let handle = tokio::task::spawn_blocking(move || {
-                        use std::io::Write;
-                        let _cleanup = WriteSessionCleanup {
-                            stream_id,
-                            sessions: write_sessions,
-                        };
-                        let mut writer = writer;
-                        while let Some(command) =
-                            tokio::runtime::Handle::current().block_on(chunk_rx.recv())
-                        {
-                            match command {
-                                WriteCommand::Data(data) => writer.write_all(&data)?,
-                                WriteCommand::Finish => {
-                                    writer.flush()?;
-                                    return Ok(());
+                        let write_task_handles = self.write_task_handles.clone();
+                        let write_sessions = self.write_sessions.clone();
+                        let handle = tokio::spawn(async move {
+                            let _cleanup = WriteSessionCleanup {
+                                stream_id,
+                                sessions: write_sessions,
+                            };
+                            let mut writer = writer;
+                            while let Some(command) = chunk_rx.recv().await {
+                                match command {
+                                    WriteCommand::Data(data) => {
+                                        writer.write(&data).await?;
+                                    }
+                                    WriteCommand::Finish => return writer.finish().await,
                                 }
                             }
-                        }
-                        // Cancellation closes the channel. Dropping the file is
-                        // sufficient; do not turn an abort into a successful finish.
-                        Ok(())
-                    });
-                    write_task_handles.lock().insert(stream_id, handle);
+                            // Sender disappearance without Finish is cancellation:
+                            // drop the writer without committing it.
+                            Ok(())
+                        });
+                        write_task_handles.lock().insert(stream_id, handle);
 
-                    Ok(stream_id)
-                } else {
-                    Err(Error::not_supported())
+                        Ok(stream_id)
+                    }
+                    Err(e) => Err(e),
                 };
 
                 encode(&ret)?
@@ -539,71 +457,13 @@ impl Dispatcher for VfsReadChunkDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use crate::rpc::{Communicator, Dispatcher};
-    use crate::test_support::mock_vfs::{MockVfs, MockVfsConfig};
+    use crate::test_support::mock_vfs::MockVfs;
     use crate::vfs::path::PathBuf;
 
-    struct EndlessReader {
-        reads: Arc<AtomicUsize>,
-        dropped: Option<tokio::sync::oneshot::Sender<()>>,
-    }
-
-    impl Read for EndlessReader {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.reads.fetch_add(1, Ordering::Relaxed);
-            buf.fill(1);
-            Ok(buf.len())
-        }
-    }
-
-    impl Drop for EndlessReader {
-        fn drop(&mut self) {
-            if let Some(tx) = self.dropped.take() {
-                let _ = tx.send(());
-            }
-        }
-    }
-
     #[tokio::test]
-    async fn sync_reader_stops_when_async_consumer_is_dropped() {
-        let reads = Arc::new(AtomicUsize::new(0));
-        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
-        let reader = Box::new(EndlessReader {
-            reads: reads.clone(),
-            dropped: Some(dropped_tx),
-        });
-
-        let (mut chunks, read_task) = crate::operation::bridge_sync_reader(
-            reader,
-            tokio_util::sync::CancellationToken::new(),
-        );
-        chunks.recv().await.unwrap().unwrap();
-        drop(chunks);
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
-            .await
-            .expect("blocking reader did not stop when its consumer was dropped")
-            .unwrap();
-        read_task.await.unwrap();
-
-        // Four buffered chunks, the one received above, and at most one send
-        // racing with receiver drop.
-        assert!(reads.load(Ordering::SeqCst) <= 6);
-    }
-
-    #[tokio::test]
-    async fn abort_removes_sync_write_session_and_handle() {
-        let vfs = MockVfs::builder()
-            .config(MockVfsConfig {
-                can_overwrite_sync: true,
-                can_overwrite_async: false,
-                ..Default::default()
-            })
-            .build();
+    async fn abort_removes_write_session_and_handle() {
+        let vfs = MockVfs::builder().build();
         let (outbox, _outbox_rx) = Communicator::create_outbox();
         let dispatcher = super::VfsDispatcher::new(vfs, outbox);
 
@@ -693,7 +553,7 @@ mod tests {
             .file("/f", b"content")
             .failure(FailureSpec {
                 path: PathBuf::from_wire_str("/f"),
-                operation: "open_read_sync",
+                operation: "open_read_async",
                 error: crate::Error::custom("simulated open failure"),
                 remaining: None,
             })

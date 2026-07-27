@@ -40,8 +40,7 @@ fn big_bytes() -> Vec<u8> {
 }
 
 /// Build a TarArchiveVfs whose upstream is a MockVfs holding `bytes` at
-/// `/archive` (or `/archive.gz`). The upstream advertises sync/async
-/// capability per `config`.
+/// `/archive` (or `/archive.gz`).
 fn mount(bytes: &[u8], path: &str, config: MockVfsConfig) -> Arc<TarArchiveVfs> {
     let upstream = MockVfs::builder().config(config).file(path, bytes).build();
     let reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
@@ -54,22 +53,6 @@ fn mount(bytes: &[u8], path: &str, config: MockVfsConfig) -> Arc<TarArchiveVfs> 
         Vec::new(),
         reporter,
     ))
-}
-
-fn sync_only_config() -> MockVfsConfig {
-    MockVfsConfig {
-        can_read_sync: true,
-        can_read_async: false,
-        ..MockVfsConfig::default()
-    }
-}
-
-fn async_only_config() -> MockVfsConfig {
-    MockVfsConfig {
-        can_read_sync: false,
-        can_read_async: true,
-        ..MockVfsConfig::default()
-    }
 }
 
 async fn read_to_vec(vfs: &TarArchiveVfs, path: &str) -> Vec<u8> {
@@ -87,24 +70,8 @@ async fn read_to_vec(vfs: &TarArchiveVfs, path: &str) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn lists_top_level_entries_sync_upstream() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
-    let mut names: Vec<String> = vfs
-        .list_files(&vp("/"), None)
-        .await
-        .expect("list_files")
-        .files
-        .into_iter()
-        .map(|f| f.name)
-        .filter(|n| n != "..")
-        .collect();
-    names.sort();
-    assert_eq!(names, vec!["dir", "hello.txt", "links"]);
-}
-
-#[tokio::test]
-async fn lists_top_level_entries_async_upstream() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, async_only_config());
+async fn lists_top_level_entries() {
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let mut names: Vec<String> = vfs
         .list_files(&vp("/"), None)
         .await
@@ -120,7 +87,7 @@ async fn lists_top_level_entries_async_upstream() {
 
 #[tokio::test]
 async fn lists_nested_dir() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let mut names: Vec<String> = vfs
         .list_files(&vp("/dir"), None)
         .await
@@ -140,7 +107,7 @@ async fn lists_nested_dir() {
 
 #[tokio::test]
 async fn streaming_read_small_file() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
     assert_eq!(read_to_vec(&vfs, "/dir/nested.txt").await, NESTED);
 }
@@ -149,19 +116,13 @@ async fn streaming_read_small_file() {
 /// streaming reader's mpsc channel and `poll_read` partial-buffer path.
 #[tokio::test]
 async fn streaming_read_multi_chunk_file() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
-    assert_eq!(read_to_vec(&vfs, "/dir/big.bin").await, big_bytes());
-}
-
-#[tokio::test]
-async fn streaming_read_works_with_async_only_upstream() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, async_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     assert_eq!(read_to_vec(&vfs, "/dir/big.bin").await, big_bytes());
 }
 
 #[tokio::test]
 async fn streaming_read_gzip_decompresses() {
-    let vfs = mount(SIMPLE_TAR_GZ, "/archive.gz", sync_only_config());
+    let vfs = mount(SIMPLE_TAR_GZ, "/archive.gz", MockVfsConfig::default());
     assert_eq!(read_to_vec(&vfs, "/dir/big.bin").await, big_bytes());
     assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
 }
@@ -170,7 +131,7 @@ async fn streaming_read_gzip_decompresses() {
 async fn streaming_read_small_buffers() {
     // Drain via a 17-byte buffer to stress the partial-chunk path in
     // TarStreamingReader::poll_read (chunk shorter than `buf.remaining()`).
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let mut reader = vfs.open_read_async(&vp("/dir/big.bin")).await.unwrap();
     let mut out = Vec::new();
     let mut tmp = [0u8; 17];
@@ -186,7 +147,7 @@ async fn streaming_read_small_buffers() {
 
 #[tokio::test]
 async fn open_read_async_missing_path_errors() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let err = match vfs.open_read_async(&vp("/nope.txt")).await {
         Ok(_) => panic!("expected NotFound, got Ok"),
         Err(e) => e,
@@ -200,7 +161,7 @@ async fn open_read_async_missing_path_errors() {
 
 #[tokio::test]
 async fn read_range_returns_correct_slice() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let big = big_bytes();
 
     // Mid-file slice across the 64 KiB chunk boundary.
@@ -226,19 +187,19 @@ async fn read_range_returns_correct_slice() {
 
 #[tokio::test]
 async fn hardlink_resolves_to_target_content() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     assert_eq!(read_to_vec(&vfs, "/links/hard.txt").await, HELLO);
 }
 
 #[tokio::test]
 async fn symlink_resolves_to_target_content() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     assert_eq!(read_to_vec(&vfs, "/links/soft.txt").await, HELLO);
 }
 
 #[tokio::test]
 async fn file_details_reports_symlink_metadata() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let details = vfs
         .file_details(&vp("/links/soft.txt"))
         .await
@@ -251,7 +212,7 @@ async fn file_details_reports_symlink_metadata() {
 /// the indexed listing entry, feeding metadata preservation on copy-out.
 #[tokio::test]
 async fn get_metadata_derives_from_the_index() {
-    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let meta = vfs
         .get_metadata(&vp("/hello.txt"))
         .await
@@ -276,13 +237,13 @@ async fn get_metadata_derives_from_the_index() {
 /// so the indexer must stop at the known file size rather than read past
 /// the end.
 #[tokio::test]
-async fn zstd_indexes_over_strict_async_upstream() {
+async fn zstd_indexes_over_strict_upstream() {
     let vfs = mount(
         SIMPLE_TAR_ZST,
         "/archive.zst",
         MockVfsConfig {
             strict_range_reads: true,
-            ..async_only_config()
+            ..MockVfsConfig::default()
         },
     );
     let mut names: Vec<String> = vfs
@@ -299,13 +260,13 @@ async fn zstd_indexes_over_strict_async_upstream() {
 }
 
 #[tokio::test]
-async fn zstd_reads_over_strict_async_upstream() {
+async fn zstd_reads_over_strict_upstream() {
     let vfs = mount(
         SIMPLE_TAR_ZST,
         "/archive.zst",
         MockVfsConfig {
             strict_range_reads: true,
-            ..async_only_config()
+            ..MockVfsConfig::default()
         },
     );
     assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
@@ -322,7 +283,7 @@ async fn zstd_reads_over_strict_async_upstream() {
 #[tokio::test]
 async fn upstream_read_range_failure_during_indexing_surfaces() {
     let upstream = MockVfs::builder()
-        .config(async_only_config())
+        .config(MockVfsConfig::default())
         .file(ARCHIVE_PATH, SIMPLE_TAR)
         .failure(FailureSpec {
             path: PathBuf::from_wire_str(ARCHIVE_PATH),

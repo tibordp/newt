@@ -41,7 +41,6 @@ pub use sftp::SftpVfs;
 pub use volume::{RootInfo, VolumeInfo, VolumeKind};
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -60,10 +59,9 @@ use crate::rpc::Communicator;
 
 /// Default chunk size for VFS read/copy buffers and streaming channels.
 ///
-/// Used by file copy loops, async-read bridge tasks, the RPC dispatcher
-/// chunking host→agent reads, and archive/SFTP streaming readers. 64 KiB
-/// is large enough to amortise syscall/RPC overhead without holding much
-/// memory per in-flight chunk.
+/// Used by file copy loops, the RPC dispatcher chunking host→agent reads,
+/// and archive/SFTP streaming readers. 64 KiB is large enough to amortise
+/// syscall/RPC overhead without holding much memory per in-flight chunk.
 pub const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -231,12 +229,10 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_watch(&self) -> bool;
 
     // --- Read ---
-    fn can_read_sync(&self) -> bool;
-    fn can_read_async(&self) -> bool;
+    fn can_read(&self) -> bool;
 
     // --- Write ---
-    fn can_overwrite_sync(&self) -> bool;
-    fn can_overwrite_async(&self) -> bool;
+    fn can_overwrite(&self) -> bool;
     fn can_create_directory(&self) -> bool;
     fn can_create_symlink(&self) -> bool;
     fn can_touch(&self) -> bool;
@@ -696,11 +692,6 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Read ---
-    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
-        let _ = path;
-        Err(Error::not_supported())
-    }
-
     async fn open_read_async(
         &self,
         path: &Path,
@@ -730,11 +721,6 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Write ---
-    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, Error> {
-        let _ = path;
-        Err(Error::not_supported())
-    }
-
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let _ = path;
         Err(Error::not_supported())
@@ -1118,47 +1104,20 @@ impl Filesystem for VfsRegistryFs {
                 details.size, max_size
             )));
         }
-        let descriptor = vfs.descriptor();
-        if descriptor.can_read_sync() {
-            let mut reader = vfs.open_read_sync(&local_path).await?;
-            let size = details.size as usize;
-            tokio::task::spawn_blocking(move || {
-                let mut data = Vec::with_capacity(size);
-                std::io::Read::read_to_end(&mut reader, &mut data)?;
-                Ok(data)
-            })
-            .await?
-        } else if descriptor.can_read_async() {
-            use tokio::io::AsyncReadExt;
-            let mut reader = vfs.open_read_async(&local_path).await?;
-            let mut data = Vec::with_capacity(details.size as usize);
-            reader.read_to_end(&mut data).await?;
-            Ok(data)
-        } else {
-            Err(Error::not_supported())
-        }
+        use tokio::io::AsyncReadExt;
+        let mut reader = vfs.open_read_async(&local_path).await?;
+        let mut data = Vec::with_capacity(details.size as usize);
+        reader.read_to_end(&mut data).await?;
+        Ok(data)
     }
 
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        let descriptor = vfs.descriptor();
-        if descriptor.can_overwrite_sync() {
-            let mut writer = vfs.overwrite_sync(&local_path).await?;
-            tokio::task::spawn_blocking(move || {
-                std::io::Write::write_all(&mut writer, &data)?;
-                std::io::Write::flush(&mut writer)?;
-                Ok(())
-            })
-            .await?
-        } else if descriptor.can_overwrite_async() {
-            let mut writer = vfs.overwrite_async(&local_path).await?;
-            writer.write(&data).await?;
-            writer.finish().await?;
-            Ok(())
-        } else {
-            Err(Error::not_supported())
-        }
+        let mut writer = vfs.overwrite_async(&local_path).await?;
+        writer.write(&data).await?;
+        writer.finish().await?;
+        Ok(())
     }
 
     async fn find_in_file(

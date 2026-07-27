@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use crate::vfs::path::{Path, PathBuf};
@@ -45,7 +44,7 @@ pub enum MockEntry {
 #[derive(Debug, Clone)]
 pub struct FailureSpec {
     pub path: PathBuf,
-    pub operation: &'static str, // e.g. "remove_file", "overwrite_sync", ...
+    pub operation: &'static str, // e.g. "remove_file", "overwrite_async", ...
     pub error: crate::Error,
     pub remaining: Option<u32>, // None = permanent, Some(n) = fail n times then succeed
 }
@@ -79,13 +78,11 @@ fn check_failure_in(
 
 #[derive(Debug, Clone)]
 pub struct MockVfsConfig {
-    pub can_read_sync: bool,
-    pub can_read_async: bool,
+    pub can_read: bool,
     /// Mimic object stores (S3): `read_range` starting at or past the
     /// file size is an error, not an empty chunk.
     pub strict_range_reads: bool,
-    pub can_overwrite_sync: bool,
-    pub can_overwrite_async: bool,
+    pub can_overwrite: bool,
     pub can_create_directory: bool,
     pub can_create_symlink: bool,
     pub can_set_metadata: bool,
@@ -100,11 +97,9 @@ pub struct MockVfsConfig {
 impl Default for MockVfsConfig {
     fn default() -> Self {
         Self {
-            can_read_sync: true,
-            can_read_async: false,
+            can_read: true,
             strict_range_reads: false,
-            can_overwrite_sync: true,
-            can_overwrite_async: false,
+            can_overwrite: true,
             can_create_directory: true,
             can_create_symlink: true,
             can_set_metadata: true,
@@ -140,17 +135,11 @@ impl VfsDescriptor for MockVfsDescriptor {
     fn can_watch(&self) -> bool {
         false
     }
-    fn can_read_sync(&self) -> bool {
-        self.config.can_read_sync
+    fn can_read(&self) -> bool {
+        self.config.can_read
     }
-    fn can_read_async(&self) -> bool {
-        self.config.can_read_async
-    }
-    fn can_overwrite_sync(&self) -> bool {
-        self.config.can_overwrite_sync
-    }
-    fn can_overwrite_async(&self) -> bool {
-        self.config.can_overwrite_async
+    fn can_overwrite(&self) -> bool {
+        self.config.can_overwrite
     }
     fn can_create_directory(&self) -> bool {
         self.config.can_create_directory
@@ -451,19 +440,6 @@ impl Vfs for MockVfs {
         Ok(None)
     }
 
-    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, crate::Error> {
-        if let Some(e) = self.check_failure(path, "open_read_sync") {
-            return Err(e);
-        }
-        match self.entries.lock().get(path.as_wire_str()) {
-            Some(MockEntry::File { content, .. }) => Ok(Box::new(Cursor::new(content.clone()))),
-            _ => Err(crate::Error {
-                kind: crate::ErrorKind::NotFound,
-                message: format!("file not found: {}", path),
-            }),
-        }
-    }
-
     async fn open_read_async(
         &self,
         path: &Path,
@@ -675,17 +651,6 @@ impl Vfs for MockVfs {
                 message: format!("not found: {}", path),
             }),
         }
-    }
-
-    async fn overwrite_sync(&self, path: &Path) -> Result<Box<dyn Write + Send>, crate::Error> {
-        if let Some(e) = self.check_failure(path, "overwrite_sync") {
-            return Err(e);
-        }
-        Ok(Box::new(MockWriter {
-            buf: Vec::new(),
-            path: path.as_wire_str().to_string(),
-            entries: self.entries.clone(),
-        }))
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, crate::Error> {
@@ -953,7 +918,7 @@ impl Vfs for MockVfs {
 }
 
 // ---------------------------------------------------------------------------
-// Writer: captures bytes, writes to entries map on drop (sync) or finish (async)
+// Writer: captures bytes, writes to entries map on finish (or drop, on abort)
 // ---------------------------------------------------------------------------
 
 type EntryMap = Arc<Mutex<BTreeMap<String, MockEntry>>>;
@@ -977,17 +942,6 @@ impl MockWriter {
                 gid: 1000,
             },
         );
-    }
-}
-
-impl Write for MockWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buf.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

@@ -393,24 +393,66 @@ impl OperationsClient for Remote {
     }
 }
 
-// --- SyncProgressSender: cloneable, movable into spawn_blocking ---
+// --- IssueOutcome: result of handle_io_error ---
+
+enum IssueOutcome {
+    Skip,
+    Retry,
+}
+
+// --- ProgressReporter: async issue resolution + progress ---
 
 /// Minimum interval between progress/scanning notifications. The host
 /// throttles UI updates anyway; sending more is wasted work.
 const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(100);
 
-#[derive(Clone)]
-struct SyncProgressSender {
+struct ProgressReporter {
     id: OperationId,
     progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
-    last_report: Arc<Mutex<std::time::Instant>>,
+    last_report: Mutex<std::time::Instant>,
+    issue_resolvers: IssueResolvers,
+    next_issue_id: Arc<AtomicU64>,
+    sticky_resolutions: HashMap<IssueKind, IssueAction>,
+    cancel: CancellationToken,
 }
 
-impl SyncProgressSender {
+impl ProgressReporter {
+    fn new(
+        id: OperationId,
+        progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
+        issue_resolvers: IssueResolvers,
+        next_issue_id: Arc<AtomicU64>,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            id,
+            progress_tx,
+            last_report: Mutex::new(std::time::Instant::now()),
+            issue_resolvers,
+            next_issue_id,
+            sticky_resolutions: HashMap::new(),
+            cancel,
+        }
+    }
+
+    fn id(&self) -> OperationId {
+        self.id
+    }
+
     fn send(&self, progress: OperationProgress) {
         let _ = self.progress_tx.send(progress);
     }
 
+    fn send_prepared(&self, total_bytes: u64, total_items: u64) {
+        self.send(OperationProgress::Prepared {
+            id: self.id(),
+            total_bytes,
+            total_items,
+        });
+    }
+
+    /// Rate-limited to `PROGRESS_THROTTLE`; returns without sending inside
+    /// the window.
     fn maybe_send_progress(&self, bytes_done: u64, items_done: u64, current_item: &str) {
         let now = std::time::Instant::now();
         let mut last = self.last_report.lock();
@@ -439,71 +481,6 @@ impl SyncProgressSender {
             });
         }
     }
-}
-
-// --- IssueOutcome: result of handle_io_error ---
-
-enum IssueOutcome {
-    Skip,
-    Retry,
-}
-
-// --- ProgressReporter: async issue resolution + progress ---
-
-struct ProgressReporter {
-    sync_sender: SyncProgressSender,
-    issue_resolvers: IssueResolvers,
-    next_issue_id: Arc<AtomicU64>,
-    sticky_resolutions: HashMap<IssueKind, IssueAction>,
-    cancel: CancellationToken,
-}
-
-impl ProgressReporter {
-    fn new(
-        id: OperationId,
-        progress_tx: tokio::sync::mpsc::UnboundedSender<OperationProgress>,
-        issue_resolvers: IssueResolvers,
-        next_issue_id: Arc<AtomicU64>,
-        cancel: CancellationToken,
-    ) -> Self {
-        Self {
-            sync_sender: SyncProgressSender {
-                id,
-                progress_tx,
-                last_report: Arc::new(Mutex::new(std::time::Instant::now())),
-            },
-            issue_resolvers,
-            next_issue_id,
-            sticky_resolutions: HashMap::new(),
-            cancel,
-        }
-    }
-
-    fn id(&self) -> OperationId {
-        self.sync_sender.id
-    }
-
-    fn send(&self, progress: OperationProgress) {
-        self.sync_sender.send(progress);
-    }
-
-    fn send_prepared(&self, total_bytes: u64, total_items: u64) {
-        self.send(OperationProgress::Prepared {
-            id: self.id(),
-            total_bytes,
-            total_items,
-        });
-    }
-
-    fn maybe_send_progress(&self, bytes_done: u64, items_done: u64, current_item: &str) {
-        self.sync_sender
-            .maybe_send_progress(bytes_done, items_done, current_item);
-    }
-
-    fn maybe_send_scanning(&self, items_found: u64, bytes_found: u64) {
-        self.sync_sender
-            .maybe_send_scanning(items_found, bytes_found);
-    }
 
     fn send_completed(&self) {
         self.send(OperationProgress::Completed { id: self.id() });
@@ -518,10 +495,6 @@ impl ProgressReporter {
 
     fn send_cancelled(&self) {
         self.send(OperationProgress::Cancelled { id: self.id() });
-    }
-
-    fn sync_sender(&self) -> SyncProgressSender {
-        self.sync_sender.clone()
     }
 
     async fn raise_issue(
@@ -1217,74 +1190,7 @@ async fn plan_copy(
     })
 }
 
-// --- Sync-reader bridge (spawn_blocking + bounded channel) ---
-
-/// Bridge a sync reader into an async chunk stream. The bounded channel
-/// provides backpressure; the blocking task ends on EOF, error, cancel, or
-/// receiver drop. Awaiting the returned handle propagates reader panics.
-pub(crate) fn bridge_sync_reader(
-    mut reader: Box<dyn std::io::Read + Send>,
-    cancel: CancellationToken,
-) -> (
-    tokio::sync::mpsc::Receiver<Result<Vec<u8>, crate::Error>>,
-    tokio::task::JoinHandle<()>,
-) {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
-    let handle = tokio::task::spawn_blocking(move || {
-        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-        loop {
-            if cancel.is_cancelled() {
-                let _ = tx.blocking_send(Err(crate::Error::cancelled()));
-                return;
-            }
-            match std::io::Read::read(&mut *reader, &mut buf) {
-                Ok(0) => return,
-                Ok(n) => {
-                    if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
-                        return;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.blocking_send(Err(e.into()));
-                    return;
-                }
-            }
-        }
-    });
-    (rx, handle)
-}
-
-// --- Chunked byte copy (runs in spawn_blocking with trait objects) ---
-
-fn copy_bytes_sync(
-    reader: &mut dyn std::io::Read,
-    writer: &mut dyn std::io::Write,
-    cancel: &CancellationToken,
-    sender: &SyncProgressSender,
-    bytes_done: &mut u64,
-    items_done: u64,
-    display: &str,
-) -> Result<(), crate::Error> {
-    let mut buf = [0u8; VFS_READ_CHUNK_SIZE];
-
-    loop {
-        if cancel.is_cancelled() {
-            return Err(crate::Error::cancelled());
-        }
-
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n])?;
-        *bytes_done += n as u64;
-        sender.maybe_send_progress(*bytes_done, items_done, display);
-    }
-
-    Ok(())
-}
-
-// --- Async chunked byte copy ---
+// --- Chunked byte copy ---
 
 async fn copy_bytes_async(
     reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
@@ -1364,48 +1270,9 @@ async fn copy_single_file(
         }
     }
 
-    // 2. Sync read + sync write
-    if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_sync() {
-        debug!(
-            "copy_single_file: sync-read + sync-write for {}",
-            entry.source
-        );
-        let mut reader = src_vfs.open_read_sync(&entry.source).await?;
-        let mut writer = dst_vfs.overwrite_sync(&entry.dest).await?;
-
-        let cancel2 = cancel.clone();
-        let sender2 = reporter.sync_sender();
-        let bd = *bytes_done;
-        let id = items_done;
-        let display_owned = display.to_string();
-
-        let bd_back = tokio::task::spawn_blocking(move || {
-            let mut bd_local = bd;
-            let result = copy_bytes_sync(
-                &mut *reader,
-                &mut *writer,
-                &cancel2,
-                &sender2,
-                &mut bd_local,
-                id,
-                &display_owned,
-            );
-            (bd_local, result)
-        })
-        .await?;
-
-        *bytes_done = bd_back.0;
-        bd_back.1?;
-
-        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
-    }
-
-    // 3. Async read + async write
-    if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_async() {
-        debug!(
-            "copy_single_file: async-read + async-write for {}",
-            entry.source
-        );
+    // 2. Streaming copy
+    if src_descriptor.can_read() && dst_descriptor.can_overwrite() {
+        debug!("copy_single_file: streaming copy for {}", entry.source);
         let mut reader = src_vfs.open_read_async(&entry.source).await?;
         let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
 
@@ -1420,101 +1287,6 @@ async fn copy_single_file(
         )
         .await?;
         writer.finish().await?;
-
-        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
-    }
-
-    // 4. Sync read + async write
-    if src_descriptor.can_read_sync() && dst_descriptor.can_overwrite_async() {
-        debug!(
-            "copy_single_file: sync-read + async-write for {}",
-            entry.source
-        );
-        let sync_reader = src_vfs.open_read_sync(&entry.source).await?;
-        let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
-
-        let (mut rx, read_task) = bridge_sync_reader(sync_reader, cancel.clone());
-        while let Some(chunk) = rx.recv().await {
-            let data = chunk?;
-            writer.write(&data).await?;
-            *bytes_done += data.len() as u64;
-            reporter.maybe_send_progress(*bytes_done, items_done, display);
-        }
-        read_task.await?;
-        writer.finish().await?;
-
-        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
-    }
-
-    // 5. Async read + sync write
-    if src_descriptor.can_read_async() && dst_descriptor.can_overwrite_sync() {
-        debug!(
-            "copy_single_file: async-read + sync-write for {}",
-            entry.source
-        );
-        let mut reader = src_vfs.open_read_async(&entry.source).await?;
-        let sync_writer = dst_vfs.overwrite_sync(&entry.dest).await?;
-
-        // Bridge async reader to sync writer via channel + spawn_blocking. The
-        // async-side send keeps the runtime thread free when the writer stalls.
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, crate::Error>>(4);
-        let cancel2 = cancel.clone();
-        let sender2 = reporter.sync_sender();
-        let bd = *bytes_done;
-        let id = items_done;
-        let display_owned = display.to_string();
-
-        let writer_handle = tokio::task::spawn_blocking(move || {
-            let mut writer = sync_writer;
-            let mut bd_local = bd;
-            while let Some(chunk) = rx.blocking_recv() {
-                match chunk {
-                    Ok(data) => {
-                        if let Err(e) = std::io::Write::write_all(&mut *writer, &data) {
-                            return (bd_local, Err(e.into()));
-                        }
-                        bd_local += data.len() as u64;
-                        sender2.maybe_send_progress(bd_local, id, &display_owned);
-                    }
-                    Err(e) => return (bd_local, Err(e)),
-                }
-            }
-            (bd_local, Ok(()))
-        });
-
-        use tokio::io::AsyncReadExt;
-        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-        loop {
-            let n = tokio::select! {
-                biased;
-                _ = cancel2.cancelled() => {
-                    drop(tx);
-                    let _ = writer_handle.await;
-                    return Err(crate::Error::cancelled());
-                }
-                result = reader.read(&mut buf) => result?,
-            };
-            if n == 0 {
-                break;
-            }
-            let sent = tokio::select! {
-                biased;
-                _ = cancel2.cancelled() => {
-                    drop(tx);
-                    let _ = writer_handle.await;
-                    return Err(crate::Error::cancelled());
-                }
-                sent = tx.send(Ok(buf[..n].to_vec())) => sent,
-            };
-            if sent.is_err() {
-                break;
-            }
-        }
-        drop(tx);
-
-        let (bd_back, result) = writer_handle.await?;
-        *bytes_done = bd_back;
-        result?;
 
         return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
     }
@@ -2091,7 +1863,6 @@ async fn execute_create_archive(
     {
         Ok(()) => sink.finish().await,
         Err(e) => {
-            // Release the writer before trying to delete the partial archive.
             let _ = sink.abort().await;
             Err(e)
         }
@@ -2141,7 +1912,7 @@ async fn pack_entries(
                 // Open the source before the entry header is committed to the
                 // stream — an open failure can still Skip/Retry cleanly.
                 let reader = loop {
-                    match SourceReader::open(src_vfs, &entry.source, cancel).await {
+                    match SourceReader::open(src_vfs, &entry.source).await {
                         Ok(reader) => break Some(reader),
                         Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
                         Err(e) => {

@@ -44,16 +44,10 @@ impl VfsDescriptor for AgentVfsDescriptor {
     fn can_watch(&self) -> bool {
         true
     }
-    fn can_read_sync(&self) -> bool {
-        false
-    }
-    fn can_read_async(&self) -> bool {
+    fn can_read(&self) -> bool {
         true
     }
-    fn can_overwrite_sync(&self) -> bool {
-        false
-    }
-    fn can_overwrite_async(&self) -> bool {
+    fn can_overwrite(&self) -> bool {
         true
     }
     fn can_create_directory(&self) -> bool {

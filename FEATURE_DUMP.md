@@ -424,17 +424,15 @@ Opens a modal dialog with:
    - File → File: Offers Skip/Overwrite.
    - Directory → Directory: Merges (copies contents into existing directory without error).
    - File → Directory or Directory → File (type mismatch): Error, offers Skip.
-3. **Copy strategies** (cascading fallback for cross-VFS compatibility):
-   - Same-VFS `copy_within` (fastest, if available).
-   - Sync read + sync write (64 KB chunks).
-   - Async read + async write.
-   - Mixed sync/async bridges for VFS combinations that don't match.
+3. **Copy strategies**:
+   - Same-VFS `copy_within` (fastest, if available — kernel-assisted: FICLONE/`copy_file_range`/`CopyFileEx`, S3 server-side CopyObject).
+   - Streaming copy otherwise: async read → async write in 64 KB chunks, drop-cancellable at every await.
 4. **Metadata preservation**: After copying, optionally sets permissions, timestamps, owner, and group on the destination. Silently skipped if the destination VFS doesn't support metadata operations. The source side reads `Vfs::get_metadata`, whose default derives from the listing entry — so any VFS that surfaces mode/owner/timestamps in listings (tar, Rock Ridge/UDF disc images, S3 mtimes) feeds preservation without its own implementation; local and SFTP override it with a real stat.
 5. **Progress**: Reports every 100ms with bytes done, items done, and current filename.
 
 **Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for single files.
 
-**Cross-VFS copies**: Fully supported. You can copy files between any combination of Local, S3, SFTP, and Archive VFS types. The system automatically selects the appropriate read/write strategy.
+**Cross-VFS copies**: Fully supported. You can copy files between any combination of Local, S3, SFTP, and Archive VFS types — every VFS speaks the same async read/write surface, so any readable source streams into any writable destination.
 
 ### Move (F6)
 
@@ -1047,7 +1045,7 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 **Gated by preference**: `behavior.expose_local_fs` (default: false). When disabled, the remote VFS is not available and no local filesystem access is exposed to the remote host.
 
-**Architecture**: The agent mounts a `RemoteVfs` that proxies all Vfs trait calls back to the Tauri host over bidirectional RPC. The host runs a `VfsDispatcher` that dispatches these calls to a real `LocalVfs`. Streaming reads use an async RPC owner over a bounded sync-reader bridge: dropping the consumer aborts the invoke, and aborting the invoke drops the bridge receiver so the blocking filesystem reader stops after at most its current 64 KiB read. Mid-stream read errors are encoded into the invoke response and surfaced by the consumer's next read — a failed stream errors out instead of waiting for chunks that will never arrive. Streaming writes have a distinct high-priority abort signal: once the ordered RPC receiver processes it, dropping a writer closes the host session without calling `finish`, wakes sync writers blocked on their bounded input channel, and removes both session and task-handle state. A receiver already backpressured on an earlier write chunk processes the abort after that handler resumes. Blocking code never writes directly to the RPC outbox.
+**Architecture**: The agent mounts a `RemoteVfs` that proxies all Vfs trait calls back to the Tauri host over bidirectional RPC. The host runs a `VfsDispatcher` that dispatches these calls to a real `LocalVfs`. Streaming reads run inside the invoke handler, pumping the VFS's async reader into chunk notifications: dropping the consumer aborts the invoke, which drops the reader mid-chunk. Mid-stream read errors are encoded into the invoke response and surfaced by the consumer's next read — a failed stream errors out instead of waiting for chunks that will never arrive. Streaming writes have a distinct high-priority abort signal: once the ordered RPC receiver processes it, dropping a writer aborts the host-side writer task without calling `finish` and removes both session and task-handle state. A receiver already backpressured on an earlier write chunk processes the abort after that handler resumes.
 
 **Hairpin diversion**: For performance, the most latency-sensitive methods (`list_files`, `poll_changes`, `read_range`, `read_file`, `write_file`) are diverted at the Tauri backend — they execute against the local filesystem directly without round-tripping through the remote agent. This is transparent: the wrapper rewrites VFS IDs so callers see consistent paths.
 

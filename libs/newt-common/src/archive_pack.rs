@@ -1,6 +1,6 @@
-//! IO plumbing for the CreateArchive operation: a uniform chunk source over
-//! sync/async VFS reads, a streaming byte sink over sync/async VFS writes,
-//! and a thin dispatch over the sans-IO `newt-archive` writers.
+//! IO plumbing for the CreateArchive operation: a chunk source over VFS
+//! reads, a streaming byte sink over VFS writes, and a thin dispatch over
+//! the sans-IO `newt-archive` writers.
 //!
 //! Everything streams — archive bytes are produced chunk-at-a-time by the
 //! writers and flow straight into the destination VFS, so no temp files and
@@ -9,99 +9,40 @@
 use std::io;
 
 use tokio::io::AsyncReadExt;
-use tokio_util::sync::CancellationToken;
 
 use crate::filesystem::{File, UserGroup};
-use crate::operation::{ArchiveFormat, ArchiveOptions, bridge_sync_reader};
+use crate::operation::{ArchiveFormat, ArchiveOptions};
 use crate::vfs::path::Path;
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsAsyncWriter};
 
-// --- Source: uniform chunk stream over sync/async reads ---
+// --- Source: chunk stream over a VFS read ---
 
-pub(crate) enum SourceReader {
-    Async(Box<dyn tokio::io::AsyncRead + Send + Unpin>),
-    Bridged(tokio::sync::mpsc::Receiver<Result<Vec<u8>, crate::Error>>),
-}
+pub(crate) struct SourceReader(Box<dyn tokio::io::AsyncRead + Send + Unpin>);
 
 impl SourceReader {
-    pub(crate) async fn open(
-        vfs: &dyn Vfs,
-        path: &Path,
-        cancel: &CancellationToken,
-    ) -> Result<Self, crate::Error> {
-        let descriptor = vfs.descriptor();
-        if descriptor.can_read_async() {
-            Ok(SourceReader::Async(vfs.open_read_async(path).await?))
-        } else if descriptor.can_read_sync() {
-            let reader = vfs.open_read_sync(path).await?;
-            let (rx, _read_task) = bridge_sync_reader(reader, cancel.clone());
-            Ok(SourceReader::Bridged(rx))
-        } else {
-            Err(crate::Error::not_supported())
-        }
+    pub(crate) async fn open(vfs: &dyn Vfs, path: &Path) -> Result<Self, crate::Error> {
+        Ok(SourceReader(vfs.open_read_async(path).await?))
     }
 
     /// Next chunk of source bytes; `None` at EOF.
     pub(crate) async fn next(&mut self) -> Result<Option<Vec<u8>>, crate::Error> {
-        match self {
-            SourceReader::Async(reader) => {
-                let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-                let n = reader.read(&mut buf).await?;
-                if n == 0 {
-                    return Ok(None);
-                }
-                buf.truncate(n);
-                Ok(Some(buf))
-            }
-            SourceReader::Bridged(rx) => rx.recv().await.transpose(),
+        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+        let n = self.0.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(None);
         }
+        buf.truncate(n);
+        Ok(Some(buf))
     }
 }
 
 // --- Sink: one streaming destination for the whole archive ---
 
-/// Streaming destination for archive bytes. Async-capable destinations are
-/// written directly; sync-only ones (the local FS) get a single blocking
-/// writer task for the whole archive, fed through a bounded channel. The
-/// archive encoder is one stateful stream spanning every entry and both
-/// sync-only and async-only VFSes, which is why the bridge exists — hoisted
-/// to per-operation, one task total (the copy engine pays one per file).
-pub(crate) struct ArchiveSink(SinkState);
-
-enum SinkState {
-    Async(Box<dyn VfsAsyncWriter>),
-    Sync {
-        tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-        // write_all takes this handle if the receiver disappears so it can
-        // surface the writer's real error. abort must then tolerate None.
-        pump: Option<tokio::task::JoinHandle<Result<(), crate::Error>>>,
-    },
-}
+pub(crate) struct ArchiveSink(Box<dyn VfsAsyncWriter>);
 
 impl ArchiveSink {
     pub(crate) async fn open(vfs: &dyn Vfs, path: &Path) -> Result<Self, crate::Error> {
-        let descriptor = vfs.descriptor();
-        if descriptor.can_overwrite_async() {
-            Ok(ArchiveSink(SinkState::Async(
-                vfs.overwrite_async(path).await?,
-            )))
-        } else if descriptor.can_overwrite_sync() {
-            let mut writer = vfs.overwrite_sync(path).await?;
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
-            let pump = tokio::task::spawn_blocking(move || {
-                while let Some(chunk) = rx.blocking_recv() {
-                    io::Write::write_all(&mut *writer, &chunk)?;
-                }
-                io::Write::flush(&mut *writer)?;
-                Ok(())
-            });
-            Ok(ArchiveSink(SinkState::Sync {
-                tx,
-                pump: Some(pump),
-            }))
-        } else {
-            Err(crate::Error::not_supported())
-        }
+        Ok(ArchiveSink(vfs.overwrite_async(path).await?))
     }
 
     /// A write failure poisons the sink — the caller must abort the
@@ -111,69 +52,21 @@ impl ArchiveSink {
         if chunk.is_empty() {
             return Ok(());
         }
-        match &mut self.0 {
-            SinkState::Async(writer) => {
-                writer.write(&chunk).await?;
-                Ok(())
-            }
-            SinkState::Sync { tx, pump } => {
-                if tx.send(chunk).await.is_err() {
-                    // The writer task bailed — surface its real error.
-                    let Some(pump) = pump.take() else {
-                        return Err(crate::Error::custom(
-                            "archive writer task result already consumed",
-                        ));
-                    };
-                    return Err(match pump.await {
-                        Ok(Err(e)) => e,
-                        Ok(Ok(())) => crate::Error::custom("archive writer closed unexpectedly"),
-                        Err(join) => {
-                            crate::Error::custom(format!("archive writer task failed: {join}"))
-                        }
-                    });
-                }
-                Ok(())
-            }
-        }
+        self.0.write(&chunk).await?;
+        Ok(())
     }
 
     pub(crate) async fn finish(self) -> Result<(), crate::Error> {
-        match self.0 {
-            SinkState::Async(writer) => writer.finish().await,
-            SinkState::Sync { tx, pump } => {
-                drop(tx);
-                match pump {
-                    Some(pump) => pump.await.map_err(|e| {
-                        crate::Error::custom(format!("archive writer task failed: {e}"))
-                    })?,
-                    None => Err(crate::Error::custom(
-                        "archive writer task result already consumed",
-                    )),
-                }
-            }
-        }
+        self.0.finish().await
     }
 
-    /// Stop producing archive bytes and wait until a sync writer has released
-    /// its file handle. This makes subsequent partial-file cleanup race-free.
+    /// Stop producing archive bytes and discard the writer without
+    /// committing it (an S3 multipart writer aborts its upload on drop). A
+    /// local writer with a write in flight may release its file handle a
+    /// beat after this returns — partial-file cleanup is best-effort.
     pub(crate) async fn abort(self) -> Result<(), crate::Error> {
-        match self.0 {
-            SinkState::Async(writer) => {
-                drop(writer);
-                Ok(())
-            }
-            SinkState::Sync { tx, pump } => {
-                drop(tx);
-                match pump {
-                    Some(pump) => pump.await.map_err(|e| {
-                        crate::Error::custom(format!("archive writer task failed: {e}"))
-                    })?,
-                    // write_all already awaited the failed task to return the
-                    // underlying I/O error; the writer handle is released.
-                    None => Ok(()),
-                }
-            }
-        }
+        drop(self.0);
+        Ok(())
     }
 }
 
@@ -296,30 +189,5 @@ fn entry_meta(file: &File) -> newt_archive::EntryMeta {
         uname,
         gname,
         mtime_ms: file.modified,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn abort_does_not_repoll_pump_after_write_error() {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        drop(rx);
-        let pump = tokio::task::spawn_blocking(|| {
-            Err(crate::Error::custom("simulated archive writer failure"))
-        });
-        let mut sink = ArchiveSink(SinkState::Sync {
-            tx,
-            pump: Some(pump),
-        });
-
-        let error = sink.write_all(vec![1]).await.unwrap_err();
-        assert!(error.message.contains("simulated archive writer failure"));
-
-        // Regression: this used to poll the already-consumed JoinHandle and
-        // panic inside Tokio.
-        sink.abort().await.unwrap();
     }
 }
