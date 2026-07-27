@@ -1,6 +1,5 @@
 pub mod agent_resolver;
 pub mod api;
-mod archive_pack;
 pub mod askpass;
 pub mod connect;
 pub mod discovery;
