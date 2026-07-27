@@ -457,6 +457,36 @@ pub struct VfsMetadata {
     pub mtime: Option<SystemTime>,
 }
 
+impl VfsMetadata {
+    /// Derive from a listing entry — the natural source for VFSes whose
+    /// attributes live in the index (archives, disc images, S3) rather than
+    /// behind a stat call. Named users/groups don't map to numeric ids and
+    /// are dropped.
+    pub fn from_listing(file: &File) -> Self {
+        fn id(ug: Option<&crate::filesystem::UserGroup>) -> Option<u32> {
+            match ug {
+                Some(crate::filesystem::UserGroup::Id(id)) => Some(*id),
+                _ => None,
+            }
+        }
+        fn time(ms: i64) -> Option<SystemTime> {
+            let d = std::time::Duration::from_millis(ms.unsigned_abs());
+            if ms >= 0 {
+                SystemTime::UNIX_EPOCH.checked_add(d)
+            } else {
+                SystemTime::UNIX_EPOCH.checked_sub(d)
+            }
+        }
+        Self {
+            permissions: file.mode.as_ref().map(|m| m.0),
+            uid: id(file.user.as_ref()),
+            gid: id(file.group.as_ref()),
+            atime: file.accessed.and_then(time),
+            mtime: file.modified.and_then(time),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VfsSpaceInfo
 // ---------------------------------------------------------------------------
@@ -735,9 +765,13 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Metadata ---
+    /// The default derives from `file_info`, so any VFS that surfaces
+    /// mode/owner/timestamps in listings automatically supports metadata
+    /// preservation as a copy source. Override where a dedicated stat call
+    /// is cheaper or more precise (local, SFTP), or to answer for the
+    /// remote side (`RemoteVfs`).
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
-        let _ = path;
-        Err(Error::not_supported())
+        Ok(VfsMetadata::from_listing(&self.file_info(path).await?))
     }
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {

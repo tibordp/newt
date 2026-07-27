@@ -1,27 +1,48 @@
+//! ZIP archive VFS over the sans-IO reader in `newt_archive::zip`.
+//!
+//! Mirrors the disc-image VFS rather than the tar one: the central directory
+//! is a complete index fetched in a few bounded reads at first use, entry
+//! content is random-access (stored entries are pure extents; compressed
+//! ones stream through a resumable decrypt→decompress cursor), and nothing
+//! ever blocks a thread — every upstream access is a plain awaited
+//! `read_range`, so dropping a future cancels the read.
+
 use std::collections::HashMap;
-use std::io::Read;
+use std::future::Future;
 // The ZIP index/directory tree is keyed by Unix-style relative path
 // strings built on std paths; the `Vfs` surface speaks our
 // `vfs::path::Path`. Convert at each trait-method boundary via
 // `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
 use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use log::info;
+use newt_archive::zip as zr;
+use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode};
+use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
 
 use super::super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
+    Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
 };
 use super::{
-    DirectoryTree, RangeReadAdapter, archive_breadcrumbs, archive_format_path, archive_mount_label,
-    archive_try_parse_display_path, ensure_ancestors, mtime_to_i64, normalize_dir_path, not_found,
+    DirectoryTree, archive_breadcrumbs, archive_format_path, archive_mount_label,
+    archive_try_parse_display_path, ensure_ancestors, normalized_to_string, not_found,
 };
+
+/// Symlink targets are read eagerly at index time; anything larger than this
+/// is not a plausible link target.
+const MAX_SYMLINK_TARGET: u64 = 64 * 1024;
+
+/// Parked decompression cursors kept per archive. Each holds a decompressor
+/// window (tens of KiB) plus up to `OUT_HIGH_WATER` of read-ahead.
+const MAX_CURSORS: usize = 6;
 
 // ---------------------------------------------------------------------------
 // ZipArchiveVfsDescriptor
@@ -53,10 +74,10 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
         false
     }
     fn can_read_sync(&self) -> bool {
-        true
+        false
     }
     fn can_read_async(&self) -> bool {
-        false
+        true
     }
     fn can_overwrite_sync(&self) -> bool {
         false
@@ -86,7 +107,7 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
         false
     }
     fn has_symlinks(&self) -> bool {
-        false
+        true
     }
     fn can_stat_directories(&self) -> bool {
         true
@@ -116,6 +137,14 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
         archive_mount_label(mount_meta)
     }
+    fn metadata_traits(&self, _mount_meta: &[u8]) -> MetadataTraits {
+        // Unix-made zips carry mode (and often uid/gid via the Info-ZIP
+        // extra); DOS-made ones simply leave the columns empty.
+        MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        }
+    }
 }
 
 static ZIP_ARCHIVE_VFS_DESCRIPTOR: ZipArchiveVfsDescriptor = ZipArchiveVfsDescriptor;
@@ -141,13 +170,9 @@ pub struct ZipArchiveVfs {
     /// the first time an encrypted entry is read. Without this, reads of
     /// encrypted entries fail with `PermissionDenied`.
     askpass: Option<Arc<dyn crate::askpass::AskpassProvider>>,
-    /// Used to emit a one-shot "Indexing ZIP" progress message while
-    /// the central directory is being read. ZIP's central directory
-    /// is at EOF and read in a single pass; there's no meaningful
-    /// mid-parse progress to report.
     reporter: Arc<dyn super::super::ProgressReporter>,
     /// Cached password for encrypted entries. Filled on first successful
-    /// decrypt. The ZIP spec allows different passwords per entry; we
+    /// verification. The ZIP spec allows different passwords per entry; we
     /// remember the most recently successful one and re-prompt if it
     /// fails on a later entry.
     password: tokio::sync::Mutex<Option<Vec<u8>>>,
@@ -159,21 +184,23 @@ pub struct ZipArchiveVfs {
     /// the chunked range reads the file viewer fans out on F3) rather
     /// than queueing N more prompts behind it.
     dismiss_gen: std::sync::atomic::AtomicU64,
-    index: tokio::sync::OnceCell<(ZipIndex, DirectoryTree)>,
+    state: tokio::sync::OnceCell<ZipState>,
+    /// Resolved local headers, by entry name — one small upstream read
+    /// each, remembered permanently (the archive is immutable while
+    /// mounted).
+    opens: parking_lot::Mutex<HashMap<String, zr::OpenEntry>>,
+    /// Verified per-entry keys (PBKDF2 output / ZipCrypto registers).
+    keys: parking_lot::Mutex<HashMap<String, zr::EntryKey>>,
+    /// Parked decompression cursors, LRU at the back. Sequential range
+    /// reads (the F3 viewer's chunk fan-out) resume the matching cursor
+    /// instead of re-decompressing the entry from the start.
+    cursors: parking_lot::Mutex<Vec<(String, zr::EntryReader)>>,
 }
 
-struct ZipIndex {
-    entries: HashMap<String, ZipEntry>,
-}
-
-struct ZipEntry {
-    /// Original name as stored in the ZIP archive (for `by_name` lookups).
-    raw_name: String,
-    size: u64,
-    is_dir: bool,
-    is_encrypted: bool,
-    mode: Option<u32>,
-    mtime: Option<u64>,
+struct ZipState {
+    fs: zr::ZipFs,
+    by_name: HashMap<String, usize>,
+    tree: DirectoryTree,
 }
 
 impl ZipArchiveVfs {
@@ -197,24 +224,17 @@ impl ZipArchiveVfs {
             reporter,
             password: tokio::sync::Mutex::new(None),
             dismiss_gen: std::sync::atomic::AtomicU64::new(0),
-            index: tokio::sync::OnceCell::new(),
+            state: tokio::sync::OnceCell::new(),
+            opens: parking_lot::Mutex::new(HashMap::new()),
+            keys: parking_lot::Mutex::new(HashMap::new()),
+            cursors: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
-    async fn ensure_indexed(&self) -> Result<&(ZipIndex, DirectoryTree), Error> {
-        self.index
+    async fn ensure_state(&self) -> Result<&ZipState, Error> {
+        self.state
             .get_or_try_init(|| async {
                 info!("archive: indexing ZIP archive {}", self.archive_path);
-
-                // One-shot progress message; clear on exit.
-                let mut extra = std::collections::BTreeMap::new();
-                extra.insert("path".to_string(), self.display_path.clone());
-                self.reporter.report(Some(super::super::VfsProgress {
-                    stage: "Indexing".into(),
-                    processed: None,
-                    total: None,
-                    extra,
-                }));
                 struct ClearOnDrop<'a>(&'a Arc<dyn super::super::ProgressReporter>);
                 impl Drop for ClearOnDrop<'_> {
                     fn drop(&mut self) {
@@ -224,63 +244,132 @@ impl ZipArchiveVfs {
                 let _clear = ClearOnDrop(&self.reporter);
 
                 let details = self.upstream.file_details(&self.archive_path).await?;
-                let file_size = details.size;
-                let handle = tokio::runtime::Handle::current();
-
-                let upstream = self.upstream.clone();
-                let archive_path = self.archive_path.clone();
-                let cancel = tokio_util::sync::CancellationToken::new();
-                let _cancel_on_drop = cancel.clone().drop_guard();
-
-                let (zip_index, tree) = tokio::task::spawn_blocking(move || {
-                    let adapter = RangeReadAdapter {
-                        handle,
-                        upstream,
-                        archive_path,
-                        file_size,
-                        position: 0,
-                        cancel,
-                    };
-                    let zip = zip::ZipArchive::new(adapter)
-                        .map_err(|e| Error::custom(format!("failed to read ZIP archive: {}", e)))?;
-                    build_zip_index(zip)
-                })
-                .await
-                .map_err(|e| Error::custom(format!("ZIP indexing task panicked: {}", e)))??;
-
+                let mut op = zr::ZipProbeOp::new(details.size);
+                let mut fetched = Vec::new();
+                let fs = loop {
+                    self.report_indexing(&op.progress());
+                    match op.step(fetched).map_err(zip_err)? {
+                        zr::Step::Done(fs) => break fs,
+                        zr::Step::Need(ranges) => {
+                            fetched =
+                                fetch_ranges(&self.upstream, &self.archive_path, ranges).await?;
+                        }
+                    }
+                };
                 info!(
                     "archive: indexed {} entries from ZIP {}",
-                    zip_index.entries.len(),
+                    fs.entries.len(),
                     self.archive_path
                 );
 
-                Ok((zip_index, tree))
+                let targets = self.read_symlink_targets(&fs).await;
+                let (tree, by_name) = build_tree(&fs, &targets);
+                Ok(ZipState { fs, by_name, tree })
             })
             .await
     }
 
-    /// Extract an entry from the ZIP. Cleartext entries take a fast
-    /// path; encrypted entries try the cached password first, and on
-    /// `PermissionDenied` prompt the user (via the configured askpass)
-    /// until a working password is supplied or the prompt is cancelled.
-    /// A successfully-validated password is cached for future reads.
+    fn report_indexing(&self, progress: &zr::ProbeProgress) {
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert("path".to_string(), self.display_path.clone());
+        if progress.entries > 0 {
+            extra.insert("entries".to_string(), progress.entries.to_string());
+        }
+        self.reporter.report(Some(super::super::VfsProgress {
+            stage: "Indexing".into(),
+            processed: (progress.cd_bytes_total > 0).then_some(progress.cd_bytes_done),
+            total: (progress.cd_bytes_total > 0).then_some(progress.cd_bytes_total),
+            extra,
+        }));
+    }
+
+    /// Symlink targets are entry *content* in ZIP, so listing an archive
+    /// with links needs a read per link. They are tiny and fetched
+    /// concurrently; failures (or encrypted links) leave the target unset
+    /// and the entry renders as a broken link.
+    async fn read_symlink_targets(&self, fs: &zr::ZipFs) -> HashMap<String, String> {
+        let candidates = fs.entries.iter().filter(|e| {
+            e.kind == zr::EntryKind::Symlink
+                && e.size > 0
+                && e.size <= MAX_SYMLINK_TARGET
+                && matches!(e.encryption, zr::Encryption::None)
+        });
+        let reads = candidates.map(|entry| async move {
+            let open = drive_open(&self.upstream, &self.archive_path, entry, fs.file_size)
+                .await
+                .ok()?;
+            let reader = zr::EntryReader::new(entry, &open, None, 0).ok()?;
+            let (data, _) = drive_reader(&self.upstream, &self.archive_path, reader, entry.size)
+                .await
+                .ok()?;
+            Some((
+                entry.name.clone(),
+                String::from_utf8_lossy(&data).into_owned(),
+            ))
+        });
+        futures::future::join_all(reads)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    fn resolve_entry<'a>(
+        &self,
+        state: &'a ZipState,
+        path: &Path,
+        follow_last: bool,
+    ) -> Result<&'a zr::ZipEntry, Error> {
+        let resolved = state
+            .tree
+            .resolve_path(StdPath::new(path.as_wire_str()), follow_last)?;
+        let key = normalized_to_string(&resolved);
+        state
+            .by_name
+            .get(&key)
+            .map(|&i| &state.fs.entries[i])
+            .ok_or_else(|| not_found(format!("file not found in archive: {}", key)))
+    }
+
+    async fn open_entry(
+        &self,
+        state: &ZipState,
+        entry: &zr::ZipEntry,
+    ) -> Result<zr::OpenEntry, Error> {
+        if let Some(open) = self.opens.lock().get(&entry.name) {
+            return Ok(open.clone());
+        }
+        let open = drive_open(
+            &self.upstream,
+            &self.archive_path,
+            entry,
+            state.fs.file_size,
+        )
+        .await?;
+        self.opens.lock().insert(entry.name.clone(), open.clone());
+        Ok(open)
+    }
+
+    /// Obtain the decryption key for an encrypted entry, prompting for the
+    /// archive password if needed. Password verification is against the
+    /// entry's cheap verifier — no decompression involved.
     ///
-    /// Concurrency: the prompt-and-validate phase is serialised by the
+    /// Concurrency: the prompt-and-verify phase is serialised by the
     /// password mutex. To prevent N concurrent reads from all queueing
     /// up their own prompts after the user dismisses one of them, we
     /// snapshot a "dismiss generation" before queueing and bail out if
     /// it has advanced by the time we hold the lock — a fresh read
     /// (started after the dismissal) sees the new generation and is
     /// allowed to prompt.
-    async fn extract_zip_file(
+    async fn entry_key(
         &self,
-        path_in_archive: String,
-        encrypted: bool,
-    ) -> Result<Vec<u8>, Error> {
+        entry: &zr::ZipEntry,
+        open: &zr::OpenEntry,
+    ) -> Result<zr::EntryKey, Error> {
         use std::sync::atomic::Ordering;
 
-        if !encrypted {
-            return self.spawn_extract(path_in_archive, None).await;
+        if let Some(key) = self.keys.lock().get(&entry.name) {
+            return Ok(key.clone());
         }
 
         // Snapshot the dismissal counter at task entry — *before* any
@@ -288,38 +377,34 @@ impl ZipArchiveVfs {
         // dismissal events: peers that increment the counter while
         // we're queued on the prompt lock will then make our post-lock
         // check trip and we'll bail instead of opening a fresh prompt.
-        // (Capturing it later — e.g. just before the slow-path lock —
-        // races with the dismissal-and-release sequence and lets a
-        // queued task think it was born after the dismissal.)
         let my_gen = self.dismiss_gen.load(Ordering::Acquire);
 
-        // Fast path: try the currently-cached password without serialising
-        // on the prompt lock once the archive has been unlocked.
-        let cached_at_start = self.password.lock().await.clone();
-        if let Some(pw) = cached_at_start {
-            match self.spawn_extract(path_in_archive.clone(), Some(pw)).await {
-                Ok(buf) => return Ok(buf),
-                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {}
-                Err(e) => return Err(e),
-            }
+        let try_password = |password: &[u8]| -> Option<zr::EntryKey> {
+            let key = open.verify_password(entry, password).ok()?;
+            self.keys.lock().insert(entry.name.clone(), key.clone());
+            Some(key)
+        };
+
+        // Fast path: the cached password, without serialising on the
+        // prompt lock once the archive has been unlocked.
+        if let Some(pw) = self.password.lock().await.clone()
+            && let Some(key) = try_password(&pw)
+        {
+            return Ok(key);
         }
 
         let mut guard = self.password.lock().await;
-
         if self.dismiss_gen.load(Ordering::Acquire) > my_gen {
             // A peer dismissed an unlock prompt while we were queued.
             // Treat the whole batch as cancelled rather than queueing N
             // more prompts behind theirs.
             return Err(Error::cancelled());
         }
-
         // Did a peer set a (different) password while we waited?
-        if let Some(pw) = guard.clone() {
-            match self.spawn_extract(path_in_archive.clone(), Some(pw)).await {
-                Ok(buf) => return Ok(buf),
-                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {}
-                Err(e) => return Err(e),
-            }
+        if let Some(pw) = guard.clone()
+            && let Some(key) = try_password(&pw)
+        {
+            return Ok(key);
         }
 
         let askpass = self.askpass.as_ref().ok_or_else(|| Error {
@@ -342,201 +427,207 @@ impl ZipArchiveVfs {
                 return Err(Error::cancelled());
             };
             let bytes = s.into_bytes();
-            match self
-                .spawn_extract(path_in_archive.clone(), Some(bytes.clone()))
-                .await
-            {
-                Ok(buf) => {
-                    *guard = Some(bytes);
-                    return Ok(buf);
-                }
-                Err(e) if e.kind == crate::ErrorKind::PermissionDenied => {
-                    prompt = format!(
-                        "Incorrect password — try again. Password for archive {}:",
-                        self.display_path
-                    );
-                }
-                Err(e) => return Err(e),
+            if let Some(key) = try_password(&bytes) {
+                *guard = Some(bytes);
+                return Ok(key);
             }
+            prompt = format!(
+                "Incorrect password — try again. Password for archive {}:",
+                self.display_path
+            );
         }
     }
 
-    /// Run a one-shot ZIP extraction inside `spawn_blocking`.
-    async fn spawn_extract(
+    /// Key for the entry when one is needed, `None` for cleartext entries.
+    async fn key_if_encrypted(
         &self,
-        path_in_archive: String,
-        password: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>, Error> {
-        let details = self.upstream.file_details(&self.archive_path).await?;
-        let file_size = details.size;
-        let handle = tokio::runtime::Handle::current();
-        let upstream = self.upstream.clone();
-        let archive_path = self.archive_path.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let _cancel_on_drop = cancel.clone().drop_guard();
+        entry: &zr::ZipEntry,
+        open: &zr::OpenEntry,
+    ) -> Result<Option<zr::EntryKey>, Error> {
+        if !open.needs_password() {
+            return Ok(None);
+        }
+        Ok(Some(self.entry_key(entry, open).await?))
+    }
 
-        tokio::task::spawn_blocking(move || {
-            let adapter = RangeReadAdapter {
-                handle,
-                upstream,
-                archive_path,
-                file_size,
-                position: 0,
-                cancel,
-            };
-            let mut zip = zip::ZipArchive::new(adapter)
-                .map_err(|e| Error::custom(format!("failed to open ZIP: {}", e)))?;
-            let mut entry = match password {
-                Some(pw) => zip
-                    .by_name_decrypt(&path_in_archive, &pw)
-                    .map_err(map_zip_error)?,
-                None => zip.by_name(&path_in_archive).map_err(map_zip_error)?,
-            };
-            let mut buf = Vec::with_capacity(entry.size() as usize);
-            std::io::Read::read_to_end(&mut entry, &mut buf)?;
-            Ok(buf)
-        })
-        .await
-        .map_err(|e| Error::custom(format!("ZIP extraction task panicked: {}", e)))?
+    /// Best parked cursor for a read of `entry` at `offset`: same entry,
+    /// positioned at or before the offset, closest to it.
+    fn take_cursor(&self, name: &str, offset: u64) -> Option<zr::EntryReader> {
+        let mut cursors = self.cursors.lock();
+        let best = cursors
+            .iter()
+            .enumerate()
+            .filter(|(_, (n, r))| n == name && r.position() <= offset)
+            .max_by_key(|(_, (_, r))| r.position())
+            .map(|(i, _)| i)?;
+        Some(cursors.remove(best).1)
+    }
+
+    fn park_cursor(&self, name: String, reader: zr::EntryReader) {
+        let mut cursors = self.cursors.lock();
+        cursors.push((name, reader));
+        if cursors.len() > MAX_CURSORS {
+            cursors.remove(0);
+        }
     }
 }
 
-/// Map a `zip::result::ZipError` to our `Error`, distinguishing missing
-/// entries, password problems, and everything else.
-fn map_zip_error(e: zip::result::ZipError) -> Error {
-    use zip::result::ZipError;
+/// Map reader errors; password conditions keep their kind so the askpass
+/// retry loop and callers can tell them apart.
+fn zip_err(e: zr::ZipError) -> Error {
     match e {
-        ZipError::FileNotFound => not_found("file not found in ZIP"),
-        ZipError::InvalidPassword => Error {
+        zr::ZipError::PasswordRequired | zr::ZipError::WrongPassword => Error {
             kind: crate::ErrorKind::PermissionDenied,
-            message: "incorrect password for ZIP entry".into(),
+            message: e.to_string(),
         },
-        ZipError::UnsupportedArchive(msg) if msg == ZipError::PASSWORD_REQUIRED => Error {
-            kind: crate::ErrorKind::PermissionDenied,
-            message: "ZIP entry requires a password".into(),
-        },
-        other => Error::custom(format!("ZIP extraction failed: {}", other)),
+        other => Error::custom(other.to_string()),
     }
 }
 
-fn zip_mtime(entry: &zip::read::ZipFile) -> Option<u64> {
-    let dt = entry.last_modified()?;
-    let odt: time::OffsetDateTime = dt.try_into().ok()?;
-    let unix = odt.unix_timestamp();
-    if unix >= 0 { Some(unix as u64) } else { None }
+/// Fetch a probe batch concurrently — the ranges in one `Need` are
+/// independent by contract.
+async fn fetch_ranges(
+    upstream: &Arc<dyn Vfs>,
+    archive_path: &PathBuf,
+    ranges: Vec<std::ops::Range<u64>>,
+) -> Result<Vec<zr::Chunk>, Error> {
+    futures::future::try_join_all(ranges.into_iter().map(|r| async move {
+        let chunk = upstream
+            .read_range(archive_path, r.start, r.end - r.start)
+            .await?;
+        Ok(zr::Chunk {
+            offset: r.start,
+            data: chunk.data,
+        })
+    }))
+    .await
 }
 
-fn build_zip_index(
-    mut zip: zip::ZipArchive<RangeReadAdapter>,
-) -> Result<(ZipIndex, DirectoryTree), Error> {
-    let mut entries = HashMap::new();
+async fn drive_open(
+    upstream: &Arc<dyn Vfs>,
+    archive_path: &PathBuf,
+    entry: &zr::ZipEntry,
+    file_size: u64,
+) -> Result<zr::OpenEntry, Error> {
+    let mut op = zr::EntryOpenOp::new(entry, file_size).map_err(zip_err)?;
+    let mut fetched = Vec::new();
+    loop {
+        match op.step(fetched).map_err(zip_err)? {
+            zr::Step::Done(open) => return Ok(open),
+            zr::Step::Need(ranges) => {
+                fetched = fetch_ranges(upstream, archive_path, ranges).await?;
+            }
+        }
+    }
+}
+
+/// Pull up to `want` bytes from the reader's current position, returning the
+/// reader for the caller to park.
+async fn drive_reader(
+    upstream: &Arc<dyn Vfs>,
+    archive_path: &PathBuf,
+    mut reader: zr::EntryReader,
+    want: u64,
+) -> Result<(Vec<u8>, zr::EntryReader), Error> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut pending: Option<zr::Chunk> = None;
+    loop {
+        if reader.buffered() > 0 {
+            out.extend(reader.take_output(want as usize - out.len()));
+            if out.len() as u64 >= want {
+                return Ok((out, reader));
+            }
+            continue;
+        }
+        match reader.step(pending.take()).map_err(zip_err)? {
+            zr::ReadStep::Need(range) => {
+                let len = range.end - range.start;
+                let chunk = upstream.read_range(archive_path, range.start, len).await?;
+                if (chunk.data.len() as u64) < len {
+                    return Err(Error::custom("ZIP archive truncated: read came up short"));
+                }
+                pending = Some(zr::Chunk {
+                    offset: range.start,
+                    data: chunk.data,
+                });
+            }
+            zr::ReadStep::Output => {}
+            zr::ReadStep::Done => return Ok((out, reader)),
+        }
+    }
+}
+
+/// Project the entry table into the shared archive `DirectoryTree`, plus a
+/// name → entry-index map for reads.
+fn build_tree(
+    fs: &zr::ZipFs,
+    symlink_targets: &HashMap<String, String>,
+) -> (DirectoryTree, HashMap<String, usize>) {
     let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
     let mut seen_dirs: std::collections::HashSet<StdPathBuf> = std::collections::HashSet::new();
+    let mut by_name = HashMap::new();
 
     dirs.insert(StdPathBuf::from(""), Vec::new());
     seen_dirs.insert(StdPathBuf::from(""));
 
-    for i in 0..zip.len() {
-        let entry = zip
-            .by_index_raw(i)
-            .map_err(|e| Error::custom(format!("failed to read ZIP entry: {}", e)))?;
-
-        let raw_name = entry.name().to_string();
-        let path = raw_name
-            .trim_start_matches('/')
-            .trim_start_matches("./")
-            .trim_end_matches('/');
-        if path.is_empty() {
-            continue;
-        }
-
-        let is_dir = entry.is_dir();
-        let size = entry.size();
-        let unix_mode = entry.unix_mode();
-        let mtime = zip_mtime(&entry);
-        let is_encrypted = entry.encrypted();
-
-        let entry_path = StdPathBuf::from(path);
+    for (index, entry) in fs.entries.iter().enumerate() {
+        let entry_path = StdPathBuf::from(&entry.name);
         let parent = entry_path
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_default();
-        let name = entry_path
+        let Some(name) = entry_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        if name.is_empty() {
+        else {
             continue;
-        }
+        };
+        by_name.insert(entry.name.clone(), index);
 
         ensure_ancestors(&mut dirs, &mut seen_dirs, &parent);
 
+        let is_dir = entry.kind == zr::EntryKind::Dir;
         let file = File {
             attributes: None,
             name: name.clone(),
-            size: if is_dir { None } else { Some(size) },
+            size: (!is_dir).then_some(entry.size),
             allocated_size: None,
             device_id: None,
             inode: None,
             hard_links: None,
             is_dir,
-            is_hidden: name.starts_with('.'),
-            is_symlink: false,
-            symlink_target: None,
-            user: None,
-            group: None,
-            mode: unix_mode.map(Mode),
-            modified: mtime.and_then(mtime_to_i64),
-            accessed: None,
-            created: None,
+            is_hidden: name.starts_with('.') || entry.hidden,
+            is_symlink: entry.kind == zr::EntryKind::Symlink,
+            symlink_target: symlink_targets.get(&entry.name).cloned(),
+            user: entry.uid.map(UserGroup::Id),
+            group: entry.gid.map(UserGroup::Id),
+            mode: entry.mode.map(Mode),
+            modified: entry.modified,
+            accessed: entry.accessed,
+            created: entry.created,
             key: None,
             source: None,
         };
 
         if is_dir && seen_dirs.contains(&entry_path) {
-            // Already added as an implicit ancestor — replace synthetic entry
-            // with real metadata.
+            // Already added as an implicit ancestor — replace the synthetic
+            // entry with real metadata.
             if let Some(children) = dirs.get_mut(&parent)
                 && let Some(existing) = children.iter_mut().find(|f| f.name == name)
             {
                 *existing = file;
             }
-            entries.insert(
-                path.to_string(),
-                ZipEntry {
-                    raw_name: raw_name.clone(),
-                    size,
-                    is_dir,
-                    is_encrypted,
-                    mode: unix_mode,
-                    mtime,
-                },
-            );
             continue;
         }
 
         dirs.entry(parent).or_default().push(file);
-
         if is_dir {
             seen_dirs.insert(entry_path.clone());
             dirs.entry(entry_path).or_default();
         }
-
-        entries.insert(
-            path.to_string(),
-            ZipEntry {
-                raw_name: raw_name.clone(),
-                size,
-                is_dir,
-                is_encrypted,
-                mode: unix_mode,
-                mtime,
-            },
-        );
     }
 
-    Ok((ZipIndex { entries }, DirectoryTree { dirs }))
+    (DirectoryTree { dirs }, by_name)
 }
 
 #[async_trait::async_trait]
@@ -558,10 +649,10 @@ impl Vfs for ZipArchiveVfs {
         path: &Path,
         _batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::super::VfsFileList, Error> {
-        let (_, tree) = self.ensure_indexed().await?;
+        let state = self.ensure_state().await?;
         // The directory tree is keyed by Unix-style relative strings;
         // feed the wire form to its std-path-based lookups.
-        Ok(tree.list(StdPath::new(path.as_wire_str()))?.into())
+        Ok(state.tree.list(StdPath::new(path.as_wire_str()))?.into())
     }
 
     async fn poll_changes(&self, _path: &Path) -> Result<(), Error> {
@@ -573,70 +664,169 @@ impl Vfs for ZipArchiveVfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
-        let path_str = normalized.to_string_lossy();
-
-        let entry = index
-            .entries
-            .get(path_str.as_ref())
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
-
+        let state = self.ensure_state().await?;
+        let entry = self.resolve_entry(state, path, true)?;
+        let is_dir = entry.kind == zr::EntryKind::Dir;
         Ok(FileDetails {
-            size: entry.size,
+            size: if is_dir { 0 } else { entry.size },
             mime_type: crate::file_reader::guess_mime_type(StdPath::new(path.as_wire_str())),
-            is_dir: entry.is_dir,
-            is_symlink: false,
+            is_dir,
+            is_symlink: entry.kind == zr::EntryKind::Symlink,
             symlink_target: None,
-            user: None,
-            group: None,
+            user: entry.uid.map(UserGroup::Id),
+            group: entry.gid.map(UserGroup::Id),
             mode: entry.mode.map(Mode),
-            modified: entry.mtime.and_then(mtime_to_i64),
-            accessed: None,
-            created: None,
+            modified: entry.modified,
+            accessed: entry.accessed,
+            created: entry.created,
         })
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let (_, tree) = self.ensure_indexed().await?;
-        tree.file_info(StdPath::new(path.as_wire_str()))
+        let state = self.ensure_state().await?;
+        state.tree.file_info(StdPath::new(path.as_wire_str()))
     }
 
-    async fn open_read_sync(&self, path: &Path) -> Result<Box<dyn Read + Send>, Error> {
-        let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
-        let path_str = normalized.to_string_lossy();
-        let entry = index
-            .entries
-            .get(path_str.as_ref())
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
-        let data = self
-            .extract_zip_file(entry.raw_name.clone(), entry.is_encrypted)
-            .await?;
-        Ok(Box::new(std::io::Cursor::new(data)))
+    async fn open_read_async(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
+        let state = self.ensure_state().await?;
+        let entry = self.resolve_entry(state, path, true)?;
+        let open = self.open_entry(state, entry).await?;
+        let key = self.key_if_encrypted(entry, &open).await?;
+        let reader = zr::EntryReader::new(entry, &open, key.as_ref(), 0).map_err(zip_err)?;
+        Ok(Box::new(ZipStreamingReader {
+            upstream: self.upstream.clone(),
+            archive_path: self.archive_path.clone(),
+            reader,
+            inflight: None,
+            done: false,
+        }))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let (index, _) = self.ensure_indexed().await?;
-        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
-        let path_str = normalized.to_string_lossy();
-
-        let entry = index
-            .entries
-            .get(path_str.as_ref())
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", path_str)))?;
+        let state = self.ensure_state().await?;
+        let entry = self.resolve_entry(state, path, true)?;
         let total_size = entry.size;
+        if offset >= total_size || length == 0 {
+            return Ok(FileChunk {
+                data: Vec::new(),
+                offset,
+                total_size,
+            });
+        }
+        let want = length.min(total_size - offset);
+        let open = self.open_entry(state, entry).await?;
 
-        let data = self
-            .extract_zip_file(entry.raw_name.clone(), entry.is_encrypted)
-            .await?;
-        let start = (offset as usize).min(data.len());
-        let end = ((offset + length) as usize).min(data.len());
+        // Stored, unencrypted entries are extents: one upstream read, no
+        // pipeline (mirroring how the disc VFS reads file content).
+        if let Some(extent) = open.plain_extent(entry) {
+            let chunk = self
+                .upstream
+                .read_range(&self.archive_path, extent.start + offset, want)
+                .await?;
+            let mut data = chunk.data;
+            data.truncate(want as usize);
+            return Ok(FileChunk {
+                data,
+                offset,
+                total_size,
+            });
+        }
 
+        let key = self.key_if_encrypted(entry, &open).await?;
+        let reader = match self.take_cursor(&entry.name, offset) {
+            Some(mut cursor) => {
+                cursor.seek_forward(offset).map_err(zip_err)?;
+                cursor
+            }
+            None => zr::EntryReader::new(entry, &open, key.as_ref(), offset).map_err(zip_err)?,
+        };
+        let (data, reader) = drive_reader(&self.upstream, &self.archive_path, reader, want).await?;
+        self.park_cursor(entry.name.clone(), reader);
         Ok(FileChunk {
-            data: data[start..end].to_vec(),
+            data,
             offset,
             total_size,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ZipStreamingReader — AsyncRead over an entry's plaintext
+// ---------------------------------------------------------------------------
+
+type ChunkFuture = Pin<Box<dyn Future<Output = Result<zr::Chunk, Error>> + Send>>;
+
+/// Drives an [`zr::EntryReader`] with `read_range` calls against the
+/// upstream VFS. Dropping the reader drops any in-flight read —
+/// cancellation propagates naturally. Streams from offset 0, so the
+/// entry's CRC (and AES HMAC) are verified when the stream is read to
+/// completion; failures surface as read errors.
+struct ZipStreamingReader {
+    upstream: Arc<dyn Vfs>,
+    archive_path: PathBuf,
+    reader: zr::EntryReader,
+    inflight: Option<ChunkFuture>,
+    done: bool,
+}
+
+impl AsyncRead for ZipStreamingReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        out: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        loop {
+            if self.reader.buffered() > 0 {
+                let data = self.reader.take_output(out.remaining());
+                out.put_slice(&data);
+                return Poll::Ready(Ok(()));
+            }
+            if self.done {
+                return Poll::Ready(Ok(())); // EOF
+            }
+
+            let fetched = if let Some(mut fut) = self.inflight.take() {
+                match fut.as_mut().poll(cx) {
+                    Poll::Pending => {
+                        self.inflight = Some(fut);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Ok(chunk)) => Some(chunk),
+                    Poll::Ready(Err(e)) => {
+                        return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                    }
+                }
+            } else {
+                None
+            };
+
+            match self.reader.step(fetched) {
+                Ok(zr::ReadStep::Need(range)) => {
+                    let upstream = self.upstream.clone();
+                    let path = self.archive_path.clone();
+                    self.inflight = Some(Box::pin(async move {
+                        let len = range.end - range.start;
+                        let chunk = upstream.read_range(&path, range.start, len).await?;
+                        if (chunk.data.len() as u64) < len {
+                            return Err(Error::custom("ZIP archive truncated: read came up short"));
+                        }
+                        Ok(zr::Chunk {
+                            offset: range.start,
+                            data: chunk.data,
+                        })
+                    }));
+                }
+                Ok(zr::ReadStep::Output) => {}
+                Ok(zr::ReadStep::Done) => {
+                    self.done = true;
+                }
+                Err(e) => {
+                    return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                }
+            }
+        }
     }
 }

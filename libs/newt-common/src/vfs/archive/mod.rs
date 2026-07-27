@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::Arc;
 
 // The archive index machinery is keyed by Unix-style *relative* path
@@ -587,71 +586,6 @@ fn ensure_ancestors(
     }
     seen_dirs.insert(path.to_path_buf());
     dirs.entry(path.to_path_buf()).or_default();
-}
-
-// ---------------------------------------------------------------------------
-// RangeReadAdapter — wraps async read_range into sync Read + Seek
-// ---------------------------------------------------------------------------
-
-use std::io::{Seek, SeekFrom};
-
-/// Adapter that implements `Read + Seek` by calling `upstream.read_range()`
-/// via `Handle::block_on()`. Designed to be used inside `spawn_blocking`.
-struct RangeReadAdapter {
-    handle: tokio::runtime::Handle,
-    upstream: Arc<dyn Vfs>,
-    // Our VFS path: passed straight to the upstream `Vfs::read_range`.
-    archive_path: PathBuf,
-    file_size: u64,
-    position: u64,
-    cancel: tokio_util::sync::CancellationToken,
-}
-
-impl Read for RangeReadAdapter {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Never ErrorKind::Interrupted here: std's read_exact/read_to_end
-        // retry on it, which would turn cancellation into a busy loop.
-        if self.cancel.is_cancelled() {
-            return Err(std::io::Error::other("archive read cancelled"));
-        }
-        if self.position >= self.file_size {
-            return Ok(0);
-        }
-        let len = buf.len() as u64;
-        let chunk = self.handle.block_on(async {
-            tokio::select! {
-                biased;
-                _ = self.cancel.cancelled() => Err(std::io::Error::other(
-                    "archive read cancelled",
-                )),
-                result = self.upstream.read_range(&self.archive_path, self.position, len) => {
-                    result.map_err(|e| std::io::Error::other(e.to_string()))
-                }
-            }
-        })?;
-        let n = chunk.data.len();
-        buf[..n].copy_from_slice(&chunk.data);
-        self.position += n as u64;
-        Ok(n)
-    }
-}
-
-impl Seek for RangeReadAdapter {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        let new_pos = match pos {
-            SeekFrom::Start(n) => n as i64,
-            SeekFrom::End(n) => self.file_size as i64 + n,
-            SeekFrom::Current(n) => self.position as i64 + n,
-        };
-        if new_pos < 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "seek to negative position",
-            ));
-        }
-        self.position = new_pos as u64;
-        Ok(self.position)
-    }
 }
 
 /// Minimum time between partial tree snapshots during indexing.

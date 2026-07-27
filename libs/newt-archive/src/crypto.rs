@@ -37,7 +37,7 @@ impl AesCtrEncryptor {
         Ok(Self::with_salt(password, &salt))
     }
 
-    fn with_salt(password: &str, salt: &[u8; SALT_LEN]) -> (Vec<u8>, Self) {
+    pub(crate) fn with_salt(password: &str, salt: &[u8; SALT_LEN]) -> (Vec<u8>, Self) {
         let mut derived = [0u8; 2 * KEY_LEN + VERIFIER_LEN];
         pbkdf2::pbkdf2_hmac::<Sha1>(password.as_bytes(), salt, PBKDF2_ROUNDS, &mut derived);
 

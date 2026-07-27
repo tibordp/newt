@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate archive test fixtures used by TarArchiveVfs / ZipArchiveVfs tests.
 
-Produces deterministic `simple.tar`, `simple.tar.gz`, `simple.tar.zst`
-and `encrypted.zip`
+Produces deterministic `simple.tar`, `simple.tar.gz`, `simple.tar.zst`,
+`encrypted.zip` and `varied.zip`
 so the bytes committed to the repo are reproducible. Run from this
 directory:
 
@@ -127,6 +127,49 @@ def build_encrypted_zip(out: Path) -> None:
         )
 
 
+def build_varied_zip(out: Path) -> None:
+    """Build varied.zip with Python's zipfile: the structural gamut the ZIP
+    VFS must handle — stored/deflated/bzip2/lzma members, an explicit and an
+    implicit directory, a symlink (unix mode in external attrs, target as
+    content), a unicode name, and unix permission bits throughout.
+
+    Layout:
+
+        hello.txt            stored,   b"hello world\\n", mode 0644
+        dir/                 explicit directory entry, mode 0755
+        dir/nested.txt       deflated, b"nested content\\n"
+        dir/big.bin          deflated, 200_000 patterned bytes
+        implicit/deep.txt    bzip2,    b"deep\\n" (no dir/ entry for implicit/)
+        packed.lzma          lzma,     b"lzma packed\\n"
+        links/soft.txt       symlink -> ../hello.txt
+        π — unicode.txt      deflated, b"unicode name\\n" (UTF-8 flag)
+    """
+    import stat
+    import zipfile
+
+    dt = (2023, 11, 14, 22, 13, 20)  # matches MTIME
+
+    def info(name: str, mode: int, is_dir: bool = False) -> zipfile.ZipInfo:
+        zi = zipfile.ZipInfo(name, date_time=dt)
+        zi.create_system = 3  # Unix
+        type_bits = stat.S_IFDIR if is_dir else stat.S_IFREG
+        zi.external_attr = ((type_bits | mode) << 16) | (0x10 if is_dir else 0)
+        return zi
+
+    with zipfile.ZipFile(out, "w") as zf:
+        zf.writestr(info("hello.txt", 0o644), HELLO, zipfile.ZIP_STORED)
+        zf.writestr(info("dir/", 0o755, is_dir=True), b"")
+        zf.writestr(info("dir/nested.txt", 0o644), NESTED, zipfile.ZIP_DEFLATED)
+        zf.writestr(info("dir/big.bin", 0o644), BIG, zipfile.ZIP_DEFLATED)
+        zf.writestr(info("implicit/deep.txt", 0o600), b"deep\n", zipfile.ZIP_BZIP2)
+        zf.writestr(info("packed.lzma", 0o644), b"lzma packed\n", zipfile.ZIP_LZMA)
+        link = zipfile.ZipInfo("links/soft.txt", date_time=dt)
+        link.create_system = 3
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(link, b"../hello.txt", zipfile.ZIP_STORED)
+        zf.writestr(info("π — unicode.txt", 0o644), b"unicode name\n", zipfile.ZIP_DEFLATED)
+
+
 def main() -> None:
     data = build()
     (OUT_DIR / "simple.tar").write_bytes(data)
@@ -142,6 +185,7 @@ def main() -> None:
     build_zstd(data, OUT_DIR / "simple.tar.zst")
 
     build_encrypted_zip(OUT_DIR / "encrypted.zip")
+    build_varied_zip(OUT_DIR / "varied.zip")
 
 
 if __name__ == "__main__":

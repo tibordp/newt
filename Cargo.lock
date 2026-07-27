@@ -3655,7 +3655,9 @@ name = "newt-archive"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "bzip2",
  "crc32fast",
+ "deflate64",
  "flate2",
  "getrandom 0.3.4",
  "hmac 0.12.1",
@@ -3714,7 +3716,6 @@ dependencies = [
  "specta",
  "tempfile",
  "thiserror 2.0.19",
- "time",
  "tokio",
  "tokio-duplex",
  "tokio-stream",

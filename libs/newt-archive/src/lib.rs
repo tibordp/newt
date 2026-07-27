@@ -1,4 +1,5 @@
-//! Sans-IO streaming archive writers.
+//! Sans-IO archive machinery: streaming tar/zip writers and a
+//! random-access ZIP reader.
 //!
 //! Every writer here is a pure state machine: entry metadata and file data go
 //! in, archive bytes come out through a caller-provided `Vec<u8>`. There is no
@@ -10,11 +11,14 @@
 //!
 //! Because all archive bytes flow through the writer, it tracks output offsets
 //! itself; nothing ever needs to seek.
+//!
+//! Reading ([`zip`]) follows the same philosophy from the other side:
+//! state machines hand the caller absolute byte ranges to fetch.
 
 mod compress;
 mod crypto;
 mod tar;
-mod zip;
+pub mod zip;
 
 pub use compress::{Compression, Compressor};
 pub use tar::TarWriter;

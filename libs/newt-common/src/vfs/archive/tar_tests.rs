@@ -247,6 +247,25 @@ async fn file_details_reports_symlink_metadata() {
     assert_eq!(details.symlink_target.as_deref(), Some("../hello.txt"));
 }
 
+/// Tar has no `get_metadata` override — the trait default derives it from
+/// the indexed listing entry, feeding metadata preservation on copy-out.
+#[tokio::test]
+async fn get_metadata_derives_from_the_index() {
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, sync_only_config());
+    let meta = vfs
+        .get_metadata(&vp("/hello.txt"))
+        .await
+        .expect("get_metadata");
+    assert_eq!(meta.permissions, Some(0o644));
+    assert_eq!(meta.uid, Some(1000));
+    assert_eq!(meta.gid, Some(1000));
+    assert_eq!(
+        meta.mtime,
+        Some(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000))
+    );
+    assert_eq!(meta.atime, None);
+}
+
 // ---------------------------------------------------------------------------
 // Strict-range upstreams (object stores)
 // ---------------------------------------------------------------------------
