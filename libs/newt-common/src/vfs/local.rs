@@ -1,4 +1,4 @@
-use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use crate::vfs::path::{Path, PathBuf};
@@ -13,10 +13,18 @@ use std::os::unix::prelude::MetadataExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UserGroup};
-use crate::{Error, ToUnix};
+use crate::Error;
+use crate::vfs::ToUnix;
+use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{FileChunk, FileDetails};
 
+#[cfg(windows)]
+use super::native::local_path_from_native;
+use super::native::to_native;
+use super::path_style::{
+    local_breadcrumbs, local_display_path, metadata_traits_from_meta, navigable_parent,
+    roots_from_meta, unified_root_from_meta,
+};
 use super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
     VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
@@ -129,78 +137,6 @@ impl VfsDescriptor for LocalVfsDescriptor {
     }
     fn metadata_traits(&self, mount_meta: &[u8]) -> MetadataTraits {
         metadata_traits_from_meta(mount_meta)
-    }
-}
-
-/// `MetadataTraits` for a `Local`/`Remote`/`Agent` mount, decided by the
-/// path style recorded in `mount_meta`.
-pub fn metadata_traits_from_meta(mount_meta: &[u8]) -> MetadataTraits {
-    match PathStyle::from_mount_meta(mount_meta) {
-        PathStyle::Unix => MetadataTraits {
-            unix_owner: true,
-            windows_attributes: false,
-        },
-        PathStyle::Windows => MetadataTraits {
-            unix_owner: false,
-            windows_attributes: true,
-        },
-    }
-}
-
-/// FS roots from `mount_meta`, defaulting to a single `/` when none were
-/// recorded (a style-only mount, e.g. a remote Unix root). Shared by
-/// `LocalVfsDescriptor` and `RemoteVfsDescriptor`.
-pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<RootInfo> {
-    let roots = super::mount_root_infos(mount_meta);
-    if roots.is_empty() {
-        vec![RootInfo::root()]
-    } else {
-        roots
-    }
-}
-
-/// Whether a `Local`/`Remote` mount presents one unified `/` root.
-///
-/// This is a property of the *path style*, **not** the number of roots: a
-/// Windows filesystem with only a `C:` drive is still split-root — its
-/// root is `C:\`, never `/`. Keying off `roots().len() == 1` (the trait
-/// default) silently misclassifies a single-drive Windows box as unified,
-/// so the VFS selector offers one "Local" entry pointing at the
-/// unlistable `\\?\` sentinel instead of the drive. Decide by style.
-pub fn unified_root_from_meta(mount_meta: &[u8]) -> bool {
-    PathStyle::from_mount_meta(mount_meta) == PathStyle::Unix
-}
-
-/// Logical parent of a LocalVfs path, honouring Windows drive/share
-/// roots. Shared by `LocalVfsDescriptor` and `RemoteVfsDescriptor` (the
-/// path shape is identical; only the `mount_meta`-derived style differs).
-pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
-    match style {
-        PathStyle::Unix => path.parent().map(Path::to_owned),
-        PathStyle::Windows => {
-            // `/?`, `/?/C:`, and `/?/UNC/server/share` are all "roots".
-            // Anything above them isn't a navigable location in our
-            // current model (no "This PC" view, no "shares on server"
-            // view), so refuse to go up past them.
-            let comps: Vec<&str> = path.components().collect();
-            // A sentinel-less path isn't a real Windows path; treat it
-            // like Unix rather than misapplying drive-root rules.
-            if comps.first().copied() != Some("?") {
-                return path.parent().map(Path::to_owned);
-            }
-            let root_depth = match comps.get(1).copied() {
-                Some("UNC") => 4,
-                Some(_) => 2,
-                None => return None,
-            };
-            if comps.len() <= root_depth {
-                None
-            } else {
-                Some(PathBuf::from_components(
-                    comps[..comps.len() - 1].iter().copied(),
-                ))
-            }
-        }
     }
 }
 
@@ -360,130 +296,6 @@ impl Default for LocalVfs {
     }
 }
 
-/// Render LocalVfs path components into the conventional host display
-/// form.
-///
-/// * Unix: `["Users", "tibor"]` → `/Users/tibor`.
-/// * Windows: strips the `"?"` sentinel — `["?", "C:", "Users", "Tibor"]`
-///   → `C:\Users\Tibor`; `["?", "UNC", "server", "share", "foo"]` →
-///   `\\server\share\foo`.
-fn comps_display(comps: &[&str], style: PathStyle) -> String {
-    match style {
-        PathStyle::Unix => {
-            if comps.is_empty() {
-                String::from("/")
-            } else {
-                format!("/{}", comps.join("/"))
-            }
-        }
-        PathStyle::Windows => {
-            // `[]` and `["?"]` both correspond to the "above any
-            // drive/share" position (`\\?\`). Navigation rules normally
-            // prevent landing here — see `navigable_parent` — but render
-            // something defensively rather than panic.
-            if comps.is_empty() || (comps.len() == 1 && comps[0] == "?") {
-                return String::from(r"\\?\");
-            }
-            match comps[0] {
-                "?" => {
-                    if comps.len() >= 2 && comps[1] == "UNC" {
-                        let mut s = String::from(r"\\");
-                        s.push_str(&comps[2..].join(r"\"));
-                        s
-                    } else {
-                        let mut s = comps[1].to_string();
-                        if comps.len() > 2 {
-                            s.push('\\');
-                            s.push_str(&comps[2..].join(r"\"));
-                        } else {
-                            // Bare drive root: `C:\`, not `C:`.
-                            s.push('\\');
-                        }
-                        s
-                    }
-                }
-                // Defensive fallback for non-sentinel components.
-                _ => comps.join(r"\"),
-            }
-        }
-    }
-}
-
-/// User-facing rendering of a LocalVfs path. See [`comps_display`].
-pub fn local_display_path(path: &Path, style: PathStyle) -> String {
-    let comps: Vec<&str> = path.components().collect();
-    comps_display(&comps, style)
-}
-
-/// Breadcrumbs for a LocalVfs path. Each breadcrumb's `nav_path` is the
-/// display form of the path up to that segment, suitable for the
-/// path-input dialog.
-pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
-    if style == PathStyle::Unix {
-        return super::unix_breadcrumbs(path);
-    }
-    let comps: Vec<&str> = path.components().collect();
-    if comps.first().copied() != Some("?") {
-        // Defensive — render unstructured components Unix-style.
-        return super::unix_breadcrumbs(path);
-    }
-    let mut crumbs = Vec::new();
-    // Root depth: 2 (`?/C:`) for drives, 4 (`?/UNC/server/share`)
-    // for UNC. The root crumb covers through that point.
-    let root_depth = if comps.get(1).copied() == Some("UNC") {
-        4
-    } else {
-        2
-    };
-    if comps.len() < root_depth {
-        crumbs.push(Breadcrumb {
-            label: comps_display(&comps, style),
-            nav_path: comps_display(&comps, style),
-        });
-        return crumbs;
-    }
-    // The root crumb's display (`C:\`, `\\server\share`) is the
-    // conventional form. When deeper segments follow, the *label* (the
-    // concatenation unit) must end in a separator so the next segment
-    // doesn't fuse onto it — `C:\` already does, `\\server\share` does
-    // not. `nav_path` stays the conventional form regardless.
-    let root_disp = comps_display(&comps[..root_depth], style);
-    let root_label = if comps.len() > root_depth && !root_disp.ends_with('\\') {
-        format!("{root_disp}\\")
-    } else {
-        root_disp.clone()
-    };
-    crumbs.push(Breadcrumb {
-        label: root_label,
-        nav_path: root_disp,
-    });
-    for i in root_depth..comps.len() {
-        let is_last = i + 1 == comps.len();
-        let label = if is_last {
-            comps[i].to_string()
-        } else {
-            format!("{}\\", comps[i])
-        };
-        crumbs.push(Breadcrumb {
-            label,
-            nav_path: comps_display(&comps[..i + 1], style),
-        });
-    }
-    crumbs
-}
-
-/// Render a LocalVfs path into a host-native `std::path::PathBuf` safe to
-/// feed to `std::fs` / `opener` / any Win32 or POSIX consumer.
-///
-/// * Unix: `/foo/bar` → `/foo/bar`.
-/// * Windows: `/?/C:/Users/Tibor` → `\\?\C:\Users\Tibor`;
-///   `/?/UNC/server/share/foo` → `\\?\UNC\server\share\foo`.
-///
-/// Native (`std::path`) form, so it must only ever run in the process
-/// that owns the files — never across the RPC boundary. A `LocalVfs`
-/// satisfies that: it executes on whichever side physically holds the FS
-/// (the host locally, the agent in a remote session), each compiled for
-/// its own platform.
 /// `st_*` metadata carried on `File` for local entries: allocated
 /// bytes (non-directories only), device id, inode, and hardlink count.
 /// All `None` on platforms without them (Windows).
@@ -610,185 +422,6 @@ fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
         u64::from(info.dwVolumeSerialNumber),
         u128::from(index),
     )))
-}
-
-pub fn to_native(path: &Path) -> StdPathBuf {
-    #[cfg(windows)]
-    {
-        let comps: Vec<&str> = path.components().collect();
-        let mut s = String::from(r"\\");
-        for (i, c) in comps.iter().enumerate() {
-            if i > 0 {
-                s.push('\\');
-            }
-            s.push_str(c);
-        }
-        // `\\?\C:` / `\\?\UNC\server\share` name the *volume*, not its
-        // root directory — `std::fs` and the change watcher reject those.
-        // The root dir needs a trailing separator (`\\?\C:\`). Deeper
-        // paths must NOT have one.
-        if comps.first() == Some(&"?") {
-            let root_depth = if comps.get(1) == Some(&"UNC") { 4 } else { 2 };
-            if comps.len() == root_depth {
-                s.push('\\');
-            }
-        }
-        StdPathBuf::from(s)
-    }
-    #[cfg(not(windows))]
-    {
-        StdPathBuf::from(path.as_wire_str())
-    }
-}
-
-/// Native path suitable as a **spawned process's working directory**.
-///
-/// [`to_native`] returns the verbatim (`\\?\…`) form, which `std::fs` and
-/// the change watcher need but which `cmd.exe` chokes on: it reads
-/// `\\?\C:\…` as a UNC path, refuses to `cd` there, and silently starts
-/// in `%SystemRoot%` instead — so local terminals would open in the wrong
-/// directory. Strip the verbatim prefix so an ordinary local directory
-/// becomes a plain `C:\…` the shell accepts. Genuine network locations
-/// are intentionally left as conventional UNC (`\\server\share\…`) so the
-/// shell shows its own "UNC paths are not supported" notice rather than us
-/// masking it. Over-long paths (> `MAX_PATH`) keep the verbatim form,
-/// since stripping it wouldn't help `cmd` anyway and other shells can
-/// still use it.
-///
-/// On non-Windows this is just [`to_native`].
-pub fn launch_cwd(path: &Path) -> StdPathBuf {
-    #[cfg(windows)]
-    {
-        const MAX_PATH: usize = 260;
-        let s = to_native(path).to_string_lossy().into_owned();
-        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-            // Verbatim UNC → conventional UNC; cmd will (rightly) warn.
-            StdPathBuf::from(format!(r"\\{rest}"))
-        } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-            if rest.len() <= MAX_PATH {
-                StdPathBuf::from(rest)
-            } else {
-                StdPathBuf::from(s)
-            }
-        } else {
-            StdPathBuf::from(s)
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        to_native(path)
-    }
-}
-
-/// Decode a host-native `std::path::Path` into LocalVfs path components.
-///
-/// * Unix: walks `Normal` components — `/home/user` → `["home", "user"]`.
-/// * Windows: emits the `"?"` sentinel then drive (`["?", "C:", …]`) or
-///   UNC (`["?", "UNC", "server", "share", …]`) info, then `Normal`
-///   components. Verbatim (`\\?\…`) and conventional forms collapse to
-///   the same components.
-///
-/// Used at the boundary between native-path APIs
-/// (`std::env::current_dir`, `dirs::*`, drag-and-drop) and `VfsPath`.
-pub fn local_path_from_native(path: &StdPath) -> PathBuf {
-    PathBuf::from_components(local_segments_from_native(path))
-}
-
-/// [`local_path_from_native`] for *user-typed* input: the same decoding,
-/// behind vetting the native decode doesn't do. Only distinctively
-/// absolute Windows shapes are claimed — `X:` + separator/end (drive) or
-/// a leading `\\` (UNC/verbatim). Drive-relative (`C:foo`) and plain
-/// relative inputs return `None` instead of being silently absolutized,
-/// as do `..` segments (the native decode drops them, which is only
-/// sound for canonicalized paths) and the non-filesystem `\\?\`/`\\.\`
-/// namespaces beyond verbatim drive/UNC forms.
-///
-/// Windows-hosted by construction: the caller gates on a Windows-styled
-/// `mount_meta`, which for a client-local mount implies this process
-/// *is* the Windows side — so `std::path` parses the syntax natively.
-/// Compiled to `None` elsewhere rather than let `std::path` misread the
-/// input as a single relative component.
-#[cfg(windows)]
-pub fn local_path_from_typed_display(input: &str) -> Option<PathBuf> {
-    let (s, verbatim) = match input.strip_prefix(r"\\?\") {
-        Some(rest) => (rest, true),
-        None => (input, false),
-    };
-    let b = s.as_bytes();
-    let drive = b.len() >= 2
-        && b[0].is_ascii_alphabetic()
-        && b[1] == b':'
-        && (b.len() == 2 || b[2] == b'\\' || b[2] == b'/');
-    if !drive {
-        // UNC: require server + share, and reject the `?`/`.` device
-        // namespaces (`//?/…` is not parsed as verbatim by std::path).
-        let rest = if verbatim {
-            s.strip_prefix("UNC\\").or_else(|| s.strip_prefix("UNC/"))?
-        } else {
-            s.strip_prefix(r"\\").or_else(|| s.strip_prefix("//"))?
-        };
-        let mut parts = rest.split(['/', '\\']).filter(|p| !p.is_empty());
-        let server = parts.next()?;
-        parts.next()?;
-        if server == "?" || server == "." {
-            return None;
-        }
-    }
-    if s.split(['/', '\\']).any(|seg| seg == "..") {
-        return None;
-    }
-    Some(local_path_from_native(StdPath::new(input)))
-}
-
-#[cfg(not(windows))]
-pub fn local_path_from_typed_display(_input: &str) -> Option<PathBuf> {
-    None
-}
-
-pub fn local_segments_from_native(path: &StdPath) -> Vec<String> {
-    use std::path::Component;
-
-    let mut segments = Vec::new();
-    for c in path.components() {
-        match c {
-            Component::Normal(s) => segments.push(s.to_string_lossy().into_owned()),
-            Component::Prefix(_prefix) => {
-                #[cfg(windows)]
-                {
-                    use std::path::Prefix;
-                    segments.push("?".to_string());
-                    match _prefix.kind() {
-                        Prefix::Disk(d) | Prefix::VerbatimDisk(d) => {
-                            // `d` is the drive letter byte (e.g. `b'C'`).
-                            segments.push(format!("{}:", char::from(d).to_ascii_uppercase()));
-                        }
-                        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
-                            segments.push("UNC".to_string());
-                            segments.push(server.to_string_lossy().into_owned());
-                            segments.push(share.to_string_lossy().into_owned());
-                        }
-                        Prefix::Verbatim(seg) => {
-                            // `\\?\<seg>\…` for forms we don't specifically
-                            // recognise (e.g. `Volume{GUID}`). Pass through
-                            // verbatim so volume-GUID paths still work.
-                            segments.push(seg.to_string_lossy().into_owned());
-                        }
-                        Prefix::DeviceNS(_) => {
-                            // `\\.\…` device-namespace paths — outside the
-                            // file-manager scope. Drop the prefix and hope
-                            // the remaining segments are usable.
-                        }
-                    }
-                }
-            }
-            // Drop `RootDir`, `CurDir`, `ParentDir`. Absolute paths land at
-            // `RootDir` after the prefix (if any); `.` and `..` shouldn't
-            // appear in a canonicalised path the caller hands us, and if
-            // they do we drop them since segments are meant to be literal.
-            _ => {}
-        }
-    }
-    segments
 }
 
 #[async_trait::async_trait]
@@ -1082,7 +715,7 @@ impl Vfs for LocalVfs {
             let mime_type = if is_dir {
                 None
             } else {
-                let from_extension = crate::file_reader::guess_mime_type(&path);
+                let from_extension = crate::vfs::file::guess_mime_type(&path);
                 if from_extension.is_some() {
                     from_extension
                 } else {
@@ -1625,103 +1258,4 @@ fn win_disk_space(path: &StdPath) -> Option<(u64, u64, u64)> {
         return None;
     }
     Some((total, total_free, free_caller))
-}
-
-#[cfg(test)]
-mod windows_path_tests {
-    use super::*;
-    use crate::vfs::path::PathBuf;
-
-    fn p(comps: &[&str]) -> PathBuf {
-        PathBuf::from_components(comps.iter().copied())
-    }
-
-    #[test]
-    fn roots_render_conventionally() {
-        // Drives keep their trailing separator (`C:\`); a UNC share root
-        // does not (`\\server\share`) — matches Explorer and every other
-        // final-location display.
-        assert_eq!(comps_display(&["?", "C:"], PathStyle::Windows), r"C:\");
-        assert_eq!(
-            comps_display(&["?", "UNC", "localhost", "Users"], PathStyle::Windows),
-            r"\\localhost\Users"
-        );
-        assert_eq!(
-            comps_display(
-                &["?", "UNC", "localhost", "Users", "Public"],
-                PathStyle::Windows
-            ),
-            r"\\localhost\Users\Public"
-        );
-    }
-
-    #[test]
-    fn share_root_breadcrumb_has_no_trailing_slash() {
-        let crumbs = local_breadcrumbs(&p(&["?", "UNC", "localhost", "Users"]), PathStyle::Windows);
-        assert_eq!(crumbs.len(), 1);
-        assert_eq!(crumbs[0].label, r"\\localhost\Users");
-    }
-
-    #[test]
-    fn breadcrumbs_concatenate_without_fusing() {
-        for (comps, expected) in [
-            (
-                &["?", "UNC", "localhost", "Users", "Public"][..],
-                r"\\localhost\Users\Public",
-            ),
-            (&["?", "C:", "Users", "Public"][..], r"C:\Users\Public"),
-        ] {
-            let crumbs = local_breadcrumbs(&p(comps), PathStyle::Windows);
-            let joined: String = crumbs.iter().map(|c| c.label.as_str()).collect();
-            assert_eq!(joined, expected);
-        }
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn typed_display_accepts_distinctive_absolute_shapes() {
-        for (input, comps) in [
-            (r"C:\Users\X", &["?", "C:", "Users", "X"][..]),
-            ("c:/x", &["?", "C:", "x"][..]),
-            ("C:", &["?", "C:"][..]),
-            (r"C:\", &["?", "C:"][..]),
-            (r"\\server\share", &["?", "UNC", "server", "share"][..]),
-            (
-                r"\\server\share\a",
-                &["?", "UNC", "server", "share", "a"][..],
-            ),
-            (
-                "//server/share/a",
-                &["?", "UNC", "server", "share", "a"][..],
-            ),
-            (r"\\?\C:\x", &["?", "C:", "x"][..]),
-            (
-                r"\\?\UNC\server\share\a",
-                &["?", "UNC", "server", "share", "a"][..],
-            ),
-        ] {
-            assert_eq!(
-                local_path_from_typed_display(input).as_ref(),
-                Some(&p(comps)),
-                "{input}"
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn typed_display_rejects_relative_and_exotic_shapes() {
-        for input in [
-            "foo",
-            r"foo\bar",
-            "C:foo",   // drive-relative — no per-drive cwd to resolve against
-            "/unix/x", // unix absolute stays with the session shell
-            r"\\server",
-            r"\\.\COM1",
-            "//?/C:/x",
-            r"C:\a\..\b", // native decode would drop the `..`, not resolve it
-        ] {
-            assert_eq!(local_path_from_typed_display(input), None, "{input}");
-        }
-    }
 }

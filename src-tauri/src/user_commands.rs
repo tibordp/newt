@@ -223,7 +223,7 @@ fn setup_template_env(
 /// Build the template context (file objects, dir, env, hostname) for a user command.
 fn build_template_context(
     pane_path: &VfsPath,
-    effective_files: &[&newt_common::filesystem::File],
+    effective_files: &[&newt_common::vfs::File],
 ) -> (
     minijinja::Value,
     Vec<minijinja::Value>,
@@ -277,7 +277,7 @@ fn render_template(
     template_str: &str,
     pane_path: &VfsPath,
     other_dir: &str,
-    effective_files: &[&newt_common::filesystem::File],
+    effective_files: &[&newt_common::vfs::File],
     prompt_responses: Option<&[String]>,
     confirm_responses: Option<&[bool]>,
 ) -> Result<(String, CollectedInputs), Error> {
@@ -344,7 +344,7 @@ fn selection_keys(pane_path: &VfsPath, selection: &[VfsPath]) -> std::collection
 fn collect_pane_context(
     ctx: &MainWindowContext,
     pane_handle: PaneHandle,
-) -> Result<(VfsPath, String, Vec<newt_common::filesystem::File>), Error> {
+) -> Result<(VfsPath, String, Vec<newt_common::vfs::File>), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
     let pane_path = pane.path();
     let other_pane = ctx.with_update(|gs| Ok(gs.other_pane(pane_handle)))?;
@@ -354,7 +354,7 @@ fn collect_pane_context(
     let selection_keys = selection_keys(&pane_path, &selection);
 
     let file_list = pane.file_list();
-    let effective_files: Vec<newt_common::filesystem::File> = file_list
+    let effective_files: Vec<newt_common::vfs::File> = file_list
         .files()
         .iter()
         .filter(|f| selection_keys.contains(f.key()))
@@ -478,7 +478,7 @@ pub async fn run_user_command(
         .clone();
 
     let (pane_path, other_dir, effective_files) = collect_pane_context(&ctx, pane_handle)?;
-    let file_refs: Vec<&newt_common::filesystem::File> = effective_files.iter().collect();
+    let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
 
     // Scanning pass: detect prompt() and confirm() calls
     let (rendered, inputs) =
@@ -539,7 +539,7 @@ pub async fn execute_user_command(
         .clone();
 
     let (pane_path, other_dir, effective_files) = collect_pane_context(&ctx, pane_handle)?;
-    let file_refs: Vec<&newt_common::filesystem::File> = effective_files.iter().collect();
+    let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
 
     let (rendered, _) = render_template(
         &uc.run,
@@ -598,7 +598,7 @@ pub fn update_user_command_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use newt_common::filesystem::File;
+    use newt_common::vfs::File;
 
     fn file_with(name: &str, key: Option<&str>, source: Option<VfsPath>) -> File {
         File {

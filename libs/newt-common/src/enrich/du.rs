@@ -118,7 +118,7 @@ impl Enricher for DuEnricher {
 
 /// The bytes an entry contributes: allocated when known (matches
 /// `du`), apparent size otherwise.
-fn occupied(f: &crate::filesystem::File) -> u64 {
+fn occupied(f: &crate::vfs::File) -> u64 {
     f.allocated_size.or(f.size).unwrap_or(0)
 }
 

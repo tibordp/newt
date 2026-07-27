@@ -1,5 +1,6 @@
 use crate::Error;
-use crate::filesystem::{FileList, Filesystem, ListFilesOptions};
+use crate::filesystem::{Filesystem, ListFilesOptions};
+use crate::vfs::FileList;
 use crate::vfs::{VfsId, VfsPath};
 
 /// `Filesystem` stub whose streaming listing never terminates: it pumps
@@ -52,7 +53,7 @@ impl Filesystem for EndlessListing {
         Ok(())
     }
 
-    async fn fs_stats(&self, _path: VfsPath) -> Result<Option<crate::filesystem::FsStats>, Error> {
+    async fn fs_stats(&self, _path: VfsPath) -> Result<Option<crate::vfs::FsStats>, Error> {
         Ok(None)
     }
 
@@ -60,7 +61,7 @@ impl Filesystem for EndlessListing {
         Ok(crate::vfs::RevalidationOutcome::Fresh)
     }
 
-    async fn file_details(&self, _path: VfsPath) -> Result<crate::file_reader::FileDetails, Error> {
+    async fn file_details(&self, _path: VfsPath) -> Result<crate::vfs::FileDetails, Error> {
         Err(Error::not_supported())
     }
 
@@ -76,7 +77,7 @@ impl Filesystem for EndlessListing {
         _path: VfsPath,
         _offset: u64,
         _length: u64,
-    ) -> Result<crate::file_reader::FileChunk, Error> {
+    ) -> Result<crate::vfs::FileChunk, Error> {
         Err(Error::not_supported())
     }
 
@@ -99,9 +100,9 @@ impl Filesystem for EndlessListing {
         &self,
         _path: VfsPath,
         _offset: u64,
-        _pattern: crate::file_reader::SearchPattern,
+        _pattern: crate::vfs::SearchPattern,
         _max_length: u64,
-    ) -> Result<Option<crate::file_reader::SearchMatch>, Error> {
+    ) -> Result<Option<crate::vfs::SearchMatch>, Error> {
         Err(Error::not_supported())
     }
 }

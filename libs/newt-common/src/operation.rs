@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::filesystem::File;
 use crate::proc::NoConsoleWindow;
 use crate::rpc::Communicator;
+use crate::vfs::File;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
@@ -597,7 +597,7 @@ async fn execute_run_command(
             // Native conversion happens here — the executor runs where
             // the FS is (the agent in a remote session). `launch_cwd`
             // (not `to_native`) so cmd.exe accepts a local directory.
-            cmd.current_dir(crate::vfs::local::launch_cwd(dir));
+            cmd.current_dir(crate::vfs::native::launch_cwd(dir));
         }
         if let Some(si) = shell_integration {
             cmd.envs(si.spawn_env(None));

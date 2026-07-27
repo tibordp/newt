@@ -10,9 +10,9 @@ use std::io;
 
 use tokio::io::AsyncReadExt;
 
-use crate::filesystem::{File, UserGroup};
 use crate::operation::{ArchiveFormat, ArchiveOptions};
 use crate::vfs::path::Path;
+use crate::vfs::{File, UserGroup};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsAsyncWriter};
 
 // --- Source: chunk stream over a VFS read ---

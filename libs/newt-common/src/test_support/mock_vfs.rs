@@ -7,11 +7,11 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use crate::filesystem::{File, Mode};
 use crate::vfs::{
     Breadcrumb, DisplayPathMatch, MountRequest, Vfs, VfsAsyncWriter, VfsDescriptor, VfsMetadata,
     VfsSpaceInfo,
 };
+use crate::vfs::{File, Mode};
 
 // ---------------------------------------------------------------------------
 // Mock entry model
@@ -353,8 +353,8 @@ impl MockVfs {
                         None,
                         Some(content.len() as u64),
                         *mode,
-                        Some(crate::filesystem::UserGroup::Id(*uid)),
-                        Some(crate::filesystem::UserGroup::Id(*gid)),
+                        Some(crate::vfs::UserGroup::Id(*uid)),
+                        Some(crate::vfs::UserGroup::Id(*gid)),
                     ),
                     MockEntry::Directory { mode, uid, gid } => (
                         true,
@@ -362,8 +362,8 @@ impl MockVfs {
                         None,
                         None,
                         *mode,
-                        Some(crate::filesystem::UserGroup::Id(*uid)),
-                        Some(crate::filesystem::UserGroup::Id(*gid)),
+                        Some(crate::vfs::UserGroup::Id(*uid)),
+                        Some(crate::vfs::UserGroup::Id(*gid)),
                     ),
                     MockEntry::Symlink { target } => {
                         (false, true, Some(target.clone()), None, 0o777, None, None)
@@ -433,10 +433,7 @@ impl Vfs for MockVfs {
         std::future::pending().await
     }
 
-    async fn fs_stats(
-        &self,
-        _path: &Path,
-    ) -> Result<Option<crate::filesystem::FsStats>, crate::Error> {
+    async fn fs_stats(&self, _path: &Path) -> Result<Option<crate::vfs::FsStats>, crate::Error> {
         Ok(None)
     }
 
@@ -463,7 +460,7 @@ impl Vfs for MockVfs {
         path: &Path,
         offset: u64,
         length: u64,
-    ) -> Result<crate::file_reader::FileChunk, crate::Error> {
+    ) -> Result<crate::vfs::FileChunk, crate::Error> {
         if let Some(e) = self.check_failure(path, "read_range") {
             return Err(e);
         }
@@ -479,7 +476,7 @@ impl Vfs for MockVfs {
                 let start = (offset as usize).min(content.len());
                 let end = (offset + length) as usize;
                 let data = content[start..end.min(content.len())].to_vec();
-                Ok(crate::file_reader::FileChunk {
+                Ok(crate::vfs::FileChunk {
                     data,
                     offset,
                     total_size: content.len() as u64,
@@ -515,43 +512,40 @@ impl Vfs for MockVfs {
         }))
     }
 
-    async fn file_details(
-        &self,
-        path: &Path,
-    ) -> Result<crate::file_reader::FileDetails, crate::Error> {
+    async fn file_details(&self, path: &Path) -> Result<crate::vfs::FileDetails, crate::Error> {
         match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File {
                 content,
                 mode,
                 uid,
                 gid,
-            }) => Ok(crate::file_reader::FileDetails {
+            }) => Ok(crate::vfs::FileDetails {
                 size: content.len() as u64,
                 mime_type: None,
                 is_dir: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: Some(crate::filesystem::UserGroup::Id(*uid)),
-                group: Some(crate::filesystem::UserGroup::Id(*gid)),
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
             }),
-            Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::file_reader::FileDetails {
+            Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::vfs::FileDetails {
                 size: 0,
                 mime_type: None,
                 is_dir: true,
                 is_symlink: false,
                 symlink_target: None,
-                user: Some(crate::filesystem::UserGroup::Id(*uid)),
-                group: Some(crate::filesystem::UserGroup::Id(*gid)),
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
                 created: None,
             }),
-            Some(MockEntry::Symlink { target }) => Ok(crate::file_reader::FileDetails {
+            Some(MockEntry::Symlink { target }) => Ok(crate::vfs::FileDetails {
                 size: 0,
                 mime_type: None,
                 is_dir: false,
@@ -595,8 +589,8 @@ impl Vfs for MockVfs {
                 is_hidden: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: Some(crate::filesystem::UserGroup::Id(*uid)),
-                group: Some(crate::filesystem::UserGroup::Id(*gid)),
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,
@@ -616,8 +610,8 @@ impl Vfs for MockVfs {
                 is_hidden: false,
                 is_symlink: false,
                 symlink_target: None,
-                user: Some(crate::filesystem::UserGroup::Id(*uid)),
-                group: Some(crate::filesystem::UserGroup::Id(*gid)),
+                user: Some(crate::vfs::UserGroup::Id(*uid)),
+                group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
                 modified: None,
                 accessed: None,

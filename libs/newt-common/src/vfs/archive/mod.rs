@@ -9,8 +9,8 @@ use std::sync::Arc;
 // `/` stripped by `normalize_dir_path`).
 use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 
-use crate::filesystem::{File, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
 use super::{Breadcrumb, DisplayPathMatch, Vfs, VfsPath};

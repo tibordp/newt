@@ -2,7 +2,10 @@ pub mod agent;
 pub mod archive;
 pub mod background_job;
 pub mod disc;
+pub mod file;
+pub mod find;
 pub mod local;
+pub mod native;
 pub mod path;
 pub mod path_style;
 pub mod progress;
@@ -21,10 +24,12 @@ pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use disc::{DiscVfs, is_disc_image_name};
+pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, ToUnix, UserGroup};
+pub use find::{SearchMatch, SearchPattern};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
-    mount_root_infos, mount_roots,
+    mount_root_infos, mount_roots, unix_breadcrumbs, unix_display_path,
 };
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
@@ -53,8 +58,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails, SearchMatch, SearchPattern};
-use crate::filesystem::{File, FileList, Filesystem, FsStats, ListFilesOptions};
+use crate::filesystem::{Filesystem, ListFilesOptions};
 use crate::rpc::Communicator;
 
 /// Default chunk size for VFS read/copy buffers and streaming channels.
@@ -92,39 +96,6 @@ impl std::fmt::Display for VfsId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
-}
-
-/// `/`-rooted display string for a segment list. Used by the descriptors
-/// of every Unix-path-speaking VFS (SFTP, S3, archives, …) in their
-/// `format_path` impls.
-pub fn unix_display_path(path: &Path) -> String {
-    path.as_wire_str().to_string()
-}
-
-/// Breadcrumb list for a Unix-style path. Each breadcrumb's `nav_path`
-/// is the corresponding prefix as a `/`-rooted string.
-pub fn unix_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
-    let comps: Vec<&str> = path.components().collect();
-    let mut crumbs = Vec::with_capacity(comps.len() + 1);
-    crumbs.push(Breadcrumb {
-        label: "/".to_string(),
-        nav_path: "/".to_string(),
-    });
-    let mut accumulated = String::new();
-    for (i, seg) in comps.iter().enumerate() {
-        accumulated.push('/');
-        accumulated.push_str(seg);
-        let is_last = i == comps.len() - 1;
-        crumbs.push(Breadcrumb {
-            label: if is_last {
-                (*seg).to_string()
-            } else {
-                format!("{}/", seg)
-            },
-            nav_path: accumulated.clone(),
-        });
-    }
-    crumbs
 }
 
 // ---------------------------------------------------------------------------
@@ -459,9 +430,9 @@ impl VfsMetadata {
     /// behind a stat call. Named users/groups don't map to numeric ids and
     /// are dropped.
     pub fn from_listing(file: &File) -> Self {
-        fn id(ug: Option<&crate::filesystem::UserGroup>) -> Option<u32> {
+        fn id(ug: Option<&crate::vfs::UserGroup>) -> Option<u32> {
             match ug {
-                Some(crate::filesystem::UserGroup::Id(id)) => Some(*id),
+                Some(crate::vfs::UserGroup::Id(id)) => Some(*id),
                 _ => None,
             }
         }
@@ -1127,15 +1098,15 @@ impl Filesystem for VfsRegistryFs {
         pattern: SearchPattern,
         max_length: u64,
     ) -> Result<Option<SearchMatch>, Error> {
-        let compiled = compile_regex(&pattern)?;
-        let overlap = compute_overlap(&pattern);
+        let compiled = find::compile_regex(&pattern)?;
+        let overlap = find::compute_overlap(&pattern);
         let mut carry: Vec<u8> = Vec::new();
         let mut pos = offset;
         let end = offset.saturating_add(max_length);
 
         let mut reader = self.open_read_at(path).await?;
         while pos < end {
-            let chunk_len = std::cmp::min(SEARCH_CHUNK_SIZE as u64, end - pos);
+            let chunk_len = std::cmp::min(find::SEARCH_CHUNK_SIZE as u64, end - pos);
             let data = reader.read_at(pos, chunk_len).await?;
             if data.is_empty() {
                 break;
@@ -1145,7 +1116,7 @@ impl Filesystem for VfsRegistryFs {
             carry.extend_from_slice(&data);
 
             if let Some((match_pos, match_len)) =
-                find_in_buffer(&carry, &pattern, compiled.as_ref())
+                find::find_in_buffer(&carry, &pattern, compiled.as_ref())
             {
                 let abs_offset = pos - carry_len as u64 + match_pos as u64;
                 return Ok(Some(SearchMatch {
@@ -1168,46 +1139,6 @@ impl Filesystem for VfsRegistryFs {
         }
 
         Ok(None)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Search helpers for find_in_file
-// ---------------------------------------------------------------------------
-
-const SEARCH_CHUNK_SIZE: usize = 256 * 1024;
-
-/// Maximum bytes carried over between search chunks for regex patterns. The
-/// regex engine has no way to bound match length up front, so we have to
-/// guess; 64 KiB covers any realistic regex while keeping the per-chunk
-/// re-scan small.
-const REGEX_OVERLAP_LIMIT: usize = 64 * 1024;
-
-fn compute_overlap(pattern: &SearchPattern) -> usize {
-    match pattern {
-        SearchPattern::Literal(pat) => pat.len().saturating_sub(1),
-        SearchPattern::Regex(_) => std::cmp::min(REGEX_OVERLAP_LIMIT, SEARCH_CHUNK_SIZE / 2),
-    }
-}
-
-fn find_in_buffer(
-    buf: &[u8],
-    pattern: &SearchPattern,
-    compiled_regex: Option<&regex::bytes::Regex>,
-) -> Option<(usize, usize)> {
-    match pattern {
-        SearchPattern::Literal(pat) => memchr::memmem::find(buf, pat).map(|pos| (pos, pat.len())),
-        SearchPattern::Regex(_) => compiled_regex?.find(buf).map(|m| (m.start(), m.len())),
-    }
-}
-
-fn compile_regex(pattern: &SearchPattern) -> Result<Option<regex::bytes::Regex>, Error> {
-    match pattern {
-        SearchPattern::Regex(pat) => {
-            let re = regex::bytes::Regex::new(pat).map_err(|e| Error::custom(e.to_string()))?;
-            Ok(Some(re))
-        }
-        _ => Ok(None),
     }
 }
 

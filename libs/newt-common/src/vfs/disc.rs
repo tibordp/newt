@@ -22,9 +22,9 @@ use tokio::sync::{Mutex, OnceCell};
 use newt_disc::{Chunk, DiscError, DiscFs, Entry, EntryData, EntryKind, ExtentKind, ProbeOp, Step};
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{FileChunk, FileDetails};
 
 use super::archive::{
     archive_breadcrumbs, archive_format_path, archive_mount_label, archive_try_parse_display_path,
@@ -693,9 +693,7 @@ impl Vfs for DiscVfs {
             } else {
                 entry.size
             },
-            mime_type: crate::file_reader::guess_mime_type(std::path::Path::new(
-                path.as_wire_str(),
-            )),
+            mime_type: crate::vfs::file::guess_mime_type(std::path::Path::new(path.as_wire_str())),
             is_dir: entry.kind == EntryKind::Dir,
             is_symlink: entry.kind == EntryKind::Symlink,
             symlink_target: entry.link_target.clone(),

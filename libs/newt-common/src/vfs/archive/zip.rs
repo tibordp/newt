@@ -26,9 +26,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
@@ -681,7 +681,7 @@ impl Vfs for ZipArchiveVfs {
         let is_dir = entry.kind == zr::EntryKind::Dir;
         Ok(FileDetails {
             size: if is_dir { 0 } else { entry.size },
-            mime_type: crate::file_reader::guess_mime_type(StdPath::new(path.as_wire_str())),
+            mime_type: crate::vfs::file::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir,
             is_symlink: entry.kind == zr::EntryKind::Symlink,
             symlink_target: None,

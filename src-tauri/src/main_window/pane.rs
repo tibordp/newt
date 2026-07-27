@@ -4,11 +4,11 @@ use log::warn;
 use newt_common::enrich::{
     Annotation, ContextBadge, EnrichScope, EnricherClient, EnrichmentBatch, EnrichmentEvent,
 };
-use newt_common::filesystem::File;
-use newt_common::filesystem::FileList;
 use newt_common::filesystem::Filesystem;
-use newt_common::filesystem::FsStats;
 use newt_common::filesystem::ListFilesOptions;
+use newt_common::vfs::File;
+use newt_common::vfs::FileList;
+use newt_common::vfs::FsStats;
 use newt_common::vfs::{Breadcrumb, OriginKind, PathStyle, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -1157,7 +1157,7 @@ impl Pane {
     }
 
     fn entry_view(&self, entry: &HistoryEntry) -> HistoryEntryView {
-        use newt_common::ToUnix;
+        use newt_common::vfs::ToUnix;
         // Prefer the formatted strings captured at push time so unmounted
         // VFSes still render meaningfully. The descriptor lookup only
         // determines whether the entry is still navigable.
@@ -1437,7 +1437,7 @@ impl Pane {
             .collect()
     }
 
-    pub fn get_focused_file_info(&self) -> Option<newt_common::filesystem::File> {
+    pub fn get_focused_file_info(&self) -> Option<newt_common::vfs::File> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;
         view_state

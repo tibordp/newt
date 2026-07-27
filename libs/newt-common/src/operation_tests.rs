@@ -2654,7 +2654,8 @@ mod local_symlink {
     use tokio_util::sync::CancellationToken;
 
     use crate::operation::*;
-    use crate::vfs::local::{LocalVfs, local_path_from_native};
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::native::local_path_from_native;
     use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
     async fn run(request: OperationRequest) -> Vec<OperationProgress> {

@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
+use newt_common::filesystem::ByteStream;
 use newt_common::shell_control::{
-    ByteStream, ControlRequest, ControlResponse, ControlResult, ENV_SOCK, ShellControlHandler,
-    ShellIntegration,
+    ControlRequest, ControlResponse, ControlResult, ENV_SOCK, ShellControlHandler, ShellIntegration,
 };
 use newt_common::vfs::VfsPath;
 

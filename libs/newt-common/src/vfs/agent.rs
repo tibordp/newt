@@ -94,15 +94,15 @@ impl VfsDescriptor for AgentVfsDescriptor {
     }
 
     fn format_path(&self, path: &Path, mount_meta: &[u8]) -> String {
-        super::local::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        super::local::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn navigable_parent(&self, path: &Path, mount_meta: &[u8]) -> Option<PathBuf> {
-        super::local::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn mount_label(&self, mount_meta: &[u8]) -> Option<String> {
@@ -114,7 +114,7 @@ impl VfsDescriptor for AgentVfsDescriptor {
     }
 
     fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
-        super::local::metadata_traits_from_meta(mount_meta)
+        super::path_style::metadata_traits_from_meta(mount_meta)
     }
 }
 

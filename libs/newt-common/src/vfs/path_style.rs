@@ -17,8 +17,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::path::PathBuf;
+use super::path::{Path, PathBuf};
 use super::volume::{RootInfo, VolumeInfo};
+use super::{Breadcrumb, MetadataTraits};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PathStyle {
@@ -171,6 +172,228 @@ impl PathStyle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Style-driven rendering: display paths, breadcrumbs, parents. Shared by
+// every descriptor whose paths are host-shaped (`Local`/`Remote`/`Agent`)
+// or plain Unix-shaped (SFTP, S3, archives, …).
+// ---------------------------------------------------------------------------
+
+/// `/`-rooted display string for a segment list. Used by the descriptors
+/// of every Unix-path-speaking VFS (SFTP, S3, archives, …) in their
+/// `format_path` impls.
+pub fn unix_display_path(path: &Path) -> String {
+    path.as_wire_str().to_string()
+}
+
+/// Breadcrumb list for a Unix-style path. Each breadcrumb's `nav_path`
+/// is the corresponding prefix as a `/`-rooted string.
+pub fn unix_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
+    let comps: Vec<&str> = path.components().collect();
+    let mut crumbs = Vec::with_capacity(comps.len() + 1);
+    crumbs.push(Breadcrumb {
+        label: "/".to_string(),
+        nav_path: "/".to_string(),
+    });
+    let mut accumulated = String::new();
+    for (i, seg) in comps.iter().enumerate() {
+        accumulated.push('/');
+        accumulated.push_str(seg);
+        let is_last = i == comps.len() - 1;
+        crumbs.push(Breadcrumb {
+            label: if is_last {
+                (*seg).to_string()
+            } else {
+                format!("{}/", seg)
+            },
+            nav_path: accumulated.clone(),
+        });
+    }
+    crumbs
+}
+
+/// Render host-shaped path components into the conventional display form.
+///
+/// * Unix: `["Users", "tibor"]` → `/Users/tibor`.
+/// * Windows: strips the `"?"` sentinel — `["?", "C:", "Users", "Tibor"]`
+///   → `C:\Users\Tibor`; `["?", "UNC", "server", "share", "foo"]` →
+///   `\\server\share\foo`.
+fn comps_display(comps: &[&str], style: PathStyle) -> String {
+    match style {
+        PathStyle::Unix => {
+            if comps.is_empty() {
+                String::from("/")
+            } else {
+                format!("/{}", comps.join("/"))
+            }
+        }
+        PathStyle::Windows => {
+            // `[]` and `["?"]` both correspond to the "above any
+            // drive/share" position (`\\?\`). Navigation rules normally
+            // prevent landing here — see `navigable_parent` — but render
+            // something defensively rather than panic.
+            if comps.is_empty() || (comps.len() == 1 && comps[0] == "?") {
+                return String::from(r"\\?\");
+            }
+            match comps[0] {
+                "?" => {
+                    if comps.len() >= 2 && comps[1] == "UNC" {
+                        let mut s = String::from(r"\\");
+                        s.push_str(&comps[2..].join(r"\"));
+                        s
+                    } else {
+                        let mut s = comps[1].to_string();
+                        if comps.len() > 2 {
+                            s.push('\\');
+                            s.push_str(&comps[2..].join(r"\"));
+                        } else {
+                            // Bare drive root: `C:\`, not `C:`.
+                            s.push('\\');
+                        }
+                        s
+                    }
+                }
+                // Defensive fallback for non-sentinel components.
+                _ => comps.join(r"\"),
+            }
+        }
+    }
+}
+
+/// User-facing rendering of a host-shaped path. See [`comps_display`].
+pub fn local_display_path(path: &Path, style: PathStyle) -> String {
+    let comps: Vec<&str> = path.components().collect();
+    comps_display(&comps, style)
+}
+
+/// Breadcrumbs for a host-shaped path. Each breadcrumb's `nav_path` is the
+/// display form of the path up to that segment, suitable for the
+/// path-input dialog.
+pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
+    if style == PathStyle::Unix {
+        return unix_breadcrumbs(path);
+    }
+    let comps: Vec<&str> = path.components().collect();
+    if comps.first().copied() != Some("?") {
+        // Defensive — render unstructured components Unix-style.
+        return unix_breadcrumbs(path);
+    }
+    let mut crumbs = Vec::new();
+    // Root depth: 2 (`?/C:`) for drives, 4 (`?/UNC/server/share`)
+    // for UNC. The root crumb covers through that point.
+    let root_depth = if comps.get(1).copied() == Some("UNC") {
+        4
+    } else {
+        2
+    };
+    if comps.len() < root_depth {
+        crumbs.push(Breadcrumb {
+            label: comps_display(&comps, style),
+            nav_path: comps_display(&comps, style),
+        });
+        return crumbs;
+    }
+    // The root crumb's display (`C:\`, `\\server\share`) is the
+    // conventional form. When deeper segments follow, the *label* (the
+    // concatenation unit) must end in a separator so the next segment
+    // doesn't fuse onto it — `C:\` already does, `\\server\share` does
+    // not. `nav_path` stays the conventional form regardless.
+    let root_disp = comps_display(&comps[..root_depth], style);
+    let root_label = if comps.len() > root_depth && !root_disp.ends_with('\\') {
+        format!("{root_disp}\\")
+    } else {
+        root_disp.clone()
+    };
+    crumbs.push(Breadcrumb {
+        label: root_label,
+        nav_path: root_disp,
+    });
+    for i in root_depth..comps.len() {
+        let is_last = i + 1 == comps.len();
+        let label = if is_last {
+            comps[i].to_string()
+        } else {
+            format!("{}\\", comps[i])
+        };
+        crumbs.push(Breadcrumb {
+            label,
+            nav_path: comps_display(&comps[..i + 1], style),
+        });
+    }
+    crumbs
+}
+
+/// Logical parent of a host-shaped path, honouring Windows drive/share
+/// roots. Shared by `LocalVfsDescriptor` and `RemoteVfsDescriptor` (the
+/// path shape is identical; only the `mount_meta`-derived style differs).
+pub fn navigable_parent(path: &Path, style: PathStyle) -> Option<PathBuf> {
+    match style {
+        PathStyle::Unix => path.parent().map(Path::to_owned),
+        PathStyle::Windows => {
+            // `/?`, `/?/C:`, and `/?/UNC/server/share` are all "roots".
+            // Anything above them isn't a navigable location in our
+            // current model (no "This PC" view, no "shares on server"
+            // view), so refuse to go up past them.
+            let comps: Vec<&str> = path.components().collect();
+            // A sentinel-less path isn't a real Windows path; treat it
+            // like Unix rather than misapplying drive-root rules.
+            if comps.first().copied() != Some("?") {
+                return path.parent().map(Path::to_owned);
+            }
+            let root_depth = match comps.get(1).copied() {
+                Some("UNC") => 4,
+                Some(_) => 2,
+                None => return None,
+            };
+            if comps.len() <= root_depth {
+                None
+            } else {
+                Some(PathBuf::from_components(
+                    comps[..comps.len() - 1].iter().copied(),
+                ))
+            }
+        }
+    }
+}
+
+/// `MetadataTraits` for a `Local`/`Remote`/`Agent` mount, decided by the
+/// path style recorded in `mount_meta`.
+pub fn metadata_traits_from_meta(mount_meta: &[u8]) -> MetadataTraits {
+    match PathStyle::from_mount_meta(mount_meta) {
+        PathStyle::Unix => MetadataTraits {
+            unix_owner: true,
+            windows_attributes: false,
+        },
+        PathStyle::Windows => MetadataTraits {
+            unix_owner: false,
+            windows_attributes: true,
+        },
+    }
+}
+
+/// FS roots from `mount_meta`, defaulting to a single `/` when none were
+/// recorded (a style-only mount, e.g. a remote Unix root). Shared by
+/// `LocalVfsDescriptor` and `RemoteVfsDescriptor`.
+pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<RootInfo> {
+    let roots = mount_root_infos(mount_meta);
+    if roots.is_empty() {
+        vec![RootInfo::root()]
+    } else {
+        roots
+    }
+}
+
+/// Whether a `Local`/`Remote` mount presents one unified `/` root.
+///
+/// This is a property of the *path style*, **not** the number of roots: a
+/// Windows filesystem with only a `C:` drive is still split-root — its
+/// root is `C:\`, never `/`. Keying off `roots().len() == 1` (the trait
+/// default) silently misclassifies a single-drive Windows box as unified,
+/// so the VFS selector offers one "Local" entry pointing at the
+/// unlistable `\\?\` sentinel instead of the drive. Decide by style.
+pub fn unified_root_from_meta(mount_meta: &[u8]) -> bool {
+    PathStyle::from_mount_meta(mount_meta) == PathStyle::Unix
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +461,56 @@ mod tests {
         assert!(mount_roots(&PathStyle::Unix.encode()).is_empty());
         assert!(mount_roots(&[]).is_empty());
         assert!(mount_roots(&[0xff, 0x00]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use crate::vfs::path::PathBuf as VfsPathBuf;
+
+    fn p(comps: &[&str]) -> VfsPathBuf {
+        VfsPathBuf::from_components(comps.iter().copied())
+    }
+
+    #[test]
+    fn roots_render_conventionally() {
+        // Drives keep their trailing separator (`C:\`); a UNC share root
+        // does not (`\\server\share`) — matches Explorer and every other
+        // final-location display.
+        assert_eq!(comps_display(&["?", "C:"], PathStyle::Windows), r"C:\");
+        assert_eq!(
+            comps_display(&["?", "UNC", "localhost", "Users"], PathStyle::Windows),
+            r"\\localhost\Users"
+        );
+        assert_eq!(
+            comps_display(
+                &["?", "UNC", "localhost", "Users", "Public"],
+                PathStyle::Windows
+            ),
+            r"\\localhost\Users\Public"
+        );
+    }
+
+    #[test]
+    fn share_root_breadcrumb_has_no_trailing_slash() {
+        let crumbs = local_breadcrumbs(&p(&["?", "UNC", "localhost", "Users"]), PathStyle::Windows);
+        assert_eq!(crumbs.len(), 1);
+        assert_eq!(crumbs[0].label, r"\\localhost\Users");
+    }
+
+    #[test]
+    fn breadcrumbs_concatenate_without_fusing() {
+        for (comps, expected) in [
+            (
+                &["?", "UNC", "localhost", "Users", "Public"][..],
+                r"\\localhost\Users\Public",
+            ),
+            (&["?", "C:", "Users", "Public"][..], r"C:\Users\Public"),
+        ] {
+            let crumbs = local_breadcrumbs(&p(comps), PathStyle::Windows);
+            let joined: String = crumbs.iter().map(|c| c.label.as_str()).collect();
+            assert_eq!(joined, expected);
+        }
     }
 }

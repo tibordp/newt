@@ -27,7 +27,7 @@ pub mod terminal;
 pub mod vfs;
 pub mod window;
 
-use newt_common::filesystem::UserGroup;
+use newt_common::vfs::UserGroup;
 use tauri::Manager;
 use tauri::WebviewWindow;
 use tauri::Wry;
@@ -368,9 +368,9 @@ pub fn create_specta_builder() -> Builder<Wry> {
         // representation uses Arc<RwLock<…>> wrappers with manual Serialize
         // impls that don't fit specta::Type cleanly.
         .typ::<newt_common::vfs::Breadcrumb>()
-        .typ::<newt_common::filesystem::File>()
-        .typ::<newt_common::filesystem::FileList>()
-        .typ::<newt_common::filesystem::FsStats>()
+        .typ::<newt_common::vfs::File>()
+        .typ::<newt_common::vfs::FileList>()
+        .typ::<newt_common::vfs::FsStats>()
         .typ::<crate::main_window::AskpassPrompt>()
         .typ::<crate::main_window::DeleteConfirmMode>()
         .typ::<crate::main_window::DndData>()

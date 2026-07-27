@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use super::git::{GitEnricher, dir_statuses, parse_porcelain_v2};
 use super::*;
-use crate::vfs::{LocalVfs, VfsId, VfsRegistry, local::local_path_from_native};
+use crate::vfs::{LocalVfs, VfsId, VfsRegistry, native::local_path_from_native};
 
 // ---------------------------------------------------------------------------
 // Porcelain v2 parsing

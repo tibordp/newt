@@ -4,13 +4,14 @@ use newt_common::api::{
 use newt_common::enrich::{
     EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
 };
-use newt_common::filesystem::{FileList, Filesystem, PendingStreams, StreamId};
+use newt_common::filesystem::{Filesystem, PendingStreams, StreamId};
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
 #[cfg(target_os = "linux")]
 use newt_common::proc::NoConsoleWindow;
 use newt_common::rpc::Communicator;
 use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
+use newt_common::vfs::FileList;
 use newt_common::vfs::{
     LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
     VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFs,
@@ -424,7 +425,7 @@ impl Filesystem for HairpinFs {
     async fn fs_stats(
         &self,
         path: VfsPath,
-    ) -> Result<Option<newt_common::filesystem::FsStats>, newt_common::Error> {
+    ) -> Result<Option<newt_common::vfs::FsStats>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .fs_stats(VfsPath::new(VfsId::ROOT, path.path))
@@ -471,7 +472,7 @@ impl Filesystem for HairpinFs {
     async fn file_details(
         &self,
         path: VfsPath,
-    ) -> Result<newt_common::file_reader::FileDetails, newt_common::Error> {
+    ) -> Result<newt_common::vfs::FileDetails, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .file_details(VfsPath::new(VfsId::ROOT, path.path))
@@ -493,7 +494,7 @@ impl Filesystem for HairpinFs {
         path: VfsPath,
         offset: u64,
         length: u64,
-    ) -> Result<newt_common::file_reader::FileChunk, newt_common::Error> {
+    ) -> Result<newt_common::vfs::FileChunk, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .read_range(VfsPath::new(VfsId::ROOT, path.path), offset, length)
@@ -540,9 +541,9 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         offset: u64,
-        pattern: newt_common::file_reader::SearchPattern,
+        pattern: newt_common::vfs::SearchPattern,
         max_length: u64,
-    ) -> Result<Option<newt_common::file_reader::SearchMatch>, newt_common::Error> {
+    ) -> Result<Option<newt_common::vfs::SearchMatch>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .find_in_file(
@@ -846,7 +847,7 @@ fn create_local_services(
         )),
         initial_dir: VfsPath::new(
             VfsId::ROOT,
-            newt_common::vfs::local::local_path_from_native(&std::env::current_dir().unwrap()),
+            newt_common::vfs::native::local_path_from_native(&std::env::current_dir().unwrap()),
         ),
     }
 }

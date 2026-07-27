@@ -13,9 +13,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::{Notify, mpsc};
 
 use crate::Error;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
@@ -668,7 +668,7 @@ impl Vfs for TarArchiveVfs {
 
         Ok(FileDetails {
             size: resolved_entry.size,
-            mime_type: crate::file_reader::guess_mime_type(StdPath::new(path.as_wire_str())),
+            mime_type: crate::vfs::file::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir: resolved_entry.entry_type.is_directory(),
             is_symlink,
             symlink_target,

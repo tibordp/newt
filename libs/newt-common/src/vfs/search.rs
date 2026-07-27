@@ -48,9 +48,9 @@ use crate::vfs::path::{Path, PathBuf};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::file_reader::SearchPattern;
 use crate::filesystem::Filesystem;
-use crate::filesystem::{File, FsStats};
+use crate::vfs::SearchPattern;
+use crate::vfs::{File, FsStats};
 use crate::{Error, ErrorKind};
 
 use super::{

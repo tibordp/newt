@@ -14,11 +14,12 @@ pub mod win_proc;
 #[cfg(windows)]
 pub mod wsl_launch;
 
-use newt_common::filesystem::{Filesystem, UserGroup};
+use newt_common::filesystem::Filesystem;
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
 use newt_common::shell::ShellService;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
+use newt_common::vfs::UserGroup;
 use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use serde::ser::SerializeMap;
@@ -525,7 +526,7 @@ pub enum ModalDataKind {
         sheet: PropertySheetState,
         /// Volume stats + classification. `Some` only for a volume root
         /// (DirectoryProperties at a root, or the RootProperties dialog).
-        fs_stats: Option<newt_common::filesystem::FsStats>,
+        fs_stats: Option<newt_common::vfs::FsStats>,
     },
     Navigate {
         path: VfsPath,

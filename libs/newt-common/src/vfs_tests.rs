@@ -242,17 +242,14 @@ impl crate::vfs::Vfs for DummyVfs {
     async fn list_files(
         &self,
         _path: &Path,
-        _batch_tx: Option<tokio::sync::mpsc::Sender<Vec<crate::filesystem::File>>>,
+        _batch_tx: Option<tokio::sync::mpsc::Sender<Vec<crate::vfs::File>>>,
     ) -> Result<crate::vfs::VfsFileList, crate::Error> {
         Ok(crate::vfs::VfsFileList::default())
     }
     async fn poll_changes(&self, _path: &Path) -> Result<(), crate::Error> {
         Ok(())
     }
-    async fn fs_stats(
-        &self,
-        _path: &Path,
-    ) -> Result<Option<crate::filesystem::FsStats>, crate::Error> {
+    async fn fs_stats(&self, _path: &Path) -> Result<Option<crate::vfs::FsStats>, crate::Error> {
         Ok(None)
     }
 }
@@ -313,7 +310,8 @@ mod same_file {
     use std::sync::Arc;
 
     use crate::vfs::Vfs;
-    use crate::vfs::local::{LocalVfs, local_path_from_native};
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::native::local_path_from_native;
     use crate::vfs::path::PathBuf;
 
     struct Fixture {

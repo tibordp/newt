@@ -14,10 +14,10 @@ use tokio::sync::mpsc;
 
 use crate::ErrorKind;
 use crate::api::MountContext;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::File;
 use crate::test_support::{MockVfs, MockVfsConfig};
+use crate::vfs::File;
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{FileChunk, FileDetails};
 use crate::vfs::{Vfs, VfsDescriptor, VfsFileList, VfsId, VfsPath, VfsRegistry};
 
 const IMAGE_PATH: &str = "/image.iso";
@@ -93,10 +93,7 @@ impl Vfs for CountingVfs {
         self.inner.poll_changes(path).await
     }
 
-    async fn fs_stats(
-        &self,
-        path: &Path,
-    ) -> Result<Option<crate::filesystem::FsStats>, crate::Error> {
+    async fn fs_stats(&self, path: &Path) -> Result<Option<crate::vfs::FsStats>, crate::Error> {
         self.inner.fs_stats(path).await
     }
 

@@ -45,7 +45,7 @@ pub async fn show_shell_context_menu(
     // `SHParseDisplayName` rejects `\\?\` paths.
     let native: Vec<std::path::PathBuf> = targets
         .iter()
-        .map(|t| newt_common::vfs::local::launch_cwd(&t.path))
+        .map(|t| newt_common::vfs::native::launch_cwd(&t.path))
         .collect();
 
     let window = ctx.window();

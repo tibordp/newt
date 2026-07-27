@@ -1,9 +1,9 @@
-use newt_common::file_reader::{FileChunk, FileDetails};
 use newt_common::operation::{
     ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
     ResolveIssueRequest, StartOperationRequest,
 };
 use newt_common::vfs::VfsPath;
+use newt_common::vfs::{FileChunk, FileDetails};
 use tauri::Manager;
 
 use crate::GlobalContext;

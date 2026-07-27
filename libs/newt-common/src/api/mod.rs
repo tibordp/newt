@@ -8,13 +8,13 @@ use std::sync::atomic::AtomicU64;
 
 use crate::{
     Error,
-    filesystem::{FileList, Filesystem, ListFilesOptions, StreamId},
+    filesystem::{Filesystem, ListFilesOptions, StreamId},
     hot_paths::HotPathsProvider,
     operation::{self, OperationHandle, OperationId, ResolveIssueRequest, StartOperationRequest},
     rpc::{Api, Dispatcher, Message, Outbox},
     shell::ShellService,
     terminal::TerminalClient,
-    vfs::{MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
+    vfs::{FileList, MountRequest, MountResponse, Vfs, VfsId, VfsManager, VfsPath, VfsRegistry},
 };
 
 pub const API_POLL_CHANGES: Api = Api(0);
@@ -302,7 +302,7 @@ impl Dispatcher for FilesystemDispatcher {
                 let (path, offset, pattern, max_length): (
                     VfsPath,
                     u64,
-                    crate::file_reader::SearchPattern,
+                    crate::vfs::SearchPattern,
                     u64,
                 ) = decode(&req[..])?;
                 let ret = self

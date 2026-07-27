@@ -188,7 +188,7 @@ impl TerminalClient for Local {
         let cwd = options
             .working_dir
             .as_ref()
-            .map(|p| crate::vfs::local::launch_cwd(p));
+            .map(|p| crate::vfs::native::launch_cwd(p));
 
         // Shell-integration env first, so caller-specified env can still
         // override it.
@@ -303,7 +303,7 @@ impl TerminalClient for Local {
                 // Convert here — this runs in the process that owns the
                 // FS (the agent in a remote session), so its own OS cfg
                 // is the right one.
-                cmd.current_dir(crate::vfs::local::launch_cwd(&working_dir));
+                cmd.current_dir(crate::vfs::native::launch_cwd(&working_dir));
             }
 
             // Shell-integration env first, so caller-specified env can

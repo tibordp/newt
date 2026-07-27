@@ -125,7 +125,7 @@ pub async fn get_hot_paths(
         entries.push(HotPathEntry {
             path: VfsPath::new(
                 newt_common::vfs::VfsId::ROOT,
-                newt_common::vfs::local::local_path_from_native(std::path::Path::new(&bm.path)),
+                newt_common::vfs::native::local_path_from_native(std::path::Path::new(&bm.path)),
             ),
             display_path: String::new(),
             name: bm.name.clone(),

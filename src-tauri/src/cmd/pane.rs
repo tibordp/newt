@@ -1,5 +1,5 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
-use newt_common::vfs::local::{local_path_from_native, to_native};
+use newt_common::vfs::native::{local_path_from_native, to_native};
 use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
 
 use crate::common::Error;

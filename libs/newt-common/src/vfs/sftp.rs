@@ -9,10 +9,10 @@ use openssh_sftp_client::Sftp;
 use tokio::io::AsyncRead;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::proc::NoConsoleWindow;
 use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::{File, FsStats, Mode, UserGroup};
+use crate::vfs::{FileChunk, FileDetails};
 use crate::{Error, ErrorKind};
 
 impl From<openssh_sftp_client::Error> for Error {
@@ -549,7 +549,7 @@ fn metadata_to_file(
     }
 }
 
-use crate::ToUnix;
+use crate::vfs::ToUnix;
 
 #[async_trait::async_trait]
 impl Vfs for SftpVfs {
@@ -727,7 +727,7 @@ impl Vfs for SftpVfs {
         let mime_type = if is_dir {
             None
         } else {
-            crate::file_reader::guess_mime_type(&sftp_path(path))
+            crate::vfs::file::guess_mime_type(&sftp_path(path))
         };
 
         Ok(FileDetails {

@@ -6,12 +6,13 @@ use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
+use crate::Error;
 use crate::api::MountContext;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats};
 use crate::vfs::S3Credentials;
+use crate::vfs::ToUnix;
 use crate::vfs::path::{Path, PathBuf};
-use crate::{Error, ToUnix};
+use crate::vfs::{File, FsStats};
+use crate::vfs::{FileChunk, FileDetails};
 
 use super::properties::{
     PropertyField, PropertyFieldValue, PropertyGrant, PropertyGrantee, PropertyGroup,
@@ -604,7 +605,7 @@ impl S3Vfs {
                         user: obj
                             .owner()
                             .and_then(|o| o.display_name())
-                            .map(|n| crate::filesystem::UserGroup::Name(n.to_string())),
+                            .map(|n| crate::vfs::UserGroup::Name(n.to_string())),
                         group: None,
                         mode: None,
                         modified,
@@ -1148,7 +1149,7 @@ impl Vfs for S3Vfs {
             .map(|s| s.to_string())
             .filter(|s| s != "application/octet-stream")
             .or_else(|| {
-                crate::file_reader::guess_mime_type(std::path::Path::new(path.as_wire_str()))
+                crate::vfs::file::guess_mime_type(std::path::Path::new(path.as_wire_str()))
             });
         let is_dir = key.ends_with('/') && size == 0;
 

@@ -18,7 +18,7 @@ fn agent_binary() -> &'static str {
 }
 
 fn vfs_path_of(native: &std::path::Path) -> VfsPathBuf {
-    newt_common::vfs::local::local_path_from_native(native)
+    newt_common::vfs::native::local_path_from_native(native)
 }
 
 /// Wire a spawned serve-vfs agent's stdio into the proxy `RemoteVfs`,
@@ -119,7 +119,7 @@ async fn serve_vfs_does_not_expose_session_api() {
     );
     let session_api = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        communicator.invoke::<_, Result<newt_common::filesystem::FileList, newt_common::Error>>(
+        communicator.invoke::<_, Result<newt_common::vfs::FileList, newt_common::Error>>(
             API_LIST_FILES,
             &args,
         ),

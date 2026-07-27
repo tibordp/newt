@@ -25,7 +25,7 @@ use super::{
 use crate::Error;
 use crate::proc::NoConsoleWindow;
 use crate::shell::resolve_program;
-use crate::vfs::{VfsDescriptor, VfsPath, VfsRegistry, local::to_native};
+use crate::vfs::{VfsDescriptor, VfsPath, VfsRegistry, native::to_native};
 
 pub struct GitEnricherDescriptor;
 

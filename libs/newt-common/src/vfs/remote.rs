@@ -7,10 +7,11 @@ use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::api::PendingVfsReadStreams;
-use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, StreamId};
+use crate::filesystem::StreamId;
 use crate::rpc::Communicator;
+use crate::vfs::File;
 use crate::vfs::path::Path;
+use crate::vfs::{FileChunk, FileDetails};
 
 use super::{
     Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsAsyncWriter,
@@ -92,27 +93,27 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         // whatever the proxied end stamped into `mount_meta` (Unix for
         // every remote in scope, the client's OS for a client-local FS
         // exposed back into a remote session).
-        super::local::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::local_display_path(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn breadcrumbs(&self, path: &Path, mount_meta: &[u8]) -> Vec<Breadcrumb> {
-        super::local::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::local_breadcrumbs(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn navigable_parent(&self, path: &Path, mount_meta: &[u8]) -> Option<PathBuf> {
-        super::local::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
+        super::path_style::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
     }
 
     fn roots(&self, mount_meta: &[u8]) -> Vec<super::RootInfo> {
         // A Windows client's FS exposed into a remote session is
         // split-root; `has_unified_root`/`initial_path` then land on its
         // first drive instead of the unlistable `/`.
-        super::local::roots_from_meta(mount_meta)
+        super::path_style::roots_from_meta(mount_meta)
     }
     fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
         // Style-based, not root-count (a single-drive Windows client is
         // still split-root). See `unified_root_from_meta`.
-        super::local::unified_root_from_meta(mount_meta)
+        super::path_style::unified_root_from_meta(mount_meta)
     }
 
     fn try_parse_display_path(&self, input: &str, mount_meta: &[u8]) -> Option<DisplayPathMatch> {
@@ -126,12 +127,12 @@ impl VfsDescriptor for RemoteVfsDescriptor {
             return None;
         }
         Some(DisplayPathMatch::exact(
-            super::local::local_path_from_typed_display(input)?,
+            super::native::local_path_from_typed_display(input)?,
         ))
     }
 
     fn metadata_traits(&self, mount_meta: &[u8]) -> super::MetadataTraits {
-        super::local::metadata_traits_from_meta(mount_meta)
+        super::path_style::metadata_traits_from_meta(mount_meta)
     }
 }
 
@@ -272,8 +273,8 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn fs_stats(&self, path: &Path) -> Result<Option<crate::filesystem::FsStats>, Error> {
-        let ret: Result<Option<crate::filesystem::FsStats>, Error> = self
+    async fn fs_stats(&self, path: &Path) -> Result<Option<crate::vfs::FsStats>, Error> {
+        let ret: Result<Option<crate::vfs::FsStats>, Error> = self
             .communicator
             .invoke(API_VFS_FS_STATS, &path.to_owned())
             .await?;

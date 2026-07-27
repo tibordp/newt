@@ -286,7 +286,7 @@ pub fn dialog(
                     // than basename — flat search results may share names.
                     let view_state = pane.view_state();
                     let view_files = view_state.files();
-                    let files: Vec<&newt_common::filesystem::File> = display_paths
+                    let files: Vec<&newt_common::vfs::File> = display_paths
                         .iter()
                         .filter_map(|p| {
                             let key = p.file_name()?;
