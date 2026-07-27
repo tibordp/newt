@@ -5,6 +5,7 @@ pub mod disc;
 pub mod file;
 pub mod find;
 pub mod local;
+pub mod mount;
 pub mod native;
 pub mod path;
 pub mod path_style;
@@ -27,6 +28,10 @@ pub use disc::{DiscVfs, is_disc_image_name};
 pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, ToUnix, UserGroup};
 pub use find::{SearchMatch, SearchPattern};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
+pub use mount::{
+    MountContext, MountRequest, MountResponse, MountedVfsInfo, SftpAskpass, VfsManager,
+    VfsManagerRemote, VfsRegistryManager, enterable_mount_request,
+};
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
     mount_root_infos, mount_roots, unix_breadcrumbs, unix_display_path,
@@ -40,7 +45,7 @@ pub use properties::{
     PropertyPatch, PropertyPatchOp, PropertySheet, PropertyValuePatch, fold_sheets,
 };
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
-pub use s3::{S3Vfs, S3VfsDescriptor};
+pub use s3::{S3Credentials, S3Vfs, S3VfsDescriptor};
 pub use search::{SEARCH_VFS_DESCRIPTOR, SearchParams, SearchVfs, SearchVfsDescriptor};
 pub use sftp::SftpVfs;
 pub use volume::{RootInfo, VolumeInfo, VolumeKind};
@@ -59,7 +64,6 @@ use tokio::sync::mpsc;
 
 use crate::Error;
 use crate::filesystem::{Filesystem, ListFilesOptions};
-use crate::rpc::Communicator;
 
 /// Default chunk size for VFS read/copy buffers and streaming channels.
 ///
@@ -1139,180 +1143,5 @@ impl Filesystem for VfsRegistryFs {
         }
 
         Ok(None)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Mount/unmount RPC types
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Default, Serialize, Deserialize, specta::Type)]
-pub struct S3Credentials {
-    /// AWS access key ID (IAM user or assumed role).
-    pub access_key_id: Option<String>,
-    /// AWS secret access key.
-    pub secret_access_key: Option<String>,
-    /// AWS session token (for temporary credentials / AssumeRole).
-    pub session_token: Option<String>,
-    /// AWS profile name (from ~/.aws/config). Overrides default profile.
-    pub profile: Option<String>,
-    /// Custom endpoint URL (for S3-compatible services like MinIO, R2, etc.)
-    pub endpoint_url: Option<String>,
-    /// IAM role ARN to assume. When set, uses STS AssumeRole with the
-    /// ambient or explicit credentials, then mounts with the resulting
-    /// temporary credentials.
-    pub role_arn: Option<String>,
-    /// External ID for AssumeRole (optional, for cross-account access).
-    pub external_id: Option<String>,
-}
-
-impl std::fmt::Debug for S3Credentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("S3Credentials")
-            .field("access_key_id", &self.access_key_id)
-            .field(
-                "secret_access_key",
-                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "session_token",
-                &self.session_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("profile", &self.profile)
-            .field("endpoint_url", &self.endpoint_url)
-            .field("role_arn", &self.role_arn)
-            .field("external_id", &self.external_id)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub enum MountRequest {
-    S3 {
-        region: Option<String>,
-        /// When set, the VFS is scoped to this bucket (root = bucket contents).
-        /// When None, root lists all buckets.
-        bucket: Option<String>,
-        #[serde(default)]
-        credentials: S3Credentials,
-    },
-    Sftp {
-        host: String,
-    },
-    Archive {
-        origin: VfsPath,
-    },
-    /// Browse into an ISO 9660 / UDF disc image file.
-    Disc {
-        origin: VfsPath,
-    },
-    Search {
-        root: VfsPath,
-        params: search::SearchParams,
-    },
-    /// Expose the requesting side's own filesystem (the client-local FS
-    /// in a remote session). `mount_meta` is supplied by the requester —
-    /// only the owner can describe its FS (style, drive roots), and the
-    /// resulting `RemoteVfs` can't derive it (its `mount_meta()` is sync,
-    /// no RPC). Refreshed via `VfsManager::remount` on drive changes.
-    Remote {
-        mount_meta: Vec<u8>,
-    },
-    /// Spawn an FS-only sub-agent over a transport (SSH, docker, …) and
-    /// mount its local filesystem. See `vfs::agent`.
-    Agent {
-        spec: crate::connect::SpawnSpec,
-        /// Transport kind shown as the VFS display name, e.g. `Docker`.
-        kind: String,
-        /// Mount target shown as the VFS label, e.g. the container name.
-        label: String,
-    },
-}
-
-/// The mount request for entering a file entry as a browsable VFS
-/// (archives, disc images), or `None` when the name isn't enterable.
-pub fn enterable_mount_request(name: &str, origin: VfsPath) -> Option<MountRequest> {
-    if is_archive_name(name) {
-        Some(MountRequest::Archive { origin })
-    } else if is_disc_image_name(name) {
-        Some(MountRequest::Disc { origin })
-    } else {
-        None
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MountResponse {
-    pub vfs_id: VfsId,
-    pub type_name: String,
-    pub mount_meta: Vec<u8>,
-    pub origin: Option<VfsPath>,
-}
-
-// ---------------------------------------------------------------------------
-// MountedVfsInfo — client-side descriptor + metadata for a mounted VFS
-// ---------------------------------------------------------------------------
-
-pub struct MountedVfsInfo {
-    pub vfs_id: VfsId,
-    pub descriptor: &'static dyn VfsDescriptor,
-    pub mount_meta: Vec<u8>,
-    pub origin: Option<VfsPath>,
-}
-
-// ---------------------------------------------------------------------------
-// VfsManager — trait for mount/unmount operations
-// ---------------------------------------------------------------------------
-
-#[async_trait::async_trait]
-pub trait VfsManager: Send + Sync {
-    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error>;
-    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error>;
-
-    /// Logical remount: refresh a mount's `mount_meta` in place, keeping
-    /// its identity (`VfsId`, descriptor, origin). Returns the new meta.
-    ///
-    /// `mount_meta: None` asks the VFS to re-derive it (revalidate where
-    /// supported, then a fresh `Vfs::mount_meta()` — for a local FS that
-    /// re-enumerates drive roots). `Some` injects owner-supplied meta and
-    /// is only valid for `MountRequest::Remote` mounts, whose meta the
-    /// requesting side owns (see the variant docs).
-    async fn remount(&self, vfs_id: VfsId, mount_meta: Option<Vec<u8>>) -> Result<Vec<u8>, Error>;
-}
-
-pub struct VfsManagerRemote {
-    communicator: Communicator,
-}
-
-impl VfsManagerRemote {
-    pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
-    }
-}
-
-#[async_trait::async_trait]
-impl VfsManager for VfsManagerRemote {
-    async fn mount(&self, request: MountRequest) -> Result<MountResponse, Error> {
-        let ret: Result<MountResponse, Error> = self
-            .communicator
-            .invoke(crate::api::API_MOUNT_VFS, &request)
-            .await?;
-        Ok(ret?)
-    }
-
-    async fn unmount(&self, vfs_id: VfsId) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(crate::api::API_UNMOUNT_VFS, &vfs_id)
-            .await?;
-        Ok(ret?)
-    }
-
-    async fn remount(&self, vfs_id: VfsId, mount_meta: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
-        let ret: Result<Vec<u8>, Error> = self
-            .communicator
-            .invoke(crate::api::API_REMOUNT_VFS, &(vfs_id, mount_meta))
-            .await?;
-        Ok(ret?)
     }
 }

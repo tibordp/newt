@@ -35,10 +35,10 @@ use tokio::sync::{Notify, mpsc};
 use async_trait::async_trait;
 
 use crate::ErrorKind;
-use crate::api::MountContext;
 use crate::askpass::{AskpassProvider, AskpassRequest, AskpassResponse};
 use crate::test_support::{MockVfs, MockVfsConfig};
 use crate::vfs::File;
+use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{FileChunk, FileDetails};
 use crate::vfs::{Vfs, VfsDescriptor, VfsFileList, VfsId, VfsPath, VfsRegistry};

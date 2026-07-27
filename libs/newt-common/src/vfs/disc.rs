@@ -58,7 +58,7 @@ const STREAM_CHUNK: u64 = 256 * 1024;
 
 pub async fn mount(
     origin: VfsPath,
-    ctx: &crate::api::MountContext<'_>,
+    ctx: &crate::vfs::mount::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
     log::info!("mounting disc image VFS for origin={}", origin);
     let (upstream_vfs, image_path) = ctx.registry.resolve(&origin)?;

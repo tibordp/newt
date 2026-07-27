@@ -10,10 +10,11 @@
 use std::sync::Arc;
 
 use crate::Error;
-use crate::api::{MountContext, PendingVfsReadStreams, VfsReadChunkDispatcher};
+use crate::api::{PendingVfsReadStreams, VfsReadChunkDispatcher};
 use crate::askpass::{AskpassProvider, CancelAskpass};
 use crate::connect::{AgentMode, ConnectLog, SpawnSpec};
 use crate::rpc::Communicator;
+use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
 
 use super::{

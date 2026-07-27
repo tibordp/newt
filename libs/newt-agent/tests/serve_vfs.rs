@@ -244,8 +244,8 @@ impl MountHarness {
         }
     }
 
-    fn ctx(&self) -> newt_common::api::MountContext<'_> {
-        newt_common::api::MountContext {
+    fn ctx(&self) -> newt_common::vfs::mount::MountContext<'_> {
+        newt_common::vfs::mount::MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
             pending_read_streams: &self.pending,

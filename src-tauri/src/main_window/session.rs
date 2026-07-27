@@ -1,6 +1,4 @@
-use newt_common::api::{
-    API_ENRICHMENT_EVENT, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS, VfsRegistryManager,
-};
+use newt_common::api::{API_ENRICHMENT_EVENT, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
 use newt_common::enrich::{
     EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
 };
@@ -12,6 +10,7 @@ use newt_common::rpc::Communicator;
 use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::FileList;
+use newt_common::vfs::mount::VfsRegistryManager;
 use newt_common::vfs::{
     LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
     VfsManagerRemote, VfsPath, VfsRegistry, VfsRegistryFs,
@@ -764,7 +763,7 @@ fn create_local_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
-    sftp_askpass: Option<newt_common::api::SftpAskpass>,
+    sftp_askpass: Option<newt_common::vfs::mount::SftpAskpass>,
     askpass_provider: Arc<dyn AskpassProvider>,
     progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
     agent_resolver: Arc<dyn AgentResolver>,
@@ -1106,7 +1105,7 @@ pub(super) async fn connect(
             // then inherit the process environment and fail loudly if a
             // password is needed.
             let sftp_askpass = match agent_resolver.find_local_agent_binary() {
-                Ok(askpass_binary) => Some(newt_common::api::SftpAskpass {
+                Ok(askpass_binary) => Some(newt_common::vfs::mount::SftpAskpass {
                     askpass_binary,
                     provider: askpass_provider.clone(),
                 }),

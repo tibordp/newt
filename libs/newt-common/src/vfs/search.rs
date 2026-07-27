@@ -856,7 +856,7 @@ pub async fn mount(
     root: VfsPath,
     params: SearchParams,
     file_reader: Arc<dyn Filesystem>,
-    ctx: &crate::api::MountContext<'_>,
+    ctx: &crate::vfs::mount::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
     // Validate the patterns up front so garbage fails the mount — and
     // surfaces in the search dialog — rather than erroring inside the

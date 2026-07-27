@@ -198,7 +198,7 @@ impl SftpVfs {
     /// up the askpass binary/provider from `ctx`.
     pub async fn mount(
         host: String,
-        ctx: &crate::api::MountContext<'_>,
+        ctx: &crate::vfs::mount::MountContext<'_>,
     ) -> Result<std::sync::Arc<dyn Vfs>, Error> {
         info!("mounting SFTP VFS for host={}", host);
         let vfs = Self::connect(&host, ctx.sftp_askpass.cloned()).await?;
@@ -207,7 +207,7 @@ impl SftpVfs {
 
     pub async fn connect(
         host: &str,
-        askpass: Option<crate::api::SftpAskpass>,
+        askpass: Option<crate::vfs::mount::SftpAskpass>,
     ) -> Result<Self, Error> {
         info!("sftp: connecting to {}", host);
 
@@ -232,7 +232,7 @@ impl SftpVfs {
 
     async fn connect_inner(
         host: &str,
-        askpass: Option<crate::api::SftpAskpass>,
+        askpass: Option<crate::vfs::mount::SftpAskpass>,
     ) -> Result<Self, Error> {
         // Application-level keepalive prevents idle TCP connections from being
         // silently killed by NAT / firewalls / load balancers between us and

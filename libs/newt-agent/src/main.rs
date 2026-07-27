@@ -6,8 +6,8 @@ use newt_common::{
     agent_resolver::AgentResolver,
     api::{
         EnricherDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        PendingVfsReadStreams, SftpAskpass, ShellServiceDispatcher, TerminalDispatcher,
-        VfsDispatcher, VfsMountDispatcher, VfsReadChunkDispatcher, VfsRegistryManager,
+        PendingVfsReadStreams, ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher,
+        VfsMountDispatcher, VfsReadChunkDispatcher,
     },
     askpass,
     enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
@@ -15,6 +15,7 @@ use newt_common::{
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
     shell::LocalShellService,
+    vfs::mount::{SftpAskpass, VfsRegistryManager},
     vfs::{LocalVfs, VfsRegistry, VfsRegistryFs},
 };
 

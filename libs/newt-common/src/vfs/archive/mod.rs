@@ -82,7 +82,7 @@ pub use self::zip::ZipArchiveVfs;
 /// entry can prompt lazily and cache the password for subsequent reads.
 pub async fn mount(
     origin: VfsPath,
-    ctx: &crate::api::MountContext<'_>,
+    ctx: &crate::vfs::mount::MountContext<'_>,
 ) -> Result<Arc<dyn Vfs>, Error> {
     log::info!("mounting archive VFS for origin={}", origin);
     let (upstream_vfs, archive_path) = ctx.registry.resolve(&origin)?;

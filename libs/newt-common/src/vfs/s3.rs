@@ -7,9 +7,8 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
-use crate::api::MountContext;
-use crate::vfs::S3Credentials;
 use crate::vfs::ToUnix;
+use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats};
 use crate::vfs::{FileChunk, FileDetails};
@@ -29,6 +28,46 @@ const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// source chain (service error code and message included) instead.
 fn sdk_err<E: std::error::Error>(e: E) -> Error {
     Error::custom(aws_sdk_s3::error::DisplayErrorContext(&e).to_string())
+}
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct S3Credentials {
+    /// AWS access key ID (IAM user or assumed role).
+    pub access_key_id: Option<String>,
+    /// AWS secret access key.
+    pub secret_access_key: Option<String>,
+    /// AWS session token (for temporary credentials / AssumeRole).
+    pub session_token: Option<String>,
+    /// AWS profile name (from ~/.aws/config). Overrides default profile.
+    pub profile: Option<String>,
+    /// Custom endpoint URL (for S3-compatible services like MinIO, R2, etc.)
+    pub endpoint_url: Option<String>,
+    /// IAM role ARN to assume. When set, uses STS AssumeRole with the
+    /// ambient or explicit credentials, then mounts with the resulting
+    /// temporary credentials.
+    pub role_arn: Option<String>,
+    /// External ID for AssumeRole (optional, for cross-account access).
+    pub external_id: Option<String>,
+}
+
+impl std::fmt::Debug for S3Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Credentials")
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("profile", &self.profile)
+            .field("endpoint_url", &self.endpoint_url)
+            .field("role_arn", &self.role_arn)
+            .field("external_id", &self.external_id)
+            .finish()
+    }
 }
 
 // ---------------------------------------------------------------------------

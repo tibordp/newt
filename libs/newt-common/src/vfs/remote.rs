@@ -169,7 +169,7 @@ impl RemoteVfs {
     /// the concrete type so the mounting manager can keep a typed handle
     /// for later `set_mount_meta` (remount) dispatch.
     pub fn mount(
-        ctx: &crate::api::MountContext<'_>,
+        ctx: &crate::vfs::mount::MountContext<'_>,
         mount_meta: Vec<u8>,
     ) -> Result<std::sync::Arc<Self>, crate::Error> {
         let communicator = ctx
