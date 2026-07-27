@@ -6,12 +6,10 @@
 //! app restarts and upgrades, so unknown routes and malformed requests are
 //! answered with HTTP errors, never panics.
 
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
-use futures::Stream;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::Frame;
 use hyper::{Method, Request, Response, StatusCode};
@@ -19,6 +17,7 @@ use hyper_util::rt::TokioIo;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 
+use crate::filesystem::ByteStream;
 use crate::terminal::TerminalHandle;
 use crate::vfs::VfsPath;
 
@@ -109,8 +108,6 @@ pub enum ControlResponse {
 
 pub type ControlResult = Result<ControlResponse, String>;
 
-pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>;
-
 /// Session-side verb handler. The control plane always reaches the host
 /// (directly in a local session, via API_HOST_SHELL_CONTROL from the agent);
 /// the data plane reads on whichever side owns the session's VFS registry.
@@ -118,45 +115,6 @@ pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>;
 pub trait ShellControlHandler: Send + Sync + 'static {
     async fn control(&self, req: ControlRequest) -> ControlResult;
     async fn read_file(&self, path: VfsPath) -> Result<ByteStream, String>;
-}
-
-/// Stream a file through the session `Filesystem` in 1 MiB chunks — the
-/// shared `cat` data plane for both host (local session) and agent (remote
-/// session).
-/// One positioned-read handle spans the whole stream; it opens lazily on
-/// the first poll so this stays a plain constructor.
-pub fn file_reader_stream(
-    reader: Arc<dyn crate::filesystem::Filesystem>,
-    path: VfsPath,
-) -> ByteStream {
-    const CHUNK: u64 = 1024 * 1024;
-    type Handle = Box<dyn crate::vfs::VfsRandomReader>;
-    Box::pin(futures::stream::try_unfold(
-        (None::<Handle>, Some(0u64)),
-        move |(handle, state)| {
-            let reader = reader.clone();
-            let path = path.clone();
-            async move {
-                let Some(offset) = state else {
-                    return Ok(None);
-                };
-                let mut handle = match handle {
-                    Some(handle) => handle,
-                    None => reader.open_read_at(path).await.map_err(|e| e.to_string())?,
-                };
-                let data = handle
-                    .read_at(offset, CHUNK)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if data.is_empty() {
-                    return Ok(None);
-                }
-                // A short chunk is EOF (read_at fills fully otherwise).
-                let next = (data.len() as u64 == CHUNK).then(|| offset + CHUNK);
-                Ok(Some((Bytes::from(data), (Some(handle), next))))
-            }
-        },
-    ))
 }
 
 // ---------------------------------------------------------------------------

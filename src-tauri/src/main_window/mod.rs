@@ -14,8 +14,9 @@ pub mod win_proc;
 #[cfg(windows)]
 pub mod wsl_launch;
 
-use newt_common::filesystem::{Filesystem, ShellService, UserGroup};
+use newt_common::filesystem::{Filesystem, UserGroup};
 use newt_common::operation::{OperationId, OperationProgress, OperationsClient};
+use newt_common::shell::ShellService;
 use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};

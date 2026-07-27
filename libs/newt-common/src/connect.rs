@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use crate::Error;
 use crate::agent_resolver::AgentResolver;
 use crate::askpass::AskpassProvider;
-use crate::proc::NoConsoleWindow;
+use crate::proc::{NoConsoleWindow, set_parent_death_signal};
 
 const BOOTSTRAP_SCRIPT: &str = include_str!("../../../scripts/bootstrap.sh");
 
@@ -44,28 +44,6 @@ pub enum AgentMode {
 impl AgentMode {
     fn serve_vfs(self) -> bool {
         matches!(self, AgentMode::ServeVfs)
-    }
-}
-
-/// On Linux, arrange for the child to receive SIGTERM when the parent exits.
-/// This ensures SSH/agent processes don't linger if Newt is killed.
-/// On other platforms this is a no-op.
-pub fn set_parent_death_signal(cmd: &mut tokio::process::Command) {
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: prctl(PR_SET_PDEATHSIG) is async-signal-safe and this is
-        // the only thing we do in the pre_exec closure.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            });
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = cmd;
     }
 }
 

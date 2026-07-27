@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::file_reader::{FileChunk, FileDetails};
-use crate::filesystem::{File, FsStats, Mode, UidGidCache, UserGroup};
+use crate::filesystem::{File, FsStats, Mode, UserGroup};
 use crate::{Error, ToUnix};
 
 use super::{
@@ -256,17 +256,100 @@ pub static LOCAL_VFS_DESCRIPTOR: LocalVfsDescriptor = LocalVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&LOCAL_VFS_DESCRIPTOR));
 
 // ---------------------------------------------------------------------------
-// LocalVfs — wraps existing filesystem::Local + file_reader::Local logic
+// LocalVfs
 // ---------------------------------------------------------------------------
 
+/// Memoized uid/gid → name resolution over the local user/group database.
+struct UidGidCache {
+    local_users: parking_lot::RwLock<std::collections::HashMap<u32, UserGroup>>,
+    local_groups: parking_lot::RwLock<std::collections::HashMap<u32, UserGroup>>,
+}
+
+impl Default for UidGidCache {
+    fn default() -> Self {
+        Self {
+            local_users: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            local_groups: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl UidGidCache {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
+        {
+            let groups = self.local_groups.read();
+            if let Some(group) = groups.get(&gid) {
+                return Ok(group.clone());
+            }
+        }
+
+        let group = lookup_group(gid)?;
+
+        let mut groups = self.local_groups.write();
+        groups.insert(gid, group.clone());
+
+        Ok(group)
+    }
+
+    fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
+        {
+            let users = self.local_users.read();
+            if let Some(user) = users.get(&uid) {
+                return Ok(user.clone());
+            }
+        }
+
+        let user = lookup_user(uid)?;
+
+        let mut users = self.local_users.write();
+        users.insert(uid, user.clone());
+
+        Ok(user)
+    }
+}
+
+#[cfg(unix)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
+    Ok(match group {
+        Some(g) => UserGroup::Name(g.name),
+        None => UserGroup::Id(gid),
+    })
+}
+
+#[cfg(unix)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
+    Ok(match user {
+        Some(u) => UserGroup::Name(u.name),
+        None => UserGroup::Id(uid),
+    })
+}
+
+#[cfg(windows)]
+fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
+    // Windows has no POSIX gid space; the local FS never produces real gids
+    // (`VfsMetadata.gid` is None), so this should be unreachable in practice.
+    Ok(UserGroup::Id(gid))
+}
+
+#[cfg(windows)]
+fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
+    Ok(UserGroup::Id(uid))
+}
+
 pub struct LocalVfs {
-    fs_cache: Arc<crate::filesystem::UidGidCache>,
+    fs_cache: Arc<UidGidCache>,
 }
 
 impl LocalVfs {
     pub fn new() -> Self {
         Self {
-            fs_cache: Arc::new(crate::filesystem::UidGidCache::new()),
+            fs_cache: Arc::new(UidGidCache::new()),
         }
     }
 }

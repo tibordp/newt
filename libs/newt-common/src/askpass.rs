@@ -89,6 +89,18 @@ pub trait AskpassProvider: Send + Sync {
     async fn prompt(&self, req: AskpassRequest) -> AskpassResponse;
 }
 
+/// Fallback provider when the session has no askpass channel: every prompt
+/// is answered as cancelled, so a password-requiring transport fails fast
+/// instead of hanging.
+pub struct CancelAskpass;
+
+#[async_trait::async_trait]
+impl AskpassProvider for CancelAskpass {
+    async fn prompt(&self, _req: AskpassRequest) -> AskpassResponse {
+        AskpassResponse(None)
+    }
+}
+
 /// `AskpassProvider` implementation that proxies prompts back to the host
 /// via the `API_HOST_ASKPASS` reverse RPC. Used by the agent.
 pub struct Remote {

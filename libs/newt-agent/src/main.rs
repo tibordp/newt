@@ -11,10 +11,10 @@ use newt_common::{
     },
     askpass,
     enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
-    filesystem::LocalShellService,
     hot_paths,
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
+    shell::LocalShellService,
     vfs::{LocalVfs, VfsRegistry, VfsRegistryFs},
 };
 
@@ -404,8 +404,8 @@ impl newt_common::shell_control::ShellControlHandler for AgentShellHandler {
     async fn read_file(
         &self,
         path: newt_common::vfs::VfsPath,
-    ) -> Result<newt_common::shell_control::ByteStream, String> {
-        Ok(newt_common::shell_control::file_reader_stream(
+    ) -> Result<newt_common::filesystem::ByteStream, String> {
+        Ok(newt_common::filesystem::file_reader_stream(
             self.fs.clone(),
             path,
         ))

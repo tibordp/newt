@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::Error;
 use crate::api::{MountContext, PendingVfsReadStreams, VfsReadChunkDispatcher};
-use crate::askpass::{AskpassProvider, AskpassRequest, AskpassResponse};
+use crate::askpass::{AskpassProvider, CancelAskpass};
 use crate::connect::{AgentMode, ConnectLog, SpawnSpec};
 use crate::rpc::Communicator;
 use crate::vfs::path::{Path, PathBuf};
@@ -194,18 +194,6 @@ impl ConnectLog for MountConnectLog {
             total: None,
             extra: Default::default(),
         }));
-    }
-}
-
-/// Fallback provider when the session has no askpass channel: every prompt
-/// is answered as cancelled, so a password-requiring transport fails fast
-/// instead of hanging.
-struct CancelAskpass;
-
-#[async_trait::async_trait]
-impl AskpassProvider for CancelAskpass {
-    async fn prompt(&self, _req: AskpassRequest) -> AskpassResponse {
-        AskpassResponse(None)
     }
 }
 

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use parking_lot::RwLock;
+use bytes::Bytes;
+use futures::Stream;
 use tokio::sync::mpsc;
 
 use crate::Error;
@@ -223,88 +225,6 @@ impl FileList {
     pub fn rewrite_vfs_id(&mut self, vfs_id: VfsId) {
         self.path.vfs_id = vfs_id;
     }
-}
-
-pub struct UidGidCache {
-    local_users: RwLock<HashMap<u32, UserGroup>>,
-    local_groups: RwLock<HashMap<u32, UserGroup>>,
-}
-
-impl Default for UidGidCache {
-    fn default() -> Self {
-        Self {
-            local_users: RwLock::new(HashMap::new()),
-            local_groups: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-impl UidGidCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn group_name(&self, gid: u32) -> Result<UserGroup, Error> {
-        {
-            let groups = self.local_groups.read();
-            if let Some(group) = groups.get(&gid) {
-                return Ok(group.clone());
-            }
-        }
-
-        let group = lookup_group(gid)?;
-
-        let mut groups = self.local_groups.write();
-        groups.insert(gid, group.clone());
-
-        Ok(group)
-    }
-
-    pub fn user_name(&self, uid: u32) -> Result<UserGroup, Error> {
-        {
-            let users = self.local_users.read();
-            if let Some(user) = users.get(&uid) {
-                return Ok(user.clone());
-            }
-        }
-
-        let user = lookup_user(uid)?;
-
-        let mut users = self.local_users.write();
-        users.insert(uid, user.clone());
-
-        Ok(user)
-    }
-}
-
-#[cfg(unix)]
-fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
-    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))?;
-    Ok(match group {
-        Some(g) => UserGroup::Name(g.name),
-        None => UserGroup::Id(gid),
-    })
-}
-
-#[cfg(unix)]
-fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
-    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))?;
-    Ok(match user {
-        Some(u) => UserGroup::Name(u.name),
-        None => UserGroup::Id(uid),
-    })
-}
-
-#[cfg(windows)]
-fn lookup_group(gid: u32) -> Result<UserGroup, Error> {
-    // Windows has no POSIX gid space; the local FS never produces real gids
-    // (`VfsMetadata.gid` is None), so this should be unreachable in practice.
-    Ok(UserGroup::Id(gid))
-}
-
-#[cfg(windows)]
-fn lookup_user(uid: u32) -> Result<UserGroup, Error> {
-    Ok(UserGroup::Id(uid))
 }
 
 /// The app shell's filesystem surface: the `Vfs` trait adapted for direct
@@ -586,92 +506,42 @@ impl Filesystem for Remote {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ShellService — shell expansion (separate from VFS/Filesystem)
-// ---------------------------------------------------------------------------
+/// Byte stream with stringly-typed errors — the shape that crosses the
+/// shell-control HTTP boundary and the `read_file` data plane.
+pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>;
 
-/// `~`/env expansion of a user-typed path on the shell's filesystem.
-///
-/// Returns a **VFS path**, not `std::path` — the result crosses the RPC
-/// boundary, and the native→VFS decode happens here, on the side the
-/// shell actually runs (the agent in a remote session), in its own OS.
-/// `None` means the expansion isn't an absolute path (caller resolves it
-/// relative to the pane instead).
-#[async_trait::async_trait]
-pub trait ShellService: Send + Sync {
-    async fn shell_expand(&self, input: String)
-    -> Result<Option<crate::vfs::path::PathBuf>, Error>;
-}
-
-/// Decode an expanded native path into a VFS path, but only if it is
-/// absolute (a relative expansion has no meaningful VFS form here).
-fn expanded_to_vfs(p: &std::path::Path) -> Option<crate::vfs::path::PathBuf> {
-    p.is_absolute()
-        .then(|| crate::vfs::local::local_path_from_native(p))
-}
-
-pub struct LocalShellService;
-
-#[cfg(unix)]
-#[async_trait::async_trait]
-impl ShellService for LocalShellService {
-    async fn shell_expand(
-        &self,
-        input: String,
-    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
-        let expanded =
-            tokio::task::spawn_blocking(move || expanduser::expanduser(input).map_err(Error::from))
-                .await??;
-        Ok(expanded_to_vfs(&expanded))
-    }
-}
-
-#[cfg(windows)]
-#[async_trait::async_trait]
-impl ShellService for LocalShellService {
-    async fn shell_expand(
-        &self,
-        input: String,
-    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
-        // Windows has no pwd database, so only the bare `~` / `~/...` form is supported.
-        // `~user/...` is left as-is.
-        let expanded = if input == "~" {
-            dirs::home_dir().ok_or_else(|| Error::custom("could not determine home directory"))?
-        } else if let Some(rest) = input
-            .strip_prefix("~/")
-            .or_else(|| input.strip_prefix("~\\"))
-        {
-            let mut home = dirs::home_dir()
-                .ok_or_else(|| Error::custom("could not determine home directory"))?;
-            home.push(rest);
-            home
-        } else {
-            std::path::PathBuf::from(input)
-        };
-        Ok(expanded_to_vfs(&expanded))
-    }
-}
-
-pub struct ShellRemote {
-    communicator: Communicator,
-}
-
-impl ShellRemote {
-    pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
-    }
-}
-
-#[async_trait::async_trait]
-impl ShellService for ShellRemote {
-    async fn shell_expand(
-        &self,
-        input: String,
-    ) -> Result<Option<crate::vfs::path::PathBuf>, Error> {
-        let ret: Result<Option<crate::vfs::path::PathBuf>, Error> = self
-            .communicator
-            .invoke(crate::api::API_SHELL_EXPAND, &input)
-            .await?;
-        Ok(ret?)
-    }
+/// Stream a file through the session `Filesystem` in 1 MiB chunks — the
+/// shared `cat` data plane for both host (local session) and agent (remote
+/// session).
+/// One positioned-read handle spans the whole stream; it opens lazily on
+/// the first poll so this stays a plain constructor.
+pub fn file_reader_stream(reader: Arc<dyn Filesystem>, path: VfsPath) -> ByteStream {
+    const CHUNK: u64 = 1024 * 1024;
+    type Handle = Box<dyn VfsRandomReader>;
+    Box::pin(futures::stream::try_unfold(
+        (None::<Handle>, Some(0u64)),
+        move |(handle, state)| {
+            let reader = reader.clone();
+            let path = path.clone();
+            async move {
+                let Some(offset) = state else {
+                    return Ok(None);
+                };
+                let mut handle = match handle {
+                    Some(handle) => handle,
+                    None => reader.open_read_at(path).await.map_err(|e| e.to_string())?,
+                };
+                let data = handle
+                    .read_at(offset, CHUNK)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if data.is_empty() {
+                    return Ok(None);
+                }
+                // A short chunk is EOF (read_at fills fully otherwise).
+                let next = (data.len() as u64 == CHUNK).then(|| offset + CHUNK);
+                Ok(Some((Bytes::from(data), (Some(handle), next))))
+            }
+        },
+    ))
 }

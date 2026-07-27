@@ -8,11 +8,12 @@
 use std::sync::Arc;
 
 use newt_common::filesystem::Filesystem;
+use newt_common::filesystem::{ByteStream, file_reader_stream};
 use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::rpc::Dispatcher;
 use newt_common::shell_control::{
-    ByteStream, CommandListEntry, ControlRequest, ControlResponse, ControlResult, PaneSelector,
-    ShellControlHandler, file_reader_stream,
+    CommandListEntry, ControlRequest, ControlResponse, ControlResult, PaneSelector,
+    ShellControlHandler,
 };
 use newt_common::vfs::{VfsId, VfsPath};
 

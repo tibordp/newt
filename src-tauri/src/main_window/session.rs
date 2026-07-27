@@ -4,13 +4,12 @@ use newt_common::api::{
 use newt_common::enrich::{
     EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
 };
-use newt_common::filesystem::{
-    FileList, Filesystem, LocalShellService, PendingStreams, ShellRemote, ShellService, StreamId,
-};
+use newt_common::filesystem::{FileList, Filesystem, PendingStreams, StreamId};
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
 #[cfg(target_os = "linux")]
 use newt_common::proc::NoConsoleWindow;
 use newt_common::rpc::Communicator;
+use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
 use newt_common::vfs::{
     LOCAL_VFS_DESCRIPTOR, LocalVfs, MountedVfsInfo, PathStyle, VfsDescriptor, VfsId, VfsManager,
@@ -29,13 +28,13 @@ use crate::common::{Error, UpdatePublisher};
 use super::{MainWindowState, Operations, apply_operation_progress};
 
 use newt_common::askpass::AskpassProvider;
-#[cfg(target_os = "linux")]
-use newt_common::connect::set_parent_death_signal;
 use newt_common::connect::{ConnectLog, DynStderr, DynStream, spawn_stderr_reader};
 pub use newt_common::connect::{
     DirectCopyPlan, SpawnSpec, docker_direct_copy_plan, docker_transport_cmd, kube_transport_cmd,
     podman_direct_copy_plan, podman_transport_cmd, ssh_transport_cmd,
 };
+#[cfg(target_os = "linux")]
+use newt_common::proc::set_parent_death_signal;
 
 // ---------------------------------------------------------------------------
 // ConnectionTarget

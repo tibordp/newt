@@ -31,6 +31,16 @@ use crate::{Error, rpc::Communicator};
 #[cfg(windows)]
 mod conpty;
 
+#[cfg(unix)]
+impl From<pty_process::Error> for Error {
+    fn from(e: pty_process::Error) -> Self {
+        Self {
+            kind: crate::ErrorKind::Other,
+            message: e.to_string(),
+        }
+    }
+}
+
 /// Bytes read in one PTY pull. Matches a typical terminal flush; bigger
 /// reads block emitting until they fill, smaller reads waste syscalls.
 #[cfg(any(unix, windows))]
