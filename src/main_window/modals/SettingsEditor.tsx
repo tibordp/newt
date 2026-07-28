@@ -8,8 +8,8 @@ import { CommandsEditor } from "./settings/CommandsEditor";
 import { KeybindingsEditor } from "./settings/KeybindingsEditor";
 import { CustomWidget, SettingControl } from "./settings/SettingControls";
 import { extractSettings } from "./settings/schema";
-import { commands } from "../../lib/bindings";
-import { DialogTabs } from "./primitives";
+import { commands, type PaneHandle } from "../../lib/bindings";
+import { DialogTabs, IconOpenExternal, IconRevealInPane } from "./primitives";
 
 type Tab = "settings" | "keybindings" | "commands";
 
@@ -17,8 +17,12 @@ const preventAutoFocus = (e: Event) => e.preventDefault();
 
 export default function SettingsEditor({
   preferences,
+  canReveal,
+  paneHandle,
 }: {
   preferences: PreferencesState | null;
+  canReveal: boolean;
+  paneHandle: PaneHandle | null;
 }) {
   const [filter, setFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -219,9 +223,31 @@ export default function SettingsEditor({
         )}
       </div>
       <div className={styles.footer}>
-        <button onClick={() => safe(commands.openConfigFile())}>
-          Open Settings File
-        </button>
+        <div className={styles.fileActions}>
+          <span className={styles.fileActionsLabel}>Settings file</span>
+          <div className={styles.fileActionsGroup}>
+            {canReveal && paneHandle !== null && (
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={() => safe(commands.revealConfigFile(paneHandle))}
+                title="Show in pane"
+                aria-label="Show settings file in pane"
+              >
+                <IconRevealInPane />
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={() => safe(commands.openConfigFile())}
+              title="Open in external editor"
+              aria-label="Open settings file in external editor"
+            >
+              <IconOpenExternal />
+            </button>
+          </div>
+        </div>
         <button onClick={() => safe(commands.closeModal())}>Close</button>
       </div>
     </Dialog.Content>

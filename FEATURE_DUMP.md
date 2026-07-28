@@ -1545,6 +1545,8 @@ Available in debug builds only. Provides:
 - **Add Command** button stays visible while editing an existing command.
 - Expandable template reference panel showing variables, filters, and functions, with example commands rendered as the same kind of `<pre>` blocks used in row view.
 
+**Footer**: a "Settings file" label beside a segmented pair of icon buttons — **Show in pane** navigates the pane the dialog was opened from to `settings.toml` and focuses it (closing the dialog), **Open in external editor** hands the file to the system handler. Both create the file with a commented skeleton if it doesn't exist yet. Show in pane needs the host machine's filesystem mounted in the session (`VfsInfo::host_local_vfs_id` — always true locally, true in a remote session while the client-local mount is present) and is hidden otherwise, leaving external open as the only route.
+
 ### Keybinding System
 
 Bindings are resolved in cascade order (later overrides earlier):

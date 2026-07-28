@@ -674,7 +674,11 @@ pub enum ModalDataKind {
         moved: bool,
     },
     HotPaths,
-    Settings,
+    Settings {
+        /// Whether the session can point a pane at the settings file, i.e.
+        /// whether the host machine's filesystem is mounted at all.
+        can_reveal: bool,
+    },
     ConfirmDelete {
         message: String,
         paths: Vec<VfsPath>,

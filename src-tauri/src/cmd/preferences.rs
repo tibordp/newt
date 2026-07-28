@@ -77,19 +77,59 @@ pub fn reset_command_keybinding(
     Ok(())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(), Error> {
+/// Path of the user's settings file, seeded with a commented skeleton if it
+/// doesn't exist yet — both entry points below hand the path to something
+/// that expects a file to be there.
+fn ensure_settings_file(global_ctx: &GlobalContext) -> Result<std::path::PathBuf, Error> {
     let path = global_ctx.preferences().settings_file_path();
-    // Create the file with defaults if it doesn't exist
     if !path.exists() {
         std::fs::write(
             &path,
             "# Newt settings\n# See documentation for available options.\n\n[appearance]\n\n[behavior]\n",
         )?;
     }
-    opener::open(&path)?;
+    Ok(path)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_config_file(global_ctx: tauri::State<'_, GlobalContext>) -> Result<(), Error> {
+    opener::open(ensure_settings_file(&global_ctx)?)?;
     Ok(())
+}
+
+/// Point `pane_handle` at the settings file — the settings file lives on the
+/// host machine, so this needs a host-local VFS mounted in the session (see
+/// `VfsInfo::host_local_vfs_id`).
+#[tauri::command]
+#[specta::specta]
+pub async fn reveal_config_file(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    let path = {
+        let app_handle = ctx.window().app_handle().clone();
+        let global_ctx: tauri::State<GlobalContext> = app_handle.state();
+        ensure_settings_file(&global_ctx)?
+    };
+    let vfs_id = ctx
+        .vfs_info()?
+        .host_local_vfs_id()
+        .ok_or_else(|| Error::Custom("No local filesystem mounted".to_string()))?;
+    let target =
+        newt_common::vfs::VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::from_native(&path));
+
+    ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
+        gs.close_modal();
+        let parent = target.parent().unwrap_or_else(|| target.clone());
+        let name = target.file_name().map(str::to_string);
+        pane.navigate_to(parent).await?;
+        if let Some(name) = name {
+            pane.view_state_mut().focus(name);
+        }
+        Ok(())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

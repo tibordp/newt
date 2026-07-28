@@ -695,6 +695,19 @@ async openConfigFile() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Point `pane_handle` at the settings file — the settings file lives on the
+ * host machine, so this needs a host-local VFS mounted in the session (see
+ * `VfsInfo::host_local_vfs_id`).
+ */
+async revealConfigFile(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reveal_config_file", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getRuntimeState() : Promise<Result<RuntimeState, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_runtime_state") };
@@ -2187,7 +2200,12 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: { 
+/**
+ * Whether the session can point a pane at the settings file, i.e.
+ * whether the host machine's filesystem is mounted at all.
+ */
+can_reveal: boolean } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.
@@ -2371,7 +2389,12 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings" } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: { 
+/**
+ * Whether the session can point a pane at the settings file, i.e.
+ * whether the host machine's filesystem is mounted at all.
+ */
+can_reveal: boolean } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.

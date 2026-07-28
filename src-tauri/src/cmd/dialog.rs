@@ -672,7 +672,11 @@ pub fn dialog(
                     category_filter: Some("User".to_string()),
                 },
                 DialogKind::HotPaths => ModalDataKind::HotPaths,
-                DialogKind::Settings => ModalDataKind::Settings,
+                DialogKind::Settings => ModalDataKind::Settings {
+                    can_reveal: ctx
+                        .vfs_info()
+                        .is_ok_and(|info| info.host_local_vfs_id().is_some()),
+                },
                 DialogKind::Debug => {
                     if !cfg!(debug_assertions) {
                         return Err(Error::Custom(

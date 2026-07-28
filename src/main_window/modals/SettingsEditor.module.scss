@@ -168,6 +168,45 @@
   flex-shrink: 0;
 }
 
+.fileActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.fileActionsLabel {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}
+
+// Segmented pair: both buttons act on the same file, so they share one
+// outline with a hairline between them.
+.fileActionsGroup {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+
+  > * + * {
+    border-left: 1px solid var(--color-border);
+  }
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  // Vertical padding matches the base button's, so the 16px glyph lines the
+  // group up with the text buttons beside it.
+  padding: var(--space-4) var(--space-5);
+  color: var(--color-fg-muted);
+  border: none;
+  border-radius: 0;
+
+  &:hover {
+    color: var(--color-fg);
+  }
+}
+
 .keybindingsTable {
   width: 100%;
   border-collapse: collapse;

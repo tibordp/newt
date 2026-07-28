@@ -7,7 +7,6 @@ Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 - `behavior.shell_integration = false` currently gates local sessions only; agents always create the control server (they can't see host preferences). Propagate the flag at agent spawn (env for bootstrap transports like `NEWT_AGENT_MODE`, an arg for direct spawns) if disabling remotely turns out to matter.
 - `newt cp --wait` (long-poll an operations endpoint for completion, exit code from the operation result).
 - Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, `newt select <glob>`, user-command invocation by title.
-- Windows is compiled but untested end-to-end: named-pipe HTTP server/client, `newt.cmd` shim (`NEWT_CLI` marker), ConPTY env merge.
 
 ## Remote VFS (local ↔ remote bridge)
 
@@ -57,10 +56,6 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 - SVG in image mode is degenerate (no natural size → transform-based zoom rasterizes blurry); a vector-aware path would size the `<img>` element instead of transforming it.
 - Downscale quality: composited CSS transforms sample bilinearly with no mip chain on both WebKit and WebView2. If real-world images shimmer at fit zoom, swap in a pre-downscaled rendition below 100% (static images only).
 
-## Archive unpacking
-
-A dedicated extract operation with conflict handling, not a VFS — today unpacking means copying out of a mounted archive VFS.
-
 ## Disc image VFS follow-ups
 
 - VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW dumps) — currently a clean "unsupported" error.
@@ -87,3 +82,10 @@ A dedicated extract operation with conflict handling, not a VFS — today unpack
 - Local macOS is the one place the app's own `PATH` is still patched by hand (`[environment] extra_path`) rather than inherited. Everywhere else the environment now arrives ambiently — a login-shell bootstrap for agents, PAM/systemd on a Linux desktop, the registry on Windows — but a Finder-launched `.app` has no login shell above it to inherit from, so there's nothing to hang off. The visible seam: the terminal gets `-l` and so has the user's full `PATH`, while a Newt-spawned command gets launchd's plus `extra_path`, so a tool can work when typed and fail as a command. The cure is what VS Code does — probe once at startup (`$SHELL -ilc`, marker-delimited JSON on stdout so profile chatter can't corrupt it, bounded by a timeout since a profile can block forever on a prompt) and thread the result as a base env rather than `set_var` (edition 2024, and `shell.rs` deliberately doesn't mutate our own environment). Not worth it until the manual patching actually bites.
 - Auto-remount VFSes when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 - Implement `Vfs::revalidate` for archive VFSes (zip + tar). Trait is wired through to the navigation layer (called when a pane crosses into a VFS that advertises `VfsDescriptor::can_revalidate`); the archive impl should stat the origin file's mtime against the value captured at mount time and rebuild the central directory / entry index in place if it drifted, returning `Refreshed`. Mount identity (`VfsId`, `mount_meta`, `origin`) must be preserved so history entries remain valid. Don't forget to flip `can_revalidate` to true on the descriptors.
+
+
+# Major new features (groom/write design docs first)
+
+- Batch rename (probably with enrichers preview)
+- Compare & synchronize directories
+- Custom styling / theming

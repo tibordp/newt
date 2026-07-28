@@ -59,7 +59,13 @@ export default function ModalRouter({
           />
         );
       case "settings":
-        return <SettingsEditorContent preferences={preferences} />;
+        return (
+          <SettingsEditorContent
+            preferences={preferences}
+            canReveal={state?.modal?.data?.can_reveal ?? false}
+            paneHandle={state?.modal?.context?.pane_handle ?? null}
+          />
+        );
       case "connection_log":
         return <ConnectionLogContent state={state} />;
       case "third_party_notices":
