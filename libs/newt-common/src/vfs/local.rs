@@ -18,9 +18,6 @@ use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FileChunk, FileDetails, FsStats, Mode, ToUnix, UserGroup};
 
-#[cfg(windows)]
-use super::native::local_path_from_native;
-use super::native::to_native;
 use super::path_style::{
     local_breadcrumbs, local_display_path, metadata_traits_from_meta, navigable_parent,
     roots_from_meta, unified_root_from_meta,
@@ -176,7 +173,7 @@ pub fn local_roots() -> Vec<RootInfo> {
             let native = String::from_utf16_lossy(s);
             let native = StdPath::new(&native);
             RootInfo {
-                path: local_path_from_native(native),
+                path: PathBuf::from_native(native),
                 volume: super::volume::probe_native(native),
             }
         })
@@ -420,7 +417,7 @@ impl Vfs for LocalVfs {
         path: &Path,
         batch_tx: Option<mpsc::Sender<Vec<File>>>,
     ) -> Result<super::VfsFileList, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let cancel = CancellationToken::new();
         let _cancel_on_drop = cancel.clone().drop_guard();
         let files: Vec<File> = tokio::task::spawn_blocking({
@@ -592,12 +589,12 @@ impl Vfs for LocalVfs {
     }
 
     async fn fs_stats(&self, path: &Path) -> Result<Option<FsStats>, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         Ok(tokio::task::spawn_blocking(move || platform_fs_stats(&path)).await?)
     }
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
 
@@ -641,7 +638,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
@@ -712,7 +709,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             use std::io::{Read, Seek, SeekFrom};
             let mut file = std::fs::File::open(&path)?;
@@ -744,12 +741,12 @@ impl Vfs for LocalVfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, Error> {
-        let file = tokio::fs::File::open(to_native(path)).await?;
+        let file = tokio::fs::File::open(path.to_native()).await?;
         Ok(Box::new(file))
     }
 
     async fn open_read_at(&self, path: &Path) -> Result<Box<dyn VfsRandomReader>, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let file =
             tokio::task::spawn_blocking(move || std::fs::File::open(&path).map_err(Error::from))
                 .await??;
@@ -759,7 +756,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
@@ -807,18 +804,18 @@ impl Vfs for LocalVfs {
     }
 
     async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
-        let file = tokio::fs::File::create(to_native(path)).await?;
+        let file = tokio::fs::File::create(path.to_native()).await?;
         Ok(Box::new(LocalAsyncWriter { file }))
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path).map_err(Error::from))
             .await?
     }
 
     async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
-        let link = to_native(link);
+        let link = link.to_native();
         let target = target.to_string();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
@@ -836,7 +833,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -849,7 +846,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) => remove_file_fallback(&path, e),
@@ -858,7 +855,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn remove_dir(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             std::fs::remove_dir(&path)?;
             Ok(())
@@ -867,7 +864,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn trash_item(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             trash::delete(&path).map_err(|e| Error::custom(format!("trash: {e}")))
         })
@@ -875,7 +872,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
             let (permissions, uid, gid) = unix_meta_ids(&meta);
@@ -891,7 +888,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         let meta = meta.clone();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
@@ -944,8 +941,8 @@ impl Vfs for LocalVfs {
     }
 
     async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, Error> {
-        let a = to_native(a);
-        let b = to_native(b);
+        let a = a.to_native();
+        let b = b.to_native();
         tokio::task::spawn_blocking(move || {
             // Two absent paths are not "the same file" — hence the match
             // rather than comparing the Options.
@@ -958,14 +955,14 @@ impl Vfs for LocalVfs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = to_native(from);
-        let to = to_native(to);
+        let from = from.to_native();
+        let to = to.to_native();
         tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from))
             .await?
     }
 
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .write(true)
@@ -977,13 +974,13 @@ impl Vfs for LocalVfs {
     }
 
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
-        let path = to_native(path);
+        let path = path.to_native();
         tokio::task::spawn_blocking(move || platform_space_info(&path)).await?
     }
 
     async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = to_native(from);
-        let to = to_native(to);
+        let from = from.to_native();
+        let to = to.to_native();
         tokio::task::spawn_blocking(move || {
             // Try FICLONE (instant COW clone) first on Linux.
             #[cfg(target_os = "linux")]
@@ -1010,8 +1007,8 @@ impl Vfs for LocalVfs {
     }
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        let link = to_native(link);
-        let target = to_native(target);
+        let link = link.to_native();
+        let target = target.to_native();
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
     }
@@ -1205,7 +1202,6 @@ mod same_file_tests {
 
     use crate::vfs::Vfs;
     use crate::vfs::local::LocalVfs;
-    use crate::vfs::native::local_path_from_native;
     use crate::vfs::path::PathBuf;
 
     struct Fixture {
@@ -1223,7 +1219,7 @@ mod same_file_tests {
 
         /// VFS path of `name` inside the fixture directory.
         fn path(&self, name: &str) -> PathBuf {
-            local_path_from_native(&self._dir.path().join(name))
+            PathBuf::from_native(&self._dir.path().join(name))
         }
 
         fn write(&self, name: &str) -> PathBuf {

@@ -21,7 +21,7 @@ pub(super) async fn execute_run_command(
             // Native conversion happens here — the executor runs where
             // the FS is (the agent in a remote session). `launch_cwd`
             // (not `to_native`) so cmd.exe accepts a local directory.
-            cmd.current_dir(crate::vfs::native::launch_cwd(dir));
+            cmd.current_dir(dir.launch_cwd());
         }
         if let Some(si) = shell_integration {
             cmd.envs(si.spawn_env(None));

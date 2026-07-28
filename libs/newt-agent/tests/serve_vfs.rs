@@ -18,7 +18,7 @@ fn agent_binary() -> &'static str {
 }
 
 fn vfs_path_of(native: &std::path::Path) -> VfsPathBuf {
-    newt_common::vfs::native::local_path_from_native(native)
+    newt_common::vfs::path::PathBuf::from_native(native)
 }
 
 /// Wire a spawned serve-vfs agent's stdio into the proxy `RemoteVfs`,

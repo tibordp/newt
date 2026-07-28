@@ -127,7 +127,7 @@ impl VfsDescriptor for RemoteVfsDescriptor {
             return None;
         }
         Some(DisplayPathMatch::exact(
-            super::native::local_path_from_typed_display(input)?,
+            super::path::PathBuf::from_typed_display(input)?,
         ))
     }
 

@@ -39,7 +39,7 @@ pub trait ShellService: Send + Sync {
 /// absolute (a relative expansion has no meaningful VFS form here).
 fn expanded_to_vfs(p: &std::path::Path) -> Option<crate::vfs::path::PathBuf> {
     p.is_absolute()
-        .then(|| crate::vfs::native::local_path_from_native(p))
+        .then(|| crate::vfs::path::PathBuf::from_native(p))
 }
 
 pub struct LocalShellService;

@@ -60,7 +60,7 @@ fn make_entry(
     HotPathEntry {
         path: VfsPath::new(
             crate::vfs::VfsId::ROOT,
-            crate::vfs::native::local_path_from_native(&path),
+            crate::vfs::path::PathBuf::from_native(&path),
         ),
         display_path: String::new(),
         name,

@@ -846,7 +846,7 @@ fn create_local_services(
         )),
         initial_dir: VfsPath::new(
             VfsId::ROOT,
-            newt_common::vfs::native::local_path_from_native(&std::env::current_dir().unwrap()),
+            newt_common::vfs::path::PathBuf::from_native(&std::env::current_dir().unwrap()),
         ),
     }
 }

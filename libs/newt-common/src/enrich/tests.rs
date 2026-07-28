@@ -4,7 +4,8 @@ use tokio::sync::mpsc;
 
 use super::git::{GitEnricher, dir_statuses, parse_porcelain_v2};
 use super::*;
-use crate::vfs::{LocalVfs, VfsId, VfsRegistry, native::local_path_from_native};
+use crate::vfs::path::PathBuf;
+use crate::vfs::{LocalVfs, VfsId, VfsRegistry};
 
 // ---------------------------------------------------------------------------
 // Porcelain v2 parsing
@@ -311,7 +312,7 @@ async fn git_enricher_end_to_end() {
     let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
     let enrichers = Enrichers::new(registry.clone()).with(Arc::new(GitEnricher::new(Vec::new())));
 
-    let root_path = VfsPath::new(VfsId::ROOT, local_path_from_native(&dir));
+    let root_path = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&dir));
     let (entries, badges, lifecycle) = collect_events(&enrichers, root_path).await;
 
     let get = |name: &str| {
@@ -340,7 +341,7 @@ async fn git_enricher_end_to_end() {
     assert_eq!(lifecycle, vec!["start:git", "finish:git"]);
 
     // Listing a subdirectory annotates its own entries.
-    let sub_path = VfsPath::new(VfsId::ROOT, local_path_from_native(&dir.join("sub")));
+    let sub_path = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&dir.join("sub")));
     let (entries, _, _) = collect_events(&enrichers, sub_path).await;
     assert_eq!(
         entries
@@ -356,7 +357,7 @@ async fn git_enricher_end_to_end() {
     let outside = tempfile::tempdir().unwrap();
     let outside_path = VfsPath::new(
         VfsId::ROOT,
-        local_path_from_native(&outside.path().canonicalize().unwrap()),
+        PathBuf::from_native(&outside.path().canonicalize().unwrap()),
     );
     let (entries, badges, lifecycle) = collect_events(&enrichers, outside_path).await;
     assert!(entries.is_empty() && badges.is_empty());
@@ -438,7 +439,7 @@ async fn du_enricher_end_to_end() {
 
     let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
     let enrichers = Enrichers::new(registry.clone()).with(Arc::new(super::du::DuEnricher));
-    let root_path = VfsPath::new(VfsId::ROOT, local_path_from_native(&dir));
+    let root_path = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&dir));
 
     // Whole-listing run: every directory sized. No badges — the
     // directory total is read via select-all (selection stats include

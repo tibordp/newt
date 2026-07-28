@@ -1,5 +1,4 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
-use newt_common::vfs::native::{local_path_from_native, to_native};
 use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
 
 use crate::common::Error;
@@ -49,7 +48,10 @@ pub async fn navigate(
             .is_some_and(|(_, meta)| PathStyle::from_mount_meta(&meta) == PathStyle::host());
         let native = std::path::Path::new(path);
         if root_is_host_style && native.is_absolute() {
-            Some(VfsPath::new(VfsId::ROOT, local_path_from_native(native)))
+            Some(VfsPath::new(
+                VfsId::ROOT,
+                newt_common::vfs::path::PathBuf::from_native(native),
+            ))
         } else {
             None
         }
@@ -433,7 +435,7 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
 
     // Open through shell if on local VFS
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(to_native(&full_path.path))?;
+        opener::open(full_path.path.to_native())?;
     } else {
         download_and_open(&ctx, full_path, &file.name).await?;
     }
@@ -455,7 +457,10 @@ async fn download_and_open(
 
     let temp_dir = tempfile::tempdir_in(std::env::temp_dir())?.keep();
     let dest_path = temp_dir.join(filename);
-    let dest_vfs_path = VfsPath::new(host_vfs, local_path_from_native(&temp_dir));
+    let dest_vfs_path = VfsPath::new(
+        host_vfs,
+        newt_common::vfs::path::PathBuf::from_native(&temp_dir),
+    );
 
     let op_id = super::operations::start_operation(
         ctx.clone(),
@@ -541,7 +546,7 @@ fn focused_symlink_target(
     let native =
         source_parent.vfs_id == VfsId::ROOT || vfs_info.is_host_local(source_parent.vfs_id);
     let target_path = if native {
-        local_path_from_native(std::path::Path::new(&target))
+        newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(&target))
     } else {
         newt_common::vfs::path::PathBuf::from_components(
             target.split('/').filter(|s| !s.is_empty()),
@@ -606,7 +611,7 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
     let full_path = pane.path();
 
     if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(to_native(&full_path.path))?;
+        opener::open(full_path.path.to_native())?;
     }
 
     Ok(())

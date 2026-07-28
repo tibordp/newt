@@ -184,7 +184,7 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         label,
         target,
         mount_point: Some(
-            super::native::local_path_from_native(std::path::Path::new(&root))
+            super::path::PathBuf::from_native(std::path::Path::new(&root))
                 .as_wire_str()
                 .to_string(),
         ),
@@ -311,7 +311,7 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         label: linux_label(&source),
         target,
         mount_point: Some(
-            super::native::local_path_from_native(std::path::Path::new(&mount_point))
+            super::path::PathBuf::from_native(std::path::Path::new(&mount_point))
                 .as_wire_str()
                 .to_string(),
         ),
@@ -443,7 +443,7 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
             None
         },
         mount_point: on.as_deref().map(|on| {
-            super::native::local_path_from_native(std::path::Path::new(on))
+            super::path::PathBuf::from_native(std::path::Path::new(on))
                 .as_wire_str()
                 .to_string()
         }),

@@ -24,7 +24,7 @@ use super::{
 };
 use crate::Error;
 use crate::shell::{resolve_program, run_capture};
-use crate::vfs::{VfsDescriptor, VfsPath, VfsRegistry, native::to_native};
+use crate::vfs::{VfsDescriptor, VfsPath, VfsRegistry};
 
 pub struct GitEnricherDescriptor;
 
@@ -98,7 +98,7 @@ impl Enricher for GitEnricher {
         _scope: &EnrichScope,
         sink: &EnrichSink,
     ) -> Result<(), Error> {
-        let dir = to_native(&path.path);
+        let dir = path.path.to_native();
         // Not inside a repo: nothing to emit — the sink's final empty
         // reset batch still clears any previous generation (e.g. the
         // repo's .git vanished between visits).

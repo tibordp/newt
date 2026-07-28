@@ -6,7 +6,6 @@ pub mod disc;
 pub mod file;
 pub mod local;
 pub mod mount;
-pub mod native;
 pub mod origin;
 pub mod path;
 pub mod path_style;

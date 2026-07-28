@@ -43,10 +43,7 @@ pub async fn show_shell_context_menu(
     }
     // `launch_cwd` strips the verbatim prefix `to_native` produces —
     // `SHParseDisplayName` rejects `\\?\` paths.
-    let native: Vec<std::path::PathBuf> = targets
-        .iter()
-        .map(|t| newt_common::vfs::native::launch_cwd(&t.path))
-        .collect();
+    let native: Vec<std::path::PathBuf> = targets.iter().map(|t| t.path.launch_cwd()).collect();
 
     let window = ctx.window();
     let hwnd = window.hwnd()?.0 as isize;

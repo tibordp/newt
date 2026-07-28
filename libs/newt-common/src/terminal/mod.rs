@@ -185,10 +185,7 @@ impl TerminalClient for Local {
         // agent in a remote session), so its own OS cfg is the right one.
         // `launch_cwd` (not `to_native`): cmd.exe rejects the verbatim
         // `\\?\C:\…` form and would silently open in %SystemRoot%.
-        let cwd = options
-            .working_dir
-            .as_ref()
-            .map(|p| crate::vfs::native::launch_cwd(p));
+        let cwd = options.working_dir.as_ref().map(|p| p.launch_cwd());
 
         // Shell-integration env first, so caller-specified env can still
         // override it.
@@ -303,7 +300,7 @@ impl TerminalClient for Local {
                 // Convert here — this runs in the process that owns the
                 // FS (the agent in a remote session), so its own OS cfg
                 // is the right one.
-                cmd.current_dir(crate::vfs::native::launch_cwd(&working_dir));
+                cmd.current_dir(working_dir.launch_cwd());
             }
 
             // Shell-integration env first, so caller-specified env can

@@ -1,6 +1,5 @@
 use newt_common::operation::{OperationId, OperationRequest};
 use newt_common::vfs::VfsPath;
-use newt_common::vfs::native::to_native;
 
 use crate::common::Error;
 use crate::main_window::{DndData, DndFile, MainWindowContext, MainWindowState, PaneHandle};
@@ -142,7 +141,7 @@ pub fn dnd_drag_out(ctx: MainWindowContext, image: Vec<u8>) -> Result<bool, Erro
         // Windows paths longer than MAX_PATH stay verbatim through
         // dunce::canonicalize and are known to crash drag-rs (#76);
         // accepted as an upstream limitation.
-        let native: Vec<std::path::PathBuf> = sources.iter().map(|s| to_native(&s.path)).collect();
+        let native: Vec<std::path::PathBuf> = sources.iter().map(|s| s.path.to_native()).collect();
         dnd.outbound = true;
         Ok(Some((native, dnd.generation)))
     })?
@@ -290,7 +289,7 @@ pub async fn external_drop(
         .map(|p| {
             VfsPath::new(
                 host_vfs,
-                newt_common::vfs::native::local_path_from_native(std::path::Path::new(p)),
+                newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(p)),
             )
         })
         .collect();

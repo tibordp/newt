@@ -2655,7 +2655,6 @@ mod local_symlink {
 
     use crate::operation::*;
     use crate::vfs::local::LocalVfs;
-    use crate::vfs::native::local_path_from_native;
     use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
     async fn run(request: OperationRequest) -> Vec<OperationProgress> {
@@ -2706,7 +2705,7 @@ mod local_symlink {
     }
 
     fn vfs_path(path: &std::path::Path) -> VfsPath {
-        VfsPath::new(VfsId::ROOT, local_path_from_native(path))
+        VfsPath::new(VfsId::ROOT, PathBuf::from_native(path))
     }
 
     /// Deleting a symlink must remove the link, never the tree it points at.
