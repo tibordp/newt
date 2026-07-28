@@ -1,14 +1,16 @@
 .file-icon {
   position: relative;
   display: inline-block;
+  // The box tracks the row height, but the artwork inside it — glyph,
+  // folder image, symlink badge — is a fixed size at any density.
   font-size: 150%;
   font-family: "seti";
-  background-size: 22px;
+  background-size: var(--row-height);
   background-position: 0;
   background-repeat: no-repeat;
   text-align: center;
-  width: 22px;
-  height: 22px;
+  width: var(--row-height);
+  height: var(--row-height);
   line-height: inherit !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -61,8 +63,8 @@
     display: inline-block;
     left: 0;
     top: 0;
-    width: 22px;
-    height: 22px;
+    width: var(--row-height);
+    height: var(--row-height);
     background-repeat: no-repeat;
     background-size: 15px;
     background-image: url("../assets/symlink_badge.svg");

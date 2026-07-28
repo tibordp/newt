@@ -81,6 +81,9 @@ pub struct AppearancePreferences {
     /// Show the status bar (file/directory counts, selection size) at the bottom of each pane.
     #[schemars(title = "Show Pane Status Bar")]
     pub show_pane_status: bool,
+    /// Vertical spacing of file list rows.
+    #[schemars(title = "Row Density")]
+    pub density: Density,
     /// Color theme: "system" follows OS preference, or force "light" / "dark".
     #[schemars(title = "Theme")]
     pub theme: ThemeMode,
@@ -102,6 +105,18 @@ pub struct AppearancePreferences {
     /// strftime-style format for time columns (e.g. "%H:%M"). Empty uses the system locale.
     #[schemars(title = "Time Format")]
     pub time_format: String,
+}
+
+// Drives the `--row-height` CSS token; row icons and cell metrics are
+// fractions of it.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Density {
+    #[default]
+    Comfortable,
+    Compact,
 }
 
 /// Which unit system displayed sizes use.
@@ -144,6 +159,7 @@ impl Default for AppearancePreferences {
             show_command_bar: true,
             show_pane_header: true,
             show_pane_status: true,
+            density: Density::default(),
             theme: ThemeMode::default(),
             // A superset: panes filter by their VFS's metadata traits, so
             // user/group/mode show on Unix-shaped panes and attributes on

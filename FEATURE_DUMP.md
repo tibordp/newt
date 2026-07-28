@@ -113,7 +113,9 @@ Bottom strip on each pane showing loading state, the current file's full display
 
 ### File List
 
-Server-side windowed list with 22px fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
+Server-side windowed list with a fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
+
+Row height comes from the `appearance.density` preference: `comfortable` (22px, default) or `compact` (20px). It reaches the styles as the `--row-height` token, keyed off a `data-density` attribute on the document element; the row icon box, the column header and the resize grip follow it, so nothing else carries a per-density value. Icon artwork — seti glyph, folder image, symlink badge — is a fixed size regardless of density. The pane's virtualization arithmetic (spacer heights, viewport reports, PageUp/PageDown, drag-rectangle → index) needs the number rather than a computed style, so `src/main_window/density.ts` restates the same pixel values — the two must stay in step. Rust is density-agnostic: viewport hints cross the boundary as row indices and counts.
 
 **Default columns** (all sortable by clicking the header):
 
@@ -1436,6 +1438,7 @@ folders_first = true        # Directories before files in sort order
 show_command_bar = true     # Show F-key bar at bottom of window
 show_pane_header = true     # Show breadcrumb / VFS selector / free-space header per pane
 show_pane_status = true     # Show file count / selection size status bar per pane
+density = "comfortable"     # File list row spacing: "comfortable" (22px) or "compact" (20px)
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
 si_size_prefixes = false    # Size column shows "1.5 GB" instead of exact byte counts

@@ -96,7 +96,7 @@
 .fileItem {
   display: flex;
   width: fit-content;
-  height: 22px;
+  height: var(--row-height);
   padding-right: 20px;
 
   &.focused {

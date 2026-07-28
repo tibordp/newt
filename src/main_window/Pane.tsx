@@ -32,6 +32,7 @@ import type { VfsProgress } from "../lib/bindings";
 import { useFormatBytes, useSizeUnits } from "../lib/size";
 import type { SizeUnits } from "../lib/bindings";
 import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
+import { rowHeightFor } from "./density";
 import { usePreferences } from "../lib/preferences";
 import { useLocale } from "../lib/locale";
 import { useRuntimeState } from "../lib/runtimeState";
@@ -553,8 +554,6 @@ function FilterInput({
   return <div className={styles.filterInput}>{input}</div>;
 }
 
-const ITEM_SIZE = 22;
-
 // --- Shared DnD helpers (used by both internal and external drag-and-drop) ---
 
 /** Clear all drop-target highlights in the document. */
@@ -767,6 +766,8 @@ function PaneInner(
     [preferences?.bindings],
   );
 
+  const rowHeight = rowHeightFor(preferences?.settings?.appearance?.density);
+
   const columns = useMemo(
     () =>
       getVisibleColumns(
@@ -835,8 +836,8 @@ function PaneInner(
 
     const containerHeight = container.clientHeight;
     const scrollTop = container.scrollTop;
-    const itemTop = focusedIndex * ITEM_SIZE;
-    const itemBottom = itemTop + ITEM_SIZE;
+    const itemTop = focusedIndex * rowHeight;
+    const itemBottom = itemTop + rowHeight;
 
     if (itemTop < scrollTop) {
       container.scrollTop = itemTop;
@@ -845,7 +846,7 @@ function PaneInner(
     }
     // Intentionally excluding file_window — this should only fire when the
     // focused item changes position, not when the window slides on scroll.
-  }, [active, focusedIndex]);
+  }, [active, focusedIndex, rowHeight]);
 
   useEffect(() => {
     if (active && !modalOpen) {
@@ -900,8 +901,8 @@ function PaneInner(
     (drag: DragState, curScrollY: number) => {
       const rectTop = Math.min(drag.startScrollY, curScrollY);
       const rectBottom = Math.max(drag.startScrollY, curScrollY);
-      const startIdx = Math.max(0, Math.floor(rectTop / ITEM_SIZE));
-      const endIdx = Math.max(0, Math.ceil(rectBottom / ITEM_SIZE) - 1);
+      const startIdx = Math.max(0, Math.floor(rectTop / rowHeight));
+      const endIdx = Math.max(0, Math.ceil(rectBottom / rowHeight) - 1);
 
       if (
         startIdx !== drag.lastSentStartIdx ||
@@ -912,7 +913,7 @@ function PaneInner(
         sendDragSelection(drag, startIdx, endIdx);
       }
     },
-    [sendDragSelection],
+    [sendDragSelection, rowHeight],
   );
 
   const updateAutoScroll = useCallback(
@@ -1328,12 +1329,12 @@ function PaneInner(
       relativeJump(-1, e.shiftKey);
     } else if (e.key == "PageDown" && (noModifiers || e.shiftKey)) {
       const pageSize = Math.floor(
-        (containerRef.current?.clientHeight ?? 220) / ITEM_SIZE,
+        (containerRef.current?.clientHeight ?? 220) / rowHeight,
       );
       relativeJump(pageSize, e.shiftKey);
     } else if (e.key == "PageUp" && (noModifiers || e.shiftKey)) {
       const pageSize = Math.floor(
-        (containerRef.current?.clientHeight ?? 220) / ITEM_SIZE,
+        (containerRef.current?.clientHeight ?? 220) / rowHeight,
       );
       relativeJump(-pageSize, e.shiftKey);
     } else if (e.key == "Home" && noModifiers) {
@@ -1571,21 +1572,22 @@ function PaneInner(
   );
 
   const lastViewportReportRef = useRef<[number, number, number]>([-1, -1, -1]);
-  // Send initial viewport report (and re-send on navigation).
+  // Send initial viewport report (and re-send on navigation, or when a
+  // density change alters how many rows the pane holds).
   useEffect(() => {
     lastViewportReportRef.current = [-1, -1, -1];
     const container = containerRef.current;
     if (container) {
-      const firstVisible = Math.floor(container.scrollTop / ITEM_SIZE);
-      const visibleCount = Math.ceil(container.clientHeight / ITEM_SIZE);
+      const firstVisible = Math.floor(container.scrollTop / rowHeight);
+      const visibleCount = Math.ceil(container.clientHeight / rowHeight);
       lastViewportReportRef.current = [firstVisible, visibleCount, -1];
       safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
     }
-  }, [path, paneHandle]);
+  }, [path, paneHandle, rowHeight]);
 
   const topSpacerStyle = useMemo(
-    () => ({ height: file_window.offset * ITEM_SIZE, flexShrink: 0 }),
-    [file_window.offset],
+    () => ({ height: file_window.offset * rowHeight, flexShrink: 0 }),
+    [file_window.offset, rowHeight],
   );
   const bottomSpacerStyle = useMemo(
     () => ({
@@ -1593,10 +1595,15 @@ function PaneInner(
         (file_window.total_count -
           file_window.offset -
           file_window.items.length) *
-        ITEM_SIZE,
+        rowHeight,
       flexShrink: 0,
     }),
-    [file_window.total_count, file_window.offset, file_window.items.length],
+    [
+      file_window.total_count,
+      file_window.offset,
+      file_window.items.length,
+      rowHeight,
+    ],
   );
 
   const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
@@ -1605,8 +1612,8 @@ function PaneInner(
 
     // Report viewport position to Rust for window sliding.
     const fw = fileWindowRef.current;
-    const firstVisible = Math.floor(el.scrollTop / ITEM_SIZE);
-    const visibleCount = Math.ceil(el.clientHeight / ITEM_SIZE);
+    const firstVisible = Math.floor(el.scrollTop / rowHeight);
+    const visibleCount = Math.ceil(el.clientHeight / rowHeight);
     const isInitial = lastViewportReportRef.current[0] === -1;
 
     if (!isInitial) {

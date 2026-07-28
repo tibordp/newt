@@ -82,6 +82,10 @@
   --space-7: 20px;
   --space-8: 24px;
 
+  // File list row height. Row icons and cell metrics scale off it, and
+  // `density.ts` restates it for the pane's virtualization arithmetic.
+  --row-height: 22px;
+
   // Radii
   --radius-sm: 3px;
   --radius-md: 6px;
@@ -95,4 +99,9 @@
 
   // Monospace (logs, transcripts; the terminal configures xterm directly)
   --font-mono: Menlo, Monaco, "Courier New", monospace;
+}
+
+// Set from the `appearance.density` preference (MainWindow).
+[data-density="compact"] {
+  --row-height: 20px;
 }

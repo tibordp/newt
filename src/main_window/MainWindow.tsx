@@ -157,6 +157,11 @@ function App() {
     }
   }, []);
 
+  const density = preferences?.settings.appearance?.density;
+  useEffect(() => {
+    document.documentElement.dataset.density = density ?? "comfortable";
+  }, [density]);
+
   const foregroundOp =
     remoteState?.foreground_operation_id != null
       ? remoteState.operations[remoteState.foreground_operation_id]

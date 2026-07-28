@@ -1630,6 +1630,10 @@ show_pane_header: boolean;
  */
 show_pane_status: boolean; 
 /**
+ * Vertical spacing of file list rows.
+ */
+density: Density; 
+/**
  * Color theme: "system" follows OS preference, or force "light" / "dark".
  */
 theme: ThemeMode; 
@@ -1865,6 +1869,7 @@ export type DeleteConfirmMode =
  * items will be deleted permanently. Delete Permanently / Cancel.
  */
 "trash_unavailable"
+export type Density = "comfortable" | "compact"
 /**
  * Every dialog the host can open. Serialized as snake_case so the frontend
  * can keep sending string literals like `"navigate"` / `"mount_s3"` over
