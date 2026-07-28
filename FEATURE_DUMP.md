@@ -1669,6 +1669,12 @@ machine-readable `copyright` file, and the Arch package mirrors both into
 
 Sets the other pane's directory to match the active pane's current path. Useful for quickly aligning both panes to the same location before a copy/move.
 
+### Swap Panes (Mod+U)
+
+Exchanges the two panes side for side. Not a mutual Copy Pane: the panes themselves move, so each arrives with its selection, sorting, filter, computed sizes and navigation history intact — Alt+Left after a swap steps back through the history that came across with the pane. `active_pane` moves with them, so the cursor stays on the directory it was in and that directory changes sides. Bound with `pane_focused` so it never shadows a shell's Ctrl+U (kill-line) in the terminal panel; the swap flips `active_pane` without touching `panes_focused`, so running it from the palette while the terminal has focus doesn't steal focus back.
+
+Scroll offset is the one thing that stays put — it lives in the DOM, not in pane state — but the focused item is scrolled back into view as soon as its pane is active.
+
 ### Follow Symlink (Shift+Enter)
 
 When a symlink is focused, navigates to the symlink's resolved target path. Handles both relative and absolute symlink targets.
@@ -1765,6 +1771,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+Left | Open in left pane | Pane focused |
 | Mod+Right | Open in right pane | Pane focused |
 | Mod+. | Copy pane path to other pane | Pane focused |
+| Mod+U | Swap panes (whole pane state, history included) | Pane focused |
 | Mod+P | Hot paths | Any |
 | Mod+B | Add bookmark | Pane focused |
 | Mod+Shift+L | Select VFS | Pane focused |

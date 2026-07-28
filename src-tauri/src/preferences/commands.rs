@@ -79,6 +79,17 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "swap_panes".into(),
+            name: "Swap Panes".into(),
+            short_name: Some("Swap".into()),
+            category: "Navigation".into(),
+            default_keys: vec!["mod+u".into()],
+            // Ctrl+U is kill-line in every readline-derived shell.
+            default_when: Some("pane_focused".into()),
+            needs_pane: false,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "open_in_left_pane".into(),
             name: "Open in Left Pane".into(),
             short_name: None,

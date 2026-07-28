@@ -332,6 +332,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             pane::navigate_history,
             pane::delete_history_entry,
             pane::cmd_as_other_pane,
+            pane::cmd_swap_panes,
             pane::cmd_open_in_left_pane,
             pane::cmd_open_in_right_pane,
             pane::cmd_select_all,
@@ -463,6 +464,7 @@ async fn dispatch_registry_command_inner(
 ) -> Result<bool, Error> {
     match id {
         "as_other_pane" => pane::cmd_as_other_pane(ctx, pane).await?,
+        "swap_panes" => pane::cmd_swap_panes(ctx, pane)?,
         "open_in_left_pane" => pane::cmd_open_in_left_pane(ctx, pane).await?,
         "open_in_right_pane" => pane::cmd_open_in_right_pane(ctx, pane).await?,
         "select_all" => pane::cmd_select_all(ctx, pane)?,
@@ -556,6 +558,7 @@ mod dispatch_tests {
             .collect();
         let table = [
             "as_other_pane",
+            "swap_panes",
             "open_in_left_pane",
             "open_in_right_pane",
             "select_all",

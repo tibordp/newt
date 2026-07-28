@@ -107,6 +107,10 @@ impl PaneHandle {
     pub fn right() -> Self {
         PaneHandle(1)
     }
+
+    pub fn other(self) -> Self {
+        PaneHandle(1 - self.0)
+    }
 }
 
 #[derive(Clone)]
@@ -134,6 +138,15 @@ impl Panes {
 
     pub fn all(&self) -> Vec<Arc<Pane>> {
         self.0.read().clone()
+    }
+
+    /// Exchange the two panes side for side. The panes themselves are
+    /// untouched — each keeps its path, selection, sorting, filter and
+    /// navigation history and simply answers to the other handle.
+    pub fn swap(&self) {
+        self.0
+            .write()
+            .swap(PaneHandle::left().0, PaneHandle::right().0);
     }
 
     pub fn clear(&self) {
@@ -981,7 +994,7 @@ impl MainWindowState {
     }
 
     pub fn other_pane(&self, handle: PaneHandle) -> Arc<Pane> {
-        self.panes.get(PaneHandle(1 - handle.0)).unwrap()
+        self.panes.get(handle.other()).unwrap()
     }
 
     pub async fn refresh(&self, force: bool) -> Result<(), Error> {

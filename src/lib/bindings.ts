@@ -1135,6 +1135,20 @@ async cmdAsOtherPane(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Exchange the two panes rather than making them navigate to each other:
+ * each side arrives with its selection, sorting, filter and navigation
+ * history intact. The active handle moves with them, so the cursor stays
+ * on the directory it was in and that directory changes sides.
+ */
+async cmdSwapPanes(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_swap_panes", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdOpenInLeftPane(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_open_in_left_pane", { paneHandle }) };

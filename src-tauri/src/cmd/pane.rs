@@ -299,6 +299,24 @@ pub async fn cmd_as_other_pane(
         .await
 }
 
+/// Exchange the two panes rather than making them navigate to each other:
+/// each side arrives with its selection, sorting, filter and navigation
+/// history intact. The active handle moves with them, so the cursor stays
+/// on the directory it was in and that directory changes sides.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_swap_panes(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        gs.panes.swap();
+        // Deliberately not `activate_pane` — that also claims focus for the
+        // panes, which would yank it out of the terminal when the command
+        // is run from the palette.
+        let mut opts = gs.display_options.0.write();
+        opts.active_pane = opts.active_pane.other();
+        Ok(())
+    })
+}
+
 pub async fn cmd_open_in_other_pane(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
