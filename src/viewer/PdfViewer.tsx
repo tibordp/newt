@@ -155,9 +155,9 @@ export function PdfViewer({
         </div>
       ) : (
         <>
-          <div className={styles.pdfToolbar}>
+          <div className={styles.viewerToolbar}>
             <button
-              className={styles.pdfToolbarBtn}
+              className={styles.viewerToolbarBtn}
               onClick={() => goToPage(currentPage - 1)}
               disabled={currentPage <= 1}
               title="Previous page"
@@ -168,16 +168,16 @@ export function PdfViewer({
               {currentPage} / {numPages || "–"}
             </span>
             <button
-              className={styles.pdfToolbarBtn}
+              className={styles.viewerToolbarBtn}
               onClick={() => goToPage(currentPage + 1)}
               disabled={currentPage >= numPages}
               title="Next page"
             >
               &#x25BC;
             </button>
-            <span className={styles.pdfToolbarSep} />
+            <span className={styles.viewerToolbarSep} />
             <button
-              className={styles.pdfToolbarBtn}
+              className={styles.viewerToolbarBtn}
               onClick={zoomOut}
               title="Zoom out (Ctrl+-)"
             >
@@ -187,14 +187,14 @@ export function PdfViewer({
               {scale ? `${Math.round(scale * 100)}%` : "–"}
             </span>
             <button
-              className={styles.pdfToolbarBtn}
+              className={styles.viewerToolbarBtn}
               onClick={zoomIn}
               title="Zoom in (Ctrl+=)"
             >
               +
             </button>
             <button
-              className={styles.pdfToolbarBtn}
+              className={styles.viewerToolbarBtn}
               onClick={zoomReset}
               title="Reset zoom (Ctrl+0)"
             >

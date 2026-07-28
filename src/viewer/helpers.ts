@@ -1,5 +1,9 @@
 export type { VfsPath } from "../lib/types";
-export type { FileChunk, FileDetails as FileInfo } from "../lib/bindings";
+export type {
+  ExifRow,
+  FileChunk,
+  FileDetails as FileInfo,
+} from "../lib/bindings";
 
 export const TEXT_MIME_PREFIXES = ["text/"];
 export const TEXT_MIME_TYPES = new Set([

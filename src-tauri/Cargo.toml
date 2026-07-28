@@ -25,6 +25,7 @@ url = "2"
 percent-encoding = "2"
 regex = "1"
 arboard = "3"
+kamadak-exif = "0.6"
 parking_lot = "0.12"
 treediff = { version = "5", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }

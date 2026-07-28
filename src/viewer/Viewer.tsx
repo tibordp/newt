@@ -127,6 +127,8 @@ function Viewer() {
   // Sub-viewers/SearchBar stopPropagation when they consume Escape.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Sub-viewers and Radix overlays preventDefault the keys they consume
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") {
         safe(commands.closeWindow());
         e.preventDefault();
@@ -181,8 +183,10 @@ function Viewer() {
     content = (
       <ImageViewer
         filePath={displayPath}
+        vfsPath={filePath}
         fileUrl={fileUrl}
         fileSize={info.size}
+        mimeType={info.mime_type}
         autoMode={autoMode ?? currentMode}
       />
     );

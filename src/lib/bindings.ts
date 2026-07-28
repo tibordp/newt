@@ -392,6 +392,20 @@ async findInViewer(path: VfsPath, offset: number, pattern: SearchPattern, maxLen
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * EXIF summary for the image viewer's info panel. Reads a bounded prefix of
+ * the file — EXIF sits near the start of every container we care about;
+ * files whose metadata lies deeper simply report none, as do files without
+ * EXIF at all.
+ */
+async imageExif(path: VfsPath) : Promise<Result<ExifRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("image_exif", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setEditorLanguage(language: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_editor_language", { language }) };
@@ -1545,7 +1559,7 @@ async connectRecent(paneHandle: PaneHandle, recent: RecentConnection) : Promise<
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -1838,6 +1852,7 @@ export type EnvironmentPreferences = {
  * Non-existent entries are silently skipped.
  */
 extra_path: string[] }
+export type ExifRow = { label: string; value: string }
 export type File = { name: string; size: number | null; 
 /**
  * Bytes actually allocated on disk (`st_blocks`-based), when the
@@ -1941,6 +1956,7 @@ mounts: boolean;
  * Show recently visited folders
  */
 recent_folders: boolean }
+export type ImageBackground = "dark" | "checkerboard" | "light"
 export type IssueAction = "skip" | "overwrite" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
@@ -2732,6 +2748,11 @@ available_bytes: number | null }
  * the strings the frontend uses.
  */
 export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf"
+export type ViewerPreferences = { 
+/**
+ * Backdrop behind images in the viewer's image mode.
+ */
+image_background: ImageBackground }
 export type VolumeInfo = { kind: VolumeKind; 
 /**
  * Filesystem name (NTFS, ext4, apfs, …).

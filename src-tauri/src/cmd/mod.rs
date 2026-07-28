@@ -221,6 +221,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::viewer::ping_viewer,
             crate::viewer::copy_viewer_range,
             crate::viewer::find_in_viewer,
+            crate::viewer::image_exif,
             crate::editor::set_editor_language,
             crate::editor::set_editor_wrap,
             crate::editor::set_editor_dirty,

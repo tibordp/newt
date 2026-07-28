@@ -204,21 +204,139 @@
   color: var(--color-error);
 }
 
+.imageMain {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .imageContent {
   flex: 1;
   overflow: hidden;
   position: relative;
-  cursor: grab;
-  background: #525252;
+  cursor: crosshair;
+}
 
-  &:active {
-    cursor: grabbing;
+.imageContentPanning {
+  cursor: grabbing;
+}
+
+.marchingAnts {
+  position: absolute;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(90deg, #fff 0 4px, #000 4px 8px),
+    repeating-linear-gradient(90deg, #fff 0 4px, #000 4px 8px),
+    repeating-linear-gradient(0deg, #fff 0 4px, #000 4px 8px),
+    repeating-linear-gradient(0deg, #fff 0 4px, #000 4px 8px);
+  background-size:
+    8px 1px,
+    8px 1px,
+    1px 8px,
+    1px 8px;
+  background-position:
+    0 0,
+    0 100%,
+    0 0,
+    100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  animation: marching-ants 0.6s linear infinite;
+}
+
+@keyframes marching-ants {
+  to {
+    background-position:
+      8px 0,
+      -8px 100%,
+      0 -8px,
+      100% 8px;
   }
 }
 
+// Info panel — matches the Properties dialog's info list styling
+.imageInfoPanel {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-bg);
+  padding: var(--space-4);
+}
+
+.imageInfoHeader {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+
+  &:not(:first-child) {
+    margin-top: var(--space-5);
+  }
+}
+
+.imageInfoList {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-5);
+}
+
+.imageInfoRow {
+  display: contents;
+
+  dt {
+    color: var(--color-fg-muted);
+    white-space: nowrap;
+    text-align: right;
+    padding: var(--space-1) 0;
+    font-size: var(--font-size-sm);
+  }
+
+  dd {
+    margin: 0;
+    padding: var(--space-1) 0;
+    word-break: break-all;
+    // Override the global user-select: none so metadata can be copied out
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+}
+
+.imageInfoStatus {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+}
+
+.bgDark {
+  background: #525252;
+}
+
+.bgChecker {
+  background: conic-gradient(
+      var(--color-checker-a) 0 25%,
+      var(--color-checker-b) 0 50%,
+      var(--color-checker-a) 0 75%,
+      var(--color-checker-b) 0
+    )
+    0 0 / 16px 16px;
+}
+
+.bgLight {
+  background: #e0e0e0;
+}
+
 .imagePreview {
-  image-rendering: pixelated;
   display: block;
+  // macOS WebKit runs VisionKit Live Text / data detectors on <img> elements
+  // the pointer can reach; all interaction lives on the container anyway.
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .imageErrorMessage {
@@ -250,7 +368,7 @@
   max-height: 100%;
 }
 
-.pdfToolbar {
+.viewerToolbar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -262,15 +380,20 @@
   -webkit-user-select: none;
 }
 
-.pdfToolbarBtn {
+.viewerToolbarBtn {
   background: none;
   border: 1px solid transparent;
   color: var(--color-fg);
   cursor: pointer;
-  padding: 2px 8px;
+  box-sizing: border-box;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
   font-size: 13px;
   border-radius: 3px;
-  line-height: 1.4;
+  line-height: 1;
 
   &:hover:not(:disabled) {
     background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
@@ -283,7 +406,27 @@
   }
 }
 
-.pdfToolbarSep {
+.viewerToolbarIconBtn {
+  width: 26px;
+  padding: 0;
+
+  svg {
+    display: block;
+  }
+}
+
+.viewerToolbarZoom {
+  width: 72px;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewerToolbarBtnActive {
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+  border-color: var(--color-border, #555);
+}
+
+.viewerToolbarSep {
   width: 1px;
   height: 16px;
   background: var(--color-fg-muted);

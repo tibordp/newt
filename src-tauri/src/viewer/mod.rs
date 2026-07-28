@@ -259,6 +259,34 @@ fn has_edit_menu(mode: ViewerMode) -> bool {
     matches!(mode, ViewerMode::Text | ViewerMode::Hex)
 }
 
+/// Edit submenu for modes without a custom one. macOS needs predefined items
+/// so Cmd+C/V/X/A route to the webview as native events (see
+/// `main_window::menu`) — the image viewer's info panel relies on this for
+/// text copy. Other platforms handle these keys in the webview without menu
+/// involvement.
+fn native_edit_submenu(app_handle: &tauri::AppHandle) -> Result<Option<Submenu<Wry>>, Error> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::PredefinedMenuItem;
+        Ok(Some(Submenu::with_items(
+            app_handle,
+            "Edit",
+            true,
+            &[
+                &PredefinedMenuItem::cut(app_handle, None)?,
+                &PredefinedMenuItem::copy(app_handle, None)?,
+                &PredefinedMenuItem::paste(app_handle, None)?,
+                &PredefinedMenuItem::select_all(app_handle, None)?,
+            ],
+        )?))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app_handle;
+        Ok(None)
+    }
+}
+
 fn build_menu(
     app_handle: &tauri::AppHandle,
     prefix: &str,
@@ -335,7 +363,7 @@ fn build_menu(
             &[&copy_item, &select_all_item, &edit_sep, &goto_item],
         )?)
     } else {
-        None
+        native_edit_submenu(app_handle)?
     };
 
     // The menubar's first submenu is the application menu; give it a Quit
@@ -451,6 +479,151 @@ pub async fn copy_viewer_range(
 
     ctx.clipboard().set_text(text)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct ExifRow {
+    pub label: String,
+    pub value: String,
+}
+
+fn gps_coord(exif: &exif::Exif, tag: exif::Tag, ref_tag: exif::Tag) -> Option<f64> {
+    let field = exif.get_field(tag, exif::In::PRIMARY)?;
+    let exif::Value::Rational(parts) = &field.value else {
+        return None;
+    };
+    if parts.len() < 3 {
+        return None;
+    }
+    let dd = parts[0].to_f64() + parts[1].to_f64() / 60.0 + parts[2].to_f64() / 3600.0;
+    let negative = matches!(
+        exif.get_field(ref_tag, exif::In::PRIMARY).map(|f| &f.value),
+        Some(exif::Value::Ascii(v)) if v.first().and_then(|s| s.first()) == Some(&b'S')
+            || v.first().and_then(|s| s.first()) == Some(&b'W')
+    );
+    Some(if negative { -dd } else { dd })
+}
+
+/// Tag's display value with units, ASCII quoting stripped. `None` when the
+/// tag is absent or displays empty.
+fn tag_display(exif: &exif::Exif, tag: exif::Tag) -> Option<String> {
+    let field = exif.get_field(tag, exif::In::PRIMARY)?;
+    let value = field.display_value().with_unit(exif).to_string();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(&value)
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn exif_rows(exif: &exif::Exif) -> Vec<ExifRow> {
+    use exif::Tag;
+
+    let mut rows: Vec<ExifRow> = Vec::new();
+    let mut push = |label: &str, value: Option<String>| {
+        if let Some(value) = value {
+            rows.push(ExifRow {
+                label: label.to_string(),
+                value,
+            });
+        }
+    };
+
+    // Make is usually redundant with the model name ("OnePlus" / "OnePlus 13")
+    let make = tag_display(exif, Tag::Make);
+    let model = tag_display(exif, Tag::Model);
+    let camera = match (make, model) {
+        (Some(make), Some(model)) => {
+            if model.to_lowercase().starts_with(&make.to_lowercase()) {
+                Some(model)
+            } else {
+                Some(format!("{} {}", make, model))
+            }
+        }
+        (make, model) => make.or(model),
+    };
+    push("Camera", camera);
+    push("Lens", tag_display(exif, Tag::LensModel));
+    push("Taken", tag_display(exif, Tag::DateTimeOriginal));
+
+    let exposure_parts: Vec<String> = [
+        tag_display(exif, Tag::ExposureTime),
+        tag_display(exif, Tag::FNumber),
+        tag_display(exif, Tag::PhotographicSensitivity).map(|v| format!("ISO {}", v)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    push(
+        "Exposure",
+        (!exposure_parts.is_empty()).then(|| exposure_parts.join(" · ")),
+    );
+
+    let focal = match (
+        tag_display(exif, Tag::FocalLength),
+        tag_display(exif, Tag::FocalLengthIn35mmFilm),
+    ) {
+        (Some(fl), Some(fl35)) => Some(format!("{} ({} equiv.)", fl, fl35)),
+        (fl, fl35) => fl.or(fl35),
+    };
+    push("Focal length", focal);
+
+    // "0 EV" is noise, show bias only when set
+    let bias = exif
+        .get_field(Tag::ExposureBiasValue, exif::In::PRIMARY)
+        .and_then(|f| match &f.value {
+            exif::Value::SRational(v) => v.first().map(|r| r.to_f64()),
+            _ => None,
+        });
+    if bias.is_some_and(|b| b != 0.0) {
+        push("Exposure bias", tag_display(exif, Tag::ExposureBiasValue));
+    }
+
+    // The full Flash display enumerates return-light detection and
+    // suppression; the part before the first comma is the fired state
+    let flash = tag_display(exif, Tag::Flash).map(|v| {
+        let mut s = v.split(',').next().unwrap_or(&v).trim().to_string();
+        if let Some(first) = s.get(0..1) {
+            let upper = first.to_uppercase();
+            s.replace_range(0..1, &upper);
+        }
+        s
+    });
+    push("Flash", flash);
+
+    push("Software", tag_display(exif, Tag::Software));
+    push("Artist", tag_display(exif, Tag::Artist));
+    push("Copyright", tag_display(exif, Tag::Copyright));
+
+    let location = match (
+        gps_coord(exif, Tag::GPSLatitude, Tag::GPSLatitudeRef),
+        gps_coord(exif, Tag::GPSLongitude, Tag::GPSLongitudeRef),
+    ) {
+        (Some(lat), Some(lon)) => Some(format!("{:.6}, {:.6}", lat, lon)),
+        _ => None,
+    };
+    push("Location", location);
+
+    rows
+}
+
+/// EXIF summary for the image viewer's info panel. Reads a bounded prefix of
+/// the file — EXIF sits near the start of every container we care about;
+/// files whose metadata lies deeper simply report none, as do files without
+/// EXIF at all.
+#[tauri::command]
+#[specta::specta]
+pub async fn image_exif(ctx: MainWindowContext, path: VfsPath) -> Result<Vec<ExifRow>, Error> {
+    const MAX_EXIF_PREFIX: u64 = 4 * 1024 * 1024;
+
+    let buf = ctx.fs()?.read_range(path, 0, MAX_EXIF_PREFIX).await?.data;
+
+    Ok(exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(&buf))
+        .map(|exif| exif_rows(&exif))
+        .unwrap_or_default())
 }
 
 #[tauri::command]

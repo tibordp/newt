@@ -30,6 +30,28 @@ pub struct AppPreferences {
     #[serde(default)]
     #[schemars(title = "Editor")]
     pub editor: EditorPreferences,
+    #[serde(default)]
+    #[schemars(title = "Viewer")]
+    pub viewer: ViewerPreferences,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct ViewerPreferences {
+    /// Backdrop behind images in the viewer's image mode.
+    #[schemars(title = "Image Background")]
+    pub image_background: ImageBackground,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageBackground {
+    Dark,
+    #[default]
+    Checkerboard,
+    Light,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -419,6 +441,12 @@ pub struct SettingsFile {
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
     pub environment: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
+    pub editor: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
+    pub viewer: toml::Value,
 
     /// Keybinding override entries.
     #[serde(default, rename = "bind")]
@@ -439,7 +467,7 @@ impl SettingsFile {
     /// defaults, modified-key detection) — a new `AppPreferences` group
     /// must be added here (and as a field above) or its TOML section is
     /// silently ignored on load.
-    pub fn sections(&self) -> [(&'static str, &toml::Value); 6] {
+    pub fn sections(&self) -> [(&'static str, &toml::Value); 8] {
         [
             ("appearance", &self.appearance),
             ("behavior", &self.behavior),
@@ -447,6 +475,8 @@ impl SettingsFile {
             ("archives", &self.archives),
             ("hot_paths", &self.hot_paths),
             ("environment", &self.environment),
+            ("editor", &self.editor),
+            ("viewer", &self.viewer),
         ]
     }
 }
@@ -461,6 +491,8 @@ impl Default for SettingsFile {
             archives: default_toml_table(),
             hot_paths: default_toml_table(),
             environment: default_toml_table(),
+            editor: default_toml_table(),
+            viewer: default_toml_table(),
             bindings: Vec::new(),
             bookmarks: Vec::new(),
             commands: Vec::new(),

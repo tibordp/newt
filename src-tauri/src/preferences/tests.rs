@@ -204,6 +204,21 @@ fn merge_preferences_wrong_type_falls_back() {
 }
 
 #[test]
+fn settings_file_sections_cover_all_preference_groups() {
+    // A group absent from SettingsFile/sections() is silently ignored on load.
+    let table = toml::Value::try_from(AppPreferences::default()).unwrap();
+    let file = SettingsFile::default();
+    let section_names: Vec<&str> = file.sections().iter().map(|(n, _)| *n).collect();
+    for key in table.as_table().unwrap().keys() {
+        assert!(
+            section_names.contains(&key.as_str()),
+            "AppPreferences group `{}` is not wired into SettingsFile::sections()",
+            key
+        );
+    }
+}
+
+#[test]
 fn merge_preferences_cascading_user_then_profile() {
     let defaults = AppPreferences::default();
 
@@ -602,6 +617,12 @@ mounts = false
 
 [environment]
 extra_path = ["/opt/custom/bin"]
+
+[editor]
+word_wrap = true
+
+[viewer]
+image_background = "checkerboard"
 "#,
     )
     .unwrap();
@@ -613,6 +634,11 @@ extra_path = ["/opt/custom/bin"]
     assert_eq!(merged.archives.zstd_level, 9);
     assert!(!merged.hot_paths.mounts);
     assert_eq!(merged.environment.extra_path, vec!["/opt/custom/bin"]);
+    assert!(merged.editor.word_wrap);
+    assert_eq!(
+        merged.viewer.image_background,
+        ImageBackground::Checkerboard
+    );
 
     // Unset keys keep their defaults.
     assert_eq!(merged.behavior.history_retention, 200);

@@ -50,6 +50,13 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 
 - Drag-out for non-host-local sources (S3/SFTP/remote sessions) needs materialization: either download-to-tempdir before the native drag starts (reuse the `download_and_open` pattern), or per-platform file-promise APIs (NSFilePromiseProvider / CFSTR_FILEDESCRIPTOR / XDS) — no cross-platform crate wraps those today.
 
+## Image viewer follow-ups
+
+- Prev/next file navigation from the viewer window. Needs a generic design that works for every viewer mode (ask the session for the pane-order neighbor of the same class and re-target the window), not an image-only hack.
+- Decode-in-Rust fallback for formats the webview can't render (TIFF on Windows, HEIC off macOS, RAW via embedded-preview extraction). Big surface — deliberately deferred.
+- SVG in image mode is degenerate (no natural size → transform-based zoom rasterizes blurry); a vector-aware path would size the `<img>` element instead of transforming it.
+- Downscale quality: composited CSS transforms sample bilinearly with no mip chain on both WebKit and WebView2. If real-world images shimmer at fit zoom, swap in a pre-downscaled rendition below 100% (static images only).
+
 ## Archive unpacking
 
 A dedicated extract operation with conflict handling, not a VFS — today unpacking means copying out of a mounted archive VFS.

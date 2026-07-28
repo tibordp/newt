@@ -659,14 +659,20 @@ The `+` after the line count indicates the file is still loading. Selection info
 
 ### Image Mode
 
-- Displays the image centered, initially fit to the window (aspect ratio preserved).
-- **Zoom**: Mouse wheel zooms in/out, centered on the cursor position. Factor: ×1.11 per wheel tick. Min zoom = fit-to-window (or 100% if image is smaller). Max zoom = 50×.
-- **Pan**: Left-click or middle-click drag to pan when zoomed in. Pan is clamped to keep the image visible (no empty edges).
-- **Reset**: Press `0` (zero) to reset to fit-to-window.
-- **Escape**: Close viewer.
+- Displays the image centered, initially fit to the window (aspect ratio preserved). Zoom percentages are HiDPI-aware: 100% means one image pixel per physical display pixel (`devicePixelRatio` is tracked live, so moving the window between monitors keeps the indicator and limits correct). Nearest-neighbor (`image-rendering: pixelated`) kicks in only above 100%; at or below, the image is smoothly resampled.
+- **Toolbar**: zoom out / zoom-percent preset dropdown (Fit, 25–800%) / zoom in, Fit, 1:1, rotate CCW/CW, flip H/V (toggle state shown), background cycle, info panel toggle. Tooltips carry the keyboard shortcuts.
+- **Zoom**: Mouse wheel (×1.11 per tick) and macOS trackpad pinch zoom centered on the cursor; `+`/`-` (×1.25 per press) zoom centered on the window. Min zoom = fit-to-window (or 100% if image is smaller). Max zoom = 50×. `0` resets to fit, `1` goes to actual size (100%), double-click toggles fit ↔ 100% around the clicked point.
+- **Selection**: Plain left-drag draws a marching-ants selection rectangle, snapped to integer image pixels (in display orientation — rotation/flips are baked into what's selected). Mod+C copies the selection to the clipboard as PNG (no selection: copies the whole image, transforms applied); Mod+A selects all, Escape or a plain click clears (Escape only closes the viewer once there's no selection). Rotating or flipping clears the selection. Copying renders through an offscreen canvas (`crossOrigin=anonymous`; the file server serves `Access-Control-Allow-Origin: *`) and writes via `navigator.clipboard` — the `ClipboardItem` is constructed synchronously inside the gesture, as WebKit requires.
+- **Pan**: Middle-click drag or Shift/Alt+left drag, or arrow keys. Pan is clamped to keep the image visible (no empty edges). Cursor is crosshair (selection is the default drag), grabbing while panning.
+- **Rotate/flip** (view-only, never touches the file): `r` rotates 90° clockwise, `Shift+R` counter-clockwise, `h`/`v` flip horizontally/vertically. Rotating while fitted re-fits to the new orientation; the status bar shows the active rotation/flips.
+- **Background**: `b` cycles the backdrop — transparency checkerboard (default, theme-aware via the `--color-checker-*` tokens), dark gray, light gray. Persisted as the `viewer.image_background` preference (app-wide, like all preferences).
+- **Info panel**: `i` (or toolbar/context menu) toggles a right-side panel with dimensions, megapixels, MIME type, file size, and a curated EXIF summary (camera make/model merged, exposure-time · aperture · ISO on one row, focal length with 35mm equivalent, flash fired-state only, zero exposure bias omitted, GPS as decimal coordinates). EXIF is parsed backend-side (`kamadak-exif`) from a bounded 4 MiB prefix read over the VFS read path, so it works on S3/archives/remote without downloading the file; files with no (or late-offset) EXIF show "No EXIF metadata". Values (not labels) are selectable for copy-out; a Mod+C with an active text selection copies the text, not the image. On macOS, non-text/hex viewer modes carry the predefined Edit menu items so clipboard keys route into the webview at all (same trap as `main_window::menu`).
+- **Context menu**: Copy Selection/Copy Image, Fit/Actual Size, rotate/flip, background radio submenu, info panel toggle — same Radix menu styling as the main window, with shortcut hints.
+- **Live Text**: the `<img>` carries `pointer-events: none` so macOS WebKit's VisionKit overlay (Live Text OCR / "Look Up" data detectors) never activates; all interaction is handled by the container.
+- **Escape**: Close viewer (when no selection is active).
 - **Cached image handling**: Correctly detects already-cached images (`img.complete`) to avoid missed load events.
 
-**Status bar**: `path/to/image.png | Image | 1920×1080 | 150% | 2.4 MB`
+**Status bar**: `path/to/image.png | Image | 1920×1080 | 150% | 90° flip H | Sel: 640 × 480 | 2.4 MB`
 
 **Error handling**: Shows "Unable to display image preview" if the image fails to load.
 
@@ -1469,6 +1475,9 @@ recent_folders = true       # Show recently visited directories
 [editor]
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
+[viewer]
+image_background = "checkerboard" # Backdrop behind images: "checkerboard", "dark", "light"
+
 [[bookmark]]
 path = "/home/user/projects"
 name = "My Projects"        # Optional
@@ -1822,7 +1831,16 @@ Note: Refresh (Mod+R) is unbound by default to avoid conflict with Quick Connect
 | Ctrl+F | Search | Text, Hex |
 | Ctrl+G | Go to Line / Go to Offset | Text, Hex |
 | F3 | Toggle mode (auto ↔ hex) | All |
+| Mod+C | Copy selection (or whole image) as PNG | Image |
+| Mod+A | Select entire image | Image |
 | 0 | Reset zoom to fit | Image |
+| 1 | Actual size (100%) | Image |
+| +/- | Zoom in/out | Image |
+| Arrows | Pan | Image |
+| r / Shift+R | Rotate 90° CW / CCW | Image |
+| h / v | Flip horizontal / vertical | Image |
+| b | Cycle background (dark / checker / light) | Image |
+| i | Toggle info panel (EXIF) | Image |
 | Ctrl+= | Zoom in | PDF |
 | Ctrl+- | Zoom out | PDF |
 | Ctrl+0 | Reset zoom | PDF |
