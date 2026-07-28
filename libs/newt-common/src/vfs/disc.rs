@@ -169,10 +169,6 @@ impl VfsDescriptor for DiscVfsDescriptor {
 static DISC_VFS_DESCRIPTOR: DiscVfsDescriptor = DiscVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&DISC_VFS_DESCRIPTOR));
 
-#[cfg(test)]
-#[path = "disc_tests.rs"]
-mod disc_tests;
-
 // ---------------------------------------------------------------------------
 // Block cache
 // ---------------------------------------------------------------------------
@@ -763,3 +759,7 @@ impl ChunkDriver for ExtentDriver {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "disc_tests.rs"]
+mod tests;

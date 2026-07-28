@@ -591,3 +591,44 @@ mod tests {
         assert_eq!(b.strip_prefix(&a), None);
     }
 }
+
+#[cfg(test)]
+mod vfs_path_tests {
+    use super::PathBuf;
+    use crate::vfs::{VfsId, VfsPath};
+
+    #[test]
+    fn vfs_path_display_root() {
+        let p = VfsPath::from_wire_str(VfsId::ROOT, "/home/user");
+        assert_eq!(format!("{}", p), "/home/user");
+    }
+
+    #[test]
+    fn vfs_path_display_non_root() {
+        let p = VfsPath::from_wire_str(VfsId(5), "/some/path");
+        assert_eq!(format!("{}", p), "vfs://5:/some/path");
+    }
+
+    #[test]
+    fn vfs_path_join() {
+        let p = VfsPath::from_wire_str(VfsId::ROOT, "/home");
+        let joined = p.join("user");
+        assert_eq!(joined.path, PathBuf::from_wire_str("/home/user"));
+        assert_eq!(joined.vfs_id, VfsId::ROOT);
+    }
+
+    #[test]
+    fn vfs_path_parent() {
+        let p = VfsPath::from_wire_str(VfsId::ROOT, "/home/user");
+        let parent = p.parent().unwrap();
+        assert_eq!(parent.path, PathBuf::from_wire_str("/home"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // VfsRegistry
+    // ---------------------------------------------------------------------------
+
+    // VfsRegistry tests require a mock Vfs. Since we can't easily construct one
+    // without the full test_support infrastructure, we test the simpler logic:
+    // mount/unmount/get.
+}

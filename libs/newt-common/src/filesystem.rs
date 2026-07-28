@@ -8,11 +8,10 @@ use futures::Stream;
 use tokio::sync::mpsc;
 
 use crate::Error;
+use crate::find::{SearchMatch, SearchPattern};
 use crate::rpc::Communicator;
 use crate::vfs::properties::PropertySheet;
-use crate::vfs::{
-    FileChunk, FileDetails, FileList, FsStats, SearchMatch, SearchPattern, VfsPath, VfsRandomReader,
-};
+use crate::vfs::{FileChunk, FileDetails, FileList, FsStats, VfsPath, VfsRandomReader};
 
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;

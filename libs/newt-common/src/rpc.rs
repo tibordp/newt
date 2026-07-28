@@ -138,10 +138,6 @@ pub fn create_outbox() -> (Outbox, OutboxReceiver) {
     )
 }
 
-#[cfg(test)]
-#[path = "rpc_tests.rs"]
-mod tests;
-
 struct MessageCodec {}
 
 impl tokio_util::codec::Decoder for MessageCodec {
@@ -609,3 +605,7 @@ impl Communicator {
         self.0.outbox.closed().await
     }
 }
+
+#[cfg(test)]
+#[path = "rpc_tests.rs"]
+mod tests;

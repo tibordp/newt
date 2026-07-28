@@ -448,5 +448,4 @@ impl EnricherClient for Remote {
 }
 
 #[cfg(test)]
-#[path = "enrich_tests.rs"]
 mod tests;

@@ -98,3 +98,43 @@ fn detect_compression_from_name(name: &str) -> iluvatar::CompressionFormat {
         iluvatar::CompressionFormat::None
     }
 }
+
+#[cfg(test)]
+mod name_tests {
+    use super::{is_archive_name, is_zip_name};
+
+    #[test]
+    fn is_archive_name_tar_variants() {
+        assert!(is_archive_name("file.tar"));
+        assert!(is_archive_name("file.tar.gz"));
+        assert!(is_archive_name("file.tgz"));
+        assert!(is_archive_name("file.tar.bz2"));
+        assert!(is_archive_name("file.tar.xz"));
+        assert!(is_archive_name("file.tar.zst"));
+    }
+
+    #[test]
+    fn is_archive_name_zip_variants() {
+        assert!(is_zip_name("file.zip"));
+        assert!(is_zip_name("app.jar"));
+        assert!(is_zip_name("deploy.war"));
+        assert!(is_zip_name("app.apk"));
+    }
+
+    #[test]
+    fn is_archive_name_case_insensitive() {
+        assert!(is_archive_name("FILE.TAR.GZ"));
+        assert!(is_zip_name("FILE.ZIP"));
+    }
+
+    #[test]
+    fn is_archive_name_non_archive() {
+        assert!(!is_archive_name("file.txt"));
+        assert!(!is_archive_name("file.rs"));
+        assert!(!is_archive_name("tarfile"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // VfsPath
+    // ---------------------------------------------------------------------------
+}

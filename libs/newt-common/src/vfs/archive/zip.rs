@@ -145,10 +145,6 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
 static ZIP_ARCHIVE_VFS_DESCRIPTOR: ZipArchiveVfsDescriptor = ZipArchiveVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&ZIP_ARCHIVE_VFS_DESCRIPTOR));
 
-#[cfg(test)]
-#[path = "zip_tests.rs"]
-mod zip_tests;
-
 // ---------------------------------------------------------------------------
 // ZipArchiveVfs
 // ---------------------------------------------------------------------------
@@ -808,3 +804,7 @@ impl ChunkDriver for ZipDriver {
         self.reader.take_output(usize::MAX)
     }
 }
+
+#[cfg(test)]
+#[path = "zip_tests.rs"]
+mod tests;

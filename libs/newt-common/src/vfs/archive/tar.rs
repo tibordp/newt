@@ -130,10 +130,6 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
 static TAR_ARCHIVE_VFS_DESCRIPTOR: TarArchiveVfsDescriptor = TarArchiveVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&TAR_ARCHIVE_VFS_DESCRIPTOR));
 
-#[cfg(test)]
-#[path = "tar_tests.rs"]
-mod tar_tests;
-
 /// Bounded buffering between the iluvatar drive task and the AsyncRead consumer.
 /// Each slot holds one decompressed chunk (≤64 KiB).
 const STREAM_CHANNEL_CAPACITY: usize = 4;
@@ -865,3 +861,7 @@ impl AsyncRead for TarStreamingReader {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tar_tests.rs"]
+mod tests;

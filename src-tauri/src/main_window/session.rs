@@ -540,9 +540,9 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         offset: u64,
-        pattern: newt_common::vfs::SearchPattern,
+        pattern: newt_common::find::SearchPattern,
         max_length: u64,
-    ) -> Result<Option<newt_common::vfs::SearchMatch>, newt_common::Error> {
+    ) -> Result<Option<newt_common::find::SearchMatch>, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .find_in_file(

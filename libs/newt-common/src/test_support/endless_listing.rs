@@ -100,9 +100,9 @@ impl Filesystem for EndlessListing {
         &self,
         _path: VfsPath,
         _offset: u64,
-        _pattern: crate::vfs::SearchPattern,
+        _pattern: crate::find::SearchPattern,
         _max_length: u64,
-    ) -> Result<Option<crate::vfs::SearchMatch>, Error> {
+    ) -> Result<Option<crate::find::SearchMatch>, Error> {
         Err(Error::not_supported())
     }
 }

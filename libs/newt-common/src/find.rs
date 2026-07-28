@@ -1,6 +1,6 @@
 //! In-file content search: the `SearchPattern`/`SearchMatch` wire types
-//! for the `find_in_file` verb, and the chunked literal/regex byte scanner
-//! that serves it.
+//! for the `find_in_file` verb (on both the `Vfs` and `Filesystem`
+//! surfaces), and the chunked literal/regex byte scanner that serves it.
 
 use crate::Error;
 

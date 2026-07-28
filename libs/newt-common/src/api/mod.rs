@@ -368,7 +368,7 @@ impl Dispatcher for FilesystemDispatcher {
                 let (path, offset, pattern, max_length): (
                     VfsPath,
                     u64,
-                    crate::vfs::SearchPattern,
+                    crate::find::SearchPattern,
                     u64,
                 ) = decode(&req[..])?;
                 let ret = self

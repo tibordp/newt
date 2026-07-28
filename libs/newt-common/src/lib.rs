@@ -6,6 +6,7 @@ pub mod discovery;
 pub mod enrich;
 pub mod error;
 pub mod filesystem;
+pub mod find;
 pub mod hot_paths;
 pub mod locale;
 pub mod operation;

@@ -1,5 +1,5 @@
+use newt_common::find::{SearchMatch, SearchPattern};
 use newt_common::vfs::VfsPath;
-use newt_common::vfs::{SearchMatch, SearchPattern};
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;

@@ -4,7 +4,6 @@ pub mod background_job;
 pub mod change_notifier;
 pub mod disc;
 pub mod file;
-pub mod find;
 pub mod local;
 pub mod mount;
 pub mod native;
@@ -15,16 +14,11 @@ mod pipelined_read;
 pub mod progress;
 pub mod properties;
 pub mod registry;
-pub mod registry_fs;
 pub mod remote;
 pub mod s3;
 pub mod search;
 pub mod sftp;
 pub mod volume;
-
-#[cfg(test)]
-#[path = "../vfs_tests.rs"]
-mod tests;
 
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
@@ -32,7 +26,6 @@ pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, Res
 pub use change_notifier::VfsChangeNotifier;
 pub use disc::{DiscVfs, is_disc_image_name};
 pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, ToUnix, UserGroup};
-pub use find::{SearchMatch, SearchPattern};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use mount::{
     MountContext, MountRequest, MountResponse, MountedVfsInfo, SftpAskpass, VfsManager,
@@ -50,8 +43,9 @@ pub use properties::{
     PropertyField, PropertyFieldValue, PropertyGrant, PropertyGrantee, PropertyGroup,
     PropertyPatch, PropertyPatchOp, PropertySheet, PropertyValuePatch, fold_sheets,
 };
-pub use registry::{RegisteredDescriptor, VfsRegistry, all_descriptors, lookup_descriptor};
-pub use registry_fs::VfsRegistryFs;
+pub use registry::{
+    RegisteredDescriptor, VfsRegistry, VfsRegistryFs, all_descriptors, lookup_descriptor,
+};
 pub use remote::{REMOTE_VFS_DESCRIPTOR, RemoteVfs, RemoteVfsDescriptor};
 pub use s3::{S3Credentials, S3Vfs, S3VfsDescriptor};
 pub use search::{SEARCH_VFS_DESCRIPTOR, SearchParams, SearchVfs, SearchVfsDescriptor};

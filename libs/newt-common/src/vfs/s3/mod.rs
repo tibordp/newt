@@ -653,6 +653,9 @@ impl S3Vfs {
 
 mod properties;
 
+#[cfg(test)]
+mod tests;
+
 #[async_trait::async_trait]
 impl Vfs for S3Vfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {

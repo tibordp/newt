@@ -637,5 +637,4 @@ async fn cancellable<T>(
 }
 
 #[cfg(test)]
-#[path = "../operation_tests.rs"]
 mod tests;
