@@ -221,36 +221,59 @@ fn utf16_field(buf: &[u16]) -> Option<String> {
 // Linux probe
 // ---------------------------------------------------------------------------
 
+/// One decoded line of `/proc/self/mountinfo`. Format (space-separated):
+/// `id parent_id major:minor root mount_point options … - fs_type source
+/// super_options`, with octal escapes in the path fields.
+#[cfg(target_os = "linux")]
+pub(crate) struct MountInfoEntry {
+    pub(crate) mount_point: String,
+    pub(crate) fs_type: String,
+    pub(crate) source: String,
+}
+
+/// The process's mount table, decoded. Empty when `/proc` is unavailable.
+#[cfg(target_os = "linux")]
+pub(crate) fn read_mountinfo() -> Vec<MountInfoEntry> {
+    let Ok(content) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let sep = fields.iter().position(|&f| f == "-")?;
+            if fields.len() < 5 || fields.len() < sep + 3 {
+                return None;
+            }
+            Some(MountInfoEntry {
+                mount_point: unescape_mountinfo(fields[4]),
+                fs_type: fields[sep + 1].to_string(),
+                source: unescape_mountinfo(fields[sep + 2]),
+            })
+        })
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
-    let content = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
-
     // Longest mount point that is a prefix of `path` = the containing mount.
-    let mut best: Option<(String, String, String)> = None; // (mount_point, fs_type, source)
-    for line in content.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        let Some(sep) = fields.iter().position(|&f| f == "-") else {
-            continue;
-        };
-        if fields.len() < 5 || fields.len() < sep + 3 {
-            continue;
-        }
-        let mount_point = unescape_mountinfo(fields[4]);
-        if !path.starts_with(std::path::Path::new(&mount_point)) {
+    let mut best: Option<MountInfoEntry> = None;
+    for entry in read_mountinfo() {
+        if !path.starts_with(std::path::Path::new(&entry.mount_point)) {
             continue;
         }
         if best
             .as_ref()
-            .is_none_or(|(mp, _, _)| mount_point.len() >= mp.len())
+            .is_none_or(|b| entry.mount_point.len() >= b.mount_point.len())
         {
-            best = Some((
-                mount_point,
-                fields[sep + 1].to_string(),
-                unescape_mountinfo(fields[sep + 2]),
-            ));
+            best = Some(entry);
         }
     }
-    let (mount_point, fs_type, source) = best?;
+    let MountInfoEntry {
+        mount_point,
+        fs_type,
+        source,
+    } = best?;
 
     const NETWORK_FS: &[&str] = &[
         "cifs",
@@ -354,7 +377,7 @@ fn unescape_udev(s: &str) -> String {
 
 /// Unescape octal escapes in mountinfo fields (e.g. `\040` → space).
 #[cfg(target_os = "linux")]
-pub(crate) fn unescape_mountinfo(s: &str) -> String {
+fn unescape_mountinfo(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {

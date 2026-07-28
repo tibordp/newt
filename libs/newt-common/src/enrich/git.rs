@@ -23,8 +23,7 @@ use super::{
     GitEntryStatus, RegisteredEnricher,
 };
 use crate::Error;
-use crate::proc::NoConsoleWindow;
-use crate::shell::resolve_program;
+use crate::shell::{resolve_program, run_capture};
 use crate::vfs::{VfsDescriptor, VfsPath, VfsRegistry, native::to_native};
 
 pub struct GitEnricherDescriptor;
@@ -129,17 +128,11 @@ impl Enricher for GitEnricher {
             .stderr(Stdio::piped())
             // Cancellation is by drop — take git down with the future.
             .kill_on_drop(true);
-        let out = cmd.no_console_window().output().await?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            return Err(Error::custom(format!(
-                "git status exited with {:?}: {}",
-                out.status.code(),
-                stderr
-            )));
-        }
+        let stdout = run_capture(&mut cmd, None)
+            .await
+            .map_err(|e| Error::custom(format!("git status: {e}")))?;
 
-        let status = parse_porcelain_v2(&out.stdout);
+        let status = parse_porcelain_v2(&stdout);
 
         for (entry, entry_status) in dir_statuses(&status.entries, &prefix) {
             sink.emit_entry(entry, Annotation::Git(entry_status));

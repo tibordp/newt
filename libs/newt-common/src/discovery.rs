@@ -14,8 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::Error;
-use crate::proc::NoConsoleWindow;
-use crate::shell::resolve_program;
+use crate::shell::{resolve_program, run_capture};
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -91,23 +90,6 @@ impl Local {
     pub fn new(extra_path: Vec<String>) -> Self {
         Self { extra_path }
     }
-}
-
-async fn run_capture(cmd: &mut Command) -> Result<Vec<u8>, String> {
-    let fut = cmd.no_console_window().output();
-    let out = tokio::time::timeout(DISCOVERY_TIMEOUT, fut)
-        .await
-        .map_err(|_| "timed out".to_string())?
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            format!("exit {:?}", out.status.code())
-        } else {
-            stderr
-        });
-    }
-    Ok(out.stdout)
 }
 
 fn parse_ssh_config() -> DiscoveryResult<SshHostEntry> {
@@ -188,7 +170,7 @@ async fn discover_engine_containers(
     let resolved = resolve_program(program, extra_path);
     let mut cmd = Command::new(&resolved);
     cmd.args(["ps", "-a", "--no-trunc", "--format", "{{json .}}"]);
-    let out = match run_capture(&mut cmd).await {
+    let out = match run_capture(&mut cmd, Some(DISCOVERY_TIMEOUT)).await {
         Ok(o) => o,
         Err(e) => {
             log::info!("discovery: {} ps failed: {}", program, e);
@@ -284,7 +266,7 @@ impl DiscoveryProvider for Local {
         let resolved = resolve_program("kubectl", &self.extra_path);
         let mut cmd = Command::new(&resolved);
         cmd.args(["config", "get-contexts", "-o", "name"]);
-        let out = match run_capture(&mut cmd).await {
+        let out = match run_capture(&mut cmd, Some(DISCOVERY_TIMEOUT)).await {
             Ok(o) => o,
             Err(e) => return Ok(DiscoveryResult::warn(format!("kubectl: {}", e))),
         };
@@ -319,7 +301,7 @@ impl DiscoveryProvider for Local {
                 cmd.arg("--all-namespaces");
             }
         }
-        let out = match run_capture(&mut cmd).await {
+        let out = match run_capture(&mut cmd, Some(DISCOVERY_TIMEOUT)).await {
             Ok(o) => o,
             Err(e) => return Ok(DiscoveryResult::warn(format!("kubectl: {}", e))),
         };

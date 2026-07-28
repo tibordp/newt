@@ -188,13 +188,6 @@ fn collect_gtk_bookmarks(out: &mut Vec<HotPathEntry>) {
 
 #[cfg(target_os = "linux")]
 fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
-    use std::fs;
-
-    let content = match fs::read_to_string("/proc/self/mountinfo") {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
     let pseudo_fs_types = [
         "sysfs",
         "proc",
@@ -222,38 +215,21 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
         "nfsd",
     ];
 
-    for line in content.lines() {
-        // mountinfo format (space-separated):
-        // id parent_id major:minor root mount_point options ... - fs_type source super_options
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        let separator_pos = fields.iter().position(|&f| f == "-");
-        let separator_pos = match separator_pos {
-            Some(p) => p,
-            None => continue,
-        };
-
-        if fields.len() < separator_pos + 3 {
+    for mount in crate::vfs::volume::read_mountinfo() {
+        if pseudo_fs_types.contains(&mount.fs_type.as_str()) {
             continue;
         }
-
-        let mount_point = crate::vfs::volume::unescape_mountinfo(fields[4]);
-        let fs_type = fields[separator_pos + 1];
-
-        if pseudo_fs_types.contains(&fs_type) {
-            continue;
-        }
-
-        let mount_path = std::path::PathBuf::from(&mount_point);
 
         // Only include mounts under /media, /run/media, or /mnt
-        let dominated = mount_point.starts_with("/media/")
-            || mount_point.starts_with("/run/media/")
-            || mount_point.starts_with("/mnt/");
+        let dominated = mount.mount_point.starts_with("/media/")
+            || mount.mount_point.starts_with("/run/media/")
+            || mount.mount_point.starts_with("/mnt/");
 
         if !dominated {
             continue;
         }
 
+        let mount_path = std::path::PathBuf::from(&mount.mount_point);
         if mount_path.exists() {
             let name = mount_path
                 .file_name()

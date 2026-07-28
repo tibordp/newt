@@ -19,6 +19,7 @@
 //!   shell's filesystem, remoted over RPC in remote sessions.
 
 use crate::Error;
+use crate::proc::NoConsoleWindow;
 use crate::rpc::Communicator;
 
 /// `~`/env expansion of a user-typed path on the shell's filesystem.
@@ -105,6 +106,35 @@ impl ShellService for ShellRemote {
             .await?;
         Ok(ret?)
     }
+}
+
+/// Run a prepared command to completion and capture stdout. On failure the
+/// error string is the trimmed stderr, or the exit code when stderr is
+/// empty. `timeout` bounds the whole run — pass it when probing external
+/// tools that may hang; `None` for commands that legitimately run long
+/// (e.g. `git status` on a large repo). The caller keeps ownership of
+/// process configuration (`kill_on_drop`, stdin, …).
+pub async fn run_capture(
+    cmd: &mut tokio::process::Command,
+    timeout: Option<std::time::Duration>,
+) -> Result<Vec<u8>, String> {
+    let fut = cmd.no_console_window().output();
+    let out = match timeout {
+        Some(t) => tokio::time::timeout(t, fut)
+            .await
+            .map_err(|_| "timed out".to_string())?,
+        None => fut.await,
+    }
+    .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("exit {:?}", out.status.code())
+        } else {
+            stderr
+        });
+    }
+    Ok(out.stdout)
 }
 
 /// Program + arguments that run `command` through the platform command
