@@ -10,13 +10,8 @@
 //! the block cache and the directory cache never invalidate.
 
 use std::collections::{HashMap, VecDeque};
-use std::future::Future;
-use std::io::Read;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use tokio::io::AsyncRead;
 use tokio::sync::{Mutex, OnceCell};
 
 use newt_disc::{Chunk, DiscError, DiscFs, Entry, EntryData, EntryKind, ExtentKind, ProbeOp, Step};
@@ -26,14 +21,13 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
+
 use super::origin::{
     build_origin_meta, origin_breadcrumbs, origin_format_path, origin_mount_label,
     origin_try_parse_display_path,
 };
-use super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath,
-    VfsRandomReader,
-};
+use super::{Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath};
 
 const DISC_EXTENSIONS: &[&str] = &["iso", "udf"];
 
@@ -704,128 +698,66 @@ impl Vfs for DiscVfs {
             EntryData::Inline(_) => None,
             EntryData::Extents(_) => Some(self.upstream.open_read_at(&self.image_path).await?),
         };
-        Ok(Box::new(ExtentReader::new(upstream, entry)))
+        Ok(Box::new(PipelinedReader::new(
+            ExtentDriver::new(entry),
+            upstream,
+            "disc image",
+        )))
     }
 }
 
 // ---------------------------------------------------------------------------
-// ExtentReader — AsyncRead over an entry's extents
+// ExtentDriver — sans-IO chunk driver over an entry's extents
 // ---------------------------------------------------------------------------
 
-type ChunkFuture = Pin<
-    Box<dyn Future<Output = (Option<Box<dyn VfsRandomReader>>, Result<Vec<u8>, Error>)> + Send>,
->;
-
-/// Streams a file out of the image with positioned reads on one held-open
-/// upstream handle, one `STREAM_CHUNK` at a time. The in-flight future owns
-/// the handle and hands it back with the result. Dropping the reader drops
-/// any in-flight read (and with it the handle) — cancellation propagates
-/// naturally.
-struct ExtentReader {
-    /// `None` for inline-only entries, and while a read is in flight.
-    upstream: Option<Box<dyn VfsRandomReader>>,
-    /// Remaining (image_offset, len, kind) pieces; inline data is
-    /// pre-buffered instead.
+/// [`ChunkDriver`] streaming a file out of the image, one `STREAM_CHUNK`
+/// at a time. Inline data is pre-buffered; sparse extents synthesize
+/// zeros without touching the upstream.
+struct ExtentDriver {
+    /// Remaining (image_offset, len, kind) pieces.
     pieces: VecDeque<(u64, u64, ExtentKind)>,
-    buf: std::io::Cursor<Vec<u8>>,
-    inflight: Option<ChunkFuture>,
+    inline: Option<Vec<u8>>,
 }
 
-impl ExtentReader {
-    fn new(upstream: Option<Box<dyn VfsRandomReader>>, entry: Entry) -> Self {
-        let (pieces, buf) = match entry.data {
+impl ExtentDriver {
+    fn new(entry: Entry) -> Self {
+        match entry.data {
             EntryData::Inline(mut data) => {
                 data.truncate(entry.size as usize);
-                (VecDeque::new(), data)
+                ExtentDriver {
+                    pieces: VecDeque::new(),
+                    inline: Some(data),
+                }
             }
-            EntryData::Extents(extents) => {
-                (slice_extents(&extents, 0, entry.size).into(), Vec::new())
-            }
-        };
-        ExtentReader {
-            upstream,
-            pieces,
-            buf: std::io::Cursor::new(buf),
-            inflight: None,
-        }
-    }
-
-    /// Pop up to `STREAM_CHUNK` bytes off the front of the piece queue and
-    /// start a read for them.
-    fn start_next(&mut self) -> Option<ChunkFuture> {
-        let (off, len, kind) = self.pieces.pop_front()?;
-        let take = len.min(STREAM_CHUNK);
-        if take < len {
-            self.pieces.push_front((off + take, len - take, kind));
-        }
-        match kind {
-            ExtentKind::Sparse => Some(Box::pin(
-                async move { (None, Ok(vec![0u8; take as usize])) },
-            )),
-            ExtentKind::Recorded => {
-                let mut handle = self
-                    .upstream
-                    .take()
-                    .expect("extent reader lost its upstream handle");
-                Some(Box::pin(async move {
-                    let result = match handle.read_at(off, take).await {
-                        Ok(data) if (data.len() as u64) < take => Err(Error::custom(
-                            "disc image truncated: extent read came up short",
-                        )),
-                        Ok(mut data) => {
-                            data.truncate(take as usize);
-                            Ok(data)
-                        }
-                        Err(e) => Err(e),
-                    };
-                    (Some(handle), result)
-                }))
-            }
+            EntryData::Extents(extents) => ExtentDriver {
+                pieces: slice_extents(&extents, 0, entry.size).into(),
+                inline: None,
+            },
         }
     }
 }
 
-impl AsyncRead for ExtentReader {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        out: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        loop {
-            // Drain the current buffer first.
-            let n = self
-                .buf
-                .read(out.initialize_unfilled())
-                .expect("cursor read");
-            if n > 0 {
-                out.advance(n);
-                return Poll::Ready(Ok(()));
-            }
-
-            let mut fut = match self.inflight.take() {
-                Some(fut) => fut,
-                None => match self.start_next() {
-                    Some(fut) => fut,
-                    None => return Poll::Ready(Ok(())), // EOF
-                },
-            };
-            match fut.as_mut().poll(cx) {
-                Poll::Pending => {
-                    self.inflight = Some(fut);
-                    return Poll::Pending;
+impl ChunkDriver for ExtentDriver {
+    fn step(&mut self, fetched: Option<(u64, Vec<u8>)>) -> Result<DriveStep, Error> {
+        if let Some((_, data)) = fetched {
+            return Ok(DriveStep::Output(data));
+        }
+        if let Some(data) = self.inline.take() {
+            return Ok(DriveStep::Output(data));
+        }
+        match self.pieces.pop_front() {
+            None => Ok(DriveStep::Done),
+            Some((off, len, kind)) => {
+                let take = len.min(STREAM_CHUNK);
+                if take < len {
+                    self.pieces.push_front((off + take, len - take, kind));
                 }
-                Poll::Ready((handle, result)) => {
-                    if let Some(handle) = handle {
-                        self.upstream = Some(handle);
-                    }
-                    match result {
-                        Ok(data) => {
-                            self.buf = std::io::Cursor::new(data);
-                        }
-                        Err(e) => {
-                            return Poll::Ready(Err(std::io::Error::other(e.to_string())));
-                        }
-                    }
+                match kind {
+                    ExtentKind::Sparse => Ok(DriveStep::Output(vec![0u8; take as usize])),
+                    ExtentKind::Recorded => Ok(DriveStep::Need {
+                        offset: off,
+                        len: take,
+                    }),
                 }
             }
         }

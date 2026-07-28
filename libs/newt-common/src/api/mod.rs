@@ -156,6 +156,70 @@ pub(super) fn try_encode<T: serde::Serialize>(value: &T) -> Option<Vec<u8>> {
     }
 }
 
+/// How a chunk stream ends when a read fails mid-stream.
+#[derive(Clone, Copy)]
+enum OnReadError {
+    /// Stop without the EOF sentinel — the error travels back on the
+    /// invoke response and the consumer tears the stream down from there.
+    Abort,
+    /// Send the sentinel anyway, ending the stream short — the consumer
+    /// detects the shortfall against the announced size.
+    Truncate,
+}
+
+/// Pump `reader` to the outbox as sequenced `(stream_id, seq, bytes)`
+/// notifications on `api`, ending with the empty EOF sentinel. The read
+/// error (if any) is returned either way; `on_read_error` picks the
+/// protocol for how the stream itself ends.
+async fn send_chunk_stream(
+    outbox: &Outbox,
+    api: Api,
+    stream_id: StreamId,
+    reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
+    on_read_error: OnReadError,
+) -> Result<(), Error> {
+    use tokio::io::AsyncReadExt;
+    let mut buf = vec![0u8; crate::vfs::VFS_READ_CHUNK_SIZE];
+    let mut seq: u64 = 0;
+    let mut read_error = None;
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                // serde_bytes for all chunk payloads: bincode's serde path
+                // walks Vec<u8> per byte (~30x slower than memcpy) and only
+                // `serialize_bytes` / `deserialize_byte_buf` hit its fast
+                // path. The wire format is identical.
+                let chunk = serde_bytes::Bytes::new(&buf[..n]);
+                if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
+                    outbox
+                        .send(Message::Notify(api, bytes.into()))
+                        .await
+                        .map_err(|_| Error::connection())?;
+                }
+                seq += 1;
+            }
+            Err(e) => match on_read_error {
+                OnReadError::Abort => return Err(e.into()),
+                OnReadError::Truncate => {
+                    read_error = Some(e.into());
+                    break;
+                }
+            },
+        }
+    }
+    if let Some(bytes) = try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[]))) {
+        outbox
+            .send(Message::Notify(api, bytes.into()))
+            .await
+            .map_err(|_| Error::connection())?;
+    }
+    match read_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 pub struct FilesystemDispatcher {
     filesystem: Box<dyn Filesystem>,
     outbox: Outbox,

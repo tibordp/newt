@@ -31,12 +31,12 @@ use super::{
     API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE, API_VFS_READ_CHUNK,
     API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
     API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
-    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, decode, encode, try_encode,
+    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, decode, encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
-use crate::rpc::{Api, Dispatcher, Message, Outbox};
-use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs};
+use crate::rpc::{Api, Dispatcher, Outbox};
+use crate::vfs::Vfs;
 
 struct WriteSession {
     tx: tokio::sync::mpsc::Sender<WriteCommand>,
@@ -125,38 +125,15 @@ impl Dispatcher for VfsDispatcher {
                 // Stream errors must land in `ret` — the encoded response is
                 // the only way the remote reader learns the stream failed.
                 let ret: Result<(), Error> = async {
-                    use tokio::io::AsyncReadExt;
                     let mut reader = self.vfs.open_read_async(&path).await?;
-                    let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-                    let mut seq: u64 = 0;
-                    loop {
-                        let n = reader.read(&mut buf).await.map_err(Error::from)?;
-                        if n == 0 {
-                            break;
-                        }
-                        // serde_bytes for all chunk payloads: bincode's
-                        // serde path walks Vec<u8> per byte (~30x slower
-                        // than memcpy) and only `serialize_bytes` /
-                        // `deserialize_byte_buf` hit its fast path. The
-                        // wire format is identical.
-                        let chunk = serde_bytes::Bytes::new(&buf[..n]);
-                        if let Some(bytes) = try_encode(&(stream_id, seq, chunk)) {
-                            outbox
-                                .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
-                                .await
-                                .map_err(|_| Error::connection())?;
-                        }
-                        seq += 1;
-                    }
-                    // Send empty sentinel to signal EOF.
-                    if let Some(bytes) = try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
-                    {
-                        outbox
-                            .send(Message::Notify(API_VFS_READ_CHUNK, bytes.into()))
-                            .await
-                            .map_err(|_| Error::connection())?;
-                    }
-                    Ok(())
+                    super::send_chunk_stream(
+                        &outbox,
+                        API_VFS_READ_CHUNK,
+                        stream_id,
+                        reader.as_mut(),
+                        super::OnReadError::Abort,
+                    )
+                    .await
                 }
                 .await;
 

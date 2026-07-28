@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Error;
 use crate::filesystem::StreamId;
-use crate::rpc::{Api, Dispatcher, Message, Outbox};
+use crate::rpc::{Api, Dispatcher, Outbox};
 
 use super::{
     API_HOST_AGENT_HASH, API_HOST_FETCH_AGENT, API_HOST_FETCH_AGENT_CANCEL,
-    API_HOST_FETCH_AGENT_CHUNK, decode, encode, try_encode,
+    API_HOST_FETCH_AGENT_CHUNK, decode, encode,
 };
 
 /// Response header for `API_HOST_FETCH_AGENT`. The bytes follow as
@@ -75,80 +75,44 @@ impl Dispatcher for AgentFetchDispatcher {
                     stream_id,
                     fetches: self.fetches.clone(),
                 };
-                let ret: Result<AgentFetchHeader, Error> = match self
-                    .resolver
-                    .open_agent_binary(&triple, accept_gzip)
-                    .await
-                {
-                    Ok(mut stream) => {
-                        let header = AgentFetchHeader {
-                            size: stream.size,
-                            raw_size: stream.raw_size,
-                            encoding: stream.encoding,
-                        };
-                        let outbox = self.outbox.clone();
-                        tokio::spawn(async move {
-                            let _registration = registration;
-                            use tokio::io::AsyncReadExt;
-                            let mut seq: u64 = 0;
-                            let mut buf = vec![0u8; crate::vfs::VFS_READ_CHUNK_SIZE];
-                            loop {
-                                let read = tokio::select! {
+                let ret: Result<AgentFetchHeader, Error> =
+                    match self.resolver.open_agent_binary(&triple, accept_gzip).await {
+                        Ok(mut stream) => {
+                            let header = AgentFetchHeader {
+                                size: stream.size,
+                                raw_size: stream.raw_size,
+                                encoding: stream.encoding,
+                            };
+                            let outbox = self.outbox.clone();
+                            tokio::spawn(async move {
+                                let _registration = registration;
+                                let pump = super::send_chunk_stream(
+                                    &outbox,
+                                    API_HOST_FETCH_AGENT_CHUNK,
+                                    stream_id,
+                                    stream.reader.as_mut(),
+                                    super::OnReadError::Truncate,
+                                );
+                                tokio::select! {
                                     biased;
-                                    _ = cancel.cancelled() => return,
-                                    read = stream.reader.read(&mut buf) => read,
-                                };
-                                match read {
-                                    Ok(0) => break,
-                                    Ok(n) => {
-                                        if let Some(bytes) = try_encode(&(
-                                            stream_id,
-                                            seq,
-                                            serde_bytes::Bytes::new(&buf[..n]),
-                                        )) {
-                                            let send = outbox.send(Message::Notify(
-                                                API_HOST_FETCH_AGENT_CHUNK,
-                                                bytes.into(),
-                                            ));
-                                            tokio::select! {
-                                                biased;
-                                                _ = cancel.cancelled() => return,
-                                                result = send => {
-                                                    if result.is_err() {
-                                                        return;
-                                                    }
-                                                }
-                                            }
+                                    _ = cancel.cancelled() => {}
+                                    result = pump => {
+                                        if let Err(e) = result {
+                                            // Stream cut short; the consumer's
+                                            // size check turns this into a hard
+                                            // error.
+                                            log::error!("agent fetch stream failed: {}", e);
                                         }
-                                        seq += 1;
-                                    }
-                                    Err(e) => {
-                                        // Cut the stream short; the
-                                        // consumer's size check turns
-                                        // this into a hard error.
-                                        log::error!("agent fetch read failed: {}", e);
-                                        break;
                                     }
                                 }
-                            }
-                            if cancel.is_cancelled() {
-                                return;
-                            }
-                            if let Some(bytes) =
-                                try_encode(&(stream_id, seq, serde_bytes::Bytes::new(&[])))
-                            {
-                                let _ = outbox
-                                    .send(Message::Notify(API_HOST_FETCH_AGENT_CHUNK, bytes.into()))
-                                    .await;
-                            }
-                        });
-                        Ok(header)
-                    }
-                    Err(e) => {
-                        drop(registration);
-                        Err(e)
-                    }
-                };
+                            });
+                            Ok(header)
+                        }
+                        Err(e) => {
+                            drop(registration);
+                            Err(e)
+                        }
+                    };
                 encode(&ret)?
             }
             _ => return Ok(None),

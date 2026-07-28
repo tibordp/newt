@@ -11,6 +11,7 @@ pub mod native;
 pub mod origin;
 pub mod path;
 pub mod path_style;
+mod pipelined_read;
 pub mod progress;
 pub mod properties;
 pub mod registry;

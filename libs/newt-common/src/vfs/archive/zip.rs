@@ -10,15 +10,12 @@
 //! one-shot `read_range` (its ranges are few and fetched concurrently).
 
 use std::collections::HashMap;
-use std::future::Future;
 // The ZIP index/directory tree is keyed by Unix-style relative path
 // strings built on std paths; the `Vfs` surface speaks our
 // `vfs::path::Path`. Convert at each trait-method boundary via
 // `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
 use std::path::{Path as StdPath, PathBuf as StdPathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use log::info;
 use newt_archive::zip as zr;
@@ -33,6 +30,7 @@ use crate::vfs::{FileChunk, FileDetails};
 use super::super::origin::{
     origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
 };
+use super::super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
 use super::super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
     VfsPath, VfsRandomReader,
@@ -709,12 +707,11 @@ impl Vfs for ZipArchiveVfs {
         let open = self.open_entry(state, entry, upstream.as_mut()).await?;
         let key = self.key_if_encrypted(entry, &open).await?;
         let reader = zr::EntryReader::new(entry, &open, key.as_ref(), 0).map_err(zip_err)?;
-        Ok(Box::new(ZipStreamingReader {
-            upstream: Some(upstream),
-            reader,
-            inflight: None,
-            done: false,
-        }))
+        Ok(Box::new(PipelinedReader::new(
+            ZipDriver { reader },
+            Some(upstream),
+            "ZIP archive",
+        )))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
@@ -784,91 +781,30 @@ impl Vfs for ZipArchiveVfs {
 }
 
 // ---------------------------------------------------------------------------
-// ZipStreamingReader — AsyncRead over an entry's plaintext
+// ZipDriver — sans-IO chunk driver over an entry's plaintext
 // ---------------------------------------------------------------------------
 
-type ChunkFuture =
-    Pin<Box<dyn Future<Output = (Box<dyn VfsRandomReader>, Result<zr::Chunk, Error>)> + Send>>;
-
-/// Drives an [`zr::EntryReader`] with positioned reads on one held-open
-/// upstream handle. The in-flight future owns the handle and hands it back
-/// with the result — exactly one of `upstream`/`inflight` holds it at any
-/// time. Dropping the reader drops any in-flight read (and with it the
-/// handle) — cancellation propagates naturally. Streams from offset 0, so
+/// [`ChunkDriver`] over a [`zr::EntryReader`]. Streams from offset 0, so
 /// the entry's CRC (and AES HMAC) are verified when the stream is read to
 /// completion; failures surface as read errors.
-struct ZipStreamingReader {
-    upstream: Option<Box<dyn VfsRandomReader>>,
+struct ZipDriver {
     reader: zr::EntryReader,
-    inflight: Option<ChunkFuture>,
-    done: bool,
 }
 
-impl AsyncRead for ZipStreamingReader {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        out: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        loop {
-            if self.reader.buffered() > 0 {
-                let data = self.reader.take_output(out.remaining());
-                out.put_slice(&data);
-                return Poll::Ready(Ok(()));
-            }
-            if self.done {
-                return Poll::Ready(Ok(())); // EOF
-            }
-
-            let fetched = if let Some(mut fut) = self.inflight.take() {
-                match fut.as_mut().poll(cx) {
-                    Poll::Pending => {
-                        self.inflight = Some(fut);
-                        return Poll::Pending;
-                    }
-                    Poll::Ready((handle, result)) => {
-                        self.upstream = Some(handle);
-                        match result {
-                            Ok(chunk) => Some(chunk),
-                            Err(e) => {
-                                return Poll::Ready(Err(std::io::Error::other(e.to_string())));
-                            }
-                        }
-                    }
-                }
-            } else {
-                None
-            };
-
-            match self.reader.step(fetched) {
-                Ok(zr::ReadStep::Need(range)) => {
-                    let mut handle = self
-                        .upstream
-                        .take()
-                        .expect("zip streaming reader lost its upstream handle");
-                    self.inflight = Some(Box::pin(async move {
-                        let len = range.end - range.start;
-                        let result = match handle.read_at(range.start, len).await {
-                            Ok(data) if (data.len() as u64) < len => {
-                                Err(Error::custom("ZIP archive truncated: read came up short"))
-                            }
-                            Ok(data) => Ok(zr::Chunk {
-                                offset: range.start,
-                                data,
-                            }),
-                            Err(e) => Err(e),
-                        };
-                        (handle, result)
-                    }));
-                }
-                Ok(zr::ReadStep::Output) => {}
-                Ok(zr::ReadStep::Done) => {
-                    self.done = true;
-                }
-                Err(e) => {
-                    return Poll::Ready(Err(std::io::Error::other(e.to_string())));
-                }
-            }
+impl ChunkDriver for ZipDriver {
+    fn step(&mut self, fetched: Option<(u64, Vec<u8>)>) -> Result<DriveStep, Error> {
+        let chunk = fetched.map(|(offset, data)| zr::Chunk { offset, data });
+        match self.reader.step(chunk).map_err(zip_err)? {
+            zr::ReadStep::Need(range) => Ok(DriveStep::Need {
+                offset: range.start,
+                len: range.end - range.start,
+            }),
+            zr::ReadStep::Output => Ok(DriveStep::Output(self.reader.take_output(usize::MAX))),
+            zr::ReadStep::Done => Ok(DriveStep::Done),
         }
+    }
+
+    fn take_buffered(&mut self) -> Vec<u8> {
+        self.reader.take_output(usize::MAX)
     }
 }
