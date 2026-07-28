@@ -27,6 +27,8 @@ import {
   PaneState,
   DndFileInfo,
   FileRowContext,
+  KEYBOARD_MENU_EVENT,
+  isKeyboardContextMenu,
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
 import { useFormatBytes, useSizeUnits } from "../lib/size";
@@ -41,6 +43,7 @@ import {
   PaneContextMenuContent,
   BreadcrumbContextMenuContent,
   ColumnsContextMenuContent,
+  type FollowKind,
 } from "./ContextMenu";
 import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
@@ -554,6 +557,15 @@ function FilterInput({
   return <div className={styles.filterInput}>{input}</div>;
 }
 
+/// What Shift+Enter would do on a row, or `null` when it would do nothing.
+/// An alias source wins over the entry's own symlink target, mirroring
+/// `cmd_follow_symlink`.
+function followKind(row: FileView | undefined): FollowKind {
+  if (!row) return null;
+  if (row.source_display) return "source";
+  return row.is_symlink ? "symlink" : null;
+}
+
 // --- Shared DnD helpers (used by both internal and external drag-and-drop) ---
 
 /** Clear all drop-target highlights in the document. */
@@ -825,6 +837,8 @@ function PaneInner(
   fileWindowRef.current = file_window;
   const selectedLookupRef = useRef(selectedLookup);
   selectedLookupRef.current = selectedLookup;
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
 
   // --- DnD (drag-and-drop between panes) refs ---
   const dndRef = useRef<LocalDndState | null>(null);
@@ -1367,14 +1381,27 @@ function PaneInner(
     if (!li) return;
     const rect = li.getBoundingClientRect();
     setContextMenuIsParentDir(focused === "..");
+    // `button: 2` marks the event as carrying a real position — see the
+    // keyboard branch in `onContextMenu`.
     li.dispatchEvent(
       new MouseEvent("contextmenu", {
         bubbles: true,
+        button: 2,
+        buttons: 2,
         clientX: rect.left,
         clientY: rect.bottom,
       }),
     );
   }, [focused]);
+
+  // Serve keyboard-requested menus while this is the active pane, wherever
+  // the webview aimed its event (or if it never reached a pane at all).
+  useEffect(() => {
+    if (!active) return;
+    const onRequest = () => openContextMenu();
+    window.addEventListener(KEYBOARD_MENU_EVENT, onRequest);
+    return () => window.removeEventListener(KEYBOARD_MENU_EVENT, onRequest);
+  }, [active, openContextMenu]);
 
   const onkeydown = (e: React.KeyboardEvent<Element>) => {
     const { noModifiers } = modifiers(e);
@@ -1514,6 +1541,7 @@ function PaneInner(
   const contextMenuFileRef = useRef<string | null>(null);
   const contextMenuPosRef = useRef({ x: 0, y: 0 });
   const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
+  const [contextMenuFollow, setContextMenuFollow] = useState<FollowKind>(null);
 
   const [contextMenuOnFile, setContextMenuOnFile] = useState(true);
 
@@ -1536,8 +1564,30 @@ function PaneInner(
     [paneHandle],
   );
 
+  /// Restore focus ourselves when a context menu closes. Radix would aim
+  /// for whatever held focus when the menu opened, which is a node inside
+  /// the previous menu whenever one context menu is opened directly from
+  /// another — unmounted by then, leaving focus on `<body>`. The column
+  /// header additionally isn't focusable at all.
+  const refocusPane = useCallback(
+    (e: Event) => {
+      e.preventDefault();
+      if (active && !modalOpen) {
+        (filter != null ? inputRef : containerRef).current?.focus();
+      }
+    },
+    [active, modalOpen, filter],
+  );
+
   const onContextMenu = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {
+      // Keyboard-requested menu — MainWindow relays it to the active pane.
+      // preventDefault keeps Radix from anchoring at the webview's point.
+      if (isKeyboardContextMenu(e.nativeEvent)) {
+        e.preventDefault();
+        return;
+      }
+
       // Find which file row was right-clicked
       const target = e.target as HTMLElement;
       const li = target.closest("li[data-name]") as HTMLElement | null;
@@ -1555,6 +1605,7 @@ function PaneInner(
         // Right-clicked on empty space — show the pane-level context menu
         setContextMenuOnFile(false);
         setContextMenuIsParentDir(false);
+        setContextMenuFollow(null);
         return;
       }
 
@@ -1564,9 +1615,24 @@ function PaneInner(
       setContextMenuIsParentDir(fileName === "..");
 
       // If right-clicked file is not in the selection, focus it (clearing selection)
-      if (fileName !== ".." && !selectedLookupRef.current.has(fileName)) {
+      const inSelection = selectedLookupRef.current.has(fileName);
+      if (fileName !== ".." && !inSelection) {
         safeSilent(commands.focus(paneHandle, fileName));
       }
+
+      // Entry-specific items describe what the commands will act on: focus
+      // stays put when the click lands inside the selection, so that row —
+      // not the clicked one — is the target.
+      const targetKey = inSelection
+        ? (focusedRef.current ?? fileName)
+        : fileName;
+      setContextMenuFollow(
+        followKind(
+          fileWindowRef.current.items.find(
+            (f) => (f.key ?? f.name) === targetKey,
+          ),
+        ),
+      );
     },
     [paneHandle, shellMenuAvailable, openShellMenu],
   );
@@ -1857,14 +1923,7 @@ function PaneInner(
         <ColumnsContextMenuContent
           columns={preferences?.settings?.appearance?.columns}
           traits={metadata_traits}
-          onCloseAutoFocus={(e) => {
-            // The header is not focusable — mirror the pane focus effect
-            // instead of letting Radix focus the trigger div.
-            e.preventDefault();
-            if (active && !modalOpen) {
-              (filter != null ? inputRef : containerRef).current?.focus();
-            }
-          }}
+          onCloseAutoFocus={refocusPane}
         />
       </ContextMenu.Root>
       {file_window && (
@@ -1920,6 +1979,8 @@ function PaneInner(
             <FileContextMenuContent
               paneHandle={paneHandle}
               isParentDir={contextMenuIsParentDir}
+              follow={contextMenuFollow}
+              onCloseAutoFocus={refocusPane}
               onShellMenu={
                 shellMenuAvailable
                   ? () => void openShellMenu(contextMenuFileRef.current)
@@ -1930,6 +1991,7 @@ function PaneInner(
             <PaneContextMenuContent
               paneHandle={paneHandle}
               isHostLocal={props.is_host_local}
+              onCloseAutoFocus={refocusPane}
               onShellMenu={
                 shellMenuAvailable ? () => void openShellMenu(null) : undefined
               }

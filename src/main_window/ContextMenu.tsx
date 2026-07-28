@@ -44,22 +44,35 @@ function ShellMenuItem({ onShellMenu }: { onShellMenu?: () => void }) {
   );
 }
 
+/// What Shift+Enter offers on the entry the menu was opened over: the
+/// target of a symlink, or the real file behind a synthetic-VFS alias
+/// (a search hit). `null` on entries that are neither.
+export type FollowKind = "symlink" | "source" | null;
+
 type FileContextMenuProps = {
   paneHandle: number;
   isParentDir: boolean;
+  follow: FollowKind;
   onShellMenu?: () => void;
+  onCloseAutoFocus?: (e: Event) => void;
 };
 
 export function FileContextMenuContent({
   paneHandle,
   isParentDir,
+  follow,
   onShellMenu,
+  onCloseAutoFocus,
 }: FileContextMenuProps) {
   const commands = useCommands();
 
   return (
     <CM.Portal>
-      <CM.Content className={styles.content} loop>
+      <CM.Content
+        className={styles.content}
+        loop
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
@@ -68,6 +81,15 @@ export function FileContextMenuContent({
           Open
           <Shortcut commands={commands} id="open" />
         </CM.Item>
+        {follow && (
+          <CM.Item
+            className={styles.item}
+            onSelect={() => safe(ipc.cmdFollowSymlink(paneHandle))}
+          >
+            {follow === "source" ? "Reveal Source" : "Follow Symlink"}
+            <Shortcut commands={commands} id="follow_symlink" />
+          </CM.Item>
+        )}
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
@@ -147,18 +169,24 @@ type PaneContextMenuProps = {
   paneHandle: number;
   isHostLocal: boolean;
   onShellMenu?: () => void;
+  onCloseAutoFocus?: (e: Event) => void;
 };
 
 export function PaneContextMenuContent({
   paneHandle,
   isHostLocal,
   onShellMenu,
+  onCloseAutoFocus,
 }: PaneContextMenuProps) {
   const commands = useCommands();
 
   return (
     <CM.Portal>
-      <CM.Content className={styles.content} loop>
+      <CM.Content
+        className={styles.content}
+        loop
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         {isHostLocal && (
           <>
             <CM.Item

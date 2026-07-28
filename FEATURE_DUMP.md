@@ -265,6 +265,7 @@ The default browser context menu is suppressed in the main window (but not in th
 | Item | Shortcut |
 |------|----------|
 | Open | |
+| Follow Symlink / Reveal Source | Shift+Enter (symlinks and aliased entries only) |
 | View | F3 |
 | Edit | F4 |
 | Copy Path | Mod+C |
@@ -274,6 +275,8 @@ The default browser context menu is suppressed in the main window (but not in th
 | Open in Terminal | Mod+Enter |
 | Properties | Alt+Enter |
 | Windows Menu | Shift+RClick (Windows host + host-local files only) |
+
+The Follow row appears only when it would do something: labelled "Reveal Source" on an entry carrying a synthetic-VFS alias (a search hit), "Follow Symlink" on a symlink, absent otherwise — the same precedence `cmd_follow_symlink` applies. Like the rest of the menu it describes the entry the commands act on, which is the focused row rather than the clicked one when the right-click lands inside a multi-selection.
 
 **Right-click empty space** in the file list:
 

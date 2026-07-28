@@ -37,7 +37,11 @@ import {
 } from "../lib/commands";
 import ModalRouter from "./modals/ModalRouter";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
-import { MainWindowState } from "./types";
+import {
+  KEYBOARD_MENU_EVENT,
+  MainWindowState,
+  isKeyboardContextMenu,
+} from "./types";
 import Pane from "./Pane";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
@@ -261,6 +265,9 @@ function App() {
         return;
       }
       e.preventDefault();
+      if (isKeyboardContextMenu(e)) {
+        window.dispatchEvent(new Event(KEYBOARD_MENU_EVENT));
+      }
     };
     document.addEventListener("contextmenu", handler);
     return () => document.removeEventListener("contextmenu", handler);
