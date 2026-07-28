@@ -99,6 +99,41 @@ pub struct File {
 }
 
 impl File {
+    /// Synthetic directory entry carrying no metadata — implicit archive
+    /// ancestors, and (via [`File::parent_dir`]) the `..` row. Deliberately
+    /// spells out every field so the compiler forces a decision here when
+    /// the model grows one; backends listing real entries keep their own
+    /// exhaustive literals for the same reason.
+    pub fn bare_dir(name: impl Into<String>) -> Self {
+        File {
+            name: name.into(),
+            size: None,
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
+            is_dir: true,
+            is_hidden: false,
+            is_symlink: false,
+            symlink_target: None,
+            user: None,
+            group: None,
+            mode: None,
+            attributes: None,
+            modified: None,
+            accessed: None,
+            created: None,
+            key: None,
+            source: None,
+        }
+    }
+
+    /// The `..` up-navigation entry every listing starts with (except at
+    /// a mount root with nowhere to go up to).
+    pub fn parent_dir() -> Self {
+        Self::bare_dir("..")
+    }
+
     /// Directory-scoped identifier. Falls back to `name` when `key` is unset,
     /// which is the case for every "real" filesystem entry. Synthetic VFSes
     /// (e.g. search results) set `key` explicitly so identity (selection,

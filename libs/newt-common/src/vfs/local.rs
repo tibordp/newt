@@ -463,27 +463,7 @@ impl Vfs for LocalVfs {
                                 source: None,
                             }
                         }
-                        Err(_) => File {
-                            name: "..".to_string(),
-                            size: None,
-                            allocated_size: None,
-                            device_id: None,
-                            inode: None,
-                            hard_links: None,
-                            is_dir: true,
-                            is_symlink: false,
-                            symlink_target: None,
-                            is_hidden: false,
-                            user: None,
-                            group: None,
-                            mode: None,
-                            attributes: None,
-                            modified: None,
-                            accessed: None,
-                            created: None,
-                            key: None,
-                            source: None,
-                        },
+                        Err(_) => File::parent_dir(),
                     };
                     batch.push(file.clone());
                     ret.push(file);

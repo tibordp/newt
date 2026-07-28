@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Error, ErrorKind};
+use crate::Error;
 
 use super::origin::build_origin_meta;
 use super::{Vfs, VfsPath};
@@ -52,13 +52,6 @@ pub async fn mount(
         ))
     };
     Ok(vfs)
-}
-
-fn not_found(msg: impl Into<String>) -> Error {
-    Error {
-        kind: ErrorKind::NotFound,
-        message: msg.into(),
-    }
 }
 
 // ---------------------------------------------------------------------------

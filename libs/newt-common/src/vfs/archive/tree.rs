@@ -10,11 +10,6 @@ use std::path::{Path as StdPath, PathBuf as StdPathBuf};
 use crate::vfs::{File, Mode, UserGroup};
 use crate::{Error, ErrorKind};
 
-use super::not_found;
-
-/// Maximum number of symlink hops before we declare a loop (matches Linux MAXSYMLINKS).
-pub(super) const MAX_SYMLINK_HOPS: usize = 40;
-
 pub(super) struct DirectoryTree {
     pub(super) dirs: HashMap<StdPathBuf, Vec<File>>,
 }
@@ -31,34 +26,14 @@ impl DirectoryTree {
                         message: format!("not a directory: {}", path.display()),
                     });
                 }
-                return Err(not_found(format!(
+                return Err(Error::not_found(format!(
                     "directory not found: {}",
                     path.display()
                 )));
             }
         };
 
-        let mut files = vec![File {
-            attributes: None,
-            name: "..".to_string(),
-            size: None,
-            allocated_size: None,
-            device_id: None,
-            inode: None,
-            hard_links: None,
-            is_dir: true,
-            is_hidden: false,
-            is_symlink: false,
-            symlink_target: None,
-            user: None,
-            group: None,
-            mode: None,
-            modified: None,
-            accessed: None,
-            created: None,
-            key: None,
-            source: None,
-        }];
+        let mut files = vec![File::parent_dir()];
         for entry in entries {
             let mut file = entry.clone();
             self.fill_symlink_target_metadata(&resolved, &mut file);
@@ -72,7 +47,7 @@ impl DirectoryTree {
         let resolved = self.resolve_path(&normalized, false)?;
         let mut file = self
             .lookup_entry(&resolved)
-            .ok_or_else(|| not_found(format!("file not found: {}", path.display())))?;
+            .ok_or_else(|| Error::not_found(format!("file not found: {}", path.display())))?;
         let parent = resolved.parent().unwrap_or(StdPath::new(""));
         self.fill_symlink_target_metadata(parent, &mut file);
         Ok(file)
@@ -136,7 +111,7 @@ impl DirectoryTree {
         follow_last: bool,
         hops: usize,
     ) -> Result<StdPathBuf, Error> {
-        if hops > MAX_SYMLINK_HOPS {
+        if hops > crate::vfs::MAX_SYMLINK_HOPS {
             return Err(Error {
                 kind: ErrorKind::Other,
                 message: "too many levels of symbolic links".into(),
@@ -277,27 +252,9 @@ pub(super) fn ensure_ancestors(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         if !name.is_empty() {
-            dirs.entry(parent.to_path_buf()).or_default().push(File {
-                attributes: None,
-                name,
-                size: None,
-                allocated_size: None,
-                device_id: None,
-                inode: None,
-                hard_links: None,
-                is_dir: true,
-                is_hidden: false,
-                is_symlink: false,
-                symlink_target: None,
-                user: None,
-                group: None,
-                mode: None,
-                modified: None,
-                accessed: None,
-                created: None,
-                key: None,
-                source: None,
-            });
+            dirs.entry(parent.to_path_buf())
+                .or_default()
+                .push(File::bare_dir(name));
         }
     }
     seen_dirs.insert(path.to_path_buf());

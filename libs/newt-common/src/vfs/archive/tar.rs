@@ -24,11 +24,11 @@ use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
     VfsPath,
 };
+use super::detect_compression_from_name;
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
     index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
 };
-use super::{detect_compression_from_name, not_found};
 
 // ---------------------------------------------------------------------------
 // TarArchiveVfsDescriptor
@@ -407,8 +407,9 @@ impl TarArchiveVfs {
         let resolved = self.state.tree.read().resolve_path(std_path, true)?;
         let resolved_str = normalized_to_string(&resolved);
 
-        let entry = index_get(index, &resolved_str)
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", resolved_str)))?;
+        let entry = index_get(index, &resolved_str).ok_or_else(|| {
+            Error::not_found(format!("file not found in archive: {}", resolved_str))
+        })?;
 
         // Follow hard links — the target path is the archive path of the
         // original entry that holds the actual data.
@@ -417,15 +418,18 @@ impl TarArchiveVfs {
         {
             let target_normalized = normalize_dir_path(StdPath::new(target));
             let target_str = target_normalized.to_string_lossy();
-            let target_entry = index_get(index, &target_str)
-                .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
-            let target_path = index_path_str(index, &target_str)
-                .ok_or_else(|| not_found(format!("hard link target not found: {}", target)))?;
+            let target_entry = index_get(index, &target_str).ok_or_else(|| {
+                Error::not_found(format!("hard link target not found: {}", target))
+            })?;
+            let target_path = index_path_str(index, &target_str).ok_or_else(|| {
+                Error::not_found(format!("hard link target not found: {}", target))
+            })?;
             return Ok((target_path, target_entry));
         }
 
-        let archive_path = index_path_str(index, &resolved_str)
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", resolved_str)))?;
+        let archive_path = index_path_str(index, &resolved_str).ok_or_else(|| {
+            Error::not_found(format!("file not found in archive: {}", resolved_str))
+        })?;
         Ok((archive_path, entry))
     }
 

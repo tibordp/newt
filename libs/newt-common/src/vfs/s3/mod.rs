@@ -528,27 +528,7 @@ impl S3Vfs {
         // ".." entry — skip at the root of a scoped bucket (nowhere to go up to)
         let at_scoped_root = self.scoped_bucket.is_some() && prefix.is_none();
         if !at_scoped_root {
-            files.push(File {
-                attributes: None,
-                name: "..".to_string(),
-                size: None,
-                allocated_size: None,
-                device_id: None,
-                inode: None,
-                hard_links: None,
-                is_dir: true,
-                is_hidden: false,
-                is_symlink: false,
-                symlink_target: None,
-                user: None,
-                group: None,
-                mode: None,
-                modified: None,
-                accessed: None,
-                created: None,
-                key: None,
-                source: None,
-            });
+            files.push(File::parent_dir());
         }
 
         debug!("s3: list_objects bucket={} prefix={:?}", bucket, prefix);

@@ -616,27 +616,7 @@ impl Vfs for SftpVfs {
         // ".." goes first and is included in the first batch so the UI
         // shows it immediately.
         if !path.is_root() {
-            let dotdot = File {
-                attributes: None,
-                name: "..".to_string(),
-                size: None,
-                allocated_size: None,
-                device_id: None,
-                inode: None,
-                hard_links: None,
-                is_dir: true,
-                is_hidden: false,
-                is_symlink: false,
-                symlink_target: None,
-                user: None,
-                group: None,
-                mode: None,
-                modified: None,
-                accessed: None,
-                created: None,
-                key: None,
-                source: None,
-            };
+            let dotdot = File::parent_dir();
             files.push(dotdot.clone());
             batch.push(dotdot);
         }

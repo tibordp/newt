@@ -346,30 +346,6 @@ pub struct SearchVfs {
 /// The synthetic `..` row leading back to the searched folder. Not a
 /// hit — no `key`/`source` — so it's excluded from redirect/deref and
 /// selection like every other VFS's `..` entry.
-fn dotdot_entry() -> File {
-    File {
-        attributes: None,
-        name: "..".to_string(),
-        size: None,
-        allocated_size: None,
-        device_id: None,
-        inode: None,
-        hard_links: None,
-        is_dir: true,
-        is_hidden: false,
-        is_symlink: false,
-        symlink_target: None,
-        user: None,
-        group: None,
-        mode: None,
-        modified: None,
-        accessed: None,
-        created: None,
-        key: None,
-        source: None,
-    }
-}
-
 impl SearchVfs {
     /// Construct a `SearchVfs`. The walker is *not* spawned here — it
     /// starts on the first streaming `list_files` call. The search is
@@ -472,7 +448,7 @@ impl Vfs for SearchVfs {
             let mut sent_len = initial.len();
             // First batch (possibly just `..`) so the navigation layer can
             // clear pending_path and show "loading…" / partial results.
-            let mut first_batch = vec![dotdot_entry()];
+            let mut first_batch = vec![File::parent_dir()];
             first_batch.extend(initial);
             let _ = tx.send(first_batch).await;
 
@@ -512,7 +488,7 @@ impl Vfs for SearchVfs {
                 let delta: Vec<File> = final_snap[sent_len..].to_vec();
                 let _ = tx.send(delta).await;
             }
-            let mut files = vec![dotdot_entry()];
+            let mut files = vec![File::parent_dir()];
             files.extend(final_snap);
             return Ok(super::VfsFileList {
                 files,
@@ -520,7 +496,7 @@ impl Vfs for SearchVfs {
             });
         }
 
-        let mut files = vec![dotdot_entry()];
+        let mut files = vec![File::parent_dir()];
         files.extend(self.results.read().iter().cloned());
         Ok(super::VfsFileList {
             files,

@@ -73,6 +73,11 @@ use crate::Error;
 /// syscall/RPC overhead without holding much memory per in-flight chunk.
 pub const VFS_READ_CHUNK_SIZE: usize = 64 * 1024;
 
+/// Maximum in-VFS symlink hops before declaring a loop, for backends that
+/// resolve symlinks against their own index (archives, disc images).
+/// Matches Linux MAXSYMLINKS.
+pub(crate) const MAX_SYMLINK_HOPS: usize = 40;
+
 // ---------------------------------------------------------------------------
 // VfsId
 // ---------------------------------------------------------------------------

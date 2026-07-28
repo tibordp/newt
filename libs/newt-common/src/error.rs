@@ -27,6 +27,13 @@ impl Error {
         }
     }
 
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::NotFound,
+            message: msg.into(),
+        }
+    }
+
     pub fn cancelled() -> Self {
         Self {
             kind: ErrorKind::Cancelled,

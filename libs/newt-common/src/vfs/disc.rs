@@ -44,9 +44,6 @@ pub fn is_disc_image_name(name: &str) -> bool {
         .any(|ext| lower.ends_with(&format!(".{}", ext)))
 }
 
-/// Matches Linux MAXSYMLINKS, like the archive resolver.
-const MAX_SYMLINK_HOPS: usize = 40;
-
 /// Metadata reads go through an aligned block cache so a directory walk
 /// over a high-latency upstream (S3) coalesces into a few range GETs
 /// instead of one per structure. File-content reads bypass it.
@@ -76,13 +73,6 @@ pub async fn mount(
 
 fn disc_err(e: DiscError) -> Error {
     Error::custom(e.to_string())
-}
-
-fn not_found(msg: impl Into<String>) -> Error {
-    Error {
-        kind: crate::ErrorKind::NotFound,
-        message: msg.into(),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,30 +375,6 @@ fn entry_to_file(e: &Entry) -> File {
     }
 }
 
-fn dotdot() -> File {
-    File {
-        attributes: None,
-        name: "..".to_string(),
-        size: None,
-        allocated_size: None,
-        device_id: None,
-        inode: None,
-        hard_links: None,
-        is_dir: true,
-        is_hidden: false,
-        is_symlink: false,
-        symlink_target: None,
-        user: None,
-        group: None,
-        mode: None,
-        modified: None,
-        accessed: None,
-        created: None,
-        key: None,
-        source: None,
-    }
-}
-
 impl DiscVfs {
     async fn ensure_state(&self) -> Result<&DiscState, Error> {
         self.state
@@ -518,7 +484,9 @@ impl DiscVfs {
                 let entry = entries
                     .iter()
                     .find(|e| e.name == *name)
-                    .ok_or_else(|| not_found(format!("no such file in disc image: {}", name)))?
+                    .ok_or_else(|| {
+                        Error::not_found(format!("no such file in disc image: {}", name))
+                    })?
                     .clone();
                 let is_last = idx == comps.len() - 1;
                 if entry.kind == EntryKind::Symlink
@@ -526,7 +494,7 @@ impl DiscVfs {
                     && entry.link_target.as_deref().is_some_and(|t| !t.is_empty())
                 {
                     hops += 1;
-                    if hops > MAX_SYMLINK_HOPS {
+                    if hops > super::MAX_SYMLINK_HOPS {
                         return Err(Error::custom("too many levels of symbolic links"));
                     }
                     let target = entry.link_target.as_deref().unwrap_or_default();
@@ -665,7 +633,7 @@ impl Vfs for DiscVfs {
             });
         }
         let entries = self.list_resolved(state, &key, &dir).await?;
-        let mut files = vec![dotdot()];
+        let mut files = vec![File::parent_dir()];
         for e in entries.iter() {
             let mut file = entry_to_file(e);
             if file.is_symlink {

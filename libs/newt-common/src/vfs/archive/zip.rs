@@ -37,7 +37,6 @@ use super::super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
     VfsPath, VfsRandomReader,
 };
-use super::not_found;
 use super::tree::{DirectoryTree, ensure_ancestors, normalized_to_string};
 
 /// Symlink targets are read eagerly at index time; anything larger than this
@@ -327,7 +326,7 @@ impl ZipArchiveVfs {
             .by_name
             .get(&key)
             .map(|&i| &state.fs.entries[i])
-            .ok_or_else(|| not_found(format!("file not found in archive: {}", key)))
+            .ok_or_else(|| Error::not_found(format!("file not found in archive: {}", key)))
     }
 
     fn cached_open(&self, entry: &zr::ZipEntry) -> Option<zr::OpenEntry> {
