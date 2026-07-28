@@ -671,9 +671,9 @@ async getPreferencesSchema() : Promise<Result<JsonValue, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async setCommandKeybinding(commandId: string, newKey: string | null, newWhen: string | null) : Promise<Result<null, string>> {
+async setCommandKeybindings(commandId: string, newKeys: string[], newWhen: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_command_keybinding", { commandId, newKey, newWhen }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_command_keybindings", { commandId, newKeys, newWhen }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1709,7 +1709,16 @@ export type Breadcrumb = { label: string; nav_path: string }
 /**
  * Command metadata for the command palette.
  */
-export type CommandInfo = { id: string; name: string; short_name: string | null; category: string; shortcut: string | null; shortcut_display: string[]; needs_pane: boolean; 
+export type CommandInfo = { id: string; name: string; short_name: string | null; category: string; 
+/**
+ * Primary resolved binding (first in resolution order) — what menus,
+ * tooltips and the command bar display.
+ */
+shortcut: string | null; shortcut_display: string[]; 
+/**
+ * Every resolved binding for this command, primary first.
+ */
+shortcuts: string[]; needs_pane: boolean; 
 /**
  * Keybinding *dispatch context* (`pane_focused` / `terminal_focused` /
  * unset = global). For user commands this is hard-coded to
@@ -1724,10 +1733,11 @@ when: string | null;
  */
 applies_to: string | null; 
 /**
- * The compiled-in default key for this command, if any. Useful for the
- * keybindings editor to display "Default: …" hints and offer Reset.
+ * The compiled-in default keys for this command (`mod` expanded).
+ * Useful for the keybindings editor to display "Default: …" hints and
+ * offer Reset.
  */
-default_key: string | null; 
+default_keys: string[]; 
 /**
  * The compiled-in default dispatch context for this command, if any.
  */
@@ -1738,7 +1748,19 @@ default_when: string | null;
  * default slot has been usurped by another command). Only meaningful
  * for built-ins; always `false` for user commands.
  */
-user_overridden: boolean }
+user_overridden: boolean; 
+/**
+ * Which window's dispatcher owns this command — the palette and each
+ * window's key handling filter by it.
+ */
+scope: CommandScope }
+/**
+ * Which window's dispatcher owns a command. Main-window commands dispatch
+ * as `cmd_<id>` Tauri commands; viewer/editor commands are handled locally
+ * by the owning window's frontend — the registry only supplies identity,
+ * default keys, and rebindability.
+ */
+export type CommandScope = "main" | "viewer" | "editor"
 export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean; login_shell?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,

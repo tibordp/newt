@@ -28,6 +28,32 @@ export const executeCommandById = (
   return safeCommand("cmd_" + commandId, { paneHandle });
 };
 
+/// Physical-code fallback for Alt combos. macOS composes Option+key into a
+/// new character (Opt+2 arrives as key "™", Opt+Z as "Ω"), which would make
+/// captured bindings layout-dependent gibberish and stop plainly-spelled
+/// "alt+…" bindings from ever matching. The mapping is keyboard-position
+/// based, which is the accepted tradeoff for Alt combos.
+const CODE_TO_KEY: Record<string, string> = {
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backquote: "`",
+};
+
+function keyFromCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^(Digit|Numpad)[0-9]$/.test(code)) return code.slice(-1);
+  return CODE_TO_KEY[code] ?? null;
+}
+
 /// Normalize a keyboard event into a canonical key string matching the Rust format.
 /// Format: modifier+modifier+key, all lowercase.
 /// Modifier order: meta, ctrl, shift, alt.
@@ -47,6 +73,11 @@ export function normalizeKeyEvent(e: KeyboardEvent): string {
   }
 
   key = key.toLowerCase();
+
+  if (e.altKey) {
+    const physical = keyFromCode(e.code);
+    if (physical) key = physical;
+  }
 
   const keyMap: Record<string, string> = {
     " ": "space",

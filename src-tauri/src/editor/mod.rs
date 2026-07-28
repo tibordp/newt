@@ -253,6 +253,40 @@ pub fn activate_editor_window(
     Ok(())
 }
 
+/// Rebuild every active editor window's menu so the Save accelerator
+/// follows rebinding. Item ids are stable, so the handlers registered on
+/// activation keep working; wrap/language check state is re-applied from
+/// the editor state.
+#[cfg(target_os = "macos")]
+pub fn rebuild_menus(app_handle: &tauri::AppHandle) {
+    let global_ctx: State<GlobalContext> = app_handle.state();
+    for label in global_ctx.active_editor_labels() {
+        let Some(ctx) = global_ctx.editor_window(&label) else {
+            continue;
+        };
+        let editor = ctx.0;
+        let menu = match build_menu(app_handle, &format!("editor_{}_", label)) {
+            Ok(menu) => menu,
+            Err(e) => {
+                log::warn!("failed to rebuild editor menu for {label}: {e}");
+                continue;
+            }
+        };
+        *editor.menu.write() = Some(menu.clone());
+        let state = editor.publisher.state();
+        let language = state.language.read().clone();
+        editor.update_language_checks(&language);
+        editor.update_wrap_check(*state.word_wrap.read());
+        global_ctx.set_window_menu(&label, menu.clone());
+        let focused = app_handle
+            .get_webview_window(&label)
+            .is_some_and(|w| w.is_focused().unwrap_or(false));
+        if focused {
+            let _ = app_handle.set_menu(menu);
+        }
+    }
+}
+
 /// Iterate all `CheckMenuItem`s across all submenus of a menu.
 fn check_menu_items(menu: &Menu<Wry>) -> impl Iterator<Item = CheckMenuItem<Wry>> {
     menu.items()
@@ -264,13 +298,31 @@ fn check_menu_items(menu: &Menu<Wry>) -> impl Iterator<Item = CheckMenuItem<Wry>
 }
 
 fn build_menu(app_handle: &tauri::AppHandle, prefix: &str) -> Result<Menu<Wry>, Error> {
-    // File menu
+    // File menu. The Save accelerator mirrors the resolved `editor_save`
+    // binding on macOS, where the menu bar claims the key ahead of the
+    // webview no matter what the registry says; `rebuild_menus` keeps it in
+    // sync. Other platforms register no accelerator — the webview handles
+    // the key directly (same approach as the viewer menu).
+    #[cfg(target_os = "macos")]
+    let save_accel: Option<String> = {
+        let global_ctx: State<GlobalContext> = app_handle.state();
+        let resolved = global_ctx.preferences().resolved();
+        resolved
+            .commands
+            .iter()
+            .find(|c| c.id == "editor_save")
+            .and_then(|c| c.shortcut.as_deref())
+            .and_then(crate::main_window::menu::accelerator)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let save_accel: Option<String> = None;
+
     let save_item = MenuItem::with_id(
         app_handle,
         format!("{}save", prefix),
         "Save",
         true,
-        Some("CmdOrCtrl+S"),
+        save_accel.as_deref(),
     )?;
     let close_item = MenuItem::with_id(
         app_handle,

@@ -3,6 +3,9 @@ import { useFormatBytes } from "../lib/size";
 
 import { commands } from "../lib/bindings";
 import { safeSilent, unwrap } from "../lib/ipc";
+import { usePreferences } from "../lib/preferences";
+import { useScopedBindings } from "../lib/scopedBindings";
+import { monacoKeybinding } from "./monacoKeys";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -320,6 +323,43 @@ function Editor() {
   saveRef.current = save;
   const closeRef = useRef(closeEditor);
   closeRef.current = closeEditor;
+
+  useScopedBindings("editor", {
+    editor_save: () => void save(),
+  });
+
+  // Mirror the resolved save binding into Monaco so the key works natively
+  // inside the editor and its command palette shows the real shortcut. The
+  // action is re-created on rebind: `addAction` registers its command under
+  // an editor-scoped unique id (`<editorId>:<id>`), so a global
+  // `addKeybindingRule` cannot target it — the keybinding must ride the
+  // action itself. The window-level hook above stays as the out-of-editor
+  // fallback; Monaco preventDefaults what it handles, so the two never
+  // double-fire.
+  const preferences = usePreferences();
+  const saveKeys =
+    preferences?.commands
+      .find((c) => c.id === "editor_save")
+      ?.shortcuts.join(",") ?? "";
+  const [monacoReady, setMonacoReady] = useState(false);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!monacoReady || !editor) return;
+    const keybindings = saveKeys
+      .split(",")
+      .filter(Boolean)
+      .map(monacoKeybinding)
+      .filter((k): k is number => k !== null);
+    const action = editor.addAction({
+      id: "editor-save",
+      label: "Save",
+      keybindings,
+      run: () => {
+        saveRef.current();
+      },
+    });
+    return () => action.dispose();
+  }, [saveKeys, monacoReady]);
   useEffect(() => {
     const currentWindow = getCurrentWebviewWindow();
     const unlisten = currentWindow.listen<string>("editor-action", (event) => {
@@ -351,25 +391,26 @@ function Editor() {
       }
     });
 
-    // Ctrl+S / Cmd+S to save
-    editor.addAction({
-      id: "editor-save",
-      label: "Save",
-      keybindings: [2048 | 49], // KeyMod.CtrlCmd | KeyCode.KeyS
-      run: () => {
-        saveRef.current();
-      },
-    });
+    // The Save action is registered in an effect keyed on the resolved
+    // `editor_save` binding — see below.
+    setMonacoReady(true);
+  }, []);
 
-    // Escape to close (prompts if dirty)
-    editor.addAction({
-      id: "editor-close",
-      label: "Close",
-      keybindings: [9], // KeyCode.Escape
-      run: () => {
+  // Escape closes (prompts if dirty) — from a window listener rather than a
+  // Monaco keybinding so Monaco's own Escape consumers run first: it
+  // preventDefaults every Escape it spends on dismissing widgets (suggest,
+  // find, palette, snippet mode) or canceling a selection, and only an
+  // unclaimed Escape falls through to us.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
         closeRef.current();
-      },
-    });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   if (error) {

@@ -698,7 +698,7 @@ The `+` after the line count indicates the file is still loading. Selection info
 
 - Rendered via PDF.js with a custom toolbar (not a browser iframe).
 - **Toolbar**: Previous/Next page buttons, page display ("1 / 42"), zoom in/out/fit buttons, zoom percentage.
-- **Keyboard**: Ctrl+= zoom in, Ctrl+- zoom out, Ctrl+0 reset to fit.
+- **Keyboard**: `=` zoom in, `-` zoom out, `0` reset to fit (the shared, rebindable `viewer_zoom_*` commands — Mod+= and friends stay webview zoom).
 - **Escape**: Close viewer (via window-level menu accelerator).
 
 **Status bar**: `path/to/document.pdf | PDF | 2.3 MB`
@@ -796,14 +796,14 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 ### Dirty State and Closing
 
 - **Dirty indicator**: Window title shows `* filename - Editor` when unsaved.
-- **Escape**: Closes the editor window. If unsaved changes exist, a confirmation dialog appears first.
+- **Escape**: Closes the editor window (confirmation first if unsaved changes) — but only when Monaco doesn't consume it: dismissing intellisense/find/palette widgets or canceling a selection spends the Escape, and only an unclaimed press closes. Save dispatches through the rebindable `editor_save` command; the resolved key also rides Monaco's Save action (re-registered on rebind — `addAction` commands are editor-scoped, so global keybinding rules can't target them) so the key works natively in-editor and Monaco's palette shows the real shortcut.
 - **Close with unsaved changes**: A warning confirmation dialog appears: "You have unsaved changes. Close without saving?" User must confirm to discard changes.
 - **Close without unsaved changes**: Window closes immediately.
 
 ### Editor Menu Bar
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
-- **File**: Save (Ctrl+S), Close (Ctrl+W)
+- **File**: Save, Close (Ctrl+W). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
 - **View**: Word Wrap (checkbox toggle). Each newly opened file starts from the `editor.word_wrap` preference (default off); toggling wrap on an open file overrides it for that file only.
 - **Language**: Radio buttons for all supported languages (Plain Text, C, C++, C#, CSS, Dockerfile, Go, HTML, INI/TOML, Java, JavaScript, JSON, Kotlin, Lua, Markdown, Perl, PHP, Python, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
 
@@ -1290,7 +1290,7 @@ Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsP
 
 ---
 
-## 11. Command Palette (Mod+Shift+P)
+## 11. Command Palette (Mod+Shift+P or F1)
 
 Fuzzy-searchable list of all available commands.
 
@@ -1482,10 +1482,10 @@ image_background = "checkerboard" # Backdrop behind images: "checkerboard", "dar
 path = "/home/user/projects"
 name = "My Projects"        # Optional
 
-[[bind]]
+[[bind]]                    # Several entries may target the same command — each adds a binding
 key = "mod+shift+f5"
-command = "some_command"
-when = "pane_focused"       # Optional
+command = "some_command"    # `command = "-"` disables whatever the key is bound to
+when = "pane_focused"       # Optional: "pane_focused", "terminal_focused", "viewer", "editor"
 
 [[command]]
 title = "My Command"
@@ -1525,15 +1525,16 @@ Available in debug builds only. Provides:
 - **Crash (throw error)**: Tests the ErrorBoundary by throwing a React error.
 
 **Keybindings tab**:
-- Table listing every command (built-in + user) with its current shortcut and dispatch context. The "When" column shows the command's intrinsic dispatch context (e.g. "Pane focused"), independent of whether a key is currently bound.
+- Table listing every command (built-in + user) with its current shortcuts and dispatch context. The "When" column shows the command's intrinsic dispatch context (e.g. "Pane focused"), independent of whether a key is currently bound.
+- **Multiple bindings per command** are first-class: a command can carry any number of keys (e.g. Delete Selected defaults to F8 + Del, and ⌘⌫ on macOS; Command Palette to Mod+Shift+P + F1; viewer zoom-in to = with +/Shift+= synonyms). The first key is the primary — the one menus, tooltips and the command bar display. Extra keys are ordinary `[[bind]]` entries; removing one default from the set writes a single `command = "-"` disable entry for that key.
 - Search/filter by command name, ID, shortcut, or context.
 - Shortcuts rendered with platform-specific symbols (⌘ on macOS, Ctrl elsewhere).
-- **Inline editor**: Click Edit (or double-click a row) to swap the shortcut cell into a key-capture input in place — no row expansion. Press a combination to record it; Escape cancels recording; the × clears.
+- **Inline editor**: Click Edit (or double-click a row) to swap the shortcut cell into one key-capture input per binding, with per-row remove and "+ Add key" (user commands are limited to one key — theirs lives on the `[[command]]` entry). Press a combination to record; Escape cancels recording; the × clears a row.
 - **Live conflict detection** as you record:
   - **Hard conflict** (same key + same dispatch context for another command) blocks Save and shows an "Already used by …" banner with an Override button. Override only *acknowledges* the conflict — it doesn't save until you press Save.
   - **Soft warning** when the same key is used in a different/overlapping context.
   - **Validation** rejects modifier-only combos.
-- **Action buttons** (in edit mode): Save (primary), Cancel, Reset (always shown when the command has a default — disabled when already at default, otherwise restores the compiled-in default key).
+- **Action buttons** (in edit mode): Save (primary), Cancel, Reset (always shown when the command has defaults — disabled when already at the default set, otherwise restores the compiled-in default keys).
 - **Reset is bidirectional**: if a different command currently squats on the row's default key+context — including a user command holding it via `[[command]].key` — Reset evicts the squatter so the default reasserts. The squatter's other fields (title/run/applies_to) are preserved.
 - **Modified indicator**: a small accent dot next to commands whose resolved binding differs from the compiled-in default.
 
@@ -1802,7 +1803,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 |----------|--------|---------|
 | Mod+H | Toggle hidden files | Any |
 | Mod+, | Settings | Any |
-| Mod+Shift+P | Command palette | Any |
+| Mod+Shift+P (or F1) | Command palette | Any |
 | F9 | User commands palette | Pane focused |
 | F10 | Show Next Operation (cycle foreground op) | Any |
 | Shift+F10 / Menu | Context menu | Pane focused |
@@ -1822,27 +1823,25 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 
 Note: Refresh (Mod+R) is unbound by default to avoid conflict with Quick Connect (Ctrl+R). Rebind via settings if needed.
 
-### Viewer-Specific Shortcuts
+### Viewer and Editor Commands
 
-| Shortcut | Action | Modes |
-|----------|--------|-------|
-| Ctrl+A | Select all | Text, Hex |
-| Ctrl+C | Copy selection | Text, Hex |
-| Ctrl+F | Search | Text, Hex |
-| Ctrl+G | Go to Line / Go to Offset | Text, Hex |
-| F3 | Toggle mode (auto ↔ hex) | All |
-| Mod+C | Copy selection (or whole image) as PNG | Image |
-| Mod+A | Select entire image | Image |
-| 0 | Reset zoom to fit | Image |
-| 1 | Actual size (100%) | Image |
-| +/- | Zoom in/out | Image |
-| Arrows | Pan | Image |
-| r / Shift+R | Rotate 90° CW / CCW | Image |
-| h / v | Flip horizontal / vertical | Image |
-| b | Cycle background (dark / checker / light) | Image |
-| i | Toggle info panel (EXIF) | Image |
-| Ctrl+= | Zoom in | PDF |
-| Ctrl+- | Zoom out | PDF |
-| Ctrl+0 | Reset zoom | PDF |
+Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding registry as main-window commands: they appear in the Keybindings tab (When column "Viewer"/"Editor"), are rebindable there or via `[[bind]]` with `when = "viewer"` / `when = "editor"`, and their toolbar tooltips and context-menu hints reflect the resolved binding. They are namespaced "Viewer: …"/"Editor: …", excluded from the command palette (they dispatch inside their own windows, not through `cmd_*`), and a command only fires in modes that implement it. Deliberately **not** rebindable (fundamental keys): Escape to close the viewer, arrow/PgUp/PgDn panning and scrolling, and quick-search-style intrinsic navigation.
+
+| Command | Default | Modes |
+|---------|---------|-------|
+| `viewer_toggle_hex` | F3 | All |
+| `viewer_copy` | Mod+C | Text, Hex, Image |
+| `viewer_select_all` | Mod+A | Text, Hex, Image |
+| `viewer_find` | Mod+F | Text, Hex |
+| `viewer_goto` | Mod+G | Text, Hex |
+| `viewer_zoom_in` | = (also + / Shift+=) | Image, PDF |
+| `viewer_zoom_out` | - (also Shift+-) | Image, PDF |
+| `viewer_zoom_fit` | 0 | Image, PDF |
+| `viewer_zoom_actual` | 1 | Image |
+| `viewer_rotate_cw` / `viewer_rotate_ccw` | r / Shift+R | Image |
+| `viewer_flip_horizontal` / `viewer_flip_vertical` | h / v | Image |
+| `viewer_cycle_background` | b | Image |
+| `viewer_toggle_info` | i | Image |
+| `editor_save` | Mod+S | Editor |
 
 All keybindings are fully customizable via the Settings dialog or `settings.toml`. `Mod` = Ctrl on Linux/Windows, Cmd on macOS.

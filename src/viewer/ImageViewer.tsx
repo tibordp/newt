@@ -7,6 +7,7 @@ import { useFormatBytes } from "../lib/size";
 import { commands, type ImageBackground } from "../lib/bindings";
 import { safe, unwrap } from "../lib/ipc";
 import { usePreferences } from "../lib/preferences";
+import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import type { VfsPath } from "../lib/types";
 import menuStyles from "../main_window/Menu.module.scss";
 
@@ -144,6 +145,7 @@ export function ImageViewer({
 }: ImageViewerProps) {
   const formatSize = useFormatBytes();
   const preferences = usePreferences();
+  const shortcuts = useCommandShortcuts();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -374,29 +376,11 @@ export function ImageViewer({
     setBackground(BACKGROUNDS[(idx + 1) % BACKGROUNDS.length].id);
   }, [background, setBackground]);
 
+  // Fundamental keys stay intrinsic: Escape layers selection-clear over the
+  // window-level close, arrows pan. Everything else dispatches through the
+  // keybinding registry below.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        !e.altKey &&
-        e.key.toLowerCase() === "c"
-      ) {
-        // A text selection in the info panel takes priority — yield to the
-        // webview's native copy
-        if (window.getSelection()?.toString()) return;
-        void copyToClipboard(stateRef.current.sel);
-        e.preventDefault();
-        return;
-      }
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        !e.altKey &&
-        e.key.toLowerCase() === "a"
-      ) {
-        selectAll();
-        e.preventDefault();
-        return;
-      }
       if (e.key === "Escape") {
         if (stateRef.current.sel) {
           setSel(null);
@@ -405,24 +389,9 @@ export function ImageViewer({
         }
         return;
       }
-      // Mod+0 / Mod+= etc. are window (webview) zoom — leave them alone
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const { zoom: z } = stateRef.current;
       switch (e.key) {
-        case "0":
-          resetView();
-          break;
-        case "1":
-          zoomAtCenter(1 / window.devicePixelRatio);
-          break;
-        case "+":
-        case "=":
-          zoomAtCenter(z * KEY_ZOOM_FACTOR);
-          break;
-        case "-":
-        case "_":
-          zoomAtCenter(z / KEY_ZOOM_FACTOR);
-          break;
         case "ArrowLeft":
           applyView(
             z,
@@ -451,41 +420,34 @@ export function ImageViewer({
             stateRef.current.pan.y - PAN_STEP,
           );
           break;
-        case "r":
-          rotate(90);
-          break;
-        case "R":
-          rotate(-90);
-          break;
-        case "h":
-          toggleFlipH();
-          break;
-        case "v":
-          toggleFlipV();
-          break;
-        case "b":
-          cycleBackground();
-          break;
-        case "i":
-          setInfoOpen((v) => !v);
-          break;
         default:
           return;
       }
       e.preventDefault();
     },
-    [
-      copyToClipboard,
-      selectAll,
-      resetView,
-      zoomAtCenter,
-      applyView,
-      rotate,
-      toggleFlipH,
-      toggleFlipV,
-      cycleBackground,
-    ],
+    [applyView],
   );
+
+  useScopedBindings("viewer", {
+    viewer_zoom_in: () => zoomAtCenter(stateRef.current.zoom * KEY_ZOOM_FACTOR),
+    viewer_zoom_out: () =>
+      zoomAtCenter(stateRef.current.zoom / KEY_ZOOM_FACTOR),
+    viewer_zoom_fit: resetView,
+    viewer_zoom_actual: () => zoomAtCenter(1 / window.devicePixelRatio),
+    viewer_rotate_cw: () => rotate(90),
+    viewer_rotate_ccw: () => rotate(-90),
+    viewer_flip_horizontal: toggleFlipH,
+    viewer_flip_vertical: toggleFlipV,
+    viewer_cycle_background: cycleBackground,
+    viewer_toggle_info: () => setInfoOpen((v) => !v),
+    viewer_select_all: selectAll,
+    viewer_copy: () => {
+      // A text selection in the info panel takes priority — yield to the
+      // webview's native copy
+      if (window.getSelection()?.toString()) return false;
+      void copyToClipboard(stateRef.current.sel);
+    },
+  });
 
   // Non-passive wheel listener so we can preventDefault (React wheel events are passive)
   useEffect(() => {
@@ -714,7 +676,7 @@ export function ImageViewer({
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => zoomAtCenter(stateRef.current.zoom / KEY_ZOOM_FACTOR)}
-        title="Zoom out (-)"
+        title={shortcuts.label("Zoom out", "viewer_zoom_out")}
       >
         <IconMinus />
       </button>
@@ -735,7 +697,11 @@ export function ImageViewer({
           >
             <DM.Item className={menuStyles.item} onSelect={resetView}>
               Fit
-              <span className={menuStyles.shortcut}>0</span>
+              {shortcuts.get("viewer_zoom_fit") && (
+                <span className={menuStyles.shortcut}>
+                  {shortcuts.get("viewer_zoom_fit")}
+                </span>
+              )}
             </DM.Item>
             {ZOOM_PRESETS.map((p) => (
               <DM.Item
@@ -744,7 +710,11 @@ export function ImageViewer({
                 onSelect={() => zoomAtCenter(p / 100 / window.devicePixelRatio)}
               >
                 {p}%
-                {p === 100 && <span className={menuStyles.shortcut}>1</span>}
+                {p === 100 && shortcuts.get("viewer_zoom_actual") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_zoom_actual")}
+                  </span>
+                )}
               </DM.Item>
             ))}
           </DM.Content>
@@ -753,7 +723,7 @@ export function ImageViewer({
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => zoomAtCenter(stateRef.current.zoom * KEY_ZOOM_FACTOR)}
-        title="Zoom in (+)"
+        title={shortcuts.label("Zoom in", "viewer_zoom_in")}
       >
         <IconPlus />
       </button>
@@ -761,14 +731,14 @@ export function ImageViewer({
       <button
         className={styles.viewerToolbarBtn}
         onClick={resetView}
-        title="Fit to window (0)"
+        title={shortcuts.label("Fit to window", "viewer_zoom_fit")}
       >
         Fit
       </button>
       <button
         className={styles.viewerToolbarBtn}
         onClick={() => zoomAtCenter(1 / window.devicePixelRatio)}
-        title="Actual size (1)"
+        title={shortcuts.label("Actual size", "viewer_zoom_actual")}
       >
         1:1
       </button>
@@ -776,28 +746,28 @@ export function ImageViewer({
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => rotate(-90)}
-        title="Rotate counter-clockwise (Shift+R)"
+        title={shortcuts.label("Rotate counter-clockwise", "viewer_rotate_ccw")}
       >
         <IconRotateCcw />
       </button>
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => rotate(90)}
-        title="Rotate clockwise (R)"
+        title={shortcuts.label("Rotate clockwise", "viewer_rotate_cw")}
       >
         <IconRotateCw />
       </button>
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${flipH ? styles.viewerToolbarBtnActive : ""}`}
         onClick={toggleFlipH}
-        title="Flip horizontal (H)"
+        title={shortcuts.label("Flip horizontal", "viewer_flip_horizontal")}
       >
         <IconFlipH />
       </button>
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${flipV ? styles.viewerToolbarBtnActive : ""}`}
         onClick={toggleFlipV}
-        title="Flip vertical (V)"
+        title={shortcuts.label("Flip vertical", "viewer_flip_vertical")}
       >
         <IconFlipV />
       </button>
@@ -805,14 +775,14 @@ export function ImageViewer({
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={cycleBackground}
-        title="Cycle background (B)"
+        title={shortcuts.label("Cycle background", "viewer_cycle_background")}
       >
         <IconChecker />
       </button>
       <button
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${infoOpen ? styles.viewerToolbarBtnActive : ""}`}
         onClick={() => setInfoOpen((v) => !v)}
-        title="Image info (I)"
+        title={shortcuts.label("Image info", "viewer_toggle_info")}
       >
         <IconInfo />
       </button>
@@ -940,7 +910,11 @@ export function ImageViewer({
                 onSelect={() => void copyToClipboard(stateRef.current.sel)}
               >
                 Copy Selection
-                <span className={menuStyles.shortcut}>Mod+C</span>
+                {shortcuts.get("viewer_copy") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_copy")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Item
                 className={menuStyles.item}
@@ -951,31 +925,55 @@ export function ImageViewer({
               <CM.Separator className={menuStyles.separator} />
               <CM.Item className={menuStyles.item} onSelect={resetView}>
                 Fit to Window
-                <span className={menuStyles.shortcut}>0</span>
+                {shortcuts.get("viewer_zoom_fit") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_zoom_fit")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Item
                 className={menuStyles.item}
                 onSelect={() => zoomAtCenter(1 / window.devicePixelRatio)}
               >
                 Actual Size
-                <span className={menuStyles.shortcut}>1</span>
+                {shortcuts.get("viewer_zoom_actual") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_zoom_actual")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Separator className={menuStyles.separator} />
               <CM.Item className={menuStyles.item} onSelect={() => rotate(90)}>
                 Rotate Clockwise
-                <span className={menuStyles.shortcut}>R</span>
+                {shortcuts.get("viewer_rotate_cw") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_rotate_cw")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Item className={menuStyles.item} onSelect={() => rotate(-90)}>
                 Rotate Counter-Clockwise
-                <span className={menuStyles.shortcut}>Shift+R</span>
+                {shortcuts.get("viewer_rotate_ccw") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_rotate_ccw")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Item className={menuStyles.item} onSelect={toggleFlipH}>
                 Flip Horizontal
-                <span className={menuStyles.shortcut}>H</span>
+                {shortcuts.get("viewer_flip_horizontal") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_flip_horizontal")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Item className={menuStyles.item} onSelect={toggleFlipV}>
                 Flip Vertical
-                <span className={menuStyles.shortcut}>V</span>
+                {shortcuts.get("viewer_flip_vertical") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_flip_vertical")}
+                  </span>
+                )}
               </CM.Item>
               <CM.Separator className={menuStyles.separator} />
               <CM.Sub>
@@ -1015,7 +1013,11 @@ export function ImageViewer({
                   <CM.ItemIndicator>✓</CM.ItemIndicator>
                 </span>
                 Image Info
-                <span className={menuStyles.shortcut}>I</span>
+                {shortcuts.get("viewer_toggle_info") && (
+                  <span className={menuStyles.shortcut}>
+                    {shortcuts.get("viewer_toggle_info")}
+                  </span>
+                )}
               </CM.CheckboxItem>
             </CM.Content>
           </CM.Portal>

@@ -62,8 +62,12 @@ pub struct CommandInfo {
     pub name: String,
     pub short_name: Option<String>,
     pub category: String,
+    /// Primary resolved binding (first in resolution order) — what menus,
+    /// tooltips and the command bar display.
     pub shortcut: Option<String>,
     pub shortcut_display: Vec<String>,
+    /// Every resolved binding for this command, primary first.
+    pub shortcuts: Vec<String>,
     pub needs_pane: bool,
     /// Keybinding *dispatch context* (`pane_focused` / `terminal_focused` /
     /// unset = global). For user commands this is hard-coded to
@@ -74,9 +78,10 @@ pub struct CommandInfo {
     /// User-command run filter (`file` / `directory` / `selection` / unset =
     /// any). Only set for user commands; always `None` for built-ins.
     pub applies_to: Option<String>,
-    /// The compiled-in default key for this command, if any. Useful for the
-    /// keybindings editor to display "Default: …" hints and offer Reset.
-    pub default_key: Option<String>,
+    /// The compiled-in default keys for this command (`mod` expanded).
+    /// Useful for the keybindings editor to display "Default: …" hints and
+    /// offer Reset.
+    pub default_keys: Vec<String>,
     /// The compiled-in default dispatch context for this command, if any.
     pub default_when: Option<String>,
     /// True when the resolved keybinding for this command differs from its
@@ -84,6 +89,9 @@ pub struct CommandInfo {
     /// default slot has been usurped by another command). Only meaningful
     /// for built-ins; always `false` for user commands.
     pub user_overridden: bool,
+    /// Which window's dispatcher owns this command — the palette and each
+    /// window's key handling filter by it.
+    pub scope: crate::preferences::commands::CommandScope,
 }
 
 /// A cheaply-cloneable handle for reading the current `AppPreferences`.
@@ -464,21 +472,21 @@ impl PreferencesManager {
     /// context is hard-coded to `pane_focused` and this parameter is ignored
     /// — only the `key` field is touched. The user command's `applies_to`
     /// run-filter is left alone.
-    pub fn set_command_keybinding(
+    pub fn set_command_keybindings(
         &self,
         command_id: &str,
-        new_key: Option<String>,
+        new_keys: Vec<String>,
         new_when: Option<String>,
     ) -> Result<(), String> {
-        // User commands store their key in the [[command]] entry, not [[bind]].
-        // Only the `key` field is updated — `applies_to` is unrelated to
-        // keybindings and must not be touched here.
+        // User commands store their key in the [[command]] entry, not [[bind]],
+        // and carry at most one. Only the `key` field is updated — `applies_to`
+        // is unrelated to keybindings and must not be touched here.
         if let Some(idx_str) = command_id.strip_prefix("user_command_") {
             let idx: usize = idx_str
                 .parse()
                 .map_err(|_| format!("Invalid user command id: {}", command_id))?;
             let _ = new_when; // dispatch context is implicit (pane_focused)
-            return self.set_user_command_key(idx, new_key);
+            return self.set_user_command_key(idx, new_keys.into_iter().next());
         }
 
         let defaults = commands::default_commands();
@@ -486,17 +494,17 @@ impl PreferencesManager {
             .iter()
             .find(|d| d.id == command_id)
             .ok_or_else(|| format!("Unknown command: {}", command_id))?;
-        let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
+        let default_keys: Vec<String> = def.default_keys.iter().map(|k| expand_mod(k)).collect();
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-        let new_content = apply_set_keybinding(
+        let new_content = apply_set_keybindings(
             &content,
             command_id,
-            new_key,
+            &new_keys,
             new_when,
-            default_key,
+            &default_keys,
             default_when,
         )?;
         std::fs::write(&file_path, new_content)
@@ -510,7 +518,7 @@ impl PreferencesManager {
     pub fn reset_command_keybinding(&self, command_id: &str) -> Result<(), String> {
         if command_id.starts_with("user_command_") {
             // For user commands, "reset" means clear the key field.
-            return self.set_command_keybinding(command_id, None, None);
+            return self.set_command_keybindings(command_id, vec![], None);
         }
 
         let defaults = commands::default_commands();
@@ -518,12 +526,13 @@ impl PreferencesManager {
             .iter()
             .find(|d| d.id == command_id)
             .ok_or_else(|| format!("Unknown command: {}", command_id))?;
-        let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
+        let default_keys: Vec<String> = def.default_keys.iter().map(|k| expand_mod(k)).collect();
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-        let new_content = apply_reset_keybinding(&content, command_id, default_key, default_when)?;
+        let new_content =
+            apply_reset_keybinding(&content, command_id, &default_keys, default_when)?;
         std::fs::write(&file_path, new_content)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         Ok(())
@@ -683,33 +692,13 @@ impl PreferencesManager {
         let command_defs = commands::default_commands();
         let mut bindings: Vec<(String, String, Option<String>)> = Vec::new();
 
-        // 1. Default bindings from command defs
+        // 1. Default bindings from command defs. The first key of each
+        // command is its primary (shown in menus, tooltips, the command
+        // bar); the rest are equal-standing synonyms.
         for def in &command_defs {
-            if let Some(ref key) = def.default_key {
+            for key in &def.default_keys {
                 bindings.push((key.clone(), def.id.clone(), def.default_when.clone()));
             }
-        }
-
-        // Extra default aliases (commands with multiple default keys)
-        bindings.push((
-            "delete".into(),
-            "delete_selected".into(),
-            Some("pane_focused".into()),
-        ));
-        if cfg!(target_os = "macos") {
-            // Finder conventions: ⌘⌫ = Move to Trash, ⌥⌘⌫ = Delete Immediately.
-            bindings.push((
-                "meta+backspace".into(),
-                "delete_selected".into(),
-                Some("pane_focused".into()),
-            ));
-            // Canonical modifier order is meta, ctrl, shift, alt
-            // (`normalizeKeyEvent`) — bindings are matched as exact strings.
-            bindings.push((
-                "meta+alt+backspace".into(),
-                "delete_permanent".into(),
-                Some("pane_focused".into()),
-            ));
         }
 
         // 2. User overrides
@@ -745,24 +734,38 @@ impl PreferencesManager {
         // command = "-" removes the binding.
         let resolved_bindings = resolve_bindings(bindings);
 
-        // Build command info with resolved shortcuts
+        // Build command info with resolved shortcuts. `shortcuts` carries
+        // every resolved binding in resolution order (defaults first, user
+        // additions after); the first one is the primary that menus,
+        // tooltips and the command bar display.
         let mut commands: Vec<CommandInfo> = command_defs
             .iter()
             .map(|def| {
+                let shortcuts: Vec<String> = resolved_bindings
+                    .iter()
+                    .filter(|b| b.command == def.id)
+                    .map(|b| b.key.clone())
+                    .collect();
                 let resolved = resolved_bindings.iter().find(|b| b.command == def.id);
-                let shortcut = resolved.map(|b| b.key.clone());
+                let shortcut = shortcuts.first().cloned();
                 let when = resolved.and_then(|b| b.when.clone());
                 let shortcut_display = shortcut
                     .as_ref()
                     .map(|k| render_shortcut(k))
                     .unwrap_or_default();
-                let default_key = def.default_key.as_ref().map(|k| expand_mod(k));
-                // The when-clause comparison only matters when there is a
-                // resolved shortcut. A command without a default key (e.g.
-                // navigate_back) has shortcut=None, when=None and a
-                // default_when of pane_focused — that's not an override.
-                let user_overridden = shortcut != default_key
-                    || (shortcut.is_some() && when.as_deref() != def.default_when.as_deref());
+                let default_keys: Vec<String> =
+                    def.default_keys.iter().map(|k| expand_mod(k)).collect();
+                // Overridden = the resolved key set differs from the default
+                // set, or a resolved binding dispatches in a non-default
+                // context. A command with no keys at all in both is pristine.
+                let user_overridden = {
+                    let mut resolved_sorted = shortcuts.clone();
+                    resolved_sorted.sort();
+                    let mut default_sorted = default_keys.clone();
+                    default_sorted.sort();
+                    resolved_sorted != default_sorted
+                        || (!shortcuts.is_empty() && when.as_deref() != def.default_when.as_deref())
+                };
                 CommandInfo {
                     id: def.id.clone(),
                     name: def.name.clone(),
@@ -770,12 +773,14 @@ impl PreferencesManager {
                     category: def.category.clone(),
                     shortcut,
                     shortcut_display,
+                    shortcuts,
                     needs_pane: def.needs_pane,
                     when,
                     applies_to: None,
-                    default_key,
+                    default_keys,
                     default_when: def.default_when.clone(),
                     user_overridden,
+                    scope: def.scope,
                 }
             })
             .collect();
@@ -795,6 +800,7 @@ impl PreferencesManager {
                 name: uc.title.clone(),
                 short_name: None,
                 category: "User".to_string(),
+                shortcuts: shortcut.iter().cloned().collect(),
                 shortcut,
                 shortcut_display,
                 needs_pane: true,
@@ -802,13 +808,14 @@ impl PreferencesManager {
                 // context; this is enforced in `resolve_bindings` above.
                 when: resolved.and_then(|b| b.when.clone()),
                 applies_to: uc.applies_to.clone(),
-                default_key: None,
+                default_keys: vec![],
                 // Intrinsic dispatch context — the keybindings tab falls back
                 // to this for the "When" column when no key is bound, so the
                 // displayed context doesn't flip between "Global" and "Pane
                 // focused" based on whether a shortcut exists.
                 default_when: Some("pane_focused".to_string()),
                 user_overridden: false,
+                scope: commands::CommandScope::Main,
             });
         }
 
@@ -994,12 +1001,12 @@ fn render_shortcut(key: &str) -> Vec<String> {
 /// new `(key, when)` pair (None = unbind), and the compiled-in default
 /// `(default_key, default_when)`. Returns the rewritten body. Doesn't touch
 /// the filesystem — extracted so it's unit-testable.
-fn apply_set_keybinding(
+fn apply_set_keybindings(
     content: &str,
     command_id: &str,
-    new_key: Option<String>,
+    new_keys: &[String],
     new_when: Option<String>,
-    default_key: Option<String>,
+    default_keys: &[String],
     default_when: Option<String>,
 ) -> Result<String, String> {
     let mut doc = content
@@ -1007,8 +1014,8 @@ fn apply_set_keybinding(
         .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
 
     // Rebuild [[bind]] dropping entries that mention this command or that
-    // disable its default via `command = "-"` (we'll re-emit either as needed
-    // below, but never both).
+    // disable one of its defaults via `command = "-"` (we'll re-emit either
+    // as needed below).
     let mut rebuilt: Vec<toml_edit::Table> = Vec::new();
     if let Some(arr) = doc.get_mut("bind").and_then(|i| i.as_array_of_tables_mut()) {
         for t in arr.iter() {
@@ -1024,7 +1031,7 @@ fn apply_set_keybinding(
                 .map(|s| s.to_string());
             let mentions_self = cmd == command_id;
             let disables_our_default =
-                cmd == "-" && default_key.as_deref() == Some(key.as_str()) && when == default_when;
+                cmd == "-" && default_keys.contains(&key) && when == default_when;
             if mentions_self || disables_our_default {
                 continue;
             }
@@ -1032,20 +1039,30 @@ fn apply_set_keybinding(
         }
     }
 
-    let normalized_new_key = new_key.as_deref().map(expand_mod);
+    // Normalize and dedupe, preserving order (first key = primary).
+    let mut seen = std::collections::HashSet::new();
+    let new_keys: Vec<String> = new_keys
+        .iter()
+        .map(|k| expand_mod(k))
+        .filter(|k| !k.is_empty() && seen.insert(k.clone()))
+        .collect();
 
-    // If the new key+when matches the compiled-in default exactly, no
+    // If the new key set + when matches the compiled-in defaults, no
     // [[bind]] entries are needed for this command — leave the slate clean.
-    let is_back_to_default = normalized_new_key == default_key && new_when == default_when;
+    let mut new_sorted = new_keys.clone();
+    new_sorted.sort();
+    let mut default_sorted = default_keys.to_vec();
+    default_sorted.sort();
+    let is_back_to_default = new_sorted == default_sorted && new_when == default_when;
 
     if !is_back_to_default {
-        // Suppress the default via a `command = "-"` entry, unless the new
-        // binding lands on the exact same key+when (in which case the new
-        // binding overrides the default in place).
-        if let Some(dk) = &default_key {
-            let new_collides_with_default =
-                normalized_new_key.as_deref() == Some(dk.as_str()) && new_when == default_when;
-            if !new_collides_with_default {
+        // A dispatch-context change moves every binding: all defaults are
+        // suppressed and every new key gets an explicit entry. Otherwise
+        // defaults carried over in the new set stay implicit — suppress only
+        // the dropped ones and add only the extra ones.
+        let when_changed = new_when != default_when;
+        for dk in default_keys {
+            if when_changed || !new_keys.contains(dk) {
                 let mut t = toml_edit::Table::new();
                 t.insert("key", toml_edit::value(dk.as_str()));
                 t.insert("command", toml_edit::value("-"));
@@ -1057,15 +1074,17 @@ fn apply_set_keybinding(
             }
         }
 
-        if let Some(k) = &normalized_new_key {
-            let mut t = toml_edit::Table::new();
-            t.insert("key", toml_edit::value(k.as_str()));
-            t.insert("command", toml_edit::value(command_id));
-            if let Some(w) = &new_when {
-                t.insert("when", toml_edit::value(w.as_str()));
+        for k in &new_keys {
+            if when_changed || !default_keys.contains(k) {
+                let mut t = toml_edit::Table::new();
+                t.insert("key", toml_edit::value(k.as_str()));
+                t.insert("command", toml_edit::value(command_id));
+                if let Some(w) = &new_when {
+                    t.insert("when", toml_edit::value(w.as_str()));
+                }
+                t.set_implicit(true);
+                rebuilt.push(t);
             }
-            t.set_implicit(true);
-            rebuilt.push(t);
         }
     }
 
@@ -1089,7 +1108,7 @@ fn apply_set_keybinding(
 fn apply_reset_keybinding(
     content: &str,
     command_id: &str,
-    default_key: Option<String>,
+    default_keys: &[String],
     default_when: Option<String>,
 ) -> Result<String, String> {
     let mut doc = content
@@ -1113,8 +1132,7 @@ fn apply_reset_keybinding(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let mentions_self = cmd == command_id;
-            let occupies_default_slot =
-                default_key.as_deref() == Some(key.as_str()) && when == default_when;
+            let occupies_default_slot = default_keys.contains(&key) && when == default_when;
             if mentions_self || occupies_default_slot {
                 continue;
             }
@@ -1131,11 +1149,11 @@ fn apply_reset_keybinding(
     }
 
     // Pass 2: clear the `key` field of any [[command]] entry currently bound
-    // to the default key. User-command keybindings always dispatch in
-    // `pane_focused` context (see `resolve_bindings`), so this only matters
-    // when our default's when is `pane_focused`.
+    // to one of the default keys. User-command keybindings always dispatch
+    // in `pane_focused` context (see `resolve_bindings`), so this only
+    // matters when our default's when is `pane_focused`.
     if default_when.as_deref() == Some("pane_focused")
-        && let Some(dk) = &default_key
+        && !default_keys.is_empty()
         && let Some(arr) = doc
             .get_mut("command")
             .and_then(|i| i.as_array_of_tables_mut())
@@ -1146,7 +1164,7 @@ fn apply_reset_keybinding(
                 .and_then(|v| v.as_str())
                 .map(expand_mod)
                 .unwrap_or_default();
-            if k == *dk {
+            if default_keys.contains(&k) {
                 t.remove("key");
             }
         }

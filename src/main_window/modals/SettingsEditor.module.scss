@@ -198,6 +198,13 @@
   white-space: nowrap;
 
   kbd {
+    // Inline padding/borders paint outside the line box and would visually
+    // overlap adjacent rows; inline-block makes them count in layout. The
+    // fixed line-height pins the chip to exactly 20px so surrounding
+    // layouts (key-capture input, binding lists) don't shift with font
+    // metrics.
+    display: inline-block;
+    line-height: 14px;
     color: var(--color-fg);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
@@ -212,6 +219,47 @@
 
 .noShortcut {
   color: var(--color-fg-muted);
+}
+
+// Multiple bindings for one command, one per line
+.kbShortcutList {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.kbChipLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kbConflictMark {
+  color: var(--color-warning, rgb(220, 140, 0));
+  font-size: 15px;
+  line-height: 1;
+  margin-left: var(--space-2);
+}
+
+// Edit mode: one capture input per binding, stacked
+.kbKeyList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.kbKeyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kbKeyRemove,
+.kbKeyAdd {
+  font-size: var(--font-size-sm);
+  padding: 1px var(--space-2);
 }
 
 .whenLabel {
@@ -516,10 +564,12 @@
   box-shadow: 0 0 0 1px var(--color-accent);
 }
 
-// "regular" variant — matches the height/padding of standard text inputs
-// from _base.scss so it sits flush alongside <input>/<select> in forms.
+// "regular" variant — matches the height of standard text inputs from
+// _base.scss so it sits flush alongside <input>/<select> in forms. Those
+// are 8px padding around a ~16px text line; our content row is pinned at
+// 20px (chip height), so vertical padding compensates.
 .keyCaptureRegular {
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   font-size: inherit;
   border-radius: var(--radius-md);
 }
@@ -528,6 +578,11 @@
   color: var(--color-fg-muted);
   font-style: italic;
   font-size: var(--font-size-sm);
+  // Same 20px layout height as a kbd chip (14px line + 2px padding + 1px
+  // border per side) so the input doesn't resize when a value is captured.
+  display: inline-block;
+  line-height: 14px;
+  padding: 3px 0;
 }
 
 .keyCaptureClear {

@@ -255,7 +255,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::update_preference,
             preferences::reset_preference,
             preferences::get_preferences_schema,
-            preferences::set_command_keybinding,
+            preferences::set_command_keybindings,
             preferences::reset_command_keybinding,
             preferences::open_config_file,
             // Runtime state (ephemeral UI state, not settings.toml)

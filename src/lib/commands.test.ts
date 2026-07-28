@@ -50,6 +50,40 @@ describe("normalizeKeyEvent", () => {
     ).toBe("meta+ctrl+shift+alt+a");
   });
 
+  it("recovers the physical key from composed Alt combos (macOS Option)", () => {
+    // Opt+2 arrives as key "™" on macOS; the code carries the real key.
+    expect(
+      normalizeKeyEvent(
+        fakeKeyEvent({ key: "™", altKey: true, code: "Digit2" }),
+      ),
+    ).toBe("alt+2");
+    expect(
+      normalizeKeyEvent(fakeKeyEvent({ key: "Ω", altKey: true, code: "KeyZ" })),
+    ).toBe("alt+z");
+    expect(
+      normalizeKeyEvent(
+        fakeKeyEvent({ key: "–", altKey: true, code: "Minus" }),
+      ),
+    ).toBe("alt+-");
+  });
+
+  it("leaves non-Alt keys untouched by code recovery", () => {
+    // Shifted keys must keep their produced character ("+"), not the code.
+    expect(
+      normalizeKeyEvent(
+        fakeKeyEvent({ key: "+", shiftKey: true, code: "Equal" }),
+      ),
+    ).toBe("shift++");
+  });
+
+  it("keeps named keys in Alt combos", () => {
+    expect(
+      normalizeKeyEvent(
+        fakeKeyEvent({ key: "Enter", altKey: true, code: "Enter" }),
+      ),
+    ).toBe("alt+enter");
+  });
+
   it("returns empty string for standalone modifier", () => {
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Control" }))).toBe("");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Shift" }))).toBe("");

@@ -18,7 +18,7 @@ const MENU_CMD_INFIX: &str = "::cmd::";
 
 /// Convert a resolved binding ("meta+shift+w") into a muda accelerator
 /// ("Cmd+Shift+W"). `None` (no accelerator) for keys menus can't express.
-fn accelerator(key: &str) -> Option<String> {
+pub(crate) fn accelerator(key: &str) -> Option<String> {
     let mut parts: Vec<&str> = key.split('+').collect();
     let key = match parts.pop()? {
         k if k.len() == 1 && k.chars().all(|c| c.is_ascii_alphanumeric()) => k.to_uppercase(),

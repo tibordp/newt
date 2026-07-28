@@ -5,7 +5,10 @@ import { unwrap, safeSilent } from "../../../lib/ipc";
 import { CommandInfo, ResolvedBinding } from "../../../lib/preferences";
 import styles from "../SettingsEditor.module.scss";
 import {
+  Conflict,
+  ConflictMark,
   detectConflicts,
+  findBindingOverlaps,
   isCompleteKey,
   KeyCaptureInput,
   shortcutChips,
@@ -14,8 +17,16 @@ import {
 
 type EditState = {
   commandId: string;
-  key: string;
+  /// Working key list; entries are "" (empty capture row) or complete keys —
+  /// KeyCaptureInput only ever commits complete combinations.
+  keys: string[];
 };
+
+function sameKeySet(a: string[], b: string[]): boolean {
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.length === sb.length && sa.every((k, i) => k === sb[i]);
+}
 
 export function KeybindingsEditor({
   commands,
@@ -28,10 +39,10 @@ export function KeybindingsEditor({
 }) {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Tracks the (key, when) the user has explicitly acknowledged as a
+  // Tracks the (keys, when) the user has explicitly acknowledged as a
   // conflict. Save remains gated until ack matches the current draft, and
-  // changing the key invalidates the ack.
-  const [acked, setAcked] = useState<{ key: string; when: string } | null>(
+  // changing any key invalidates the ack.
+  const [acked, setAcked] = useState<{ keys: string; when: string } | null>(
     null,
   );
 
@@ -41,6 +52,12 @@ export function KeybindingsEditor({
     return m;
   }, [commands]);
 
+  const overlaps = useMemo(
+    () =>
+      findBindingOverlaps(bindings, (id) => commandsById.get(id)?.name ?? id),
+    [bindings, commandsById],
+  );
+
   const filtered = useMemo(() => {
     if (!filter) return commands;
     const lower = filter.toLowerCase();
@@ -48,7 +65,7 @@ export function KeybindingsEditor({
       (c) =>
         c.name.toLowerCase().includes(lower) ||
         c.id.toLowerCase().includes(lower) ||
-        (c.shortcut && c.shortcut.toLowerCase().includes(lower)) ||
+        c.shortcuts.some((k) => k.toLowerCase().includes(lower)) ||
         (c.when && c.when.toLowerCase().includes(lower)),
     );
   }, [commands, filter]);
@@ -58,7 +75,7 @@ export function KeybindingsEditor({
     setAcked(null);
     setEdit({
       commandId: cmd.id,
-      key: cmd.shortcut ?? "",
+      keys: cmd.shortcuts.length > 0 ? [...cmd.shortcuts] : [""],
     });
   };
 
@@ -68,7 +85,7 @@ export function KeybindingsEditor({
     setAcked(null);
   };
 
-  const save = async (cmd: CommandInfo) => {
+  const save = async (cmd: CommandInfo, keysToSave: string[]) => {
     if (!edit) return;
     try {
       // The when clause is a property of the command, not the user's choice —
@@ -77,9 +94,9 @@ export function KeybindingsEditor({
       // resolution order and the loser's row visibly shows as shadowed. To
       // reclaim, the user can Reset either side — Reset is symmetric.
       await unwrap(
-        ipc.setCommandKeybinding(
+        ipc.setCommandKeybindings(
           edit.commandId,
-          edit.key || null,
+          keysToSave,
           cmd.default_when ?? cmd.when ?? null,
         ),
       );
@@ -109,33 +126,34 @@ export function KeybindingsEditor({
           {filtered.map((cmd) => {
             const isEditing = edit?.commandId === cmd.id;
             const candidateWhen = cmd.default_when ?? cmd.when ?? "";
+            // User commands carry at most one key (it lives on their
+            // [[command]] entry, not in [[bind]]).
+            const singleKey = cmd.id.startsWith("user_command_");
 
             // Conflict / validation state — only computed in edit mode.
-            const conflicts =
-              isEditing && edit && edit.key
-                ? detectConflicts(
-                    edit.key,
+            const keysToSave = isEditing
+              ? [...new Set(edit!.keys.filter((k) => k && isCompleteKey(k)))]
+              : [];
+            const conflicts: Conflict[] = isEditing
+              ? keysToSave.flatMap((k) =>
+                  detectConflicts(
+                    k,
                     candidateWhen,
-                    edit.commandId,
+                    edit!.commandId,
                     bindings,
                     commandsById,
-                  )
-                : [];
+                  ),
+                )
+              : [];
             const hardConflicts = conflicts.filter((c) => c.kind === "hard");
             const softConflicts = conflicts.filter((c) => c.kind === "soft");
-            const valid = !isEditing || !edit?.key || isCompleteKey(edit.key);
+            const ackKeys = keysToSave.join(",");
             const ackMatches =
-              !!acked &&
-              !!edit &&
-              acked.key === edit.key &&
-              acked.when === candidateWhen;
-            const canSave = valid && (hardConflicts.length === 0 || ackMatches);
+              !!acked && acked.keys === ackKeys && acked.when === candidateWhen;
+            const canSave = hardConflicts.length === 0 || ackMatches;
             const showBanner =
               isEditing &&
-              (!valid ||
-                hardConflicts.length > 0 ||
-                softConflicts.length > 0 ||
-                !!error);
+              (hardConflicts.length > 0 || softConflicts.length > 0 || !!error);
 
             return (
               <Fragment key={cmd.id}>
@@ -158,16 +176,62 @@ export function KeybindingsEditor({
                   </td>
                   <td>
                     {isEditing && edit ? (
-                      <KeyCaptureInput
-                        value={edit.key}
-                        onChange={(k) => {
-                          setEdit({ ...edit, key: k });
-                          setAcked(null);
-                        }}
-                        autoFocus
-                      />
-                    ) : cmd.shortcut_display.length > 0 ? (
-                      shortcutChips(cmd.shortcut!)
+                      <div className={styles.kbKeyList}>
+                        {edit.keys.map((key, i) => (
+                          <div className={styles.kbKeyRow} key={i}>
+                            <KeyCaptureInput
+                              value={key}
+                              onChange={(k) => {
+                                const keys = [...edit.keys];
+                                keys[i] = k;
+                                setEdit({ ...edit, keys });
+                                setAcked(null);
+                              }}
+                              autoFocus={i === 0}
+                            />
+                            {edit.keys.length > 1 && (
+                              <button
+                                type="button"
+                                className={styles.kbKeyRemove}
+                                title="Remove this binding"
+                                onClick={() => {
+                                  setEdit({
+                                    ...edit,
+                                    keys: edit.keys.filter((_, j) => j !== i),
+                                  });
+                                  setAcked(null);
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {!singleKey && (
+                          <button
+                            type="button"
+                            className={styles.kbKeyAdd}
+                            onClick={() =>
+                              setEdit({ ...edit, keys: [...edit.keys, ""] })
+                            }
+                            disabled={edit.keys.some((k) => !k)}
+                          >
+                            + Add key
+                          </button>
+                        )}
+                      </div>
+                    ) : cmd.shortcuts.length > 0 ? (
+                      <span className={styles.kbShortcutList}>
+                        {cmd.shortcuts.map((k, i) => {
+                          const warn = overlaps.get(cmd.id)?.get(k);
+                          return (
+                            <span className={styles.kbChipLine} key={i}>
+                              {shortcutChips(k)}
+                              {warn && <ConflictMark title={warn} />}
+                            </span>
+                          );
+                        })}
+                      </span>
                     ) : (
                       <span className={styles.noShortcut}>&mdash;</span>
                     )}
@@ -195,13 +259,13 @@ export function KeybindingsEditor({
                       <>
                         <button
                           className="suggested"
-                          onClick={() => save(cmd)}
+                          onClick={() => save(cmd, keysToSave)}
                           disabled={!canSave}
                         >
                           Save
                         </button>
                         <button onClick={cancelEdit}>Cancel</button>
-                        {cmd.default_key && (
+                        {cmd.default_keys.length > 0 && (
                           <button
                             onClick={() => {
                               reset(cmd);
@@ -209,9 +273,9 @@ export function KeybindingsEditor({
                             }}
                             disabled={
                               !cmd.user_overridden &&
-                              edit.key === cmd.default_key
+                              sameKeySet(keysToSave, cmd.default_keys)
                             }
-                            title="Restore the built-in default"
+                            title="Restore the built-in defaults"
                           >
                             Reset
                           </button>
@@ -225,13 +289,6 @@ export function KeybindingsEditor({
                   <tr className={styles.kbDetailRow}>
                     <td></td>
                     <td colSpan={3}>
-                      {!valid && (
-                        <div className={styles.kbBannerWarn}>
-                          Press a non-modifier key (letter, number, function
-                          key, etc.).
-                        </div>
-                      )}
-
                       {hardConflicts.length > 0 && (
                         <div className={styles.kbBannerError}>
                           <span>
@@ -248,11 +305,10 @@ export function KeybindingsEditor({
                             <button
                               onClick={() =>
                                 setAcked({
-                                  key: edit!.key,
+                                  keys: ackKeys,
                                   when: candidateWhen,
                                 })
                               }
-                              disabled={!valid}
                               title="Acknowledge the conflict — Save will then overwrite the existing binding"
                             >
                               Override
@@ -261,8 +317,7 @@ export function KeybindingsEditor({
                         </div>
                       )}
 
-                      {showBanner &&
-                        hardConflicts.length === 0 &&
+                      {hardConflicts.length === 0 &&
                         softConflicts.length > 0 && (
                           <div className={styles.kbBannerWarn}>
                             Also used by{" "}
@@ -272,7 +327,6 @@ export function KeybindingsEditor({
                                   `${c.commandName} (${whenLabel(c.binding.when)})`,
                               )
                               .join(", ")}
-                            . Whichever context applies will win.
                           </div>
                         )}
 

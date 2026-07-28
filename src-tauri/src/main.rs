@@ -340,7 +340,7 @@ impl GlobalContext {
 
     /// Editor windows that are actually showing a document (not pre-warmed
     /// hidden spares).
-    fn active_editor_labels(&self) -> Vec<String> {
+    pub fn active_editor_labels(&self) -> Vec<String> {
         let prewarmed: Vec<String> = self
             .prewarmed_editors
             .lock()
@@ -984,6 +984,7 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     while prefs_rx.changed().await.is_ok() {
                         main_window::menu::rebuild_all(&app_handle);
+                        editor::rebuild_menus(&app_handle);
                     }
                 });
             }

@@ -9,7 +9,9 @@ import {
 } from "../../../lib/preferences";
 import styles from "../SettingsEditor.module.scss";
 import {
+  ConflictMark,
   detectConflicts,
+  findBindingOverlaps,
   isCompleteKey,
   KeyCaptureInput,
   shortcutChips,
@@ -44,6 +46,12 @@ export function CommandsEditor({
     for (const c of allCommands) m.set(c.id, c);
     return m;
   }, [allCommands]);
+
+  const overlaps = useMemo(
+    () =>
+      findBindingOverlaps(bindings, (id) => commandsById.get(id)?.name ?? id),
+    [bindings, commandsById],
+  );
 
   const startEdit = (index: number) => {
     setEditingIndex(index);
@@ -262,7 +270,6 @@ export function CommandsEditor({
             {softConflicts
               .map((c) => `${c.commandName} (${whenLabel(c.binding.when)})`)
               .join(", ")}
-            . Whichever context applies will win.
           </div>
         )}
 
@@ -310,6 +317,15 @@ export function CommandsEditor({
                   {cmd.key && (
                     <span className={styles.userCmdShortcut}>
                       {shortcutChips(cmd.key)}
+                      {/* User commands hold one key, so any overlap for
+                          this command id belongs to it. */}
+                      {(() => {
+                        const warn = overlaps
+                          .get(`user_command_${i}`)
+                          ?.values()
+                          .next().value;
+                        return warn ? <ConflictMark title={warn} /> : null;
+                      })()}
                     </span>
                   )}
                 </div>

@@ -64,6 +64,8 @@ export default function CommandPalette({
     ret = ret.filter(
       ({ matches, command }) =>
         matches &&
+        // Viewer/editor commands dispatch in their own windows, not here
+        command.scope === "main" &&
         // Hide internal commands from palette
         command.id !== "command_palette" &&
         command.id !== "hot_paths" &&

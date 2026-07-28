@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import styles from "./Viewer.module.scss";
 import { commands } from "../lib/bindings";
 import { useRemoteState, safe, unwrap } from "../lib/ipc";
+import { useScopedBindings } from "../lib/scopedBindings";
 import type { VfsPath } from "../lib/types";
 import {
   CHUNK_SIZE,
@@ -123,24 +124,28 @@ function Viewer() {
     [displayPath],
   );
 
-  // Window-level key handler for actions that must work regardless of focus.
-  // Sub-viewers/SearchBar stopPropagation when they consume Escape.
+  // Window-level Escape handler — closing the viewer is fundamental and
+  // deliberately not a rebindable command. Sub-viewers/SearchBar
+  // stopPropagation or preventDefault when they consume Escape.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Sub-viewers and Radix overlays preventDefault the keys they consume
       if (e.defaultPrevented) return;
       if (e.key === "Escape") {
         safe(commands.closeWindow());
         e.preventDefault();
-      } else if (e.key === "F3" && currentMode) {
-        e.preventDefault();
-        const resolved = autoMode ?? currentMode;
-        safe(commands.setViewerMode(getAlternateMode(currentMode, resolved)));
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentMode, autoMode]);
+  }, []);
+
+  useScopedBindings("viewer", {
+    viewer_toggle_hex: () => {
+      if (!currentMode) return false;
+      const resolved = autoMode ?? currentMode;
+      safe(commands.setViewerMode(getAlternateMode(currentMode, resolved)));
+    },
+  });
 
   let content: React.ReactNode;
 

@@ -28,6 +28,7 @@ import {
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
+import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 
@@ -492,6 +493,13 @@ export function HexViewer({
     }
   }, [clampedTopRow, rowHeight, scale]);
 
+  useScopedBindings("viewer", {
+    viewer_copy: copyHexSelection,
+    viewer_select_all: selectAll,
+    viewer_goto: goToOffset,
+    viewer_find: openSearch,
+  });
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (
@@ -499,30 +507,6 @@ export function HexViewer({
         e.target instanceof HTMLTextAreaElement
       )
         return;
-
-      if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        selectAll();
-        return;
-      }
-
-      if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        copyHexSelection();
-        return;
-      }
-
-      if (e.key === "g" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        goToOffset();
-        return;
-      }
-
-      if (e.key === "f" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        openSearch();
-        return;
-      }
 
       const scrollBy = (rows: number) => {
         setTopRow((prev) => Math.max(0, Math.min(prev + rows, maxRow)));
@@ -559,7 +543,7 @@ export function HexViewer({
           break;
       }
     },
-    [visibleRows, maxRow, selectAll, copyHexSelection, goToOffset, openSearch],
+    [visibleRows, maxRow],
   );
 
   const currentOffset = clampedTopRow * HEX_BYTES_PER_ROW;

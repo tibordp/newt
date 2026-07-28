@@ -27,6 +27,7 @@ import {
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
+import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 
@@ -666,6 +667,13 @@ export function TextViewer({
     }
   }, [clampedTopRow, lineHeight, scale]);
 
+  useScopedBindings("viewer", {
+    viewer_copy: copySelection,
+    viewer_select_all: selectAll,
+    viewer_goto: goToLine,
+    viewer_find: openSearch,
+  });
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       // Don't intercept keys meant for input elements (e.g. search bar)
@@ -674,30 +682,6 @@ export function TextViewer({
         e.target instanceof HTMLTextAreaElement
       )
         return;
-
-      if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        selectAll();
-        return;
-      }
-
-      if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        copySelection();
-        return;
-      }
-
-      if (e.key === "g" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        goToLine();
-        return;
-      }
-
-      if (e.key === "f" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        openSearch();
-        return;
-      }
 
       const scrollBy = (rows: number) => {
         setTopRow((prev) => Math.max(0, Math.min(prev + rows, maxRow)));
@@ -740,7 +724,7 @@ export function TextViewer({
           break;
       }
     },
-    [visibleRows, maxRow, selectAll, copySelection, goToLine, openSearch],
+    [visibleRows, maxRow],
   );
 
   const currentLine = clampedTopRow + 1;

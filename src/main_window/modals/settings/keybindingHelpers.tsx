@@ -113,6 +113,58 @@ export function detectConflicts(
   return conflicts;
 }
 
+/// Omnipresent (non-blocking) conflict survey over the resolved bindings:
+/// commandId → key → tooltip naming the other commands sharing that key in
+/// an overlapping context. Exact-slot duplicates can't survive resolution
+/// (later entries win), so everything found here is a context overlap where
+/// dispatch still picks one — worth a warning, not a block.
+export function findBindingOverlaps(
+  bindings: ResolvedBinding[],
+  commandName: (id: string) => string,
+): Map<string, Map<string, string>> {
+  const byKey = new Map<string, ResolvedBinding[]>();
+  for (const b of bindings) {
+    const list = byKey.get(b.key);
+    if (list) list.push(b);
+    else byKey.set(b.key, [b]);
+  }
+  const result = new Map<string, Map<string, string>>();
+  for (const list of byKey.values()) {
+    if (list.length < 2) continue;
+    for (const b of list) {
+      const others = list.filter(
+        (o) =>
+          o !== b &&
+          o.command !== b.command &&
+          (whenEq(o.when, b.when) || !o.when || !b.when),
+      );
+      if (others.length === 0) continue;
+      const text =
+        "Also used by " +
+        others
+          .map((o) => `${commandName(o.command)} (${whenLabel(o.when)})`)
+          .join(", ");
+      let perKey = result.get(b.command);
+      if (!perKey) {
+        perKey = new Map();
+        result.set(b.command, perKey);
+      }
+      perKey.set(b.key, text);
+    }
+  }
+  return result;
+}
+
+/// Warning marker for a binding that overlaps another command's; the
+/// tooltip carries the detail.
+export function ConflictMark({ title }: { title: string }) {
+  return (
+    <span className={styles.kbConflictMark} title={title}>
+      {"⚠︎"}
+    </span>
+  );
+}
+
 export function KeyCaptureInput({
   value,
   onChange,

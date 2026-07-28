@@ -12,6 +12,7 @@ import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 import styles from "./Viewer.module.scss";
 import { type ViewerMode } from "./helpers";
+import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -108,6 +109,8 @@ export function PdfViewer({
     };
   }, [fileUrl]);
 
+  const shortcuts = useCommandShortcuts();
+
   const zoomIn = useCallback(() => {
     const v = viewerInstanceRef.current;
     if (v) v.increaseScale();
@@ -130,25 +133,14 @@ export function PdfViewer({
     }
   }, []);
 
-  // Keyboard shortcuts for zoom (Ctrl+/-, Ctrl+0)
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        zoomIn();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "-") {
-        e.preventDefault();
-        zoomOut();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "0") {
-        e.preventDefault();
-        zoomReset();
-      }
-    },
-    [zoomIn, zoomOut, zoomReset],
-  );
+  useScopedBindings("viewer", {
+    viewer_zoom_in: zoomIn,
+    viewer_zoom_out: zoomOut,
+    viewer_zoom_fit: zoomReset,
+  });
 
   return (
-    <div className={styles.viewer} onKeyDown={handleKeyDown}>
+    <div className={styles.viewer}>
       {pdfError ? (
         <div className={styles.mediaContent}>
           <div className={styles.imageErrorMessage}>{pdfError}</div>
@@ -179,7 +171,7 @@ export function PdfViewer({
             <button
               className={styles.viewerToolbarBtn}
               onClick={zoomOut}
-              title="Zoom out (Ctrl+-)"
+              title={shortcuts.label("Zoom out", "viewer_zoom_out")}
             >
               −
             </button>
@@ -189,14 +181,14 @@ export function PdfViewer({
             <button
               className={styles.viewerToolbarBtn}
               onClick={zoomIn}
-              title="Zoom in (Ctrl+=)"
+              title={shortcuts.label("Zoom in", "viewer_zoom_in")}
             >
               +
             </button>
             <button
               className={styles.viewerToolbarBtn}
               onClick={zoomReset}
-              title="Reset zoom (Ctrl+0)"
+              title={shortcuts.label("Reset zoom", "viewer_zoom_fit")}
             >
               Fit
             </button>

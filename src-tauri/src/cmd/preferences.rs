@@ -49,15 +49,15 @@ pub fn get_preferences_schema(
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_command_keybinding(
+pub fn set_command_keybindings(
     global_ctx: tauri::State<'_, GlobalContext>,
     command_id: String,
-    new_key: Option<String>,
+    new_keys: Vec<String>,
     new_when: Option<String>,
 ) -> Result<(), Error> {
     let prefs = global_ctx.preferences();
     prefs
-        .set_command_keybinding(&command_id, new_key, new_when)
+        .set_command_keybindings(&command_id, new_keys, new_when)
         .map_err(Error::Custom)?;
     prefs.reload();
     Ok(())
