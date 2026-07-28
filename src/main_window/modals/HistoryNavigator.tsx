@@ -161,7 +161,7 @@ export default function HistoryNavigator({
   // Ignore hover until the user actually moves the mouse — prevents
   // whichever entry happens to sit under the cursor at open time from
   // hijacking the keyboard's preview selection.
-  const pointerActive = useSuppressInitialPointer();
+  const pointerActive = useSuppressInitialPointer(open);
 
   // Window-level Alt-up commit for the alt-tab style mode. Radix's own
   // keyboard handling on Content covers ArrowUp/ArrowDown/Enter/Esc, but

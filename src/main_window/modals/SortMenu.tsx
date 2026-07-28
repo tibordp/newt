@@ -67,7 +67,7 @@ export default function SortMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const pointerActive = useSuppressInitialPointer();
+  const pointerActive = useSuppressInitialPointer(open);
 
   // Holding Shift arms "reverse": Shift+<key> applies that sort descending,
   // and the Reverse row lights up while held. Tracked via window listeners so
