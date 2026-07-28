@@ -742,6 +742,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             },
         }
         CommandDef {
+            id: "documentation".into(),
+            name: "Documentation...".into(),
+            short_name: Some("Docs".into()),
+            category: "Help".into(),
+            default_keys: vec![],
+            default_when: None,
+            needs_pane: false,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "about".into(),
             name: "About Newt...".into(),
             short_name: Some("About".into()),

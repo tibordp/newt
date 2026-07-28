@@ -160,6 +160,25 @@ pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
     })
 }
 
+/// Hand a URL to the system's default browser. The webview installs no
+/// new-window handler, so an `<a target="_blank">` goes nowhere on any
+/// platform — every outbound link in the UI comes through here.
+#[tauri::command]
+#[specta::specta]
+pub fn open_url(url: String) -> Result<(), Error> {
+    opener::open(&url)?;
+    Ok(())
+}
+
+const DOCS_URL: &str = "https://newt-fm.org/docs/";
+
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_documentation(_ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    opener::open(DOCS_URL)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tauri invoke handler — dispatch + middleware
 // ---------------------------------------------------------------------------
@@ -175,6 +194,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
             askpass_respond,
             ping,
             close_modal,
+            open_url,
+            cmd_documentation,
             operations::confirm_delete,
             dialog::dialog,
             window::close_window,
@@ -500,6 +521,7 @@ async fn dispatch_registry_command_inner(
         "add_bookmark" => preferences::cmd_add_bookmark(ctx, pane)?,
         "connection_log" => dialog::cmd_connection_log(ctx, pane)?,
         "debug" => dialog::cmd_debug(ctx, pane)?,
+        "documentation" => cmd_documentation(ctx, pane)?,
         "about" => dialog::cmd_about(ctx, pane)?,
         _ => return Ok(false),
     }
@@ -591,6 +613,7 @@ mod dispatch_tests {
             "add_bookmark",
             "connection_log",
             "debug",
+            "documentation",
             "about",
         ];
         for id in table {

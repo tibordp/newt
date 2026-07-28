@@ -31,13 +31,31 @@
   line-height: 1.6;
 }
 
+// Link-styled buttons: the webview can't follow an anchor out to a browser,
+// so every outbound link is a button that goes through `open_url`.
+.links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  font-size: var(--font-size-sm);
+
+  button {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+    color: var(--color-accent);
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
 .license {
   font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
-
-  a {
-    color: var(--color-accent);
-  }
 }
 
 .factCard {

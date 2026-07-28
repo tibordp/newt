@@ -376,13 +376,15 @@ export function CommandsEditor({
           <div className={styles.templateHelpBody}>
             <p>
               The <b>Run</b> field uses{" "}
-              <a
-                href="https://docs.rs/minijinja"
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                className={styles.inlineLink}
+                onClick={() =>
+                  safeSilent(ipc.openUrl("https://docs.rs/minijinja"))
+                }
               >
                 Jinja2
-              </a>{" "}
+              </button>{" "}
               templates.
             </p>
 

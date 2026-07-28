@@ -1623,6 +1623,12 @@ Focus is a first-class concern — broken focus means reaching for the mouse, wh
 
 ## 16. Miscellaneous Features
 
+### Outbound Links
+
+Every link that leaves the app goes through the `open_url` command, which hands the URL to `opener` on the host side. An `<a target="_blank">` is not an option: the webview has no new-window handler installed, so a blank-target link is silently swallowed on every platform. Links are therefore `<button>`s styled as links.
+
+`documentation` ("Documentation...", Help category, no default keybinding) opens `newt-fm.org/docs/` from the command palette.
+
 ### About Dialog
 
 Available from the command palette. Shows:
@@ -1630,8 +1636,8 @@ Available from the command palette. Shows:
 - **App icon** (96×96), title ("Newt"), tagline ("A keyboard-centric dual-pane file manager").
 - **Version**: e.g., `v0.1.0 (a1b2c3d+)` — short git hash with `+` suffix if built from a dirty working tree.
 - **Build date** and **target triple** (e.g., `x86_64-unknown-linux-gnu`).
+- **Links**: Website (newt-fm.org), Documentation (newt-fm.org/docs/), GitHub — each hands the URL to the system browser via `open_url`.
 - **License**: GNU General Public License v3.0 or later.
-- **GitHub link**: Clickable link to the repository, opens in browser.
 - **Third-Party Notices…**: opens the notices dialog (below).
 - **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation). The icon rotates slightly on activation.
 

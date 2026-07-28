@@ -72,15 +72,30 @@ export default function About({
           <div>{versionLine}</div>
           <div>{target_triple}</div>
         </div>
-        <div className={styles.license}>
-          <div>GNU General Public License v3.0 or later</div>
-          <a
-            href="https://github.com/tibordp/newt"
-            target="_blank"
-            rel="noopener"
+        <div className={styles.links}>
+          <button
+            type="button"
+            onClick={() => safe(commands.openUrl("https://newt-fm.org"))}
           >
-            github.com/tibordp/newt
-          </a>
+            Website
+          </button>
+          <button
+            type="button"
+            onClick={() => safe(commands.openUrl("https://newt-fm.org/docs/"))}
+          >
+            Documentation
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              safe(commands.openUrl("https://github.com/tibordp/newt"))
+            }
+          >
+            GitHub
+          </button>
+        </div>
+        <div className={styles.license}>
+          GNU General Public License v3.0 or later
         </div>
         {fact && <div className={styles.factCard}>{fact}</div>}
       </DialogBody>
