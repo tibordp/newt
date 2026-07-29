@@ -516,8 +516,8 @@ Today only S3 implements a sheet:
 
 ### Clipboard Operations
 
-- **Copy Path** (Mod+C): Copies the paths of all selected files (or the focused file if none selected) to the system clipboard.
-- **Paste** (Mod+V): Pastes file paths from the system clipboard into the current pane.
+- **Copy Path** (Mod+C, also Ctrl+Ins off macOS): Copies the paths of all selected files (or the focused file if none selected) to the system clipboard.
+- **Paste** (Mod+V, also Shift+Ins off macOS): Pastes file paths from the system clipboard into the current pane.
 
 ### Operation Progress and Issue Resolution
 
@@ -1833,8 +1833,8 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| Mod+C | Copy path to clipboard | Pane focused |
-| Mod+V | Paste from clipboard | Pane focused |
+| Mod+C, Ctrl+Ins (not macOS) | Copy path to clipboard | Pane focused |
+| Mod+V, Shift+Ins (not macOS) | Paste from clipboard | Pane focused |
 
 ### Filter & Search
 

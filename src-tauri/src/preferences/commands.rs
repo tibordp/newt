@@ -371,7 +371,12 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Copy Path to Clipboard".into(),
             short_name: Some("CopyPath".into()),
             category: "Edit".into(),
-            default_keys: vec!["mod+c".into()],
+            // Ctrl+Ins is the CUA-era clipboard alias; macOS has no Insert key.
+            default_keys: if cfg!(target_os = "macos") {
+                vec!["mod+c".into()]
+            } else {
+                vec!["mod+c".into(), "ctrl+insert".into()]
+            },
             default_when: Some("pane_focused".into()),
             needs_pane: true,
             scope: CommandScope::Main,
@@ -381,7 +386,11 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Paste Path from Clipboard".into(),
             short_name: Some("PastePath".into()),
             category: "Edit".into(),
-            default_keys: vec!["mod+v".into()],
+            default_keys: if cfg!(target_os = "macos") {
+                vec!["mod+v".into()]
+            } else {
+                vec!["mod+v".into(), "shift+insert".into()]
+            },
             default_when: Some("pane_focused".into()),
             needs_pane: true,
             scope: CommandScope::Main,
