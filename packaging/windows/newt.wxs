@@ -1,0 +1,116 @@
+<!-- MSI authoring, built by build-msi.ps1 with WiX 6 — Tauri's bundler is not
+     involved on Windows. Preprocessor variables (Version, NewtExe, AgentsDir,
+     SrcDir) come from that script.
+
+     The UpgradeCode is pinned to the value tauri-bundler derived for
+     previously shipped MSIs (uuid5(DNS, "Newt.exe.app.x64")); changing it
+     orphans existing installs. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <?if $(sys.BUILDARCH) = "x86" ?>
+        <?define PFDir = "ProgramFilesFolder" ?>
+    <?else?>
+        <?define PFDir = "ProgramFiles64Folder" ?>
+    <?endif?>
+
+    <Package Name="Newt"
+             Manufacturer="Newt"
+             Version="$(var.Version)"
+             UpgradeCode="c0782214-bad9-55ff-8ca9-b0479f60e882"
+             Language="1033"
+             Codepage="1252"
+             Scope="perMachine"
+             Compressed="yes">
+
+        <SummaryInformation Description="Newt Installer" Manufacturer="Newt" />
+        <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+        <MajorUpgrade Schedule="afterInstallInitialize"
+                      DowngradeErrorMessage="A newer version of Newt is already installed."
+                      AllowSameVersionUpgrades="yes" />
+
+        <Icon Id="NewtIco" SourceFile="$(var.SrcDir)\..\..\src-tauri\icons\icon.ico" />
+        <Property Id="ARPPRODUCTICON" Value="NewtIco" />
+        <Property Id="ARPURLINFOABOUT" Value="https://newt-fm.org" />
+        <Property Id="ARPURLUPDATEINFO" Value="https://newt-fm.org" />
+        <Property Id="ARPHELPLINK" Value="https://newt-fm.org" />
+
+        <WixVariable Id="WixUILicenseRtf" Value="$(var.SrcDir)\LICENSE.rtf" />
+        <WixVariable Id="WixUIBannerBmp" Value="$(var.SrcDir)\wix-banner.bmp" />
+        <WixVariable Id="WixUIDialogBmp" Value="$(var.SrcDir)\wix-dialog.bmp" />
+
+        <!-- WebView2 Evergreen runtime: per-machine (registered under the
+             32-bit view) or per-user. Detect-only; no bootstrapper. -->
+        <Property Id="INSTALLED_WEBVIEW2_VERSION">
+            <RegistrySearch Id="Webview2SystemWow" Root="HKLM" Key="SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+            <RegistrySearch Id="Webview2System" Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" Bitness="always32" />
+            <RegistrySearch Id="Webview2User" Root="HKCU" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+        </Property>
+        <Launch Condition="Installed OR INSTALLED_WEBVIEW2_VERSION"
+                Message="Newt requires the Microsoft Edge WebView2 Runtime, which is not installed. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and run this installer again." />
+
+        <!-- Previous install location and desktop-shortcut choice. The HKCU
+             search also matches per-machine installs of the old
+             Tauri-bundled MSIs, which wrote HKCU unconditionally. -->
+        <Property Id="APPLICATIONFOLDER">
+            <RegistrySearch Id="PrevInstallDirUser" Root="HKCU" Key="Software\Newt\Newt" Name="InstallDir" Type="raw" />
+            <RegistrySearch Id="PrevInstallDirMachine" Root="HKLM" Key="Software\Newt\Newt" Name="InstallDir" Type="raw" />
+        </Property>
+        <Property Id="NEWT_DESKTOP_SHORTCUT" Secure="yes">
+            <RegistrySearch Id="PrevDesktopShortcutUser" Root="HKCU" Key="Software\Newt\Newt" Name="Desktop Shortcut" Type="raw" />
+            <RegistrySearch Id="PrevDesktopShortcutMachine" Root="HKLM" Key="Software\Newt\Newt" Name="Desktop Shortcut" Type="raw" />
+        </Property>
+
+        <StandardDirectory Id="$(var.PFDir)">
+            <Directory Id="APPLICATIONFOLDER" Name="Newt">
+                <Directory Id="AgentsFolder" Name="agents" />
+            </Directory>
+        </StandardDirectory>
+        <StandardDirectory Id="DesktopFolder" />
+        <StandardDirectory Id="ProgramMenuFolder" />
+
+        <Component Id="MainExecutable" Directory="APPLICATIONFOLDER">
+            <File Id="NewtExe" Source="$(var.NewtExe)" Name="newt.exe" KeyPath="yes" Checksum="yes" />
+        </Component>
+        <Component Id="RegistryEntries" Directory="APPLICATIONFOLDER">
+            <RegistryKey Root="HKMU" Key="Software\Newt\Newt">
+                <RegistryValue Name="InstallDir" Type="string" Value="[APPLICATIONFOLDER]" KeyPath="yes" />
+            </RegistryKey>
+        </Component>
+        <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+            <Shortcut Id="StartMenuShortcut" Name="Newt" Description="Dual-pane file manager" Target="[!NewtExe]" WorkingDirectory="APPLICATIONFOLDER">
+                <ShortcutProperty Key="System.AppUserModel.ID" Value="org.newt-fm.newt" />
+            </Shortcut>
+            <RegistryValue Root="HKMU" Key="Software\Newt\Newt" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+        <Component Id="DesktopShortcutCmp" Directory="DesktopFolder">
+            <Shortcut Id="DesktopShortcut" Name="Newt" Description="Dual-pane file manager" Target="[!NewtExe]" WorkingDirectory="APPLICATIONFOLDER">
+                <ShortcutProperty Key="System.AppUserModel.ID" Value="org.newt-fm.newt" />
+            </Shortcut>
+            <RegistryValue Root="HKMU" Key="Software\Newt\Newt" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+        <ComponentGroup Id="AgentFiles" Directory="AgentsFolder">
+            <Files Include="$(var.AgentsDir)\**" />
+        </ComponentGroup>
+
+        <Feature Id="MainProgram" Title="Newt" Description="The Newt application." Level="1" AllowAbsent="no" Display="expand" ConfigurableDirectory="APPLICATIONFOLDER">
+            <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="RegistryEntries" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <ComponentGroupRef Id="AgentFiles" />
+            <!-- Level 2 = absent unless the UI checkbox opts in, the registry
+                 search found a previous shortcut, or NEWT_DESKTOP_SHORTCUT=1 /
+                 ADDLOCAL=DesktopShortcut is passed on the command line. -->
+            <Feature Id="DesktopShortcut" Title="Desktop shortcut" Description="Shortcut to Newt on the desktop." Level="2" AllowAbsent="yes">
+                <Level Value="1" Condition="NEWT_DESKTOP_SHORTCUT" />
+                <ComponentRef Id="DesktopShortcutCmp" />
+            </Feature>
+        </Feature>
+
+        <!-- Launch-after-install checkbox on the exit dialog; runs from the UI
+             sequence, so it starts in the invoking user's context. -->
+        <CustomAction Id="LaunchApplication" FileRef="NewtExe" ExeCommand="" Return="asyncNoWait" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Newt" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+        <UIRef Id="NewtUI" />
+    </Package>
+</Wix>

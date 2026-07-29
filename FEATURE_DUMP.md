@@ -1671,6 +1671,45 @@ Linux packages install `LICENSE` and the notices under
 machine-readable `copyright` file, and the Arch package mirrors both into
 `/usr/share/licenses/newt-fm/`.
 
+### Windows Installer
+
+Windows ships a single MSI, authored from scratch in `packaging/windows/`
+and built with WiX (dotnet tool, pinned in `.config/dotnet-tools.json`) by
+`packaging/windows/build-msi.ps1` — Tauri's bundler is not involved, same as
+on Linux. The app binary itself is a plain `cargo build --release -p newt
+--features custom-protocol`; tauri-build embeds the icon, manifest, and
+frontend at compile time. The WiX invocations pass `--acceptEula wix7`
+(Open Source Maintenance Fee EULA; Newt is fee-exempt as an open-source
+project).
+
+The **UpgradeCode is pinned** in `newt.wxs` to the value tauri-bundler
+derived for previously shipped MSIs (`uuid5(DNS, "Newt.exe.app.x64")`) —
+changing it orphans existing installs.
+
+Installer UI (custom WixUI set in `ui.wxs`): Welcome → License →
+per-user/per-machine scope → install dir + "Create a desktop shortcut"
+checkbox (unchecked by default) → confirm; the exit page offers "Launch
+Newt". Rerunning the installer gives the stock Change/Repair/Remove
+maintenance flow, where Change opens the feature tree — that is how an
+existing install adds or drops the desktop shortcut later. The desktop
+shortcut is a Level-2 feature: silent installs opt in with
+`NEWT_DESKTOP_SHORTCUT=1` or `ADDLOCAL=DesktopShortcut`, and a previous
+install's choice is re-detected from the registry (old Tauri-bundled MSIs
+wrote the same `Desktop Shortcut` value, so their users keep the shortcut
+they already have).
+
+WebView2 is detect-only: a launch condition blocks the install with a
+pointer to the runtime download if it is missing; nothing is downloaded by
+the installer. One dual-scope caveat: a per-user install cannot see or
+upgrade an existing per-machine install (MSI context isolation), so
+switching scope leaves the other copy behind.
+
+The Add/Remove Programs entry carries the icon, homepage, and support
+links. Banner and dialog artwork is generated from the app icon and logo
+palette by `packaging/windows/generate.py` (Pillow); WiX stretches the
+fixed-size BMPs on high-DPI displays — there is no oversized-asset escape
+hatch.
+
 ### Copy Pane (Mod+.)
 
 Sets the other pane's directory to match the active pane's current path. Useful for quickly aligning both panes to the same location before a copy/move.

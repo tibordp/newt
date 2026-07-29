@@ -51,10 +51,10 @@ jobs:
               linux.append(leg)
 
           macos = [{"arch": "aarch64", "target": "aarch64-apple-darwin"}]
-          windows = [{"arch": "x86_64", "target": "x86_64-pc-windows-msvc"}]
+          windows = [{"arch": "x86_64", "target": "x86_64-pc-windows-msvc", "msi_arch": "x64"}]
           if full:
               macos.append({"arch": "x86_64", "target": "x86_64-apple-darwin"})
-              windows.append({"arch": "aarch64", "target": "aarch64-pc-windows-msvc"})
+              windows.append({"arch": "aarch64", "target": "aarch64-pc-windows-msvc", "msi_arch": "arm64"})
 
           for key, legs in {"linux": linux, "macos": macos, "windows": windows}.items():
               print(f"{key}={json.dumps(legs)}")
@@ -412,24 +412,23 @@ jobs:
   #
   # Both arches cross-compile on the x86_64 `windows-latest` runner (the
   # MSVC toolchain there carries the ARM64 cross tools), mirroring the
-  # Linux x86-runner pattern. The stage-1 Linux/macOS agents are bundled
-  # as on every other platform — you remote *from* Windows into those.
-  # The one thing Windows-specific: there is no remoting *into* Windows
-  # from another platform (or another Windows arch), so the Windows agent
-  # is only ever shipped here, and only for the build's own arch. It is
-  # built inline for the build triple alongside the cross agents.
+  # Linux x86-runner pattern. The app is built with plain cargo and
+  # packaged by packaging/windows/build-msi.ps1 (WiX, pinned in
+  # .config/dotnet-tools.json) — Tauri's bundler is not used, same as on
+  # Linux. The stage-1 Linux/macOS agents are bundled as on every other
+  # platform — you remote *from* Windows into those. The one thing
+  # Windows-specific: there is no remoting *into* Windows from another
+  # platform (or another Windows arch), so the Windows agent is only ever
+  # shipped here, and only for the build's own arch. It is built inline
+  # for the build triple alongside the cross agents.
 
   package-windows:
     name: Package (Windows ${{ matrix.arch }})
     runs-on: windows-latest
     needs: [plan, agent, frontend]
-    # Shared target dir so the inline agent build and the Tauri app
-    # build reuse deps and are both covered by rust-cache (xtask honours
-    # this instead of its local per-triple split). Must be absolute: a
-    # relative CARGO_TARGET_DIR resolves against each cargo invocation's
-    # cwd, and `cargo tauri build` runs cargo from src-tauri/ — so
-    # `target` would split the builds and strand the .msi in
-    # src-tauri/target/ where the upload step never looks.
+    # Shared target dir so the inline agent build and the app build reuse
+    # deps and are both covered by rust-cache (xtask honours this instead
+    # of its local per-triple split).
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
     strategy:
@@ -447,21 +446,6 @@ jobs:
       # aws-lc-sys / ring assemble with NASM on Windows MSVC targets.
       - name: Install NASM
         run: choco install nasm --no-progress -y
-      # Prebuilt from the tauri-cli release — compiling it via
-      # `cargo install` costs minutes per cache miss. x86_64 CLI on
-      # both legs: the aarch64 app build cross-compiles on this
-      # x86_64 runner.
-      - name: Install tauri-cli
-        shell: bash
-        run: |
-          curl -fsSL --retry 3 -o cargo-tauri.zip \
-            https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.11.4/cargo-tauri-x86_64-pc-windows-msvc.zip
-          # No unzip on the runner (and Git Bash's tar is GNU tar, which
-          # can't read zip); 7z is preinstalled.
-          7z e cargo-tauri.zip cargo-tauri.exe -y
-          mv cargo-tauri.exe "$HOME/.cargo/bin/"
-          rm cargo-tauri.zip
-          cargo tauri --version
       - name: Download frontend
         uses: actions/download-artifact@v8
         with:
@@ -491,19 +475,19 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
         run: cargo xtask agents ${{ matrix.target }}
-      # bash (Git for Windows) so the single-quoted --config JSON survives
-      # verbatim; PowerShell would mangle it.
-      - name: Build Tauri app
-        shell: bash
+      - name: Build app
+        run: cargo build --release --target ${{ matrix.target }} -p newt --features custom-protocol
+      - name: Build .msi
         run: >
-          cargo tauri build
-          --target ${{ matrix.target }}
-          --bundles msi
-          --config '{"build":{"beforeBuildCommand":""}}'
+          packaging/windows/build-msi.ps1
+          -Exe target/${{ matrix.target }}/release/newt.exe
+          -AgentsDir agents
+          -Version ${{ needs.frontend.outputs.version }}
+          -Arch ${{ matrix.msi_arch }}
       - uses: actions/upload-artifact@v6
         with:
           name: package-windows-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/bundle/msi/*.msi
+          path: "*.msi"
           retention-days: 7
           if-no-files-found: error
 

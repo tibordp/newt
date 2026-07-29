@@ -15,15 +15,13 @@
       "icons/32x32.png",
       "icons/icon.ico"
     ],
-    "targets": "all",
+    "targets": ["app", "dmg"],
     "resources": {
-      "../agents": "agents" 
+      "../agents": "agents"
     },
-    "windows": {
-      "nsis": {
-        "installMode": "both"
-      }
-    },
+    "homepage": "https://newt-fm.org",
+    "shortDescription": "Dual-pane file manager",
+    "longDescription": "A keyboard-driven dual-pane file manager with an integrated terminal, SSH remoting, and S3/SFTP/archive mounts.",
     "license": "GPL-3.0-or-later",
     "licenseFile": "../LICENSE",
     "copyright": "Copyright © 2023-2026 The Newt Authors"

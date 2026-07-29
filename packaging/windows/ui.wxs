@@ -1,0 +1,104 @@
+<!-- Custom WixUI dialog set: Welcome → License → Scope → InstallDir (with
+     desktop-shortcut checkbox) → VerifyReady. Linear — no express-install
+     shortcut like WixUI_Advanced, from which the per-user/per-machine folder
+     custom actions are adapted. Maintenance mode keeps the stock
+     Change/Repair/Remove flow; Change opens the feature tree, which is how an
+     existing install can add or drop the desktop shortcut later. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <?if $(sys.BUILDARCH) = "x86" ?>
+        <?define PFDir = "ProgramFilesFolder" ?>
+    <?else?>
+        <?define PFDir = "ProgramFiles64Folder" ?>
+    <?endif?>
+
+    <Fragment>
+        <!-- InstallScopeDlg (stock) shows its radio group only when these are set. -->
+        <WixVariable Id="WixUISupportPerUser" Value="1" />
+        <WixVariable Id="WixUISupportPerMachine" Value="1" />
+
+        <Property Id="ApplicationFolderName" Value="Newt" />
+        <Property Id="WixAppFolder" Value="WixPerMachineFolder" />
+        <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER" />
+
+        <CustomAction Id="NewtSetDefaultPerUserFolder" Property="WixPerUserFolder" Value="[LocalAppDataFolder]Programs\[ApplicationFolderName]" Execute="immediate" />
+        <CustomAction Id="NewtSetDefaultPerMachineFolder" Property="WixPerMachineFolder" Value="[$(var.PFDir)][ApplicationFolderName]" Execute="immediate" />
+        <CustomAction Id="NewtSetPerUserFolder" Property="APPLICATIONFOLDER" Value="[WixPerUserFolder]" Execute="immediate" />
+        <CustomAction Id="NewtSetPerMachineFolder" Property="APPLICATIONFOLDER" Value="[WixPerMachineFolder]" Execute="immediate" />
+
+        <InstallExecuteSequence>
+            <Custom Action="NewtSetDefaultPerUserFolder" Before="CostFinalize" />
+            <Custom Action="NewtSetDefaultPerMachineFolder" After="NewtSetDefaultPerUserFolder" />
+            <Custom Action="NewtSetPerUserFolder" After="NewtSetDefaultPerMachineFolder" Condition="ACTION=&quot;INSTALL&quot; AND APPLICATIONFOLDER=&quot;&quot; AND (ALLUSERS=&quot;&quot; OR (ALLUSERS=2 AND (NOT Privileged)))" />
+            <Custom Action="NewtSetPerMachineFolder" After="NewtSetPerUserFolder" Condition="ACTION=&quot;INSTALL&quot; AND APPLICATIONFOLDER=&quot;&quot; AND (ALLUSERS=1 OR (ALLUSERS=2 AND Privileged))" />
+        </InstallExecuteSequence>
+        <InstallUISequence>
+            <Custom Action="NewtSetDefaultPerUserFolder" Before="CostFinalize" />
+            <Custom Action="NewtSetDefaultPerMachineFolder" After="NewtSetDefaultPerUserFolder" />
+            <Custom Action="NewtSetPerUserFolder" After="NewtSetDefaultPerMachineFolder" Condition="ACTION=&quot;INSTALL&quot; AND APPLICATIONFOLDER=&quot;&quot; AND (ALLUSERS=&quot;&quot; OR (ALLUSERS=2 AND (NOT Privileged)))" />
+            <Custom Action="NewtSetPerMachineFolder" After="NewtSetPerUserFolder" Condition="ACTION=&quot;INSTALL&quot; AND APPLICATIONFOLDER=&quot;&quot; AND (ALLUSERS=1 OR (ALLUSERS=2 AND Privileged))" />
+        </InstallUISequence>
+
+        <UI Id="NewtUI">
+            <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+            <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+            <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+            <TextStyle Id="WixUI_Font_Emphasized" FaceName="Tahoma" Size="8" Bold="yes" />
+
+            <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+            <DialogRef Id="BrowseDlg" />
+            <DialogRef Id="DiskCostDlg" />
+            <DialogRef Id="ErrorDlg" />
+            <DialogRef Id="FatalError" />
+            <DialogRef Id="FilesInUse" />
+            <DialogRef Id="MsiRMFilesInUse" />
+            <DialogRef Id="PrepareDlg" />
+            <DialogRef Id="ProgressDlg" />
+            <DialogRef Id="ResumeDlg" />
+            <DialogRef Id="UserExit" />
+            <DialogRef Id="WelcomeDlg" />
+            <DialogRef Id="MaintenanceWelcomeDlg" />
+
+            <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+
+            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" Condition="NOT Installed" />
+
+            <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+            <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallScopeDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+
+            <Publish Dialog="InstallScopeDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Property="WixAppFolder" Value="WixPerUserFolder" Order="1" Condition="NOT Privileged" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Property="ALLUSERS" Value="{}" Order="2" Condition="WixAppFolder = &quot;WixPerUserFolder&quot;" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Property="ALLUSERS" Value="1" Order="3" Condition="WixAppFolder = &quot;WixPerMachineFolder&quot;" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Property="APPLICATIONFOLDER" Value="[WixPerUserFolder]" Order="4" Condition="WixAppFolder = &quot;WixPerUserFolder&quot;" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Property="APPLICATIONFOLDER" Value="[WixPerMachineFolder]" Order="5" Condition="WixAppFolder = &quot;WixPerMachineFolder&quot;" />
+            <Publish Dialog="InstallScopeDlg" Control="Next" Event="NewDialog" Value="NewtInstallDirDlg" Order="6" />
+
+            <Publish Dialog="NewtInstallDirDlg" Control="Back" Event="NewDialog" Value="InstallScopeDlg" />
+            <Publish Dialog="NewtInstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+            <Publish Dialog="NewtInstallDirDlg" Control="Next" Event="AddLocal" Value="DesktopShortcut" Order="2" Condition="NEWT_DESKTOP_SHORTCUT" />
+            <Publish Dialog="NewtInstallDirDlg" Control="Next" Event="Remove" Value="DesktopShortcut" Order="3" Condition="NOT NEWT_DESKTOP_SHORTCUT" />
+            <Publish Dialog="NewtInstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" />
+            <Publish Dialog="NewtInstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+            <Publish Dialog="NewtInstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+
+            <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
+            <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
+
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="NewtInstallDirDlg" Order="1" Condition="NOT Installed" />
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
+
+            <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+
+            <Publish Dialog="MaintenanceTypeDlg" Control="ChangeButton" Event="NewDialog" Value="FeaturesDlg" />
+            <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+            <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+            <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+            <Publish Dialog="FeaturesDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Condition="Installed" />
+        </UI>
+
+        <UIRef Id="WixUI_Common" />
+    </Fragment>
+</Wix>

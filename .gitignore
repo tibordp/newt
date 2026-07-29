@@ -27,3 +27,6 @@ dist-ssr
 # Cargo
 /target/
 /target-agents/
+
+# WiX extension cache (wix extension add)
+/.wix/
