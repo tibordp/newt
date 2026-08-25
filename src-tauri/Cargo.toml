@@ -24,6 +24,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 url = "2"
 percent-encoding = "2"
 regex = "1"
+globset = "0.4"
 arboard = "3"
 kamadak-exif = "0.6"
 parking_lot = "0.12"

@@ -176,6 +176,55 @@ pub fn cmd_invert_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> 
 
 #[tauri::command]
 #[specta::specta]
+pub fn cmd_select_same_extension(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.view_state_mut().select_same_extension();
+        Ok(())
+    })
+}
+
+/// Dialog submission: apply the pattern and close. An uncompilable
+/// pattern leaves the dialog open (the frontend already shows it as
+/// invalid), so nothing is done here.
+#[tauri::command]
+#[specta::specta]
+pub fn select_by_pattern(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    pattern: String,
+    subtract: bool,
+) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |gs, pane| {
+        if pane
+            .view_state_mut()
+            .select_matching(&pattern, subtract)
+            .is_some()
+        {
+            *gs.select_pattern.lock() = pattern;
+            gs.close_modal();
+        }
+        Ok(())
+    })
+}
+
+/// Live match count for the dialog; `None` when the pattern doesn't compile.
+#[tauri::command]
+#[specta::specta]
+pub fn count_pattern_matches(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    pattern: String,
+) -> Result<Option<u32>, Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let count = pane.view_state().count_matching(&pattern);
+    Ok(count.map(|c| c as u32))
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     ctx.with_pane_update(pane_handle, |_, pane| {
         pane.view_state_mut().deselect_all();

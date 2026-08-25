@@ -2283,6 +2283,66 @@ impl PaneViewState {
         self.recompute_stats();
     }
 
+    /// Add (or, with `subtract`, remove) every visible entry whose display
+    /// name matches `pattern`; the rest of the selection is untouched.
+    /// Returns the number of entries the pattern matched, `None` when it
+    /// doesn't compile.
+    pub fn select_matching(&mut self, pattern: &str, subtract: bool) -> Option<usize> {
+        let matcher = compile_select_pattern(pattern)?;
+        self.drag_base = None;
+        self.clear_quick_search();
+        let mut hits = 0;
+        for f in &self.files {
+            if f.key() == PARENT_KEY || !matcher(&f.name) {
+                continue;
+            }
+            hits += 1;
+            if subtract {
+                self.all_selected.remove(f.key());
+            } else {
+                self.all_selected.insert(f.key().to_string());
+            }
+        }
+        self.recompute_stats();
+        Some(hits)
+    }
+
+    pub fn count_matching(&self, pattern: &str) -> Option<usize> {
+        let matcher = compile_select_pattern(pattern)?;
+        Some(
+            self.files
+                .iter()
+                .filter(|f| f.key() != PARENT_KEY && matcher(&f.name))
+                .count(),
+        )
+    }
+
+    /// Add every visible entry sharing the focused entry's extension.
+    /// Directories have no extension and so match each other, not
+    /// extensionless files.
+    pub fn select_same_extension(&mut self) {
+        let Some(focused) = self
+            .focused
+            .as_deref()
+            .and_then(|f| self.file_lookup.get(f))
+            .map(|&i| &self.files[i])
+        else {
+            return;
+        };
+        if focused.key() == PARENT_KEY {
+            return;
+        }
+        let want = (focused.is_dir, extension_of(&focused.name).to_lowercase());
+        self.drag_base = None;
+        self.clear_quick_search();
+        for f in &self.files {
+            if f.key() != PARENT_KEY && (f.is_dir, extension_of(&f.name).to_lowercase()) == want {
+                self.all_selected.insert(f.key().to_string());
+            }
+        }
+        self.recompute_stats();
+    }
+
     pub fn end_drag_selection(&mut self) {
         self.drag_base = None;
     }
@@ -2438,6 +2498,37 @@ impl PaneViewState {
     }
 }
 
+/// Everything after the last dot, unless the dot leads (`.bashrc`) or
+/// there is none.
+fn extension_of(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(0) | None => "",
+        Some(i) => &name[i + 1..],
+    }
+}
+
+/// Selection patterns are case-insensitive globs (`*.rs`, `img_*.{jpg,png}`);
+/// a leading `/` switches to a regex, as in `/^foo.*\.c$`. Glob `*` spans
+/// the whole name — there are no separators in a display name to stop at.
+type NameMatcher = Box<dyn Fn(&str) -> bool>;
+
+fn compile_select_pattern(pattern: &str) -> Option<NameMatcher> {
+    if let Some(re) = pattern.strip_prefix('/') {
+        let re = regex::RegexBuilder::new(re)
+            .case_insensitive(true)
+            .build()
+            .ok()?;
+        return Some(Box::new(move |name| re.is_match(name)));
+    }
+    let glob = globset::GlobBuilder::new(pattern)
+        .case_insensitive(true)
+        .literal_separator(false)
+        .build()
+        .ok()?
+        .compile_matcher();
+    Some(Box::new(move |name| glob.is_match(name)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2448,6 +2539,78 @@ mod tests {
             all_selected: selected.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         }
+    }
+
+    fn listed(names: &[(&str, bool)]) -> PaneViewState {
+        let files: Vec<File> = names
+            .iter()
+            .map(|&(n, is_dir)| File {
+                name: n.to_string(),
+                is_dir,
+                ..File::parent_dir()
+            })
+            .collect();
+        let file_lookup = files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.key().to_string(), i))
+            .collect();
+        PaneViewState {
+            files,
+            file_lookup,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn glob_pattern_adds_and_subtracts_without_touching_the_rest() {
+        let mut vs = listed(&[
+            ("..", true),
+            ("a.RS", false),
+            ("b.rs", false),
+            ("c.txt", false),
+        ]);
+        vs.all_selected.insert("c.txt".into());
+        assert_eq!(vs.select_matching("*.rs", false), Some(2));
+        assert_eq!(vs.all_selected.len(), 3);
+        assert_eq!(vs.select_matching("a*", true), Some(1));
+        assert!(!vs.all_selected.contains("a.RS"));
+        assert!(vs.all_selected.contains("c.txt"));
+        assert!(!vs.all_selected.contains(PARENT_KEY));
+    }
+
+    #[test]
+    fn slash_prefix_is_a_regex_and_bad_patterns_report_none() {
+        let mut vs = listed(&[("foo1.c", false), ("foo.h", false)]);
+        assert_eq!(vs.select_matching("/^foo\\d\\.c$", false), Some(1));
+        assert_eq!(vs.count_matching("/("), None);
+        assert_eq!(vs.count_matching("[a-"), None);
+    }
+
+    #[test]
+    fn same_extension_groups_directories_separately_from_extensionless_files() {
+        let mut vs = listed(&[
+            ("..", true),
+            ("dir", true),
+            ("other", true),
+            ("README", false),
+            ("x.txt", false),
+        ]);
+        vs.focused = Some("dir".into());
+        vs.select_same_extension();
+        assert_eq!(vs.all_selected.len(), 2);
+        assert!(vs.all_selected.contains("other"));
+        assert!(!vs.all_selected.contains("README"));
+        vs.focused = Some(PARENT_KEY.into());
+        vs.select_same_extension();
+        assert_eq!(vs.all_selected.len(), 2);
+    }
+
+    #[test]
+    fn extension_of_ignores_leading_dot() {
+        assert_eq!(extension_of(".bashrc"), "");
+        assert_eq!(extension_of("a.tar.gz"), "gz");
+        assert_eq!(extension_of("noext"), "");
     }
 
     /// The bug: `..` never enters `all_selected`, but the fall back to

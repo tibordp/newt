@@ -1189,6 +1189,54 @@ async cmdInvertSelection(paneHandle: PaneHandle) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async cmdSelectSameExtension(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_select_same_extension", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dialog submission: apply the pattern and close. An uncompilable
+ * pattern leaves the dialog open (the frontend already shows it as
+ * invalid), so nothing is done here.
+ */
+async selectByPattern(paneHandle: PaneHandle, pattern: string, subtract: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("select_by_pattern", { paneHandle, pattern, subtract }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Live match count for the dialog; `None` when the pattern doesn't compile.
+ */
+async countPatternMatches(paneHandle: PaneHandle, pattern: string) : Promise<Result<number | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("count_pattern_matches", { paneHandle, pattern }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdSelectByPattern(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_select_by_pattern", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cmdDeselectByPattern(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_deselect_by_pattern", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdComputeSize(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_compute_size", { paneHandle }) };
@@ -1876,7 +1924,7 @@ export type Density = "comfortable" | "compact"
  * IPC — but a typo on either side now fails to compile rather than producing
  * `Error::Custom("unknown dialog: …")` at runtime.
  */
-export type DialogKind = "navigate" | "create_directory" | "create_file" | "create_and_edit" | "directory_properties" | 
+export type DialogKind = "navigate" | "create_directory" | "select_by_pattern" | "deselect_by_pattern" | "create_file" | "create_and_edit" | "directory_properties" | 
 /**
  * Properties of the volume root containing the pane's current path
  * (opened by clicking the free-space label in the pane header).
@@ -2062,7 +2110,7 @@ unix_owner: boolean;
  */
 windows_attributes: boolean }
 export type ModalContext = { pane_handle: PaneHandle | null }
-export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
+export type ModalData = ({ type: "create_directory"; data: { path: VfsPath } } | { type: "select_by_pattern"; data: { pattern: string; subtract: boolean } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
  * Bytes allocated on disk (`File::allocated_size`); summed across
  * a multi-selection the same way `size` is.
@@ -2251,7 +2299,7 @@ can_reveal: boolean } } | { type: "confirm_delete"; data: { message: string; pat
  * so the modal carries no payload.
  */
 { type: "third_party_notices" }) & { context: ModalContext }
-export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
+export type ModalDataKind = { type: "create_directory"; data: { path: VfsPath } } | { type: "select_by_pattern"; data: { pattern: string; subtract: boolean } } | { type: "create_file"; data: { path: VfsPath; open_editor: boolean } } | { type: "properties"; data: { paths: VfsPath[]; name: string; size: number | null; 
 /**
  * Bytes allocated on disk (`File::allocated_size`); summed across
  * a multi-selection the same way `size` is.

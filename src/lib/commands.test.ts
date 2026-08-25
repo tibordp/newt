@@ -20,6 +20,18 @@ function fakeKeyEvent(
 }
 
 describe("normalizeKeyEvent", () => {
+  it("names numpad operators by code, leaving the main row printable", () => {
+    expect(
+      normalizeKeyEvent(fakeKeyEvent({ key: "+", code: "NumpadAdd" })),
+    ).toBe("numpad_add");
+    expect(
+      normalizeKeyEvent(fakeKeyEvent({ key: "-", code: "NumpadSubtract" })),
+    ).toBe("numpad_subtract");
+    expect(normalizeKeyEvent(fakeKeyEvent({ key: "-", code: "Minus" }))).toBe(
+      "-",
+    );
+  });
+
   it("normalizes a plain letter key", () => {
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "a" }))).toBe("a");
   });

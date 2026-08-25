@@ -17,6 +17,8 @@ use crate::main_window::{
 pub enum DialogKind {
     Navigate,
     CreateDirectory,
+    SelectByPattern,
+    DeselectByPattern,
     CreateFile,
     CreateAndEdit,
     DirectoryProperties,
@@ -106,6 +108,12 @@ pub fn dialog(
                 DialogKind::CreateDirectory => ModalDataKind::CreateDirectory {
                     path: pane.unwrap().path(),
                 },
+                DialogKind::SelectByPattern | DialogKind::DeselectByPattern => {
+                    ModalDataKind::SelectByPattern {
+                        pattern: gs.select_pattern.lock().clone(),
+                        subtract: dialog == DialogKind::DeselectByPattern,
+                    }
+                }
                 DialogKind::CreateFile => ModalDataKind::CreateFile {
                     path: pane.unwrap().path(),
                     open_editor: false,
@@ -836,6 +844,8 @@ cmd_dialog!(cmd_rename, DialogKind::Rename);
 cmd_dialog!(cmd_properties, DialogKind::Properties);
 cmd_dialog!(cmd_directory_properties, DialogKind::DirectoryProperties);
 cmd_dialog!(cmd_create_directory, DialogKind::CreateDirectory);
+cmd_dialog!(cmd_select_by_pattern, DialogKind::SelectByPattern);
+cmd_dialog!(cmd_deselect_by_pattern, DialogKind::DeselectByPattern);
 cmd_dialog!(cmd_create_file, DialogKind::CreateFile);
 cmd_dialog!(cmd_create_and_edit, DialogKind::CreateAndEdit);
 cmd_dialog!(cmd_navigate, DialogKind::Navigate);

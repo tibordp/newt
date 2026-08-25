@@ -974,6 +974,10 @@ fn render_shortcut(key: &str) -> Vec<String> {
                 }
             }
             "shift" => "Shift".to_string(),
+            "numpad_add" => "Num +".to_string(),
+            "numpad_subtract" => "Num -".to_string(),
+            "numpad_multiply" => "Num *".to_string(),
+            "numpad_divide" => "Num /".to_string(),
             "alt" => {
                 if is_mac {
                     "\u{2325}".to_string()

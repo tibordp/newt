@@ -3603,6 +3603,7 @@ dependencies = [
  "clap",
  "drag",
  "gio",
+ "globset",
  "kamadak-exif",
  "keyring",
  "libc",

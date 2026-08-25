@@ -222,10 +222,16 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Insert | Toggle selection on current file and advance focus to next |
 | Mod+A | Select all files (except `..`) |
 | Mod+D | Deselect all |
-| (unbound) | Invert Selection (command palette) — toggles every visible entry; filtered-out selections are left alone |
+| Num * | Invert Selection — toggles every visible entry; filtered-out selections are left alone |
+| Num + / Num - | Select / Deselect by Pattern (see below) |
+| (unbound) | Select Same Extension (command palette) — adds every visible entry with the focused entry's extension, case-folded; directories count as one extensionless group of their own |
 | Escape | Clear filter text, or clear selection if no filter active |
 | Shift+Enter | Follow symlink (navigate to its target) |
 | Shift+\<drive letter\> | Jump to that drive's root. Offered whenever the session has a split-root (Windows drive-lettered) mount — `MainWindowState.mount_summary.has_split_root_vfs`, refreshed on mount/unmount — not gated on the host OS. With no such mount the keystroke types into the quick filter as usual. |
+
+**Select by Pattern** (Num + / Num -, "Select by Pattern..." / "Deselect by Pattern..." in the palette): one dialog, opened in add or remove mode by the entry point, with the mode switchable inside it. The pattern is a case-insensitive glob (`*.rs`, `IMG_*.{jpg,png}`; `*` spans the whole name, there are no separators to stop at); a leading `/` makes it a case-insensitive regex (`/^foo.*\.c$`). It matches display names of *visible* entries only (an active visual filter narrows it, as with Mod+A), never `..`, and only ever adds or removes the matches — the rest of the selection stays. A live "N entries match" count updates as you type (`count_pattern_matches`, an ephemeral query rather than pushed state); an uncompilable pattern disables Submit. The last applied pattern is remembered per session and pre-filled (selected) on the next open.
+
+Numpad-only defaults are deliberate: `+`/`-`/`*` on the main row are printable characters and start quick search. `normalizeKeyEvent` names the numpad operators by `KeyboardEvent.code` (`numpad_add`, `numpad_subtract`, `numpad_multiply`, `numpad_divide`) since `e.key` is identical for both rows, and the pane's printable-key heuristic skips those codes so they reach the dispatcher. Laptop users rebind (`shift+=` etc.) in the Keybindings tab.
 
 **Enter behavior** depends on what's focused:
 - **Directory**: Navigate into it.
@@ -1828,6 +1834,10 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Insert | Toggle select + advance focus | Pane focused |
 | Mod+A | Select all | Pane focused |
 | Mod+D | Deselect all | Pane focused |
+| Num * | Invert selection | Pane focused |
+| Num + | Select by pattern… | Pane focused |
+| Num - | Deselect by pattern… | Pane focused |
+| (unbound) | Select same extension | Pane focused |
 
 ### Clipboard
 

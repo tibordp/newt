@@ -27,6 +27,14 @@ export function renderShortcut(key: string): string[] {
         return "Shift";
       case "alt":
         return IS_MAC ? "⌥" : "Alt";
+      case "numpad_add":
+        return "Num +";
+      case "numpad_subtract":
+        return "Num -";
+      case "numpad_multiply":
+        return "Num *";
+      case "numpad_divide":
+        return "Num /";
       default:
         return part.length > 0 ? part[0].toUpperCase() + part.slice(1) : "";
     }

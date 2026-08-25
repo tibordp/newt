@@ -14,7 +14,7 @@ import iconMapping from "../assets/mapping.json";
 import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result } from "../lib/bindings";
 import { safe, safeSilent } from "../lib/ipc";
-import { modifiers, normalizeKeyEvent } from "../lib/commands";
+import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
 import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
 import SortMenu from "./modals/SortMenu";
@@ -1443,7 +1443,8 @@ function PaneInner(
       !e.ctrlKey &&
       !e.shiftKey &&
       !e.metaKey &&
-      !e.altKey
+      !e.altKey &&
+      !numpadOperator(e.nativeEvent.code)
     ) {
       // Printable-character heuristic: routes typing into quick-search.
       // Reliable for en-US; international IME coverage is unverified.

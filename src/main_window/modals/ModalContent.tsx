@@ -20,6 +20,7 @@ import Navigate from "./Navigate";
 import Properties from "./Properties";
 import Rename from "./Rename";
 import SearchDialog from "./Search";
+import SelectByPattern from "./SelectByPattern";
 import UserCommandInput from "./UserCommandInput";
 
 export type { ModalContext, ModalData };
@@ -53,6 +54,8 @@ export function ModalContent({
   switch (state?.type) {
     case "create_directory":
       return <CreateDirectory {...state.data} {...commonProps} />;
+    case "select_by_pattern":
+      return <SelectByPattern {...state.data} {...commonProps} />;
     case "create_file":
       return <CreateFile {...state.data} {...commonProps} />;
     case "navigate":

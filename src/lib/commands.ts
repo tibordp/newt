@@ -47,6 +47,20 @@ const CODE_TO_KEY: Record<string, string> = {
   Backquote: "`",
 };
 
+/// The numpad operator keys get their own names so they can be bound
+/// separately from the main-row `+`/`-`/`*`/`/`, which `e.key` reports
+/// identically. The main-row keys stay printable characters (quick search).
+const NUMPAD_OPERATORS: Record<string, string> = {
+  NumpadAdd: "numpad_add",
+  NumpadSubtract: "numpad_subtract",
+  NumpadMultiply: "numpad_multiply",
+  NumpadDivide: "numpad_divide",
+};
+
+export function numpadOperator(code: string | undefined): string | null {
+  return (code && NUMPAD_OPERATORS[code]) || null;
+}
+
 function keyFromCode(code: string | undefined): string | null {
   if (!code) return null;
   if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
@@ -72,7 +86,7 @@ export function normalizeKeyEvent(e: KeyboardEvent): string {
     return "";
   }
 
-  key = key.toLowerCase();
+  key = numpadOperator(e.code) ?? key.toLowerCase();
 
   if (e.altKey) {
     const physical = keyFromCode(e.code);

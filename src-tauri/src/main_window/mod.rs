@@ -501,6 +501,10 @@ pub enum ModalDataKind {
     CreateDirectory {
         path: VfsPath,
     },
+    SelectByPattern {
+        pattern: String,
+        subtract: bool,
+    },
     CreateFile {
         path: VfsPath,
         open_editor: bool,
@@ -924,6 +928,9 @@ pub struct MainWindowState {
     pub vfs_progress: VfsProgressState,
     pub mount_log: MountLogState,
     pub mount_summary: MountSummaryState,
+    /// Last pattern applied from the select-by-pattern dialog, pre-filled
+    /// on the next open.
+    pub select_pattern: Arc<parking_lot::Mutex<String>>,
 }
 
 /// Session-level facts about the mounted VFS set that the frontend needs
@@ -990,6 +997,7 @@ impl MainWindowState {
             vfs_progress: VfsProgressState::default(),
             mount_log: MountLogState::default(),
             mount_summary: MountSummaryState::default(),
+            select_pattern: Default::default(),
         }
     }
 
