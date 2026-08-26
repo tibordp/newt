@@ -12,7 +12,7 @@ use newt_common::filesystem::{ByteStream, file_reader_stream};
 use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::rpc::Dispatcher;
 use newt_common::shell_control::{
-    CommandListEntry, ControlRequest, ControlResponse, ControlResult, PaneSelector,
+    CommandListEntry, ControlRequest, ControlResponse, ControlResult, PaneSelector, SelectMode,
     ShellControlHandler,
 };
 use newt_common::vfs::{VfsId, VfsPath};
@@ -173,6 +173,44 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             .map_err(err)?;
             Ok(ControlResponse::Ok)
         }
+        ControlRequest::Select {
+            pane,
+            patterns,
+            names,
+            cwd,
+            mode,
+        } => {
+            let handle = select_pane(ctx, pane);
+            let mut keys = if patterns.is_empty() {
+                pane_entry_keys(ctx, handle, &names, &cwd).await?
+            } else {
+                let pane = ctx
+                    .panes()
+                    .get(handle)
+                    .ok_or_else(|| "no such pane".to_string())?;
+                let vs = pane.view_state();
+                let mut keys = Vec::new();
+                for p in &patterns {
+                    keys.extend(
+                        vs.matching_keys(p)
+                            .ok_or_else(|| format!("invalid pattern: {p}"))?,
+                    );
+                }
+                keys
+            };
+            keys.sort();
+            keys.dedup();
+            let hits = ctx
+                .with_pane_update(handle, |_, pane| {
+                    let mut vs = pane.view_state_mut();
+                    if mode == SelectMode::Replace {
+                        vs.deselect_all();
+                    }
+                    Ok(vs.select_keys(&keys, mode == SelectMode::Remove))
+                })
+                .map_err(err)?;
+            Ok(ControlResponse::Text(format!("{hits} matched")))
+        }
         ControlRequest::Command { pane, id } => {
             let handle = select_pane(ctx, pane);
             if crate::cmd::dispatch_registry_command(ctx, &id, handle)
@@ -236,6 +274,39 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             Ok(ControlResponse::Text(format!("operation {id}")))
         }
     }
+}
+
+/// Entry keys for `newt select` names. A bare name (no separator) is a
+/// pane entry as listed — the only form that makes sense on S3 or inside
+/// an archive, and what `ls | newt select` produces. Anything else is a
+/// path relative to the shell's cwd and only counts if it resolves into
+/// the pane's own directory (`git ls-files` at the pane's path yields
+/// bare names for the top level and skips the rest).
+async fn pane_entry_keys(
+    ctx: &MainWindowContext,
+    handle: PaneHandle,
+    names: &[String],
+    cwd: &str,
+) -> Result<Vec<String>, String> {
+    let pane_path = ctx
+        .panes()
+        .get(handle)
+        .ok_or_else(|| "no such pane".to_string())?
+        .path();
+    let mut keys = Vec::with_capacity(names.len());
+    for name in names {
+        if !name.contains(['/', '\\']) {
+            keys.push(name.clone());
+            continue;
+        }
+        let resolved = resolve_arg(ctx, handle, name, ArgBase::Cwd(cwd)).await?;
+        if resolved.parent() == Some(pane_path.clone())
+            && let Some(leaf) = resolved.file_name()
+        {
+            keys.push(leaf.to_string());
+        }
+    }
+    Ok(keys)
 }
 
 /// `cp`/`mv` semantics: multiple sources require an existing directory

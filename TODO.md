@@ -6,7 +6,7 @@ Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 
 - `behavior.shell_integration = false` currently gates local sessions only; agents always create the control server (they can't see host preferences). Propagate the flag at agent spawn (env for bootstrap transports like `NEWT_AGENT_MODE`, an arg for direct spawns) if disabling remotely turns out to matter.
 - `newt cp --wait` (long-poll an operations endpoint for completion, exit code from the operation result).
-- Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, `newt select <glob>`, user-command invocation by title.
+- Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, user-command invocation by title.
 
 ## Remote VFS (local ↔ remote bridge)
 

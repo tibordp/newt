@@ -15,7 +15,8 @@ use serde::Deserialize;
 use crate::terminal::TerminalHandle;
 
 use super::{
-    ControlRequest, ControlResponse, ENV_SOCK, ENV_TERMINAL, PaneSelector, ShellControlHandler,
+    ControlRequest, ControlResponse, ENV_SOCK, ENV_TERMINAL, PaneSelector, SelectMode,
+    ShellControlHandler,
 };
 
 static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -230,6 +231,17 @@ struct PathBody {
 }
 
 #[derive(Deserialize)]
+struct SelectBody {
+    #[serde(default)]
+    patterns: Vec<String>,
+    #[serde(default)]
+    names: Vec<String>,
+    #[serde(default)]
+    cwd: String,
+    mode: SelectMode,
+}
+
+#[derive(Deserialize)]
 struct TransferBody {
     sources: Vec<String>,
     dest: String,
@@ -286,6 +298,22 @@ async fn route(
                 cwd: body.cwd,
             }
         }
+        (&Method::POST, ["v1", "panes", pane, "select"]) => {
+            let Some(pane) = PaneSelector::parse(pane) else {
+                return status_response(StatusCode::NOT_FOUND, "unknown pane");
+            };
+            let body: SelectBody = match read_json_body(req).await {
+                Ok(b) => b,
+                Err(resp) => return resp,
+            };
+            ControlRequest::Select {
+                pane,
+                patterns: body.patterns,
+                names: body.names,
+                cwd: body.cwd,
+                mode: body.mode,
+            }
+        }
         (&Method::GET, ["v1", "commands"]) => ControlRequest::ListCommands,
         (&Method::POST, ["v1", "commands", id]) => {
             let pane = query_param(query.as_deref(), "pane")
@@ -337,7 +365,7 @@ async fn route(
                 Err(e) => status_response(StatusCode::NOT_FOUND, e),
             };
         }
-        (&Method::POST, ["v1", verb @ ("open" | "edit")]) => {
+        (&Method::POST, ["v1", verb @ ("view" | "edit")]) => {
             let edit = *verb == "edit";
             let pane = query_param(query.as_deref(), "pane")
                 .as_deref()
@@ -449,6 +477,16 @@ mod tests {
                     Err("no such directory".into())
                 }
                 ControlRequest::Navigate { .. } => Ok(ControlResponse::Ok),
+                ControlRequest::Select {
+                    patterns,
+                    names,
+                    mode,
+                    ..
+                } => Ok(ControlResponse::Text(format!(
+                    "{} {} {mode:?}",
+                    patterns.len(),
+                    names.len()
+                ))),
                 ControlRequest::ResolveFile { path, .. } => {
                     Ok(ControlResponse::ResolvedFile(VfsPath::new(
                         crate::vfs::VfsId::ROOT,
@@ -541,6 +579,16 @@ mod tests {
         assert_eq!(body, b"no such directory");
 
         // cat streams through resolve + read_file
+        let (status, body) = send(
+            &si,
+            Method::POST,
+            "/v1/panes/left/select",
+            r#"{"names":["a","b"],"mode":"add"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"0 2 Add");
+
         let (status, body) = send(&si, Method::GET, "/v1/panes/active/read?path=/f", "").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"hello world");

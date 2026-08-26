@@ -911,7 +911,7 @@ Every spawned terminal (and every user command, both terminal- and operation-mod
 
 **Protocol**: HTTP/1.1 over the socket/pipe (hyper connection-level; no axum in the shared code), deliberately version-tolerant (unknown route → 404, never a panic) because shells outlive app upgrades. On Unix, `curl --unix-socket "$NEWT_SHELL_SOCK" http://newt/v1/panes/active/cwd` works. In remote sessions the agent forwards control-plane verbs to the host over `API_HOST_SHELL_CONTROL`; `cat` bytes stream from the agent-side VfsRegistry without a host round-trip.
 
-**Verbs** (`--pane active|other|left|right`, default active; exit codes 0 ok / 1 error / 2 no session):
+**Verbs** (`--pane active|other|left|right`, a clap global flag, default active; exit codes 0 ok / 1 usage or request error / 2 no session). The CLI is a clap derive `Parser` in `shell_control/cli.rs`: `newt --help` carries the path-resolution rules, exit codes and examples, every verb has a long `--help` and a short `-h`, and the main executable's CLI-mode guard derives its verb list from the clap command so the two can't drift.
 
 | Verb | Behavior |
 |------|----------|
@@ -919,8 +919,9 @@ Every spawned terminal (and every user command, both terminal- and operation-mod
 | `newt cd [path]` | Navigate the pane (non-strict: a leaf path lands on the parent with the entry focused). Bare `newt cd` syncs the pane to the shell's cwd. Relative paths resolve against the shell's cwd. |
 | `newt focus <path>` | Alias for the leaf-focus form of `cd`. |
 | `newt cat <path>` | Stream a file to stdout through the session VFS. Relative paths resolve against the *pane* — works inside archives/S3 mounts. |
-| `newt open <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). |
+| `newt view <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). |
 | `newt cp <src>… <dest>` / `newt mv` | Enqueue a copy/move through the operations framework (fire-and-forget; prints the operation id). Multiple sources need an existing dir; single source to a non-existent leaf copies/moves under the new name (a same-directory `mv` is a plain rename). Trailing slash asserts directory-ness; existence checks go through the session VFS. |
+| `newt select [pattern…] [--add\|--remove]` | Set the pane's selection. With patterns: the Select by Pattern dialog's syntax (case-insensitive glob, `/` prefix for regex) against visible entries, matches of several patterns unioned — so a shell-expanded unquoted `*.c` works, each file name being a literal glob. Without: names read from stdin, one per line — a bare name is a pane entry as listed (works on S3/archives; `ls \| newt select`), a name containing a separator resolves against the shell's cwd and only counts if it lands in the pane's directory (so `git ls-files \| newt select` picks the top-level tracked files of the pane's directory and ignores nested ones). Replaces the selection by default; `--add`/`--remove` adjust it instead. Prints "N matched". |
 | `newt cmd [id]` | Tier-1 mechanical dispatch of any command-registry id (same ids as `[[bind]]`/palette): closes any open modal first, exactly like a keybinding. Bare `newt cmd` lists ids + names (including user commands). Excluded: `new_window`, `quit`, `open_elevated`, `connect_wsl` (non-uniform signatures). |
 
 Path arguments resolve exactly like the Go To dialog (`resolve_display_path`: mounted-VFS URLs, native absolutes, `~` expansion on the session side), so `newt cd "$(newt pwd)"` round-trips on any pane. A URL matching no mounted VFS is an error (no auto-mounting).

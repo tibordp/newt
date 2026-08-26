@@ -14,7 +14,7 @@ use crate::vfs::VfsPath;
 mod cli;
 mod server;
 
-pub use cli::{VERBS, is_cli_invocation, run_cli};
+pub use cli::{is_cli_invocation, run_cli, verbs};
 pub use server::ShellIntegration;
 
 pub const ENV_SOCK: &str = "NEWT_SHELL_SOCK";
@@ -59,6 +59,19 @@ pub enum ControlRequest {
         path: String,
         cwd: String,
     },
+    /// `select`: set the pane's selection by pattern or by explicit names.
+    Select {
+        pane: PaneSelector,
+        /// Same syntax as the Select by Pattern dialog, matches unioned;
+        /// empty selects `names` instead.
+        patterns: Vec<String>,
+        /// Bare names match pane entries directly; anything with a
+        /// separator is resolved against `cwd` and must land in the
+        /// pane's directory.
+        names: Vec<String>,
+        cwd: String,
+        mode: SelectMode,
+    },
     /// Tier-1 registry command dispatch (same ids as keybindings/palette).
     Command {
         pane: PaneSelector,
@@ -86,6 +99,14 @@ pub enum ControlRequest {
         dest: String,
         cwd: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectMode {
+    Replace,
+    Add,
+    Remove,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,26 +7,217 @@ use hyper::{Method, Request};
 use hyper_util::rt::TokioIo;
 
 use super::server::full;
-use super::{CommandListEntry, ENV_CLI, ENV_SOCK, PaneSelector};
+use super::{CommandListEntry, ENV_CLI, ENV_SOCK, PaneSelector, SelectMode};
 
-const USAGE: &str = "newt — control the Newt session that owns this terminal
+use clap::{Args, CommandFactory, Parser, Subcommand};
 
-Usage:
-  newt pwd [--pane <p>]              print the pane's current directory
-  newt cd [path] [--pane <p>]        navigate the pane (bare: sync to $PWD)
-  newt focus <path> [--pane <p>]     navigate to the parent and focus the entry
-  newt cat <path> [--pane <p>]       stream a file through the session VFS
-  newt open <path> [--pane <p>]      open in the built-in viewer
-  newt edit <path> [--pane <p>]      open in the built-in editor
-  newt cp <src>... <dest>            copy via the operations framework
-  newt mv <src>... <dest>            move via the operations framework
-  newt cmd [id] [--pane <p>]         run a command by registry id (bare: list)
+const AFTER_HELP: &str = "\
+Paths:
+  Arguments accept native paths, `~`, and the URLs of mounted VFSes
+  (s3://bucket/key, sftp://host/path, archive paths). cd, focus, cp and mv
+  resolve relative paths against the shell's working directory; cat, view
+  and edit resolve them against the pane (what you see in the file list),
+  so they work inside archives and S3 mounts.
 
-Panes: active (default), other, left, right";
+Exit codes:
+  0  ok        1  error        2  no Newt session owns this terminal
 
-pub const VERBS: &[&str] = &[
-    "pwd", "cd", "focus", "cat", "open", "edit", "cp", "mv", "cmd", "help", "--help", "-h",
-];
+Examples:
+  newt cd                     sync the active pane to the shell's cwd
+  newt cd ~/src --pane other  navigate the other pane
+  newt cat s3://bucket/key    stream a file through the session's mounts
+  newt select '*.rs' --add    add every .rs entry to the selection
+  git ls-files | newt select  select the tracked files of the pane's directory";
+
+/// Control the Newt session that owns this terminal.
+#[derive(Parser, Debug)]
+#[command(
+    name = "newt",
+    bin_name = "newt",
+    disable_version_flag = true,
+    after_help = AFTER_HELP,
+    subcommand_required = true,
+    arg_required_else_help = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    verb: Verb,
+    #[command(flatten)]
+    pane: PaneArg,
+}
+
+#[derive(Args, Debug, Clone, Copy)]
+struct PaneArg {
+    /// Pane to act on
+    #[arg(
+        long,
+        global = true,
+        default_value = "active",
+        value_name = "PANE",
+        value_parser = parse_pane,
+        help = "Pane to act on: active, other, left or right"
+    )]
+    pane: PaneSelector,
+}
+
+fn parse_pane(s: &str) -> Result<PaneSelector, String> {
+    PaneSelector::parse(s).ok_or_else(|| "expected active, other, left or right".to_string())
+}
+
+impl PaneSelector {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Other => "other",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum Verb {
+    /// Print the pane's current directory
+    #[command(long_about = "\
+Print the pane's current directory as a display path: a native path on the
+root filesystem, a URL (s3://…, sftp://…) on a mounted VFS. Round-trips
+through `newt cd`.")]
+    Pwd,
+
+    /// Navigate the pane (bare: sync it to the shell's cwd)
+    #[command(long_about = "\
+Navigate the pane. Without a path, the pane follows the shell's working
+directory. A path naming a file lands on its parent directory with the file
+focused. A URL must belong to an already-mounted VFS; nothing is mounted on
+your behalf.")]
+    Cd {
+        /// Directory or file to go to (default: the shell's cwd)
+        path: Option<String>,
+    },
+
+    /// Navigate to a file's directory and focus it
+    #[command(long_about = "\
+Navigate to the parent directory of PATH and put the cursor on the entry.
+The same as `newt cd` with a file path, but a path is required.")]
+    Focus {
+        /// File or directory to focus
+        path: String,
+    },
+
+    /// Stream a file to stdout through the session's filesystem
+    #[command(long_about = "\
+Stream a file to stdout through the session's filesystem. Relative paths
+resolve against the pane, so `newt cat README.md` works inside an archive
+or an S3 prefix. Bytes come from wherever the session runs (the remote
+host in an SSH session).")]
+    Cat {
+        /// File to read (pane-relative)
+        path: String,
+    },
+
+    /// Open a file in the built-in viewer
+    #[command(long_about = "\
+Open PATH in the built-in viewer window (text, hex, image, audio, video or
+PDF by content). Relative paths resolve against the pane.")]
+    View {
+        /// File to view (pane-relative)
+        path: String,
+    },
+
+    /// Open a file in the built-in editor
+    #[command(long_about = "\
+Open PATH in the built-in editor window. Relative paths resolve against
+the pane.")]
+    Edit {
+        /// File to edit (pane-relative)
+        path: String,
+    },
+
+    /// Copy files through the operations panel
+    #[command(long_about = "\
+Enqueue a copy through the operations framework and print the operation
+id; progress, conflicts and cancellation show up in the operations panel.
+Several sources need an existing directory as DEST. A single source may
+name a new file (copied under that name); a trailing slash on DEST insists
+on a directory.")]
+    Cp {
+        /// Files or directories to copy
+        #[arg(required = true, value_name = "SRC")]
+        sources: Vec<String>,
+        /// Destination directory, or new name for a single source
+        #[arg(value_name = "DEST")]
+        dest: String,
+    },
+
+    /// Move files through the operations panel
+    #[command(long_about = "\
+Enqueue a move through the operations framework and print the operation
+id. Destination rules are those of `newt cp`; moving a single source to a
+new name in the same directory is a plain rename.")]
+    Mv {
+        /// Files or directories to move
+        #[arg(required = true, value_name = "SRC")]
+        sources: Vec<String>,
+        /// Destination directory, or new name for a single source
+        #[arg(value_name = "DEST")]
+        dest: String,
+    },
+
+    /// Select entries in the pane by pattern or from stdin
+    #[command(long_about = "\
+Select entries in the pane. Each PATTERN is a case-insensitive glob (`*.rs`,
+`IMG_*.{jpg,png}`) matched against the visible entries' names, or with a
+leading `/` a regular expression (`/^foo.*\\.c$`); the matches of several
+patterns are combined, so an unquoted glob the shell has already expanded
+into file names works too. Without PATTERN, names are read from stdin, one
+per line: a bare name is an entry as listed in the pane, a name containing
+a separator is resolved against the shell's working directory and counts
+only if it lands in the pane's directory.
+
+The selection is replaced unless --add or --remove is given. Prints how
+many entries matched.")]
+    #[command(after_help = "\
+Examples:
+  newt select '*.log'            select every .log entry
+  newt select *.c *.h            unquoted: the shell expands, newt unions
+  newt select '/^\\d{4}-'         regex: entries starting with four digits
+  newt select --remove '*.bak'   drop .bak entries from the selection
+  ls -t | head -5 | newt select  the five most recently modified entries
+  git ls-files | newt select     tracked files of the pane's directory")]
+    Select {
+        /// Globs (or /regexes) to match entry names against
+        #[arg(value_name = "PATTERN")]
+        patterns: Vec<String>,
+        /// Add matches to the current selection
+        #[arg(long)]
+        add: bool,
+        /// Remove matches from the current selection
+        #[arg(long, conflicts_with = "add")]
+        remove: bool,
+    },
+
+    /// Run a command by its registry id (bare: list them)
+    #[command(long_about = "\
+Run a command from the command registry — the same ids that keybindings,
+the command palette and user commands use, e.g. `newt cmd refresh` or
+`newt cmd swap_panes`. Any open dialog is closed first, exactly as if the
+key had been pressed. Without ID, lists every id with its name.")]
+    Cmd {
+        /// Command id (see the bare listing)
+        id: Option<String>,
+    },
+}
+
+/// Names that select CLI mode in the main `newt` executable, where an
+/// ordinary app launch must not be mistaken for a shim invocation.
+pub fn verbs() -> Vec<String> {
+    let mut verbs: Vec<String> = Cli::command()
+        .get_subcommands()
+        .map(|c| c.get_name().to_string())
+        .collect();
+    verbs.extend(["help", "--help", "-h"].map(String::from));
+    verbs
+}
 
 /// True when this process should act as the shell-integration CLI.
 /// `invoked_as_newt`: argv[0] basename is `newt` (Unix shim) — the Windows
@@ -42,7 +233,7 @@ pub fn is_cli_invocation(invoked_as_newt: bool, require_verb: bool) -> bool {
     }
     if require_verb {
         let verb = std::env::args().nth(1);
-        matches!(verb.as_deref(), Some(v) if VERBS.contains(&v))
+        matches!(verb, Some(v) if verbs().contains(&v))
     } else {
         true
     }
@@ -51,6 +242,20 @@ pub fn is_cli_invocation(invoked_as_newt: bool, require_verb: bool) -> bool {
 /// Entry point for CLI mode: builds its own small runtime, never returns to
 /// the caller's normal startup path.
 pub fn run_cli() -> i32 {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        // Help and version print themselves; usage errors already carry
+        // the "error:" prefix and usage line.
+        Err(e) => {
+            return if e.use_stderr() {
+                e.print().ok();
+                1
+            } else {
+                e.print().ok();
+                0
+            };
+        }
+    };
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -61,123 +266,118 @@ pub fn run_cli() -> i32 {
             return 1;
         }
     };
-    rt.block_on(run_cli_async(std::env::args().skip(1).collect()))
+    rt.block_on(run_cli_async(cli))
 }
 
-struct ParsedArgs {
-    verb: String,
-    pane: String,
-    positional: Vec<String>,
-}
-
-fn parse_args(args: Vec<String>) -> Result<ParsedArgs, String> {
-    let mut verb = None;
-    let mut pane = "active".to_string();
-    let mut positional = Vec::new();
-    let mut iter = args.into_iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--pane" => {
-                pane = iter.next().ok_or("--pane requires a value")?;
-                if PaneSelector::parse(&pane).is_none() {
-                    return Err(format!("unknown pane: {pane}"));
-                }
-            }
-            "--help" | "-h" => verb = verb.or(Some("help".to_string())),
-            _ if verb.is_none() => verb = Some(arg),
-            _ => positional.push(arg),
+/// Non-empty stdin lines, or an error when stdin is a terminal (nothing
+/// piped, no pattern given).
+fn names_from_stdin() -> Result<Vec<String>, String> {
+    use std::io::{BufRead, IsTerminal};
+    let stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        return Err("select needs a PATTERN, or names on stdin".into());
+    }
+    let mut names = Vec::new();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|e| format!("reading stdin: {e}"))?;
+        if !line.is_empty() {
+            names.push(line);
         }
     }
-    Ok(ParsedArgs {
-        verb: verb.unwrap_or_else(|| "help".to_string()),
-        pane,
-        positional,
-    })
+    Ok(names)
 }
 
-async fn run_cli_async(args: Vec<String>) -> i32 {
-    let parsed = match parse_args(args) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("newt: {e}");
-            return 1;
-        }
-    };
-    if parsed.verb == "help" || parsed.verb == "--help" || parsed.verb == "-h" {
-        println!("{USAGE}");
-        return 0;
-    }
+async fn run_cli_async(cli: Cli) -> i32 {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let pane = parsed.pane;
+    let pane = cli.pane.pane.as_str();
+    let mut raw_output = false;
+    let mut list_commands = false;
 
-    let (method, path, body): (Method, String, Option<serde_json::Value>) =
-        match parsed.verb.as_str() {
-            "pwd" => (Method::GET, format!("/v1/panes/{pane}/cwd"), None),
-            "cd" | "focus" => {
-                let target = match parsed.positional.first() {
-                    Some(p) => p.clone(),
-                    None if parsed.verb == "cd" => cwd.clone(),
-                    None => {
-                        eprintln!("newt: focus requires a path");
+    let (method, path, body): (Method, String, Option<serde_json::Value>) = match cli.verb {
+        Verb::Pwd => (Method::GET, format!("/v1/panes/{pane}/cwd"), None),
+        Verb::Cd { path } => (
+            Method::POST,
+            format!("/v1/panes/{pane}/cd"),
+            Some(serde_json::json!({ "path": path.unwrap_or_else(|| cwd.clone()), "cwd": cwd })),
+        ),
+        Verb::Focus { path } => (
+            Method::POST,
+            format!("/v1/panes/{pane}/focus"),
+            Some(serde_json::json!({ "path": path, "cwd": cwd })),
+        ),
+        Verb::Cat { path } => {
+            raw_output = true;
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("path", &path)
+                .append_pair("cwd", &cwd)
+                .finish();
+            (Method::GET, format!("/v1/panes/{pane}/read?{query}"), None)
+        }
+        Verb::View { path } => (
+            Method::POST,
+            format!("/v1/view?pane={pane}"),
+            Some(serde_json::json!({ "path": path, "cwd": cwd })),
+        ),
+        Verb::Edit { path } => (
+            Method::POST,
+            format!("/v1/edit?pane={pane}"),
+            Some(serde_json::json!({ "path": path, "cwd": cwd })),
+        ),
+        Verb::Cp { sources, dest } => (
+            Method::POST,
+            "/v1/operations/copy".to_string(),
+            Some(serde_json::json!({ "sources": sources, "dest": dest, "cwd": cwd })),
+        ),
+        Verb::Mv { sources, dest } => (
+            Method::POST,
+            "/v1/operations/move".to_string(),
+            Some(serde_json::json!({ "sources": sources, "dest": dest, "cwd": cwd })),
+        ),
+        Verb::Select {
+            patterns,
+            add,
+            remove,
+        } => {
+            let names = if !patterns.is_empty() {
+                Vec::new()
+            } else {
+                match names_from_stdin() {
+                    Ok(names) => names,
+                    Err(e) => {
+                        eprintln!("newt: {e}");
                         return 1;
                     }
-                };
-                (
-                    Method::POST,
-                    format!("/v1/panes/{pane}/{}", parsed.verb),
-                    Some(serde_json::json!({ "path": target, "cwd": cwd })),
-                )
-            }
-            "cat" => {
-                let Some(target) = parsed.positional.first() else {
-                    eprintln!("newt: cat requires a path");
-                    return 1;
-                };
-                let query = url::form_urlencoded::Serializer::new(String::new())
-                    .append_pair("path", target)
-                    .append_pair("cwd", &cwd)
-                    .finish();
-                (Method::GET, format!("/v1/panes/{pane}/read?{query}"), None)
-            }
-            "open" | "edit" => {
-                let Some(target) = parsed.positional.first() else {
-                    eprintln!("newt: {} requires a path", parsed.verb);
-                    return 1;
-                };
-                (
-                    Method::POST,
-                    format!("/v1/{}?pane={pane}", parsed.verb),
-                    Some(serde_json::json!({ "path": target, "cwd": cwd })),
-                )
-            }
-            "cp" | "mv" => {
-                if parsed.positional.len() < 2 {
-                    eprintln!("newt: {} requires sources and a destination", parsed.verb);
-                    return 1;
                 }
-                let mut sources = parsed.positional.clone();
-                let dest = sources.pop().unwrap();
-                let op = if parsed.verb == "mv" { "move" } else { "copy" };
-                (
-                    Method::POST,
-                    format!("/v1/operations/{op}"),
-                    Some(serde_json::json!({ "sources": sources, "dest": dest, "cwd": cwd })),
-                )
-            }
-            "cmd" => match parsed.positional.first() {
-                Some(id) => (Method::POST, format!("/v1/commands/{id}?pane={pane}"), None),
-                None => (Method::GET, "/v1/commands".to_string(), None),
-            },
-            other => {
-                eprintln!("newt: unknown verb: {other}\n\n{USAGE}");
-                return 1;
-            }
-        };
+            };
+            let mode = if add {
+                SelectMode::Add
+            } else if remove {
+                SelectMode::Remove
+            } else {
+                SelectMode::Replace
+            };
+            (
+                Method::POST,
+                format!("/v1/panes/{pane}/select"),
+                Some(serde_json::json!({
+                    "patterns": patterns,
+                    "names": names,
+                    "cwd": cwd,
+                    "mode": mode,
+                })),
+            )
+        }
+        Verb::Cmd { id: Some(id) } => {
+            (Method::POST, format!("/v1/commands/{id}?pane={pane}"), None)
+        }
+        Verb::Cmd { id: None } => {
+            list_commands = true;
+            (Method::GET, "/v1/commands".to_string(), None)
+        }
+    };
 
-    let raw_output = parsed.verb == "cat";
-    let list_commands = parsed.verb == "cmd" && parsed.positional.is_empty();
     request(&method, &path, body, raw_output, list_commands).await
 }
 
@@ -318,21 +518,64 @@ async fn connect(
 mod tests {
     use super::*;
 
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("newt").chain(args.iter().copied()))
+    }
+
     #[test]
-    fn parse_args_basics() {
-        let p = parse_args(vec!["cd".into(), "/tmp".into()]).unwrap();
-        assert_eq!(p.verb, "cd");
-        assert_eq!(p.positional, vec!["/tmp"]);
-        assert_eq!(p.pane, "active");
+    fn parse_basics() {
+        let cli = parse(&["cd", "/tmp"]).unwrap();
+        assert!(matches!(cli.verb, Verb::Cd { path: Some(p) } if p == "/tmp"));
+        assert_eq!(cli.pane.pane, PaneSelector::Active);
 
-        let p = parse_args(vec!["pwd".into(), "--pane".into(), "other".into()]).unwrap();
-        assert_eq!(p.verb, "pwd");
-        assert_eq!(p.pane, "other");
+        let cli = parse(&["pwd", "--pane", "other"]).unwrap();
+        assert!(matches!(cli.verb, Verb::Pwd));
+        assert_eq!(cli.pane.pane, PaneSelector::Other);
 
-        assert!(parse_args(vec!["pwd".into(), "--pane".into(), "bogus".into()]).is_err());
+        // --pane is global: accepted before the verb too.
+        let cli = parse(&["--pane", "left", "pwd"]).unwrap();
+        assert_eq!(cli.pane.pane, PaneSelector::Left);
 
-        let p = parse_args(vec!["cp".into(), "a".into(), "b".into(), "dest/".into()]).unwrap();
-        assert_eq!(p.positional, vec!["a", "b", "dest/"]);
+        assert!(parse(&["pwd", "--pane", "bogus"]).is_err());
+        assert!(parse(&["focus"]).is_err());
+        assert!(parse(&["cp", "only-one"]).is_err());
+        assert!(parse(&[]).is_err());
+    }
+
+    #[test]
+    fn parse_transfer_and_select() {
+        let cli = parse(&["cp", "a", "b", "dest/"]).unwrap();
+        assert!(
+            matches!(cli.verb, Verb::Cp { sources, dest } if sources == ["a", "b"] && dest == "dest/")
+        );
+
+        let cli = parse(&["select", "--remove", "*.o", "*.a"]).unwrap();
+        assert!(
+            matches!(cli.verb, Verb::Select { patterns, add: false, remove: true } if patterns == ["*.o", "*.a"])
+        );
+        assert!(matches!(
+            parse(&["select"]).unwrap().verb,
+            Verb::Select { patterns, .. } if patterns.is_empty()
+        ));
+        assert!(parse(&["select", "--add", "--remove", "x"]).is_err());
+    }
+
+    #[test]
+    fn help_is_available_everywhere() {
+        for args in [vec!["--help"], vec!["select", "--help"], vec!["cp", "-h"]] {
+            let err = parse(&args).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        }
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn verbs_track_the_subcommands() {
+        let v = verbs();
+        for expected in ["pwd", "cd", "view", "select", "cmd", "help", "--help"] {
+            assert!(v.iter().any(|x| x == expected), "{expected}");
+        }
+        assert!(!v.iter().any(|x| x == "open"));
     }
 
     #[test]

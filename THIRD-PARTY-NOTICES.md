@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-686 crates, the superset across every target platform and feature.
+687 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -1065,6 +1065,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2015 Keegan McAllister
   termcolor 1.4.1 — Unlicense OR MIT
       Copyright (c) 2015 Andrew Gallant
+  terminal_size 0.4.4 — MIT OR Apache-2.0
+      Copyright (c) 2015 The terminal-size Developers
   thin-vec 0.2.18 — MIT OR Apache-2.0
   thiserror 1.0.69 — MIT OR Apache-2.0
   thiserror 2.0.19 — MIT OR Apache-2.0

@@ -2288,33 +2288,46 @@ impl PaneViewState {
     /// Returns the number of entries the pattern matched, `None` when it
     /// doesn't compile.
     pub fn select_matching(&mut self, pattern: &str, subtract: bool) -> Option<usize> {
-        let matcher = compile_select_pattern(pattern)?;
-        self.drag_base = None;
-        self.clear_quick_search();
-        let mut hits = 0;
-        for f in &self.files {
-            if f.key() == PARENT_KEY || !matcher(&f.name) {
-                continue;
-            }
-            hits += 1;
-            if subtract {
-                self.all_selected.remove(f.key());
-            } else {
-                self.all_selected.insert(f.key().to_string());
-            }
-        }
-        self.recompute_stats();
-        Some(hits)
+        let keys = self.matching_keys(pattern)?;
+        Some(self.select_keys(&keys, subtract))
     }
 
-    pub fn count_matching(&self, pattern: &str) -> Option<usize> {
+    /// Keys of the visible entries whose display name matches `pattern`;
+    /// `None` when it doesn't compile.
+    pub fn matching_keys(&self, pattern: &str) -> Option<Vec<String>> {
         let matcher = compile_select_pattern(pattern)?;
         Some(
             self.files
                 .iter()
                 .filter(|f| f.key() != PARENT_KEY && matcher(&f.name))
-                .count(),
+                .map(|f| f.key().to_string())
+                .collect(),
         )
+    }
+
+    /// Add or remove the given keys; unknown keys and `..` are ignored.
+    /// Returns how many named a visible entry.
+    pub fn select_keys(&mut self, keys: &[String], subtract: bool) -> usize {
+        self.drag_base = None;
+        self.clear_quick_search();
+        let mut hits = 0;
+        for key in keys {
+            if key == PARENT_KEY || !self.file_lookup.contains_key(key) {
+                continue;
+            }
+            hits += 1;
+            if subtract {
+                self.all_selected.remove(key);
+            } else {
+                self.all_selected.insert(key.clone());
+            }
+        }
+        self.recompute_stats();
+        hits
+    }
+
+    pub fn count_matching(&self, pattern: &str) -> Option<usize> {
+        self.matching_keys(pattern).map(|k| k.len())
     }
 
     /// Add every visible entry sharing the focused entry's extension.
