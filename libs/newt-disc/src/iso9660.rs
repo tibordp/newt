@@ -478,8 +478,10 @@ fn decode_iso_name(bytes: &[u8], joliet: bool) -> String {
 
 fn decode_ucs2(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_be_bytes(*c))
         .collect();
     String::from_utf16_lossy(&units)
 }
