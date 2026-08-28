@@ -258,15 +258,14 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
 
 async fn read_json_body<T: serde::de::DeserializeOwned>(
     req: Request<hyper::body::Incoming>,
-) -> Result<T, Response<Body>> {
+) -> Result<T, String> {
     let bytes = req
         .into_body()
         .collect()
         .await
-        .map_err(|e| status_response(StatusCode::BAD_REQUEST, format!("bad body: {e}")))?
+        .map_err(|e| format!("bad body: {e}"))?
         .to_bytes();
-    serde_json::from_slice(&bytes)
-        .map_err(|e| status_response(StatusCode::BAD_REQUEST, format!("bad request body: {e}")))
+    serde_json::from_slice(&bytes).map_err(|e| format!("bad request body: {e}"))
 }
 
 async fn route(
@@ -290,7 +289,7 @@ async fn route(
             };
             let body: PathBody = match read_json_body(req).await {
                 Ok(b) => b,
-                Err(resp) => return resp,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
             };
             ControlRequest::Navigate {
                 pane,
@@ -304,7 +303,7 @@ async fn route(
             };
             let body: SelectBody = match read_json_body(req).await {
                 Ok(b) => b,
-                Err(resp) => return resp,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
             };
             ControlRequest::Select {
                 pane,
@@ -376,7 +375,7 @@ async fn route(
             };
             let body: PathBody = match read_json_body(req).await {
                 Ok(b) => b,
-                Err(resp) => return resp,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
             };
             ControlRequest::Open {
                 pane,
@@ -396,7 +395,7 @@ async fn route(
             };
             let body: TransferBody = match read_json_body(req).await {
                 Ok(b) => b,
-                Err(resp) => return resp,
+                Err(msg) => return status_response(StatusCode::BAD_REQUEST, msg),
             };
             ControlRequest::Transfer {
                 pane,
