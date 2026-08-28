@@ -100,9 +100,12 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.1
+      # cargo-zigbuild >= 0.23 is required: rustc >= 1.98 passes
+      # `--fix-cortex-a53-843419` for aarch64 musl, which zig rejects
+      # unless cargo-zigbuild filters it out.
       - name: Install cargo-zigbuild
         if: contains(matrix.target, 'linux-musl')
-        run: cargo install cargo-zigbuild --version 0.22.2 --locked
+        run: cargo install cargo-zigbuild --version 0.23.3 --locked
       - name: Build agent
         env:
           CARGO_PROFILE_RELEASE_STRIP: symbols
