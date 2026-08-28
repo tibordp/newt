@@ -261,12 +261,13 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             Ok(ControlResponse::Ok)
         }
         ControlRequest::Transfer {
+            pane,
             move_files,
             sources,
             dest,
             cwd,
         } => {
-            let handle = select_pane(ctx, PaneSelector::Active);
+            let handle = select_pane(ctx, pane);
             let request = build_transfer(ctx, handle, move_files, sources, &dest, &cwd).await?;
             let id = crate::cmd::operations::start_operation(ctx.clone(), request)
                 .await

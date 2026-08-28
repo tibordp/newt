@@ -626,7 +626,7 @@ pub fn default_commands() -> Vec<CommandDef> {
             name: "Filter Files".into(),
             short_name: Some("Filter".into()),
             category: "View".into(),
-            default_keys: vec!["/".into()],
+            default_keys: vec!["/".into(), "numpad_divide".into()],
             default_when: Some("pane_focused".into()),
             needs_pane: true,
             scope: CommandScope::Main,

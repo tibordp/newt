@@ -387,11 +387,19 @@ async fn route(
         }
         (&Method::POST, ["v1", "operations", op @ ("copy" | "move")]) => {
             let move_files = *op == "move";
+            let pane = query_param(query.as_deref(), "pane")
+                .as_deref()
+                .map(PaneSelector::parse)
+                .unwrap_or(Some(PaneSelector::Active));
+            let Some(pane) = pane else {
+                return status_response(StatusCode::NOT_FOUND, "unknown pane");
+            };
             let body: TransferBody = match read_json_body(req).await {
                 Ok(b) => b,
                 Err(resp) => return resp,
             };
             ControlRequest::Transfer {
+                pane,
                 move_files,
                 sources: body.sources,
                 dest: body.dest,

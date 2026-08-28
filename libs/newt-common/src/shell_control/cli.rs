@@ -327,12 +327,12 @@ async fn run_cli_async(cli: Cli) -> i32 {
         ),
         Verb::Cp { sources, dest } => (
             Method::POST,
-            "/v1/operations/copy".to_string(),
+            format!("/v1/operations/copy?pane={pane}"),
             Some(serde_json::json!({ "sources": sources, "dest": dest, "cwd": cwd })),
         ),
         Verb::Mv { sources, dest } => (
             Method::POST,
-            "/v1/operations/move".to_string(),
+            format!("/v1/operations/move?pane={pane}"),
             Some(serde_json::json!({ "sources": sources, "dest": dest, "cwd": cwd })),
         ),
         Verb::Select {

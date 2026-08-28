@@ -92,8 +92,10 @@ pub enum ControlRequest {
         cwd: String,
         edit: bool,
     },
-    /// `cp` / `mv` through the operations framework.
+    /// `cp` / `mv` through the operations framework. `pane` only anchors
+    /// path resolution (which mount a relative fragment lives in).
     Transfer {
+        pane: PaneSelector,
         move_files: bool,
         sources: Vec<String>,
         dest: String,

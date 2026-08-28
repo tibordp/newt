@@ -353,7 +353,7 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 
 While rows are hidden, the file list carries a faint accent tint (`--color-bg-filtered`) as a standing reminder that the view is partial. Applies to Filter mode with a non-empty pattern, the only state that hides entries.
 
-- **Activation**: Press the filter key (`/` by default), switch from Quick Search with the same key, or start typing when `quick_search = false`.
+- **Activation**: Press the filter key (`/` by default, numpad `/` too), switch from Quick Search with the same key, or start typing when `quick_search = false`.
 
   Both routes run the one `start_filter` command — "switch this pane to filter mode, keeping whatever is typed" — so it is rebindable in the Keybindings tab and runnable from the command palette like anything else. That matters for non-US layouts: `/` is Shift+7 on QWERTZ, and the binding is matched as an exact normalized string, so those layouts capture `shift+/` instead. Unlike other commands it is matched inside the pane rather than dispatched from the window-level handler — the pane's own keydown runs first and routes every unmodified printable character into quick-search, so a key left to the dispatcher would be swallowed before reaching it.
 - **UI**: A filter input bar appears at the bottom of the pane.
