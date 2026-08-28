@@ -54,10 +54,6 @@ function sendAskpassResponse(response: string | null) {
   safeSilent(commands.askpassRespond(response));
 }
 
-const preventAskpassAutoFocus = (e: Event) => {
-  // Let our autoFocus on the input win over Radix focusing Dialog.Content.
-  e.preventDefault();
-};
 const preventAskpassInteractOutside = (e: Event) => e.preventDefault();
 
 function AskpassDialog({
@@ -73,6 +69,17 @@ function AskpassDialog({
   // through cancel(); the buttons call respond() directly. Both paths cause
   // the askpass state to clear, so we must only send one response per prompt.
   const respondedRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus from Radix's open-autofocus hook rather than the `autoFocus`
+  // attribute: the prompt can appear above another open dialog (a connect
+  // dialog mid-handshake), whose focus trap reclaims any focus moved
+  // before this dialog's scope is registered. On close, Radix's default
+  // returns focus to wherever it was — that dialog, or the pane.
+  const focusInput = useCallback((e: Event) => {
+    e.preventDefault();
+    inputRef.current?.focus();
+  }, []);
 
   const respond = useCallback((response: string | null) => {
     if (respondedRef.current) return;
@@ -105,7 +112,7 @@ function AskpassDialog({
       <Dialog.Portal>
         <Dialog.Content
           className={dialogStyles.dialogContentTop}
-          onOpenAutoFocus={preventAskpassAutoFocus}
+          onOpenAutoFocus={focusInput}
           onPointerDownOutside={preventAskpassInteractOutside}
           onInteractOutside={preventAskpassInteractOutside}
         >
@@ -125,7 +132,7 @@ function AskpassDialog({
                 type={isSecret ? "password" : "text"}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                autoFocus
+                ref={inputRef}
                 size={40}
               />
             </DialogBody>

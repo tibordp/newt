@@ -367,14 +367,20 @@ export function ColumnsContextMenuContent({
 
 type BreadcrumbContextMenuProps = {
   displayPath: string;
+  onCloseAutoFocus?: (e: Event) => void;
 };
 
 export function BreadcrumbContextMenuContent({
   displayPath,
+  onCloseAutoFocus,
 }: BreadcrumbContextMenuProps) {
   return (
     <CM.Portal>
-      <CM.Content className={styles.content} loop>
+      <CM.Content
+        className={styles.content}
+        loop
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <CM.Item
           className={styles.item}
           onSelect={() => navigator.clipboard.writeText(displayPath)}

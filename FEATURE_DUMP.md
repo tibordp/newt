@@ -213,9 +213,10 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Arrow Up/Down | Move focus one item |
 | Shift+Arrow Up/Down | Move focus and extend selection |
 | Page Up/Down | Jump one viewport height |
-| Shift+Page Up/Down | Jump one viewport height with selection |
+| Shift+Page Up/Down | Jump one viewport height, selecting every row passed over (destination included) |
 | Home | Jump to first item |
 | End | Jump to last item |
+| Shift+Home / Shift+End | Jump to first/last item, selecting the whole range |
 | Enter | Open file or enter directory (see "Enter behavior" below) |
 | Backspace | Navigate to parent directory (`..`) |
 | Tab | Switch active pane |

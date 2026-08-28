@@ -46,8 +46,7 @@ export default function CopyMove({
   // filename character on Unix, where a directory may be called `\`.
   const nameInvalid =
     default_name != null &&
-    (name.trim() === "" ||
-      [...name_separators].some((sep) => name.includes(sep)));
+    (name === "" || [...name_separators].some((sep) => name.includes(sep)));
 
   function selectStem(e: React.FocusEvent<HTMLInputElement>) {
     const dot = name.lastIndexOf(".");

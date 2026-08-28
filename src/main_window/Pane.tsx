@@ -53,8 +53,9 @@ function PathBreadcrumbs(props: {
   breadcrumbs: Breadcrumb[];
   paneHandle: number;
   displayPath: string;
+  onMenuCloseAutoFocus: (e: Event) => void;
 }) {
-  const { breadcrumbs, paneHandle, displayPath } = props;
+  const { breadcrumbs, paneHandle, displayPath, onMenuCloseAutoFocus } = props;
 
   // The last breadcrumb gets the full display_path; earlier ones join labels.
   const pathUpTo = (index: number): string => {
@@ -86,7 +87,10 @@ function PathBreadcrumbs(props: {
               {crumb.label}
             </a>
           </ContextMenu.Trigger>
-          <BreadcrumbContextMenuContent displayPath={pathUpTo(i)} />
+          <BreadcrumbContextMenuContent
+            displayPath={pathUpTo(i)}
+            onCloseAutoFocus={onMenuCloseAutoFocus}
+          />
         </ContextMenu.Root>
       ))}
     </>
@@ -1351,9 +1355,9 @@ function PaneInner(
         (containerRef.current?.clientHeight ?? 220) / rowHeight,
       );
       relativeJump(-pageSize, e.shiftKey);
-    } else if (e.key == "Home" && noModifiers) {
+    } else if (e.key == "Home" && (noModifiers || e.shiftKey)) {
       relativeJump(-Math.pow(2, 31), e.shiftKey);
-    } else if (e.key == "End" && noModifiers) {
+    } else if (e.key == "End" && (noModifiers || e.shiftKey)) {
       relativeJump(Math.pow(2, 31) - 1, e.shiftKey);
     } else if (e.key == "Enter" && noModifiers) {
       const focusedFile = file_window.items[focusedIndex - file_window.offset];
@@ -1831,6 +1835,7 @@ function PaneInner(
                 breadcrumbs={breadcrumbs}
                 paneHandle={paneHandle}
                 displayPath={props.display_path}
+                onMenuCloseAutoFocus={refocusPane}
               />
             </div>
             {(context_badges ?? []).map((badge, i) => (

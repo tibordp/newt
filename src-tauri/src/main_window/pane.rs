@@ -2479,12 +2479,15 @@ impl PaneViewState {
             .map(|focused| *self.file_lookup.get(focused).unwrap() as i32)
             .unwrap_or(0);
 
+        // Shift+step selects the row it leaves (so the cursor ends just past
+        // the range); a longer Shift+jump (page/home/end) selects everything
+        // it passes over, destination included.
+        let multi_step = offset.unsigned_abs() > 1;
         let mut i = new_index;
         if with_selection {
             self.all_selected
                 .insert(self.files[new_index as usize].key().to_string());
         }
-        self.all_selected.remove(PARENT_KEY);
 
         loop {
             i += direction;
@@ -2497,10 +2500,15 @@ impl PaneViewState {
                     .as_ref()
                     .is_none_or(|re| re.is_match(&self.files[i as usize].name))
             {
+                if with_selection && multi_step {
+                    self.all_selected
+                        .insert(self.files[i as usize].key().to_string());
+                }
                 new_index = i;
                 offset -= direction;
             }
         }
+        self.all_selected.remove(PARENT_KEY);
 
         self.focused = Some(self.files[new_index as usize].key().to_string());
         if with_selection {
@@ -2617,6 +2625,34 @@ mod tests {
         vs.focused = Some(PARENT_KEY.into());
         vs.select_same_extension();
         assert_eq!(vs.all_selected.len(), 2);
+    }
+
+    #[test]
+    fn shift_jump_selects_the_range_but_shift_step_only_the_origin() {
+        let mut vs = listed(&[
+            ("..", true),
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("d", false),
+        ]);
+        vs.focused = Some("b".into());
+        vs.relative_jump(1, true);
+        assert_eq!(vs.focused.as_deref(), Some("c"));
+        assert_eq!(vs.all_selected.len(), 1);
+        assert!(vs.all_selected.contains("b"));
+
+        vs.all_selected.clear();
+        vs.focused = Some("b".into());
+        vs.relative_jump(i32::MAX, true);
+        assert_eq!(vs.focused.as_deref(), Some("d"));
+        assert_eq!(vs.all_selected.len(), 3);
+
+        vs.all_selected.clear();
+        vs.relative_jump(i32::MIN, true);
+        assert_eq!(vs.focused.as_deref(), Some(".."));
+        assert_eq!(vs.all_selected.len(), 4);
+        assert!(!vs.all_selected.contains(".."));
     }
 
     #[test]

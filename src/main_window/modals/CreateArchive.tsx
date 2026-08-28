@@ -84,8 +84,7 @@ export default function CreateArchive({
   // a Windows-styled one. To archive into a folder, navigate there in the
   // other pane.
   const nameInvalid =
-    name.trim() === "" ||
-    [...name_separators].some((sep) => name.includes(sep));
+    name === "" || [...name_separators].some((sep) => name.includes(sep));
 
   function switchFormat(next: ArchiveFormat) {
     setName((n) => swapExtension(n, format, next));
