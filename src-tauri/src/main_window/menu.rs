@@ -114,9 +114,22 @@ fn build(app_handle: &AppHandle, label: &str) -> Result<Menu<Wry>, Error> {
         ],
     )?;
 
+    let help_submenu = Submenu::with_items(
+        app_handle,
+        "Help",
+        true,
+        &[&cmd_item("documentation", "Newt Documentation")?],
+    )?;
+
     Ok(Menu::with_items(
         app_handle,
-        &[&app_submenu, &file_submenu, &edit_submenu, &window_submenu],
+        &[
+            &app_submenu,
+            &file_submenu,
+            &edit_submenu,
+            &window_submenu,
+            &help_submenu,
+        ],
     )?)
 }
 

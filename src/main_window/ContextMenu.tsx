@@ -119,6 +119,33 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdCopy(paneHandle))}
+        >
+          Copy
+          <Shortcut commands={commands} id="copy" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdMove(paneHandle))}
+        >
+          Move
+          <Shortcut commands={commands} id="move" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdCreateArchive(paneHandle))}
+        >
+          Pack to Archive
+          <Shortcut commands={commands} id="create_archive" />
+        </CM.Item>
+
+        <CM.Separator className={styles.separator} />
+
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
           onSelect={() => safe(ipc.cmdRename(paneHandle))}
         >
           Rename
@@ -193,7 +220,7 @@ export function PaneContextMenuContent({
               className={styles.item}
               onSelect={() => safe(ipc.cmdOpenFolder(paneHandle))}
             >
-              Open in Default App
+              Reveal in File Manager
               <Shortcut commands={commands} id="open_folder" />
             </CM.Item>
             <CM.Separator className={styles.separator} />
@@ -214,6 +241,20 @@ export function PaneContextMenuContent({
           New File
           <Shortcut commands={commands} id="create_file" />
         </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdPasteFromClipboard(paneHandle))}
+        >
+          Paste
+          <Shortcut commands={commands} id="paste_from_clipboard" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdRefresh(paneHandle))}
+        >
+          Refresh
+          <Shortcut commands={commands} id="refresh" />
+        </CM.Item>
 
         <CM.Separator className={styles.separator} />
 
@@ -222,6 +263,7 @@ export function PaneContextMenuContent({
           onSelect={() => safe(ipc.cmdDirectoryProperties(paneHandle))}
         >
           Directory Properties
+          <Shortcut commands={commands} id="directory_properties" />
         </CM.Item>
 
         <ShellMenuItem onShellMenu={onShellMenu} />

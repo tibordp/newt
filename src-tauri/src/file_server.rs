@@ -139,9 +139,11 @@ async fn serve_file(
         }
     };
 
+    // The type may come verbatim from a remote object's Content-Type.
     let mime = details
         .mime_type
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+        .and_then(|m| header::HeaderValue::from_str(&m).ok())
+        .unwrap_or(header::HeaderValue::from_static("application/octet-stream"));
     let file_size = details.size;
 
     let range_header = headers

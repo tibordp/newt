@@ -48,7 +48,7 @@ pub struct BookmarkAdded {
 }
 
 /// A resolved keybinding after `mod+` expansion and cascading.
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct ResolvedBinding {
     pub key: String,
     pub command: String,
@@ -56,7 +56,7 @@ pub struct ResolvedBinding {
 }
 
 /// Command metadata for the command palette.
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct CommandInfo {
     pub id: String,
     pub name: String,
@@ -629,10 +629,10 @@ impl PreferencesManager {
                 {
                     let mut guard = resolved.write();
                     if guard.settings != new_resolved.settings
-                        || guard.bindings.len() != new_resolved.bindings.len()
+                        || guard.bindings != new_resolved.bindings
                         || guard.bookmarks != new_resolved.bookmarks
                         || guard.user_commands != new_resolved.user_commands
-                        || guard.commands.len() != new_resolved.commands.len()
+                        || guard.commands != new_resolved.commands
                     {
                         *guard = new_resolved.clone();
                     } else {

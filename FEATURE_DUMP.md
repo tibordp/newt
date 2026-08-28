@@ -73,7 +73,7 @@ Zoom is applied via the webview zoom factor and persisted app-wide in the runtim
 - **Close Window** (Mod+Shift+W): Closes the current window. Shifted (gnome-terminal convention) so a session window can't be closed on a stray Mod+W. Viewer/editor children can't outlive the session they were spawned from, so closing a main window takes them along: a Rust-side `CloseRequested` interceptor (covers the command, the menu item, and the OS close button alike) closes viewer children outright and sweeps editor children — dirty ones prompt, the window close resumes once the last child editor is gone, and refusing a prompt aborts the close.
 - **Quit Newt** (Mod+Q): Closes all main windows, exiting the app. Open editor windows are swept first so their unsaved-changes prompts fire: the quit waits (event-driven, via the `Destroyed` handler) for the last editor to close before the main windows go, and refusing any editor's prompt aborts the quit (`cancel_quit`), leaving all remaining windows open. Pre-warmed hidden editors are exempt from the sweep. OS-initiated termination (macOS Dock quit, logout) goes through the same sweep via an `applicationShouldTerminate:` method injected into tao's app delegate at runtime (`terminate_guard` in `main.rs` — tao doesn't implement the selector and `RunEvent::ExitRequested` never fires for OS termination, see tauri#9198): a dirty editor cancels the termination and runs the sweep, a clean app terminates immediately so it never blocks logout. Editor dirty state is mirrored to Rust for this via `set_editor_dirty`. The `ExitRequested { code: None }` handler remains as a safety net for the all-windows-closed path.
 - **Reload Window**: Available in the Debug dialog (debug builds only).
-- **Refresh File List** (Mod+R): Force-refreshes the active pane's directory listing.
+- **Refresh File List** (unbound by default — `mod+r` would be Quick Connect's Ctrl+R on Windows/Linux; palette, pane context menu): Force-refreshes the active pane's directory listing.
 
 Multiple main windows coexist in the same process: "New Window", remote connections, and elevated sessions all create additional windows within the running app. Each window has its own independent session, panes, terminals, and operations; closing the last main window exits the app.
 
@@ -85,6 +85,7 @@ Main windows carry a minimal native menu on macOS (Windows/Linux main windows ha
 - **File**: New Window, Connect to Remote Host…, Close Window.
 - **Edit**: predefined Cut/Copy/Paste/Select All (required so macOS routes Cmd+C/V/X/A to the webview — previously the sole content of the main-window menu).
 - **Window**: predefined Minimize, Zoom.
+- **Help**: Newt Documentation (`documentation`).
 
 Viewer and editor windows prepend an app submenu with Quit Newt (Cmd+Q) on macOS, so quit works whichever window is focused.
 
@@ -276,6 +277,7 @@ The default browser context menu is suppressed in the main window (but not in th
 | View | F3 |
 | Edit | F4 |
 | Copy Path | Mod+C |
+| Copy / Move / Pack to Archive | F5 / F6 / Alt+F5 |
 | Rename | F2 |
 | Delete | F8 |
 | Delete Permanently | Shift+Delete |
@@ -289,10 +291,12 @@ The Follow row appears only when it would do something: labelled "Reveal Source"
 
 | Item | Shortcut |
 |------|----------|
-| Open in Default App | Shift+F3 (host-local VFS only) |
+| Reveal in File Manager | Shift+F3 (host-local VFS only) |
 | New Directory | F7 |
 | New File | |
-| Directory Properties | |
+| Paste | Mod+V |
+| Refresh | (unbound) |
+| Directory Properties | (`directory_properties`, unbound) |
 | Windows Menu | Shift+RClick (Windows host + host-local files only) |
 
 **Windows shell context menu** (Windows host, host-local files): the trailing "Windows Menu" item — or Shift+right-click to skip our menu entirely — pops the classic `IContextMenu` shell menu (not the Windows 11 abbreviated one) for the effective selection; on empty space (or the `..` row) it targets the current directory itself. Implementation (`main_window/shell_menu.rs`, `shell_context_menu` command): runs synchronously on the main thread (`TrackPopupMenuEx` pumps its own modal loop), `SHParseDisplayName` on de-verbatimed paths (`launch_cwd`) → parent `IShellFolder::GetUIObjectOf` → `QueryContextMenu` → `TrackPopupMenuEx(TPM_RETURNCMD)` → `InvokeCommand`, with the Tauri window temporarily subclassed to forward `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MEASUREITEM`/`WM_MENUCHAR` to `IContextMenu2/3` so dynamic submenus ("Open with", "Send to") populate. User-cancelled verbs (`ERROR_CANCELLED`) are not errors; shell-side mutations (delete, rename, …) reach the pane through the directory watcher. In **elevated sessions** the menu is still built and invoked by the non-elevated UI process — items the desktop user can't read (e.g. `C:\Windows\System32\config\*`) fail at `SHParseDisplayName` with an error, and any verb that did run would run non-elevated. Deliberate: an agent-side menu (feasible for the UAC transport, which shares the interactive desktop) would invoke *every* verb elevated — "Open"/"Open with" silently spawning admin-token processes — which is why Explorer refuses to run elevated too. Power users who need shell verbs on admin-only files can just run `newt.exe` itself elevated.

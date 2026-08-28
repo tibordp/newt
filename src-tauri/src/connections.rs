@@ -205,13 +205,23 @@ pub fn list_connections(config_dir: &std::path::Path) -> Vec<ConnectionProfile> 
     }
 }
 
+/// An absent file is an empty list; an unparsable one is an error, since
+/// the caller is about to write the list back.
+fn read_connections_file(path: &std::path::Path) -> Result<ConnectionsFile, Error> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(e) => return Err(Error::Custom(format!("{}: {e}", path.display()))),
+    };
+    toml::from_str(&content).map_err(|e| Error::Custom(format!("{}: {e}", path.display())))
+}
+
 pub fn save_connection(
     config_dir: &std::path::Path,
     profile: ConnectionProfile,
 ) -> Result<(), Error> {
     let path = connections_path(config_dir);
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut file: ConnectionsFile = toml::from_str(&content).unwrap_or_default();
+    let mut file = read_connections_file(&path)?;
 
     // Update existing or append
     if let Some(existing) = file.connections.iter_mut().find(|c| c.id == profile.id) {
@@ -227,8 +237,7 @@ pub fn save_connection(
 
 pub fn delete_connection(config_dir: &std::path::Path, id: &str) -> Result<(), Error> {
     let path = connections_path(config_dir);
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut file: ConnectionsFile = toml::from_str(&content).unwrap_or_default();
+    let mut file = read_connections_file(&path)?;
 
     file.connections.retain(|c| c.id != id);
 

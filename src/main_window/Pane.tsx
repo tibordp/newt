@@ -1219,12 +1219,14 @@ function PaneInner(
         if (ghost) {
           if (dnd.files.length === 1) {
             const f = dnd.files[0];
-            if (f.is_dir) {
-              ghost.innerHTML = `<div class="file-icon folder"></div> ${f.name}`;
-            } else {
+            const icon = document.createElement("div");
+            icon.className = f.is_dir ? "file-icon folder" : "file-icon";
+            if (!f.is_dir) {
               const { ch, color } = getFileIconChar(f.name, f.is_dir);
-              ghost.innerHTML = `<div class="file-icon" style="color: ${color}">${ch}</div> ${f.name}`;
+              icon.style.color = color;
+              icon.textContent = ch;
             }
+            ghost.replaceChildren(icon, ` ${f.name}`);
           } else {
             ghost.textContent = `${dnd.files.length} items`;
           }
