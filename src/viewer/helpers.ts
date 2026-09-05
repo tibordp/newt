@@ -180,3 +180,123 @@ export function collectBytes(
 
   return result.subarray(0, pos);
 }
+
+// --- Text encodings ---
+
+/** Leading bytes the text viewer hands to the backend encoding sniffer. */
+export const SNIFF_PREFIX_LEN = 64 * 1024;
+
+export type EncodingKind = "utf8" | "utf16le" | "utf16be" | "single" | "multi";
+
+/** How newlines are found in the byte stream for an encoding. */
+export type NewlineScan = "byte" | "utf16le" | "utf16be";
+
+// Legacy multibyte encodings in the viewer's catalogue: bytes per character
+// vary and the browser has no encoder for them.
+const MULTIBYTE_LEGACY = new Set([
+  "shift_jis",
+  "euc-jp",
+  "iso-2022-jp",
+  "gbk",
+  "gb18030",
+  "big5",
+  "euc-kr",
+]);
+
+export function encodingKind(encoding: string): EncodingKind {
+  const e = encoding.toLowerCase();
+  if (e === "utf-8") return "utf8";
+  if (e === "utf-16le") return "utf16le";
+  if (e === "utf-16be") return "utf16be";
+  return MULTIBYTE_LEGACY.has(e) ? "multi" : "single";
+}
+
+export function newlineScan(encoding: string): NewlineScan {
+  const kind = encodingKind(encoding);
+  return kind === "utf16le" || kind === "utf16be" ? kind : "byte";
+}
+
+/**
+ * Decoder for slices taken mid-file. A BOM-shaped sequence inside the file
+ * is data; the real BOM is skipped by offset (line 0 starts after it).
+ */
+export function makeDecoder(encoding: string): TextDecoder {
+  return new TextDecoder(encoding, { fatal: false, ignoreBOM: true });
+}
+
+/**
+ * Append the absolute byte offsets of the line starts found in `chunk` from
+ * absolute offset `from` onwards. UTF-16 newlines are the code unit 0x000A,
+ * so `from` must be code-unit aligned; in every other catalogue encoding
+ * 0x0A never occurs inside a multibyte sequence and a byte scan is exact.
+ */
+export function scanLineStarts(
+  chunk: Uint8Array,
+  chunkStart: number,
+  from: number,
+  scan: NewlineScan,
+  out: number[],
+): void {
+  const start = from - chunkStart;
+  if (scan === "byte") {
+    for (let i = start; i < chunk.length; i++) {
+      if (chunk[i] === 0x0a) out.push(chunkStart + i + 1);
+    }
+    return;
+  }
+  const [lo, hi] = scan === "utf16le" ? [0x0a, 0] : [0, 0x0a];
+  for (let i = start; i + 1 < chunk.length; i += 2) {
+    if (chunk[i] === lo && chunk[i + 1] === hi) out.push(chunkStart + i + 2);
+  }
+}
+
+/**
+ * Number of leading bytes of `bytes` that decode to `col` UTF-16 code units
+ * (rounded up to a character boundary). `bytes` must start on a character
+ * boundary.
+ */
+export function colToByteLength(
+  bytes: Uint8Array,
+  encoding: string,
+  col: number,
+): number {
+  if (col <= 0) return 0;
+  switch (encodingKind(encoding)) {
+    case "single":
+      return Math.min(col, bytes.length);
+    case "utf16le":
+    case "utf16be":
+      return Math.min(col * 2, bytes.length);
+    case "utf8": {
+      // Count code units from lead bytes: 4-byte sequences are a surrogate
+      // pair, anything else is one unit — including a stray continuation
+      // byte, which decodes to one U+FFFD.
+      let units = 0;
+      let pending = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        const b = bytes[i];
+        if ((b & 0xc0) === 0x80 && pending > 0) {
+          pending--;
+          continue;
+        }
+        if (units >= col) return i;
+        pending = b >= 0xf0 ? 3 : b >= 0xe0 ? 2 : b >= 0xc0 ? 1 : 0;
+        units += b >= 0xf0 ? 2 : 1;
+      }
+      return bytes.length;
+    }
+    case "multi": {
+      // No encoder available: stream bytes one at a time and stop once the
+      // decoder has emitted enough units.
+      const decoder = makeDecoder(encoding);
+      let units = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        units += decoder.decode(bytes.subarray(i, i + 1), {
+          stream: true,
+        }).length;
+        if (units >= col) return i + 1;
+      }
+      return bytes.length;
+    }
+  }
+}

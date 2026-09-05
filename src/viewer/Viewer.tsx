@@ -26,11 +26,17 @@ import { PdfViewer } from "./PdfViewer";
 
 // --- Main Viewer component ---
 
+interface ViewerEncodingState {
+  detected: { encoding: string; bom_len: number } | null;
+  selected: string | null;
+}
+
 interface ViewerRemoteState {
   mode: string;
   file_path: VfsPath | null;
   display_path: string | null;
   file_server_base: string | null;
+  encoding: ViewerEncodingState;
 }
 
 function Viewer() {
@@ -85,6 +91,19 @@ function Viewer() {
   const currentMode = filePath
     ? ((viewerState?.mode as ViewerMode) ?? null)
     : null;
+
+  // Text mode decodes as UTF-8 until the sniff result lands or the user
+  // picks an encoding. The BOM is skipped only when the effective encoding
+  // is the one it announces.
+  const detectedEncoding = viewerState?.encoding.detected ?? null;
+  const selectedEncoding = viewerState?.encoding.selected ?? null;
+  const encoding = selectedEncoding ?? detectedEncoding?.encoding ?? "UTF-8";
+  const bomLen =
+    detectedEncoding?.encoding === encoding ? detectedEncoding.bom_len : 0;
+  const encodingLabel =
+    selectedEncoding || detectedEncoding
+      ? `${encoding}${bomLen > 0 ? " (BOM)" : ""}`
+      : null;
 
   // Preload first hex chunk when switching to hex mode (or when auto-detected as hex)
   useEffect(() => {
@@ -182,6 +201,10 @@ function Viewer() {
         chunkCache={chunkCache}
         loadChunk={loadChunk}
         autoMode={autoMode ?? currentMode}
+        encoding={encoding}
+        bomLen={bomLen}
+        encodingLabel={encodingLabel}
+        needsSniff={detectedEncoding === null}
       />
     );
   } else if (currentMode === "image") {

@@ -598,7 +598,10 @@ The status bar includes mode toggle buttons on the right side. The auto-detected
 
 - Line-numbered display with a non-selectable gutter. Gutter width adjusts to fit the number of digits in the total line count.
 - **Chunked loading**: Loads files in 128 KB chunks on demand. Large files don't need to be fully loaded before viewing. LRU cache holds up to 32 chunks (4 MB); older chunks are evicted as new ones load.
-- **UTF-8 aware**: Detects incomplete UTF-8 sequences at chunk boundaries and handles them gracefully.
+- **Encodings**: Decoding happens in the webview with `TextDecoder`, so every WHATWG encoding it knows is available: UTF-8, UTF-16 LE/BE, the Windows-125x and ISO-8859-x families, KOI8, Mac, Shift_JIS, EUC-JP, ISO-2022-JP, GBK, GB18030, Big5, EUC-KR. The catalogue lives in `viewer/encoding.rs` (encoding_rs canonical names, which double as `TextDecoder` labels); UTF-32 has no `TextDecoder` and is not offered. The **Encoding** menu (Text mode only) has an *Auto-detect (name)* entry followed by the catalogue grouped by script; the pick is per viewer window and the status bar shows the effective encoding, with "(BOM)" when one was honoured.
+  - **Detection** is sniffed from the data the viewer already has: once the first chunk lands, the text viewer hands its leading 64 KiB to `sniff_viewer_encoding`, which records the result in the viewer's Rust state (menu and status bar follow via the usual state push). Order: BOM (UTF-8, UTF-16 LE/BE), then BOM-less UTF-16 by null-byte parity, then UTF-8 validity (a sequence cut off by the prefix boundary is not held against it), then `chardetng` (Firefox's detector) for legacy codepages. The view renders as UTF-8 until the result lands and then switches once; the line index is rebuilt only when the newline scan changes (UTF-16 needs an aligned code-unit scan; every other catalogue encoding never places 0x0A inside a multibyte sequence) or when a BOM moves the start of line 0.
+  - **Columns ↔ bytes**: selection columns are UTF-16 code units of the decoded line. Mapping back to bytes is 1:1 for single-byte encodings, 2:1 for UTF-16, a lead-byte count for UTF-8, and a byte-at-a-time streaming decode for the legacy multibyte encodings (the browser has no encoder for them). ISO-2022-JP is decoded per line, so a line that ends inside a JIS run shows the next line wrong until an escape resets it.
+  - **Copy and search** transcode on the host with `encoding_rs`: copy decodes the selected bytes in the effective encoding, literal search encodes the query into it (UTF-16 spelled out by hand, since encoding_rs encodes UTF-16 as UTF-8 per WHATWG). Regex search stays a byte regex over the raw file, so non-ASCII regex literals only match in UTF-8 files. The hex viewer's text search is always UTF-8.
 - **Virtual scrolling**: Only renders visible lines plus 5-line overscan for smooth scrolling. Scroll scaling for files exceeding browser's max element height (16M px).
 - **Incremental line index**: Line positions are built by scanning for `0x0A` in chunks as they load. The `+` after the line count in the status bar indicates more lines may exist in unscanned chunks.
 
@@ -610,7 +613,7 @@ The status bar includes mode toggle buttons on the right side. The auto-detected
 - **Auto-scroll**: Dragging near top/bottom edges (20px margin) auto-scrolls.
 - **Escape**: Clears the selection. If there is no selection, closes the viewer.
 
-**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`). 10 MB copy size limit.
+**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`, decoded in the effective encoding). 10 MB copy size limit.
 
 **Search** (Ctrl+F): Opens a search bar at the bottom of the viewer.
 - **Literal text search** (default) or **regex** (toggle with `.*` button).
@@ -725,6 +728,7 @@ The `+` after the line count indicates the file is still loading. Selection info
 - **File**: Close (Escape)
 - **Edit** (Text/Hex modes only): Copy, Select All, separator, Go to Line / Go to Offset
 - **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
+- **Encoding** (Text mode only): Auto-detect (detected name), separator, then the encoding catalogue as per-script submenus (radio buttons, same one-checked convention as View).
 
 ### File Serving
 

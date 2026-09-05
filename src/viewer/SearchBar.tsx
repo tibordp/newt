@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { commands, type SearchMatch } from "../lib/bindings";
+import {
+  commands,
+  type SearchMatch,
+  type ViewerSearchPattern,
+} from "../lib/bindings";
 import { unwrap } from "../lib/ipc";
 import styles from "./Viewer.module.scss";
 import type { VfsPath } from "./helpers";
@@ -14,8 +18,10 @@ export interface SearchBarProps {
   onClose: () => void;
   vfsPath: VfsPath;
   fileSize: number;
-  /** "text" for text viewer (search as UTF-8), "hex" for hex viewer */
+  /** "text" for text viewer, "hex" for hex viewer (adds a hex-bytes toggle) */
   mode: SearchMode;
+  /** Encoding a text query is searched as. */
+  encoding: string;
   /** Called when a match is found — viewer should scroll to this byte range */
   onMatch: (match: SearchMatch) => void;
   /** Called when search wraps or finds nothing */
@@ -39,6 +45,7 @@ export function SearchBar({
   vfsPath,
   fileSize,
   mode,
+  encoding,
   onMatch,
   onNoMatch,
 }: SearchBarProps) {
@@ -78,18 +85,18 @@ export function SearchBar({
     async (fromOffset: number) => {
       if (!query.trim()) return;
 
-      let pattern: { Literal: number[] } | { Regex: string };
+      let pattern: ViewerSearchPattern;
       if (hexMode) {
         const bytes = parseHexBytes(query);
         if (!bytes) {
           setStatus("Invalid hex");
           return;
         }
-        pattern = { Literal: Array.from(bytes) };
+        pattern = { Bytes: Array.from(bytes) };
       } else if (useRegex) {
         pattern = { Regex: query };
       } else {
-        pattern = { Literal: Array.from(new TextEncoder().encode(query)) };
+        pattern = { Text: { text: query, encoding } };
       }
 
       setSearching(true);
@@ -129,7 +136,7 @@ export function SearchBar({
         setSearching(false);
       }
     },
-    [query, useRegex, hexMode, vfsPath, fileSize, onMatch, onNoMatch],
+    [query, useRegex, hexMode, vfsPath, fileSize, encoding, onMatch, onNoMatch],
   );
 
   const findNext = useCallback(() => {

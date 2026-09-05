@@ -681,6 +681,7 @@ export function HexViewer({
         vfsPath={vfsPath}
         fileSize={fileSize}
         mode="hex"
+        encoding="UTF-8"
         onMatch={handleSearchMatch}
         onNoMatch={() => {}}
       />

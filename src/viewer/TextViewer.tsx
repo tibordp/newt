@@ -21,9 +21,14 @@ import { SearchBar } from "./SearchBar";
 import {
   CHUNK_SIZE,
   MAX_SCROLL_HEIGHT,
+  SNIFF_PREFIX_LEN,
   LruChunkCache,
   collectBytes,
+  colToByteLength,
   formatHexOffset,
+  makeDecoder,
+  newlineScan,
+  scanLineStarts,
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
@@ -100,13 +105,21 @@ export interface TextViewerProps {
   chunkCache: React.MutableRefObject<LruChunkCache>;
   loadChunk: (chunkIndex: number) => Promise<void>;
   autoMode: ViewerMode;
+  /** Effective encoding (a `TextDecoder` label). */
+  encoding: string;
+  /** Bytes of byte-order mark to skip at the start of the file. */
+  bomLen: number;
+  /** Status-bar text for the encoding; null while it is still the default. */
+  encodingLabel: string | null;
+  /** No sniff result yet: hand the first chunk's prefix to the backend. */
+  needsSniff: boolean;
 }
 
 /**
  * Text viewer with on-demand chunk loading. Builds a line-start index
- * incrementally by scanning chunk bytes for newlines (0x0A — safe in
- * UTF-8 since it never appears as a continuation byte). Only the chunks
- * covering the visible line range are kept in memory.
+ * incrementally by scanning chunk bytes for newlines (see
+ * `scanLineStarts`). Only the chunks covering the visible line range are
+ * kept in memory.
  */
 export function TextViewer({
   filePath,
@@ -115,6 +128,10 @@ export function TextViewer({
   chunkCache,
   loadChunk,
   autoMode,
+  encoding,
+  bomLen,
+  encodingLabel,
+  needsSniff,
 }: TextViewerProps) {
   const formatSize = useFormatBytes();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -135,11 +152,16 @@ export function TextViewer({
   const lineCountRef = useRef(1);
 
   // Line index: lineStarts[i] = byte offset where line i begins.
-  // Scanning proceeds sequentially from byte 0; all chunks up to
-  // scannedTo are guaranteed to be in chunkCache.
-  const lineStartsRef = useRef<number[]>([0]);
-  const scannedToRef = useRef(0);
+  // Scanning proceeds sequentially from the end of the BOM; all chunks up
+  // to scannedTo are guaranteed to be in chunkCache. The index depends on
+  // how newlines are found and where line 0 starts, so it is rebuilt when
+  // either changes — a switch between byte-scanned encodings keeps it.
+  const scan = newlineScan(encoding);
+  const scanKey = `${scan}:${bomLen}`;
+  const lineStartsRef = useRef<number[]>([bomLen]);
+  const scannedToRef = useRef(bomLen);
   const eofFoundRef = useRef(false);
+  const sniffSentRef = useRef(false);
   const [lineCount, setLineCount] = useState(1);
   const [scanTarget, setScanTarget] = useState(200);
   // Bumped whenever bytes become renderable (chunk loaded / scan advanced).
@@ -148,16 +170,24 @@ export function TextViewer({
   // newline keeps lineCount at 1, and without this it would stay blank.
   const [renderGen, setRenderGen] = useState(0);
 
-  // Reset on file change
+  // Reset on file change or when the line index no longer applies
   useEffect(() => {
-    lineStartsRef.current = [0];
-    scannedToRef.current = 0;
+    lineStartsRef.current = [bomLen];
+    scannedToRef.current = bomLen;
     eofFoundRef.current = false;
     setLineCount(1);
     setScanTarget(200);
     setTopRow(0);
     setSelection(null);
-  }, [filePath]);
+    setRenderGen((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, scanKey]);
+
+  // Columns are code units of the decoded text, so a selection does not
+  // survive a change of encoding.
+  useEffect(() => {
+    setSelection(null);
+  }, [encoding]);
 
   // Scan effect: load chunks sequentially and record newline positions
   useEffect(() => {
@@ -177,14 +207,24 @@ export function TextViewer({
         const chunk = chunkCache.current.get(ci);
         if (!chunk) break;
 
-        const chunkStart = ci * CHUNK_SIZE;
-        const scanFrom = scannedToRef.current - chunkStart;
-
-        for (let i = scanFrom; i < chunk.length; i++) {
-          if (chunk[i] === 0x0a) {
-            lineStartsRef.current.push(chunkStart + i + 1);
-          }
+        if (ci === 0 && needsSniff && !sniffSentRef.current) {
+          sniffSentRef.current = true;
+          safe(
+            commands.sniffViewerEncoding(
+              Array.from(chunk.subarray(0, SNIFF_PREFIX_LEN)),
+              chunk.length < CHUNK_SIZE,
+            ),
+          );
         }
+
+        const chunkStart = ci * CHUNK_SIZE;
+        scanLineStarts(
+          chunk,
+          chunkStart,
+          scannedToRef.current,
+          scan,
+          lineStartsRef.current,
+        );
 
         scannedToRef.current = chunkStart + chunk.length;
         if (chunk.length < CHUNK_SIZE) {
@@ -202,7 +242,7 @@ export function TextViewer({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanTarget, filePath]);
+  }, [scanTarget, filePath, scanKey]);
 
   // Focus
   useEffect(() => {
@@ -303,11 +343,11 @@ export function TextViewer({
     if (endByte <= startByte)
       return Array(actualEndLine - startLine).fill("") as string[];
     const bytes = collectBytes(chunkCache.current, startByte, endByte);
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const text = makeDecoder(encoding).decode(bytes);
     const parts = text.split("\n");
     return parts.slice(0, actualEndLine - startLine);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startLine, actualEndLine, lineCount, renderGen]);
+  }, [startLine, actualEndLine, lineCount, renderGen, encoding]);
 
   const lineNumWidth = Math.max(4, String(lineCount).length);
   const gutterWidth = `${lineNumWidth + 1}ch`;
@@ -357,36 +397,31 @@ export function TextViewer({
         lineIdx + 1 < ls.length ? ls[lineIdx + 1] : scannedToRef.current;
       if (end <= start) return "";
       const bytes = collectBytes(chunkCache.current, start, end);
-      const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      const text = makeDecoder(encoding).decode(bytes);
       return text.replace(/\n$/, "");
     },
-    [chunkCache],
+    [chunkCache, encoding],
   );
 
   // Convert a (line, col) text position to an absolute byte offset.
-  // col=0 → lineStart, col=lineLen → lineEnd (before \n). Uses TextEncoder
-  // to handle multi-byte UTF-8 characters. Only needs the line's chunks in
-  // cache (always true for visible/recently-visible lines).
+  // col=0 → lineStart, col=lineLen → lineEnd (before the newline). Only
+  // needs the line's chunks in cache (always true for visible/recently-
+  // visible lines).
   const colToByteOffset = useCallback(
     (line: number, col: number): number => {
       const ls = lineStartsRef.current;
       if (line >= ls.length) return scannedToRef.current;
       const lineStart = ls[line];
       if (col === 0) return lineStart;
+      // Exclude the newline so an overshooting column lands before it.
       const lineEnd =
-        line + 1 < ls.length ? ls[line + 1] : scannedToRef.current;
+        line + 1 < ls.length
+          ? ls[line + 1] - (scan === "byte" ? 1 : 2)
+          : scannedToRef.current;
       const lineBytes = collectBytes(chunkCache.current, lineStart, lineEnd);
-      const lineText = new TextDecoder("utf-8", { fatal: false })
-        .decode(lineBytes)
-        .replace(/\n$/, "");
-      if (col >= lineText.length) {
-        return lineStart + new TextEncoder().encode(lineText).length;
-      }
-      return (
-        lineStart + new TextEncoder().encode(lineText.slice(0, col)).length
-      );
+      return lineStart + colToByteLength(lineBytes, encoding, col);
     },
-    [chunkCache],
+    [chunkCache, encoding, scan],
   );
 
   // Compute the byte range [start, end) for the current selection
@@ -406,9 +441,11 @@ export function TextViewer({
     const [startByte, endByte] = range;
     if (endByte <= startByte) return;
     safe(
-      commands.copyViewerRange(vfsPath, startByte, endByte - startByte, "text"),
+      commands.copyViewerRange(vfsPath, startByte, endByte - startByte, {
+        text: { encoding },
+      }),
     );
-  }, [vfsPath, selectionByteRange]);
+  }, [vfsPath, selectionByteRange, encoding]);
 
   const selectAll = useCallback(() => {
     const lastLine = lineCountRef.current - 1;
@@ -452,10 +489,10 @@ export function TextViewer({
       );
       const prefixBytes = match.offset - lineStartByte;
       // Count characters in the prefix bytes
-      const prefixText = new TextDecoder("utf-8", { fatal: false }).decode(
+      const decoder = makeDecoder(encoding);
+      const startCol = decoder.decode(
         lineBytes.subarray(0, prefixBytes),
-      );
-      const startCol = prefixText.length;
+      ).length;
 
       // Find end position
       const endByteOffset = match.offset + match.length;
@@ -473,10 +510,9 @@ export function TextViewer({
         endLineEndByte,
       );
       const endPrefixBytes = endByteOffset - endLineStartByte;
-      const endPrefixText = new TextDecoder("utf-8", { fatal: false }).decode(
+      const endCol = decoder.decode(
         endLineBytes.subarray(0, endPrefixBytes),
-      );
-      const endCol = endPrefixText.length;
+      ).length;
 
       // Set selection and scroll to match
       setSelection({
@@ -502,7 +538,7 @@ export function TextViewer({
         }
       });
     },
-    [chunkCache, lineHeight, scale],
+    [chunkCache, lineHeight, scale, encoding],
   );
 
   const handleGoToSubmit = useCallback(
@@ -832,6 +868,7 @@ export function TextViewer({
         vfsPath={vfsPath}
         fileSize={fileSize}
         mode="text"
+        encoding={encoding}
         onMatch={handleSearchMatch}
         onNoMatch={() => {}}
       />
@@ -853,6 +890,12 @@ export function TextViewer({
           <span>{filePath}</span>
           <span className={styles.statusSeparator}>|</span>
           <span>Text</span>
+          {encodingLabel && (
+            <>
+              <span className={styles.statusSeparator}>|</span>
+              <span>{encodingLabel}</span>
+            </>
+          )}
           <span className={styles.statusSeparator}>|</span>
           <span>
             Line {currentLine} / {lineCount}

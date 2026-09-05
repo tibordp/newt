@@ -1,15 +1,18 @@
+pub mod encoding;
+
 use newt_common::find::{SearchMatch, SearchPattern};
 use newt_common::vfs::VfsPath;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::ipc::CommandArg;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, State, WebviewWindow, Wry};
 
 use crate::GlobalContext;
 use crate::common::{Error, UpdatePublisher};
 use crate::main_window::MainWindowContext;
+use encoding::{DetectedEncoding, ViewerEncoding};
 
 /// Display mode for the file viewer. Wire format is snake_case to match
 /// the strings the frontend uses.
@@ -75,16 +78,18 @@ pub struct ViewerState {
     file_path: RwLock<Option<VfsPath>>,
     display_path: RwLock<Option<String>>,
     file_server_base: RwLock<Option<String>>,
+    encoding: RwLock<ViewerEncoding>,
 }
 
 impl Serialize for ViewerState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("ViewerState", 4)?;
+        let mut s = serializer.serialize_struct("ViewerState", 5)?;
         s.serialize_field("mode", &*self.mode.read())?;
         s.serialize_field("file_path", &*self.file_path.read())?;
         s.serialize_field("display_path", &*self.display_path.read())?;
         s.serialize_field("file_server_base", &*self.file_server_base.read())?;
+        s.serialize_field("encoding", &*self.encoding.read())?;
         s.end()
     }
 }
@@ -104,12 +109,25 @@ impl ViewerWindow {
         *state.file_server_base.write() = Some(file_server_base);
         // Reset mode for new file
         *state.mode.write() = ViewerMode::Text;
+        *state.encoding.write() = ViewerEncoding::default();
         let _ = self.publisher.publish_full();
     }
 
     pub fn set_mode(&self, mode: ViewerMode) {
         *self.publisher.state().mode.write() = mode;
-        self.rebuild_menu(mode);
+        self.rebuild_menu();
+        let _ = self.publisher.publish_full();
+    }
+
+    pub fn set_encoding(&self, selected: Option<String>) {
+        self.publisher.state().encoding.write().selected = selected;
+        self.rebuild_menu();
+        let _ = self.publisher.publish_full();
+    }
+
+    fn set_detected(&self, detected: DetectedEncoding) {
+        self.publisher.state().encoding.write().detected = Some(detected);
+        self.rebuild_menu();
         let _ = self.publisher.publish_full();
     }
 
@@ -117,7 +135,7 @@ impl ViewerWindow {
         let _ = self.publisher.publish_full();
     }
 
-    fn rebuild_menu(&self, active_mode: ViewerMode) {
+    fn rebuild_menu(&self) {
         let window_guard = self.window.read();
         let prefix_guard = self.prefix.read();
         let (window, prefix) = match (window_guard.as_ref(), prefix_guard.as_ref()) {
@@ -125,7 +143,10 @@ impl ViewerWindow {
             _ => return,
         };
         let app_handle = window.app_handle();
-        let Ok(menu) = build_menu(app_handle, prefix, active_mode) else {
+        let state = self.publisher.state();
+        let mode = *state.mode.read();
+        let encoding = state.encoding.read().clone();
+        let Ok(menu) = build_menu(app_handle, prefix, mode, &encoding) else {
             return;
         };
         #[cfg(target_os = "macos")]
@@ -173,6 +194,7 @@ pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
         file_path: RwLock::new(None),
         display_path: RwLock::new(None),
         file_server_base: RwLock::new(None),
+        encoding: RwLock::new(ViewerEncoding::default()),
     };
     let publisher = Arc::new(UpdatePublisher::new(window.clone(), "viewer", state));
 
@@ -193,8 +215,12 @@ pub fn activate_viewer_window(
 ) -> Result<(), Error> {
     let prefix = format!("viewer_{}_", label);
     let close_id = format!("{}close", prefix);
-    let current_mode = *viewer.publisher.state().mode.read();
-    let menu = build_menu(app_handle, &prefix, current_mode)?;
+    let menu = {
+        let state = viewer.publisher.state();
+        let mode = *state.mode.read();
+        let encoding = state.encoding.read().clone();
+        build_menu(app_handle, &prefix, mode, &encoding)?
+    };
 
     #[cfg(target_os = "macos")]
     {
@@ -246,6 +272,14 @@ pub fn activate_viewer_window(
             Some(v) => v,
             None => return,
         };
+        if let Some(enc) = suffix.strip_prefix("enc_") {
+            if enc == "auto" {
+                viewer.set_encoding(None);
+            } else if let Some(name) = encoding::catalogue_name(enc) {
+                viewer.set_encoding(Some(name.to_string()));
+            }
+            return;
+        }
         let Some(mode) = suffix.strip_prefix("mode_").and_then(ViewerMode::from_id) else {
             return;
         };
@@ -287,39 +321,106 @@ fn native_edit_submenu(app_handle: &tauri::AppHandle) -> Result<Option<Submenu<W
     }
 }
 
+/// A checked CheckMenuItem when active, a plain MenuItem otherwise: a
+/// radio group without the empty checkbox indicators some GTK themes draw
+/// on unchecked check items.
+fn radio_item(
+    app_handle: &tauri::AppHandle,
+    id: String,
+    label: &str,
+    active: bool,
+) -> Result<Box<dyn tauri::menu::IsMenuItem<Wry>>, Error> {
+    Ok(if active {
+        Box::new(CheckMenuItem::with_id(
+            app_handle,
+            id,
+            label,
+            true,
+            true,
+            None::<&str>,
+        )?)
+    } else {
+        Box::new(MenuItem::with_id(
+            app_handle,
+            id,
+            label,
+            true,
+            None::<&str>,
+        )?)
+    })
+}
+
+fn encoding_submenu(
+    app_handle: &tauri::AppHandle,
+    prefix: &str,
+    encoding: &ViewerEncoding,
+) -> Result<Submenu<Wry>, Error> {
+    let auto_label = match &encoding.detected {
+        Some(d) if d.bom_len > 0 => format!("Auto-detect ({}, BOM)", d.encoding),
+        Some(d) => format!("Auto-detect ({})", d.encoding),
+        None => "Auto-detect".to_string(),
+    };
+    let auto_item = radio_item(
+        app_handle,
+        format!("{prefix}enc_auto"),
+        &auto_label,
+        encoding.selected.is_none(),
+    )?;
+    let separator = PredefinedMenuItem::separator(app_handle)?;
+
+    let mut groups: Vec<Submenu<Wry>> = Vec::new();
+    for group in encoding::CATALOGUE {
+        let items = group
+            .encodings
+            .iter()
+            .map(|name| {
+                radio_item(
+                    app_handle,
+                    format!("{prefix}enc_{name}"),
+                    name,
+                    encoding.selected.as_deref() == Some(name),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
+            items.iter().map(|i| i.as_ref()).collect();
+        groups.push(Submenu::with_items(app_handle, group.label, true, &refs)?);
+    }
+
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![auto_item.as_ref(), &separator];
+    refs.extend(
+        groups
+            .iter()
+            .map(|g| g as &dyn tauri::menu::IsMenuItem<Wry>),
+    );
+    Ok(Submenu::with_items(app_handle, "Encoding", true, &refs)?)
+}
+
 fn build_menu(
     app_handle: &tauri::AppHandle,
     prefix: &str,
     mode: ViewerMode,
+    encoding: &ViewerEncoding,
 ) -> Result<Menu<Wry>, Error> {
-    // Use a checked CheckMenuItem for the active mode, plain MenuItem for the rest.
-    // This avoids showing empty checkbox indicators (visible on some GTK themes).
-    let mut mode_items: Vec<Box<dyn tauri::menu::IsMenuItem<Wry>>> = Vec::new();
-    for &m in &ViewerMode::ALL {
-        let menu_id = format!("{}mode_{}", prefix, m.id());
-        if m == mode {
-            mode_items.push(Box::new(CheckMenuItem::with_id(
+    let mode_items = ViewerMode::ALL
+        .iter()
+        .map(|&m| {
+            radio_item(
                 app_handle,
-                &menu_id,
+                format!("{}mode_{}", prefix, m.id()),
                 m.label(),
-                true,
-                true,
-                None::<&str>,
-            )?));
-        } else {
-            mode_items.push(Box::new(MenuItem::with_id(
-                app_handle,
-                &menu_id,
-                m.label(),
-                true,
-                None::<&str>,
-            )?));
-        }
-    }
+                m == mode,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let item_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
         mode_items.iter().map(|i| i.as_ref()).collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
+
+    let encoding_submenu = (mode == ViewerMode::Text)
+        .then(|| encoding_submenu(app_handle, prefix, encoding))
+        .transpose()?;
 
     let close_item = MenuItem::with_id(
         app_handle,
@@ -355,7 +456,7 @@ fn build_menu(
             true,
             None::<&str>,
         )?;
-        let edit_sep = tauri::menu::PredefinedMenuItem::separator(app_handle)?;
+        let edit_sep = PredefinedMenuItem::separator(app_handle)?;
         Some(Submenu::with_items(
             app_handle,
             "Edit",
@@ -385,6 +486,9 @@ fn build_menu(
         items.push(edit);
     }
     items.push(&view_submenu);
+    if let Some(enc) = &encoding_submenu {
+        items.push(enc);
+    }
     #[cfg(target_os = "macos")]
     items.insert(0, &app_submenu);
 
@@ -408,11 +512,11 @@ pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
 }
 
 /// How to render a byte range when copying to the clipboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CopyFormat {
-    /// UTF-8 lossy decode of the bytes.
-    Text,
+    /// Lossy decode of the bytes in the named encoding.
+    Text { encoding: String },
     /// Space-separated uppercase hex (`AB CD EF`).
     Hex,
     /// Printable ASCII (0x20–0x7e); other bytes become `.`.
@@ -474,7 +578,7 @@ pub async fn copy_viewer_range(
                 }
             })
             .collect(),
-        CopyFormat::Text => String::from_utf8_lossy(&buf).into_owned(),
+        CopyFormat::Text { encoding } => encoding::decode(&buf, &encoding),
     };
 
     ctx.clipboard().set_text(text)?;
@@ -626,15 +730,51 @@ pub async fn image_exif(ctx: MainWindowContext, path: VfsPath) -> Result<Vec<Exi
         .unwrap_or_default())
 }
 
+/// Record the encoding sniffed from the file's leading bytes, which the
+/// text viewer hands over from its first chunk. `eof` says the bytes are
+/// the whole file.
+#[tauri::command]
+#[specta::specta]
+pub fn sniff_viewer_encoding(
+    ctx: ViewerWindowContext,
+    prefix: Vec<u8>,
+    eof: bool,
+) -> Result<(), Error> {
+    ctx.0.set_detected(encoding::detect(&prefix, eof));
+    Ok(())
+}
+
+/// Search pattern as the viewer's search bar states it. `Text` is encoded
+/// here into the file's byte encoding; the filesystem search only knows
+/// bytes.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub enum ViewerSearchPattern {
+    Text {
+        text: String,
+        encoding: String,
+    },
+    Bytes(Vec<u8>),
+    /// Byte regex over the raw file; non-ASCII literals in the pattern are
+    /// UTF-8, so they only match in UTF-8 files.
+    Regex(String),
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn find_in_viewer(
     ctx: MainWindowContext,
     path: VfsPath,
     offset: u64,
-    pattern: SearchPattern,
+    pattern: ViewerSearchPattern,
     max_length: u64,
 ) -> Result<Option<SearchMatch>, Error> {
+    let pattern = match pattern {
+        ViewerSearchPattern::Text { text, encoding } => {
+            SearchPattern::Literal(encoding::encode(&text, &encoding))
+        }
+        ViewerSearchPattern::Bytes(bytes) => SearchPattern::Literal(bytes),
+        ViewerSearchPattern::Regex(re) => SearchPattern::Regex(re),
+    };
     Ok(ctx
         .fs()?
         .find_in_file(path, offset, pattern, max_length)

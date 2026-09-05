@@ -57,6 +57,8 @@ tempfile = "3.27.0"
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
+chardetng = "1.0.0"
+encoding_rs = "0.8.35"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs", "hostname"] }

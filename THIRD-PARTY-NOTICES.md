@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-687 crates, the superset across every target platform and feature.
+688 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -295,6 +295,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2017 Matthew D. Steele
   cfg-if 1.0.4 — MIT OR Apache-2.0
       Copyright (c) 2014 Alex Crichton
+  chardetng 1.0.0 — Apache-2.0 OR MIT
   chrono 0.4.45 — MIT OR Apache-2.0
       Copyright (c) 2014, Kang Seonghoon.
   cipher 0.4.4 — MIT OR Apache-2.0

@@ -405,7 +405,20 @@ async copyViewerRange(path: VfsPath, offset: number, length: number, format: Cop
     else return { status: "error", error: e  as any };
 }
 },
-async findInViewer(path: VfsPath, offset: number, pattern: SearchPattern, maxLength: number) : Promise<Result<SearchMatch | null, string>> {
+/**
+ * Record the encoding sniffed from the file's leading bytes, which the
+ * text viewer hands over from its first chunk. `eof` says the bytes are
+ * the whole file.
+ */
+async sniffViewerEncoding(prefix: number[], eof: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sniff_viewer_encoding", { prefix, eof }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async findInViewer(path: VfsPath, offset: number, pattern: ViewerSearchPattern, maxLength: number) : Promise<Result<SearchMatch | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("find_in_viewer", { path, offset, pattern, maxLength }) };
 } catch (e) {
@@ -1880,9 +1893,9 @@ export type ContainerEntry = { id: string; name: string; image: string; state: s
  */
 export type CopyFormat = 
 /**
- * UTF-8 lossy decode of the bytes.
+ * Lossy decode of the bytes in the named encoding.
  */
-"text" | 
+{ text: { encoding: string } } | 
 /**
  * Space-separated uppercase hex (`AB CD EF`).
  */
@@ -2776,7 +2789,6 @@ follow_symlinks: boolean;
  * skipped (matched-by-name still surfaces). 0 means unlimited.
  */
 content_size_cap: number }
-export type SearchPattern = { Literal: number[] } | { Regex: string }
 /**
  * Which unit system displayed sizes use.
  */
@@ -2886,6 +2898,17 @@ export type ViewerPreferences = {
  * Backdrop behind images in the viewer's image mode.
  */
 image_background: ImageBackground }
+/**
+ * Search pattern as the viewer's search bar states it. `Text` is encoded
+ * here into the file's byte encoding; the filesystem search only knows
+ * bytes.
+ */
+export type ViewerSearchPattern = { Text: { text: string; encoding: string } } | { Bytes: number[] } | 
+/**
+ * Byte regex over the raw file; non-ASCII literals in the pattern are
+ * UTF-8, so they only match in UTF-8 files.
+ */
+{ Regex: string }
 export type VolumeInfo = { kind: VolumeKind; 
 /**
  * Filesystem name (NTFS, ext4, apfs, …).

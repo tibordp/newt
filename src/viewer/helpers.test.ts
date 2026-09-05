@@ -13,6 +13,9 @@ import {
   LruChunkCache,
   collectBytes,
   CHUNK_SIZE,
+  scanLineStarts,
+  colToByteLength,
+  newlineScan,
 } from "./helpers";
 
 describe("buildFileUrl", () => {
@@ -298,5 +301,100 @@ describe("collectBytes", () => {
     const cache = new LruChunkCache(10);
     const result = collectBytes(cache, 100, 100);
     expect(result.length).toBe(0);
+  });
+});
+
+describe("scanLineStarts", () => {
+  it("byte scan records the offset after each 0x0A", () => {
+    const out: number[] = [];
+    scanLineStarts(
+      new Uint8Array([0x61, 0x0a, 0x62, 0x0a, 0x0a]),
+      100,
+      100,
+      "byte",
+      out,
+    );
+    expect(out).toEqual([102, 104, 105]);
+  });
+
+  it("resumes mid-chunk", () => {
+    const out: number[] = [];
+    scanLineStarts(new Uint8Array([0x0a, 0x0a, 0x0a]), 0, 2, "byte", out);
+    expect(out).toEqual([3]);
+  });
+
+  it("UTF-16 scans aligned code units only", () => {
+    // "a\n␊" in UTF-16LE: 0x000A is a newline, U+240A is not, and its
+    // 0x0A byte sits at an even offset.
+    const le = new Uint8Array([0x61, 0, 0x0a, 0, 0x0a, 0x24]);
+    const out: number[] = [];
+    scanLineStarts(le, 0, 0, "utf16le", out);
+    expect(out).toEqual([4]);
+
+    const be = new Uint8Array([0, 0x61, 0, 0x0a, 0x24, 0x0a]);
+    const outBe: number[] = [];
+    scanLineStarts(be, 0, 0, "utf16be", outBe);
+    expect(outBe).toEqual([4]);
+  });
+
+  it("UTF-16 honours the BOM offset for alignment", () => {
+    // BOM, then "\n" — scanning from 2 keeps the pairs aligned.
+    const le = new Uint8Array([0xff, 0xfe, 0x0a, 0, 0x61, 0]);
+    const out: number[] = [];
+    scanLineStarts(le, 0, 2, "utf16le", out);
+    expect(out).toEqual([4]);
+  });
+});
+
+describe("colToByteLength", () => {
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+
+  it("UTF-8 counts multibyte characters and surrogate pairs", () => {
+    const bytes = utf8("aé😀b");
+    expect(colToByteLength(bytes, "UTF-8", 0)).toBe(0);
+    expect(colToByteLength(bytes, "UTF-8", 1)).toBe(1);
+    expect(colToByteLength(bytes, "UTF-8", 2)).toBe(3);
+    expect(colToByteLength(bytes, "UTF-8", 4)).toBe(7);
+    expect(colToByteLength(bytes, "UTF-8", 5)).toBe(8);
+    expect(colToByteLength(bytes, "UTF-8", 99)).toBe(8);
+  });
+
+  it("UTF-8 rounds a column inside a surrogate pair up to its end", () => {
+    expect(colToByteLength(utf8("😀"), "UTF-8", 1)).toBe(4);
+  });
+
+  it("UTF-8 counts a stray byte as one unit", () => {
+    expect(colToByteLength(new Uint8Array([0x80, 0x61]), "UTF-8", 1)).toBe(1);
+    expect(colToByteLength(new Uint8Array([0x80, 0x61]), "UTF-8", 2)).toBe(2);
+  });
+
+  it("single-byte encodings map 1:1", () => {
+    expect(
+      colToByteLength(new Uint8Array([0xe9, 0x61, 0x62]), "windows-1252", 2),
+    ).toBe(2);
+    expect(colToByteLength(new Uint8Array([0xe9]), "windows-1252", 5)).toBe(1);
+  });
+
+  it("UTF-16 maps two bytes per unit", () => {
+    expect(colToByteLength(new Uint8Array(8), "UTF-16LE", 3)).toBe(6);
+    expect(colToByteLength(new Uint8Array(4), "UTF-16BE", 3)).toBe(4);
+  });
+
+  it("legacy multibyte encodings stream to a character boundary", () => {
+    // Shift_JIS "a日b": 61 93FA 62
+    const bytes = new Uint8Array([0x61, 0x93, 0xfa, 0x62]);
+    expect(colToByteLength(bytes, "Shift_JIS", 1)).toBe(1);
+    expect(colToByteLength(bytes, "Shift_JIS", 2)).toBe(3);
+    expect(colToByteLength(bytes, "Shift_JIS", 3)).toBe(4);
+  });
+});
+
+describe("newlineScan", () => {
+  it("only UTF-16 needs a code-unit scan", () => {
+    expect(newlineScan("UTF-8")).toBe("byte");
+    expect(newlineScan("Shift_JIS")).toBe("byte");
+    expect(newlineScan("windows-1251")).toBe("byte");
+    expect(newlineScan("UTF-16LE")).toBe("utf16le");
+    expect(newlineScan("UTF-16BE")).toBe("utf16be");
   });
 });
