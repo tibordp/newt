@@ -88,6 +88,21 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 - Implement `Vfs::revalidate` for archive VFSes (zip + tar). Trait is wired through to the navigation layer (called when a pane crosses into a VFS that advertises `VfsDescriptor::can_revalidate`); the archive impl should stat the origin file's mtime against the value captured at mount time and rebuild the central directory / entry index in place if it drifted, returning `Refreshed`. Mount identity (`VfsId`, `mount_meta`, `origin`) must be preserved so history entries remain valid. Don't forget to flip `can_revalidate` to true on the descriptors.
 
 
+## 7z archives follow-ups
+
+Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
+`~/src/iluvatar/design_docs/DESIGN_STREAM_ENGINE.md` (iluvatar). Built against
+the path-patched iluvatar checkout (`[patch.crates-io]` in the workspace
+manifest); drop the patch and pin the release once iluvatar 0.4 publishes.
+
+- The corpus is written by 7-Zip 26.03 on macOS (`sevenz/fixtures/regenerate.py`; zstd via py7zr, which 7-Zip cannot write). Archives written by 7-Zip on Windows (attribute conventions, `\` names, NTFS times without the unix extension) and by other writers (p7zip, Keka, WinRAR's 7z) are untested.
+- PPMd folders: port ppmd-rust's Ppmd7 decoder (CC0/MIT-0) to the push model; no checkpoints (the model is the state), so a PPMd folder decodes from its start like ZIP's cursor path.
+- Cold reads deep into a huge solid block decode forward once (about 1.5 s per 100 MB of packed data in a release build) before the first byte comes back; the "Decoding" progress goes to the mount's channel. Worth checking that the pane actually surfaces it during a read, not only during mounting.
+- Split volumes (`.7z.001`) and SFX stubs refuse; volumes need sibling reads through the upstream VFS.
+- A 7z writer for Pack to Archive (lzma-rust2's LZMA2 encoder is Apache-2.0; iluvatar has no encoders).
+- Folder index memory is bounded per folder (256 MiB budget), not per mount; a mount over many huge solid folders can add up. An LRU across folders would cap it.
+- RAR was scoped and shelved: no GPL-compatible reference implementation (unrar's license is non-free), and the format is two to three times the 7z work.
+
 # Major new features (groom/write design docs first)
 
 - Batch rename (probably with enrichers preview)

@@ -307,6 +307,7 @@ const VFS_ICONS: Record<string, string> = {
   sftp: "\u{eb3a}",
   archive: "\u{eaa0}",
   archive_zip: "\u{eaa0}",
+  archive_7z: "\u{eaa0}",
   remote: "\u{f048d}",
   agent: "\u{f048d}",
 };

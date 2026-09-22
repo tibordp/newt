@@ -25,7 +25,7 @@ handling. Built with Tauri 2 — Rust backend, React/TypeScript frontend.
   over stdin/stdout. Your local filesystem stays reachable inside the session, so local↔remote
   copies are just copies. Elevated sessions (pkexec / UAC) and WSL sessions work the same way.
 - **Virtual filesystems** — mount S3 (with extended properties: ACLs, storage class, user
-  metadata) and SFTP; browse zip/tar/tar.gz/tar.zst archives and ISO/UDF
+  metadata) and SFTP; browse zip/7z/tar/tar.gz/tar.zst archives and ISO/UDF
   disc images in place, even when they live on S3. VFS mounts are per-pane and orthogonal to the
   session — an S3 mount inside an SSH session uses the remote host's credentials and network.
 - **Recursive search as a filesystem** — Find in Folder streams matches into a flat pane you can

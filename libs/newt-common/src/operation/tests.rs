@@ -792,6 +792,43 @@ async fn test_copy_directory_recursive() {
 }
 
 #[tokio::test]
+async fn test_copy_reads_files_in_the_source_order() {
+    let vfs = MockVfs::builder()
+        .dir("/src")
+        .file("/src/a.txt", b"aaa")
+        .file("/src/c.txt", b"ccc")
+        .dir("/src/sub")
+        .file("/src/sub/b.txt", b"bbb")
+        .read_order(&["/src/sub/b.txt", "/src/c.txt", "/src/a.txt"])
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/src/a.txt"), b"aaa");
+    assert_eq!(result.vfs.read_content("/dst/src/sub/b.txt"), b"bbb");
+    assert_eq!(
+        result.vfs.opened_reads(),
+        vec![
+            PathBuf::from_wire_str("/src/sub/b.txt"),
+            PathBuf::from_wire_str("/src/c.txt"),
+            PathBuf::from_wire_str("/src/a.txt")
+        ]
+    );
+}
+
+#[tokio::test]
 async fn test_copy_with_symlinks() {
     let vfs = MockVfs::builder()
         .dir("/src")

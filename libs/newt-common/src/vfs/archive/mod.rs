@@ -5,17 +5,21 @@ use crate::Error;
 use super::origin::build_origin_meta;
 use super::{Vfs, VfsPath};
 
+mod stream;
 mod tree;
 
+mod sevenz;
 mod tar;
 mod zip;
 
+pub use self::sevenz::SevenZArchiveVfs;
 pub use self::tar::TarArchiveVfs;
 pub use self::zip::ZipArchiveVfs;
 
 /// Build an archive VFS from a `MountRequest::Archive`. Resolves the
 /// upstream VFS holding the archive bytes via the registry and picks
-/// `ZipArchiveVfs` or `TarArchiveVfs` based on the file extension. The
+/// `ZipArchiveVfs`, `SevenZArchiveVfs` or `TarArchiveVfs` based on the
+/// file extension. The
 /// archive's display path (origin rendered through the upstream's
 /// `format_path`) is stamped into `mount_meta` so the mounted VFS keeps
 /// a stable label even after the origin is unmounted.
@@ -24,6 +28,8 @@ pub use self::zip::ZipArchiveVfs;
 /// directory is always cleartext, so listing always works. The askpass
 /// provider is plumbed into the mounted VFS so reading an encrypted
 /// entry can prompt lazily and cache the password for subsequent reads.
+/// A 7z archive with an encrypted header prompts at mount time instead,
+/// since nothing can be listed without the password.
 pub async fn mount(
     origin: VfsPath,
     ctx: &crate::vfs::mount::MountContext<'_>,
@@ -34,6 +40,16 @@ pub async fn mount(
 
     let vfs: Arc<dyn Vfs> = if is_zip_name(archive_path.as_wire_str()) {
         Arc::new(ZipArchiveVfs::new(
+            upstream_vfs,
+            archive_path,
+            origin,
+            mount_meta,
+            display_path,
+            ctx.askpass_provider.cloned(),
+            ctx.progress_reporter.clone(),
+        ))
+    } else if is_sevenz_name(archive_path.as_wire_str()) {
+        Arc::new(SevenZArchiveVfs::new(
             upstream_vfs,
             archive_path,
             origin,
@@ -66,7 +82,11 @@ const TAR_EXTENSIONS: &[&str] = &[
 const ZIP_EXTENSIONS: &[&str] = &["zip", "jar", "war", "ear", "apk", "ipa"];
 
 pub fn is_archive_name(name: &str) -> bool {
-    is_tar_name(name) || is_zip_name(name)
+    is_tar_name(name) || is_zip_name(name) || is_sevenz_name(name)
+}
+
+pub fn is_sevenz_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".7z")
 }
 
 fn is_tar_name(name: &str) -> bool {
@@ -119,6 +139,13 @@ mod name_tests {
         assert!(is_zip_name("app.jar"));
         assert!(is_zip_name("deploy.war"));
         assert!(is_zip_name("app.apk"));
+    }
+
+    #[test]
+    fn is_archive_name_sevenz() {
+        assert!(is_archive_name("file.7z"));
+        assert!(is_archive_name("FILE.7Z"));
+        assert!(!is_zip_name("file.7z"));
     }
 
     #[test]

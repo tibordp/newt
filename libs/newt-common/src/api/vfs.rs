@@ -299,6 +299,10 @@ impl Dispatcher for VfsDispatcher {
                 let path: PathBuf = decode(&req[..])?;
                 encode(&self.vfs.resolve_link(&path).await)?
             }
+            super::API_VFS_READ_ORDER => {
+                let paths: Vec<PathBuf> = decode(&req[..])?;
+                encode(&self.vfs.read_order(&paths).await)?
+            }
             API_VFS_STREAM_PATH => {
                 let (path, name): (PathBuf, String) = decode(&req[..])?;
                 encode(&self.vfs.stream_path(&path, &name).await)?

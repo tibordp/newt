@@ -20,11 +20,13 @@ use crate::vfs::{FileChunk, FileDetails};
 use super::super::origin::{
     origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
 };
+use super::super::pipelined_read::PipelinedReader;
 use super::super::{
-    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
-    VfsPath,
+    Breadcrumb, ConsumerGuard, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs,
+    VfsDescriptor, VfsPath,
 };
 use super::detect_compression_from_name;
+use super::stream::{MAX_READERS, ReaderPool, StreamDriver, drive_reader};
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
     index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
@@ -130,10 +132,6 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
 static TAR_ARCHIVE_VFS_DESCRIPTOR: TarArchiveVfsDescriptor = TarArchiveVfsDescriptor;
 inventory::submit!(RegisteredDescriptor(&TAR_ARCHIVE_VFS_DESCRIPTOR));
 
-/// Bounded buffering between the iluvatar drive task and the AsyncRead consumer.
-/// Each slot holds one decompressed chunk (≤64 KiB).
-const STREAM_CHANNEL_CAPACITY: usize = 4;
-
 /// Emit an indexing-progress snapshot via the supplied reporter.
 /// `entries` is the running count of archive entries discovered so
 /// far; `total_bytes` / `bytes_read` give the determinate ratio so
@@ -191,6 +189,9 @@ pub struct TarArchiveVfs {
     /// `partial: true` until unmount.
     job: super::super::BackgroundJob,
     reporter: Arc<dyn super::super::ProgressReporter>,
+    /// Readers parked after a read, so the next entry in archive order
+    /// decodes forward instead of restoring a checkpoint.
+    pool: Arc<ReaderPool>,
 }
 
 impl TarArchiveVfs {
@@ -219,6 +220,7 @@ impl TarArchiveVfs {
             // served with `partial: true`.
             job: super::super::BackgroundJob::new(super::super::RestartPolicy::Sticky),
             reporter,
+            pool: Arc::new(ReaderPool::new(MAX_READERS)),
         }
     }
 
@@ -429,70 +431,20 @@ impl TarArchiveVfs {
         Ok((archive_path, entry))
     }
 
-    /// Drive the sans-I/O ReadEngine over one held-open upstream handle.
-    async fn drive_read_engine(
+    /// A reader serving `len` bytes at `offset` in the uncompressed
+    /// stream: a parked reader close before the target, else a restore
+    /// from the nearest checkpoint.
+    fn prepare_reader(
         &self,
-        path_in_archive: &str,
-        range: Option<(u64, u64)>,
-    ) -> Result<Vec<u8>, Error> {
-        let (index, _guard) = self.wait_for_index().await?;
-
-        let mut engine = if let Some((offset, len)) = range {
-            iluvatar::ReadEngine::new_range(index, path_in_archive, offset, len)
-        } else {
-            iluvatar::ReadEngine::new(index, path_in_archive)
+        index: &iluvatar::ArchiveIndex,
+        offset: u64,
+        len: u64,
+    ) -> Result<iluvatar::StreamReader, Error> {
+        if let Some(reader) = self.pool.take(offset, len) {
+            return Ok(reader);
         }
-        .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
-
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
-        let mut output = Vec::new();
-        let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-        let mut position: u64 = 0;
-        // Same clamp as the indexer: never read at/past the end — object
-        // stores reject such ranges rather than returning an empty chunk.
-        let archive_size = index.metadata.archive_size;
-        loop {
-            let need = match engine.step() {
-                iluvatar::EngineRequest::NeedInput => Some(VFS_READ_CHUNK_SIZE as u64),
-                iluvatar::EngineRequest::SeekAndRead { offset, len } => {
-                    position = offset;
-                    Some(len as u64)
-                }
-                iluvatar::EngineRequest::OutputReady => {
-                    loop {
-                        let n = engine.read_output(&mut buf);
-                        if n == 0 {
-                            break;
-                        }
-                        output.extend_from_slice(&buf[..n]);
-                    }
-                    continue;
-                }
-                iluvatar::EngineRequest::Done => break,
-                iluvatar::EngineRequest::Error(e) => {
-                    return Err(Error::custom(format!(
-                        "failed to read file from archive: {}",
-                        e
-                    )));
-                }
-            };
-
-            if let Some(len) = need {
-                if position >= archive_size {
-                    engine.signal_eof();
-                    continue;
-                }
-                let data = upstream.read_at(position, len).await?;
-                if data.is_empty() {
-                    engine.signal_eof();
-                } else {
-                    position += data.len() as u64;
-                    engine.provide_data(&data);
-                }
-            }
-        }
-
-        Ok(output)
+        iluvatar::StreamReader::new(&index.stream, offset, len)
+            .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))
     }
 }
 
@@ -697,168 +649,79 @@ impl Vfs for TarArchiveVfs {
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let (index, guard) = self.wait_for_index().await?;
-        let (archive_path_in_index, _entry) = self.resolve_for_read(index, path)?;
-
-        // Construct the engine eagerly so any setup error (file not found,
-        // unknown compression, etc.) is reported synchronously to the caller
-        // rather than swallowed by the streaming task.
-        let mut engine = iluvatar::ReadEngine::new(index, &archive_path_in_index)
-            .map_err(|e| Error::custom(format!("failed to create read engine: {}", e)))?;
-
-        let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(STREAM_CHANNEL_CAPACITY);
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
-        let archive_size = index.metadata.archive_size;
-        // The read holds the consumer guard for its entire lifetime
-        // (moved into the streaming task) — if the navigation that
-        // originated this read is cancelled, the indexer stays alive
-        // until the read completes. The cancel token (sourced from
-        // the same job) makes the read itself abort on VFS unmount.
-        let cancel = self.job.cancel_token();
-
-        tokio::spawn(async move {
-            let _indexer_guard = guard;
-            let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
-            let mut position: u64 = 0;
-            loop {
-                if cancel.is_cancelled() || tx.is_closed() {
-                    return;
-                }
-                let need = match engine.step() {
-                    // Same clamp as the indexer: never read at/past the
-                    // end — object stores reject such ranges rather than
-                    // returning an empty chunk.
-                    iluvatar::EngineRequest::NeedInput => Some(VFS_READ_CHUNK_SIZE as u64),
-                    iluvatar::EngineRequest::SeekAndRead { offset, len } => {
-                        position = offset;
-                        Some(len as u64)
-                    }
-                    iluvatar::EngineRequest::OutputReady => {
-                        loop {
-                            let n = engine.read_output(&mut buf);
-                            if n == 0 {
-                                break;
-                            }
-                            if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
-                                // Consumer dropped — abort.
-                                return;
-                            }
-                        }
-                        continue;
-                    }
-                    iluvatar::EngineRequest::Done => return,
-                    iluvatar::EngineRequest::Error(e) => {
-                        let _ = tx
-                            .send(Err(std::io::Error::other(format!(
-                                "read engine error: {}",
-                                e
-                            ))))
-                            .await;
-                        return;
-                    }
-                };
-
-                if let Some(len) = need {
-                    if position >= archive_size {
-                        engine.signal_eof();
-                        continue;
-                    }
-                    let read = tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => return,
-                        _ = tx.closed() => return,
-                        read = upstream.read_at(position, len) => read,
-                    };
-                    match read {
-                        Ok(data) => {
-                            if data.is_empty() {
-                                engine.signal_eof();
-                            } else {
-                                position += data.len() as u64;
-                                engine.provide_data(&data);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx
-                                .send(Err(std::io::Error::other(format!(
-                                    "upstream read error: {}",
-                                    e
-                                ))))
-                                .await;
-                            return;
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(Box::new(TarStreamingReader {
-            rx,
-            current: Vec::new(),
-            offset: 0,
+        let (_, entry) = self.resolve_for_read(index, path)?;
+        let reader = self.prepare_reader(index, entry.uncompressed_offset, entry.size)?;
+        let upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        Ok(Box::new(GuardedRead {
+            inner: PipelinedReader::new(
+                StreamDriver::new(
+                    reader,
+                    0..index.metadata.archive_size,
+                    self.pool.clone(),
+                    entry.size,
+                    None,
+                ),
+                Some(upstream),
+                "tar archive",
+            ),
+            _guard: guard,
         }))
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let (index, _guard) = self.wait_for_index().await?;
-        let (archive_path, entry) = self.resolve_for_read(index, path)?;
+        let (_, entry) = self.resolve_for_read(index, path)?;
         let total_size = entry.size;
-
-        let data = self
-            .drive_read_engine(&archive_path, Some((offset, length)))
-            .await?;
-
+        let want = length.min(total_size.saturating_sub(offset));
+        if want == 0 {
+            return Ok(FileChunk {
+                data: Vec::new(),
+                offset,
+                total_size,
+            });
+        }
+        let reader = self.prepare_reader(index, entry.uncompressed_offset + offset, want)?;
+        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let packed = 0..index.metadata.archive_size;
+        let (mut data, reader) = drive_reader(upstream.as_mut(), &packed, reader, want).await?;
+        self.pool.park(reader);
+        data.truncate(want as usize);
         Ok(FileChunk {
             data,
             offset,
             total_size,
         })
     }
+
+    /// Entries sit back to back in the uncompressed stream.
+    async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, Error> {
+        let (index, _guard) = self.wait_for_index().await?;
+        Ok(Some(
+            paths
+                .iter()
+                .map(|p| {
+                    self.resolve_for_read(index, p)
+                        .map_or(u64::MAX, |(_, e)| e.uncompressed_offset)
+                })
+                .collect(),
+        ))
+    }
 }
 
-// ---------------------------------------------------------------------------
-// TarStreamingReader — turns an mpsc stream of decompressed chunks into AsyncRead.
-//
-// The engine drive task feeds `Ok(Vec<u8>)` chunks for output, `Err(...)` for
-// any failure (upstream or decompression), and closes the channel to signal EOF.
-// ---------------------------------------------------------------------------
-
-struct TarStreamingReader {
-    rx: mpsc::Receiver<std::io::Result<Vec<u8>>>,
-    current: Vec<u8>,
-    offset: usize,
+/// A streaming read keeps its indexer consumer slot for its whole
+/// lifetime, so the indexer outlives the navigation that started it.
+struct GuardedRead {
+    inner: PipelinedReader<StreamDriver>,
+    _guard: ConsumerGuard,
 }
 
-impl AsyncRead for TarStreamingReader {
+impl AsyncRead for GuardedRead {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if self.offset < self.current.len() {
-            let remaining = &self.current[self.offset..];
-            let n = remaining.len().min(buf.remaining());
-            buf.put_slice(&remaining[..n]);
-            self.offset += n;
-            return Poll::Ready(Ok(()));
-        }
-
-        match self.rx.poll_recv(cx) {
-            Poll::Ready(Some(Ok(chunk))) => {
-                let n = chunk.len().min(buf.remaining());
-                buf.put_slice(&chunk[..n]);
-                if n < chunk.len() {
-                    self.current = chunk;
-                    self.offset = n;
-                } else {
-                    self.current = Vec::new();
-                    self.offset = 0;
-                }
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
-            Poll::Ready(None) => Poll::Ready(Ok(())),
-            Poll::Pending => Poll::Pending,
-        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 

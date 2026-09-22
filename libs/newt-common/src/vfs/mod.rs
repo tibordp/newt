@@ -22,7 +22,7 @@ pub mod sftp;
 pub mod volume;
 
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
-pub use archive::{TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
+pub use archive::{SevenZArchiveVfs, TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use change_notifier::VfsChangeNotifier;
 pub use disc::{DiscVfs, is_disc_image_name};
@@ -719,6 +719,15 @@ pub trait Vfs: Send + Sync {
     async fn stream_path(&self, path: &Path, name: &str) -> Result<path::PathBuf, Error> {
         let _ = (path, name);
         Err(Error::not_supported())
+    }
+
+    /// Each path's position in the order this source reads cheapest, for
+    /// a caller that reads many files and can pick its sequence — an
+    /// archive decodes once when read in stream order. `None` when the
+    /// order is immaterial; a path with no position gets `u64::MAX`.
+    async fn read_order(&self, paths: &[path::PathBuf]) -> Result<Option<Vec<u64>>, Error> {
+        let _ = paths;
+        Ok(None)
     }
 
     async fn read_attribute(

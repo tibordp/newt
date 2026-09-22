@@ -41,7 +41,7 @@ pub(super) async fn plan_copy(
     let (walked, total_bytes) =
         walk_sources(src_vfs, src_descriptor, sources, walk, reporter, cancel).await?;
 
-    let entries = walked
+    let mut entries = walked
         .into_iter()
         .map(|w| {
             // `rel` leads with the top-level source's file name; a rename
@@ -70,6 +70,33 @@ pub(super) async fn plan_copy(
             }
         })
         .collect::<Vec<_>>();
+
+    // An archive decodes cheapest in its own order, which rarely matches
+    // the walk. Directories keep walk order (parents before children;
+    // the reverse passes rely on it) and go first; files and links follow
+    // in the source's order.
+    let files = entries
+        .iter()
+        .filter(|e| !matches!(e.kind, CopyEntryKind::Directory))
+        .map(|e| e.source.clone())
+        .collect::<Vec<_>>();
+    if files.len() > 1 {
+        match src_vfs.read_order(&files).await {
+            Ok(Some(order)) => {
+                let (dirs, files): (Vec<_>, Vec<_>) = entries
+                    .into_iter()
+                    .partition(|e| matches!(e.kind, CopyEntryKind::Directory));
+                let mut keyed = order.into_iter().zip(files).collect::<Vec<_>>();
+                keyed.sort_by_key(|(key, _)| *key);
+                entries = dirs
+                    .into_iter()
+                    .chain(keyed.into_iter().map(|(_, e)| e))
+                    .collect();
+            }
+            Ok(None) => {}
+            Err(e) => debug!("plan_copy: read_order unavailable: {}", e),
+        }
+    }
 
     debug!(
         "plan_copy: {} entries, {} total bytes",

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::vfs::path::{Path, PathBuf};
@@ -213,6 +213,10 @@ pub struct MockVfs {
     /// and `same_file` — fold ASCII case, so `/a/Foo` and `/a/foo` are one
     /// file. Off by default: the mock is case-sensitive like ext4.
     case_insensitive: bool,
+    /// Ordinal per path for `read_order`; empty means no order.
+    read_order: HashMap<String, u64>,
+    /// Paths opened through `open_read_async`, in call order.
+    opened: Mutex<Vec<String>>,
 }
 
 impl MockVfs {
@@ -277,6 +281,15 @@ impl MockVfs {
             Some(MockEntry::File { content, .. }) => content.clone(),
             other => panic!("read_content: {:?} is {:?}, not a file", key, other),
         }
+    }
+
+    /// Paths opened for streaming reads, in call order.
+    pub fn opened_reads(&self) -> Vec<PathBuf> {
+        self.opened
+            .lock()
+            .iter()
+            .map(|p| PathBuf::from_wire_str(p))
+            .collect()
     }
 
     /// Paths that were moved to the (simulated) trash, in call order.
@@ -448,6 +461,7 @@ impl Vfs for MockVfs {
         if let Some(e) = self.check_failure(path, "open_read_async") {
             return Err(e);
         }
+        self.opened.lock().push(path.as_wire_str().to_string());
         match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::File { content, .. }) => {
                 Ok(Box::new(std::io::Cursor::new(content.clone())))
@@ -854,6 +868,23 @@ impl Vfs for MockVfs {
         }
     }
 
+    async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, crate::Error> {
+        if self.read_order.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            paths
+                .iter()
+                .map(|p| {
+                    self.read_order
+                        .get(p.as_wire_str())
+                        .copied()
+                        .unwrap_or(u64::MAX)
+                })
+                .collect(),
+        ))
+    }
+
     async fn available_space(&self, _path: &Path) -> Result<VfsSpaceInfo, crate::Error> {
         Ok(VfsSpaceInfo {
             total_bytes: None,
@@ -1031,6 +1062,7 @@ pub struct MockVfsBuilder {
     failures: Vec<FailureSpec>,
     config: MockVfsConfig,
     case_insensitive: bool,
+    read_order: HashMap<String, u64>,
 }
 
 impl MockVfsBuilder {
@@ -1049,7 +1081,20 @@ impl MockVfsBuilder {
             failures: Vec::new(),
             config: MockVfsConfig::default(),
             case_insensitive: false,
+            read_order: HashMap::new(),
         }
+    }
+
+    /// Give the paths a `read_order` position, like an archive whose
+    /// entries sit in stream order.
+    pub fn read_order(mut self, paths: &[&str]) -> Self {
+        for (i, p) in paths.iter().enumerate() {
+            self.read_order.insert(
+                PathBuf::from_wire_str(p).as_wire_str().to_string(),
+                i as u64,
+            );
+        }
+        self
     }
 
     /// Treat entry names case-insensitively, like NTFS or a stock APFS
@@ -1202,6 +1247,8 @@ impl MockVfsBuilder {
             strict_range_reads,
             trashed: Mutex::new(Vec::new()),
             case_insensitive: self.case_insensitive,
+            read_order: self.read_order,
+            opened: Mutex::new(Vec::new()),
         })
     }
 }

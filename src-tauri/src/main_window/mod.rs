@@ -836,6 +836,9 @@ pub struct VfsTarget {
 
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct AskpassPrompt {
+    /// Distinct per prompt, so a retry that replaces a dismissed or
+    /// answered prompt renders as a fresh dialog.
+    pub id: u64,
     pub prompt: String,
     pub is_secret: bool,
 }
@@ -850,6 +853,7 @@ pub struct TauriAskpassProvider {
     state: AskpassState,
     response_slot: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
     publisher: Arc<crate::common::UpdatePublisher<MainWindowState>>,
+    next_id: std::sync::atomic::AtomicU64,
 }
 
 impl TauriAskpassProvider {
@@ -864,6 +868,7 @@ impl TauriAskpassProvider {
             state,
             response_slot,
             publisher,
+            next_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
 }
@@ -877,6 +882,9 @@ impl newt_common::askpass::AskpassProvider for TauriAskpassProvider {
         let is_secret = newt_common::askpass::is_secret_prompt(&req);
         let (tx, rx) = tokio::sync::oneshot::channel();
         *self.state.0.write() = Some(AskpassPrompt {
+            id: self
+                .next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             prompt: req.prompt,
             is_secret,
         });

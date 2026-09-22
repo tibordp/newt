@@ -455,6 +455,7 @@ function App() {
           )}
         {remoteState && remoteState.askpass && (
           <AskpassDialog
+            key={remoteState.askpass.id}
             prompt={remoteState.askpass.prompt}
             isSecret={remoteState.askpass.is_secret}
           />

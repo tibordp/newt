@@ -58,7 +58,6 @@ async fn full_session_agent_serves_discovery() {
     let err = provider
         .containers("evil-engine".to_string())
         .await
-        .err()
-        .expect("unknown engine must be rejected");
+        .expect_err("unknown engine must be rejected");
     assert!(err.message.contains("unknown container engine"), "{}", err);
 }

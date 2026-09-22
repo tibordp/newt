@@ -128,9 +128,42 @@ async fn streaming_read_gzip_decompresses() {
 }
 
 #[tokio::test]
+async fn read_order_follows_the_stream_and_readers_park() {
+    let vfs = mount(SIMPLE_TAR_GZ, "/archive.gz", MockVfsConfig::default());
+    let order = vfs
+        .read_order(&[
+            vp("/dir/big.bin"),
+            vp("/hello.txt"),
+            vp("/dir/nested.txt"),
+            vp("/nope"),
+        ])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(order[1] < order[2] && order[2] < order[0], "{:?}", order);
+    assert_eq!(order[3], u64::MAX);
+
+    assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
+    assert_eq!(vfs.pool.parked(), 1);
+    // The next entry in stream order resumes the parked reader.
+    assert_eq!(read_to_vec(&vfs, "/dir/nested.txt").await, NESTED);
+    assert_eq!(vfs.pool.parked(), 1);
+    // An entry behind every parked reader restores a checkpoint and
+    // parks a second reader.
+    assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
+    assert_eq!(vfs.pool.parked(), 2);
+    let chunk = vfs
+        .read_range(&vp("/dir/big.bin"), 1_000, 10)
+        .await
+        .expect("read_range");
+    assert_eq!(chunk.data, big_bytes()[1_000..1_010]);
+    assert_eq!(vfs.pool.parked(), 2);
+}
+
+#[tokio::test]
 async fn streaming_read_small_buffers() {
     // Drain via a 17-byte buffer to stress the partial-chunk path in
-    // TarStreamingReader::poll_read (chunk shorter than `buf.remaining()`).
+    // the pipelined reader (chunk shorter than `buf.remaining()`).
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let mut reader = vfs.open_read_async(&vp("/dir/big.bin")).await.unwrap();
     let mut out = Vec::new();

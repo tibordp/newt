@@ -460,6 +460,12 @@ impl Vfs for RemoteVfs {
             .await?
     }
 
+    async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, Error> {
+        self.communicator
+            .invoke(crate::api::API_VFS_READ_ORDER, &paths)
+            .await?
+    }
+
     async fn read_attribute(
         &self,
         path: &Path,

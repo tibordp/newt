@@ -2972,10 +2972,9 @@ dependencies = [
 
 [[package]]
 name = "iluvatar"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dde1ae3f3817f21166d894fd4e8fda612c4eb1700858d05c798bf8da4651f896"
+version = "0.4.0"
 dependencies = [
+ "aes",
  "bincode",
  "bzip2",
  "miniz_oxide 0.9.1",
@@ -3692,8 +3691,10 @@ dependencies = [
  "flate2",
  "getrandom 0.3.4",
  "hmac 0.12.1",
+ "iluvatar",
  "pbkdf2",
  "sha1 0.10.7",
+ "sha2 0.10.9",
  "tar",
  "xz2",
  "zip",
@@ -3715,6 +3716,7 @@ dependencies = [
  "clap",
  "core-foundation 0.10.1",
  "core-foundation-sys",
+ "crc32fast",
  "dirs 6.0.0",
  "expanduser",
  "filetime",

@@ -1766,7 +1766,12 @@ xz_level: number;
  * Compression level for tar.zst archives.
  */
 zstd_level: number }
-export type AskpassPrompt = { prompt: string; is_secret: boolean }
+export type AskpassPrompt = { 
+/**
+ * Distinct per prompt, so a retry that replaces a dismissed or
+ * answered prompt renders as a fresh dialog.
+ */
+id: number; prompt: string; is_secret: boolean }
 export type BehaviorPreferences = { 
 /**
  * Ask for confirmation before deleting files.

@@ -17,3 +17,15 @@ default-members = [
     "src-tauri/",
     "libs/newt-common/",
 ]
+
+# 7z support is developed against the unreleased iluvatar stream layer;
+# the patch comes out when 0.4 publishes.
+[patch.crates-io]
+iluvatar = { path = "../iluvatar" }
+
+# LZMA decoding and 7z key derivation are tens of times slower unoptimized,
+# which turns reads from real archives into apparent hangs in dev builds.
+[profile.dev.package.iluvatar]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3

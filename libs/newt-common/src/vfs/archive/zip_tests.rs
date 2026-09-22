@@ -393,6 +393,24 @@ async fn read_range_slices_match_streaming() {
 }
 
 #[tokio::test]
+async fn read_order_follows_local_headers() {
+    let h = Harness::new(VARIED_ZIP);
+    let vfs = mount_with(&h, None).await;
+    let order = vfs
+        .read_order(&[
+            vp("/dir/big.bin"),
+            vp("/hello.txt"),
+            vp("/dir/nested.txt"),
+            vp("/nope"),
+        ])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(order[1] < order[2] && order[2] < order[0], "{:?}", order);
+    assert_eq!(order[3], u64::MAX);
+}
+
+#[tokio::test]
 async fn not_a_zip_errors_on_first_use() {
     let h = Harness::new(b"this is not a zip archive at all");
     let vfs = mount_with(&h, None).await;

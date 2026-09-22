@@ -603,7 +603,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2013-2025 The rust-url developers
   idna_adapter 1.2.2 — Apache-2.0 OR MIT
       Copyright (c) The rust-url developers
-  iluvatar 0.3.0 — MIT OR Apache-2.0
+  iluvatar 0.4.0 — MIT OR Apache-2.0
       Copyright (c) 2025 iluvatar contributors
   image 0.25.10 — MIT OR Apache-2.0
   indexmap 1.9.3 — Apache-2.0 OR MIT

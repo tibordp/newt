@@ -774,6 +774,20 @@ impl Vfs for ZipArchiveVfs {
             total_size,
         })
     }
+
+    /// Entries sit in the archive in local-header order.
+    async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, Error> {
+        let state = self.ensure_state().await?;
+        Ok(Some(
+            paths
+                .iter()
+                .map(|p| {
+                    self.resolve_entry(state, p, true)
+                        .map_or(u64::MAX, |e| e.header_offset)
+                })
+                .collect(),
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------

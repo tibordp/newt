@@ -17,6 +17,8 @@
 
 mod compress;
 mod crypto;
+pub mod sansio;
+pub mod sevenz;
 mod tar;
 pub mod zip;
 
