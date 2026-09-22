@@ -13,7 +13,7 @@ use crate::vfs::properties::{
 
 use super::{S3Vfs, sdk_err};
 
-fn grant_from_s3(grant: &aws_sdk_s3::types::Grant) -> Option<PropertyGrant> {
+pub(super) fn grant_from_s3(grant: &aws_sdk_s3::types::Grant) -> Option<PropertyGrant> {
     use aws_sdk_s3::types::Type;
     let grantee = grant.grantee()?;
     let permission = grant.permission()?.as_str().to_string();
@@ -36,7 +36,7 @@ fn grant_from_s3(grant: &aws_sdk_s3::types::Grant) -> Option<PropertyGrant> {
     })
 }
 
-fn grant_to_s3(grant: &PropertyGrant) -> Result<aws_sdk_s3::types::Grant, Error> {
+pub(super) fn grant_to_s3(grant: &PropertyGrant) -> Result<aws_sdk_s3::types::Grant, Error> {
     use aws_sdk_s3::types::{Grant, Grantee, Permission, Type};
     let grantee = match &grant.grantee {
         PropertyGrantee::User { id, display_name } => Grantee::builder()
@@ -61,7 +61,9 @@ fn grant_to_s3(grant: &PropertyGrant) -> Result<aws_sdk_s3::types::Grant, Error>
 /// and nothing else. Rewrites skip re-putting this — both to save a call
 /// and to keep metadata edits working on ACL-disabled buckets (where
 /// PutObjectAcl with an explicit policy is rejected).
-fn is_owner_only_acl(acl: &aws_sdk_s3::operation::get_object_acl::GetObjectAclOutput) -> bool {
+pub(super) fn is_owner_only_acl(
+    acl: &aws_sdk_s3::operation::get_object_acl::GetObjectAclOutput,
+) -> bool {
     let owner_id = acl.owner().and_then(|o| o.id());
     acl.grants().len() <= 1
         && acl.grants().iter().all(|g| {

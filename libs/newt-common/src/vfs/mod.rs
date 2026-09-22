@@ -1,10 +1,12 @@
 pub mod agent;
 pub mod archive;
+pub mod attributes;
 pub mod background_job;
 pub mod change_notifier;
 pub mod disc;
 pub mod file;
 pub mod local;
+pub(crate) mod local_attributes;
 pub mod mount;
 pub mod origin;
 pub mod path;
@@ -613,8 +615,15 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Write ---
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
-        let _ = path;
+    /// Non-default `options` the VFS cannot honour are a `NotSupported`
+    /// error, never silently dropped: the caller decides whether to retry
+    /// without them.
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        let _ = (path, options);
         Err(Error::not_supported())
     }
 
@@ -678,6 +687,74 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
+    async fn resolve_link(&self, path: &Path) -> Result<path::PathBuf, Error> {
+        let file = self.file_info(path).await?;
+        let target = file
+            .symlink_target
+            .ok_or_else(|| Error::custom("link target unavailable"))?;
+        let parent = path
+            .parent()
+            .map(Path::to_owned)
+            .unwrap_or_else(path::PathBuf::root);
+        let mut result = if target.starts_with('/') {
+            path::PathBuf::root()
+        } else {
+            parent.to_owned()
+        };
+        for part in target.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    result = result
+                        .parent()
+                        .map(Path::to_owned)
+                        .unwrap_or_else(path::PathBuf::root)
+                }
+                part => result.push(part),
+            }
+        }
+        Ok(result)
+    }
+
+    async fn stream_path(&self, path: &Path, name: &str) -> Result<path::PathBuf, Error> {
+        let _ = (path, name);
+        Err(Error::not_supported())
+    }
+
+    async fn read_attribute(
+        &self,
+        path: &Path,
+        kind: attributes::AttributeKind,
+    ) -> Result<Option<attributes::Attribute>, Error> {
+        use attributes::{Attribute, AttributeKind};
+        match kind {
+            AttributeKind::Metadata
+            | AttributeKind::Timestamps
+            | AttributeKind::Permissions
+            | AttributeKind::Owner { by_name: false }
+            | AttributeKind::Group { by_name: false } => Ok(None),
+            AttributeKind::Owner { by_name: true } | AttributeKind::Group { by_name: true } => {
+                let file = self.file_info(path).await?;
+                let owner = matches!(kind, AttributeKind::Owner { .. });
+                match if owner { file.user } else { file.group } {
+                    Some(UserGroup::Name(name)) if owner => Ok(Some(Attribute::OwnerName(name))),
+                    Some(UserGroup::Name(name)) => Ok(Some(Attribute::GroupName(name))),
+                    _ => Err(Error::custom("source account name is unavailable")),
+                }
+            }
+            _ => Err(Error::not_supported()),
+        }
+    }
+
+    async fn write_attribute(
+        &self,
+        path: &Path,
+        attribute: &attributes::Attribute,
+    ) -> Result<(), Error> {
+        let _ = (path, attribute);
+        Err(Error::not_supported())
+    }
+
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let _ = path;
         Err(Error::not_supported())
@@ -728,8 +805,14 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
-    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let _ = (from, to);
+    /// `options` follow the same rule as `overwrite_async`.
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &attributes::WriteOptions,
+    ) -> Result<(), Error> {
+        let _ = (from, to, options);
         Err(Error::not_supported())
     }
 

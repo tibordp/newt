@@ -362,6 +362,52 @@ async fn test_delete_error_retry() {
 }
 
 #[tokio::test]
+async fn test_retry_with_apply_to_all_prompts_again() {
+    let vfs = MockVfs::builder()
+        .file("/a.txt", b"hello")
+        .file("/b.txt", b"world")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/a.txt"),
+            operation: "remove_tree",
+            error: crate::Error::custom("transient error"),
+            remaining: Some(2),
+        })
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/b.txt"),
+            operation: "remove_tree",
+            error: crate::Error::custom("transient error"),
+            remaining: Some(1),
+        })
+        .build();
+
+    let mut issue_count = 0;
+    let result = run_operation(
+        vfs,
+        OperationRequest::Delete {
+            paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
+            to_trash: false,
+        },
+        |_| {
+            issue_count += 1;
+            IssueResponse {
+                action: if issue_count == 1 {
+                    IssueAction::Retry
+                } else {
+                    IssueAction::Skip
+                },
+                apply_to_all: true,
+            }
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_count, 2);
+    assert!(result.vfs.exists("/a.txt"));
+    assert!(result.vfs.exists("/b.txt"));
+}
+
+#[tokio::test]
 async fn test_delete_multiple_paths() {
     let vfs = MockVfs::builder()
         .file("/a.txt", b"a")
@@ -2770,3 +2816,6 @@ mod local_symlink {
         );
     }
 }
+
+#[path = "preserve_tests.rs"]
+mod preserve_tests;

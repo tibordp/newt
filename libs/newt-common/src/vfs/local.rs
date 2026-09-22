@@ -333,7 +333,7 @@ type FileIdentity = (u64, u128);
 /// identified as themselves rather than as their target, matching
 /// `file_info`'s `symlink_metadata`.
 #[cfg(unix)]
-fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
+pub(super) fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) => Ok(Some((meta.dev(), u128::from(meta.ino())))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -342,7 +342,7 @@ fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
 }
 
 #[cfg(windows)]
-fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
+pub(super) fn file_identity(path: &StdPath) -> Result<Option<FileIdentity>, Error> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -803,9 +803,75 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        Ok(PathBuf::from_native(
+            &tokio::fs::canonicalize(path.to_native()).await?,
+        ))
+    }
+
+    async fn read_attribute(
+        &self,
+        path: &Path,
+        kind: super::attributes::AttributeKind,
+    ) -> Result<Option<super::attributes::Attribute>, Error> {
+        let path = path.to_native();
+        tokio::task::spawn_blocking(move || super::local_attributes::read(&path, kind)).await?
+    }
+
+    async fn write_attribute(
+        &self,
+        path: &Path,
+        property: &super::attributes::Attribute,
+    ) -> Result<(), Error> {
+        let path = path.to_native();
+        let property = property.clone();
+        tokio::task::spawn_blocking(move || super::local_attributes::write(&path, &property))
+            .await?
+    }
+
+    async fn stream_path(&self, path: &Path, name: &str) -> Result<PathBuf, Error> {
+        super::local_attributes::stream_path(path, name)
+    }
+
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        if options.object_metadata.is_some()
+            || options.object_storage_class.is_some()
+            || options.object_canned_acl.is_some()
+        {
+            return Err(Error::not_supported());
+        }
         let file = tokio::fs::File::create(path.to_native()).await?;
-        Ok(Box::new(LocalAsyncWriter { file }))
+        #[cfg(windows)]
+        if options.sparse {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_SPARSE};
+            let mut returned = 0;
+            if unsafe {
+                DeviceIoControl(
+                    file.as_raw_handle() as _,
+                    FSCTL_SET_SPARSE,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut returned,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+        Ok(Box::new(LocalAsyncWriter {
+            file,
+            sparse: options.sparse,
+            length: 0,
+            holes: Vec::new(),
+        }))
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
@@ -875,7 +941,10 @@ impl Vfs for LocalVfs {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path)?;
-            let (permissions, uid, gid) = unix_meta_ids(&meta);
+            let (mut permissions, uid, gid) = unix_meta_ids(&meta);
+            if meta.is_symlink() {
+                permissions = None;
+            }
             Ok(VfsMetadata {
                 permissions,
                 uid,
@@ -901,11 +970,23 @@ impl Vfs for LocalVfs {
                 let uid = meta.uid.map(nix::unistd::Uid::from_raw);
                 let gid = meta.gid.map(nix::unistd::Gid::from_raw);
                 if uid.is_some() || gid.is_some() {
-                    nix::unistd::chown(&path, uid, gid)?;
+                    use std::os::unix::ffi::OsStrExt;
+                    let native = std::ffi::CString::new(path.as_os_str().as_bytes())
+                        .map_err(|e| Error::custom(e.to_string()))?;
+                    if unsafe {
+                        libc::lchown(
+                            native.as_ptr(),
+                            uid.map_or(!0, |id| id.as_raw()),
+                            gid.map_or(!0, |id| id.as_raw()),
+                        )
+                    } != 0
+                    {
+                        return Err(std::io::Error::last_os_error().into());
+                    }
                 }
 
                 if meta.atime.is_some() || meta.mtime.is_some() {
-                    let current_meta = std::fs::metadata(&path)?;
+                    let current_meta = std::fs::symlink_metadata(&path)?;
                     let atime = meta.atime.map_or_else(
                         || filetime::FileTime::from_last_access_time(&current_meta),
                         filetime::FileTime::from_system_time,
@@ -914,7 +995,7 @@ impl Vfs for LocalVfs {
                         || filetime::FileTime::from_last_modification_time(&current_meta),
                         filetime::FileTime::from_system_time,
                     );
-                    filetime::set_file_times(&path, atime, mtime)?;
+                    filetime::set_symlink_file_times(&path, atime, mtime)?;
                 }
             }
             #[cfg(windows)]
@@ -923,7 +1004,7 @@ impl Vfs for LocalVfs {
                 // (`get_metadata` returns them as `None`), so we only honor
                 // atime/mtime — everything else is a no-op.
                 if meta.atime.is_some() || meta.mtime.is_some() {
-                    let current_meta = std::fs::metadata(&path)?;
+                    let current_meta = std::fs::symlink_metadata(&path)?;
                     let atime = meta.atime.map_or_else(
                         || filetime::FileTime::from_last_access_time(&current_meta),
                         filetime::FileTime::from_system_time,
@@ -978,7 +1059,17 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || platform_space_info(&path)).await?
     }
 
-    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<(), Error> {
+        // Kernel copies don't take write options; the streaming fallback
+        // honours them.
+        if !options.is_default() {
+            return Err(Error::not_supported());
+        }
         let from = from.to_native();
         let to = to.to_native();
         tokio::task::spawn_blocking(move || {
@@ -1020,19 +1111,46 @@ impl Vfs for LocalVfs {
 
 struct LocalAsyncWriter {
     file: tokio::fs::File,
+    sparse: bool,
+    length: u64,
+    holes: Vec<(u64, u64)>,
 }
 
 #[async_trait::async_trait]
 impl VfsAsyncWriter for LocalAsyncWriter {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         use tokio::io::AsyncWriteExt;
-        self.file.write_all(buf).await?;
+        if self.sparse && buf.iter().all(|byte| *byte == 0) {
+            match self.holes.last_mut() {
+                Some((offset, len)) if *offset + *len == self.length => *len += buf.len() as u64,
+                _ => self.holes.push((self.length, buf.len() as u64)),
+            }
+            use tokio::io::AsyncSeekExt;
+            self.file
+                .seek(std::io::SeekFrom::Current(buf.len() as i64))
+                .await?;
+        } else {
+            self.file.write_all(buf).await?;
+        }
+        self.length += buf.len() as u64;
         Ok(buf.len())
     }
 
     async fn finish(mut self: Box<Self>) -> Result<(), Error> {
         use tokio::io::AsyncWriteExt;
         self.file.flush().await?;
+        if self.sparse {
+            self.file.set_len(self.length).await?;
+            #[cfg(unix)]
+            {
+                let file = self.file.into_std().await;
+                let holes = self.holes;
+                tokio::task::spawn_blocking(move || {
+                    super::local_attributes::punch_holes(&file, &holes)
+                })
+                .await??;
+            }
+        }
         Ok(())
     }
 }

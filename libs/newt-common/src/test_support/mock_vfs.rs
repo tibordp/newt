@@ -251,6 +251,10 @@ impl MockVfs {
     // -- State inspection helpers --
 
     /// Snapshot of all paths and their types, sorted.
+    pub fn inject_failure(&self, failure: FailureSpec) {
+        self.failures.lock().push(failure);
+    }
+
     pub fn snapshot(&self) -> Vec<(PathBuf, &'static str)> {
         self.entries
             .lock()
@@ -647,7 +651,14 @@ impl Vfs for MockVfs {
         }
     }
 
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, crate::Error> {
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, crate::Error> {
+        if !options.is_default() {
+            return Err(crate::Error::not_supported());
+        }
         if let Some(e) = self.check_failure(path, "overwrite_async") {
             return Err(e);
         }
@@ -889,7 +900,15 @@ impl Vfs for MockVfs {
         Ok(())
     }
 
-    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<(), crate::Error> {
+        if !options.is_default() {
+            return Err(crate::Error::not_supported());
+        }
         if let Some(e) = self.check_failure(from, "copy_within") {
             return Err(e);
         }

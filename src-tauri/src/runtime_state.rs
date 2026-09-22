@@ -71,15 +71,57 @@ pub struct LayoutState {
     pub terminal_height: Option<f64>,
 }
 
-/// Last-used Copy/Move toggles, re-seeded into the dialog on open.
-/// `create_symlink` is deliberately not here — a sticky "create symlink"
-/// would silently change what Copy does.
+/// Last-used Copy/Move toggles, re-seeded into the dialog on open. Only
+/// "preserve what the source has" toggles belong here: anything that
+/// changes what gets written beyond a faithful copy (link modes, canned
+/// ACL, storage class, rewriting merged directories) resets every time.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(default, deny_unknown_fields)]
 pub struct CopyMoveDefaults {
-    pub preserve_timestamps: bool,
-    pub preserve_owner: bool,
-    pub preserve_group: bool,
+    pub preserve_timestamps: Option<bool>,
+    pub preserve_permissions: Option<bool>,
+    pub ownership_by_name: Option<bool>,
+    pub preserve_owner: Option<bool>,
+    pub preserve_group: Option<bool>,
+    pub preserve_xattrs: Option<bool>,
+    pub preserve_acl: Option<bool>,
+    pub preserve_streams: Option<bool>,
+    pub preserve_hard_links: Option<bool>,
+    pub preserve_sparse: Option<bool>,
+    pub preserve_object_metadata: Option<bool>,
+    pub preserve_object_tags: Option<bool>,
+    pub preserve_object_access: Option<bool>,
+}
+
+impl CopyMoveDefaults {
+    /// The remembered toggles laid over the operation's own defaults.
+    pub fn seed(&self) -> newt_common::operation::CopyOptions {
+        let base = newt_common::operation::CopyOptions::default();
+        newt_common::operation::CopyOptions {
+            preserve_timestamps: self.preserve_timestamps.unwrap_or(base.preserve_timestamps),
+            preserve_permissions: self
+                .preserve_permissions
+                .unwrap_or(base.preserve_permissions),
+            ownership_by_name: self.ownership_by_name.unwrap_or(base.ownership_by_name),
+            preserve_owner: self.preserve_owner.unwrap_or(base.preserve_owner),
+            preserve_group: self.preserve_group.unwrap_or(base.preserve_group),
+            preserve_xattrs: self.preserve_xattrs.unwrap_or(base.preserve_xattrs),
+            preserve_acl: self.preserve_acl.unwrap_or(base.preserve_acl),
+            preserve_streams: self.preserve_streams.unwrap_or(base.preserve_streams),
+            preserve_hard_links: self.preserve_hard_links.unwrap_or(base.preserve_hard_links),
+            preserve_sparse: self.preserve_sparse.unwrap_or(base.preserve_sparse),
+            preserve_object_metadata: self
+                .preserve_object_metadata
+                .unwrap_or(base.preserve_object_metadata),
+            preserve_object_tags: self
+                .preserve_object_tags
+                .unwrap_or(base.preserve_object_tags),
+            preserve_object_access: self
+                .preserve_object_access
+                .unwrap_or(base.preserve_object_access),
+            ..base
+        }
+    }
 }
 
 /// Last-used Search toggles, re-seeded into fresh searches (the refine flow

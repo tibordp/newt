@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-688 crates, the superset across every target platform and feature.
+689 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -1358,6 +1358,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright 2019 x11rb Contributers
   x11rb-protocol 0.13.2 — MIT OR Apache-2.0
       Copyright 2019 x11rb Contributers
+  xattr 1.6.1 — MIT OR Apache-2.0
+      Copyright (c) 2015 Steven Allen
   xmlparser 0.13.6 — MIT/Apache-2.0
       Copyright (c) 2018 Reizner Evgeniy
   xz2 0.1.7 — MIT/Apache-2.0

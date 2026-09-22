@@ -110,6 +110,10 @@ pub const API_VFS_SAME_FILE: Api = Api(632);
 pub const API_VFS_OPEN_READ_AT: Api = Api(633);
 pub const API_VFS_READ_AT: Api = Api(634);
 pub const API_VFS_READ_AT_CLOSE: Api = Api(635);
+pub const API_VFS_READ_ATTRIBUTE: Api = Api(636);
+pub const API_VFS_WRITE_ATTRIBUTE: Api = Api(637);
+pub const API_VFS_STREAM_PATH: Api = Api(638);
+pub const API_VFS_RESOLVE_LINK: Api = Api(639);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);

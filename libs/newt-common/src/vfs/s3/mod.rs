@@ -651,6 +651,7 @@ impl S3Vfs {
     }
 }
 
+mod attributes;
 mod properties;
 
 #[cfg(test)]
@@ -835,7 +836,30 @@ impl Vfs for S3Vfs {
         Ok(Box::new(resp.body.into_async_read()))
     }
 
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+    async fn read_attribute(
+        &self,
+        path: &Path,
+        kind: super::attributes::AttributeKind,
+    ) -> Result<Option<super::attributes::Attribute>, Error> {
+        self.read_object_attribute(path, kind).await
+    }
+
+    async fn write_attribute(
+        &self,
+        path: &Path,
+        property: &super::attributes::Attribute,
+    ) -> Result<(), Error> {
+        self.write_object_attribute(path, property).await
+    }
+
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        if options.sparse {
+            return Err(Error::not_supported());
+        }
         let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
@@ -846,13 +870,33 @@ impl Vfs for S3Vfs {
             bucket, key
         );
 
-        let resp = client
+        let mut request = client
             .create_multipart_upload()
             .bucket(&bucket)
             .key(&key)
-            .send()
-            .await
-            .map_err(sdk_err)?;
+            .set_storage_class(
+                options
+                    .object_storage_class
+                    .as_deref()
+                    .map(aws_sdk_s3::types::StorageClass::from),
+            )
+            .set_acl(
+                options
+                    .object_canned_acl
+                    .as_deref()
+                    .map(aws_sdk_s3::types::ObjectCannedAcl::from),
+            );
+        if let Some(meta) = &options.object_metadata {
+            request = request
+                .set_metadata(Some(meta.metadata.clone().into_iter().collect()))
+                .set_content_type(meta.content_type.clone())
+                .set_content_encoding(meta.content_encoding.clone())
+                .set_content_language(meta.content_language.clone())
+                .set_content_disposition(meta.content_disposition.clone())
+                .set_cache_control(meta.cache_control.clone())
+                .set_expires(attributes::expires(meta)?);
+        }
+        let resp = request.send().await.map_err(sdk_err)?;
 
         let upload_id = resp
             .upload_id()
@@ -922,7 +966,15 @@ impl Vfs for S3Vfs {
         Ok(())
     }
 
-    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<(), Error> {
+        if options.sparse {
+            return Err(Error::not_supported());
+        }
         let (src_bucket, src_key) = self.parse_path(from);
         let src_bucket = src_bucket.ok_or(Error::not_supported())?;
         let src_key = src_key.ok_or_else(|| Error::custom("no source key"))?;
@@ -940,10 +992,7 @@ impl Vfs for S3Vfs {
         let src_client = self.client_for_bucket(&src_bucket).await?;
         let copy_source = format!("{}/{}", src_bucket, src_key);
 
-        // CopyObject carries user metadata and headers over by default
-        // (MetadataDirective COPY), but the destination's storage class
-        // defaults to STANDARD and its ACL always resets to the bucket-
-        // owner default — snapshot both from the source explicitly.
+        // The head supplies the size limit and the native storage-class default.
         let head = src_client
             .head_object()
             .bucket(&src_bucket)
@@ -958,29 +1007,36 @@ impl Vfs for S3Vfs {
             return Err(Error::not_supported());
         }
 
-        let acl_snapshot =
-            properties::snapshot_nontrivial_acl(&src_client, &src_bucket, &src_key).await;
-
-        client
+        let mut request = client
             .copy_object()
             .bucket(&dst_bucket)
             .key(&dst_key)
             .copy_source(&copy_source)
-            .set_storage_class(head.storage_class().cloned())
-            .send()
-            .await
-            .map_err(sdk_err)?;
-
-        if let Some(acl) = acl_snapshot {
-            // Losing the grants beats failing the copy: the caller's next
-            // strategy (streaming re-upload) couldn't restore them either.
-            if let Err(e) = properties::restore_acl(&client, &dst_bucket, &dst_key, &acl).await {
-                warn!(
-                    "s3: copy_within: failed to restore ACL on {}/{}: {}",
-                    dst_bucket, dst_key, e
-                );
-            }
+            .set_storage_class(
+                options
+                    .object_storage_class
+                    .as_deref()
+                    .map(aws_sdk_s3::types::StorageClass::from)
+                    .or_else(|| head.storage_class().cloned()),
+            )
+            .set_acl(
+                options
+                    .object_canned_acl
+                    .as_deref()
+                    .map(aws_sdk_s3::types::ObjectCannedAcl::from),
+            );
+        if let Some(meta) = &options.object_metadata {
+            request = request
+                .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+                .set_metadata(Some(meta.metadata.clone().into_iter().collect()))
+                .set_content_type(meta.content_type.clone())
+                .set_content_encoding(meta.content_encoding.clone())
+                .set_content_language(meta.content_language.clone())
+                .set_content_disposition(meta.content_disposition.clone())
+                .set_cache_control(meta.cache_control.clone())
+                .set_expires(attributes::expires(meta)?);
         }
+        request.send().await.map_err(sdk_err)?;
 
         self.notifier.notify(to);
         Ok(())

@@ -426,10 +426,19 @@ Opens a modal dialog with:
 - **New name** field (single item only, copy and move): pre-filled with the source's leaf name; edit it to land under a different name in the destination (`rename_to` on the operation — same-VFS moves rename directly to the new name, and the copy fallback plans the tree under it). Left unchanged it sends nothing. Also names the symlink when "Create symbolic link" is checked. Empty or separator-containing input greys out the primary button, since the value becomes a single leaf under the destination. *Which* characters separate comes from the destination's `PathStyle` (`name_separators` on the modal payload), not from the frontend: `\` is rejected on a Windows-styled destination and accepted on a Unix one, where it is an ordinary filename character.
 - **Options** (checkboxes):
   - **Create symbolic link** — only available for single-file copies. Creates a symlink at the destination pointing to the source. Disables the other options when checked.
-  - **Preserve timestamps** — maintains file modification and access times.
-  - **Preserve owner** — maintains UID.
-  - **Preserve group** — maintains GID.
-  - The three preserve toggles are **sticky**: the last-used values are remembered in `state.json` (`copy_move.*`) and seed the next Copy/Move. "Create symbolic link" is deliberately not sticky — a remembered value would silently change what Copy does.
+  - **Preserve timestamps** — modification and access times.
+  - **Preserve permissions** (default on) — Unix mode bits.
+  - **More copy options** ("More move options" for a move; collapsed section, keyboard-reachable like any other control; opens expanded when a remembered toggle inside it is on, so a sticky choice is never hidden):
+    - **Preserve owner / group**, with **Match accounts by** numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
+    - **Preserve extended attributes** (user xattrs; ACL and resource-fork xattrs are excluded because they have their own toggles).
+    - **Preserve access control lists** — Linux POSIX ACLs, macOS extended ACLs, Windows DACLs. Carried opaquely in the source platform's encoding; only a destination of the same platform can apply them.
+    - **Preserve alternate streams and resource forks** — macOS `..namedfork/rsrc`, NTFS `:stream:$DATA`; streamed like file contents.
+    - **Preserve hard links within the selection** — files sharing an identity (device + inode) are linked on the destination instead of copied again.
+    - **Preserve sparse files** — zero runs are skipped and holes punched on the destination (Linux `fallocate`, macOS `F_PUNCHHOLE`, NTFS sparse flag).
+    - **Apply source attributes to existing directories** — merged directories otherwise keep their own mode/times/owner.
+    - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue).
+    - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3), and for an S3 destination a **Storage class** and **Object access** canned ACL.
+  - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered. Link modes, storage class, canned ACL and "apply source attributes to existing directories" reset every time — each changes what gets written beyond a faithful copy or who can read it.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
 **Copy execution**:
@@ -443,7 +452,7 @@ Opens a modal dialog with:
 3. **Copy strategies**:
    - Same-VFS `copy_within` (fastest, if available — kernel-assisted: FICLONE/`copy_file_range`/`CopyFileEx`, S3 server-side CopyObject).
    - Streaming copy otherwise: async read → async write in 64 KB chunks, drop-cancellable at every await.
-4. **Metadata preservation**: After copying, optionally sets permissions, timestamps, owner, and group on the destination. Silently skipped if the destination VFS doesn't support metadata operations. The source side reads `Vfs::get_metadata`, whose default derives from the listing entry — so any VFS that surfaces mode/owner/timestamps in listings (tar, Rock Ridge/UDF disc images, S3 mtimes) feeds preservation without its own implementation; local and SFTP override it with a real stat.
+4. **Attribute preservation**: After each file lands (and after a directory's contents, deepest first), the requested attributes are applied in an order that keeps them from undoing each other: ownership (chown can clear set-id bits), then xattrs and streams (writing them touches times), then permissions, then ACLs (chmod rewrites the POSIX ACL mask), then timestamps. Timestamps, permissions and numeric ownership come from one `Vfs::get_metadata` stat; everything else through `Vfs::read_attribute`/`write_attribute`, which keep values in their native encoding across the RPC boundary. Attributes that must exist at creation (sparse, S3 metadata/storage class/canned ACL) travel as `WriteOptions` on `overwrite_async`/`copy_within`; a VFS that cannot honour them returns not-supported and the copy retries without them after a prompt. **Any attribute that cannot be read or applied raises "Cannot preserve <kind>" with Retry/Skip**; "Apply to all" Skip is scoped to that attribute kind. A destination that declares no metadata support (S3) gets no stat-derived attributes and no prompts about them.
 5. **Progress**: Reports every 100ms with bytes done, items done, and current filename.
 
 **Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for single files.
@@ -563,7 +572,7 @@ When an operation encounters a conflict:
 | Permission denied | Skip, Retry |
 | Other I/O error | Skip, Retry |
 
-- **"Apply to all" checkbox**: When checked, the chosen action is automatically applied to all subsequent issues of the same type within the same operation. No further prompts for that issue type.
+- **"Apply to all" checkbox**: When checked, Skip or Overwrite is automatically applied to all subsequent issues of the same type within the same operation. Retry always applies only to the current attempt, regardless of the checkbox; another failure prompts again.
 
 ---
 
@@ -977,6 +986,8 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 **Operations supported**: Read, write (multipart upload with 10 MB chunks), create directory, delete, copy within the same S3 bucket, touch, rename (via the operation's copy+delete fallback — server-side CopyObject per object, works on prefixes too), extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog). Server-side copies (copy/move/rename within S3) carry over user metadata and system headers (CopyObject default), and explicitly re-apply the source's storage class and any non-default ACL — a failed ACL restore is logged and the copy still succeeds, since the streaming fallback couldn't restore it either.
 
 **Operations NOT supported**: Hard link, symlink, Unix permissions, filesystem stats, trash (plain Delete prompts for permanent deletion).
+
+**Copy attributes**: a same-bucket copy keeps the source's storage class unless the dialog picks one. User metadata, content headers, tags and access grants carry over only with the matching "Preserve object …" toggle; the canned-ACL selector, when set, replaces grants outright.
 
 **Display path**: `s3://bucket/prefix/key`
 

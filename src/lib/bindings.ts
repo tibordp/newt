@@ -1905,12 +1905,13 @@ export type CopyFormat =
  */
 "ascii"
 /**
- * Last-used Copy/Move toggles, re-seeded into the dialog on open.
- * `create_symlink` is deliberately not here — a sticky "create symlink"
- * would silently change what Copy does.
+ * Last-used Copy/Move toggles, re-seeded into the dialog on open. Only
+ * "preserve what the source has" toggles belong here: anything that
+ * changes what gets written beyond a faithful copy (link modes, canned
+ * ACL, storage class, rewriting merged directories) resets every time.
  */
-export type CopyMoveDefaults = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean }
-export type CopyOptions = { preserve_timestamps: boolean; preserve_owner: boolean; preserve_group: boolean; create_symlink: boolean }
+export type CopyMoveDefaults = { preserve_timestamps: boolean | null; preserve_permissions: boolean | null; ownership_by_name: boolean | null; preserve_owner: boolean | null; preserve_group: boolean | null; preserve_xattrs: boolean | null; preserve_acl: boolean | null; preserve_streams: boolean | null; preserve_hard_links: boolean | null; preserve_sparse: boolean | null; preserve_object_metadata: boolean | null; preserve_object_tags: boolean | null; preserve_object_access: boolean | null }
+export type CopyOptions = { preserve_timestamps: boolean; preserve_permissions: boolean; ownership_by_name: boolean; preserve_owner: boolean; preserve_group: boolean; preserve_xattrs: boolean; preserve_acl: boolean; preserve_streams: boolean; preserve_hard_links: boolean; preserve_sparse: boolean; preserve_object_metadata: boolean; preserve_object_tags: boolean; preserve_object_access: boolean; object_storage_class: string | null; object_canned_acl: string | null; follow_symlinks: boolean; preserve_merged_directories: boolean; create_symlink: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
 /**
@@ -2161,7 +2162,7 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Volume stats + classification. `Some` only for a volume root
  * (DirectoryProperties at a root, or the RootProperties dialog).
  */
-fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
@@ -2176,9 +2177,9 @@ default_name: string | null;
  */
 name_separators: string; 
 /**
- * Sticky last-used preserve toggles, seeded from runtime state.
+ * The operation defaults with the sticky toggles laid over them.
  */
-defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+defaults: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -2350,7 +2351,7 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Volume stats + classification. `Some` only for a volume root
  * (DirectoryProperties at a root, or the RootProperties dialog).
  */
-fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
@@ -2365,9 +2366,9 @@ default_name: string | null;
  */
 name_separators: string; 
 /**
- * Sticky last-used preserve toggles, seeded from runtime state.
+ * The operation defaults with the sticky toggles laid over them.
  */
-defaults: CopyMoveDefaults } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+defaults: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.

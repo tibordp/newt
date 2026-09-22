@@ -3,3 +3,13 @@
   font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
 }
+
+.options {
+  summary {
+    cursor: pointer;
+    margin-bottom: 0.5rem;
+  }
+  > div {
+    margin-bottom: 0.75rem;
+  }
+}

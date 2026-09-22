@@ -790,8 +790,15 @@ impl Vfs for SftpVfs {
         }))
     }
 
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         debug!("sftp: overwrite_async {}", path);
+        if !options.is_default() {
+            return Err(Error::not_supported());
+        }
         self.check_alive()?;
         let file = self
             .sftp
@@ -918,6 +925,11 @@ impl Vfs for SftpVfs {
         Ok(())
     }
 
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        let target = self.sftp.fs().canonicalize(sftp_path(path)).await?;
+        Ok(PathBuf::from_wire_str(&target.to_string_lossy()))
+    }
+
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         debug!("sftp: get_metadata {}", path);
         self.check_alive()?;
@@ -937,6 +949,14 @@ impl Vfs for SftpVfs {
         self.check_alive()?;
         let mut fs = self.sftp.fs();
 
+        if fs
+            .symlink_metadata(sftp_path(path))
+            .await?
+            .file_type()
+            .is_some_and(|ft| ft.is_symlink())
+        {
+            return Err(Error::not_supported());
+        }
         let mut sftp_meta = openssh_sftp_client::metadata::MetaDataBuilder::new();
 
         if let Some(permissions) = meta.permissions {

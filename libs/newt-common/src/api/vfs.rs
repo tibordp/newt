@@ -28,10 +28,11 @@ use super::{
     API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
     API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_ABORT, API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_OVERWRITE_ASYNC_FINISH,
-    API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE, API_VFS_READ_CHUNK,
-    API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
-    API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
-    API_VFS_TRUNCATE, API_VFS_WRITE_CHUNK, decode, encode,
+    API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE, API_VFS_READ_ATTRIBUTE,
+    API_VFS_READ_CHUNK, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
+    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA,
+    API_VFS_STREAM_PATH, API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
+    API_VFS_WRITE_ATTRIBUTE, API_VFS_WRITE_CHUNK, decode, encode,
 };
 use crate::Error;
 use crate::filesystem::StreamId;
@@ -169,51 +170,61 @@ impl Dispatcher for VfsDispatcher {
                 encode(&ret)?
             }
             API_VFS_OVERWRITE_ASYNC_BEGIN => {
-                let path: PathBuf = decode(&req[..])?;
+                let (path, options): (PathBuf, crate::vfs::attributes::WriteOptions) =
+                    decode(&req[..])?;
+                let ret: Result<StreamId, Error> =
+                    match self.vfs.overwrite_async(&path, &options).await {
+                        Ok(writer) => {
+                            let stream_id = StreamId(
+                                self.next_stream_id
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                            );
 
-                let ret: Result<StreamId, Error> = match self.vfs.overwrite_async(&path).await {
-                    Ok(writer) => {
-                        let stream_id = StreamId(
-                            self.next_stream_id
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                        );
-
-                        let (chunk_tx, mut chunk_rx) =
-                            tokio::sync::mpsc::channel::<WriteCommand>(4);
-                        self.write_sessions.lock().insert(
-                            stream_id,
-                            WriteSession {
-                                tx: chunk_tx,
-                                expected_seq: 0,
-                            },
-                        );
-
-                        let write_task_handles = self.write_task_handles.clone();
-                        let write_sessions = self.write_sessions.clone();
-                        let handle = tokio::spawn(async move {
-                            let _cleanup = WriteSessionCleanup {
+                            let (chunk_tx, mut chunk_rx) =
+                                tokio::sync::mpsc::channel::<WriteCommand>(4);
+                            self.write_sessions.lock().insert(
                                 stream_id,
-                                sessions: write_sessions,
-                            };
-                            let mut writer = writer;
-                            while let Some(command) = chunk_rx.recv().await {
-                                match command {
-                                    WriteCommand::Data(data) => {
-                                        writer.write(&data).await?;
-                                    }
-                                    WriteCommand::Finish => return writer.finish().await,
-                                }
-                            }
-                            // Sender disappearance without Finish is cancellation:
-                            // drop the writer without committing it.
-                            Ok(())
-                        });
-                        write_task_handles.lock().insert(stream_id, handle);
+                                WriteSession {
+                                    tx: chunk_tx,
+                                    expected_seq: 0,
+                                },
+                            );
 
-                        Ok(stream_id)
-                    }
-                    Err(e) => Err(e),
-                };
+                            let write_task_handles = self.write_task_handles.clone();
+                            let write_sessions = self.write_sessions.clone();
+                            let handle = tokio::spawn(async move {
+                                let _cleanup = WriteSessionCleanup {
+                                    stream_id,
+                                    sessions: write_sessions,
+                                };
+                                let mut writer = writer;
+                                while let Some(command) = chunk_rx.recv().await {
+                                    match command {
+                                        WriteCommand::Data(data) => {
+                                            let mut offset = 0;
+                                            while offset < data.len() {
+                                                let written = writer.write(&data[offset..]).await?;
+                                                if written == 0 {
+                                                    return Err(Error::custom(
+                                                        "write made no progress",
+                                                    ));
+                                                }
+                                                offset += written;
+                                            }
+                                        }
+                                        WriteCommand::Finish => return writer.finish().await,
+                                    }
+                                }
+                                // Sender disappearance without Finish is cancellation:
+                                // drop the writer without committing it.
+                                Ok(())
+                            });
+                            write_task_handles.lock().insert(stream_id, handle);
+
+                            Ok(stream_id)
+                        }
+                        Err(e) => Err(e),
+                    };
 
                 encode(&ret)?
             }
@@ -274,6 +285,24 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.vfs.trash_item(&path).await;
                 encode(&ret)?
             }
+            API_VFS_READ_ATTRIBUTE => {
+                let (path, kind): (PathBuf, crate::vfs::attributes::AttributeKind) =
+                    decode(&req[..])?;
+                encode(&self.vfs.read_attribute(&path, kind).await)?
+            }
+            API_VFS_WRITE_ATTRIBUTE => {
+                let (path, property): (PathBuf, crate::vfs::attributes::Attribute) =
+                    decode(&req[..])?;
+                encode(&self.vfs.write_attribute(&path, &property).await)?
+            }
+            super::API_VFS_RESOLVE_LINK => {
+                let path: PathBuf = decode(&req[..])?;
+                encode(&self.vfs.resolve_link(&path).await)?
+            }
+            API_VFS_STREAM_PATH => {
+                let (path, name): (PathBuf, String) = decode(&req[..])?;
+                encode(&self.vfs.stream_path(&path, &name).await)?
+            }
             API_VFS_GET_METADATA => {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.get_metadata(&path).await;
@@ -300,8 +329,9 @@ impl Dispatcher for VfsDispatcher {
                 encode(&ret)?
             }
             API_VFS_COPY_WITHIN => {
-                let (from, to): (PathBuf, PathBuf) = decode(&req[..])?;
-                let ret = self.vfs.copy_within(&from, &to).await;
+                let (from, to, options): (PathBuf, PathBuf, crate::vfs::attributes::WriteOptions) =
+                    decode(&req[..])?;
+                let ret = self.vfs.copy_within(&from, &to, &options).await;
                 encode(&ret)?
             }
             API_VFS_HARD_LINK => {
@@ -457,9 +487,12 @@ mod tests {
         let response = dispatcher
             .invoke(
                 super::API_VFS_OVERWRITE_ASYNC_BEGIN,
-                super::encode(&PathBuf::from_wire_str("/partial"))
-                    .unwrap()
-                    .into(),
+                super::encode(&(
+                    PathBuf::from_wire_str("/partial"),
+                    crate::vfs::attributes::WriteOptions::default(),
+                ))
+                .unwrap()
+                .into(),
             )
             .await
             .unwrap()

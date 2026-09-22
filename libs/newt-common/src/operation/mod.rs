@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::proc::NoConsoleWindow;
 use crate::rpc::Communicator;
 use crate::vfs::File;
+use crate::vfs::attributes::AttributeKind;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
@@ -19,6 +20,7 @@ mod copy;
 mod delete;
 mod metadata;
 mod move_rename;
+mod preserve;
 mod progress;
 mod run_command;
 mod walk;
@@ -42,6 +44,7 @@ pub enum IssueKind {
     AlreadyExists,
     PermissionDenied,
     IoError,
+    PreservationFailed(AttributeKind),
     Other(String),
 }
 
@@ -77,12 +80,52 @@ pub struct ResolveIssueRequest {
 
 // --- Copy Options ---
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, specta::Type)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, specta::Type)]
+#[serde(default, deny_unknown_fields)]
 pub struct CopyOptions {
     pub preserve_timestamps: bool,
+    pub preserve_permissions: bool,
+    pub ownership_by_name: bool,
     pub preserve_owner: bool,
     pub preserve_group: bool,
+    pub preserve_xattrs: bool,
+    pub preserve_acl: bool,
+    pub preserve_streams: bool,
+    pub preserve_hard_links: bool,
+    pub preserve_sparse: bool,
+    pub preserve_object_metadata: bool,
+    pub preserve_object_tags: bool,
+    pub preserve_object_access: bool,
+    pub object_storage_class: Option<String>,
+    pub object_canned_acl: Option<String>,
+    pub follow_symlinks: bool,
+    pub preserve_merged_directories: bool,
     pub create_symlink: bool,
+}
+
+impl Default for CopyOptions {
+    fn default() -> Self {
+        Self {
+            preserve_timestamps: false,
+            preserve_permissions: true,
+            ownership_by_name: false,
+            preserve_owner: false,
+            preserve_group: false,
+            preserve_xattrs: false,
+            preserve_acl: false,
+            preserve_streams: false,
+            preserve_hard_links: false,
+            preserve_sparse: false,
+            preserve_object_metadata: false,
+            preserve_object_tags: false,
+            preserve_object_access: false,
+            object_storage_class: None,
+            object_canned_acl: None,
+            follow_symlinks: false,
+            preserve_merged_directories: false,
+            create_symlink: false,
+        }
+    }
 }
 
 // --- Archive Options ---

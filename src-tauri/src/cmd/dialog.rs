@@ -480,7 +480,15 @@ pub fn dialog(
                         None
                     };
                     let name_separators = leaf_name_separators(&ctx, &destination);
+                    let is_object = |path: &VfsPath| {
+                        ctx.vfs_info()
+                            .ok()
+                            .and_then(|vi| vi.descriptor(path.vfs_id))
+                            .is_some_and(|(d, _)| d.type_name() == "s3")
+                    };
                     ModalDataKind::CopyMove {
+                        object_destination: is_object(&destination),
+                        object_source: sources.iter().any(is_object),
                         default_name,
                         name_separators,
                         // Frontend distinguishes copy/move by this string.
@@ -493,7 +501,7 @@ pub fn dialog(
                         destination,
                         display_destination,
                         summary,
-                        defaults: rt_state.copy_move.clone(),
+                        defaults: rt_state.copy_move.seed(),
                     }
                 }
                 DialogKind::CreateArchive => {

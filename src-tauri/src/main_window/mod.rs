@@ -555,6 +555,8 @@ pub enum ModalDataKind {
     },
     CopyMove {
         kind: String,
+        object_destination: bool,
+        object_source: bool,
         sources: Vec<VfsPath>,
         destination: VfsPath,
         display_destination: String,
@@ -568,8 +570,8 @@ pub enum ModalDataKind {
         /// actually separates — on a Unix filesystem it is a legal
         /// filename character and a directory may be called `\`.
         name_separators: String,
-        /// Sticky last-used preserve toggles, seeded from runtime state.
-        defaults: crate::runtime_state::CopyMoveDefaults,
+        /// The operation defaults with the sticky toggles laid over them.
+        defaults: newt_common::operation::CopyOptions,
     },
     CreateArchive {
         sources: Vec<VfsPath>,

@@ -17,6 +17,7 @@ pub(super) struct WalkedEntry {
     /// The dirent as seen during the walk — carries the metadata (mode,
     /// owner, mtime, size) so consumers don't need a second stat pass.
     pub file: File,
+    pub metadata: Option<crate::vfs::VfsMetadata>,
 }
 
 #[derive(Default)]
@@ -25,6 +26,7 @@ pub(super) struct WalkOptions {
     /// directories are recursed into, symlinks to files become plain files.
     /// Cycles among followed targets are detected and skipped.
     pub follow_symlinks: bool,
+    pub capture_directory_metadata: bool,
     /// Path on the source VFS to silently omit — the archive being written,
     /// so it doesn't pack itself.
     pub exclude: Option<PathBuf>,
@@ -34,29 +36,6 @@ pub(super) struct WalkOptions {
 /// cycle it failed to detect structurally (mirrors the archive-read side's
 /// `MAX_SYMLINK_HOPS`).
 const MAX_FOLLOWED_LINKS: usize = 40;
-
-/// Resolve a raw symlink target against the directory containing the link.
-/// Best-effort textual normalization — the VFS surface has no realpath.
-pub(super) fn resolve_symlink_target(parent: &Path, target: &str) -> PathBuf {
-    let mut path = if target.starts_with('/') {
-        PathBuf::root()
-    } else {
-        parent.to_owned()
-    };
-    for seg in target.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                path = path
-                    .parent()
-                    .map(|p| p.to_owned())
-                    .unwrap_or_else(PathBuf::root);
-            }
-            seg => path.push(seg),
-        }
-    }
-    path
-}
 
 pub(super) async fn walk_sources(
     src_vfs: &dyn Vfs,
@@ -112,100 +91,113 @@ pub(super) async fn walk_sources(
             vec![(source.clone(), file_name, file_entry, Arc::new(Vec::new()))];
 
         loop {
-            for (src_path, rel, file, link_ancestry) in pending.drain(..) {
+            'entry: for (mut src_path, rel, mut file, link_ancestry) in pending.drain(..) {
                 if options.exclude.as_ref() == Some(&src_path) {
                     continue;
                 }
-
-                if has_symlinks && file.is_symlink && !follow {
-                    entries.push(WalkedEntry {
-                        source: src_path,
-                        rel,
-                        kind: WalkedKind::Symlink {
-                            target: file.symlink_target.clone().unwrap_or_default(),
-                        },
-                        file,
-                    });
-                } else if has_symlinks && file.is_symlink && follow && file.is_dir {
-                    let parent = src_path
-                        .parent()
-                        .map(|p| p.to_owned())
-                        .unwrap_or_else(PathBuf::root);
-                    let target = resolve_symlink_target(
-                        &parent,
-                        file.symlink_target.as_deref().unwrap_or_default(),
-                    );
-                    // A target that is itself on the followed chain, or an
-                    // ancestor of the link, recurses forever.
-                    let cycle = link_ancestry.contains(&target) || src_path.starts_with(&target);
-                    if cycle || link_ancestry.len() >= MAX_FOLLOWED_LINKS {
-                        reporter
-                            .raise_issue(
-                                IssueKind::Other("SymlinkCycle".to_string()),
-                                format!("Symlink cycle at {}", src_path),
-                                Some(format!("target: {}", target)),
-                                vec![IssueAction::Skip],
-                            )
-                            .await?;
-                        continue;
+                let mut ancestry = (*link_ancestry).clone();
+                if has_symlinks && file.is_symlink && follow {
+                    let mut hops = 0;
+                    while file.is_symlink {
+                        if hops >= MAX_FOLLOWED_LINKS {
+                            reporter
+                                .raise_issue(
+                                    IssueKind::Other("SymlinkCycle".into()),
+                                    format!("Symbolic link cycle at {src_path}"),
+                                    None,
+                                    vec![IssueAction::Skip],
+                                )
+                                .await?;
+                            continue 'entry;
+                        }
+                        let resolved = loop {
+                            let result = async {
+                                let target = src_vfs.resolve_link(&src_path).await?;
+                                let file = src_vfs.file_info(&target).await?;
+                                Ok((target, file))
+                            };
+                            match cancellable(cancel, result).await {
+                                Ok(resolved) => break resolved,
+                                Err(e) => match reporter
+                                    .handle_io_error(
+                                        e,
+                                        &format!("Cannot follow {src_path}"),
+                                        None,
+                                        cancel,
+                                        true,
+                                    )
+                                    .await?
+                                {
+                                    IssueOutcome::Retry => {}
+                                    IssueOutcome::Skip => continue 'entry,
+                                },
+                            }
+                        };
+                        let (target, target_file) = resolved;
+                        if ancestry.contains(&target)
+                            || (target_file.is_dir && src_path.starts_with(&target))
+                        {
+                            reporter
+                                .raise_issue(
+                                    IssueKind::Other("SymlinkCycle".into()),
+                                    format!("Symbolic link cycle at {src_path}"),
+                                    None,
+                                    vec![IssueAction::Skip],
+                                )
+                                .await?;
+                            continue 'entry;
+                        }
+                        ancestry.push(target.clone());
+                        src_path = target;
+                        file = target_file;
+                        hops += 1;
                     }
-                    let mut ancestry = (*link_ancestry).clone();
-                    ancestry.push(target.clone());
-                    entries.push(WalkedEntry {
-                        source: src_path,
-                        rel: rel.clone(),
-                        kind: WalkedKind::Directory,
-                        file,
-                    });
-                    // Recurse into the resolved target: identical on a real
-                    // FS, and keeps the frame path physical for VFSes that
-                    // don't resolve links on access.
+                }
+                let mut metadata = None;
+                if file.is_dir && !file.is_symlink && options.capture_directory_metadata {
+                    loop {
+                        match cancellable(cancel, src_vfs.get_metadata(&src_path)).await {
+                            Ok(meta) => {
+                                metadata = Some(meta);
+                                break;
+                            }
+                            Err(e) => {
+                                if !super::preserve::resolve_preservation(
+                                    reporter,
+                                    AttributeKind::Metadata,
+                                    &src_path,
+                                    e,
+                                )
+                                .await?
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let kind = if file.is_symlink {
+                    WalkedKind::Symlink {
+                        target: file.symlink_target.clone().unwrap_or_default(),
+                    }
+                } else if file.is_dir {
                     stack.push(DirFrame {
-                        src: target,
-                        rel,
+                        src: src_path.clone(),
+                        rel: rel.clone(),
                         link_ancestry: Arc::new(ancestry),
                     });
-                } else if has_symlinks && file.is_symlink && follow {
-                    // Followed file symlink: the dirent's size is the link's
-                    // own length — stat the target for the real size (drives
-                    // progress totals and the zip writer's zip64 decision).
-                    let parent = src_path
-                        .parent()
-                        .map(|p| p.to_owned())
-                        .unwrap_or_else(PathBuf::root);
-                    let target = resolve_symlink_target(
-                        &parent,
-                        file.symlink_target.as_deref().unwrap_or_default(),
-                    );
-                    let resolved = src_vfs.file_info(&target).await.unwrap_or(file);
-                    total_bytes += resolved.size.unwrap_or(0);
-                    entries.push(WalkedEntry {
-                        source: target,
-                        rel,
-                        kind: WalkedKind::File,
-                        file: resolved,
-                    });
-                } else if file.is_dir {
-                    entries.push(WalkedEntry {
-                        source: src_path.clone(),
-                        rel: rel.clone(),
-                        kind: WalkedKind::Directory,
-                        file,
-                    });
-                    stack.push(DirFrame {
-                        src: src_path,
-                        rel,
-                        link_ancestry,
-                    });
+                    WalkedKind::Directory
                 } else {
                     total_bytes += file.size.unwrap_or(0);
-                    entries.push(WalkedEntry {
-                        source: src_path,
-                        rel,
-                        kind: WalkedKind::File,
-                        file,
-                    });
-                }
+                    WalkedKind::File
+                };
+                entries.push(WalkedEntry {
+                    source: src_path,
+                    rel,
+                    kind,
+                    file,
+                    metadata,
+                });
             }
 
             let Some(frame) = stack.pop() else { break };

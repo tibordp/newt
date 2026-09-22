@@ -111,6 +111,9 @@ impl ProgressReporter {
         detail: Option<String>,
         actions: Vec<IssueAction>,
     ) -> Result<IssueAction, crate::Error> {
+        if self.cancel.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
         // Check sticky resolutions first
         if let Some(&action) = self.sticky_resolutions.get(&kind) {
             return Ok(action);
@@ -136,7 +139,7 @@ impl ProgressReporter {
             result = rx => {
                 match result {
                     Ok(response) => {
-                        if response.apply_to_all {
+                        if response.apply_to_all && response.action != IssueAction::Retry {
                             self.sticky_resolutions.insert(kind, response.action);
                         }
                         Ok(response.action)

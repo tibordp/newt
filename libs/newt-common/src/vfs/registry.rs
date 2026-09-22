@@ -304,7 +304,9 @@ impl Filesystem for VfsRegistryFs {
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        let mut writer = vfs.overwrite_async(&local_path).await?;
+        let mut writer = vfs
+            .overwrite_async(&local_path, &Default::default())
+            .await?;
         writer.write(&data).await?;
         writer.finish().await?;
         Ok(())

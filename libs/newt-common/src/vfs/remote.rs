@@ -362,10 +362,14 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn overwrite_async(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+    async fn overwrite_async(
+        &self,
+        path: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         let stream_id: Result<StreamId, Error> = self
             .communicator
-            .invoke(API_VFS_OVERWRITE_ASYNC_BEGIN, &path.to_owned())
+            .invoke(API_VFS_OVERWRITE_ASYNC_BEGIN, &(path.to_owned(), options))
             .await?;
         let stream_id = stream_id?;
 
@@ -444,6 +448,41 @@ impl Vfs for RemoteVfs {
         ret
     }
 
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        self.communicator
+            .invoke(crate::api::API_VFS_RESOLVE_LINK, &path.to_owned())
+            .await?
+    }
+
+    async fn stream_path(&self, path: &Path, name: &str) -> Result<PathBuf, Error> {
+        self.communicator
+            .invoke(crate::api::API_VFS_STREAM_PATH, &(path.to_owned(), name))
+            .await?
+    }
+
+    async fn read_attribute(
+        &self,
+        path: &Path,
+        kind: super::attributes::AttributeKind,
+    ) -> Result<Option<super::attributes::Attribute>, Error> {
+        self.communicator
+            .invoke(crate::api::API_VFS_READ_ATTRIBUTE, &(path.to_owned(), kind))
+            .await?
+    }
+
+    async fn write_attribute(
+        &self,
+        path: &Path,
+        property: &super::attributes::Attribute,
+    ) -> Result<(), Error> {
+        self.communicator
+            .invoke(
+                crate::api::API_VFS_WRITE_ATTRIBUTE,
+                &(path.to_owned(), property),
+            )
+            .await?
+    }
+
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
         let ret: Result<VfsMetadata, Error> = self
             .communicator
@@ -484,10 +523,18 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn copy_within(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn copy_within(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::WriteOptions,
+    ) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
-            .invoke(API_VFS_COPY_WITHIN, &(from.to_owned(), to.to_owned()))
+            .invoke(
+                API_VFS_COPY_WITHIN,
+                &(from.to_owned(), to.to_owned(), options),
+            )
             .await?;
         ret
     }

@@ -82,6 +82,7 @@ pub(super) async fn execute_create_archive(
     let source_paths: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
     let walk_options = WalkOptions {
         follow_symlinks: !options.preserve_symlinks,
+        capture_directory_metadata: false,
         // Keep a same-VFS destination out of the walk, or the archive
         // would pack its growing self.
         exclude: (src_vfs_id == destination.vfs_id).then(|| dst_path.to_owned()),
@@ -294,7 +295,9 @@ struct ArchiveSink(Box<dyn VfsAsyncWriter>);
 
 impl ArchiveSink {
     async fn open(vfs: &dyn Vfs, path: &Path) -> Result<Self, crate::Error> {
-        Ok(ArchiveSink(vfs.overwrite_async(path).await?))
+        Ok(ArchiveSink(
+            vfs.overwrite_async(path, &Default::default()).await?,
+        ))
     }
 
     /// A write failure poisons the sink — the caller must abort the

@@ -1,3 +1,4 @@
+use super::preserve::{SourceAttributes, resolve_preservation};
 use super::*;
 
 // --- Copy Entry ---
@@ -13,6 +14,8 @@ pub(super) struct CopyEntry {
     source: PathBuf,
     dest: PathBuf,
     kind: CopyEntryKind,
+    file: File,
+    metadata: Option<crate::vfs::VfsMetadata>,
     #[allow(dead_code)]
     size_bytes: u64,
 }
@@ -24,24 +27,19 @@ pub(super) struct CopyPlan {
 
 // --- Plan copy (async, uses Vfs) ---
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn plan_copy(
     src_vfs: &dyn Vfs,
     src_descriptor: &dyn VfsDescriptor,
     sources: &[PathBuf],
     destination: &Path,
     rename_to: Option<&str>,
+    walk: &WalkOptions,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<CopyPlan, crate::Error> {
-    let (walked, total_bytes) = walk_sources(
-        src_vfs,
-        src_descriptor,
-        sources,
-        &WalkOptions::default(),
-        reporter,
-        cancel,
-    )
-    .await?;
+    let (walked, total_bytes) =
+        walk_sources(src_vfs, src_descriptor, sources, walk, reporter, cancel).await?;
 
     let entries = walked
         .into_iter()
@@ -67,6 +65,8 @@ pub(super) async fn plan_copy(
                     WalkedKind::Symlink { target } => CopyEntryKind::Symlink { target },
                 },
                 source: w.source,
+                file: w.file,
+                metadata: w.metadata,
             }
         })
         .collect::<Vec<_>>();
@@ -85,6 +85,7 @@ pub(super) async fn plan_copy(
 
 // --- Chunked byte copy ---
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn copy_bytes_async(
     reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
     writer: &mut dyn crate::vfs::VfsAsyncWriter,
@@ -107,12 +108,13 @@ pub(super) async fn copy_bytes_async(
         if n == 0 {
             break;
         }
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(crate::Error::cancelled()),
-            result = writer.write(&buf[..n]) => {
-                result?;
+        let mut offset = 0;
+        while offset < n {
+            let written = cancellable(cancel, writer.write(&buf[offset..n])).await?;
+            if written == 0 {
+                return Err(crate::Error::custom("copy write made no progress"));
             }
+            offset += written;
         }
         *bytes_done += n as u64;
         reporter.maybe_send_progress(*bytes_done, items_done, display);
@@ -133,7 +135,7 @@ pub(super) async fn copy_single_file(
     reporter: &mut ProgressReporter,
     bytes_done: &mut u64,
     items_done: u64,
-    options: &CopyOptions,
+    write_options: &mut crate::vfs::attributes::WriteOptions,
     display: &str,
 ) -> Result<(), crate::Error> {
     let src_descriptor = src_vfs.descriptor();
@@ -142,11 +144,15 @@ pub(super) async fn copy_single_file(
     // 1. Same-VFS copy_within fast path
     if same_vfs && dst_descriptor.can_copy_within() {
         debug!("copy_single_file: trying copy_within for {}", entry.source);
-        match src_vfs.copy_within(&entry.source, &entry.dest).await {
+        match cancellable(
+            cancel,
+            src_vfs.copy_within(&entry.source, &entry.dest, write_options),
+        )
+        .await
+        {
             Ok(()) => {
                 *bytes_done += entry.size_bytes;
-                return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options)
-                    .await;
+                return Ok(());
             }
             // The descriptor can't see per-call quirks (a RootVfs spans
             // many real filesystems; server-side copies have size caps),
@@ -166,8 +172,34 @@ pub(super) async fn copy_single_file(
     // 2. Streaming copy
     if src_descriptor.can_read() && dst_descriptor.can_overwrite() {
         debug!("copy_single_file: streaming copy for {}", entry.source);
-        let mut reader = src_vfs.open_read_async(&entry.source).await?;
-        let mut writer = dst_vfs.overwrite_async(&entry.dest).await?;
+        let mut reader = cancellable(cancel, src_vfs.open_read_async(&entry.source)).await?;
+        let mut writer = loop {
+            match cancellable(cancel, dst_vfs.overwrite_async(&entry.dest, write_options)).await {
+                Ok(writer) => break writer,
+                Err(e)
+                    if e.kind == crate::ErrorKind::NotSupported && !write_options.is_default() =>
+                {
+                    let kind = if write_options.sparse {
+                        AttributeKind::Sparse
+                    } else if write_options.object_canned_acl.is_some() {
+                        AttributeKind::ObjectAccess
+                    } else {
+                        AttributeKind::ObjectMetadata
+                    };
+                    if !resolve_preservation(reporter, kind, &entry.dest, e).await? {
+                        if write_options.sparse {
+                            write_options.sparse = false;
+                        } else if write_options.object_canned_acl.is_some() {
+                            write_options.object_canned_acl = None;
+                        } else {
+                            write_options.object_metadata = None;
+                            write_options.object_storage_class = None;
+                        }
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        };
 
         copy_bytes_async(
             &mut *reader,
@@ -179,52 +211,12 @@ pub(super) async fn copy_single_file(
             display,
         )
         .await?;
-        writer.finish().await?;
+        cancellable(cancel, writer.finish()).await?;
 
-        return preserve_metadata(src_vfs, &entry.source, dst_vfs, &entry.dest, options).await;
-    }
-
-    Err(crate::Error::not_supported())
-}
-
-// --- Preserve metadata after copy ---
-
-pub(super) async fn preserve_metadata(
-    src_vfs: &dyn Vfs,
-    src_path: &Path,
-    dst_vfs: &dyn Vfs,
-    dst_path: &Path,
-    options: &CopyOptions,
-) -> Result<(), crate::Error> {
-    if !dst_vfs.descriptor().can_set_metadata() {
         return Ok(());
     }
 
-    // Permissions are always preserved; timestamps/owner/group only if requested.
-    let meta = match src_vfs.get_metadata(src_path).await {
-        Ok(m) => m,
-        Err(_) => return Ok(()), // source doesn't support metadata, nothing to preserve
-    };
-
-    let mut to_set = crate::vfs::VfsMetadata {
-        permissions: meta.permissions,
-        ..Default::default()
-    };
-
-    if options.preserve_timestamps {
-        to_set.atime = meta.atime;
-        to_set.mtime = meta.mtime;
-    }
-    if options.preserve_owner {
-        to_set.uid = meta.uid;
-    }
-    if options.preserve_group {
-        to_set.gid = meta.gid;
-    }
-
-    let _ = dst_vfs.set_metadata(dst_path, &to_set).await;
-
-    Ok(())
+    Err(crate::Error::not_supported())
 }
 
 // --- Execute Copy (async outer loop, uses Vfs) ---
@@ -391,6 +383,15 @@ pub(super) async fn execute_copy(
         &source_paths,
         &dst_path,
         rename_to,
+        &WalkOptions {
+            follow_symlinks: options.follow_symlinks,
+            capture_directory_metadata: dst_descriptor.can_set_metadata()
+                && (options.preserve_permissions
+                    || options.preserve_timestamps
+                    || options.preserve_owner
+                    || options.preserve_group),
+            ..Default::default()
+        },
         reporter,
         &cancel,
     )
@@ -399,6 +400,8 @@ pub(super) async fn execute_copy(
     let total_items = plan.entries.len() as u64 + items_done_offset;
     reporter.send_prepared(plan.total_bytes, total_items);
 
+    let mut directories = Vec::new();
+    let mut hard_links = HashMap::<Vec<u8>, PathBuf>::new();
     let mut bytes_done = 0u64;
     let mut items_done = items_done_offset;
 
@@ -414,14 +417,18 @@ pub(super) async fn execute_copy(
             .unwrap_or_else(|| entry.dest.as_wire_str().to_string());
         reporter.maybe_send_progress(bytes_done, items_done, &display);
 
+        let mut merged_directory = false;
         let dest_file = dst_vfs.file_info(&entry.dest).await;
         if let Ok(dest_file) = dest_file {
             match &entry.kind {
                 CopyEntryKind::Directory => {
                     if dest_file.is_dir {
+                        merged_directory = true;
                         // Directory already exists — merge, skip mkdir.
-                        items_done += 1;
-                        continue;
+                        if !options.preserve_merged_directories {
+                            items_done += 1;
+                            continue;
+                        }
                     } else {
                         // Type mismatch
                         match reporter
@@ -490,9 +497,6 @@ pub(super) async fn execute_copy(
                                     dst_vfs.remove_file(&entry.dest).await?;
                                 }
                                 // For regular file → regular file: overwrite in place.
-                                // VFS write methods truncate and replace contents without
-                                // a delete+create gap, so partial failure doesn't lose
-                                // the destination.
                             }
                             Err(e) => return Err(e),
                             _ => unreachable!("not offered"),
@@ -502,6 +506,43 @@ pub(super) async fn execute_copy(
             }
         }
 
+        let mut attributes = SourceAttributes::read(
+            &*src_vfs,
+            &*dst_vfs,
+            &entry.source,
+            &entry.file,
+            entry.metadata.clone(),
+            &options,
+            reporter,
+            &cancel,
+        )
+        .await?;
+        let identity = attributes.identity.clone();
+        hard_links.retain(|_, target| target != &entry.dest);
+        let mut linked = false;
+        if let Some(target) = identity.as_ref().and_then(|id| hard_links.get(id)) {
+            loop {
+                let result = async {
+                    if dst_vfs.file_info(&entry.dest).await.is_ok() {
+                        dst_vfs.remove_file(&entry.dest).await?;
+                    }
+                    dst_vfs.hard_link(&entry.dest, target).await
+                };
+                match cancellable(&cancel, result).await {
+                    Ok(()) => {
+                        linked = true;
+                        break;
+                    }
+                    Err(e) => {
+                        if !resolve_preservation(reporter, AttributeKind::HardLinks, &entry.dest, e)
+                            .await?
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         // Perform the operation
         let bytes_before = bytes_done;
         let mut retry = true;
@@ -511,16 +552,27 @@ pub(super) async fn execute_copy(
             bytes_done = bytes_before; // Reset progress on retry to avoid double-counting
 
             let result = match &entry.kind {
-                CopyEntryKind::Directory => dst_vfs.create_directory(&entry.dest).await,
+                CopyEntryKind::Directory if merged_directory => Ok(()),
+                CopyEntryKind::Directory => {
+                    cancellable(&cancel, dst_vfs.create_directory(&entry.dest)).await
+                }
                 CopyEntryKind::Symlink { target } => {
                     if dst_descriptor.can_create_symlink() {
-                        dst_vfs.create_symlink(&entry.dest, target.as_str()).await
+                        cancellable(
+                            &cancel,
+                            dst_vfs.create_symlink(&entry.dest, target.as_str()),
+                        )
+                        .await
                     } else {
                         Err(crate::Error::custom(format!(
                             "Cannot create symlink on {}: not supported",
                             dst_descriptor.type_name()
                         )))
                     }
+                }
+                CopyEntryKind::File if linked => {
+                    bytes_done += entry.size_bytes;
+                    Ok(())
                 }
                 CopyEntryKind::File => {
                     copy_single_file(
@@ -532,7 +584,7 @@ pub(super) async fn execute_copy(
                         reporter,
                         &mut bytes_done,
                         items_done,
-                        &options,
+                        &mut attributes.write,
                         &display,
                     )
                     .await
@@ -562,6 +614,26 @@ pub(super) async fn execute_copy(
                             retry = true;
                         }
                     }
+                }
+            }
+        }
+
+        if succeeded {
+            if matches!(entry.kind, CopyEntryKind::Directory) {
+                directories.push((entry, attributes));
+            } else {
+                attributes
+                    .apply(
+                        &*src_vfs,
+                        &*dst_vfs,
+                        &entry.dest,
+                        &options,
+                        reporter,
+                        &cancel,
+                    )
+                    .await?;
+                if let Some(id) = identity {
+                    hard_links.entry(id).or_insert_with(|| entry.dest.clone());
                 }
             }
         }
@@ -602,6 +674,19 @@ pub(super) async fn execute_copy(
     }
 
     reporter.maybe_send_progress(bytes_done, items_done, "");
+
+    for (entry, attributes) in directories.into_iter().rev() {
+        attributes
+            .apply(
+                &*src_vfs,
+                &*dst_vfs,
+                &entry.dest,
+                &options,
+                reporter,
+                &cancel,
+            )
+            .await?;
+    }
 
     // For move: reverse pass to clean up empty source directories (deepest first).
     // DirectoryNotEmpty is expected (items may have been skipped) and silently ignored.

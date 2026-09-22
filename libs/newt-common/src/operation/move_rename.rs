@@ -11,6 +11,11 @@ pub(super) async fn execute_move(
     cancel: CancellationToken,
     rename_to: Option<&str>,
 ) -> Result<(), crate::Error> {
+    if options.follow_symlinks {
+        return Err(crate::Error::custom(
+            "Move preserves symbolic links; following targets is only available for Copy",
+        ));
+    }
     debug_assert!(
         rename_to.is_none() || sources.len() == 1,
         "rename_to requires exactly one source"
