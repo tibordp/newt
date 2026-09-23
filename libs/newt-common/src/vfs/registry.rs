@@ -281,7 +281,7 @@ impl Filesystem for VfsRegistryFs {
     async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        vfs.open_read_at(&local_path).await
+        super::open_read_at(&vfs, &local_path).await
     }
 
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {

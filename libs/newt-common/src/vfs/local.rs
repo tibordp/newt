@@ -76,6 +76,9 @@ impl VfsDescriptor for LocalVfsDescriptor {
     fn can_truncate(&self) -> bool {
         true
     }
+    fn can_write_range(&self) -> bool {
+        true
+    }
     fn can_set_metadata(&self) -> bool {
         true
     }
@@ -1054,6 +1057,28 @@ impl Vfs for LocalVfs {
         .await?
     }
 
+    async fn write_range(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), Error> {
+        let path = path.to_native();
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+            let len = file.metadata()?.len();
+            if offset.saturating_add(data.len() as u64) > len {
+                return Err(Error::custom("write_range past the end of the file"));
+            }
+            let mut done = 0;
+            while done < data.len() {
+                let n = pwrite(&file, &data[done..], offset + done as u64)?;
+                if n == 0 {
+                    return Err(Error::custom("write_range wrote nothing"));
+                }
+                done += n;
+            }
+            Ok(())
+        })
+        .await?
+    }
+
     async fn available_space(&self, path: &Path) -> Result<VfsSpaceInfo, Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || platform_space_info(&path)).await?
@@ -1194,6 +1219,16 @@ fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<u
     std::os::windows::fs::FileExt::seek_read(file, buf, offset)
 }
 
+#[cfg(unix)]
+fn pwrite(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+    std::os::unix::fs::FileExt::write_at(file, buf, offset)
+}
+
+#[cfg(windows)]
+fn pwrite(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+    std::os::windows::fs::FileExt::seek_write(file, buf, offset)
+}
+
 // ---------------------------------------------------------------------------
 // Platform-specific helpers
 // ---------------------------------------------------------------------------
@@ -1313,6 +1348,40 @@ fn win_disk_space(path: &StdPath) -> Option<(u64, u64, u64)> {
 // ---------------------------------------------------------------------------
 // LocalVfs::same_file — real filesystem
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod write_range_tests {
+    use std::sync::Arc;
+
+    use crate::ErrorKind;
+    use crate::vfs::Vfs;
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::path::PathBuf;
+
+    #[tokio::test]
+    async fn overwrites_in_place_and_refuses_to_extend() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let native = dir.path().join("f.bin");
+        std::fs::write(&native, b"0123456789").expect("write");
+        let vfs = Arc::new(LocalVfs::new());
+        let path = PathBuf::from_native(&native);
+
+        vfs.write_range(&path, 3, b"abc").await.unwrap();
+        assert_eq!(std::fs::read(&native).unwrap(), b"012abc6789");
+        vfs.write_range(&path, 8, b"xy").await.unwrap();
+        assert_eq!(std::fs::read(&native).unwrap(), b"012abc67xy");
+
+        assert!(vfs.write_range(&path, 9, b"zz").await.is_err());
+        assert_eq!(std::fs::read(&native).unwrap(), b"012abc67xy");
+        assert_eq!(
+            vfs.write_range(&PathBuf::from_native(&dir.path().join("nope")), 0, b"z")
+                .await
+                .unwrap_err()
+                .kind,
+            ErrorKind::NotFound
+        );
+    }
+}
 
 #[cfg(test)]
 mod same_file_tests {

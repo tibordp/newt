@@ -134,6 +134,7 @@ impl Default for CopyOptions {
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveFormat {
     Zip,
+    SevenZ,
     Tar,
     TarGz,
     TarXz,
@@ -144,6 +145,7 @@ impl ArchiveFormat {
     pub fn extension(&self) -> &'static str {
         match self {
             ArchiveFormat::Zip => "zip",
+            ArchiveFormat::SevenZ => "7z",
             ArchiveFormat::Tar => "tar",
             ArchiveFormat::TarGz => "tar.gz",
             ArchiveFormat::TarXz => "tar.xz",
@@ -159,7 +161,7 @@ pub struct ArchiveOptions {
     pub level: Option<i32>,
     /// Store symlinks as symlink entries; off = follow them into the archive.
     pub preserve_symlinks: bool,
-    /// Zip only — WinZip AES-256 encryption.
+    /// Zip (WinZip AES-256) and 7z (7-Zip's AES-256) only.
     pub password: Option<String>,
 }
 
@@ -308,6 +310,9 @@ pub struct OperationContext {
     /// When present, `RunCommand` children get the `newt` CLI env/PATH, so
     /// operation-mode user commands can control the session too.
     pub shell_integration: Option<Arc<crate::shell_control::ShellIntegration>>,
+    /// Temporary storage for bytes an operation must hold before it can
+    /// hand them on.
+    pub spooler: Arc<crate::spool::Spooler>,
 }
 
 // --- OperationsClient trait ---

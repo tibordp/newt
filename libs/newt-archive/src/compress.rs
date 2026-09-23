@@ -91,6 +91,92 @@ impl Compressor {
     }
 }
 
+/// Raw LZMA2 over the bundled liblzma, the stream a 7z LZMA2 coder holds.
+/// Pushes input and drains output per call; nothing is buffered across
+/// calls beyond the encoder's own state.
+pub(crate) struct RawLzma2Encoder {
+    strm: lzma_sys::lzma_stream,
+}
+
+// The stream's pointers only ever refer to buffers passed into a call.
+unsafe impl Send for RawLzma2Encoder {}
+
+impl RawLzma2Encoder {
+    /// Returns the encoder and the dictionary size its preset uses.
+    pub(crate) fn new(preset: u32) -> io::Result<(Self, u32)> {
+        // SAFETY: plain FFI; the option and filter structs are only read
+        // during `lzma_raw_encoder`, which copies what it keeps.
+        unsafe {
+            let mut opts: lzma_sys::lzma_options_lzma = std::mem::zeroed();
+            if lzma_sys::lzma_lzma_preset(&mut opts, preset) != 0 {
+                return Err(io::Error::other(format!("invalid LZMA2 preset {}", preset)));
+            }
+            let filters = [
+                lzma_sys::lzma_filter {
+                    id: lzma_sys::LZMA_FILTER_LZMA2,
+                    options: &mut opts as *mut _ as *mut std::ffi::c_void,
+                },
+                lzma_sys::lzma_filter {
+                    id: lzma_sys::LZMA_VLI_UNKNOWN,
+                    options: std::ptr::null_mut(),
+                },
+            ];
+            let mut strm: lzma_sys::lzma_stream = std::mem::zeroed();
+            if lzma_sys::lzma_raw_encoder(&mut strm, filters.as_ptr()) != lzma_sys::LZMA_OK {
+                return Err(io::Error::other("failed to create LZMA2 encoder"));
+            }
+            Ok((RawLzma2Encoder { strm }, opts.dict_size))
+        }
+    }
+
+    fn run(
+        &mut self,
+        mut input: &[u8],
+        action: lzma_sys::lzma_action,
+        out: &mut Vec<u8>,
+    ) -> io::Result<bool> {
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            self.strm.next_in = input.as_ptr();
+            self.strm.avail_in = input.len();
+            self.strm.next_out = buf.as_mut_ptr();
+            self.strm.avail_out = buf.len();
+            // SAFETY: the stream is initialized and both buffers outlive
+            // the call.
+            let ret = unsafe { lzma_sys::lzma_code(&mut self.strm, action) };
+            let consumed = input.len() - self.strm.avail_in;
+            let produced = buf.len() - self.strm.avail_out;
+            out.extend_from_slice(&buf[..produced]);
+            input = &input[consumed..];
+            match ret {
+                lzma_sys::LZMA_OK => {}
+                lzma_sys::LZMA_STREAM_END => return Ok(true),
+                code => return Err(io::Error::other(format!("LZMA2 encoder error {}", code))),
+            }
+            if input.is_empty() && produced < buf.len() {
+                return Ok(false);
+            }
+        }
+    }
+
+    pub(crate) fn write(&mut self, input: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
+        self.run(input, lzma_sys::LZMA_RUN, out).map(|_| ())
+    }
+
+    pub(crate) fn finish(mut self, out: &mut Vec<u8>) -> io::Result<()> {
+        while !self.run(&[], lzma_sys::LZMA_FINISH, out)? {}
+        Ok(())
+    }
+}
+
+impl Drop for RawLzma2Encoder {
+    fn drop(&mut self) {
+        // SAFETY: `lzma_end` accepts an initialized stream any number of
+        // times.
+        unsafe { lzma_sys::lzma_end(&mut self.strm) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

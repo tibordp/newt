@@ -23,6 +23,7 @@ use crate::vfs::{FileChunk, FileDetails};
 
 use super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
 
+use super::open_read_at;
 use super::origin::{
     build_origin_meta, origin_breadcrumbs, origin_format_path, origin_mount_label,
     origin_try_parse_display_path,
@@ -122,6 +123,9 @@ impl VfsDescriptor for DiscVfsDescriptor {
         false
     }
     fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
         false
     }
     fn can_set_metadata(&self) -> bool {
@@ -692,7 +696,7 @@ impl Vfs for DiscVfs {
         // Inline entries never touch the image again — no handle for them.
         let upstream = match entry.data {
             EntryData::Inline(_) => None,
-            EntryData::Extents(_) => Some(self.upstream.open_read_at(&self.image_path).await?),
+            EntryData::Extents(_) => Some(open_read_at(&self.upstream, &self.image_path).await?),
         };
         Ok(Box::new(PipelinedReader::new(
             ExtentDriver::new(entry),

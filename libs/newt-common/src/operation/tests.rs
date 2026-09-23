@@ -63,6 +63,7 @@ async fn run_operation_inner(
     let context = Arc::new(OperationContext {
         registry: registry.clone(),
         shell_integration: None,
+        spooler: crate::spool::Spooler::new(Default::default()),
     });
 
     let issue_resolvers2 = issue_resolvers.clone();
@@ -120,6 +121,7 @@ async fn run_operation_cancellable(
     let context = Arc::new(OperationContext {
         registry,
         shell_integration: None,
+        spooler: crate::spool::Spooler::new(Default::default()),
     });
 
     let op_handle = tokio::spawn(execute_operation(
@@ -2273,6 +2275,143 @@ async fn test_create_archive_tar_round_trip() {
     );
 }
 
+/// Read a 7z produced by CreateArchive back through the 7z VFS.
+async fn read_back_7z(
+    bytes: &[u8],
+    password: Option<&str>,
+) -> std::collections::BTreeMap<String, TarCheck> {
+    use crate::vfs::{NoopProgressSink, ScopedReporter, SevenZArchiveVfs, Vfs};
+
+    struct Password(Option<String>);
+    #[async_trait::async_trait]
+    impl crate::askpass::AskpassProvider for Password {
+        async fn prompt(
+            &self,
+            _req: crate::askpass::AskpassRequest,
+        ) -> crate::askpass::AskpassResponse {
+            crate::askpass::AskpassResponse(self.0.clone())
+        }
+    }
+
+    let upstream = MockVfs::builder().file("/out.7z", bytes).build();
+    let reporter: Arc<dyn crate::vfs::ProgressReporter> =
+        Arc::new(ScopedReporter::new(Arc::new(NoopProgressSink), VfsId(1)));
+    let askpass: Arc<dyn crate::askpass::AskpassProvider> =
+        Arc::new(Password(password.map(str::to_owned)));
+    let vfs = Arc::new(SevenZArchiveVfs::new(
+        upstream,
+        PathBuf::from_wire_str("/out.7z"),
+        VfsPath::root(VfsId(1)),
+        Vec::new(),
+        "out.7z".to_string(),
+        Some(askpass),
+        reporter,
+    ));
+
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![PathBuf::root()];
+    while let Some(dir) = stack.pop() {
+        let list = vfs.list_files(&dir, None).await.unwrap();
+        for f in list.files {
+            if f.name == ".." {
+                continue;
+            }
+            let p = dir.join(&f.name);
+            if f.is_dir {
+                stack.push(p.clone());
+            }
+            let content = if !f.is_dir && !f.is_symlink {
+                let mut reader = vfs.open_read_async(&p).await.unwrap();
+                let mut data = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut data)
+                    .await
+                    .unwrap();
+                Some(data)
+            } else {
+                None
+            };
+            out.insert(
+                p.as_wire_str().trim_start_matches('/').to_string(),
+                TarCheck {
+                    is_dir: f.is_dir,
+                    is_symlink: f.is_symlink,
+                    symlink_target: f.symlink_target.clone(),
+                    mode: f.mode.as_ref().map(|m| m.0),
+                    content,
+                },
+            );
+        }
+    }
+    out
+}
+
+/// 7z lands its start header last: straight into a destination that
+/// overwrites in place, or spooled and uploaded whole otherwise. Either
+/// way the archive reads back the same.
+#[tokio::test]
+async fn test_create_archive_7z_round_trip_direct_and_spooled() {
+    for (can_write_range, password) in [(true, None), (false, None), (true, Some("secret"))] {
+        let vfs = MockVfs::builder()
+            .config(MockVfsConfig {
+                can_write_range,
+                ..MockVfsConfig::default()
+            })
+            .dir("/data")
+            .file_with_mode("/data/hello.txt", b"hello world", 0o640)
+            .dir("/data/sub")
+            .file("/data/sub/nested.txt", b"nested content")
+            .file("/data/empty.txt", b"")
+            .dir("/data/empty")
+            .symlink("/data/link", "hello.txt")
+            .build();
+        let result = run_operation(
+            vfs,
+            OperationRequest::CreateArchive {
+                sources: vec![vfs_path("/data")],
+                destination: vfs_path("/out.7z"),
+                options: ArchiveOptions {
+                    level: Some(3),
+                    password: password.map(str::to_owned),
+                    ..archive_options(ArchiveFormat::SevenZ)
+                },
+            },
+            |issue| panic!("unexpected issue: {}", issue.message),
+        )
+        .await;
+        assert!(
+            has_completed(&result.events),
+            "write_range={} {:?}",
+            can_write_range,
+            result.events
+        );
+
+        let bytes = result.vfs.read_content("/out.7z");
+        assert_eq!(&bytes[..6], b"7z\xbc\xaf\x27\x1c");
+        let entries = read_back_7z(&bytes, password).await;
+        assert!(entries["data"].is_dir);
+        assert!(entries["data/empty"].is_dir);
+        assert_eq!(
+            entries["data/hello.txt"].content.as_deref(),
+            Some(&b"hello world"[..])
+        );
+        assert_eq!(entries["data/hello.txt"].mode, Some(0o640));
+        assert_eq!(entries["data/empty.txt"].content.as_deref(), Some(&b""[..]));
+        assert_eq!(
+            entries["data/sub/nested.txt"].content.as_deref(),
+            Some(&b"nested content"[..])
+        );
+        assert!(entries["data/link"].is_symlink);
+        // Link targets are entry content; the VFS leaves those in
+        // encrypted folders unresolved rather than prompting at mount.
+        if password.is_none() {
+            assert_eq!(
+                entries["data/link"].symlink_target.as_deref(),
+                Some("hello.txt")
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_create_archive_zip_round_trip() {
     use std::io::Read;
@@ -2749,6 +2888,7 @@ mod local_symlink {
         let context = Arc::new(OperationContext {
             registry,
             shell_integration: None,
+            spooler: crate::spool::Spooler::new(Default::default()),
         });
 
         let handle = tokio::spawn(execute_operation(

@@ -34,9 +34,11 @@ pub(super) async fn execute_create_archive(
             src_vfs_id, mismatched.vfs_id
         )));
     }
-    if options.password.is_some() && options.format != ArchiveFormat::Zip {
+    if options.password.is_some()
+        && !matches!(options.format, ArchiveFormat::Zip | ArchiveFormat::SevenZ)
+    {
         return Err(crate::Error::custom(
-            "password protection is only supported for zip archives",
+            "password protection is only supported for zip and 7z archives",
         ));
     }
 
@@ -111,11 +113,21 @@ pub(super) async fn execute_create_archive(
     reporter.send_prepared(total_bytes, walked.len() as u64);
 
     let writer = ArchiveWriter::new(&options)?;
-    let mut sink = ArchiveSink::open(&*dst_vfs, &dst_path).await?;
+    // A format that patches its start after the last byte streams
+    // straight into a destination that can overwrite in place; any other
+    // destination gets the archive spooled and uploaded whole.
+    let mut sink = if writer.patches_start() && !dst_vfs.descriptor().can_write_range() {
+        ArchiveSink::Spool(context.spooler.open())
+    } else {
+        ArchiveSink::open(&*dst_vfs, &dst_path).await?
+    };
 
     let result = match pack_entries(reporter, &*src_vfs, writer, &mut sink, &walked, &cancel).await
     {
-        Ok(()) => sink.finish().await,
+        Ok(patch) => {
+            sink.finish(&*dst_vfs, &dst_path, patch, reporter, &cancel)
+                .await
+        }
         Err(e) => {
             let _ = sink.abort().await;
             Err(e)
@@ -130,6 +142,7 @@ pub(super) async fn execute_create_archive(
     Ok(())
 }
 
+/// Returns the writer's start patch, if its format needs one.
 async fn pack_entries(
     reporter: &mut ProgressReporter,
     src_vfs: &dyn Vfs,
@@ -137,7 +150,7 @@ async fn pack_entries(
     sink: &mut ArchiveSink,
     entries: &[WalkedEntry],
     cancel: &CancellationToken,
-) -> Result<(), crate::Error> {
+) -> Result<Option<StartPatch>, crate::Error> {
     let mut buf = Vec::new();
     let mut bytes_done = 0u64;
     let mut items_done = 0u64;
@@ -254,10 +267,10 @@ async fn pack_entries(
         items_done += 1;
     }
 
-    writer.finish(&mut buf)?;
+    let patch = writer.finish(&mut buf)?;
     cancellable(cancel, sink.write_all(std::mem::take(&mut buf))).await?;
     reporter.maybe_send_progress(bytes_done, items_done, "");
-    Ok(())
+    Ok(patch)
 }
 
 // ---------------------------------------------------------------------------
@@ -291,11 +304,23 @@ impl SourceReader {
 
 // --- Sink: one streaming destination for the whole archive ---
 
-struct ArchiveSink(Box<dyn VfsAsyncWriter>);
+/// Bytes a writer must place at `offset` once the archive is complete.
+struct StartPatch {
+    offset: u64,
+    bytes: Vec<u8>,
+}
+
+enum ArchiveSink {
+    /// Streamed straight into the destination.
+    Direct(Box<dyn VfsAsyncWriter>),
+    /// Held back and uploaded whole, because the destination cannot take
+    /// the writer's start patch in place.
+    Spool(crate::spool::Spool),
+}
 
 impl ArchiveSink {
     async fn open(vfs: &dyn Vfs, path: &Path) -> Result<Self, crate::Error> {
-        Ok(ArchiveSink(
+        Ok(ArchiveSink::Direct(
             vfs.overwrite_async(path, &Default::default()).await?,
         ))
     }
@@ -307,12 +332,61 @@ impl ArchiveSink {
         if chunk.is_empty() {
             return Ok(());
         }
-        self.0.write(&chunk).await?;
+        match self {
+            ArchiveSink::Direct(writer) => {
+                writer.write(&chunk).await?;
+            }
+            ArchiveSink::Spool(spool) => spool.write(&chunk).await?,
+        }
         Ok(())
     }
 
-    async fn finish(self) -> Result<(), crate::Error> {
-        self.0.finish().await
+    /// Commit the archive: close the stream and land the start patch, or
+    /// patch the spool and upload it as a second progress phase.
+    async fn finish(
+        self,
+        vfs: &dyn Vfs,
+        path: &Path,
+        patch: Option<StartPatch>,
+        reporter: &mut ProgressReporter,
+        cancel: &CancellationToken,
+    ) -> Result<(), crate::Error> {
+        match self {
+            ArchiveSink::Direct(writer) => {
+                writer.finish().await?;
+                if let Some(patch) = patch {
+                    cancellable(cancel, vfs.write_range(path, patch.offset, &patch.bytes)).await?;
+                }
+                Ok(())
+            }
+            ArchiveSink::Spool(mut spool) => {
+                if let Some(patch) = patch {
+                    spool.write_at(patch.offset, &patch.bytes).await?;
+                }
+                let total = spool.len();
+                let mut reader = spool.into_reader().await?;
+                reporter.send_prepared(total, 1);
+                let name = path.file_name().unwrap_or("archive").to_string();
+                let mut writer = vfs.overwrite_async(path, &Default::default()).await?;
+                let mut done = 0u64;
+                let mut buf = vec![0u8; VFS_READ_CHUNK_SIZE];
+                loop {
+                    if cancel.is_cancelled() {
+                        return Err(crate::Error::cancelled());
+                    }
+                    let n = reader.read(&mut buf).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    cancellable(cancel, writer.write(&buf[..n])).await?;
+                    done += n as u64;
+                    reporter.maybe_send_progress(done, 0, &name);
+                }
+                cancellable(cancel, writer.finish()).await?;
+                reporter.maybe_send_progress(done, 1, "");
+                Ok(())
+            }
+        }
     }
 
     /// Stop producing archive bytes and discard the writer without
@@ -320,7 +394,7 @@ impl ArchiveSink {
     /// local writer with a write in flight may release its file handle a
     /// beat after this returns — partial-file cleanup is best-effort.
     async fn abort(self) -> Result<(), crate::Error> {
-        drop(self.0);
+        drop(self);
         Ok(())
     }
 }
@@ -330,6 +404,7 @@ impl ArchiveSink {
 enum ArchiveWriter {
     Tar(Box<newt_archive::TarWriter>),
     Zip(Box<newt_archive::ZipWriter>),
+    SevenZ(Box<newt_archive::SevenZWriter>),
 }
 
 impl ArchiveWriter {
@@ -339,13 +414,16 @@ impl ArchiveWriter {
                 options.level,
                 options.password.as_deref(),
             ))),
+            ArchiveFormat::SevenZ => ArchiveWriter::SevenZ(Box::new(
+                newt_archive::SevenZWriter::new(options.level, options.password.as_deref())?,
+            )),
             format => {
                 let compression = match format {
                     ArchiveFormat::Tar => newt_archive::Compression::None,
                     ArchiveFormat::TarGz => newt_archive::Compression::Gzip,
                     ArchiveFormat::TarXz => newt_archive::Compression::Xz,
                     ArchiveFormat::TarZst => newt_archive::Compression::Zstd,
-                    ArchiveFormat::Zip => unreachable!(),
+                    ArchiveFormat::Zip | ArchiveFormat::SevenZ => unreachable!(),
                 };
                 ArchiveWriter::Tar(Box::new(newt_archive::TarWriter::new(
                     compression,
@@ -355,10 +433,16 @@ impl ArchiveWriter {
         })
     }
 
+    /// Whether `finish` hands back bytes for the start of the archive.
+    fn patches_start(&self) -> bool {
+        matches!(self, ArchiveWriter::SevenZ(_))
+    }
+
     fn add_directory(&mut self, rel: &str, file: &File, out: &mut Vec<u8>) -> io::Result<()> {
         match self {
             ArchiveWriter::Tar(w) => w.add_directory(rel, &entry_meta(file), out),
             ArchiveWriter::Zip(w) => w.add_directory(rel, &entry_meta(file), out),
+            ArchiveWriter::SevenZ(w) => w.add_directory(rel, &entry_meta(file), out),
         }
     }
 
@@ -372,6 +456,7 @@ impl ArchiveWriter {
         match self {
             ArchiveWriter::Tar(w) => w.add_symlink(rel, target, &entry_meta(file), out),
             ArchiveWriter::Zip(w) => w.add_symlink(rel, target, &entry_meta(file), out),
+            ArchiveWriter::SevenZ(w) => w.add_symlink(rel, target, &entry_meta(file), out),
         }
     }
 
@@ -386,6 +471,7 @@ impl ArchiveWriter {
             // Tar headers precede data, so the size is a hard commitment.
             ArchiveWriter::Tar(w) => w.begin_file(rel, size.unwrap_or(0), &entry_meta(file), out),
             ArchiveWriter::Zip(w) => w.begin_file(rel, size, &entry_meta(file), out),
+            ArchiveWriter::SevenZ(w) => w.begin_file(rel, size, &entry_meta(file), out),
         }
     }
 
@@ -395,6 +481,10 @@ impl ArchiveWriter {
         match self {
             ArchiveWriter::Tar(w) => w.write_data(chunk, out),
             ArchiveWriter::Zip(w) => {
+                w.write_data(chunk, out)?;
+                Ok(chunk.len())
+            }
+            ArchiveWriter::SevenZ(w) => {
                 w.write_data(chunk, out)?;
                 Ok(chunk.len())
             }
@@ -410,13 +500,23 @@ impl ArchiveWriter {
                 w.end_file(out)?;
                 Ok(0)
             }
+            ArchiveWriter::SevenZ(w) => {
+                w.end_file(out)?;
+                Ok(0)
+            }
         }
     }
 
-    fn finish(self, out: &mut Vec<u8>) -> io::Result<()> {
+    /// Writes the trailer; 7z also hands back its start header, which
+    /// belongs at offset 0 in place of the zeroed placeholder.
+    fn finish(self, out: &mut Vec<u8>) -> io::Result<Option<StartPatch>> {
         match self {
-            ArchiveWriter::Tar(w) => w.finish(out),
-            ArchiveWriter::Zip(w) => w.finish(out),
+            ArchiveWriter::Tar(w) => w.finish(out).map(|()| None),
+            ArchiveWriter::Zip(w) => w.finish(out).map(|()| None),
+            ArchiveWriter::SevenZ(w) => Ok(Some(StartPatch {
+                offset: 0,
+                bytes: w.finish(out)?.to_vec(),
+            })),
         }
     }
 }

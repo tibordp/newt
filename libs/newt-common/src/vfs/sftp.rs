@@ -95,6 +95,9 @@ impl VfsDescriptor for SftpVfsDescriptor {
     fn can_truncate(&self) -> bool {
         true
     }
+    fn can_write_range(&self) -> bool {
+        true
+    }
     fn can_set_metadata(&self) -> bool {
         true
     }
@@ -920,6 +923,33 @@ impl Vfs for SftpVfs {
             .truncate(true)
             .open(sftp_path(path))
             .await?;
+        file.close().await?;
+        self.notifier.notify(path);
+        Ok(())
+    }
+
+    async fn write_range(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), Error> {
+        use tokio::io::AsyncSeekExt;
+        debug!(
+            "sftp: write_range {} at {} ({} bytes)",
+            path,
+            offset,
+            data.len()
+        );
+        self.check_alive()?;
+        let mut file = self
+            .sftp
+            .options()
+            .write(true)
+            .open(sftp_path(path))
+            .await?;
+        let len = file.metadata().await?.len().unwrap_or(0);
+        if offset.saturating_add(data.len() as u64) > len {
+            file.close().await?;
+            return Err(Error::custom("write_range past the end of the file"));
+        }
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.write_all(data).await?;
         file.close().await?;
         self.notifier.notify(path);
         Ok(())

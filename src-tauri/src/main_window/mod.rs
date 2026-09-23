@@ -469,6 +469,7 @@ pub struct ArchiveDialogDefaults {
     pub format: newt_common::operation::ArchiveFormat,
     pub preserve_symlinks: bool,
     pub zip_level: i32,
+    pub sevenz_level: i32,
     pub gzip_level: i32,
     pub xz_level: i32,
     pub zstd_level: i32,

@@ -22,7 +22,9 @@ pub mod sftp;
 pub mod volume;
 
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
-pub use archive::{SevenZArchiveVfs, TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name};
+pub use archive::{
+    CompressedFileVfs, SevenZArchiveVfs, TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name,
+};
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use change_notifier::VfsChangeNotifier;
 pub use disc::{DiscVfs, is_disc_image_name};
@@ -214,6 +216,8 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_create_symlink(&self) -> bool;
     fn can_touch(&self) -> bool;
     fn can_truncate(&self) -> bool;
+    /// `Vfs::write_range`: overwrite bytes in place. Object stores cannot.
+    fn can_write_range(&self) -> bool;
     fn can_set_metadata(&self) -> bool;
 
     // --- Delete ---
@@ -483,6 +487,35 @@ pub trait VfsRandomReader: Send {
     async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error>;
 }
 
+/// A positioned-read handle on any VFS: the backend's own, or one over
+/// `read_range` for a backend without them. Archive and disc mounts are
+/// the latter; their entries never change under a reader, so there is no
+/// identity to pin.
+pub async fn open_read_at(
+    vfs: &std::sync::Arc<dyn Vfs>,
+    path: &Path,
+) -> Result<Box<dyn VfsRandomReader>, Error> {
+    match vfs.open_read_at(path).await {
+        Err(e) if e.kind == crate::ErrorKind::NotSupported => Ok(Box::new(RangeReader {
+            vfs: vfs.clone(),
+            path: path.to_owned(),
+        })),
+        other => other,
+    }
+}
+
+struct RangeReader {
+    vfs: std::sync::Arc<dyn Vfs>,
+    path: path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl VfsRandomReader for RangeReader {
+    async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, Error> {
+        Ok(self.vfs.read_range(&self.path, offset, len).await?.data)
+    }
+}
+
 /// Outcome of a `Vfs::revalidate` pass. Conveyed back to the navigation
 /// layer so it can decide whether to treat any local caches as stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -642,6 +675,13 @@ pub trait Vfs: Send + Sync {
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
         let _ = path;
+        Err(Error::not_supported())
+    }
+
+    /// Overwrite `data` at `offset` in place. The range must lie within
+    /// the file, which is neither truncated nor extended.
+    async fn write_range(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), Error> {
+        let _ = (path, offset, data);
         Err(Error::not_supported())
     }
 

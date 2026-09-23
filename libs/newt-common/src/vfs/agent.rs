@@ -63,6 +63,9 @@ impl VfsDescriptor for AgentVfsDescriptor {
     fn can_truncate(&self) -> bool {
         true
     }
+    fn can_write_range(&self) -> bool {
+        true
+    }
     fn can_set_metadata(&self) -> bool {
         true
     }

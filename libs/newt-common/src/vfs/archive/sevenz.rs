@@ -32,6 +32,7 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::super::open_read_at;
 use super::super::origin::{
     origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
 };
@@ -103,6 +104,9 @@ impl VfsDescriptor for SevenZArchiveVfsDescriptor {
         false
     }
     fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
         false
     }
     fn can_set_metadata(&self) -> bool {
@@ -381,7 +385,7 @@ impl SevenZArchiveVfs {
             {
                 continue;
             }
-            let Ok(mut upstream) = self.upstream.open_read_at(&self.archive_path).await else {
+            let Ok(mut upstream) = open_read_at(&self.upstream, &self.archive_path).await else {
                 continue;
             };
             let folder = &folders[loc.folder];
@@ -805,7 +809,7 @@ impl Vfs for SevenZArchiveVfs {
         };
         let info = &state.fs.folders[loc.folder];
         info.supported().map_err(sz_err)?;
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let mut upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         let folder = &state.folders[loc.folder];
         let reader = {
             let mut folder_state = folder.state.lock().await;
@@ -849,7 +853,7 @@ impl Vfs for SevenZArchiveVfs {
         let want = length.min(total_size - offset);
         let info = &state.fs.folders[loc.folder];
         info.supported().map_err(sz_err)?;
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let mut upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         let folder = &state.folders[loc.folder];
         let mut folder_state = folder.state.lock().await;
         let reader = self

@@ -147,9 +147,7 @@ impl Dispatcher for VfsDispatcher {
             }
             API_VFS_OPEN_READ_AT => {
                 let path: PathBuf = decode(&req[..])?;
-                let ret: Result<StreamId, Error> = self
-                    .vfs
-                    .open_read_at(&path)
+                let ret: Result<StreamId, Error> = crate::vfs::open_read_at(&self.vfs, &path)
                     .await
                     .map(|reader| self.read_at_sessions.open(reader));
                 encode(&ret)?
@@ -264,6 +262,10 @@ impl Dispatcher for VfsDispatcher {
                 let path: PathBuf = decode(&req[..])?;
                 let ret = self.vfs.truncate(&path).await;
                 encode(&ret)?
+            }
+            super::API_VFS_WRITE_RANGE => {
+                let (path, offset, data): (PathBuf, u64, Vec<u8>) = decode(&req[..])?;
+                encode(&self.vfs.write_range(&path, offset, &data).await)?
             }
             API_VFS_REMOVE_FILE => {
                 let path: PathBuf = decode(&req[..])?;

@@ -798,6 +798,7 @@ fn create_local_services(
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
         shell_integration: shell_integration.clone(),
+        spooler: newt_common::spool::Spooler::new(Default::default()),
     });
 
     let operations = operations.clone();

@@ -4,9 +4,7 @@ use std::collections::HashMap;
 // `vfs::path::Path`. Convert at each trait-method boundary via
 // `as_wire_str()` (leading `/` stripped by `normalize_dir_path`).
 use std::path::Path as StdPath;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use log::info;
 use tokio::io::AsyncRead;
@@ -17,16 +15,17 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::super::open_read_at;
 use super::super::origin::{
     origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
 };
 use super::super::pipelined_read::PipelinedReader;
 use super::super::{
-    Breadcrumb, ConsumerGuard, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs,
-    VfsDescriptor, VfsPath,
+    Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
+    VfsPath,
 };
 use super::detect_compression_from_name;
-use super::stream::{MAX_READERS, ReaderPool, StreamDriver, drive_reader};
+use super::stream::{GuardedRead, MAX_READERS, ReaderPool, StreamDriver, drive_reader};
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
     index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
@@ -85,6 +84,9 @@ impl VfsDescriptor for TarArchiveVfsDescriptor {
         false
     }
     fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
         false
     }
     fn can_set_metadata(&self) -> bool {
@@ -278,7 +280,7 @@ impl TarArchiveVfs {
             let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
                 .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
 
-            let mut reader = upstream.open_read_at(&archive_path).await?;
+            let mut reader = open_read_at(&upstream, &archive_path).await?;
             let mut position: u64 = 0;
             let mut last_snapshot = tokio::time::Instant::now();
             let mut last_snapshot_entries = 0usize;
@@ -651,7 +653,7 @@ impl Vfs for TarArchiveVfs {
         let (index, guard) = self.wait_for_index().await?;
         let (_, entry) = self.resolve_for_read(index, path)?;
         let reader = self.prepare_reader(index, entry.uncompressed_offset, entry.size)?;
-        let upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         Ok(Box::new(GuardedRead {
             inner: PipelinedReader::new(
                 StreamDriver::new(
@@ -681,7 +683,7 @@ impl Vfs for TarArchiveVfs {
             });
         }
         let reader = self.prepare_reader(index, entry.uncompressed_offset + offset, want)?;
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let mut upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         let packed = 0..index.metadata.archive_size;
         let (mut data, reader) = drive_reader(upstream.as_mut(), &packed, reader, want).await?;
         self.pool.park(reader);
@@ -705,23 +707,6 @@ impl Vfs for TarArchiveVfs {
                 })
                 .collect(),
         ))
-    }
-}
-
-/// A streaming read keeps its indexer consumer slot for its whole
-/// lifetime, so the indexer outlives the navigation that started it.
-struct GuardedRead {
-    inner: PipelinedReader<StreamDriver>,
-    _guard: ConsumerGuard,
-}
-
-impl AsyncRead for GuardedRead {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 

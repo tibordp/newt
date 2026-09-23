@@ -1725,9 +1725,9 @@ time_format: string }
 /**
  * Pack-dialog defaults sourced from `ArchivePreferences`.
  */
-export type ArchiveDialogDefaults = { format: ArchiveFormat; preserve_symlinks: boolean; zip_level: number; gzip_level: number; xz_level: number; zstd_level: number }
-export type ArchiveFormat = "zip" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
-export type ArchiveFormatPref = "zip" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
+export type ArchiveDialogDefaults = { format: ArchiveFormat; preserve_symlinks: boolean; zip_level: number; sevenz_level: number; gzip_level: number; xz_level: number; zstd_level: number }
+export type ArchiveFormat = "zip" | "seven_z" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
+export type ArchiveFormatPref = "zip" | "seven_z" | "tar" | "tar_gz" | "tar_xz" | "tar_zst"
 export type ArchiveOptions = { format: ArchiveFormat; 
 /**
  * `None` = per-format default (gzip/xz/deflate 6, zstd 3); zip 0 = store.
@@ -1738,7 +1738,7 @@ level: number | null;
  */
 preserve_symlinks: boolean; 
 /**
- * Zip only — WinZip AES-256 encryption.
+ * Zip (WinZip AES-256) and 7z (7-Zip's AES-256) only.
  */
 password: string | null }
 export type ArchivePreferences = { 
@@ -1754,6 +1754,10 @@ preserve_symlinks: boolean;
  * Deflate level for zip archives; 0 stores entries uncompressed.
  */
 zip_level: number; 
+/**
+ * LZMA2 level for 7z archives; 0 stores entries uncompressed.
+ */
+sevenz_level: number; 
 /**
  * Compression level for tar.gz archives.
  */

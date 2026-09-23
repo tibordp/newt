@@ -25,6 +25,7 @@
 mod folder;
 mod header;
 mod probe;
+mod writer;
 
 #[cfg(test)]
 mod tests;
@@ -34,6 +35,10 @@ use std::ops::Range;
 pub use crate::sansio::{Chunk, Step};
 pub use folder::{AesParams, Bcj2Sides, FolderInfo, MAX_BCJ2_SIDE, SideStream, derive_key};
 pub use probe::{ProbeProgress, ProbeStep, SevenZProbeOp};
+pub use writer::{SOLID_BLOCK, SevenZWriter};
+
+pub(super) const SIGNATURE: [u8; 6] = [b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C];
+pub(super) const SIGNATURE_HEADER_LEN: u64 = 32;
 
 /// Header and packed-header slices are requested in pieces of at most this.
 pub const READ_SLICE: u64 = 1024 * 1024;

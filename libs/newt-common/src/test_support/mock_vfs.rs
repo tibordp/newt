@@ -92,6 +92,7 @@ pub struct MockVfsConfig {
     pub has_symlinks: bool,
     pub can_rename: bool,
     pub can_copy_within: bool,
+    pub can_write_range: bool,
 }
 
 impl Default for MockVfsConfig {
@@ -108,6 +109,7 @@ impl Default for MockVfsConfig {
             can_trash: true,
             has_symlinks: true,
             can_rename: true,
+            can_write_range: true,
             can_copy_within: false,
         }
     }
@@ -152,6 +154,9 @@ impl VfsDescriptor for MockVfsDescriptor {
     }
     fn can_truncate(&self) -> bool {
         false
+    }
+    fn can_write_range(&self) -> bool {
+        self.config.can_write_range
     }
     fn can_set_metadata(&self) -> bool {
         self.config.can_set_metadata
@@ -725,6 +730,30 @@ impl Vfs for MockVfs {
 
     async fn truncate(&self, _path: &Path) -> Result<(), crate::Error> {
         Err(crate::Error::not_supported())
+    }
+
+    async fn write_range(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), crate::Error> {
+        if !self.descriptor.can_write_range() {
+            return Err(crate::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(path, "write_range") {
+            return Err(e);
+        }
+        let mut entries = self.entries.lock();
+        match entries.get_mut(path.as_wire_str()) {
+            Some(MockEntry::File { content, .. }) => {
+                let end = offset as usize + data.len();
+                if end > content.len() {
+                    return Err(crate::Error::custom("write_range past the end of the file"));
+                }
+                content[offset as usize..end].copy_from_slice(data);
+                Ok(())
+            }
+            _ => Err(crate::Error {
+                kind: crate::ErrorKind::NotFound,
+                message: format!("file not found: {}", path),
+            }),
+        }
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), crate::Error> {

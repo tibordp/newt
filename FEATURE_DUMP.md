@@ -457,6 +457,12 @@ Opens a modal dialog with:
 
 **Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for single files.
 
+**Positioned reads everywhere**: `vfs::open_read_at` hands out a backend's own positioned-read handle, or one over `read_range` for a VFS without them (archive and disc mounts, whose entries never change under a reader). Everything that reads through handles — the viewer's file server, so media plays from inside archives; nested mounts, so a tar inside a zip indexes; the agent-side `OPEN_READ_AT` dispatch — goes through it.
+
+**In-place writes**: `Vfs::write_range` overwrites a byte range of an existing file without truncating or extending it, behind the `can_write_range` capability (Local, SFTP and remote sessions; never S3). Its first user is the 7z start-header patch; anything that fixes up a fixed-layout file after streaming it belongs here too.
+
+**Spooling** (`newt_common::spool`): a `Spooler` per session hands out `Spool`s — append-only buffers with in-place patching, kept in memory up to a threshold (32 MiB) and spilled to a temp file past it, every held byte counted against the spooler's optional quota and released when the spool or its reader is dropped, temp file included. An operation that must hold bytes before it can hand them on (a 7z bound for S3) spools rather than inventing its own temp handling.
+
 **Cross-VFS copies**: Fully supported. You can copy files between any combination of Local, S3, SFTP, and Archive VFS types — every VFS speaks the same async read/write surface, so any readable source streams into any writable destination.
 
 ### Move (F6)
@@ -474,17 +480,18 @@ Packs the active pane's selection into a new archive in the other pane's directo
 
 Opens a modal dialog with:
 
-- **Format tab bar**: `zip`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`. Switching formats swaps the extension on the name field.
+- **Format tab bar**: `zip`, `7z`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`. Switching formats swaps the extension on the name field.
 - **Archive name** (auto-focused, stem pre-selected): defaults to the single selection's stem, or the containing directory's name for multi-selections. Empty or separator-containing input greys out the primary button — the archive is a single leaf in the destination, so to write it into a subdirectory you navigate the other pane there. Which characters separate comes from the destination's `PathStyle` (`name_separators`, shared with the Copy/Move dialog), so `\` blocks on a Windows-styled destination and is a legal name character on a Unix one.
 - **Destination** display (read-only, the other pane's directory).
-- **Compression level** (per-format, seeded from the `[archives]` preferences): gzip/xz/deflate 0–9, zstd 1–22; zip level 0 stores entries uncompressed. Hidden for plain tar. Each format remembers its own level while the dialog is open.
+- **Compression level** (per-format, seeded from the `[archives]` preferences): gzip/xz/deflate/LZMA2 0–9, zstd 1–22; zip and 7z level 0 store entries uncompressed. Hidden for plain tar. Each format remembers its own level while the dialog is open.
 - **Preserve symlinks** (default on, seeded from preferences): stores symlinks as symlink entries. When off, symlinks are followed — symlinked files are stored as regular files, symlinked directories are descended into (with cycle detection; a cycle raises a skip prompt).
-- **Password** (zip only, optional, with confirm field): WinZip AES-256 (AE-2) encryption. Opens in 7-Zip/WinRAR/Keka and Newt's own archive VFS (lazy askpass); not in Windows Explorer or macOS Archive Utility.
+- **Password** (zip and 7z, optional, with confirm field): zip gets WinZip AES-256 (AE-2), 7z gets 7-Zip's AES-256 per solid block with the header in the clear (file names stay visible, as 7-Zip without `-mhe`). Both open in 7-Zip/WinRAR/Keka and Newt's own archive VFS (lazy askpass); zip's not in Windows Explorer or macOS Archive Utility.
 
 **Writers** (in-tree `newt-archive` crate, sans-IO streaming state machines):
 
 - **tar**: ustar with pax extended headers when needed (long/unsplittable paths, long link targets, files ≥ 8 GiB, large uid/gid, pre-epoch or sub-second mtimes). Preserves mode, uid/gid (or uname/gname), and mtime from the source dirent; sensible defaults (0644/0755, archive-creation time) when the source VFS has no such metadata (e.g. S3).
 - **zip**: streaming data-descriptor mode (no seeking — this is what makes append-only sinks like S3 multipart possible), UTF-8 names, per-entry zip64 committed up front from the scanned size, zip64 EOCD for >65k entries or >4 GiB offsets, unix modes in external attributes, symlink entries, extended-timestamp extra field. DOS times are written as UTC.
+- **7z**: solid blocks of 256 MiB of input in walk order, one raw LZMA2 stream each from the bundled liblzma (level 0 stores), unix modes and mtimes in the attributes, symlinks as 7-Zip's `-snl` stores them, per-entry CRCs, a plain (uncompressed) header. The format's one non-streamable piece is its 32-byte start header, which names the header's offset, size and CRC: the writer emits a zeroed placeholder first and hands the real bytes back from `finish`. Landing them takes the destination's `write_range` (Local, SFTP, remote sessions); a destination without it (S3) gets the archive **spooled** — in memory up to 32 MiB, then a temp file on the side running the operation, the agent's host in a remote session — and uploaded whole as a second progress phase. No BCJ filters yet, so executables compress a little worse than 7-Zip's output.
 
 **Execution**:
 
@@ -1037,6 +1044,7 @@ Mount and browse archive files as virtual read-only filesystems.
 | CPIO + compression | `.cpio.gz`, `.cpio.bz2`, `.cpio.xz`, `.cpio.zst` |
 | ZIP | `.zip`, `.jar`, `.war`, `.ear`, `.apk`, `.ipa` |
 | 7z | `.7z` |
+| Bare compressed file | `.gz`, `.bz2`, `.xz`, `.zst`, `.zstd` (not on a tar or cpio name) |
 
 **Auto-detection**: Pressing Enter on a file with a recognized archive extension mounts it automatically and navigates into the archive root (instead of opening the file).
 
@@ -1044,6 +1052,8 @@ Mount and browse archive files as virtual read-only filesystems.
 - Index is built by scanning the archive stream. Files appear incrementally in the UI as indexing progresses — you can browse partial results while the rest of the archive is still being indexed.
 - Periodic snapshots every 200ms update the file list.
 - If you navigate away before indexing completes, the indexing is cancelled.
+
+**Bare compressed files** (`whatever.gz`): mount as a one-entry filesystem whose entry is the archive's name without its suffix (`notes.txt.gz` → `notes.txt`), with no mode, owner or timestamps — the containers carry nothing worth showing. Nothing but a full pass tells the unpacked length, so the stream is indexed in the background at first use like a tar: the listing lands at once without a size and refreshes with it when indexing completes (partial and refreshable if the pane left in between; a cancelled run resumes from its last snapshot), and reads wait for the complete index. Reads then go through the same reader pool and stream driver as tar and 7z.
 
 **ZIP indexing** (one-shot, sans-IO): the in-tree `newt_archive::zip` reader (disc-image architecture, not the tar one — no external zip crate, no `spawn_blocking`/`block_on` anywhere) fetches the central directory at EOF in bounded 1 MiB slices with determinate progress, yielding the complete entry table; listings and `file_details` afterwards cost zero upstream reads. Reads are random-access: stored entries map 1:1 onto upstream range reads (ISO-extent style), compressed entries stream through a resumable decrypt→decompress cursor that gets parked per archive and resumed by the next sequential range read — the viewer's chunk fan-out costs one decompression pass total, not one per chunk. Dropping a read future drops the in-flight upstream read (async-native cancellation).
 
@@ -1502,9 +1512,10 @@ shell_integration = true    # `newt` CLI in built-in terminals / user commands (
 git_status = true           # Git enricher: per-row status colors + branch badge
 
 [archives]
-default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "tar", "tar_gz", "tar_xz", "tar_zst"
+default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "seven_z", "tar", "tar_gz", "tar_xz", "tar_zst"
 preserve_symlinks = true    # Store symlinks as symlinks (false: follow them)
 zip_level = 6               # Deflate level for zip (0-9, 0 = store)
+sevenz_level = 6            # LZMA2 level for 7z (0-9, 0 = store)
 gzip_level = 6              # tar.gz level (0-9)
 xz_level = 6                # tar.xz level (0-9)
 zstd_level = 3              # tar.zst level (1-22)

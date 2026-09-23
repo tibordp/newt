@@ -308,6 +308,7 @@ const VFS_ICONS: Record<string, string> = {
   archive: "\u{eaa0}",
   archive_zip: "\u{eaa0}",
   archive_7z: "\u{eaa0}",
+  compressed_file: "\u{eaa0}",
   remote: "\u{f048d}",
   agent: "\u{f048d}",
 };

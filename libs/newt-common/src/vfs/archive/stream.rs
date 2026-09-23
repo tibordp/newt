@@ -5,14 +5,17 @@
 //! streams one entry and hands its reader back when it is done.
 
 use std::ops::Range;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use iluvatar::{EngineRequest, StreamReader};
+use tokio::io::AsyncRead;
 
 use crate::Error;
 
-use super::super::VfsRandomReader;
-use super::super::pipelined_read::{ChunkDriver, DriveStep};
+use super::super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
+use super::super::{ConsumerGuard, VfsRandomReader};
 
 /// Parked readers kept per stream, LRU at the back. Each holds a live
 /// decoder with the stream's whole dictionary, so large-window streams
@@ -266,5 +269,23 @@ impl Drop for StreamDriver {
         if let Some(reader) = self.reader.take() {
             self.pool.park(reader);
         }
+    }
+}
+
+/// A streaming read over a background-indexed stream keeps its indexer
+/// consumer slot for its whole lifetime, so the indexer outlives the
+/// navigation that started it.
+pub(super) struct GuardedRead {
+    pub(super) inner: PipelinedReader<StreamDriver>,
+    pub(super) _guard: ConsumerGuard,
+}
+
+impl AsyncRead for GuardedRead {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }

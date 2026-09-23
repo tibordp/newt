@@ -84,6 +84,58 @@ impl AesCtrEncryptor {
     }
 }
 
+/// AES-256-CBC as the 7z AES coder writes it: whole blocks as they come,
+/// the final partial block zero-padded (the decoder cuts at the coder's
+/// unpack size).
+pub(crate) struct AesCbcEncryptor {
+    cipher: Aes256,
+    prev: [u8; 16],
+    carry: Vec<u8>,
+}
+
+impl AesCbcEncryptor {
+    pub(crate) fn new(key: &[u8; 32], iv: &[u8; 16]) -> Self {
+        Self {
+            cipher: Aes256::new_from_slice(key).unwrap(),
+            prev: *iv,
+            carry: Vec::new(),
+        }
+    }
+
+    pub(crate) fn encrypt(&mut self, input: &[u8], out: &mut Vec<u8>) {
+        let mut carry = std::mem::take(&mut self.carry);
+        carry.extend_from_slice(input);
+        let whole = carry.len() - carry.len() % 16;
+        for block in carry[..whole].as_chunks::<16>().0 {
+            out.extend_from_slice(&self.block(block));
+        }
+        carry.drain(..whole);
+        self.carry = carry;
+    }
+
+    pub(crate) fn finish(mut self, out: &mut Vec<u8>) {
+        if self.carry.is_empty() {
+            return;
+        }
+        let mut last = [0u8; 16];
+        last[..self.carry.len()].copy_from_slice(&self.carry);
+        out.extend_from_slice(&self.block(&last));
+    }
+
+    fn block(&mut self, plain: &[u8]) -> [u8; 16] {
+        let mut block = [0u8; 16];
+        for (b, (p, v)) in block.iter_mut().zip(plain.iter().zip(&self.prev)) {
+            *b = p ^ v;
+        }
+        self.cipher
+            .encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(
+                &mut block,
+            ));
+        self.prev = block;
+        block
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

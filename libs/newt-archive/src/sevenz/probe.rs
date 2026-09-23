@@ -6,12 +6,9 @@ use std::ops::Range;
 use super::folder::{FolderInfo, decode_all};
 use super::header::{self, FileRecord, Reader, StreamsInfo};
 use super::{
-    Chunk, EntryKind, Location, MAX_HEADER, MAX_ROUNDS, READ_SLICE, Result, SevenZEntry,
-    SevenZError, SevenZFs, Store, corrupt, filetime_ms,
+    Chunk, EntryKind, Location, MAX_HEADER, MAX_ROUNDS, READ_SLICE, Result, SIGNATURE,
+    SIGNATURE_HEADER_LEN, SevenZEntry, SevenZError, SevenZFs, Store, corrupt, filetime_ms,
 };
-
-const SIGNATURE: [u8; 6] = [b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C];
-const SIGNATURE_HEADER_LEN: u64 = 32;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProbeProgress {

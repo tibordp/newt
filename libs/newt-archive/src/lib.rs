@@ -23,6 +23,7 @@ mod tar;
 pub mod zip;
 
 pub use compress::{Compression, Compressor};
+pub use sevenz::SevenZWriter;
 pub use tar::TarWriter;
 pub use zip::ZipWriter;
 

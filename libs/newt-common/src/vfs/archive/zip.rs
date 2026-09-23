@@ -27,6 +27,7 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, UserGroup};
 use crate::vfs::{FileChunk, FileDetails};
 
+use super::super::open_read_at;
 use super::super::origin::{
     origin_breadcrumbs, origin_format_path, origin_mount_label, origin_try_parse_display_path,
 };
@@ -90,6 +91,9 @@ impl VfsDescriptor for ZipArchiveVfsDescriptor {
         false
     }
     fn can_truncate(&self) -> bool {
+        false
+    }
+    fn can_write_range(&self) -> bool {
         false
     }
     fn can_set_metadata(&self) -> bool {
@@ -286,7 +290,9 @@ impl ZipArchiveVfs {
                 && matches!(e.encryption, zr::Encryption::None)
         });
         let reads = candidates.map(|entry| async move {
-            let mut upstream = self.upstream.open_read_at(&self.archive_path).await.ok()?;
+            let mut upstream = open_read_at(&self.upstream, &self.archive_path)
+                .await
+                .ok()?;
             let open = drive_open(upstream.as_mut(), entry, fs.file_size)
                 .await
                 .ok()?;
@@ -699,7 +705,7 @@ impl Vfs for ZipArchiveVfs {
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
         let state = self.ensure_state().await?;
         let entry = self.resolve_entry(state, path, true)?;
-        let mut upstream = self.upstream.open_read_at(&self.archive_path).await?;
+        let mut upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         let open = self.open_entry(state, entry, upstream.as_mut()).await?;
         let key = self.key_if_encrypted(entry, &open).await?;
         let reader = zr::EntryReader::new(entry, &open, key.as_ref(), 0).map_err(zip_err)?;
@@ -730,7 +736,7 @@ impl Vfs for ZipArchiveVfs {
             Some(open) => open,
             None => {
                 let handle = upstream
-                    .insert(self.upstream.open_read_at(&self.archive_path).await?)
+                    .insert(open_read_at(&self.upstream, &self.archive_path).await?)
                     .as_mut();
                 let open = drive_open(handle, entry, state.fs.file_size).await?;
                 self.opens.lock().insert(entry.name.clone(), open.clone());
@@ -757,7 +763,7 @@ impl Vfs for ZipArchiveVfs {
         let key = self.key_if_encrypted(entry, &open).await?;
         let mut upstream = match upstream {
             Some(handle) => handle,
-            None => self.upstream.open_read_at(&self.archive_path).await?,
+            None => open_read_at(&self.upstream, &self.archive_path).await?,
         };
         let reader = match self.take_cursor(&entry.name, offset) {
             Some(mut cursor) => {

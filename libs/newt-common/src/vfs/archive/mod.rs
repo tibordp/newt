@@ -8,10 +8,12 @@ use super::{Vfs, VfsPath};
 mod stream;
 mod tree;
 
+mod compressed;
 mod sevenz;
 mod tar;
 mod zip;
 
+pub use self::compressed::CompressedFileVfs;
 pub use self::sevenz::SevenZArchiveVfs;
 pub use self::tar::TarArchiveVfs;
 pub use self::zip::ZipArchiveVfs;
@@ -58,12 +60,21 @@ pub async fn mount(
             ctx.askpass_provider.cloned(),
             ctx.progress_reporter.clone(),
         ))
-    } else {
+    } else if is_tar_name(archive_path.as_wire_str()) {
         Arc::new(TarArchiveVfs::new(
             upstream_vfs,
             archive_path,
             origin,
             mount_meta,
+            ctx.progress_reporter.clone(),
+        ))
+    } else {
+        Arc::new(CompressedFileVfs::new(
+            upstream_vfs,
+            archive_path,
+            origin,
+            mount_meta,
+            display_path,
             ctx.progress_reporter.clone(),
         ))
     };
@@ -81,8 +92,20 @@ const TAR_EXTENSIONS: &[&str] = &[
 
 const ZIP_EXTENSIONS: &[&str] = &["zip", "jar", "war", "ear", "apk", "ipa"];
 
+/// Suffixes of a bare compressed file, which mounts as a one-entry
+/// filesystem; the same suffixes on a tar or cpio name mean the container.
+const COMPRESSED_EXTENSIONS: &[&str] = &["gz", "bz2", "xz", "zst", "zstd"];
+
 pub fn is_archive_name(name: &str) -> bool {
-    is_tar_name(name) || is_zip_name(name) || is_sevenz_name(name)
+    is_tar_name(name) || is_zip_name(name) || is_sevenz_name(name) || is_compressed_name(name)
+}
+
+pub fn is_compressed_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !is_tar_name(name)
+        && COMPRESSED_EXTENSIONS
+            .iter()
+            .any(|ext| lower.ends_with(&format!(".{}", ext)))
 }
 
 pub fn is_sevenz_name(name: &str) -> bool {
@@ -139,6 +162,23 @@ mod name_tests {
         assert!(is_zip_name("app.jar"));
         assert!(is_zip_name("deploy.war"));
         assert!(is_zip_name("app.apk"));
+    }
+
+    #[test]
+    fn bare_compressed_files_are_archives_but_not_tars() {
+        use super::{compressed::entry_name, is_compressed_name};
+        for name in ["notes.txt.gz", "disk.img.XZ", "dump.sql.zst", "log.bz2"] {
+            assert!(is_archive_name(name), "{}", name);
+            assert!(is_compressed_name(name), "{}", name);
+        }
+        assert!(!is_compressed_name("file.tar.gz"));
+        assert!(!is_compressed_name("file.tgz"));
+        assert!(!is_compressed_name("file.cpio.zst"));
+        assert!(!is_compressed_name("file.txt"));
+        assert_eq!(entry_name("notes.txt.gz"), "notes.txt");
+        assert_eq!(entry_name("disk.img.XZ"), "disk.img");
+        assert_eq!(entry_name(".gz"), ".gz");
+        assert_eq!(entry_name("plain"), "plain");
     }
 
     #[test]

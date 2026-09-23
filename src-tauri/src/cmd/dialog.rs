@@ -551,6 +551,7 @@ pub fn dialog(
                             format: prefs.default_format.into(),
                             preserve_symlinks: prefs.preserve_symlinks,
                             zip_level: prefs.zip_level,
+                            sevenz_level: prefs.sevenz_level,
                             gzip_level: prefs.gzip_level,
                             xz_level: prefs.xz_level,
                             zstd_level: prefs.zstd_level,

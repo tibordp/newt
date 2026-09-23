@@ -337,6 +337,8 @@ pub enum ArchiveFormatPref {
     #[cfg_attr(windows, default)]
     #[schemars(title = ".zip")]
     Zip,
+    #[schemars(title = ".7z")]
+    SevenZ,
     #[schemars(title = ".tar")]
     Tar,
     #[schemars(title = ".tar.gz")]
@@ -353,6 +355,7 @@ impl From<ArchiveFormatPref> for newt_common::operation::ArchiveFormat {
         use newt_common::operation::ArchiveFormat;
         match pref {
             ArchiveFormatPref::Zip => ArchiveFormat::Zip,
+            ArchiveFormatPref::SevenZ => ArchiveFormat::SevenZ,
             ArchiveFormatPref::Tar => ArchiveFormat::Tar,
             ArchiveFormatPref::TarGz => ArchiveFormat::TarGz,
             ArchiveFormatPref::TarXz => ArchiveFormat::TarXz,
@@ -373,6 +376,9 @@ pub struct ArchivePreferences {
     /// Deflate level for zip archives; 0 stores entries uncompressed.
     #[schemars(title = "Zip Compression Level", range(min = 0, max = 9))]
     pub zip_level: i32,
+    /// LZMA2 level for 7z archives; 0 stores entries uncompressed.
+    #[schemars(title = "7z Compression Level", range(min = 0, max = 9))]
+    pub sevenz_level: i32,
     /// Compression level for tar.gz archives.
     #[schemars(title = "Gzip Compression Level", range(min = 0, max = 9))]
     pub gzip_level: i32,
@@ -390,6 +396,7 @@ impl Default for ArchivePreferences {
             default_format: ArchiveFormatPref::default(),
             preserve_symlinks: true,
             zip_level: 6,
+            sevenz_level: 6,
             gzip_level: 6,
             xz_level: 6,
             zstd_level: 3,

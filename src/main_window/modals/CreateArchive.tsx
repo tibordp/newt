@@ -19,6 +19,7 @@ type CreateArchiveProps = CommonDialogProps & ModalDataOf<"create_archive">;
 
 const FORMATS: { tag: ArchiveFormat; ext: string }[] = [
   { tag: "zip", ext: "zip" },
+  { tag: "seven_z", ext: "7z" },
   { tag: "tar", ext: "tar" },
   { tag: "tar_gz", ext: "tar.gz" },
   { tag: "tar_xz", ext: "tar.xz" },
@@ -27,6 +28,7 @@ const FORMATS: { tag: ArchiveFormat; ext: string }[] = [
 
 const LEVEL_RANGE: Record<ArchiveFormat, [number, number] | null> = {
   zip: [0, 9],
+  seven_z: [0, 9],
   tar: null,
   tar_gz: [0, 9],
   tar_xz: [0, 9],
@@ -64,6 +66,7 @@ export default function CreateArchive({
   // One remembered level per format, so tab-switching doesn't lose edits.
   const [levels, setLevels] = useState<Record<ArchiveFormat, number>>({
     zip: defaults.zip_level,
+    seven_z: defaults.sevenz_level,
     tar: 0,
     tar_gz: defaults.gzip_level,
     tar_xz: defaults.xz_level,
@@ -76,8 +79,9 @@ export default function CreateArchive({
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const range = LEVEL_RANGE[format];
+  const encryptable = format === "zip" || format === "seven_z";
   const passwordMismatch =
-    format === "zip" && password !== "" && password !== confirmPassword;
+    encryptable && password !== "" && password !== confirmPassword;
   // The archive is a single leaf in the destination, so a separator in the
   // name would silently write it into a subdirectory. Which characters
   // those are comes from the destination filesystem — `\` only separates on
@@ -110,7 +114,7 @@ export default function CreateArchive({
           format,
           level: range ? levels[format] : null,
           preserve_symlinks: preserveSymlinks,
-          password: format === "zip" && password !== "" ? password : null,
+          password: encryptable && password !== "" ? password : null,
         },
       ),
     );
@@ -155,9 +159,7 @@ export default function CreateArchive({
                   }
                 }}
               />
-              {format === "zip" && (
-                <span className={styles.hint}>0 = store</span>
-              )}
+              {encryptable && <span className={styles.hint}>0 = store</span>}
             </FieldRow>
           )}
           <CheckboxField
@@ -165,7 +167,7 @@ export default function CreateArchive({
             checked={preserveSymlinks}
             onChange={setPreserveSymlinks}
           />
-          {format === "zip" && (
+          {encryptable && (
             <>
               <FieldRow label="Password">
                 <input
@@ -187,8 +189,9 @@ export default function CreateArchive({
                     />
                   </FieldRow>
                   <p className={styles.hint}>
-                    AES-256 — opens in 7-Zip, WinRAR, or Keka; not in Windows
-                    Explorer.
+                    {format === "zip"
+                      ? "AES-256 — opens in 7-Zip, WinRAR, or Keka; not in Windows Explorer."
+                      : "AES-256 — file names stay visible; opens in 7-Zip, WinRAR, or Keka."}
                   </p>
                 </>
               )}

@@ -343,6 +343,7 @@ async fn run_agent() -> Result<(), Error> {
     let op_context = Arc::new(OperationContext {
         registry: registry.clone(),
         shell_integration: shell_integration.clone(),
+        spooler: newt_common::spool::Spooler::new(Default::default()),
     });
 
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())

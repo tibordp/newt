@@ -644,3 +644,184 @@ fn not_a_7z_and_truncation() {
     bad[last] ^= 0xFF;
     assert!(matches!(probe(&bad).unwrap_err(), SevenZError::Corrupt(_)));
 }
+
+// ─── Writer ───
+
+/// Pack `entries` (`(name, Some(data))` files, `(name, None)` directories,
+/// `(name, Some(target))` with a leading `@` symlinks) and patch the start
+/// header in, as the operation does.
+fn write_archive(
+    level: Option<i32>,
+    password: Option<&str>,
+    solid_block: u64,
+    entries: &[(&str, Option<&[u8]>)],
+) -> Vec<u8> {
+    let mut w = SevenZWriter::new(level, password)
+        .unwrap()
+        .solid_block(solid_block);
+    let mut out = Vec::new();
+    let meta = crate::EntryMeta {
+        mode: Some(0o640),
+        mtime_ms: Some(MTIME_MS),
+        ..Default::default()
+    };
+    for (name, data) in entries {
+        match data {
+            None => w.add_directory(name, &meta, &mut out).unwrap(),
+            Some(target) if name.starts_with('@') => {
+                let target = std::str::from_utf8(target).unwrap();
+                w.add_symlink(&name[1..], target, &meta, &mut out).unwrap()
+            }
+            Some(data) => {
+                w.begin_file(name, Some(data.len() as u64), &meta, &mut out)
+                    .unwrap();
+                for chunk in data.chunks(7_001) {
+                    w.write_data(chunk, &mut out).unwrap();
+                }
+                w.end_file(&mut out).unwrap();
+            }
+        }
+    }
+    let start = w.finish(&mut out).unwrap();
+    out[..32].copy_from_slice(&start);
+    out
+}
+
+fn written_set() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("hello.txt", b"hello world\n".to_vec()),
+        ("dir/nested.txt", b"nested content\n".to_vec()),
+        ("dir/big.bin", pattern(3, 300_000)),
+        ("dir/noise.bin", noise(5, 70_000)),
+        ("empty.txt", Vec::new()),
+        ("π — unicode.txt", "unicode ☃\n".as_bytes().to_vec()),
+    ]
+}
+
+fn written_entries<'a>(
+    set: &'a [(&'static str, Vec<u8>)],
+) -> Vec<(&'static str, Option<&'a [u8]>)> {
+    let mut entries: Vec<(&str, Option<&[u8]>)> = vec![("dir", None), ("emptydir", None)];
+    entries.extend(set.iter().map(|(n, d)| (*n, Some(d.as_slice()))));
+    entries.push(("@links/soft.txt", Some(b"../hello.txt".as_slice())));
+    entries
+}
+
+#[test]
+fn writer_round_trips_through_the_reader() {
+    let set = written_set();
+    for (level, password, solid_block) in [
+        (None, None, u64::MAX),
+        (Some(0), None, u64::MAX),
+        (Some(9), None, 100_000),
+        (Some(3), Some("secret"), u64::MAX),
+        (Some(0), Some("secret"), 100_000),
+    ] {
+        let image = write_archive(level, password, solid_block, &written_entries(&set));
+        let fs = probe_with(&image, password)
+            .unwrap_or_else(|e| panic!("{:?}/{:?}: {}", level, password, e));
+        let names: Vec<&str> = fs.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "dir",
+                "emptydir",
+                "hello.txt",
+                "dir/nested.txt",
+                "dir/big.bin",
+                "dir/noise.bin",
+                "empty.txt",
+                "π — unicode.txt",
+                "links/soft.txt",
+            ]
+        );
+        assert_eq!(entry(&fs, "dir").kind, EntryKind::Dir);
+        assert_eq!(entry(&fs, "emptydir").kind, EntryKind::Dir);
+        assert_eq!(entry(&fs, "links/soft.txt").kind, EntryKind::Symlink);
+        assert_eq!(entry(&fs, "hello.txt").kind, EntryKind::File);
+        assert_eq!(entry(&fs, "hello.txt").mode, Some(0o640));
+        assert_eq!(entry(&fs, "hello.txt").modified, Some(MTIME_MS));
+        assert!(entry(&fs, "empty.txt").location.is_none());
+        // A block closes once it holds `solid_block` bytes, at the next
+        // entry: big.bin ends the first, everything after fits the second.
+        let expected_folders = if solid_block == u64::MAX { 1 } else { 2 };
+        assert_eq!(fs.folders.len(), expected_folders, "{:?}", solid_block);
+        assert_eq!(fs.folders[0].aes.is_some(), password.is_some());
+        let files: Vec<(&str, Vec<u8>)> = set.iter().map(|(n, d)| (*n, d.clone())).collect();
+        check_set(&image, &fs, &files, password);
+        assert_eq!(
+            read_entry(&image, &fs, "links/soft.txt", password).unwrap(),
+            b"../hello.txt"
+        );
+        if password.is_some() {
+            assert!(matches!(
+                read_entry(&image, &fs, "hello.txt", None),
+                Err(SevenZError::PasswordRequired)
+            ));
+        }
+    }
+}
+
+#[test]
+fn writer_output_is_streamed_as_it_goes() {
+    let mut w = SevenZWriter::new(Some(1), None).unwrap();
+    let mut out = Vec::new();
+    let meta = crate::EntryMeta::default();
+    w.begin_file("big.bin", None, &meta, &mut out).unwrap();
+    for seed in 1..=8 {
+        w.write_data(&noise(seed, 1 << 20), &mut out).unwrap();
+    }
+    // Incompressible input comes out about as it goes in, less the
+    // encoder's window; nothing waits for the end.
+    assert!(out.len() > 4 << 20, "{}", out.len());
+    w.end_file(&mut out).unwrap();
+    assert!(w.finish(&mut out).is_ok());
+}
+
+/// Interoperability with 7-Zip, when `7zz` is on the PATH.
+#[test]
+fn written_archives_open_in_7zip() {
+    let Ok(which) = std::process::Command::new("7zz").arg("i").output() else {
+        eprintln!("7zz not found; skipping");
+        return;
+    };
+    assert!(which.status.success());
+    let set = written_set();
+    let dir = std::env::temp_dir().join(format!("newt-7z-writer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (level, password) in [(Some(5), None), (Some(0), None), (Some(5), Some("secret"))] {
+        let image = write_archive(level, password, 120_000, &written_entries(&set));
+        let path = dir.join(format!("l{}-{}.7z", level.unwrap(), password.is_some()));
+        std::fs::write(&path, &image).unwrap();
+        let mut args = vec!["t".to_string(), path.to_string_lossy().into_owned()];
+        if let Some(pw) = password {
+            args.push(format!("-p{}", pw));
+        }
+        let test = std::process::Command::new("7zz")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(
+            test.status.success(),
+            "7zz t {:?}: {}",
+            path,
+            String::from_utf8_lossy(&test.stdout)
+        );
+        let mut args = vec![
+            "e".to_string(),
+            "-so".to_string(),
+            path.to_string_lossy().into_owned(),
+            "dir/big.bin".to_string(),
+        ];
+        if let Some(pw) = password {
+            args.push(format!("-p{}", pw));
+        }
+        let extract = std::process::Command::new("7zz")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(extract.status.success());
+        assert_eq!(extract.stdout, pattern(3, 300_000));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

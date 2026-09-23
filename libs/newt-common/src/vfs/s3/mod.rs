@@ -105,6 +105,9 @@ impl VfsDescriptor for S3VfsDescriptor {
     fn can_truncate(&self) -> bool {
         false
     }
+    fn can_write_range(&self) -> bool {
+        false
+    }
     fn can_set_metadata(&self) -> bool {
         false
     }

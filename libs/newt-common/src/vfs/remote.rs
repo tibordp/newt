@@ -57,6 +57,9 @@ impl VfsDescriptor for RemoteVfsDescriptor {
     fn can_truncate(&self) -> bool {
         true
     }
+    fn can_write_range(&self) -> bool {
+        true
+    }
     fn can_set_metadata(&self) -> bool {
         true
     }
@@ -414,6 +417,15 @@ impl Vfs for RemoteVfs {
             .invoke(API_VFS_TRUNCATE, &path.to_owned())
             .await?;
         ret
+    }
+
+    async fn write_range(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), Error> {
+        self.communicator
+            .invoke(
+                crate::api::API_VFS_WRITE_RANGE,
+                &(path.to_owned(), offset, data),
+            )
+            .await?
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {

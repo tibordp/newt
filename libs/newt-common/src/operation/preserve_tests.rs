@@ -136,6 +136,7 @@ async fn run_vfs(
     let context = Arc::new(OperationContext {
         registry,
         shell_integration: None,
+        spooler: crate::spool::Spooler::new(Default::default()),
     });
     let cancel = CancellationToken::new();
     let resolvers: IssueResolvers = Arc::new(Mutex::new(HashMap::new()));

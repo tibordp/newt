@@ -99,7 +99,8 @@ manifest); drop the patch and pin the release once iluvatar 0.4 publishes.
 - PPMd folders: port ppmd-rust's Ppmd7 decoder (CC0/MIT-0) to the push model; no checkpoints (the model is the state), so a PPMd folder decodes from its start like ZIP's cursor path.
 - Cold reads deep into a huge solid block decode forward once (about 1.5 s per 100 MB of packed data in a release build) before the first byte comes back; the "Decoding" progress goes to the mount's channel. Worth checking that the pane actually surfaces it during a read, not only during mounting.
 - Split volumes (`.7z.001`) and SFX stubs refuse; volumes need sibling reads through the upstream VFS.
-- A 7z writer for Pack to Archive (lzma-rust2's LZMA2 encoder is Apache-2.0; iluvatar has no encoders).
+- 7z writer: a BCJ x86 stage for executables (liblzma's filter chain has it; 7-Zip puts `.exe`/`.dll` through BCJ2, which we cannot write), and header compression/encryption (`-mhe`).
+- Spool quota and memory threshold as preferences; today `SpoolConfig::default()` (32 MiB in memory, unlimited disk) is wired at session start.
 - Folder index memory is bounded per folder (256 MiB budget), not per mount; a mount over many huge solid folders can add up. An LRU across folders would cap it.
 - RAR was scoped and shelved: no GPL-compatible reference implementation (unrar's license is non-free), and the format is two to three times the 7z work.
 
