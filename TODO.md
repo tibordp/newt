@@ -91,9 +91,7 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 ## 7z archives follow-ups
 
 Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
-`~/src/iluvatar/design_docs/DESIGN_STREAM_ENGINE.md` (iluvatar). Built against
-the path-patched iluvatar checkout (`[patch.crates-io]` in the workspace
-manifest); drop the patch and pin the release once iluvatar 0.4 publishes.
+`~/src/iluvatar/design_docs/DESIGN_STREAM_ENGINE.md` (iluvatar).
 
 - The corpus is written by 7-Zip 26.03 on macOS (`sevenz/fixtures/regenerate.py`; zstd via py7zr, which 7-Zip cannot write). Archives written by 7-Zip on Windows (attribute conventions, `\` names, NTFS times without the unix extension) and by other writers (p7zip, Keka, WinRAR's 7z) are untested.
 - PPMd folders: port ppmd-rust's Ppmd7 decoder (CC0/MIT-0) to the push model; no checkpoints (the model is the state), so a PPMd folder decodes from its start like ZIP's cursor path.

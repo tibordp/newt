@@ -356,7 +356,7 @@ impl CompressedFileVfs {
         offset: u64,
         len: u64,
     ) -> Result<iluvatar::StreamReader, Error> {
-        if let Some(reader) = self.pool.take(offset, len) {
+        if let Some(reader) = self.pool.take(index, offset, len) {
             return Ok(reader);
         }
         iluvatar::StreamReader::new(index, offset, len)

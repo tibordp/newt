@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use iluvatar::{EngineRequest, StreamReader};
+use iluvatar::{EngineRequest, StreamIndex, StreamReader};
 use tokio::io::AsyncRead;
 
 use crate::Error;
@@ -24,10 +24,6 @@ pub(super) const MAX_READERS: usize = 4;
 
 /// Reader state a stream may keep parked.
 pub(super) const READERS_BUDGET: u64 = 128 << 20;
-
-/// A parked reader this close before the target beats restoring a
-/// checkpoint: decoding forward is cheaper than a restore plus a seek.
-const RESUME_WINDOW: u64 = 8 << 20;
 
 /// Compressed input is requested in slices of at most this.
 pub(super) const PACKED_SLICE: u64 = 256 << 10;
@@ -53,14 +49,19 @@ impl ReaderPool {
     }
 
     /// The parked reader best placed to serve `offset..offset + len`,
-    /// retargeted at that range: at or before the offset, within the
-    /// resume window, closest.
-    pub(super) fn take(&self, offset: u64, len: u64) -> Option<StreamReader> {
+    /// retargeted at that range: the closest one at or before the offset
+    /// that stands at or past the checkpoint a fresh reader would restore,
+    /// so resuming it never decodes more than starting over would.
+    pub(super) fn take(&self, index: &StreamIndex, offset: u64, len: u64) -> Option<StreamReader> {
+        let floor = index
+            .best_checkpoint_for_offset(offset)
+            .1
+            .uncompressed_offset;
         let mut readers = self.readers.lock();
         let i = readers
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.position() <= offset && offset - r.position() <= RESUME_WINDOW)
+            .filter(|(_, r)| (floor..=offset).contains(&r.position()))
             .max_by_key(|(_, r)| r.position())
             .map(|(i, _)| i)?;
         let mut reader = readers.remove(i);

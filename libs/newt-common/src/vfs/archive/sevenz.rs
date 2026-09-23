@@ -518,7 +518,7 @@ impl SevenZArchiveVfs {
             folder.index = Some(index);
         }
 
-        if let Some(reader) = pool.take(offset, len) {
+        if let Some(reader) = pool.take(folder.index.as_ref().unwrap(), offset, len) {
             return Ok(reader);
         }
 
