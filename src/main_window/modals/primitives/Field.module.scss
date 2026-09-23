@@ -37,6 +37,16 @@
   }
 }
 
+// Collapsed "more options" section of a dialog.
+.fold {
+  summary {
+    cursor: pointer;
+  }
+  &[open] summary {
+    margin-bottom: var(--space-3);
+  }
+}
+
 // Indented past the 16px checkbox + 6px gap to align with the label text.
 .checkboxHint {
   margin: var(--space-1) 0 0 calc(16px + var(--space-3));

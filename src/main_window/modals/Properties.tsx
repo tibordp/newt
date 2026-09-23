@@ -294,6 +294,7 @@ export default function Properties({
   const [modeSet, setModeSet] = useState(initialModeSet);
   const [modeClear, setModeClear] = useState(initialModeClear);
   const [recursive, setRecursive] = useState(false);
+  const [crossMountPoints, setCrossMountPoints] = useState(false);
   const [sheetOps, setSheetOps] = useState<PropertyPatchOp[]>([]);
   const [ownerEdit, setOwnerEdit] = useState<OwnerEditState>({
     enabled: false,
@@ -348,6 +349,7 @@ export default function Properties({
           ownerChanged ? parseOwnerId(ownerEdit.value) : null,
           groupChanged ? parseOwnerId(groupEdit.value) : null,
           recursive,
+          crossMountPoints,
         ),
       );
     }
@@ -358,6 +360,7 @@ export default function Properties({
           paths,
           { ops: sheetOps },
           recursive,
+          crossMountPoints,
         ),
       );
     }
@@ -514,6 +517,16 @@ export default function Properties({
                   onChange={(e) => setRecursive(e.target.checked)}
                 />
                 Apply recursively
+              </label>
+            )}
+            {hasDirs && recursive && (canEdit || sheetEditable) && (
+              <label className={styles.recursiveLabel}>
+                <input
+                  type="checkbox"
+                  checked={crossMountPoints}
+                  onChange={(e) => setCrossMountPoints(e.target.checked)}
+                />
+                Descend into mount points
               </label>
             )}
             {applyHint && <span className={styles.sheetHint}>{applyHint}</span>}

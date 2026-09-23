@@ -62,9 +62,9 @@ async cmdDocumentation(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async confirmDelete(toTrash: boolean) : Promise<Result<null, string>> {
+async confirmDelete(toTrash: boolean, crossMountPoints: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("confirm_delete", { toTrash }) };
+    return { status: "ok", data: await TAURI_INVOKE("confirm_delete", { toTrash, crossMountPoints }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -266,17 +266,17 @@ async rename(paneHandle: PaneHandle | null, basePath: VfsPath, oldName: string, 
     else return { status: "error", error: e  as any };
 }
 },
-async setMetadata(paneHandle: PaneHandle | null, paths: VfsPath[], modeSet: number, modeClear: number, uid: number | null, gid: number | null, recursive: boolean) : Promise<Result<null, string>> {
+async setMetadata(paneHandle: PaneHandle | null, paths: VfsPath[], modeSet: number, modeClear: number, uid: number | null, gid: number | null, recursive: boolean, crossMountPoints: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_metadata", { paneHandle, paths, modeSet, modeClear, uid, gid, recursive }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_metadata", { paneHandle, paths, modeSet, modeClear, uid, gid, recursive, crossMountPoints }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async applyProperties(paneHandle: PaneHandle | null, paths: VfsPath[], patch: PropertyPatch, recursive: boolean) : Promise<Result<null, string>> {
+async applyProperties(paneHandle: PaneHandle | null, paths: VfsPath[], patch: PropertyPatch, recursive: boolean, crossMountPoints: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("apply_properties", { paneHandle, paths, patch, recursive }) };
+    return { status: "ok", data: await TAURI_INVOKE("apply_properties", { paneHandle, paths, patch, recursive, crossMountPoints }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1920,7 +1920,12 @@ export type CopyFormat =
  * ACL, storage class, rewriting merged directories) resets every time.
  */
 export type CopyMoveDefaults = { preserve_timestamps: boolean | null; preserve_permissions: boolean | null; ownership_by_name: boolean | null; preserve_owner: boolean | null; preserve_group: boolean | null; preserve_xattrs: boolean | null; preserve_acl: boolean | null; preserve_streams: boolean | null; preserve_hard_links: boolean | null; preserve_sparse: boolean | null; preserve_object_metadata: boolean | null; preserve_object_tags: boolean | null; preserve_object_access: boolean | null }
-export type CopyOptions = { preserve_timestamps: boolean; preserve_permissions: boolean; ownership_by_name: boolean; preserve_owner: boolean; preserve_group: boolean; preserve_xattrs: boolean; preserve_acl: boolean; preserve_streams: boolean; preserve_hard_links: boolean; preserve_sparse: boolean; preserve_object_metadata: boolean; preserve_object_tags: boolean; preserve_object_access: boolean; object_storage_class: string | null; object_canned_acl: string | null; follow_symlinks: boolean; preserve_merged_directories: boolean; create_symlink: boolean }
+export type CopyOptions = { preserve_timestamps: boolean; preserve_permissions: boolean; ownership_by_name: boolean; preserve_owner: boolean; preserve_group: boolean; preserve_xattrs: boolean; preserve_acl: boolean; preserve_streams: boolean; preserve_hard_links: boolean; preserve_sparse: boolean; preserve_object_metadata: boolean; preserve_object_tags: boolean; preserve_object_access: boolean; object_storage_class: string | null; object_canned_acl: string | null; follow_symlinks: boolean; preserve_merged_directories: boolean; create_symlink: boolean; 
+/**
+ * Stay on each source's filesystem: a mount point under the
+ * selection becomes an empty directory (rsync's `-x`).
+ */
+one_file_system: boolean }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
 /**
@@ -2545,7 +2550,12 @@ rename_to?: string | null } } |
 /**
  * Move to the OS trash (`Vfs::trash_item`) instead of deleting.
  */
-to_trash?: boolean } } | { CreateArchive: { sources: VfsPath[]; 
+to_trash?: boolean; 
+/**
+ * Walk into directories on other filesystems. Off, a mount point
+ * under the selection is left alone, contents included.
+ */
+cross_mount_points?: boolean } } | { CreateArchive: { sources: VfsPath[]; 
 /**
  * Full path of the archive file itself, not its directory.
  */
@@ -2557,12 +2567,16 @@ mode_set: number;
 /**
  * Bits to force OFF (applied as `old_mode & !mode_clear`)
  */
-mode_clear: number; uid: number | null; gid: number | null; recursive: boolean } } | 
+mode_clear: number; uid: number | null; gid: number | null; recursive: boolean; 
+/**
+ * As on `Delete`; meaningful only with `recursive`.
+ */
+cross_mount_points?: boolean } } | 
 /**
  * Apply a property-sheet patch (`Vfs::apply_properties`) to each
  * path; `recursive` walks directories/prefixes like `SetMetadata`.
  */
-{ ApplyProperties: { paths: VfsPath[]; patch: PropertyPatch; recursive: boolean } } | { RunCommand: { command: string; 
+{ ApplyProperties: { paths: VfsPath[]; patch: PropertyPatch; recursive: boolean; cross_mount_points?: boolean } } | { RunCommand: { command: string; 
 /**
  * VFS path, not `std::path` — crosses RPC; the executor (the
  * agent in a remote session) converts to native in its own OS.

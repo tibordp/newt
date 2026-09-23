@@ -417,6 +417,8 @@ Deletes all selected files and directories (recursive for directories).
 1. **Fast tree removal**: If the VFS supports atomic `remove_tree()`, deletes the entire tree in one call.
 2. **Manual tree walk**: Depth-first traversal — deletes files first, then directories bottom-up.
 
+**Mount points stay** (`rm --one-file-system`): the walk compares each directory's `device_id` with its parent's, so a filesystem mounted under the selection is recognized as such — bind mounts share their source's device and are not, btrfs subvolumes have their own and are. By default the walk stays out: the mount point's contents are left alone and a Skip-only `MountPoint` issue says so, its Details naming the option below (apply-to-all silences the rest). **Descend into mount points**, in the confirmation dialog's "More options" fold, walks in and deletes the contents. Either way the mount point directory itself is never removed (it cannot be while mounted) and neither is the chain of directories above it, so the operation ends clean rather than in a cascade of "busy" and "not empty" issues; a selected directory that is itself a mount point is emptied and left standing. The tickbox is not remembered between dialogs, and it is unreachable with confirmations off, so an unconfirmed delete always stays put. Only the local filesystem reports devices (in a remote session, the agent's), so nothing is ever a mount point on SFTP, S3 or inside archives; on Windows junctions and volume mount points are reparse points, which the walk never follows.
+
 ### Copy (F5)
 
 Opens a modal dialog with:
@@ -436,9 +438,10 @@ Opens a modal dialog with:
     - **Preserve hard links within the selection** — files sharing an identity (device + inode) are linked on the destination instead of copied again.
     - **Preserve sparse files** — zero runs are skipped and holes punched on the destination (Linux `fallocate`, macOS `F_PUNCHHOLE`, NTFS sparse flag).
     - **Apply source attributes to existing directories** — merged directories otherwise keep their own mode/times/owner.
+    - **Stay on one filesystem** — rsync's `-x`: a mount point under the selection is copied as an empty directory. Off by default, since a backup of a tree with a volume mounted under it usually wants the volume too. A move's copy half follows the same rule, and its clean-up pass never removes a mount point or the directories above it (see Delete).
     - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue).
     - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3), and for an S3 destination a **Storage class** and **Object access** canned ACL.
-  - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered. Link modes, storage class, canned ACL and "apply source attributes to existing directories" reset every time — each changes what gets written beyond a faithful copy or who can read it.
+  - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered. Link modes, storage class, canned ACL, "apply source attributes to existing directories" and "stay on one filesystem" reset every time — each changes what gets written beyond a faithful copy or who can read it.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
 **Copy execution**:
@@ -531,7 +534,7 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 - Separate checkboxes to enable owner/group editing.
 - Text input accepts numeric ID. Name resolution planned for future.
 
-**Recursive** checkbox (for directories): Applies permissions and ownership changes to all contents.
+**Recursive** checkbox (for directories): Applies permissions and ownership changes to all contents. The walk stays out of filesystems mounted under the selection (a `chmod -R` that runs onto a mounted volume rewrites the whole volume's permissions), raising the same Skip-only `MountPoint` issue as Delete; **Descend into mount points**, shown beside it once Recursive is ticked and forgotten when the dialog closes, walks in. Applies to sheet edits too.
 
 **Extended properties (property sheets)**: VFSes that advertise `has_extended_properties` contribute extra editable groups below the generic metadata. The sheet is schema-driven — the backend describes fields (text, choice, key-value map, grant list) and one generic renderer edits them all; no per-VFS frontend code. Sheets load after the dialog opens (loading placeholder → filled in place), so Alt+Enter never stalls on network calls. Multi-select folds per-field: equal values show, differing ones show as mixed/indeterminate and are left untouched unless edited; grant lists fold whole (differing lists offer an explicit "replace on all"). Applying goes through the operations engine (progress, per-item retry/skip, cancel) as an `ApplyProperties` operation; the **Recursive** checkbox extends to sheet edits (per-prefix apply on S3, skipping synthetic directory entries).
 
@@ -570,7 +573,7 @@ When a copy, move, rename, delete, or trash operation runs, it's tracked in the 
 
 **Issue resolution** (file conflicts):
 When an operation encounters a conflict:
-- The foreground modal shows the issue (e.g., "File 'readme.txt' already exists").
+- The foreground modal shows the issue (e.g., "File 'readme.txt' already exists"). An issue that carries a `detail` gets a collapsed **Details** panel under the message, selectable text (paths, the option that would have avoided the issue); the compact background row shows the same text as a hover tooltip.
 - Available actions depend on the issue type:
 
 | Issue Type | Available Actions |
@@ -1072,7 +1075,7 @@ Mount and browse archive files as virtual read-only filesystems.
 - **Entry-level encryption**: listing never prompts; the first read from an encrypted folder prompts through askpass, and the key is verified by trial-decoding the folder's first chunk (7z has no cheap verifier). The password is remembered per mount; dismissing a prompt cancels that read and the concurrent batch behind it, and the next read prompts again.
 - **Metadata**: unix mode from the attributes' high half when the archiver stored one (no owner exists in the format), FILETIME timestamps at full precision, DOS hidden/read-only bits. Symlink targets are entry content and are read eagerly at index time (links inside encrypted folders stay unresolved rather than prompting at mount).
 - **Names**: UTF-16 decoded, both separators normalized, anti items skipped, empty streams distinguished from empty files.
-- **Listed but refused on read** (clean `NotSupported`): PPMd folders, BCJ2 (a four-stream coder graph) and any other coder outside the set above. Split volumes and SFX stubs are not recognized.
+- **Listed but refused on read** (clean `NotSupported`): PPMd folders and any other coder outside the set above. Split volumes and SFX stubs are not recognized. RAR is out of scope: no GPL-compatible reference implementation exists (unrar's license is non-free).
 
 **Navigation out of archives**:
 - Pressing `..` at the archive root exits the archive and returns to the parent directory containing the archive file.

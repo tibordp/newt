@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
@@ -6,7 +7,11 @@ import {
   DialogHeader,
   DialogBody,
   DialogFooter,
+  FieldFold,
+  FieldGroup,
+  CheckboxField,
 } from "./primitives";
+import styles from "./ConfirmDelete.module.scss";
 
 type ConfirmDeleteProps = CommonDialogProps & ModalDataOf<"confirm_delete">;
 
@@ -15,14 +20,31 @@ export default function ConfirmDelete({
   mode,
   cancel,
 }: ConfirmDeleteProps) {
+  // Deliberately forgotten between dialogs: crossing into a mounted
+  // filesystem is a per-delete decision.
+  const [crossMountPoints, setCrossMountPoints] = useState(false);
   function onConfirm(toTrash: boolean) {
-    safe(commands.confirmDelete(toTrash));
+    safe(commands.confirmDelete(toTrash, crossMountPoints));
   }
 
   return (
     <DialogShell>
       <DialogHeader title="Delete" />
-      <DialogBody>{message}</DialogBody>
+      <DialogBody className={styles.body}>
+        {message}
+        {mode !== "trash" && (
+          <FieldFold summary="More options">
+            <FieldGroup>
+              <CheckboxField
+                label="Descend into mount points"
+                title="Also delete the contents of filesystems mounted under the selection. The mount points themselves stay."
+                checked={crossMountPoints}
+                onChange={setCrossMountPoints}
+              />
+            </FieldGroup>
+          </FieldFold>
+        )}
+      </DialogBody>
       <DialogFooter onCancel={cancel}>
         {mode === "trash" ? (
           <>

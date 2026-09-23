@@ -130,7 +130,11 @@ async fn delete_selected_impl(
     };
 
     let Some(mode) = mode else {
-        let request = OperationRequest::Delete { paths, to_trash };
+        let request = OperationRequest::Delete {
+            paths,
+            to_trash,
+            cross_mount_points: false,
+        };
         start_operation(ctx, request).await?;
         return Ok(());
     };
@@ -146,9 +150,9 @@ async fn delete_selected_impl(
         }
         DeleteConfirmMode::Permanent => {
             if paths.len() > 1 {
-                format!("Delete {} selected files?", paths.len())
+                format!("Permanently delete {} selected files?", paths.len())
             } else {
-                format!("Delete {}?", name())
+                format!("Permanently delete {}?", name())
             }
         }
         DeleteConfirmMode::TrashUnavailable => {
@@ -232,6 +236,7 @@ pub async fn set_metadata(
     uid: Option<u32>,
     gid: Option<u32>,
     recursive: bool,
+    cross_mount_points: bool,
 ) -> Result<(), Error> {
     let request = OperationRequest::SetMetadata {
         paths,
@@ -240,6 +245,7 @@ pub async fn set_metadata(
         uid,
         gid,
         recursive,
+        cross_mount_points,
     };
     start_operation(ctx.clone(), request).await?;
 
@@ -262,11 +268,13 @@ pub async fn apply_properties(
     paths: Vec<VfsPath>,
     patch: newt_common::vfs::PropertyPatch,
     recursive: bool,
+    cross_mount_points: bool,
 ) -> Result<(), Error> {
     let request = OperationRequest::ApplyProperties {
         paths,
         patch,
         recursive,
+        cross_mount_points,
     };
     start_operation(ctx.clone(), request).await?;
 
@@ -333,7 +341,9 @@ pub async fn start_operation_with_callback(
                 new_name,
             ),
         ),
-        OperationRequest::Delete { paths, to_trash } => (
+        OperationRequest::Delete {
+            paths, to_trash, ..
+        } => (
             if *to_trash { "trash" } else { "delete" }.to_string(),
             if *to_trash {
                 format!("Moving {} item(s) to Trash", paths.len())
@@ -615,7 +625,11 @@ pub async fn start_create_archive(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn confirm_delete(ctx: MainWindowContext, to_trash: bool) -> Result<(), Error> {
+pub async fn confirm_delete(
+    ctx: MainWindowContext,
+    to_trash: bool,
+    cross_mount_points: bool,
+) -> Result<(), Error> {
     let paths = ctx.with_update(|gs| {
         let modal = gs.modal.0.read().clone();
         let modal = modal.ok_or_else(|| Error::Custom("no modal open".into()))?;
@@ -633,7 +647,11 @@ pub async fn confirm_delete(ctx: MainWindowContext, to_trash: bool) -> Result<()
         Ok(paths)
     })?;
 
-    let request = OperationRequest::Delete { paths, to_trash };
+    let request = OperationRequest::Delete {
+        paths,
+        to_trash,
+        cross_mount_points,
+    };
     start_operation(ctx, request).await?;
     Ok(())
 }

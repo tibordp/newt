@@ -18,6 +18,7 @@ pub(super) struct CopyEntry {
     metadata: Option<crate::vfs::VfsMetadata>,
     #[allow(dead_code)]
     size_bytes: u64,
+    mount_point: bool,
 }
 
 pub(super) struct CopyPlan {
@@ -67,6 +68,7 @@ pub(super) async fn plan_copy(
                 source: w.source,
                 file: w.file,
                 metadata: w.metadata,
+                mount_point: w.mount_point,
             }
         })
         .collect::<Vec<_>>();
@@ -417,6 +419,7 @@ pub(super) async fn execute_copy(
                     || options.preserve_timestamps
                     || options.preserve_owner
                     || options.preserve_group),
+            one_file_system: options.one_file_system,
             ..Default::default()
         },
         reporter,
@@ -718,10 +721,15 @@ pub(super) async fn execute_copy(
     // For move: reverse pass to clean up empty source directories (deepest first).
     // DirectoryNotEmpty is expected (items may have been skipped) and silently ignored.
     // Other errors (e.g. permission denied) are reported through issue resolution.
+    // A mount point stays: it cannot be removed while mounted, and its
+    // parent then fails as not empty.
     if is_move {
         for entry in plan.entries.iter().rev() {
             if cancel.is_cancelled() {
                 return Err(crate::Error::cancelled());
+            }
+            if entry.mount_point {
+                continue;
             }
             if let CopyEntryKind::Directory = &entry.kind {
                 let mut dir_retry = true;

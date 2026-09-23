@@ -148,9 +148,18 @@ function IssueResolution({
     <div
       className={classNameOverrides?.issueResolution ?? styles.issueResolution}
     >
-      <span className={classNameOverrides?.issueMessage ?? styles.issueMessage}>
+      <span
+        className={classNameOverrides?.issueMessage ?? styles.issueMessage}
+        title={inModal ? undefined : (issue.detail ?? undefined)}
+      >
         {issue.message}
       </span>
+      {inModal && issue.detail != null && (
+        <details className={modalStyles.issueDetail}>
+          <summary>Details</summary>
+          {issue.detail}
+        </details>
+      )}
       <div className={classNameOverrides?.issueActions ?? styles.issueActions}>
         {issue.actions.map((action, i) => (
           <button

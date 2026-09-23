@@ -18,6 +18,9 @@ pub(super) struct WalkedEntry {
     /// owner, mtime, size) so consumers don't need a second stat pass.
     pub file: File,
     pub metadata: Option<crate::vfs::VfsMetadata>,
+    /// A directory that is the root of another filesystem than its
+    /// parent's. Removing it fails while it is mounted.
+    pub mount_point: bool,
 }
 
 #[derive(Default)]
@@ -30,6 +33,50 @@ pub(super) struct WalkOptions {
     /// Path on the source VFS to silently omit — the archive being written,
     /// so it doesn't pack itself.
     pub exclude: Option<PathBuf>,
+    /// Stay on each source's filesystem: a mount point under it is walked
+    /// as an empty directory (rsync's `-x`). A source that is itself a
+    /// mount point is always walked.
+    pub one_file_system: bool,
+}
+
+/// Whether a directory listed under a parent on `parent_device` is the
+/// root of another filesystem. Only the local filesystem reports devices,
+/// so nothing is ever a mount point elsewhere. Bind mounts share their
+/// source's device and go unnoticed; btrfs subvolumes have their own and
+/// count, as they do for `rm --one-file-system`.
+pub(super) fn is_mount_point(parent_device: Option<u64>, file: &File) -> bool {
+    file.is_dir
+        && !file.is_symlink
+        && matches!((parent_device, file.device_id), (Some(p), Some(d)) if p != d)
+}
+
+/// The device of a selected path's parent, for telling whether the
+/// selection is itself a mount point. Asked only when the entry reports a
+/// device at all.
+pub(super) async fn parent_device(vfs: &dyn Vfs, path: &Path, file: &File) -> Option<u64> {
+    file.device_id?;
+    let parent = path.parent()?;
+    vfs.file_info(parent).await.ok().and_then(|f| f.device_id)
+}
+
+/// Report a mount point a walk stayed out of. Skip is the only action;
+/// `hint` names the dialog option that would have walked into it.
+pub(super) async fn skip_mount_point(
+    reporter: &mut ProgressReporter,
+    path: &Path,
+    hint: &str,
+) -> Result<(), crate::Error> {
+    reporter
+        .raise_issue(
+            IssueKind::Other("MountPoint".into()),
+            format!("Skipped mount point {path}"),
+            Some(format!(
+                "The directory is the root of another filesystem. {hint}"
+            )),
+            vec![IssueAction::Skip],
+        )
+        .await?;
+    Ok(())
 }
 
 /// Longest chain of dir-symlinks the walk will follow before assuming a
@@ -50,6 +97,16 @@ pub(super) async fn walk_sources(
         rel: String,
         /// Normalized targets of the dir-symlinks followed to reach here.
         link_ancestry: Arc<Vec<PathBuf>>,
+        device: Option<u64>,
+    }
+
+    struct Pending {
+        src: PathBuf,
+        rel: String,
+        file: File,
+        link_ancestry: Arc<Vec<PathBuf>>,
+        parent_device: Option<u64>,
+        top_level: bool,
     }
 
     let mut entries: Vec<WalkedEntry> = Vec::new();
@@ -87,11 +144,26 @@ pub(super) async fn walk_sources(
         let mut stack: Vec<DirFrame> = Vec::new();
         // The top-level source enters classification as a pseudo-child;
         // directory listings feed the same queue below.
-        let mut pending: Vec<(PathBuf, String, File, Arc<Vec<PathBuf>>)> =
-            vec![(source.clone(), file_name, file_entry, Arc::new(Vec::new()))];
+        let parent_device = parent_device(src_vfs, source, &file_entry).await;
+        let mut pending: Vec<Pending> = vec![Pending {
+            src: source.clone(),
+            rel: file_name,
+            file: file_entry,
+            link_ancestry: Arc::new(Vec::new()),
+            parent_device,
+            top_level: true,
+        }];
 
         loop {
-            'entry: for (mut src_path, rel, mut file, link_ancestry) in pending.drain(..) {
+            'entry: for Pending {
+                src: mut src_path,
+                rel,
+                mut file,
+                link_ancestry,
+                parent_device,
+                top_level,
+            } in pending.drain(..)
+            {
                 if options.exclude.as_ref() == Some(&src_path) {
                     continue;
                 }
@@ -176,16 +248,20 @@ pub(super) async fn walk_sources(
                         }
                     }
                 }
+                let mount_point = is_mount_point(parent_device, &file);
                 let kind = if file.is_symlink {
                     WalkedKind::Symlink {
                         target: file.symlink_target.clone().unwrap_or_default(),
                     }
                 } else if file.is_dir {
-                    stack.push(DirFrame {
-                        src: src_path.clone(),
-                        rel: rel.clone(),
-                        link_ancestry: Arc::new(ancestry),
-                    });
+                    if !(mount_point && options.one_file_system && !top_level) {
+                        stack.push(DirFrame {
+                            src: src_path.clone(),
+                            rel: rel.clone(),
+                            link_ancestry: Arc::new(ancestry),
+                            device: file.device_id,
+                        });
+                    }
                     WalkedKind::Directory
                 } else {
                     total_bytes += file.size.unwrap_or(0);
@@ -197,6 +273,7 @@ pub(super) async fn walk_sources(
                     kind,
                     file,
                     metadata,
+                    mount_point,
                 });
             }
 
@@ -233,7 +310,14 @@ pub(super) async fn walk_sources(
                 }
                 let src_path = frame.src.join(&file.name);
                 let rel = format!("{}/{}", frame.rel, file.name);
-                pending.push((src_path, rel, file, frame.link_ancestry.clone()));
+                pending.push(Pending {
+                    src: src_path,
+                    rel,
+                    file,
+                    link_ancestry: frame.link_ancestry.clone(),
+                    parent_device: frame.device,
+                    top_level: false,
+                });
             }
             reporter.maybe_send_scanning(entries.len() as u64, total_bytes);
         }

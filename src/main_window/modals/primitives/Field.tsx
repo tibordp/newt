@@ -28,22 +28,50 @@ export function FieldGroup({ children }: { children: React.ReactNode }) {
   return <div className={styles.group}>{children}</div>;
 }
 
+// Collapsed section for the options most runs leave alone.
+export function FieldFold({
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  summary: React.ReactNode;
+  open?: boolean;
+  onToggle?: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      className={styles.fold}
+      open={open}
+      onToggle={(e) => onToggle?.(e.currentTarget.open)}
+    >
+      <summary>{summary}</summary>
+      {children}
+    </details>
+  );
+}
+
 export function CheckboxField({
   label,
   checked,
   onChange,
   disabled,
   hint,
+  title,
 }: {
   label: React.ReactNode;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   hint?: React.ReactNode;
+  // Hover explainer; the tooltip idiom for text that would otherwise
+  // take a line of its own.
+  title?: string;
 }) {
   return (
     <div>
-      <label className={styles.checkboxField}>
+      <label className={styles.checkboxField} title={title}>
         <input
           type="checkbox"
           checked={checked}

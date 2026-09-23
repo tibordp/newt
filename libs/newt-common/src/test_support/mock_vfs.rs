@@ -222,11 +222,29 @@ pub struct MockVfs {
     read_order: HashMap<String, u64>,
     /// Paths opened through `open_read_async`, in call order.
     opened: Mutex<Vec<String>>,
+    /// Roots of other filesystems; empty means no entry reports a device.
+    mounts: Vec<String>,
 }
 
 impl MockVfs {
     pub fn builder() -> MockVfsBuilder {
         MockVfsBuilder::new()
+    }
+
+    /// The device an entry reports: 1 for the root filesystem, 2.. for
+    /// each mount in builder order, `None` when no mounts are declared.
+    fn device_of(&self, path: &Path) -> Option<u64> {
+        if self.mounts.is_empty() {
+            return None;
+        }
+        let device = self
+            .mounts
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| path.starts_with(&PathBuf::from_wire_str(m)))
+            .max_by_key(|(_, m)| m.len())
+            .map_or(1, |(i, _)| i as u64 + 2);
+        Some(device)
     }
 
     /// Check if a failure should fire for the given path+operation.
@@ -396,7 +414,7 @@ impl MockVfs {
                     name,
                     size,
                     allocated_size: None,
-                    device_id: None,
+                    device_id: self.device_of(&path),
                     inode: None,
                     hard_links: None,
                     is_dir,
@@ -605,7 +623,7 @@ impl Vfs for MockVfs {
                 name,
                 size: Some(content.len() as u64),
                 allocated_size: None,
-                device_id: None,
+                device_id: self.device_of(path),
                 inode: None,
                 hard_links: None,
                 is_dir: false,
@@ -626,7 +644,7 @@ impl Vfs for MockVfs {
                 name,
                 size: None,
                 allocated_size: None,
-                device_id: None,
+                device_id: self.device_of(path),
                 inode: None,
                 hard_links: None,
                 is_dir: true,
@@ -1092,6 +1110,7 @@ pub struct MockVfsBuilder {
     config: MockVfsConfig,
     case_insensitive: bool,
     read_order: HashMap<String, u64>,
+    mounts: Vec<String>,
 }
 
 impl MockVfsBuilder {
@@ -1111,7 +1130,18 @@ impl MockVfsBuilder {
             config: MockVfsConfig::default(),
             case_insensitive: false,
             read_order: HashMap::new(),
+            mounts: Vec::new(),
         }
+    }
+
+    /// Make the directory the root of another filesystem: it and
+    /// everything under it report a device of their own, and every other
+    /// entry reports the root's.
+    pub fn mount_point(mut self, path: &str) -> Self {
+        self = self.dir(path);
+        self.mounts
+            .push(PathBuf::from_wire_str(path).as_wire_str().to_string());
+        self
     }
 
     /// Give the paths a `read_order` position, like an archive whose
@@ -1278,6 +1308,7 @@ impl MockVfsBuilder {
             case_insensitive: self.case_insensitive,
             read_order: self.read_order,
             opened: Mutex::new(Vec::new()),
+            mounts: self.mounts,
         })
     }
 }

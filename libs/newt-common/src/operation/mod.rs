@@ -101,6 +101,9 @@ pub struct CopyOptions {
     pub follow_symlinks: bool,
     pub preserve_merged_directories: bool,
     pub create_symlink: bool,
+    /// Stay on each source's filesystem: a mount point under the
+    /// selection becomes an empty directory (rsync's `-x`).
+    pub one_file_system: bool,
 }
 
 impl Default for CopyOptions {
@@ -124,6 +127,7 @@ impl Default for CopyOptions {
             follow_symlinks: false,
             preserve_merged_directories: false,
             create_symlink: false,
+            one_file_system: false,
         }
     }
 }
@@ -211,6 +215,10 @@ pub enum OperationRequest {
         /// Move to the OS trash (`Vfs::trash_item`) instead of deleting.
         #[serde(default)]
         to_trash: bool,
+        /// Walk into directories on other filesystems. Off, a mount point
+        /// under the selection is left alone, contents included.
+        #[serde(default)]
+        cross_mount_points: bool,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -227,6 +235,9 @@ pub enum OperationRequest {
         uid: Option<u32>,
         gid: Option<u32>,
         recursive: bool,
+        /// As on `Delete`; meaningful only with `recursive`.
+        #[serde(default)]
+        cross_mount_points: bool,
     },
     /// Apply a property-sheet patch (`Vfs::apply_properties`) to each
     /// path; `recursive` walks directories/prefixes like `SetMetadata`.
@@ -234,6 +245,8 @@ pub enum OperationRequest {
         paths: Vec<VfsPath>,
         patch: crate::vfs::PropertyPatch,
         recursive: bool,
+        #[serde(default)]
+        cross_mount_points: bool,
     },
     RunCommand {
         command: String,
@@ -545,11 +558,22 @@ pub async fn execute_operation(
     );
 
     let result = match request {
-        OperationRequest::Delete { paths, to_trash } => {
+        OperationRequest::Delete {
+            paths,
+            to_trash,
+            cross_mount_points,
+        } => {
             if to_trash {
                 execute_trash(&mut reporter, &context, paths, cancel.clone()).await
             } else {
-                execute_delete(&mut reporter, &context, paths, cancel.clone()).await
+                execute_delete(
+                    &mut reporter,
+                    &context,
+                    paths,
+                    cross_mount_points,
+                    cancel.clone(),
+                )
+                .await
             }
         }
         OperationRequest::Copy {
@@ -613,6 +637,7 @@ pub async fn execute_operation(
             uid,
             gid,
             recursive,
+            cross_mount_points,
         } => {
             execute_set_metadata(
                 &mut reporter,
@@ -623,6 +648,7 @@ pub async fn execute_operation(
                 uid,
                 gid,
                 recursive,
+                cross_mount_points,
                 cancel.clone(),
             )
             .await
@@ -631,6 +657,7 @@ pub async fn execute_operation(
             paths,
             patch,
             recursive,
+            cross_mount_points,
         } => {
             execute_apply_properties(
                 &mut reporter,
@@ -638,6 +665,7 @@ pub async fn execute_operation(
                 paths,
                 patch,
                 recursive,
+                cross_mount_points,
                 cancel.clone(),
             )
             .await

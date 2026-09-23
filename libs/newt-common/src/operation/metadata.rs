@@ -1,15 +1,23 @@
 use super::*;
 
+const MOUNT_POINT_HINT: &str =
+    "To change its contents too, tick \"Descend into mount points\" in the Properties dialog.";
+
+/// Every entry under `root`, root first, as `(path, is_dir)`. Without
+/// `cross_mount_points` a mount point under the root is left out whole,
+/// its own entry included, and the walk says so.
 pub(super) async fn collect_chmod_entries(
     vfs: &dyn Vfs,
-    path: &Path,
+    root: &Path,
+    root_file: &File,
+    cross_mount_points: bool,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Vec<(PathBuf, bool)>, crate::Error> {
-    let mut entries = vec![(path.to_owned(), true)];
-    let mut stack = vec![path.to_owned()];
+    let mut entries = vec![(root.to_owned(), true)];
+    let mut stack = vec![(root.to_owned(), root_file.device_id)];
 
-    while let Some(dir) = stack.pop() {
+    while let Some((dir, device)) = stack.pop() {
         if cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
@@ -43,7 +51,11 @@ pub(super) async fn collect_chmod_entries(
             let entry_path = dir.join(&file.name);
             let is_dir = file.is_dir && !file.is_symlink;
             if is_dir {
-                stack.push(entry_path.clone());
+                if !cross_mount_points && is_mount_point(device, file) {
+                    skip_mount_point(reporter, &entry_path, MOUNT_POINT_HINT).await?;
+                    continue;
+                }
+                stack.push((entry_path.clone(), file.device_id));
             }
             entries.push((entry_path, is_dir));
         }
@@ -62,6 +74,7 @@ pub(super) async fn execute_set_metadata(
     uid: Option<u32>,
     gid: Option<u32>,
     recursive: bool,
+    cross_mount_points: bool,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     debug!(
@@ -90,16 +103,21 @@ pub(super) async fn execute_set_metadata(
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
         let descriptor = vfs.descriptor();
 
-        if recursive {
-            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
-            if is_dir {
-                let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
-                for (entry, _) in entries {
-                    let display = format!("{}:{}", vfs_path.vfs_id, entry);
-                    all_entries.push((vfs.clone(), entry, display));
-                }
-                continue;
+        if recursive && let Some(dir) = probe_dir(&*vfs, descriptor, &local_path, &cancel).await? {
+            let entries = collect_chmod_entries(
+                &*vfs,
+                &local_path,
+                &dir,
+                cross_mount_points,
+                reporter,
+                &cancel,
+            )
+            .await?;
+            for (entry, _) in entries {
+                let display = format!("{}:{}", vfs_path.vfs_id, entry);
+                all_entries.push((vfs.clone(), entry, display));
             }
+            continue;
         }
 
         let display = vfs_path.to_string();
@@ -194,6 +212,7 @@ pub(super) async fn execute_apply_properties(
     paths: Vec<VfsPath>,
     patch: crate::vfs::PropertyPatch,
     recursive: bool,
+    cross_mount_points: bool,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     debug!(
@@ -226,19 +245,24 @@ pub(super) async fn execute_apply_properties(
         // are synthetic prefixes, not objects — nothing to apply to.
         let include_dirs = descriptor.can_stat_directories();
 
-        if recursive {
-            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
-            if is_dir {
-                let entries = collect_chmod_entries(&*vfs, &local_path, reporter, &cancel).await?;
-                for (entry, entry_is_dir) in entries {
-                    if entry_is_dir && !include_dirs {
-                        continue;
-                    }
-                    let display = format!("{}:{}", vfs_path.vfs_id, entry);
-                    all_entries.push((vfs.clone(), entry, display));
+        if recursive && let Some(dir) = probe_dir(&*vfs, descriptor, &local_path, &cancel).await? {
+            let entries = collect_chmod_entries(
+                &*vfs,
+                &local_path,
+                &dir,
+                cross_mount_points,
+                reporter,
+                &cancel,
+            )
+            .await?;
+            for (entry, entry_is_dir) in entries {
+                if entry_is_dir && !include_dirs {
+                    continue;
                 }
-                continue;
+                let display = format!("{}:{}", vfs_path.vfs_id, entry);
+                all_entries.push((vfs.clone(), entry, display));
             }
+            continue;
         }
 
         let display = vfs_path.to_string();

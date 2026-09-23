@@ -13,6 +13,7 @@ import {
   DialogFooter,
   DialogSubmitButton,
   FieldGroup,
+  FieldFold,
   CheckboxField,
   FieldRow,
 } from "./primitives";
@@ -107,12 +108,12 @@ export default function CopyMove({
     safe(commands.startCopyMove(kind, sources, destination, options, renameTo));
   }
 
-  function checkbox(key: keyof CopyOptions, label: string, hint?: string) {
+  function checkbox(key: keyof CopyOptions, label: string, title?: string) {
     return (
       <CheckboxField
         key={key}
         label={label}
-        hint={hint}
+        title={title}
         checked={Boolean(options[key])}
         onChange={(checked) => toggle(key, checked)}
         disabled={createSymlink}
@@ -157,12 +158,11 @@ export default function CopyMove({
           {checkbox("preserve_timestamps", "Preserve timestamps")}
           {checkbox("preserve_permissions", "Preserve permissions")}
         </FieldGroup>
-        <details
-          className={styles.options}
+        <FieldFold
+          summary={`More ${isCopy ? "copy" : "move"} options`}
           open={advancedOpen}
-          onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+          onToggle={setAdvancedOpen}
         >
-          <summary>More {isCopy ? "copy" : "move"} options</summary>
           <FieldGroup>
             {checkbox("preserve_owner", "Preserve owner")}
             {checkbox("preserve_group", "Preserve group")}
@@ -194,6 +194,11 @@ export default function CopyMove({
             {checkbox(
               "preserve_merged_directories",
               "Apply source attributes to existing directories",
+            )}
+            {checkbox(
+              "one_file_system",
+              "Stay on one filesystem",
+              "Mount points under the selection are copied as empty directories.",
             )}
             {isCopy && (
               <FieldRow label="Symbolic links">
@@ -282,7 +287,7 @@ export default function CopyMove({
             If a requested property cannot be preserved, choose Retry, Skip, or
             Cancel in the operation dialog.
           </p>
-        </details>
+        </FieldFold>
       </DialogBody>
       <DialogFooter
         onCancel={cancel}

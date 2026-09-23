@@ -230,6 +230,7 @@ async fn test_delete_single_file() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -254,6 +255,7 @@ async fn test_delete_directory_with_remove_tree() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -284,6 +286,7 @@ async fn test_delete_directory_slow_path() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -319,6 +322,7 @@ async fn test_delete_error_skip() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -354,6 +358,7 @@ async fn test_delete_error_retry() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
             to_trash: false,
+            cross_mount_points: false,
         },
         retry_then_skip(&retry_count),
     )
@@ -388,6 +393,7 @@ async fn test_retry_with_apply_to_all_prompts_again() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
             to_trash: false,
+            cross_mount_points: false,
         },
         |_| {
             issue_count += 1;
@@ -423,6 +429,7 @@ async fn test_delete_multiple_paths() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt"), vfs_path("/c")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -449,6 +456,7 @@ async fn test_delete_symlink_not_followed_top_level() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/link_to_dir")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -480,6 +488,7 @@ async fn test_delete_symlink_not_followed_inside_dir_fast_path() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -515,6 +524,7 @@ async fn test_delete_symlink_not_followed_inside_dir_slow_path() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
             to_trash: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -543,6 +553,7 @@ async fn test_trash_single_file() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
             to_trash: true,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -570,6 +581,7 @@ async fn test_trash_directory_counts_one_item() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/mydir")],
             to_trash: true,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -607,6 +619,7 @@ async fn test_trash_error_skip() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt"), vfs_path("/b.txt")],
             to_trash: true,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -642,6 +655,7 @@ async fn test_trash_error_retry() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
             to_trash: true,
+            cross_mount_points: false,
         },
         retry_then_skip(&retry_count),
     )
@@ -667,6 +681,7 @@ async fn test_trash_not_supported_surfaces_issue() {
         OperationRequest::Delete {
             paths: vec![vfs_path("/a.txt")],
             to_trash: true,
+            cross_mount_points: false,
         },
         |issue| {
             issue_count.set(issue_count.get() + 1);
@@ -1870,6 +1885,7 @@ async fn test_set_permissions_single_file() {
             uid: None,
             gid: None,
             recursive: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -1897,6 +1913,7 @@ async fn test_set_permissions_recursive() {
             uid: None,
             gid: None,
             recursive: true,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -1936,6 +1953,7 @@ async fn test_set_permissions_error_skip() {
             uid: None,
             gid: None,
             recursive: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -1965,6 +1983,7 @@ async fn test_set_metadata_mask() {
             uid: None,
             gid: None,
             recursive: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -1990,6 +2009,7 @@ async fn test_set_metadata_uid_gid() {
             uid: Some(500),
             gid: Some(600),
             recursive: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -2024,6 +2044,7 @@ async fn test_set_metadata_uid_gid_recursive() {
             uid: Some(500),
             gid: Some(600),
             recursive: true,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -2073,6 +2094,7 @@ async fn test_set_metadata_uid_gid_error_skip() {
             uid: Some(500),
             gid: Some(600),
             recursive: false,
+            cross_mount_points: false,
         },
         skip_all,
     )
@@ -2944,6 +2966,7 @@ mod local_symlink {
         run(OperationRequest::Delete {
             paths: vec![vfs_path(&link)],
             to_trash: false,
+            cross_mount_points: false,
         })
         .await;
 
@@ -2979,6 +3002,7 @@ mod local_symlink {
             uid: None,
             gid: None,
             recursive: true,
+            cross_mount_points: false,
         })
         .await;
 
@@ -2991,6 +3015,190 @@ mod local_symlink {
             0o644,
             "recursive chmod reached through the symlink into the target"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mount points
+// ---------------------------------------------------------------------------
+
+/// `/top` with a file, a subdirectory, and `/top/mnt` on another
+/// filesystem holding a file of its own.
+fn tree_with_mount() -> crate::test_support::MockVfsBuilder {
+    MockVfs::builder()
+        .dir("/top")
+        .file("/top/a.txt", b"a")
+        .dir("/top/sub")
+        .file("/top/sub/c.txt", b"c")
+        .mount_point("/top/mnt")
+        .file("/top/mnt/b.txt", b"b")
+        .dir("/dst")
+}
+
+fn delete_request(path: &str, cross_mount_points: bool) -> OperationRequest {
+    OperationRequest::Delete {
+        paths: vec![vfs_path(path)],
+        to_trash: false,
+        cross_mount_points,
+    }
+}
+
+#[tokio::test]
+async fn test_delete_stays_out_of_mount_points_and_keeps_the_path_to_them() {
+    let vfs = tree_with_mount()
+        .config(MockVfsConfig {
+            can_remove_tree: false,
+            ..Default::default()
+        })
+        .build();
+    let issues = std::cell::RefCell::new(Vec::new());
+    let result = run_operation(vfs, delete_request("/top", false), |issue| {
+        issues
+            .borrow_mut()
+            .push((issue.kind.clone(), issue.actions.clone()));
+        skip_all(issue)
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(
+        issues.into_inner(),
+        vec![(
+            IssueKind::Other("MountPoint".into()),
+            vec![IssueAction::Skip]
+        )]
+    );
+    assert!(!result.vfs.exists("/top/a.txt"));
+    assert!(!result.vfs.exists("/top/sub"));
+    assert!(result.vfs.exists("/top/mnt/b.txt"));
+    assert!(
+        result.vfs.exists("/top"),
+        "the mount point's parent survives"
+    );
+}
+
+#[tokio::test]
+async fn test_delete_crosses_mount_points_on_request_but_never_removes_them() {
+    let vfs = tree_with_mount()
+        .config(MockVfsConfig {
+            can_remove_tree: false,
+            ..Default::default()
+        })
+        .build();
+    let result = run_operation(vfs, delete_request("/top", true), |issue| {
+        panic!("unexpected issue: {}", issue.message)
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/top/a.txt"));
+    assert!(!result.vfs.exists("/top/mnt/b.txt"));
+    assert!(result.vfs.exists("/top/mnt"));
+    assert!(result.vfs.exists("/top"));
+}
+
+#[tokio::test]
+async fn test_delete_of_a_mount_point_itself_empties_it() {
+    let vfs = tree_with_mount()
+        .config(MockVfsConfig {
+            can_remove_tree: false,
+            ..Default::default()
+        })
+        .build();
+    let result = run_operation(vfs, delete_request("/top/mnt", false), |issue| {
+        panic!("unexpected issue: {}", issue.message)
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/top/mnt/b.txt"));
+    assert!(result.vfs.exists("/top/mnt"));
+}
+
+#[tokio::test]
+async fn test_copy_crosses_mount_points_unless_told_to_stay() {
+    for one_file_system in [false, true] {
+        let vfs = tree_with_mount().build();
+        let result = run_operation(
+            vfs,
+            OperationRequest::Copy {
+                sources: vec![vfs_path("/top")],
+                destination: vfs_path("/dst"),
+                options: CopyOptions {
+                    one_file_system,
+                    ..Default::default()
+                },
+                rename_to: None,
+            },
+            |issue| panic!("unexpected issue: {}", issue.message),
+        )
+        .await;
+
+        assert!(has_completed(&result.events));
+        assert!(result.vfs.exists("/dst/top/sub/c.txt"));
+        assert!(result.vfs.exists("/dst/top/mnt"));
+        assert_eq!(result.vfs.exists("/dst/top/mnt/b.txt"), !one_file_system);
+    }
+}
+
+#[tokio::test]
+async fn test_move_leaves_mount_points_standing() {
+    let vfs = tree_with_mount()
+        .config(MockVfsConfig {
+            can_rename: false,
+            ..Default::default()
+        })
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            sources: vec![vfs_path("/top")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+            rename_to: None,
+        },
+        |issue| panic!("unexpected issue: {}", issue.message),
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert!(result.vfs.exists("/dst/top/mnt/b.txt"));
+    assert!(!result.vfs.exists("/top/mnt/b.txt"));
+    assert!(!result.vfs.exists("/top/sub"));
+    assert!(result.vfs.exists("/top/mnt"));
+    assert!(result.vfs.exists("/top"));
+}
+
+#[tokio::test]
+async fn test_recursive_metadata_stays_out_of_mount_points_unless_told_to_cross() {
+    for cross_mount_points in [false, true] {
+        let vfs = tree_with_mount().build();
+        let issues = std::cell::RefCell::new(Vec::new());
+        let result = run_operation(
+            vfs,
+            OperationRequest::SetMetadata {
+                paths: vec![vfs_path("/top")],
+                mode_set: 0o007,
+                mode_clear: 0,
+                uid: None,
+                gid: None,
+                recursive: true,
+                cross_mount_points,
+            },
+            |issue| {
+                issues.borrow_mut().push(issue.kind.clone());
+                skip_all(issue)
+            },
+        )
+        .await;
+
+        assert!(has_completed(&result.events));
+        assert_eq!(issues.into_inner().len(), usize::from(!cross_mount_points));
+        assert_eq!(result.vfs.get_mode("/top/a.txt"), Some(0o647));
+        let expected = if cross_mount_points { 0o647 } else { 0o644 };
+        assert_eq!(result.vfs.get_mode("/top/mnt/b.txt"), Some(expected));
+        let expected = if cross_mount_points { 0o757 } else { 0o755 };
+        assert_eq!(result.vfs.get_mode("/top/mnt"), Some(expected));
     }
 }
 

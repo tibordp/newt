@@ -2,7 +2,8 @@ use super::*;
 
 // --- Execute Delete (async outer loop, uses Vfs) ---
 
-/// Whether a path is a directory *to descend into*.
+/// The entry of a path that is a directory *to descend into*, `None` for
+/// anything else.
 ///
 /// A symlink or Windows junction pointing at a directory is deliberately
 /// **not** one. `File::is_dir` says otherwise — `file_info` reports the
@@ -14,15 +15,15 @@ use super::*;
 ///
 /// When `can_stat_directories` is true (most VFSes), uses `file_info` directly.
 /// When false (e.g. S3), falls back to listing the parent directory.
-pub(super) async fn probe_is_dir(
+pub(super) async fn probe_dir(
     vfs: &dyn Vfs,
     descriptor: &dyn VfsDescriptor,
     path: &Path,
     cancel: &CancellationToken,
-) -> Result<bool, crate::Error> {
+) -> Result<Option<File>, crate::Error> {
     if descriptor.can_stat_directories() {
         let file = vfs.file_info(path).await?;
-        return Ok(file.is_dir && !file.is_symlink);
+        return Ok((file.is_dir && !file.is_symlink).then_some(file));
     }
 
     let root = PathBuf::root();
@@ -33,32 +34,61 @@ pub(super) async fn probe_is_dir(
             let listing = cancellable(cancel, vfs.list_files(parent, None)).await?;
             Ok(listing
                 .files
-                .iter()
+                .into_iter()
                 .find(|f| f.name == name)
-                .is_some_and(|f| f.is_dir && !f.is_symlink))
+                .filter(|f| f.is_dir && !f.is_symlink))
         }
-        None => Ok(true), // root-level path, treat as directory
+        // The root of the VFS: a directory by definition.
+        None => Ok(Some(File::bare_dir(""))),
     }
 }
 
-/// Walk a directory tree depth-first and collect all entries for deletion.
-/// Returns entries in deletion order: files first, then directories (deepest first).
+/// Dialog wording for the mount-point issue raised by a delete.
+pub(super) const DELETE_MOUNT_POINT_HINT: &str =
+    "To delete its contents too, tick \"Descend into mount points\" in the delete dialog.";
+
 pub(super) struct DeleteEntry {
     path: PathBuf,
     is_dir: bool,
 }
 
+/// Walk a directory tree depth-first and collect every entry to delete,
+/// root included, in deletion order: files first, then directories
+/// deepest first.
+///
+/// A mount point cannot be removed while mounted, so it and every
+/// directory above it up to the root are left out. Without
+/// `cross_mount_points` its contents stay too, and the walk says so.
 pub(super) async fn collect_delete_entries(
     vfs: &dyn Vfs,
-    path: &Path,
+    root: &Path,
+    root_file: &File,
+    cross_mount_points: bool,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Vec<DeleteEntry>, crate::Error> {
     let mut files = Vec::new();
-    let mut dirs = Vec::new();
-    let mut stack = vec![path.to_owned()];
+    let mut dirs = vec![DeleteEntry {
+        path: root.to_owned(),
+        is_dir: true,
+    }];
+    let mut kept = std::collections::HashSet::new();
+    let keep = |path: &Path, kept: &mut std::collections::HashSet<String>| {
+        let mut current = Some(path);
+        while let Some(p) = current {
+            kept.insert(p.as_wire_str().to_string());
+            if p.as_wire_str() == root.as_wire_str() {
+                break;
+            }
+            current = p.parent();
+        }
+    };
+    if is_mount_point(parent_device(vfs, root, root_file).await, root_file) {
+        keep(root, &mut kept);
+    }
+    let mut stack = vec![(root.to_owned(), root_file.device_id)];
 
-    while let Some(dir) = stack.pop() {
+    while let Some((dir, device)) = stack.pop() {
         if cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
@@ -91,7 +121,14 @@ pub(super) async fn collect_delete_entries(
             }
             let entry_path = dir.join(&file.name);
             if file.is_dir && !file.is_symlink {
-                stack.push(entry_path.clone());
+                if is_mount_point(device, file) {
+                    keep(&entry_path, &mut kept);
+                    if !cross_mount_points {
+                        skip_mount_point(reporter, &entry_path, DELETE_MOUNT_POINT_HINT).await?;
+                        continue;
+                    }
+                }
+                stack.push((entry_path.clone(), file.device_id));
                 dirs.push(DeleteEntry {
                     path: entry_path,
                     is_dir: true,
@@ -106,6 +143,7 @@ pub(super) async fn collect_delete_entries(
     }
 
     // Files first, then directories in reverse order (deepest first)
+    dirs.retain(|d| !kept.contains(d.path.as_wire_str()));
     dirs.reverse();
     files.extend(dirs);
     Ok(files)
@@ -126,6 +164,7 @@ pub(super) async fn execute_delete(
     reporter: &mut ProgressReporter,
     context: &OperationContext,
     paths: Vec<VfsPath>,
+    cross_mount_points: bool,
     cancel: CancellationToken,
 ) -> Result<(), crate::Error> {
     debug!("execute_delete: {} paths", paths.len());
@@ -157,11 +196,18 @@ pub(super) async fn execute_delete(
                 use_remove_tree: true,
             });
         } else {
-            let is_dir = probe_is_dir(&*vfs, descriptor, &local_path, &cancel).await?;
-            if is_dir {
-                let children =
-                    collect_delete_entries(&*vfs, &local_path, reporter, &cancel).await?;
-                for entry in children {
+            let dir = probe_dir(&*vfs, descriptor, &local_path, &cancel).await?;
+            if let Some(dir) = dir {
+                let entries = collect_delete_entries(
+                    &*vfs,
+                    &local_path,
+                    &dir,
+                    cross_mount_points,
+                    reporter,
+                    &cancel,
+                )
+                .await?;
+                for entry in entries {
                     all_entries.push(ResolvedDeleteEntry {
                         vfs: vfs.clone(),
                         path: entry.path,
@@ -169,13 +215,6 @@ pub(super) async fn execute_delete(
                         use_remove_tree: false,
                     });
                 }
-                // The top-level directory itself (removed last)
-                all_entries.push(ResolvedDeleteEntry {
-                    vfs,
-                    path: local_path,
-                    is_dir: true,
-                    use_remove_tree: false,
-                });
             } else {
                 all_entries.push(ResolvedDeleteEntry {
                     vfs,

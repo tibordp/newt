@@ -43,6 +43,23 @@
   font-size: var(--font-size-sm);
 }
 
+.issueDetail {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+
+  summary {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  &[open] summary {
+    margin-bottom: var(--space-2);
+  }
+}
+
 .bodyIssueActions {
   button {
     padding: var(--space-2) var(--space-5);

@@ -1,0 +1,5 @@
+// Wide enough for the expanded "More options" fold, so opening it does
+// not resize the dialog around the question.
+.body {
+  min-width: 24rem;
+}

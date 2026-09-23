@@ -88,6 +88,7 @@ pub(super) async fn execute_create_archive(
         // Keep a same-VFS destination out of the walk, or the archive
         // would pack its growing self.
         exclude: (src_vfs_id == destination.vfs_id).then(|| dst_path.to_owned()),
+        one_file_system: false,
     };
     let (walked, total_bytes) = walk_sources(
         &*src_vfs,
