@@ -158,17 +158,27 @@ export const allColumns: ColumnDef[] = [
     ],
     render: (info, ctx) => {
       // Computed recursive size (du enricher) beats the entry's own
-      // size; still-growing / cancelled values get a trailing "+".
+      // size. A trailing "+" marks a value that is not the whole story:
+      // dimmed while still growing, plain when finished but some
+      // directory could not be read.
       const du = recursiveSize(info);
       const size = (bytes: number) =>
         ctx.siSizePrefixes
           ? formatBytes(bytes, ctx.sizeUnits, ctx.locale)
           : bytes.toLocaleString(ctx.locale);
       if (du != null) {
+        const unreadable = du.unreadable > 0;
         return (
-          <span className={du.complete ? undefined : styles.partialValue}>
+          <span
+            className={du.complete ? undefined : styles.partialValue}
+            title={
+              unreadable
+                ? `${du.unreadable} ${du.unreadable === 1 ? "directory" : "directories"} could not be read`
+                : undefined
+            }
+          >
             {size(du.bytes)}
-            {!du.complete && "+"}
+            {(!du.complete || unreadable) && "+"}
           </span>
         );
       }

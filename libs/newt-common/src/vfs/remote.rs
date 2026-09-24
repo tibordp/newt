@@ -478,6 +478,19 @@ impl Vfs for RemoteVfs {
             .await?
     }
 
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<super::FlatEntry>>,
+    ) -> Result<(), Error> {
+        let entries: Result<Vec<super::FlatEntry>, Error> = self
+            .communicator
+            .invoke(crate::api::API_VFS_LIST_RECURSIVE, &prefix.to_owned())
+            .await?;
+        let _ = tx.send(entries?).await;
+        Ok(())
+    }
+
     async fn read_attribute(
         &self,
         path: &Path,

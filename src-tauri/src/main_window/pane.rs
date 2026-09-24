@@ -580,13 +580,14 @@ impl Pane {
                     *self.file_list.write() = old_file_list;
                 }
 
-                let intrinsic_partial = self.file_list.read().is_partial();
+                let intrinsic_partial = self.file_list.read().partial().map(str::to_string);
                 let mut ws = self.view_state_mut();
                 ws.pending_path = None;
                 ws.loading = false;
-                // OR the consumer-side "we got cut off" signal with the
-                // VFS-intrinsic flag (e.g. SearchVfs Cancelled walker).
-                ws.partial = dirty || intrinsic_partial;
+                // The VFS-intrinsic reason (a SearchVfs cancelled or cut
+                // short) beats the consumer-side "we got cut off" one.
+                ws.partial =
+                    intrinsic_partial.or_else(|| dirty.then(|| "listing interrupted".to_string()));
                 self.update_display(&mut ws);
 
                 let outcome = if landed {
@@ -626,11 +627,11 @@ impl Pane {
 
         ws.pending_path = None;
         ws.loading = false;
-        // VFS-intrinsic partial flag (SearchVfs whose walker was
+        // VFS-intrinsic partial reason (SearchVfs whose walker was
         // cancelled, …) takes precedence over the consumer-side
         // "we navigated away mid-stream" flavor — both render the
         // same `(partial)` badge.
-        ws.partial = new_file_list.is_partial();
+        ws.partial = new_file_list.partial().map(str::to_string);
         if has_path_changed {
             let _ = changes_sender.send(());
             if let Some(tx) = &self.event_tx {
@@ -1551,7 +1552,9 @@ pub struct PaneViewState {
     pub path: VfsPath,
     pub pending_path: Option<VfsPath>,
     pub loading: bool,
-    pub partial: bool,
+    /// Why the listing is incomplete, shown as `(partial)` with this on
+    /// hover.
+    pub partial: Option<String>,
     pub sorting: Sorting,
     pub file_window: FileWindow,
     pub focused: Option<String>,

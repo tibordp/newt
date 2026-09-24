@@ -7,14 +7,33 @@
 //! an excluded subtree never listed, an unreadable directory the
 //! visitor's call. The walk sees a single `Vfs`, so anything mounted
 //! over it in the registry is invisible by construction.
+//!
+//! A root is listed flat when its VFS advertises `can_list_recursive`
+//! (an object store's one listing per prefix); the tree's enter/leave
+//! events are then synthesized from the paths as the batches arrive, so
+//! a visitor sees the same sequence either way. Such a VFS has no
+//! symlinks, so follow mode changes nothing there.
+//!
+//! Directory-at-a-time walks list ahead: up to [`PREFETCH`] directories
+//! still to come in depth-first order are being listed while the visitor
+//! works on the current one, so a networked VFS overlaps its round
+//! trips. Events are not reordered; only the I/O is.
 
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::sync::mpsc;
 
 use super::path::{Path, PathBuf};
-use super::{File, MAX_SYMLINK_HOPS, Vfs};
-use crate::Error;
+use super::{File, FlatEntry, MAX_SYMLINK_HOPS, Vfs};
+use crate::{Error, ErrorKind};
+
+/// Directories listed ahead of the walk, per walk.
+pub const PREFETCH: usize = 4;
 
 #[derive(Debug, Default, Clone)]
 pub struct WalkOptions {
@@ -151,6 +170,9 @@ pub async fn walk(
         options,
         visitor,
         stack: Vec::new(),
+        inflight: FuturesUnordered::new(),
+        pending: HashSet::new(),
+        ready: HashMap::new(),
     };
     for root in roots {
         let file = root_entry(vfs, root).await?;
@@ -169,6 +191,7 @@ pub async fn walk(
         while let Some(frame) = walker.stack.last_mut() {
             let Some(file) = frame.children.next() else {
                 let frame = walker.stack.pop().unwrap();
+                walker.forget_under(&frame.path);
                 walker.visitor.leave(&frame.path, &frame.file).await?;
                 continue;
             };
@@ -188,6 +211,7 @@ pub async fn walk(
                 ancestry: frame.ancestry.clone(),
                 root: false,
             };
+            walker.list_ahead();
             if walker.visit(child, depth).await? == Flow::Stop {
                 return Ok(());
             }
@@ -196,11 +220,21 @@ pub async fn walk(
     Ok(())
 }
 
+type Listing = Result<Vec<File>, Error>;
+type ListingAhead<'a> = Pin<Box<dyn Future<Output = (String, Listing)> + Send + 'a>>;
+
 struct Walker<'a> {
     vfs: &'a dyn Vfs,
     options: &'a WalkOptions,
     visitor: &'a mut dyn Visitor,
     stack: Vec<Frame>,
+    /// Listings started ahead of the walk, keyed by wire path on
+    /// completion.
+    inflight: FuturesUnordered<ListingAhead<'a>>,
+    /// Keys of the listings in flight.
+    pending: HashSet<String>,
+    /// Listings that completed before the walk reached them.
+    ready: HashMap<String, Listing>,
 }
 
 /// A directory being listed out.
@@ -307,10 +341,13 @@ impl Walker<'_> {
             return Ok(Flow::Continue);
         }
 
+        if child.root && self.vfs.descriptor().can_list_recursive() {
+            return self.flat(&child, depth).await;
+        }
         let children = loop {
-            match self.vfs.list_files(&child.path, None).await {
-                Ok(list) => break list.files,
-                Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
+            match self.listing(&child.path).await {
+                Ok(files) => break files,
+                Err(e) if e.kind == ErrorKind::Cancelled => return Err(e),
                 Err(e) => {
                     log::debug!("walk: cannot list {}: {}", child.path, e);
                     match self.visitor.failed(Failed::Listing(&child.path), e).await? {
@@ -329,6 +366,278 @@ impl Walker<'_> {
             children: children.into_iter(),
         });
         Ok(Flow::Continue)
+    }
+
+    /// The listing of `path`: the one started ahead if there is one,
+    /// waited for if it is still in flight, fetched now otherwise (a
+    /// retry after a failure always fetches).
+    async fn listing(&mut self, path: &Path) -> Listing {
+        let key = path.as_wire_str();
+        if let Some(listing) = self.ready.remove(key) {
+            return listing;
+        }
+        if self.pending.remove(key) {
+            while let Some((done, listing)) = self.inflight.next().await {
+                if done == key {
+                    return listing;
+                }
+                if self.pending.remove(&done) {
+                    self.ready.insert(done, listing);
+                }
+            }
+        }
+        self.vfs.list_files(path, None).await.map(|l| l.files)
+    }
+
+    /// Start listing the directories next in depth-first order, up to
+    /// [`PREFETCH`] at a time counting those already done and waiting.
+    fn list_ahead(&mut self) {
+        let mut budget = PREFETCH.saturating_sub(self.pending.len() + self.ready.len());
+        for frame in self.stack.iter().rev() {
+            if budget == 0 {
+                break;
+            }
+            for file in frame.children.as_slice() {
+                if budget == 0 {
+                    break;
+                }
+                if file.name == ".."
+                    || !file.is_dir
+                    || file.is_symlink
+                    || (self.options.one_file_system && is_mount_point(frame.file.device_id, file))
+                {
+                    continue;
+                }
+                let path = frame.path.join(&file.name);
+                if self.options.excludes.iter().any(|e| path.starts_with(e)) {
+                    continue;
+                }
+                let key = path.as_wire_str().to_string();
+                if self.pending.contains(&key) || self.ready.contains_key(&key) {
+                    continue;
+                }
+                let vfs = self.vfs;
+                self.pending.insert(key.clone());
+                self.inflight.push(Box::pin(async move {
+                    let listing = vfs.list_files(&path, None).await.map(|l| l.files);
+                    (key, listing)
+                }));
+                budget -= 1;
+            }
+        }
+    }
+
+    /// Drop what was listed ahead under a directory the walk has left:
+    /// children the visitor chose not to enter.
+    fn forget_under(&mut self, dir: &Path) {
+        let under = |key: &String| {
+            PathBuf::from_wire_str(key)
+                .parent()
+                .is_some_and(|p| p.as_wire_str() == dir.as_wire_str())
+        };
+        self.ready.retain(|key, _| !under(key));
+        self.pending.retain(|key| !under(key));
+    }
+
+    /// Walk a root through its flat listing. Entries are reported as
+    /// the batches arrive: a directory is
+    /// opened when its own entry or its first descendant comes up and
+    /// closed once a path outside it does. A listing that fails part-way
+    /// goes through the visitor; on Retry it is restarted and everything
+    /// up to the last path consumed is dropped, which path order makes
+    /// exact. Nothing here has a device, so nothing is a mount point.
+    async fn flat(&mut self, root: &Child, depth: usize) -> Result<Flow, Error> {
+        let vfs = self.vfs;
+        let mut state = Flat {
+            root_path: root.path.clone(),
+            root_rel: root.rel.clone(),
+            depth,
+            open: vec![(root.path.clone(), root.file.clone())],
+            passing: None,
+            last: None,
+        };
+        loop {
+            let (tx, mut rx) = mpsc::channel(4);
+            let mut producer = std::pin::pin!(vfs.list_recursive(&root.path, tx));
+            let mut produced: Option<Result<(), Error>> = None;
+            let mut stopped = false;
+            loop {
+                tokio::select! {
+                    result = &mut producer, if produced.is_none() => produced = Some(result),
+                    batch = rx.recv() => match batch {
+                        Some(batch) => {
+                            for entry in batch {
+                                if self.flat_entry(&mut state, entry).await? == Flow::Stop {
+                                    stopped = true;
+                                    break;
+                                }
+                            }
+                            if stopped {
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                }
+            }
+            if stopped {
+                return Ok(Flow::Stop);
+            }
+            // The sender is gone, so the producer is done or about to be.
+            let result = match produced {
+                Some(result) => result,
+                None => producer.await,
+            };
+            match result {
+                Ok(()) => break,
+                Err(e) if e.kind == ErrorKind::Cancelled => return Err(e),
+                Err(e) => {
+                    log::debug!("walk: flat listing of {} failed: {}", root.path, e);
+                    match self.visitor.failed(Failed::Listing(&root.path), e).await? {
+                        Resume::Retry => {}
+                        Resume::Skip => break,
+                    }
+                }
+            }
+        }
+        while let Some((p, f)) = state.open.pop() {
+            self.visitor.leave(&p, &f).await?;
+        }
+        Ok(Flow::Continue)
+    }
+
+    async fn flat_entry(&mut self, state: &mut Flat, entry: FlatEntry) -> Result<Flow, Error> {
+        let FlatEntry { path, file } = entry;
+        if let Some(last) = &state.last
+            && path.as_wire_str() <= last.as_wire_str()
+        {
+            return Ok(Flow::Continue);
+        }
+        state.last = Some(path.clone());
+        if let Some(p) = &state.passing {
+            if path.starts_with(p) {
+                return Ok(Flow::Continue);
+            }
+            state.passing = None;
+        }
+        if !path.starts_with(&state.root_path)
+            || path.as_wire_str() == state.root_path.as_wire_str()
+        {
+            return Ok(Flow::Continue);
+        }
+        while !path.starts_with(&state.open.last().unwrap().0) {
+            let (p, f) = state.open.pop().unwrap();
+            self.visitor.leave(&p, &f).await?;
+        }
+        // Directories between the innermost open one and this entry.
+        let top = state.open.last().unwrap().0.clone();
+        let parent = path.parent().map_or("", Path::as_wire_str);
+        let mut dir = top.clone();
+        let between = path.strip_prefix(&top).unwrap_or_default();
+        for name in between.split('/').filter(|s| !s.is_empty()) {
+            if dir.as_wire_str() == parent {
+                break;
+            }
+            dir = dir.join(name);
+            match self.open_dir(state, &dir, File::bare_dir(name)).await? {
+                Opened::Entered => {}
+                Opened::Passed => {
+                    state.passing = Some(dir);
+                    return Ok(Flow::Continue);
+                }
+                Opened::Stopped => return Ok(Flow::Stop),
+            }
+        }
+        if file.is_dir && !file.is_symlink {
+            return Ok(match self.open_dir(state, &path, file).await? {
+                Opened::Entered => Flow::Continue,
+                Opened::Passed => {
+                    state.passing = Some(path);
+                    Flow::Continue
+                }
+                Opened::Stopped => Flow::Stop,
+            });
+        }
+        if self.options.excludes.iter().any(|e| path.starts_with(e)) {
+            return Ok(Flow::Continue);
+        }
+        let rel = rel_under(&state.root_rel, &state.root_path, &path);
+        let control = self
+            .visitor
+            .entry(Entry {
+                path: &path,
+                rel: &rel,
+                depth: state.depth + path.depth() - state.root_path.depth(),
+                file: &file,
+                mount_point: false,
+            })
+            .await?;
+        Ok(if control == Control::Stop {
+            Flow::Stop
+        } else {
+            Flow::Continue
+        })
+    }
+
+    /// Report a directory of a flat listing and, when the visitor enters
+    /// it, put it on the open stack.
+    async fn open_dir(
+        &mut self,
+        state: &mut Flat,
+        path: &Path,
+        file: File,
+    ) -> Result<Opened, Error> {
+        if self.options.excludes.iter().any(|e| path.starts_with(e)) {
+            return Ok(Opened::Passed);
+        }
+        let rel = rel_under(&state.root_rel, &state.root_path, path);
+        let control = self
+            .visitor
+            .entry(Entry {
+                path,
+                rel: &rel,
+                depth: state.depth + path.depth() - state.root_path.depth(),
+                file: &file,
+                mount_point: false,
+            })
+            .await?;
+        Ok(match control {
+            Control::Descend => {
+                state.open.push((path.to_owned(), file));
+                Opened::Entered
+            }
+            Control::Skip => Opened::Passed,
+            Control::Stop => Opened::Stopped,
+        })
+    }
+}
+
+/// A flat listing in progress.
+struct Flat {
+    root_path: PathBuf,
+    root_rel: String,
+    depth: usize,
+    /// Directories entered and not yet left, the root at the bottom.
+    open: Vec<(PathBuf, File)>,
+    /// A subtree being passed over: skipped by the visitor or excluded.
+    passing: Option<PathBuf>,
+    /// The last path consumed, for dropping a restarted listing's replay.
+    last: Option<PathBuf>,
+}
+
+enum Opened {
+    Entered,
+    Passed,
+    Stopped,
+}
+
+/// `rel` of a path below a root, given the root's own.
+fn rel_under(root_rel: &str, root_path: &Path, path: &Path) -> String {
+    let below = path.strip_prefix(root_path).unwrap_or_default();
+    if root_rel.is_empty() {
+        below.to_string()
+    } else {
+        format!("{root_rel}/{below}")
     }
 }
 
@@ -638,6 +947,192 @@ mod tests {
         .await;
         assert!(lines.iter().all(|l| !l.contains("/proc")), "{lines:?}");
         assert!(lines.contains(&"file /etc/hosts rel=etc/hosts d=2".to_string()));
+    }
+
+    /// A tree without empty directories: a flat listing carries no
+    /// directories of its own, so an empty one has nothing to be
+    /// synthesized from.
+    fn flat_tree(flat: bool) -> Arc<MockVfs> {
+        MockVfs::builder()
+            .config(MockVfsConfig {
+                can_stat_directories: false,
+                can_list_recursive: flat,
+                ..Default::default()
+            })
+            .file("/top/a.txt", b"a")
+            .file("/top/skipped/x", b"x")
+            .file("/top/skipped/deep/y", b"y")
+            .file("/top/sub/c.txt", b"c")
+            .file("/top/sub/d/e/f.txt", b"f")
+            .symlink("/top/sub/link", "/top/a.txt")
+            .file("/top/z/y", b"y")
+            .file("/topmost", b"t")
+            .build()
+    }
+
+    #[tokio::test]
+    async fn a_flat_listing_reports_the_same_sequence_as_the_tree_walk() {
+        type Scenario = (&'static [&'static str], WalkOptions, fn() -> Log);
+        let scenarios: Vec<Scenario> = vec![
+            (&["/top"], WalkOptions::default(), Log::default),
+            (&["/top"], WalkOptions::default(), || Log {
+                skip: vec!["/top/skipped", "/top/sub/d"],
+                ..Default::default()
+            }),
+            (&["/top"], WalkOptions::default(), || Log {
+                stop_at: Some("/top/sub/c.txt"),
+                ..Default::default()
+            }),
+            (
+                &["/top"],
+                WalkOptions {
+                    excludes: vec![
+                        PathBuf::from_wire_str("/top/skipped"),
+                        PathBuf::from_wire_str("/top/sub/d/e/f.txt"),
+                    ],
+                    ..Default::default()
+                },
+                Log::default,
+            ),
+            (
+                &["/top/sub", "/topmost", "/top/z"],
+                WalkOptions::default(),
+                Log::default,
+            ),
+            (&["/"], WalkOptions::default(), Log::default),
+        ];
+        for (roots_, options, log) in scenarios {
+            let tree = run(&flat_tree(false), roots_, options.clone(), log()).await;
+            let flat = run(&flat_tree(true), roots_, options, log()).await;
+            assert_eq!(flat, tree, "roots {roots_:?}");
+        }
+        // The directories the flat listing never mentioned were
+        // synthesized where the tree walk lists them.
+        let flat = run(
+            &flat_tree(true),
+            &["/top"],
+            WalkOptions::default(),
+            Log::default(),
+        )
+        .await;
+        assert!(flat.contains(&"dir /top/sub/d/e rel=top/sub/d/e d=3".to_string()));
+        assert!(flat.contains(&"leave /top/sub/d/e".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_failed_flat_listing_is_retried_then_skipped() {
+        let vfs = MockVfs::builder()
+            .config(MockVfsConfig {
+                can_list_recursive: true,
+                ..Default::default()
+            })
+            .file("/top/a", b"a")
+            .failure(FailureSpec {
+                path: PathBuf::from_wire_str("/top"),
+                operation: "list_recursive",
+                error: Error::custom("throttled"),
+                remaining: None,
+            })
+            .build();
+        let lines = run(
+            &vfs,
+            &["/top"],
+            WalkOptions::default(),
+            Log {
+                retries: 1,
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            lines,
+            [
+                "dir /top rel=top d=0",
+                "failed list /top: throttled",
+                "failed list /top: throttled",
+                "leave /top",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_flat_listing_failing_part_way_resumes_after_the_last_path_on_retry() {
+        let tree = run(
+            &flat_tree(false),
+            &["/top"],
+            WalkOptions::default(),
+            Log::default(),
+        )
+        .await;
+        let vfs = MockVfs::builder()
+            .config(MockVfsConfig {
+                can_stat_directories: false,
+                can_list_recursive: true,
+                ..Default::default()
+            })
+            .file("/top/a.txt", b"a")
+            .file("/top/skipped/x", b"x")
+            .file("/top/skipped/deep/y", b"y")
+            .file("/top/sub/c.txt", b"c")
+            .file("/top/sub/d/e/f.txt", b"f")
+            .symlink("/top/sub/link", "/top/a.txt")
+            .file("/top/z/y", b"y")
+            .file("/topmost", b"t")
+            .failure(FailureSpec {
+                path: PathBuf::from_wire_str("/top"),
+                operation: "list_recursive_page",
+                error: Error::custom("throttled"),
+                remaining: Some(1),
+            })
+            .build();
+        let mut lines = run(
+            &vfs,
+            &["/top"],
+            WalkOptions::default(),
+            Log {
+                retries: 1,
+                ..Default::default()
+            },
+        )
+        .await;
+        let failed = lines
+            .iter()
+            .position(|l| l == "failed list /top: throttled")
+            .expect("the failure was reported");
+        // The first batch got through before the failure...
+        assert!(failed > 1, "{lines:?}");
+        lines.remove(failed);
+        // ...and the retry reported nothing twice and left nothing out.
+        assert_eq!(lines, tree);
+    }
+
+    #[tokio::test]
+    async fn listings_ahead_overlap_without_reordering_events() {
+        let mut builder = MockVfs::builder().config(MockVfsConfig {
+            list_latency: Some(std::time::Duration::from_millis(2)),
+            ..Default::default()
+        });
+        for d in 0..8 {
+            builder = builder.file(&format!("/top/d{d}/f"), b"");
+        }
+        let vfs = builder.build();
+        let lines = run(&vfs, &["/top"], WalkOptions::default(), Log::default()).await;
+        let expected: Vec<String> = std::iter::once("dir /top rel=top d=0".to_string())
+            .chain((0..8).flat_map(|d| {
+                [
+                    format!("dir /top/d{d} rel=top/d{d} d=1"),
+                    format!("file /top/d{d}/f rel=top/d{d}/f d=2"),
+                    format!("leave /top/d{d}"),
+                ]
+            }))
+            .chain(std::iter::once("leave /top".to_string()))
+            .collect();
+        assert_eq!(lines, expected);
+        let overlap = vfs.max_concurrent_listings();
+        assert!(
+            (2..=PREFETCH + 1).contains(&overlap),
+            "listings should overlap up to the prefetch bound, saw {overlap}"
+        );
     }
 
     #[tokio::test]

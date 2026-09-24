@@ -335,6 +335,9 @@ pub struct SearchVfs {
     /// Best-effort match counter, refreshed atomically as results stream
     /// in. Used by the walker thread to throttle batch publishes.
     hit_count: Arc<AtomicUsize>,
+    /// Why the results are incomplete, once the walker could not read
+    /// something; the status bar's `(partial)` reason.
+    incomplete: Arc<parking_lot::Mutex<Option<String>>>,
     /// Walker construction inputs. Kept on `SearchVfs` so we can spawn
     /// the walker lazily — at construction time we don't yet know if
     /// anyone will ever observe this search (the navigation that
@@ -370,6 +373,7 @@ impl SearchVfs {
             job: super::BackgroundJob::new(super::RestartPolicy::Sticky),
             notifier: VfsChangeNotifier::new(),
             hit_count: Arc::new(AtomicUsize::new(0)),
+            incomplete: Arc::new(parking_lot::Mutex::new(None)),
             source_vfs,
             file_reader,
             search_root,
@@ -384,6 +388,13 @@ impl SearchVfs {
 
     pub fn hit_count(&self) -> usize {
         self.hit_count.load(Ordering::Relaxed)
+    }
+
+    fn partial(&self) -> Option<String> {
+        if self.job.status() == super::JobStatus::Cancelled {
+            return Some("cancelled".to_string());
+        }
+        self.incomplete.lock().clone()
     }
 }
 
@@ -437,6 +448,7 @@ impl Vfs for SearchVfs {
                     results: self.results.clone(),
                     notifier: self.notifier.clone(),
                     hit_count: self.hit_count.clone(),
+                    incomplete: self.incomplete.clone(),
                     reporter: self.reporter.clone(),
                     job: handle,
                 };
@@ -496,7 +508,7 @@ impl Vfs for SearchVfs {
             files.extend(final_snap);
             return Ok(super::VfsFileList {
                 files,
-                partial: self.job.status() == super::JobStatus::Cancelled,
+                partial: self.partial(),
             });
         }
 
@@ -504,7 +516,7 @@ impl Vfs for SearchVfs {
         files.extend(self.results.read().iter().cloned());
         Ok(super::VfsFileList {
             files,
-            partial: self.job.status() == super::JobStatus::Cancelled,
+            partial: self.partial(),
         })
     }
 
@@ -561,6 +573,7 @@ struct Walker {
     results: Arc<RwLock<Vec<File>>>,
     notifier: VfsChangeNotifier,
     hit_count: Arc<AtomicUsize>,
+    incomplete: Arc<parking_lot::Mutex<Option<String>>>,
     reporter: Arc<dyn super::ProgressReporter>,
     job: super::JobHandle,
 }
@@ -603,13 +616,14 @@ impl Walker {
         // Emit an initial zero-count report so the spinner is replaced
         // by a live status line immediately on mount, before the first
         // directory is scanned.
-        self.emit_progress(0, None);
+        self.emit_progress(0, None, 0);
 
         let mut matcher = Matcher {
             walker: self,
             name_glob,
             content_pattern,
             files_scanned: 0,
+            skipped: 0,
             last_report: std::time::Instant::now(),
             root_prefix: self
                 .search_root
@@ -635,8 +649,11 @@ impl Walker {
     /// `Arc<dyn ProgressReporter>`'s `report` call into whatever sink
     /// is wired (no-op in tests, host-state mutation in local mode,
     /// RPC notify in remote mode).
-    fn emit_progress(&self, files_scanned: u64, current_dir: Option<&Path>) {
+    fn emit_progress(&self, files_scanned: u64, current_dir: Option<&Path>, skipped: u64) {
         let mut extra = std::collections::BTreeMap::new();
+        if skipped > 0 {
+            extra.insert("skipped".to_string(), skipped.to_string());
+        }
         if let Some(path) = current_dir {
             // Relative to the search root, like the result rows: the root
             // itself is already named in the pane header, and an absolute
@@ -667,6 +684,8 @@ struct Matcher<'a> {
     /// via the pane's normal file-count line, so progress reports the
     /// running scanned total and the directory being walked instead.
     files_scanned: u64,
+    /// Directories and links the walk could not read and passed over.
+    skipped: u64,
     last_report: std::time::Instant,
     /// Length of the root's own name plus `/` at the front of every
     /// `rel`; what follows is the hit's key.
@@ -693,7 +712,7 @@ impl walk::Visitor for Matcher<'_> {
             } else {
                 entry.path.parent().unwrap_or(entry.path)
             };
-            walker.emit_progress(self.files_scanned, Some(dir));
+            walker.emit_progress(self.files_scanned, Some(dir), self.skipped);
             self.last_report = std::time::Instant::now();
         }
 
@@ -755,6 +774,35 @@ impl walk::Visitor for Matcher<'_> {
         // even if the walker is much faster than the consumer.
         walker.notifier.notify(&PathBuf::root());
         Ok(walk::Control::Descend)
+    }
+
+    /// The root failing is the whole search failing, worded as such; a
+    /// subtree failing is counted and passed over.
+    async fn failed(
+        &mut self,
+        what: walk::Failed<'_>,
+        error: Error,
+    ) -> Result<walk::Resume, Error> {
+        let walker = self.walker;
+        let path = match what {
+            walk::Failed::Listing(path) | walk::Failed::Following(path) => path,
+        };
+        let reason = if path.as_wire_str() == walker.search_root.path.as_wire_str() {
+            format!("cannot list {path}: {error}")
+        } else {
+            self.skipped += 1;
+            format!(
+                "{} {} could not be read",
+                self.skipped,
+                if self.skipped == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                }
+            )
+        };
+        *walker.incomplete.lock() = Some(reason);
+        Ok(walk::Resume::Skip)
     }
 }
 
@@ -876,7 +924,7 @@ mod progress_tests {
 
     use parking_lot::Mutex;
 
-    use crate::test_support::MockVfs;
+    use crate::test_support::{FailureSpec, MockVfs, MockVfsBuilder};
     use crate::vfs::path::PathBuf;
     use crate::vfs::search::{SearchParams, SearchVfs};
     use crate::vfs::{ProgressReporter, Vfs, VfsId, VfsPath, VfsProgress, VfsRegistry};
@@ -977,5 +1025,70 @@ mod progress_tests {
             matches!(reports.last(), Some(None)),
             "the walker must clear its progress when it finishes"
         );
+    }
+
+    fn unreadable(path: &str) -> FailureSpec {
+        FailureSpec {
+            path: PathBuf::from_wire_str(path),
+            operation: "list_files",
+            error: crate::Error::custom("denied"),
+            remaining: None,
+        }
+    }
+
+    /// Search everything under `root`, let the walker finish, and return
+    /// the final listing.
+    async fn search_all(builder: MockVfsBuilder, root: &str) -> crate::vfs::VfsFileList {
+        let source = builder.build();
+        let registry = Arc::new(VfsRegistry::with_root(source.clone()));
+        let reader = Arc::new(crate::vfs::VfsRegistryFs::new(registry));
+        let vfs = SearchVfs::new(
+            source,
+            reader,
+            VfsPath::new(VfsId::ROOT, PathBuf::from_wire_str(root)),
+            SearchParams::default(),
+            Vec::new(),
+            Arc::new(Capture::default()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let _ = vfs.list_files(&PathBuf::root(), Some(tx)).await;
+        let _ = drain.await;
+        vfs.list_files(&PathBuf::root(), None).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_root_is_an_empty_listing_that_says_why() {
+        let list = search_all(
+            MockVfs::builder()
+                .file("/dir/a.txt", b"")
+                .failure(unreadable("/dir")),
+            "/dir",
+        )
+        .await;
+        let names: Vec<&str> = list.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, [".."]);
+        assert_eq!(list.partial.as_deref(), Some("cannot list /dir: denied"));
+    }
+
+    #[tokio::test]
+    async fn unreadable_subtrees_are_passed_over_and_counted() {
+        let list = search_all(
+            MockVfs::builder()
+                .file("/dir/a.txt", b"")
+                .file("/dir/bad/x", b"")
+                .file("/dir/worse/y", b"")
+                .file("/dir/ok/z", b"")
+                .failure(unreadable("/dir/bad"))
+                .failure(unreadable("/dir/worse")),
+            "/dir",
+        )
+        .await;
+        let names: Vec<&str> = list.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["..", "a.txt", "bad", "ok", "z", "worse"]);
+        assert_eq!(list.partial.as_deref(), Some("2 entries could not be read"));
+
+        let list = search_all(MockVfs::builder().file("/dir/a.txt", b""), "/dir").await;
+        assert_eq!(list.partial, None);
     }
 }

@@ -305,6 +305,18 @@ impl Dispatcher for VfsDispatcher {
                 let paths: Vec<PathBuf> = decode(&req[..])?;
                 encode(&self.vfs.read_order(&paths).await)?
             }
+            super::API_VFS_LIST_RECURSIVE => {
+                let prefix: PathBuf = decode(&req[..])?;
+                let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+                let (result, entries) = tokio::join!(self.vfs.list_recursive(&prefix, tx), async {
+                    let mut entries = Vec::new();
+                    while let Some(batch) = rx.recv().await {
+                        entries.extend(batch);
+                    }
+                    entries
+                });
+                encode(&result.map(|()| entries))?
+            }
             API_VFS_STREAM_PATH => {
                 let (path, name): (PathBuf, String) = decode(&req[..])?;
                 encode(&self.vfs.stream_path(&path, &name).await)?

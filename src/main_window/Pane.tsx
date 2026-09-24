@@ -2042,8 +2042,11 @@ function PaneInner(
                     ` (showing ${stats.file_count + stats.dir_count} of ${stats.total_count})`}
                 </>
               )}
-            {!showSpinner && !loading && partial && (
-              <span className={styles.partial}> (partial)</span>
+            {!showSpinner && !loading && partial != null && (
+              <span className={styles.partial} title={partial}>
+                {" "}
+                (partial)
+              </span>
             )}
             {showActivity && hasActivity && (
               <span className={styles.statusbarProgress}>

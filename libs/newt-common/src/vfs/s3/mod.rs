@@ -21,6 +21,42 @@ use super::{
 
 const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
+/// The dirent for an object listed under a prefix, `name` being the key
+/// past that prefix.
+fn object_file(name: &str, obj: &aws_sdk_s3::types::Object) -> File {
+    let modified = obj.last_modified().and_then(|d| {
+        let secs = d.secs();
+        let nanos = d.subsec_nanos();
+        std::time::SystemTime::UNIX_EPOCH
+            .checked_add(std::time::Duration::new(secs as u64, nanos))
+            .map(|t| t.to_unix())
+    });
+    File {
+        attributes: None,
+        name: name.to_string(),
+        size: Some(obj.size().unwrap_or(0) as u64),
+        allocated_size: None,
+        device_id: None,
+        inode: None,
+        hard_links: None,
+        is_dir: false,
+        is_hidden: false,
+        is_symlink: false,
+        symlink_target: None,
+        user: obj
+            .owner()
+            .and_then(|o| o.display_name())
+            .map(|n| crate::vfs::UserGroup::Name(n.to_string())),
+        group: None,
+        mode: None,
+        modified,
+        accessed: None,
+        created: None,
+        key: None,
+        source: None,
+    }
+}
+
 /// `SdkError`'s bare `Display` is just "service error" — render the full
 /// source chain (service error code and message included) instead.
 fn sdk_err<E: std::error::Error>(e: E) -> Error {
@@ -125,6 +161,9 @@ impl VfsDescriptor for S3VfsDescriptor {
     }
     fn can_stat_directories(&self) -> bool {
         false
+    }
+    fn can_list_recursive(&self) -> bool {
+        true
     }
     fn can_fs_stats(&self) -> bool {
         false
@@ -510,6 +549,74 @@ impl S3Vfs {
         Ok(files)
     }
 
+    /// Every object under `key_prefix` in `bucket`, a page per batch, as
+    /// paths under `base`. `Ok(false)` when the receiver went away.
+    async fn list_objects_flat(
+        &self,
+        bucket: &str,
+        key_prefix: Option<String>,
+        base: &Path,
+        tx: &mpsc::Sender<Vec<super::FlatEntry>>,
+    ) -> Result<bool, Error> {
+        let key_prefix = key_prefix.map(|p| {
+            if p.ends_with('/') {
+                p
+            } else {
+                format!("{}/", p)
+            }
+        });
+        debug!(
+            "s3: list_objects_flat bucket={} prefix={:?}",
+            bucket, key_prefix
+        );
+        let client = self.client_for_bucket(bucket).await?;
+        let mut request = client.list_objects_v2().bucket(bucket);
+        if let Some(p) = &key_prefix {
+            request = request.prefix(p);
+        }
+        let prefix_len = key_prefix.as_ref().map_or(0, |p| p.len());
+        let mut continuation_token: Option<String> = None;
+        loop {
+            let mut req = request.clone();
+            if let Some(ref token) = continuation_token {
+                req = req.continuation_token(token);
+            }
+            let resp = req.send().await.map_err(sdk_err)?;
+            let mut batch = Vec::new();
+            for obj in resp.contents() {
+                let Some(key) = obj.key() else { continue };
+                let rel = &key[prefix_len..];
+                if rel.is_empty() || rel == "/" {
+                    continue;
+                }
+                let (rel, is_dir) = match rel.strip_suffix('/') {
+                    Some(dir) => (dir, true),
+                    None => (rel, false),
+                };
+                let path = base.join(rel);
+                let name = path.file_name().unwrap_or_default();
+                let file = if is_dir {
+                    File::bare_dir(name)
+                } else {
+                    object_file(name, obj)
+                };
+                batch.push(super::FlatEntry { path, file });
+            }
+            if !batch.is_empty() && tx.send(batch).await.is_err() {
+                return Ok(false);
+            }
+            if resp.is_truncated().unwrap_or(false) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+                if continuation_token.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(true)
+    }
+
     async fn list_objects(
         &self,
         bucket: &str,
@@ -601,38 +708,7 @@ impl S3Vfs {
                     if name.is_empty() || name == "/" {
                         continue;
                     }
-                    let modified = obj.last_modified().and_then(|d| {
-                        let secs = d.secs();
-                        let nanos = d.subsec_nanos();
-                        std::time::SystemTime::UNIX_EPOCH
-                            .checked_add(std::time::Duration::new(secs as u64, nanos))
-                            .map(|t| t.to_unix())
-                    });
-
-                    batch.push(File {
-                        attributes: None,
-                        name: name.to_string(),
-                        size: Some(obj.size().unwrap_or(0) as u64),
-                        allocated_size: None,
-                        device_id: None,
-                        inode: None,
-                        hard_links: None,
-                        is_dir: false,
-                        is_hidden: false,
-                        is_symlink: false,
-                        symlink_target: None,
-                        user: obj
-                            .owner()
-                            .and_then(|o| o.display_name())
-                            .map(|n| crate::vfs::UserGroup::Name(n.to_string())),
-                        group: None,
-                        mode: None,
-                        modified,
-                        accessed: None,
-                        created: None,
-                        key: None,
-                        source: None,
-                    });
+                    batch.push(object_file(name, obj));
                 }
             }
 
@@ -688,6 +764,49 @@ impl Vfs for S3Vfs {
             }
         };
         Ok(files.into())
+    }
+
+    /// One delimiter-less `ListObjectsV2` per page over the prefix, each
+    /// page a batch. Only objects come back; a `dir/` marker object
+    /// becomes a directory entry and every other directory is implied by
+    /// its keys. Above the buckets, every bucket in name order, each
+    /// listed the same way after its own entry.
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<super::FlatEntry>>,
+    ) -> Result<(), Error> {
+        let (bucket, key_prefix) = self.parse_path(prefix);
+        let Some(bucket) = bucket else {
+            let mut buckets: Vec<File> = self
+                .list_buckets(None)
+                .await?
+                .into_iter()
+                .filter(|f| f.is_dir && f.name != "..")
+                .collect();
+            buckets.sort_by(|a, b| a.name.cmp(&b.name));
+            for file in buckets {
+                let path = prefix.join(&file.name);
+                let name = file.name.clone();
+                if tx
+                    .send(vec![super::FlatEntry {
+                        path: path.clone(),
+                        file,
+                    }])
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                if !self.list_objects_flat(&name, None, &path, &tx).await? {
+                    return Ok(());
+                }
+            }
+            return Ok(());
+        };
+        self.list_objects_flat(&bucket, key_prefix, prefix, &tx)
+            .await
+            .map(|_| ())
     }
 
     async fn fs_stats(&self, _path: &Path) -> Result<Option<FsStats>, Error> {

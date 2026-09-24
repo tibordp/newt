@@ -183,6 +183,7 @@ fn enrichment_event_bincode_round_trip() {
                     Annotation::RecursiveSize {
                         bytes: 42,
                         complete: false,
+                        unreadable: 0,
                     },
                 ),
             ],
@@ -382,11 +383,18 @@ async fn git_enricher_end_to_end() {
 // ---------------------------------------------------------------------------
 
 /// Last emission per key wins (running totals re-emit the same key).
-fn final_sizes(entries: &[(String, Annotation)]) -> std::collections::HashMap<String, (u64, bool)> {
+fn final_sizes(
+    entries: &[(String, Annotation)],
+) -> std::collections::HashMap<String, (u64, bool, u32)> {
     let mut map = std::collections::HashMap::new();
     for (key, annotation) in entries {
-        if let Annotation::RecursiveSize { bytes, complete } = annotation {
-            map.insert(key.clone(), (*bytes, *complete));
+        if let Annotation::RecursiveSize {
+            bytes,
+            complete,
+            unreadable,
+        } = annotation
+        {
+            map.insert(key.clone(), (*bytes, *complete, *unreadable));
         }
     }
     map
@@ -405,6 +413,53 @@ fn disk_usage(path: &std::path::Path) -> u64 {
     {
         meta.len()
     }
+}
+
+/// A directory nobody can list, restored on drop so the tempdir can go.
+#[cfg(unix)]
+struct Locked(std::path::PathBuf);
+
+#[cfg(unix)]
+impl Locked {
+    fn new(path: std::path::PathBuf) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Self(path)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Locked {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn du_reports_a_lower_bound_when_a_subtree_cannot_be_listed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    std::fs::create_dir_all(dir.join("a/locked")).unwrap();
+    std::fs::write(dir.join("a/f1"), "abc").unwrap();
+    std::fs::write(dir.join("a/locked/f2"), "hidden").unwrap();
+    let _locked = Locked::new(dir.join("a/locked"));
+    if std::fs::read_dir(dir.join("a/locked")).is_ok() {
+        // Running as root: nothing is unreadable.
+        return;
+    }
+
+    let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+    let enrichers = Enrichers::new(registry.clone()).with(Arc::new(super::du::DuEnricher));
+    let root_path = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&dir));
+    let (entries, _, _) =
+        collect_scoped_events(&enrichers, root_path, &["du"], EnrichScope::AllEntries).await;
+    let sizes = final_sizes(&entries);
+    assert_eq!(
+        sizes.get("a"),
+        Some(&(disk_usage(&dir.join("a/f1")), true, 1))
+    );
 }
 
 #[tokio::test]
@@ -452,8 +507,8 @@ async fn du_enricher_end_to_end() {
     )
     .await;
     let sizes = final_sizes(&entries);
-    assert_eq!(sizes.get("a"), Some(&(expected_a, true)));
-    assert_eq!(sizes.get("b"), Some(&(expected_b, true)));
+    assert_eq!(sizes.get("a"), Some(&(expected_a, true, 0)));
+    assert_eq!(sizes.get("b"), Some(&(expected_b, true, 0)));
     // Symlinked directories are neither sized nor followed.
     assert_eq!(sizes.get("link"), None);
     assert!(badges.is_empty());
@@ -468,7 +523,7 @@ async fn du_enricher_end_to_end() {
     )
     .await;
     let sizes = final_sizes(&entries);
-    assert_eq!(sizes.get("a"), Some(&(expected_a, true)));
+    assert_eq!(sizes.get("a"), Some(&(expected_a, true, 0)));
     assert_eq!(sizes.get("b"), None);
     assert!(badges.is_empty());
 

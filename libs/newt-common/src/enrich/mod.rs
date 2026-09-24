@@ -58,10 +58,13 @@ pub enum Annotation {
     Git(GitEntryStatus),
     /// Recursively computed size of a directory entry. `complete` is
     /// false while the walk is still running (or was cancelled) — the
-    /// frontend renders such values with a trailing `+`.
+    /// frontend renders such values with a trailing `+`. `unreadable`
+    /// counts directories the walk could not list, which makes a
+    /// finished value a lower bound, rendered with the `+` as well.
     RecursiveSize {
         bytes: u64,
         complete: bool,
+        unreadable: u32,
     },
 }
 

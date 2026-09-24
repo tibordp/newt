@@ -8,7 +8,9 @@
 //!
 //! Streams running totals per sized entry (replace-by-key,
 //! `complete: false`, throttled by the sink) so directories visibly
-//! grow while the walk runs, flipping to `complete: true` per subtree.
+//! grow while the walk runs, flipping to `complete: true` per subtree;
+//! a subtree the walk could not list leaves the total a lower bound,
+//! which the annotation says.
 //! No directory-total badge: the pane's selection totals include
 //! computed sizes, so select-all after a whole-listing run reads the
 //! directory total off the status bar. Cancellation is by drop, like
@@ -132,12 +134,13 @@ async fn walk_entry(vfs: &dyn Vfs, key: String, root: PathBuf, sink: &EnrichSink
     }
     // An entry we couldn't list at all stays unannotated — a final
     // "0, complete" would read as an authoritative empty directory.
-    if sizer.left > sizer.unlisted {
+    if sizer.left > u64::from(sizer.unlisted) {
         sizer.sink.emit_entry(
             sizer.key,
             Annotation::RecursiveSize {
                 bytes: sizer.bytes,
                 complete: true,
+                unreadable: sizer.unlisted,
             },
         );
     }
@@ -151,7 +154,7 @@ struct Sizer<'a> {
     seen_links: HashSet<(u64, u64)>,
     /// Directories left, and those among them whose listing failed.
     left: u64,
-    unlisted: u64,
+    unlisted: u32,
 }
 
 #[async_trait::async_trait]
@@ -165,6 +168,7 @@ impl Visitor for Sizer<'_> {
                     Annotation::RecursiveSize {
                         bytes: self.bytes,
                         complete: false,
+                        unreadable: self.unlisted,
                     },
                 );
                 self.sink.maybe_flush().await;

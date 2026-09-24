@@ -188,7 +188,7 @@ pub struct TarArchiveVfs {
     /// streaming `list_files` or any in-flight file read), cancellation
     /// when the last consumer leaves, sticky-Cancelled — the partial
     /// directory tree remains browsable, and `list_files` reports
-    /// `partial: true` until unmount.
+    /// `partial` until unmount.
     job: super::super::BackgroundJob,
     reporter: Arc<dyn super::super::ProgressReporter>,
     /// Readers parked after a read, so the next entry in archive order
@@ -219,7 +219,7 @@ impl TarArchiveVfs {
             }),
             // Tar's partial tree is fully usable as a partial listing,
             // so Sticky: once cancelled, the tree stays as-is and is
-            // served with `partial: true`.
+            // served as partial.
             job: super::super::BackgroundJob::new(super::super::RestartPolicy::Sticky),
             reporter,
             pool: Arc::new(ReaderPool::new(MAX_READERS)),
@@ -499,7 +499,8 @@ impl Vfs for TarArchiveVfs {
                 .list(std_path)
                 .map(|files| super::super::VfsFileList {
                     files,
-                    partial: job_status == super::super::JobStatus::Cancelled,
+                    partial: (job_status == super::super::JobStatus::Cancelled)
+                        .then(|| "indexing cancelled".to_string()),
                 });
         }
         if let Some(err) = self.state.error.get() {
@@ -577,7 +578,8 @@ impl Vfs for TarArchiveVfs {
             result.as_ref().map(|f| f.len()).unwrap_or(0)
         );
         // Cancelled during the streaming wait → partial; Done → full.
-        let partial = self.job.status() == super::super::JobStatus::Cancelled;
+        let partial = (self.job.status() == super::super::JobStatus::Cancelled)
+            .then(|| "indexing cancelled".to_string());
         result.map(|files| super::super::VfsFileList { files, partial })
     }
 

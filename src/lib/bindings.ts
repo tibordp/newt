@@ -2065,12 +2065,13 @@ export type FileDetails = { size: number; mime_type: string | null; is_dir: bool
 symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
 /**
- * Set when the underlying VFS reports that the listing is
- * intrinsically incomplete (e.g. a SearchVfs whose walker was
- * cancelled). Surfaces in the pane status bar as `(partial)` and
- * is sticky across navigations into the same VFS.
+ * Why the underlying VFS reports the listing as intrinsically
+ * incomplete (a SearchVfs whose walker was cancelled or could not
+ * read part of the tree). Surfaces in the pane status bar as
+ * `(partial)` with the reason on hover, and is sticky across
+ * navigations into the same VFS.
  */
-partial: boolean }
+partial: string | null }
 export type FilterMode = "quick_search" | "filter"
 export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number; 
 /**

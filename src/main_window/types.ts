@@ -72,7 +72,12 @@ export type GitEntryStatus =
 /// Recursively computed directory size; `complete` is false while the
 /// walk is still running (or was cancelled) — rendered with a trailing
 /// `+`.
-export type RecursiveSize = { bytes: number; complete: boolean };
+export type RecursiveSize = {
+  bytes: number;
+  complete: boolean;
+  /// Directories the walk could not list: a finished value is a lower bound.
+  unreadable: number;
+};
 
 /// Per-entry annotation from an enricher. Open taxonomy — the backend
 /// ships whatever its enrichers produce; the frontend interprets the
@@ -125,7 +130,8 @@ export type PaneState = {
   path: VfsPath;
   pending_path?: VfsPath;
   loading?: boolean;
-  partial?: boolean;
+  /// Why the listing is incomplete; shown on hover of the "(partial)" badge.
+  partial?: string | null;
   sorting: Sorting;
   file_window: FileWindow;
   focused?: string;

@@ -53,7 +53,7 @@ async fn lists_one_entry_named_without_the_suffix() {
     let list = vfs.list_files(&vp("/"), None).await.unwrap();
     let names: Vec<&str> = list.files.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, vec!["..", "simple.tar"]);
-    assert!(!list.partial);
+    assert!(list.partial.is_none());
     let entry = &list.files[1];
     assert_eq!(entry.size, Some(SIMPLE_TAR.len() as u64));
     assert!(entry.mode.is_none() && entry.modified.is_none() && entry.user.is_none());

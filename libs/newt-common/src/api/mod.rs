@@ -116,6 +116,7 @@ pub const API_VFS_STREAM_PATH: Api = Api(638);
 pub const API_VFS_RESOLVE_LINK: Api = Api(639);
 pub const API_VFS_READ_ORDER: Api = Api(640);
 pub const API_VFS_WRITE_RANGE: Api = Api(641);
+pub const API_VFS_LIST_RECURSIVE: Api = Api(642);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);

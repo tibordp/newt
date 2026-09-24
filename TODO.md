@@ -68,11 +68,9 @@ Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
 - `.img` support via content sniffing: the extension is ambiguous (raw disk images with partition tables vs raw ISO9660/UDF), so claiming it needs a cheap probe before mount rather than an extension match.
 - El Torito boot catalog: expose boot images as synthetic entries at the mount root.
 
-## Unified VFS recursor + operations improvements (ideas, not started)
+## Copy conflicts
 
-- **Flat listings for the recursor** (phase 2 of `design_docs/DESIGN_VFS_RECURSOR.md`): an optional `Vfs::list_recursive(prefix)` streaming every entry under a prefix in key order, gated by a descriptor capability, plus a driver that synthesizes the walker's enter/leave events from the sorted stream so every visitor works unchanged. S3 implements it as a delimiter-less `ListObjectsV2`, turning du and large prefix copies from one round trip per pseudo-directory into a few paginated calls. Taken only when `follow_symlinks` is off.
-- **Bounded prefetch inside a walk**: list the next directories on the stack ahead of time while still delivering events depth-first, so SFTP and S3 walks overlap their round trips without reordering `leave`.
-- **Operation framework hardening.** (a) Write-to-temp + atomic rename for overwrites instead of truncate-in-place, on VFSes with `can_rename` — a cancelled/failed copy must never leave a half-written destination; temp naming + orphan cleanup on failure; S3 and friends keep the direct write (PUT is already atomic). (b) Richer conflict handling on the existing issue-resolution channel: keep-if-newer, skip-identical (size+mtime), rename-both.
+- Two more answers on the existing conflict prompt, both composing with "apply to all": **Overwrite if newer** (source mtime later than the destination's) and **Skip identical** (same size and mtime). The prompt already has both entries in hand. No rename-both.
 
 ## Distribution
 

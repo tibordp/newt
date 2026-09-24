@@ -197,11 +197,12 @@ pub struct FileList {
     path: VfsPath,
     fs_stats: Option<FsStats>,
     files: Vec<File>,
-    /// Set when the underlying VFS reports that the listing is
-    /// intrinsically incomplete (e.g. a SearchVfs whose walker was
-    /// cancelled). Surfaces in the pane status bar as `(partial)` and
-    /// is sticky across navigations into the same VFS.
-    partial: bool,
+    /// Why the underlying VFS reports the listing as intrinsically
+    /// incomplete (a SearchVfs whose walker was cancelled or could not
+    /// read part of the tree). Surfaces in the pane status bar as
+    /// `(partial)` with the reason on hover, and is sticky across
+    /// navigations into the same VFS.
+    partial: Option<String>,
 }
 
 impl FileList {
@@ -210,11 +211,11 @@ impl FileList {
             path,
             files,
             fs_stats,
-            partial: false,
+            partial: None,
         }
     }
 
-    pub fn with_partial(mut self, partial: bool) -> Self {
+    pub fn with_partial(mut self, partial: Option<String>) -> Self {
         self.partial = partial;
         self
     }
@@ -231,8 +232,8 @@ impl FileList {
         self.fs_stats.as_ref()
     }
 
-    pub fn is_partial(&self) -> bool {
-        self.partial
+    pub fn partial(&self) -> Option<&str> {
+        self.partial.as_deref()
     }
 
     /// Replace the VFS ID in this file list's path.

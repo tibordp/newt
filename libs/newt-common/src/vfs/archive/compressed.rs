@@ -434,7 +434,7 @@ impl Vfs for CompressedFileVfs {
             if self.job.status() == super::super::JobStatus::Cancelled {
                 return Ok(VfsFileList {
                     files: self.state.tree.read().list(std_path)?,
-                    partial: true,
+                    partial: Some("indexing cancelled".to_string()),
                 });
             }
             notified.await;

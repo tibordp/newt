@@ -235,6 +235,11 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn has_symlinks(&self) -> bool;
     fn can_stat_directories(&self) -> bool;
     fn can_fs_stats(&self) -> bool;
+    /// Whether `Vfs::list_recursive` serves a subtree in one listing. A
+    /// walk over such a VFS never lists a directory at a time.
+    fn can_list_recursive(&self) -> bool {
+        false
+    }
 
     /// Whether this VFS serves a property sheet (`Vfs::get_property_sheet`
     /// / `apply_properties`) — per-VFS extras beyond `VfsMetadata`, e.g.
@@ -537,24 +542,31 @@ pub enum RevalidationOutcome {
 // ---------------------------------------------------------------------------
 
 /// Return value of `Vfs::list_files`. Carries the entries plus a
-/// `partial` bit that the VFS sets when the listing it served is
-/// intrinsically incomplete — e.g. a SearchVfs whose walker was
-/// cancelled before reaching `Done`. The flag persists across
-/// navigations to the same VFS, so a re-visit to a Cancelled search
-/// still shows the partial state correctly. `VfsRegistryFs::list_files`
-/// hoists the bit onto the registry-level `FileList` for consumer-side
+/// `partial` names why the listing served is intrinsically incomplete —
+/// a SearchVfs whose walker was cancelled, or that could not read part
+/// of the tree — in the words the status bar shows on hover. It persists
+/// across navigations to the same VFS, so a re-visit to a Cancelled
+/// search still shows the partial state correctly. `VfsRegistryFs::list_files`
+/// hoists it onto the registry-level `FileList` for consumer-side
 /// rendering.
+/// One entry of a flat listing: its full in-VFS path and dirent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlatEntry {
+    pub path: path::PathBuf,
+    pub file: File,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct VfsFileList {
     pub files: Vec<File>,
-    pub partial: bool,
+    pub partial: Option<String>,
 }
 
 impl From<Vec<File>> for VfsFileList {
     fn from(files: Vec<File>) -> Self {
         Self {
             files,
-            partial: false,
+            partial: None,
         }
     }
 }
@@ -769,6 +781,22 @@ pub trait Vfs: Send + Sync {
     async fn read_order(&self, paths: &[path::PathBuf]) -> Result<Option<Vec<u64>>, Error> {
         let _ = paths;
         Ok(None)
+    }
+
+    /// Every entry under `prefix` at any depth, for a source that lists
+    /// a subtree cheaper than one directory at a time (an object store's
+    /// delimiter-less listing). Batches go out as they are produced, in
+    /// path order (byte-wise), and a dropped receiver ends the listing
+    /// with `Ok`. Directories may be left out; the walker synthesizes
+    /// them from the paths. Called only where the descriptor's
+    /// `can_list_recursive` says so.
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<FlatEntry>>,
+    ) -> Result<(), Error> {
+        let _ = (prefix, tx);
+        Err(Error::not_supported())
     }
 
     async fn read_attribute(

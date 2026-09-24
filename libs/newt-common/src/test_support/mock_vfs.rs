@@ -96,6 +96,13 @@ pub struct MockVfsConfig {
     /// Off, directories are prefixes the way S3 lists them: `file_info`
     /// still answers, but walkers classify roots from the parent listing.
     pub can_stat_directories: bool,
+    /// Advertise `list_recursive`, served the way S3 does: every file
+    /// under the prefix and no directories at all, which the walker
+    /// synthesizes.
+    pub can_list_recursive: bool,
+    /// Time each `list_files` takes, so overlapping listings can be seen
+    /// overlapping (`MockVfs::max_concurrent_listings`).
+    pub list_latency: Option<std::time::Duration>,
 }
 
 impl Default for MockVfsConfig {
@@ -115,6 +122,8 @@ impl Default for MockVfsConfig {
             can_write_range: true,
             can_copy_within: false,
             can_stat_directories: true,
+            can_list_recursive: false,
+            list_latency: None,
         }
     }
 }
@@ -180,6 +189,9 @@ impl VfsDescriptor for MockVfsDescriptor {
     fn can_stat_directories(&self) -> bool {
         self.config.can_stat_directories
     }
+    fn can_list_recursive(&self) -> bool {
+        self.config.can_list_recursive
+    }
     fn can_fs_stats(&self) -> bool {
         false
     }
@@ -228,6 +240,9 @@ pub struct MockVfs {
     opened: Mutex<Vec<String>>,
     /// Roots of other filesystems; empty means no entry reports a device.
     mounts: Vec<String>,
+    list_latency: Option<std::time::Duration>,
+    listings_in_flight: std::sync::atomic::AtomicUsize,
+    max_concurrent_listings: std::sync::atomic::AtomicUsize,
 }
 
 impl MockVfs {
@@ -308,6 +323,12 @@ impl MockVfs {
             Some(MockEntry::File { content, .. }) => content.clone(),
             other => panic!("read_content: {:?} is {:?}, not a file", key, other),
         }
+    }
+
+    /// The most `list_files` calls ever in progress at once.
+    pub fn max_concurrent_listings(&self) -> usize {
+        self.max_concurrent_listings
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Paths opened for streaming reads, in call order.
@@ -457,6 +478,13 @@ impl Vfs for MockVfs {
     ) -> Result<crate::vfs::VfsFileList, crate::Error> {
         if let Some(e) = self.check_failure(path, "list_files") {
             return Err(e);
+        }
+        if let Some(latency) = self.list_latency {
+            use std::sync::atomic::Ordering::Relaxed;
+            let now = self.listings_in_flight.fetch_add(1, Relaxed) + 1;
+            self.max_concurrent_listings.fetch_max(now, Relaxed);
+            tokio::time::sleep(latency).await;
+            self.listings_in_flight.fetch_sub(1, Relaxed);
         }
         // Verify directory exists
         match self.entries.lock().get(path.as_wire_str()) {
@@ -608,6 +636,69 @@ impl Vfs for MockVfs {
                 message: format!("not found: {}", path),
             }),
         }
+    }
+
+    /// Two entries per batch. Failure specs: `list_recursive` fires
+    /// before anything is sent, `list_recursive_page` before every batch
+    /// after the first.
+    async fn list_recursive(
+        &self,
+        prefix: &Path,
+        tx: mpsc::Sender<Vec<crate::vfs::FlatEntry>>,
+    ) -> Result<(), crate::Error> {
+        if let Some(e) = self.check_failure(prefix, "list_recursive") {
+            return Err(e);
+        }
+        let entries: Vec<_> = self
+            .entries
+            .lock()
+            .iter()
+            .filter_map(|(key, entry)| {
+                let path = PathBuf::from_wire_str(key);
+                if path.as_wire_str() == prefix.as_wire_str() || !path.starts_with(prefix) {
+                    return None;
+                }
+                let name = path.file_name().unwrap_or_default().to_string();
+                let file = match entry {
+                    MockEntry::Directory { .. } => return None,
+                    MockEntry::File {
+                        content,
+                        mode,
+                        uid,
+                        gid,
+                    } => File {
+                        name,
+                        size: Some(content.len() as u64),
+                        device_id: self.device_of(&path),
+                        user: Some(crate::vfs::UserGroup::Id(*uid)),
+                        group: Some(crate::vfs::UserGroup::Id(*gid)),
+                        mode: Some(Mode(*mode)),
+                        is_dir: false,
+                        ..File::bare_dir("")
+                    },
+                    MockEntry::Symlink { target } => File {
+                        name,
+                        is_dir: false,
+                        is_symlink: true,
+                        symlink_target: Some(target.clone()),
+                        mode: Some(Mode(0o777)),
+                        ..File::bare_dir("")
+                    },
+                };
+                Some(crate::vfs::FlatEntry { path, file })
+            })
+            .collect();
+        for (i, batch) in entries.chunks(2).enumerate() {
+            if i > 0
+                && let Some(e) = self.check_failure(prefix, "list_recursive_page")
+            {
+                return Err(e);
+            }
+            if tx.send(batch.to_vec()).await.is_err() {
+                return Ok(());
+            }
+        }
+        Ok(())
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, crate::Error> {
@@ -1299,6 +1390,7 @@ impl MockVfsBuilder {
 
     pub fn build(self) -> Arc<MockVfs> {
         let strict_range_reads = self.config.strict_range_reads;
+        let list_latency = self.config.list_latency;
         let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
             config: self.config,
         }));
@@ -1313,6 +1405,9 @@ impl MockVfsBuilder {
             read_order: self.read_order,
             opened: Mutex::new(Vec::new()),
             mounts: self.mounts,
+            list_latency,
+            listings_in_flight: std::sync::atomic::AtomicUsize::new(0),
+            max_concurrent_listings: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 }
