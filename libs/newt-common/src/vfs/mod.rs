@@ -20,6 +20,7 @@ pub mod s3;
 pub mod search;
 pub mod sftp;
 pub mod volume;
+pub mod walk;
 
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{

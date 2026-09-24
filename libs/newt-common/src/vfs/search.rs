@@ -50,6 +50,7 @@ use tokio::sync::mpsc;
 
 use crate::filesystem::Filesystem;
 use crate::find::SearchPattern;
+use crate::vfs::walk;
 use crate::vfs::{File, FsStats};
 use crate::{Error, ErrorKind};
 
@@ -574,7 +575,7 @@ const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::from_millis(
 const PROGRESS_THROTTLE: std::time::Duration = std::time::Duration::ZERO;
 
 impl Walker {
-    async fn run(mut self) {
+    async fn run(self) {
         if self.walk().await.is_ok() {
             // Natural completion — flip the job status to `Done`.
             // Cancellation flows through `BackgroundJob` already; we
@@ -588,7 +589,7 @@ impl Walker {
         self.reporter.report(None);
     }
 
-    async fn walk(&mut self) -> Result<(), Error> {
+    async fn walk(&self) -> Result<(), Error> {
         // Compile both matchers once; bail loudly if the user gave us
         // garbage rather than silently matching everything. `mount`
         // already validated these, so failures here are unreachable in
@@ -599,135 +600,35 @@ impl Walker {
         };
         let content_pattern = compile_content_pattern(&self.params)?;
 
-        // Stack-based iterative DFS so we don't have to recurse async.
-        // VFS `PathBuf`s are always `/`-separated regardless of host OS,
-        // so there's no separator-mangling concern.
-        let mut stack: Vec<PathBuf> = vec![self.search_root.path.clone()];
-        let vfs_id = self.search_root.vfs_id;
-
-        // Progress accounting. `files_scanned` is the running total of
-        // entries we've actually looked at. The hit count is already
-        // visible to the user via the pane's normal file-count line, so
-        // we don't duplicate it here — we report the running scanned
-        // total and the current directory being walked, which is the
-        // useful "what's it busy with" signal.
-        let mut files_scanned: u64 = 0;
-        let mut last_report = std::time::Instant::now();
         // Emit an initial zero-count report so the spinner is replaced
         // by a live status line immediately on mount, before the first
         // directory is scanned.
-        self.emit_progress(files_scanned, None);
+        self.emit_progress(0, None);
 
-        while let Some(dir_path) = stack.pop() {
-            if self.job.is_cancelled() {
-                return Err(Error::cancelled());
-            }
-
-            // Emit a progress tick whenever we *enter* a new directory,
-            // not only after a fixed number of entries — for searches
-            // that traverse mostly-empty directories the per-entry path
-            // would otherwise rarely update.
-            if last_report.elapsed() >= PROGRESS_THROTTLE {
-                self.emit_progress(files_scanned, Some(&dir_path));
-                last_report = std::time::Instant::now();
-            }
-
-            let entries = match self.source_vfs.list_files(&dir_path, None).await {
-                Ok(e) => e,
-                Err(e) => {
-                    // Log + skip — a single unreadable directory shouldn't
-                    // kill the whole walk. (Permission-denied on `/proc/`
-                    // is the canonical case.)
-                    log::debug!("search walker: list_files {} failed: {}", dir_path, e);
-                    continue;
-                }
-            };
-
-            for entry in entries.files {
-                if self.job.is_cancelled() {
-                    return Err(Error::cancelled());
-                }
-                if entry.name == ".." {
-                    continue;
-                }
-                files_scanned += 1;
-                if last_report.elapsed() >= PROGRESS_THROTTLE {
-                    self.emit_progress(files_scanned, Some(&dir_path));
-                    last_report = std::time::Instant::now();
-                }
-                let entry_path = dir_path.join(&entry.name);
-
-                // Recurse into directories. We only descend into entries
-                // that the source VFS reports as directories — child
-                // mount points (archives etc.) live in the registry,
-                // not on the source VFS, and are therefore invisible
-                // here, which is exactly what we want.
-                let is_proc = entry_path.components().next() == Some("proc");
-                if entry.is_dir && !is_proc && (self.params.follow_symlinks || !entry.is_symlink) {
-                    stack.push(entry_path.clone());
-                }
-
-                // Name match.
-                if let Some(ref glob) = name_glob
-                    && !glob.is_match(&entry.name)
-                {
-                    continue;
-                }
-
-                // Content match: skip files that are too big to scan.
-                // Directories never match content (they have no bytes to
-                // scan); so when a content filter is set, dirs are
-                // implicitly excluded.
-                if entry.is_dir && content_pattern.is_some() {
-                    continue;
-                }
-                if let Some(ref pattern) = content_pattern {
-                    let cap = self.params.content_size_cap;
-                    if cap != 0 && entry.size.unwrap_or(0) > cap {
-                        continue;
-                    }
-                    let probe = self
-                        .file_reader
-                        .find_in_file(
-                            VfsPath::new(vfs_id, entry_path.clone()),
-                            0,
-                            pattern.clone(),
-                            if cap == 0 { u64::MAX } else { cap },
-                        )
-                        .await;
-                    match probe {
-                        Ok(Some(_)) => {}
-                        Ok(None) => continue,
-                        Err(e) => {
-                            log::debug!(
-                                "search walker: find_in_file {:?} failed: {}",
-                                entry_path,
-                                e
-                            );
-                            continue;
-                        }
-                    }
-                }
-
-                // Hit. Build the synthetic File entry.
-                let key = relative_key(&self.search_root.path, &entry_path);
-                let source = VfsPath::new(vfs_id, entry_path);
-                let mut hit = entry.clone();
-                hit.key = Some(key);
-                hit.source = Some(source);
-                {
-                    let mut results = self.results.write();
-                    results.push(hit);
-                    self.hit_count.store(results.len(), Ordering::Relaxed);
-                }
-                // Coarse-grained wake. The list_files forwarder snapshots
-                // the full results vector on each wake, so this is fine
-                // even if the walker is much faster than the consumer.
-                self.notifier.notify(&PathBuf::root());
-            }
-        }
-
-        Ok(())
+        let mut matcher = Matcher {
+            walker: self,
+            name_glob,
+            content_pattern,
+            files_scanned: 0,
+            last_report: std::time::Instant::now(),
+            root_prefix: self
+                .search_root
+                .path
+                .file_name()
+                .map_or(0, |name| name.len() + 1),
+        };
+        let options = walk::WalkOptions {
+            follow_symlinks: self.params.follow_symlinks,
+            one_file_system: false,
+            excludes: vec![PathBuf::from_wire_str("/proc")],
+        };
+        walk::walk(
+            &*self.source_vfs,
+            std::slice::from_ref(&self.search_root.path),
+            &options,
+            &mut matcher,
+        )
+        .await
     }
 
     /// Build and push a progress snapshot. Cheap — clones the
@@ -753,6 +654,107 @@ impl Walker {
             total: None,
             extra,
         }));
+    }
+}
+
+/// The walk's visitor: matches each entry against the search and
+/// publishes the hits.
+struct Matcher<'a> {
+    walker: &'a Walker,
+    name_glob: Option<globset::GlobMatcher>,
+    content_pattern: Option<SearchPattern>,
+    /// Entries looked at. The hit count is already visible to the user
+    /// via the pane's normal file-count line, so progress reports the
+    /// running scanned total and the directory being walked instead.
+    files_scanned: u64,
+    last_report: std::time::Instant,
+    /// Length of the root's own name plus `/` at the front of every
+    /// `rel`; what follows is the hit's key.
+    root_prefix: usize,
+}
+
+#[async_trait::async_trait]
+impl walk::Visitor for Matcher<'_> {
+    async fn entry(&mut self, entry: walk::Entry<'_>) -> Result<walk::Control, Error> {
+        let walker = self.walker;
+        if walker.job.is_cancelled() {
+            return Err(Error::cancelled());
+        }
+        // The root is what is searched, not a result.
+        if entry.depth == 0 {
+            return Ok(walk::Control::Descend);
+        }
+        self.files_scanned += 1;
+        // A tick on entering a directory as well as per entry: a search
+        // through mostly-empty directories would otherwise rarely update.
+        if self.last_report.elapsed() >= PROGRESS_THROTTLE {
+            let dir = if entry.file.is_dir {
+                entry.path
+            } else {
+                entry.path.parent().unwrap_or(entry.path)
+            };
+            walker.emit_progress(self.files_scanned, Some(dir));
+            self.last_report = std::time::Instant::now();
+        }
+
+        // The name as traversed: a followed link's own name, not its
+        // target's.
+        let name = entry.rel.rsplit('/').next().unwrap_or(&entry.file.name);
+        if let Some(glob) = &self.name_glob
+            && !glob.is_match(name)
+        {
+            return Ok(walk::Control::Descend);
+        }
+
+        // Content match: skip files that are too big to scan.
+        // Directories never match content (they have no bytes to
+        // scan); so when a content filter is set, dirs are
+        // implicitly excluded.
+        if entry.file.is_dir && self.content_pattern.is_some() {
+            return Ok(walk::Control::Descend);
+        }
+        if let Some(pattern) = &self.content_pattern {
+            let cap = walker.params.content_size_cap;
+            if cap != 0 && entry.file.size.unwrap_or(0) > cap {
+                return Ok(walk::Control::Descend);
+            }
+            let probe = walker
+                .file_reader
+                .find_in_file(
+                    VfsPath::new(walker.search_root.vfs_id, entry.path.to_owned()),
+                    0,
+                    pattern.clone(),
+                    if cap == 0 { u64::MAX } else { cap },
+                )
+                .await;
+            match probe {
+                Ok(Some(_)) => {}
+                Ok(None) => return Ok(walk::Control::Descend),
+                Err(e) => {
+                    log::debug!("search walker: find_in_file {:?} failed: {}", entry.path, e);
+                    return Ok(walk::Control::Descend);
+                }
+            }
+        }
+
+        // Hit. Build the synthetic File entry.
+        let mut hit = entry.file.clone();
+        hit.name = name.to_string();
+        hit.key = Some(entry.rel[self.root_prefix..].to_string());
+        hit.source = Some(VfsPath::new(
+            walker.search_root.vfs_id,
+            entry.path.to_owned(),
+        ));
+        {
+            let mut results = walker.results.write();
+            results.push(hit);
+            walker.hit_count.store(results.len(), Ordering::Relaxed);
+        }
+        // Coarse-grained wake. The list_files forwarder snapshots
+        // the full results vector on each wake, so this is fine
+        // even if the walker is much faster than the consumer.
+        walker.notifier.notify(&PathBuf::root());
+        Ok(walk::Control::Descend)
     }
 }
 

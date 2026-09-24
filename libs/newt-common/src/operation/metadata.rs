@@ -1,67 +1,68 @@
 use super::*;
+use crate::vfs::walk::{self, Control, Entry, Failed, Resume, Visitor};
 
 const MOUNT_POINT_HINT: &str =
     "To change its contents too, tick \"Descend into mount points\" in the Properties dialog.";
 
-/// Every entry under `root`, root first, as `(path, is_dir)`. Without
+/// Every entry under `root`, root first, as `(path, is_dir)`; a root
+/// that is a file or a link is the one entry. Without
 /// `cross_mount_points` a mount point under the root is left out whole,
 /// its own entry included, and the walk says so.
 pub(super) async fn collect_chmod_entries(
     vfs: &dyn Vfs,
     root: &Path,
-    root_file: &File,
     cross_mount_points: bool,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Vec<(PathBuf, bool)>, crate::Error> {
-    let mut entries = vec![(root.to_owned(), true)];
-    let mut stack = vec![(root.to_owned(), root_file.device_id)];
+    let mut collector = AttributeCollector {
+        reporter,
+        cancel,
+        cross_mount_points,
+        entries: Vec::new(),
+    };
+    cancellable(
+        cancel,
+        walk::walk(
+            vfs,
+            std::slice::from_ref(&root.to_owned()),
+            &walk::WalkOptions::default(),
+            &mut collector,
+        ),
+    )
+    .await?;
+    Ok(collector.entries)
+}
 
-    while let Some((dir, device)) = stack.pop() {
-        if cancel.is_cancelled() {
+struct AttributeCollector<'a> {
+    reporter: &'a mut ProgressReporter,
+    cancel: &'a CancellationToken,
+    cross_mount_points: bool,
+    entries: Vec<(PathBuf, bool)>,
+}
+
+#[async_trait::async_trait]
+impl Visitor for AttributeCollector<'_> {
+    async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, crate::Error> {
+        if self.cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
-
-        let file_list = loop {
-            match cancellable(cancel, vfs.list_files(&dir, None)).await {
-                Ok(list) => break list,
-                Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
-                Err(e) => {
-                    match reporter
-                        .handle_io_error(
-                            e,
-                            &format!("Error scanning directory {}", dir),
-                            None,
-                            cancel,
-                            true,
-                        )
-                        .await?
-                    {
-                        IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
-                        IssueOutcome::Retry => continue,
-                    }
-                }
-            }
-        };
-
-        for file in &file_list.files {
-            if file.name == ".." {
-                continue;
-            }
-            let entry_path = dir.join(&file.name);
-            let is_dir = file.is_dir && !file.is_symlink;
-            if is_dir {
-                if !cross_mount_points && is_mount_point(device, file) {
-                    skip_mount_point(reporter, &entry_path, MOUNT_POINT_HINT).await?;
-                    continue;
-                }
-                stack.push((entry_path.clone(), file.device_id));
-            }
-            entries.push((entry_path, is_dir));
+        let is_dir = entry.file.is_dir && !entry.file.is_symlink;
+        if is_dir && entry.mount_point && !self.cross_mount_points && entry.depth > 0 {
+            skip_mount_point(self.reporter, entry.path, MOUNT_POINT_HINT).await?;
+            return Ok(Control::Skip);
         }
+        self.entries.push((entry.path.to_owned(), is_dir));
+        Ok(Control::Descend)
     }
 
-    Ok(entries)
+    async fn failed(
+        &mut self,
+        what: Failed<'_>,
+        error: crate::Error,
+    ) -> Result<Resume, crate::Error> {
+        resume_after(self.reporter, what, error, self.cancel).await
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -101,18 +102,11 @@ pub(super) async fn execute_set_metadata(
         }
 
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
-        let descriptor = vfs.descriptor();
 
-        if recursive && let Some(dir) = probe_dir(&*vfs, descriptor, &local_path, &cancel).await? {
-            let entries = collect_chmod_entries(
-                &*vfs,
-                &local_path,
-                &dir,
-                cross_mount_points,
-                reporter,
-                &cancel,
-            )
-            .await?;
+        if recursive {
+            let entries =
+                collect_chmod_entries(&*vfs, &local_path, cross_mount_points, reporter, &cancel)
+                    .await?;
             for (entry, _) in entries {
                 let display = format!("{}:{}", vfs_path.vfs_id, entry);
                 all_entries.push((vfs.clone(), entry, display));
@@ -245,16 +239,10 @@ pub(super) async fn execute_apply_properties(
         // are synthetic prefixes, not objects — nothing to apply to.
         let include_dirs = descriptor.can_stat_directories();
 
-        if recursive && let Some(dir) = probe_dir(&*vfs, descriptor, &local_path, &cancel).await? {
-            let entries = collect_chmod_entries(
-                &*vfs,
-                &local_path,
-                &dir,
-                cross_mount_points,
-                reporter,
-                &cancel,
-            )
-            .await?;
+        if recursive {
+            let entries =
+                collect_chmod_entries(&*vfs, &local_path, cross_mount_points, reporter, &cancel)
+                    .await?;
             for (entry, entry_is_dir) in entries {
                 if entry_is_dir && !include_dirs {
                     continue;

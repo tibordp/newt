@@ -31,7 +31,6 @@ pub(super) struct CopyPlan {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn plan_copy(
     src_vfs: &dyn Vfs,
-    src_descriptor: &dyn VfsDescriptor,
     sources: &[PathBuf],
     destination: &Path,
     rename_to: Option<&str>,
@@ -39,8 +38,7 @@ pub(super) async fn plan_copy(
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<CopyPlan, crate::Error> {
-    let (walked, total_bytes) =
-        walk_sources(src_vfs, src_descriptor, sources, walk, reporter, cancel).await?;
+    let (walked, total_bytes) = walk_sources(src_vfs, sources, walk, reporter, cancel).await?;
 
     let mut entries = walked
         .into_iter()
@@ -408,7 +406,6 @@ pub(super) async fn execute_copy(
 
     let plan = plan_copy(
         &*src_vfs,
-        src_descriptor,
         &source_paths,
         &dst_path,
         rename_to,

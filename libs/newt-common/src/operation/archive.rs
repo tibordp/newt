@@ -90,15 +90,8 @@ pub(super) async fn execute_create_archive(
         exclude: (src_vfs_id == destination.vfs_id).then(|| dst_path.to_owned()),
         one_file_system: false,
     };
-    let (walked, total_bytes) = walk_sources(
-        &*src_vfs,
-        src_descriptor,
-        &source_paths,
-        &walk_options,
-        reporter,
-        &cancel,
-    )
-    .await?;
+    let (walked, total_bytes) =
+        walk_sources(&*src_vfs, &source_paths, &walk_options, reporter, &cancel).await?;
 
     // Duplicate top-level names would silently collide inside the archive.
     let mut top_level = std::collections::HashSet::new();

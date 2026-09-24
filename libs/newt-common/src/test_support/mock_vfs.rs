@@ -93,6 +93,9 @@ pub struct MockVfsConfig {
     pub can_rename: bool,
     pub can_copy_within: bool,
     pub can_write_range: bool,
+    /// Off, directories are prefixes the way S3 lists them: `file_info`
+    /// still answers, but walkers classify roots from the parent listing.
+    pub can_stat_directories: bool,
 }
 
 impl Default for MockVfsConfig {
@@ -111,6 +114,7 @@ impl Default for MockVfsConfig {
             can_rename: true,
             can_write_range: true,
             can_copy_within: false,
+            can_stat_directories: true,
         }
     }
 }
@@ -174,7 +178,7 @@ impl VfsDescriptor for MockVfsDescriptor {
         self.config.has_symlinks
     }
     fn can_stat_directories(&self) -> bool {
-        true
+        self.config.can_stat_directories
     }
     fn can_fs_stats(&self) -> bool {
         false

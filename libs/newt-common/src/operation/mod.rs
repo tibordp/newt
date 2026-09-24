@@ -13,7 +13,7 @@ use crate::rpc::Communicator;
 use crate::vfs::File;
 use crate::vfs::attributes::AttributeKind;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
+use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsPath, VfsRegistry};
 
 mod archive;
 mod copy;

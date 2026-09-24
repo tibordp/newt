@@ -22,10 +22,9 @@
 //! archives, where the two coincide anyway). Hardlinked files are
 //! counted once per sized entry (`(device_id, inode)` dedup, gated on
 //! `hard_links > 1`), and the walk never crosses filesystem boundaries
-//! (`du -x`): directories whose `device_id` differs from the walk
-//! root's are not descended into — a mountpoint entry reports the
-//! mounted filesystem's device, so sizing the mountpoint itself still
-//! works and stops at further nested mounts.
+//! (`du -x`, the shared walker's `one_file_system`): a mount point below
+//! the sized entry is not entered, while the entry itself may be one and
+//! is sized regardless.
 
 use std::collections::HashSet;
 
@@ -35,8 +34,9 @@ use super::{
     Annotation, EnrichScope, EnrichSink, Enricher, EnricherDescriptor, RegisteredEnricher,
 };
 use crate::Error;
-use crate::vfs::path::PathBuf;
-use crate::vfs::{Vfs, VfsDescriptor, VfsPath, VfsRegistry};
+use crate::vfs::path::{Path, PathBuf};
+use crate::vfs::walk::{self, Control, Entry, Failed, Resume, Visitor};
+use crate::vfs::{File, Vfs, VfsDescriptor, VfsPath, VfsRegistry};
 
 /// Directory walks (one per sized entry) running concurrently. Within a
 /// walk, listing is serial DFS.
@@ -94,18 +94,7 @@ impl Enricher for DuEnricher {
                 EnrichScope::AllEntries => true,
                 EnrichScope::Entries(keys) => keys.iter().any(|k| k == f.key()),
             })
-            .map(|f| {
-                walk_entry(
-                    vfs.as_ref(),
-                    f.key().to_string(),
-                    dir.join(&f.name),
-                    // The sized entry's own device: a mountpoint entry
-                    // reports the mounted fs, so the walk covers it and
-                    // stops at the next boundary down.
-                    f.device_id,
-                    sink,
-                )
-            })
+            .map(|f| walk_entry(vfs.as_ref(), f.key().to_string(), dir.join(&f.name), sink))
             .collect();
         futures::stream::iter(walks)
             .buffer_unordered(WALK_CONCURRENCY)
@@ -123,77 +112,85 @@ fn occupied(f: &crate::vfs::File) -> u64 {
 }
 
 /// Size one directory entry: serial DFS summing file sizes, emitting a
-/// growing running total for the entry after every directory listed.
-async fn walk_entry(
-    vfs: &dyn Vfs,
-    key: String,
-    root: PathBuf,
-    root_device: Option<u64>,
-    sink: &EnrichSink,
-) {
-    let mut bytes = 0u64;
-    let mut listed_any = false;
-    // Hardlinked inodes already counted within this entry's walk.
-    let mut seen_links: HashSet<(u64, u64)> = HashSet::new();
-    let mut stack = vec![root];
-    while let Some(dir_path) = stack.pop() {
-        let listing = match vfs.list_files(&dir_path, None).await {
-            Ok(l) => l,
-            Err(e) => {
-                // A single unreadable subtree shouldn't kill the walk
-                // (permission-denied being the canonical case).
-                log::debug!("du walker: list_files {} failed: {}", dir_path, e);
-                continue;
-            }
-        };
-        listed_any = true;
-        for entry in listing.files {
-            if entry.name == ".." {
-                continue;
-            }
-            let entry_path = dir_path.join(&entry.name);
-            // Mirror the search walker: never descend into /proc, and
-            // don't follow directory symlinks (loops, double counting).
-            let is_proc = entry_path.components().next() == Some("proc");
-            if entry.is_dir {
-                // `du -x`: a child directory on a different device is a
-                // mount boundary — don't cross it.
-                let crosses_fs = matches!(
-                    (root_device, entry.device_id),
-                    (Some(root), Some(dev)) if root != dev
-                );
-                if !entry.is_symlink && !is_proc && !crosses_fs {
-                    stack.push(entry_path);
-                }
-            } else {
-                // Count each hardlinked inode once per sized entry.
-                if entry.hard_links.is_some_and(|n| n > 1)
-                    && let (Some(dev), Some(ino)) = (entry.device_id, entry.inode)
-                    && !seen_links.insert((dev, ino))
-                {
-                    continue;
-                }
-                bytes += occupied(&entry);
-            }
-        }
-        sink.emit_entry(
-            key.clone(),
-            Annotation::RecursiveSize {
-                bytes,
-                complete: false,
-            },
-        );
-        sink.maybe_flush().await;
+/// growing running total for the entry once per directory entered.
+async fn walk_entry(vfs: &dyn Vfs, key: String, root: PathBuf, sink: &EnrichSink) {
+    let mut sizer = Sizer {
+        key,
+        sink,
+        bytes: 0,
+        seen_links: HashSet::new(),
+        left: 0,
+        unlisted: 0,
+    };
+    let options = walk::WalkOptions {
+        one_file_system: true,
+        excludes: vec![PathBuf::from_wire_str("/proc")],
+        ..Default::default()
+    };
+    if let Err(e) = walk::walk(vfs, std::slice::from_ref(&root), &options, &mut sizer).await {
+        log::debug!("du walker: {} failed: {}", root, e);
     }
     // An entry we couldn't list at all stays unannotated — a final
     // "0, complete" would read as an authoritative empty directory.
-    if listed_any {
-        sink.emit_entry(
-            key,
+    if sizer.left > sizer.unlisted {
+        sizer.sink.emit_entry(
+            sizer.key,
             Annotation::RecursiveSize {
-                bytes,
+                bytes: sizer.bytes,
                 complete: true,
             },
         );
+    }
+}
+
+struct Sizer<'a> {
+    key: String,
+    sink: &'a EnrichSink,
+    bytes: u64,
+    /// Hardlinked inodes already counted within this entry's walk.
+    seen_links: HashSet<(u64, u64)>,
+    /// Directories left, and those among them whose listing failed.
+    left: u64,
+    unlisted: u64,
+}
+
+#[async_trait::async_trait]
+impl Visitor for Sizer<'_> {
+    async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, Error> {
+        let file = entry.file;
+        if file.is_dir {
+            if !file.is_symlink {
+                self.sink.emit_entry(
+                    self.key.clone(),
+                    Annotation::RecursiveSize {
+                        bytes: self.bytes,
+                        complete: false,
+                    },
+                );
+                self.sink.maybe_flush().await;
+            }
+            return Ok(Control::Descend);
+        }
+        // Count each hardlinked inode once per sized entry.
+        if file.hard_links.is_some_and(|n| n > 1)
+            && let (Some(dev), Some(ino)) = (file.device_id, file.inode)
+            && !self.seen_links.insert((dev, ino))
+        {
+            return Ok(Control::Descend);
+        }
+        self.bytes += occupied(file);
+        Ok(Control::Descend)
+    }
+
+    async fn leave(&mut self, _path: &Path, _file: &File) -> Result<(), Error> {
+        self.left += 1;
+        Ok(())
+    }
+
+    async fn failed(&mut self, what: Failed<'_>, _error: Error) -> Result<Resume, Error> {
+        if let Failed::Listing(_) = what {
+            self.unlisted += 1;
+        }
+        Ok(Resume::Skip)
     }
 }

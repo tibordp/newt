@@ -1,50 +1,10 @@
 use super::*;
+use crate::vfs::walk::{self, Control, Entry, Failed, Resume, Visitor};
 
 // --- Execute Delete (async outer loop, uses Vfs) ---
 
-/// The entry of a path that is a directory *to descend into*, `None` for
-/// anything else.
-///
-/// A symlink or Windows junction pointing at a directory is deliberately
-/// **not** one. `File::is_dir` says otherwise — `file_info` reports the
-/// target's type for a link so panes can enter it — but every caller here
-/// is about to walk the path and act on what it finds, and following the
-/// link would delete or chmod the target's contents instead of the link.
-/// The parent-listing branch has always excluded links; the stat branch
-/// must match it.
-///
-/// When `can_stat_directories` is true (most VFSes), uses `file_info` directly.
-/// When false (e.g. S3), falls back to listing the parent directory.
-pub(super) async fn probe_dir(
-    vfs: &dyn Vfs,
-    descriptor: &dyn VfsDescriptor,
-    path: &Path,
-    cancel: &CancellationToken,
-) -> Result<Option<File>, crate::Error> {
-    if descriptor.can_stat_directories() {
-        let file = vfs.file_info(path).await?;
-        return Ok((file.is_dir && !file.is_symlink).then_some(file));
-    }
-
-    let root = PathBuf::root();
-    let parent = path.parent().unwrap_or(&root);
-    let file_name = path.file_name();
-    match file_name {
-        Some(name) => {
-            let listing = cancellable(cancel, vfs.list_files(parent, None)).await?;
-            Ok(listing
-                .files
-                .into_iter()
-                .find(|f| f.name == name)
-                .filter(|f| f.is_dir && !f.is_symlink))
-        }
-        // The root of the VFS: a directory by definition.
-        None => Ok(Some(File::bare_dir(""))),
-    }
-}
-
 /// Dialog wording for the mount-point issue raised by a delete.
-pub(super) const DELETE_MOUNT_POINT_HINT: &str =
+const DELETE_MOUNT_POINT_HINT: &str =
     "To delete its contents too, tick \"Descend into mount points\" in the delete dialog.";
 
 pub(super) struct DeleteEntry {
@@ -52,9 +12,9 @@ pub(super) struct DeleteEntry {
     is_dir: bool,
 }
 
-/// Walk a directory tree depth-first and collect every entry to delete,
-/// root included, in deletion order: files first, then directories
-/// deepest first.
+/// Every entry under `root`, root included, in deletion order: files
+/// first, then directories deepest first. A root that is a file or a
+/// link is the one entry.
 ///
 /// A mount point cannot be removed while mounted, so it and every
 /// directory above it up to the root are left out. Without
@@ -62,91 +22,93 @@ pub(super) struct DeleteEntry {
 pub(super) async fn collect_delete_entries(
     vfs: &dyn Vfs,
     root: &Path,
-    root_file: &File,
     cross_mount_points: bool,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Vec<DeleteEntry>, crate::Error> {
-    let mut files = Vec::new();
-    let mut dirs = vec![DeleteEntry {
-        path: root.to_owned(),
-        is_dir: true,
-    }];
-    let mut kept = std::collections::HashSet::new();
-    let keep = |path: &Path, kept: &mut std::collections::HashSet<String>| {
-        let mut current = Some(path);
-        while let Some(p) = current {
-            kept.insert(p.as_wire_str().to_string());
-            if p.as_wire_str() == root.as_wire_str() {
-                break;
-            }
-            current = p.parent();
-        }
+    let mut collector = DeleteCollector {
+        reporter,
+        cancel,
+        cross_mount_points,
+        files: Vec::new(),
+        dirs: Vec::new(),
+        open: Vec::new(),
+        kept: std::collections::HashSet::new(),
     };
-    if is_mount_point(parent_device(vfs, root, root_file).await, root_file) {
-        keep(root, &mut kept);
-    }
-    let mut stack = vec![(root.to_owned(), root_file.device_id)];
+    cancellable(
+        cancel,
+        walk::walk(
+            vfs,
+            std::slice::from_ref(&root.to_owned()),
+            &walk::WalkOptions::default(),
+            &mut collector,
+        ),
+    )
+    .await?;
+    let mut entries = collector.files;
+    entries.extend(collector.dirs);
+    Ok(entries)
+}
 
-    while let Some((dir, device)) = stack.pop() {
-        if cancel.is_cancelled() {
+struct DeleteCollector<'a> {
+    reporter: &'a mut ProgressReporter,
+    cancel: &'a CancellationToken,
+    cross_mount_points: bool,
+    files: Vec<DeleteEntry>,
+    /// Filled on `leave`, so deepest first.
+    dirs: Vec<DeleteEntry>,
+    /// Directories entered and not yet left: the current entry's ancestry.
+    open: Vec<String>,
+    /// Directories that must survive: mount points and their ancestors.
+    kept: std::collections::HashSet<String>,
+}
+
+#[async_trait::async_trait]
+impl Visitor for DeleteCollector<'_> {
+    async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, crate::Error> {
+        if self.cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
-
-        let file_list = loop {
-            match cancellable(cancel, vfs.list_files(&dir, None)).await {
-                Ok(list) => break list,
-                Err(e) if e.kind == crate::ErrorKind::Cancelled => return Err(e),
-                Err(e) => {
-                    match reporter
-                        .handle_io_error(
-                            e,
-                            &format!("Error scanning directory {}", dir),
-                            None,
-                            cancel,
-                            true,
-                        )
-                        .await?
-                    {
-                        IssueOutcome::Skip => break crate::vfs::VfsFileList::default(),
-                        IssueOutcome::Retry => continue,
-                    }
-                }
-            }
-        };
-
-        for file in &file_list.files {
-            if file.name == ".." {
-                continue;
-            }
-            let entry_path = dir.join(&file.name);
-            if file.is_dir && !file.is_symlink {
-                if is_mount_point(device, file) {
-                    keep(&entry_path, &mut kept);
-                    if !cross_mount_points {
-                        skip_mount_point(reporter, &entry_path, DELETE_MOUNT_POINT_HINT).await?;
-                        continue;
-                    }
-                }
-                stack.push((entry_path.clone(), file.device_id));
-                dirs.push(DeleteEntry {
-                    path: entry_path,
-                    is_dir: true,
-                });
-            } else {
-                files.push(DeleteEntry {
-                    path: entry_path,
-                    is_dir: false,
-                });
+        self.reporter
+            .maybe_send_scanning((self.files.len() + self.dirs.len()) as u64, 0);
+        if !entry.file.is_dir || entry.file.is_symlink {
+            self.files.push(DeleteEntry {
+                path: entry.path.to_owned(),
+                is_dir: false,
+            });
+            return Ok(Control::Descend);
+        }
+        let key = entry.path.as_wire_str().to_string();
+        if entry.mount_point {
+            self.kept.extend(self.open.iter().cloned());
+            self.kept.insert(key.clone());
+            if !self.cross_mount_points && entry.depth > 0 {
+                skip_mount_point(self.reporter, entry.path, DELETE_MOUNT_POINT_HINT).await?;
+                return Ok(Control::Skip);
             }
         }
+        self.open.push(key);
+        Ok(Control::Descend)
     }
 
-    // Files first, then directories in reverse order (deepest first)
-    dirs.retain(|d| !kept.contains(d.path.as_wire_str()));
-    dirs.reverse();
-    files.extend(dirs);
-    Ok(files)
+    async fn leave(&mut self, path: &Path, _file: &File) -> Result<(), crate::Error> {
+        self.open.pop();
+        if !self.kept.contains(path.as_wire_str()) {
+            self.dirs.push(DeleteEntry {
+                path: path.to_owned(),
+                is_dir: true,
+            });
+        }
+        Ok(())
+    }
+
+    async fn failed(
+        &mut self,
+        what: Failed<'_>,
+        error: crate::Error,
+    ) -> Result<Resume, crate::Error> {
+        resume_after(self.reporter, what, error, self.cancel).await
+    }
 }
 
 /// Walk a directory tree and collect every entry (root included) as
@@ -196,30 +158,14 @@ pub(super) async fn execute_delete(
                 use_remove_tree: true,
             });
         } else {
-            let dir = probe_dir(&*vfs, descriptor, &local_path, &cancel).await?;
-            if let Some(dir) = dir {
-                let entries = collect_delete_entries(
-                    &*vfs,
-                    &local_path,
-                    &dir,
-                    cross_mount_points,
-                    reporter,
-                    &cancel,
-                )
-                .await?;
-                for entry in entries {
-                    all_entries.push(ResolvedDeleteEntry {
-                        vfs: vfs.clone(),
-                        path: entry.path,
-                        is_dir: entry.is_dir,
-                        use_remove_tree: false,
-                    });
-                }
-            } else {
+            let entries =
+                collect_delete_entries(&*vfs, &local_path, cross_mount_points, reporter, &cancel)
+                    .await?;
+            for entry in entries {
                 all_entries.push(ResolvedDeleteEntry {
-                    vfs,
-                    path: local_path,
-                    is_dir: false,
+                    vfs: vfs.clone(),
+                    path: entry.path,
+                    is_dir: entry.is_dir,
                     use_remove_tree: false,
                 });
             }
