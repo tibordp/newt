@@ -236,6 +236,8 @@ pub struct MockVfs {
     case_insensitive: bool,
     /// Ordinal per path for `read_order`; empty means no order.
     read_order: HashMap<String, u64>,
+    /// Modification times (ms) per path; absent means `None`.
+    modified: HashMap<String, i64>,
     /// Paths opened through `open_read_async`, in call order.
     opened: Mutex<Vec<String>>,
     /// Roots of other filesystems; empty means no entry reports a device.
@@ -449,7 +451,7 @@ impl MockVfs {
                     user,
                     group,
                     mode: Some(Mode(mode)),
-                    modified: None,
+                    modified: self.modified.get(path_str).copied(),
                     accessed: None,
                     created: None,
                     key: None,
@@ -728,7 +730,7 @@ impl Vfs for MockVfs {
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
-                modified: None,
+                modified: self.modified.get(&key).copied(),
                 accessed: None,
                 created: None,
                 key: None,
@@ -749,7 +751,7 @@ impl Vfs for MockVfs {
                 user: Some(crate::vfs::UserGroup::Id(*uid)),
                 group: Some(crate::vfs::UserGroup::Id(*gid)),
                 mode: Some(Mode(*mode)),
-                modified: None,
+                modified: self.modified.get(&key).copied(),
                 accessed: None,
                 created: None,
                 key: None,
@@ -770,7 +772,7 @@ impl Vfs for MockVfs {
                 user: None,
                 group: None,
                 mode: Some(Mode(0o777)),
-                modified: None,
+                modified: self.modified.get(&key).copied(),
                 accessed: None,
                 created: None,
                 key: None,
@@ -1205,6 +1207,7 @@ pub struct MockVfsBuilder {
     config: MockVfsConfig,
     case_insensitive: bool,
     read_order: HashMap<String, u64>,
+    modified: HashMap<String, i64>,
     mounts: Vec<String>,
 }
 
@@ -1225,6 +1228,7 @@ impl MockVfsBuilder {
             config: MockVfsConfig::default(),
             case_insensitive: false,
             read_order: HashMap::new(),
+            modified: HashMap::new(),
             mounts: Vec::new(),
         }
     }
@@ -1248,6 +1252,13 @@ impl MockVfsBuilder {
                 i as u64,
             );
         }
+        self
+    }
+
+    /// Set the entry's modification time, in milliseconds.
+    pub fn modified(mut self, path: &str, ms: i64) -> Self {
+        self.modified
+            .insert(PathBuf::from_wire_str(path).as_wire_str().to_string(), ms);
         self
     }
 
@@ -1403,6 +1414,7 @@ impl MockVfsBuilder {
             trashed: Mutex::new(Vec::new()),
             case_insensitive: self.case_insensitive,
             read_order: self.read_order,
+            modified: self.modified,
             opened: Mutex::new(Vec::new()),
             mounts: self.mounts,
             list_latency,

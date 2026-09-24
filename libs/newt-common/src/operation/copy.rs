@@ -498,36 +498,25 @@ pub(super) async fn execute_copy(
                         }
                     } else {
                         // Both are files (or symlinks)
-                        match reporter
-                            .raise_issue(
-                                IssueKind::AlreadyExists,
-                                format!("File already exists: {}", entry.dest),
-                                None,
-                                vec![IssueAction::Skip, IssueAction::Overwrite],
-                            )
-                            .await
+                        if !reporter
+                            .replace_existing(&entry.dest, &entry.file, &dest_file)
+                            .await?
                         {
-                            Ok(IssueAction::Skip) => {
-                                bytes_done += entry.size_bytes;
-                                items_done += 1;
-                                continue;
-                            }
-                            Ok(IssueAction::Overwrite) => {
-                                let source_is_symlink =
-                                    matches!(&entry.kind, CopyEntryKind::Symlink { .. });
-                                if dest_file.is_symlink || source_is_symlink {
-                                    // Remove when either side is a symlink:
-                                    // - dest is symlink: writing would go through to the
-                                    //   target rather than replacing the symlink itself
-                                    // - source is symlink: create_symlink can't overwrite
-                                    //   an existing file
-                                    dst_vfs.remove_file(&entry.dest).await?;
-                                }
-                                // For regular file → regular file: overwrite in place.
-                            }
-                            Err(e) => return Err(e),
-                            _ => unreachable!("not offered"),
+                            bytes_done += entry.size_bytes;
+                            items_done += 1;
+                            continue;
                         }
+                        let source_is_symlink =
+                            matches!(&entry.kind, CopyEntryKind::Symlink { .. });
+                        if dest_file.is_symlink || source_is_symlink {
+                            // Remove when either side is a symlink:
+                            // - dest is symlink: writing would go through to the
+                            //   target rather than replacing the symlink itself
+                            // - source is symlink: create_symlink can't overwrite
+                            //   an existing file
+                            dst_vfs.remove_file(&entry.dest).await?;
+                        }
+                        // For regular file → regular file: overwrite in place.
                     }
                 }
             }

@@ -49,3 +49,12 @@ export function IconOpenExternal() {
     </Icon>
   );
 }
+
+/// Downward chevron for a button that opens a menu.
+export function IconChevronDown() {
+  return (
+    <Icon>
+      <polyline points="4.5 6.25 8 9.75 11.5 6.25" />
+    </Icon>
+  );
+}

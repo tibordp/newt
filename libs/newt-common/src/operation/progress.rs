@@ -104,6 +104,13 @@ impl ProgressReporter {
         self.send(OperationProgress::Cancelled { id: self.id() });
     }
 
+    /// Answer issues of `kind` up front, as "apply to all" would.
+    pub(super) fn preset(&mut self, kind: IssueKind, action: Option<IssueAction>) {
+        if let Some(action) = action {
+            self.sticky_resolutions.insert(kind, action);
+        }
+    }
+
     pub(super) async fn raise_issue(
         &mut self,
         kind: IssueKind,
@@ -114,8 +121,11 @@ impl ProgressReporter {
         if self.cancel.is_cancelled() {
             return Err(crate::Error::cancelled());
         }
-        // Check sticky resolutions first
-        if let Some(&action) = self.sticky_resolutions.get(&kind) {
+        // A sticky answer covers later issues of the kind that offer it; a
+        // type mismatch after "Overwrite all" still asks.
+        if let Some(&action) = self.sticky_resolutions.get(&kind)
+            && actions.contains(&action)
+        {
             return Ok(action);
         }
 
@@ -153,6 +163,42 @@ impl ProgressReporter {
         }
     }
 
+    /// Asks about a file in the way of another; true to replace it.
+    pub(super) async fn replace_existing(
+        &mut self,
+        dest: &PathBuf,
+        source: &File,
+        existing: &File,
+    ) -> Result<bool, crate::Error> {
+        let action = self
+            .raise_issue(
+                IssueKind::AlreadyExists,
+                format!("File already exists: {}", dest),
+                None,
+                vec![
+                    IssueAction::Skip,
+                    IssueAction::Overwrite,
+                    IssueAction::OverwriteIfNewer,
+                    IssueAction::OverwriteIfSizeDiffers,
+                    IssueAction::OverwriteIfSizeOrDateDiffers,
+                ],
+            )
+            .await?;
+        Ok(match action {
+            IssueAction::Skip => false,
+            IssueAction::Overwrite => true,
+            IssueAction::OverwriteIfNewer => matches!(
+                (source.modified, existing.modified),
+                (Some(s), Some(e)) if s > e
+            ),
+            IssueAction::OverwriteIfSizeDiffers => !same(source.size, existing.size),
+            IssueAction::OverwriteIfSizeOrDateDiffers => {
+                !same(source.size, existing.size) || !same(source.modified, existing.modified)
+            }
+            IssueAction::Retry => unreachable!("not offered"),
+        })
+    }
+
     pub(super) async fn handle_io_error(
         &mut self,
         error: crate::Error,
@@ -165,9 +211,10 @@ impl ProgressReporter {
             return Err(crate::Error::cancelled());
         }
         warn!("operation {}: {} — {}", self.id(), context, error);
+        // `IssueKind::AlreadyExists` means a destination conflict, which a
+        // preset answers; an I/O error saying "already exists" is not one.
         let kind = match error.kind {
             crate::ErrorKind::PermissionDenied => IssueKind::PermissionDenied,
-            crate::ErrorKind::AlreadyExists => IssueKind::AlreadyExists,
             _ => IssueKind::IoError,
         };
         let mut actions = vec![IssueAction::Skip];
@@ -184,4 +231,10 @@ impl ProgressReporter {
             _ => unreachable!("not offered"),
         }
     }
+}
+
+/// Unknown on either side is never the same: an unknown size or time
+/// counts as a difference.
+fn same<T: PartialEq>(a: Option<T>, b: Option<T>) -> bool {
+    a.is_some() && a == b
 }

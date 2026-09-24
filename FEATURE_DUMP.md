@@ -433,6 +433,7 @@ Opens a modal dialog with:
   - **Preserve timestamps** — modification and access times.
   - **Preserve permissions** (default on) — Unix mode bits.
   - **More copy options** ("More move options" for a move; collapsed section, keyboard-reachable like any other control; opens expanded when a remembered toggle inside it is on, so a sticky choice is never hidden):
+    - **Existing files**: Ask (default), or answer every file conflict up front with any answer the prompt offers (see Issue resolution) — the same as giving it with "apply to all" at the first prompt.
     - **Preserve owner / group**, with **Match accounts by** numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
     - **Preserve extended attributes** (user xattrs; ACL and resource-fork xattrs are excluded because they have their own toggles).
     - **Preserve access control lists** — Linux POSIX ACLs, macOS extended ACLs, Windows DACLs. Carried opaquely in the source platform's encoding; only a destination of the same platform can apply them.
@@ -443,7 +444,7 @@ Opens a modal dialog with:
     - **Stay on one filesystem** — rsync's `-x`: a mount point under the selection is copied as an empty directory. Off by default, since a backup of a tree with a volume mounted under it usually wants the volume too. A move's copy half follows the same rule, and its clean-up pass never removes a mount point or the directories above it (see Delete).
     - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue).
     - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3), and for an S3 destination a **Storage class** and **Object access** canned ACL.
-  - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered. Link modes, storage class, canned ACL, "apply source attributes to existing directories" and "stay on one filesystem" reset every time — each changes what gets written beyond a faithful copy or who can read it.
+  - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered. Link modes, storage class, canned ACL, "apply source attributes to existing directories", "stay on one filesystem" and the existing-files answer reset every time — each changes what gets written beyond a faithful copy or who can read it.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
 **Copy execution**:
@@ -451,7 +452,7 @@ Opens a modal dialog with:
 0. **Self-destination check**: before any scanning, an operation whose destination *is* one of its sources fails outright — no conflict prompt, since there is no sane resolution (Overwrite would open the destination truncating while the source read was still pending, emptying the file). Byte comparison can't answer this — `/a/Foo` and `/a/foo` are one file on a case-insensitive volume, as are NFC and NFD spellings on HFS+ — so the filesystem is asked via `Vfs::same_file`. Copy refuses every spelling of a self-copy, matching `cp`'s "'x' and 'x' are the same file". Costs one filesystem question per distinct source directory, since a source can only land on itself when its own directory is the destination.
 1. **Planning phase**: Recursively traverses all source directories to build a complete file list. The UI shows "Scanning..." with a live count of items and bytes discovered so far. Subdirectory scan errors raise a skip/retry prompt rather than aborting the whole operation.
 2. **Conflict detection**: For each file, checks if the destination already exists:
-   - File → File: Offers Skip/Overwrite.
+   - File → File: Offers Skip / Overwrite, with the conditional overwrites (see Issue resolution) in a menu on Overwrite, unless the dialog answered up front.
    - Directory → Directory: Merges (copies contents into existing directory without error).
    - File → Directory or Directory → File (type mismatch): Error, offers Skip.
 3. **Copy strategies**:
@@ -476,7 +477,7 @@ Same dialog and options as Copy (except "Create symbolic link" is not available)
 
 **Move execution**:
 0. **Self-destination check**: as for Copy, but Move refuses only the true no-op — same file *and* a byte-identical leaf name. A differing leaf (`Foo` → `foo` in place on a case-insensitive volume) is a re-spelling, which is legitimate and falls through to the rename below. This is the `mv Foo foo` works / `cp Foo foo` fails split that coreutils has.
-1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same Skip / Overwrite prompt as Copy is shown rather than silently overwriting. A destination that resolves to the *source itself* is exempt: on a case-insensitive volume `Foo` → `foo` stats successfully as the source, and that is the point of the move rather than an obstacle to it. `Vfs::same_file` is consulted only once something is actually in the way, so bulk moves stay at one probe apiece. An approved overwrite still goes through the plain rename (atomic replace on POSIX and posix-rename SFTP servers); only if the backend refuses with "already exists" is the destination cleared and the rename retried. Directory-onto-existing-directory goes straight to the copy machinery, which merges.
+1. **Try fast rename** (same VFS only): Attempts atomic rename for each source. Instant if it works. The rename path also performs conflict detection — if the destination already exists, the same conflict prompt as Copy is shown rather than silently overwriting; a file left in place by a conditional answer stays at its source. A destination that resolves to the *source itself* is exempt: on a case-insensitive volume `Foo` → `foo` stats successfully as the source, and that is the point of the move rather than an obstacle to it. `Vfs::same_file` is consulted only once something is actually in the way, so bulk moves stay at one probe apiece. An approved overwrite still goes through the plain rename (atomic replace on POSIX and posix-rename SFTP servers); only if the backend refuses with "already exists" is the destination cleared and the rename retried. Directory-onto-existing-directory goes straight to the copy machinery, which merges.
 2. **Fallback to copy+delete**: Only a `NotSupported` rename — the VFS has no rename, or this particular pair can't be renamed (cross-device inside the root VFS, cross-VFS) — falls back to copying each file and immediately deleting the source after successful copy. Real rename failures (permissions, connection) raise a Skip/Retry issue instead of silently degrading. After all files are copied, empty source directories are removed in reverse order (deepest first). Directories that still contain files (because some copies were skipped) are left intact. The same rule governs the same-VFS server-side copy fast path: `copy_within` falling over with `NotSupported` (e.g. S3 CopyObject's 5 GiB cap) cascades to streaming; real errors surface as issues.
 
 ### Pack to Archive (Alt+F5)
@@ -580,11 +581,12 @@ When an operation encounters a conflict:
 
 | Issue Type | Available Actions |
 |-----------|------------------|
-| File already exists | Skip, Overwrite |
+| File already exists | Skip, Overwrite; copy and move add Overwrite if newer / if size differs / if size or date differs |
 | Permission denied | Skip, Retry |
 | Other I/O error | Skip, Retry |
 
-- **"Apply to all" checkbox**: When checked, Skip or Overwrite is automatically applied to all subsequent issues of the same type within the same operation. Retry always applies only to the current attempt, regardless of the checkbox; another failure prompts again.
+- **Conditional overwrites** sit in a menu on the Overwrite button (its chevron half) and are decided per file from the two entries' size and modification time; no content is read. *If newer*: the source's time is later. *If size differs*: for destinations whose times say nothing (S3, copies made without "Preserve timestamps"). *If size or date differs*: rsync's quick check; a file matching on both is skipped. Times compare exactly, to the millisecond, so a copy to a filesystem with coarser times (DOS timestamps in zip and FAT, whole seconds over SFTP) differs from its source. An unknown size or time is never newer and always differs. Without "Preserve timestamps" a copy carries the time it was made, so it is newer than its source.
+- **"Apply to all" checkbox**: When checked, the chosen answer is applied to all subsequent issues of the same type within the same operation that offer it; a conditional answer is still decided per file. An issue that does not offer the sticky answer (a directory in the way after "Overwrite" for all) still prompts, while Skip covers it. The dialog's **Existing files** answer is this same sticky answer, set before the operation starts. "Already exists" I/O errors outside a conflict check are ordinary I/O errors and are not covered. Retry always applies only to the current attempt, regardless of the checkbox; another failure prompts again.
 
 ---
 

@@ -137,6 +137,32 @@
     padding: 1px 8px;
     font-size: 0.8em;
   }
+
+  // Outranks the modal's `.bodyIssueActions button` padding.
+  .splitMenuButton {
+    display: inline-flex;
+    align-items: center;
+    align-self: stretch;
+    margin-left: -1px;
+    padding-inline: 0.3em;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+
+    svg {
+      width: 1em;
+      height: 1em;
+    }
+  }
+}
+
+// Overwrite and the menu of its conditional variants, as one control.
+.splitButton {
+  display: inline-flex;
+
+  > button:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
 }
 
 .applyToAll {

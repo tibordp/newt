@@ -990,6 +990,276 @@ async fn test_copy_conflict_apply_to_all() {
     assert_eq!(issue_count, 1);
 }
 
+fn answer_all(action: IssueAction) -> impl FnMut(&OperationIssue) -> IssueResponse {
+    move |_issue| IssueResponse {
+        action,
+        apply_to_all: true,
+    }
+}
+
+/// Copies `/src/<name>.txt` for each name into `/dst`.
+fn copy_named(names: &[&str], conflict_resolution: Option<IssueAction>) -> OperationRequest {
+    OperationRequest::Copy {
+        rename_to: None,
+        sources: names
+            .iter()
+            .map(|n| vfs_path(&format!("/src/{n}.txt")))
+            .collect(),
+        destination: vfs_path("/dst"),
+        options: CopyOptions {
+            conflict_resolution,
+            ..Default::default()
+        },
+    }
+}
+
+fn never_asked(issue: &OperationIssue) -> IssueResponse {
+    panic!("unexpected prompt: {}", issue.message)
+}
+
+#[tokio::test]
+async fn test_copy_conflict_overwrite_if_newer() {
+    let vfs = MockVfs::builder()
+        .file("/src/newer.txt", b"new")
+        .modified("/src/newer.txt", 5_000_001)
+        .file("/dst/newer.txt", b"old")
+        .modified("/dst/newer.txt", 5_000_000)
+        .file("/src/older.txt", b"new")
+        .modified("/src/older.txt", 1_000_000)
+        .file("/dst/older.txt", b"old")
+        .modified("/dst/older.txt", 5_000_000)
+        .file("/src/equal.txt", b"new")
+        .modified("/src/equal.txt", 5_000_000)
+        .file("/dst/equal.txt", b"old")
+        .modified("/dst/equal.txt", 5_000_000)
+        .file("/src/unknown.txt", b"new")
+        .file("/dst/unknown.txt", b"old")
+        .modified("/dst/unknown.txt", 5_000_000)
+        .build();
+
+    let mut issues = 0;
+    let result = run_operation(
+        vfs,
+        copy_named(&["newer", "older", "equal", "unknown"], None),
+        |issue| {
+            issues += 1;
+            answer_all(IssueAction::OverwriteIfNewer)(issue)
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issues, 1);
+    assert_eq!(result.vfs.read_content("/dst/newer.txt"), b"new");
+    assert_eq!(result.vfs.read_content("/dst/older.txt"), b"old");
+    assert_eq!(result.vfs.read_content("/dst/equal.txt"), b"old");
+    assert_eq!(result.vfs.read_content("/dst/unknown.txt"), b"old");
+}
+
+#[tokio::test]
+async fn test_copy_conflict_overwrite_if_size_differs() {
+    let vfs = MockVfs::builder()
+        .file("/src/same.txt", b"aaaa")
+        .modified("/src/same.txt", 1_000_000)
+        .file("/dst/same.txt", b"bbbb")
+        .modified("/dst/same.txt", 5_000_000)
+        .file("/src/resized.txt", b"aaaaa")
+        .modified("/src/resized.txt", 5_000_000)
+        .file("/dst/resized.txt", b"bbbb")
+        .modified("/dst/resized.txt", 5_000_000)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        copy_named(&["same", "resized"], None),
+        answer_all(IssueAction::OverwriteIfSizeDiffers),
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/same.txt"), b"bbbb");
+    assert_eq!(result.vfs.read_content("/dst/resized.txt"), b"aaaaa");
+}
+
+#[tokio::test]
+async fn test_copy_conflict_overwrite_if_size_or_date_differs() {
+    let vfs = MockVfs::builder()
+        .file("/src/same.txt", b"aaaa")
+        .modified("/src/same.txt", 5_000_000)
+        .file("/dst/same.txt", b"bbbb")
+        .modified("/dst/same.txt", 5_000_000)
+        .file("/src/resized.txt", b"aaaaa")
+        .modified("/src/resized.txt", 5_000_000)
+        .file("/dst/resized.txt", b"bbbb")
+        .modified("/dst/resized.txt", 5_000_000)
+        .file("/src/touched.txt", b"aaaa")
+        .modified("/src/touched.txt", 4_999_999)
+        .file("/dst/touched.txt", b"bbbb")
+        .modified("/dst/touched.txt", 5_000_000)
+        .file("/src/unknown.txt", b"aaaa")
+        .file("/dst/unknown.txt", b"bbbb")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        copy_named(&["same", "resized", "touched", "unknown"], None),
+        answer_all(IssueAction::OverwriteIfSizeOrDateDiffers),
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/same.txt"), b"bbbb");
+    assert_eq!(result.vfs.read_content("/dst/resized.txt"), b"aaaaa");
+    assert_eq!(result.vfs.read_content("/dst/touched.txt"), b"aaaa");
+    assert_eq!(result.vfs.read_content("/dst/unknown.txt"), b"aaaa");
+}
+
+#[tokio::test]
+async fn test_copy_preset_conflict_resolution_does_not_prompt() {
+    let vfs = MockVfs::builder()
+        .file("/src/newer.txt", b"new")
+        .modified("/src/newer.txt", 10_000_000)
+        .file("/dst/newer.txt", b"old")
+        .modified("/dst/newer.txt", 5_000_000)
+        .file("/src/older.txt", b"new")
+        .modified("/src/older.txt", 1_000_000)
+        .file("/dst/older.txt", b"old")
+        .modified("/dst/older.txt", 5_000_000)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        copy_named(&["newer", "older"], Some(IssueAction::OverwriteIfNewer)),
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/newer.txt"), b"new");
+    assert_eq!(result.vfs.read_content("/dst/older.txt"), b"old");
+}
+
+#[tokio::test]
+async fn test_copy_preset_skip_covers_a_directory_in_the_way() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/src/b.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .dir("/dst/b.txt")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        copy_named(&["a", "b"], Some(IssueAction::Skip)),
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+}
+
+#[tokio::test]
+async fn test_copy_preset_overwrite_still_asks_about_a_directory_in_the_way() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/src/b.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .dir("/dst/b.txt")
+        .build();
+
+    let mut asked = Vec::new();
+    let result = run_operation(
+        vfs,
+        copy_named(&["a", "b"], Some(IssueAction::Overwrite)),
+        |issue| {
+            asked.push(issue.actions.clone());
+            skip_all(issue)
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(asked, vec![vec![IssueAction::Skip]]);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+}
+
+#[tokio::test]
+async fn test_move_preset_overwrite_if_newer_keeps_skipped_sources() {
+    let vfs = MockVfs::builder()
+        .file("/src/newer.txt", b"new")
+        .modified("/src/newer.txt", 10_000_000)
+        .file("/dst/newer.txt", b"old")
+        .modified("/dst/newer.txt", 5_000_000)
+        .file("/src/older.txt", b"new")
+        .modified("/src/older.txt", 1_000_000)
+        .file("/dst/older.txt", b"old")
+        .modified("/dst/older.txt", 5_000_000)
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/newer.txt"), vfs_path("/src/older.txt")],
+            destination: vfs_path("/dst"),
+            options: CopyOptions {
+                conflict_resolution: Some(IssueAction::OverwriteIfNewer),
+                ..Default::default()
+            },
+        },
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/newer.txt"), b"new");
+    assert!(!result.vfs.exists("/src/newer.txt"));
+    assert_eq!(result.vfs.read_content("/dst/older.txt"), b"old");
+    assert!(result.vfs.exists("/src/older.txt"));
+}
+
+#[tokio::test]
+async fn test_sticky_answer_only_covers_issues_that_offer_it() {
+    // "Overwrite all" on a file conflict, then a directory in the way of a
+    // file: the second prompt offers only Skip and must still be asked.
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/src/b.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .dir("/dst/b.txt")
+        .build();
+
+    let mut asked = Vec::new();
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt"), vfs_path("/src/b.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        |issue| {
+            asked.push(issue.actions.clone());
+            let action = if issue.actions.contains(&IssueAction::Overwrite) {
+                IssueAction::Overwrite
+            } else {
+                IssueAction::Skip
+            };
+            IssueResponse {
+                action,
+                apply_to_all: true,
+            }
+        },
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1], vec![IssueAction::Skip]);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+}
+
 #[tokio::test]
 async fn test_copy_preserves_metadata() {
     let vfs = MockVfs::builder()

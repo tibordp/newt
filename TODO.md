@@ -68,10 +68,6 @@ Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
 - `.img` support via content sniffing: the extension is ambiguous (raw disk images with partition tables vs raw ISO9660/UDF), so claiming it needs a cheap probe before mount rather than an extension match.
 - El Torito boot catalog: expose boot images as synthetic entries at the mount root.
 
-## Copy conflicts
-
-- Two more answers on the existing conflict prompt, both composing with "apply to all": **Overwrite if newer** (source mtime later than the destination's) and **Skip identical** (same size and mtime). The prompt already has both entries in hand. No rename-both.
-
 ## Distribution
 
 - Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.

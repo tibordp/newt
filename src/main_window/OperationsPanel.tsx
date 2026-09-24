@@ -1,17 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 import { commands } from "../lib/bindings";
 import type { IssueAction, OperationState } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { formatBytes, useFormatBytes } from "../lib/size";
+import { ACTION_LABELS, OVERWRITE_VARIANTS } from "./issueActions";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
+import menuStyles from "./Menu.module.scss";
 import {
   DialogShell,
   DialogHeader,
   DialogBody,
   DialogFooter,
+  IconChevronDown,
 } from "./modals/primitives";
 
 export type { IssueAction, OperationState };
@@ -110,12 +114,6 @@ function TransferSpeedInfo({ op }: { op: OperationState }) {
   );
 }
 
-export const ACTION_LABELS: Record<IssueAction, string> = {
-  skip: "Skip",
-  overwrite: "Overwrite",
-  retry: "Retry",
-};
-
 function IssueResolution({
   op,
   classNameOverrides,
@@ -136,12 +134,33 @@ function IssueResolution({
 }) {
   const [applyToAll, setApplyToAll] = useState(false);
   const issue = op.issue!;
+  // Whatever held focus when the overwrite menu opened (the pane, for the
+  // inline row) gets it back when the menu closes.
+  const focusBeforeMenu = useRef<HTMLElement | null>(null);
 
   const resolve = useCallback(
     (action: IssueAction) => {
       safe(commands.resolveIssue(op.id, issue.issue_id, action, applyToAll));
     },
     [op.id, issue.issue_id, applyToAll],
+  );
+
+  const variants = issue.actions.filter((a) => OVERWRITE_VARIANTS.includes(a));
+  const primary = issue.actions.filter((a) => !OVERWRITE_VARIANTS.includes(a));
+
+  const actionButton = (action: IssueAction, i: number) => (
+    <button
+      key={action}
+      autoFocus={inModal && i === 0}
+      tabIndex={inModal ? 0 : -1}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => {
+        e.stopPropagation();
+        resolve(action);
+      }}
+    >
+      {ACTION_LABELS[action] || action}
+    </button>
   );
 
   return (
@@ -161,20 +180,60 @@ function IssueResolution({
         </details>
       )}
       <div className={classNameOverrides?.issueActions ?? styles.issueActions}>
-        {issue.actions.map((action, i) => (
-          <button
-            key={action}
-            autoFocus={inModal && i === 0}
-            tabIndex={inModal ? 0 : -1}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={(e) => {
-              e.stopPropagation();
-              resolve(action);
-            }}
-          >
-            {ACTION_LABELS[action] || action}
-          </button>
-        ))}
+        {primary.map((action, i) =>
+          action === "overwrite" && variants.length > 0 ? (
+            <span key={action} className={styles.splitButton}>
+              {actionButton(action, i)}
+              <DropdownMenu.Root
+                onOpenChange={(open) => {
+                  if (open) {
+                    focusBeforeMenu.current =
+                      document.activeElement as HTMLElement | null;
+                  }
+                }}
+              >
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className={styles.splitMenuButton}
+                    aria-label="More overwrite options"
+                    tabIndex={inModal ? 0 : -1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <IconChevronDown />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    className={menuStyles.content}
+                    align="end"
+                    sideOffset={4}
+                    loop
+                    // Portalled, but React still bubbles the click to the
+                    // row, which would foreground the operation.
+                    onClick={(e) => e.stopPropagation()}
+                    onCloseAutoFocus={(e) => {
+                      e.preventDefault();
+                      focusBeforeMenu.current?.focus();
+                    }}
+                  >
+                    {variants.map((variant) => (
+                      <DropdownMenu.Item
+                        key={variant}
+                        className={menuStyles.item}
+                        onSelect={() => resolve(variant)}
+                      >
+                        {ACTION_LABELS[variant]}
+                      </DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </span>
+          ) : (
+            actionButton(action, i)
+          ),
+        )}
         <label
           className={styles.applyToAll}
           onMouseDown={(e) => e.preventDefault()}

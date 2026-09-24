@@ -53,6 +53,10 @@ pub enum IssueKind {
 pub enum IssueAction {
     Skip,
     Overwrite,
+    /// Overwrite when the source was modified later than the destination.
+    OverwriteIfNewer,
+    OverwriteIfSizeDiffers,
+    OverwriteIfSizeOrDateDiffers,
     Retry,
 }
 
@@ -104,6 +108,9 @@ pub struct CopyOptions {
     /// Stay on each source's filesystem: a mount point under the
     /// selection becomes an empty directory (rsync's `-x`).
     pub one_file_system: bool,
+    /// The answer to every "already exists" prompt that offers it, as if
+    /// given with "apply to all"; `None` asks.
+    pub conflict_resolution: Option<IssueAction>,
 }
 
 impl Default for CopyOptions {
@@ -128,6 +135,7 @@ impl Default for CopyOptions {
             preserve_merged_directories: false,
             create_symlink: false,
             one_file_system: false,
+            conflict_resolution: None,
         }
     }
 }
@@ -582,6 +590,7 @@ pub async fn execute_operation(
             options,
             rename_to,
         } => {
+            reporter.preset(IssueKind::AlreadyExists, options.conflict_resolution);
             execute_copy(
                 &mut reporter,
                 &context,
@@ -601,6 +610,7 @@ pub async fn execute_operation(
             options,
             rename_to,
         } => {
+            reporter.preset(IssueKind::AlreadyExists, options.conflict_resolution);
             execute_move(
                 &mut reporter,
                 &context,

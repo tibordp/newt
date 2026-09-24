@@ -88,27 +88,17 @@ pub(super) async fn execute_move(
                         _ => unreachable!("not offered"),
                     }
                 } else if !dest_file.is_dir {
-                    // Both are files — offer skip/overwrite
-                    match reporter
-                        .raise_issue(
-                            IssueKind::AlreadyExists,
-                            format!("File already exists: {}", dest_local),
-                            None,
-                            vec![IssueAction::Skip, IssueAction::Overwrite],
-                        )
-                        .await
+                    if !reporter
+                        .replace_existing(&dest_local, &source_file, &dest_file)
+                        .await?
                     {
-                        Ok(IssueAction::Skip) => continue,
-                        Ok(IssueAction::Overwrite) => {
-                            // Proceed with rename — an atomic replace on
-                            // backends that support it (POSIX rename,
-                            // posix-rename SFTP servers). Backends that
-                            // refuse report AlreadyExists, handled below.
-                            overwrite_approved = true;
-                        }
-                        Err(e) => return Err(e),
-                        _ => unreachable!("not offered"),
+                        continue;
                     }
+                    // Proceed with rename — an atomic replace on backends
+                    // that support it (POSIX rename, posix-rename SFTP
+                    // servers). Backends that refuse report AlreadyExists,
+                    // handled below.
+                    overwrite_approved = true;
                 } else {
                     // Both are directories: merge — the copy machinery
                     // merges into an existing destination; rename can't.

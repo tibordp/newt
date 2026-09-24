@@ -1925,7 +1925,12 @@ export type CopyOptions = { preserve_timestamps: boolean; preserve_permissions: 
  * Stay on each source's filesystem: a mount point under the
  * selection becomes an empty directory (rsync's `-x`).
  */
-one_file_system: boolean }
+one_file_system: boolean; 
+/**
+ * The answer to every "already exists" prompt that offers it, as if
+ * given with "apply to all"; `None` asks.
+ */
+conflict_resolution: IssueAction | null }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
 /**
@@ -2109,7 +2114,11 @@ mounts: boolean;
  */
 recent_folders: boolean }
 export type ImageBackground = "dark" | "checkerboard" | "light"
-export type IssueAction = "skip" | "overwrite" | "retry"
+export type IssueAction = "skip" | "overwrite" | 
+/**
+ * Overwrite when the source was modified later than the destination.
+ */
+"overwrite_if_newer" | "overwrite_if_size_differs" | "overwrite_if_size_or_date_differs" | "retry"
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
 /**

@@ -3,7 +3,9 @@ import {
   commands,
   type CopyMoveDefaults,
   type CopyOptions,
+  type IssueAction,
 } from "../../lib/bindings";
+import { ACTION_LABELS, CONFLICT_RESOLUTIONS } from "../issueActions";
 import { safe, safeCommand } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
@@ -164,6 +166,28 @@ export default function CopyMove({
           onToggle={setAdvancedOpen}
         >
           <FieldGroup>
+            <FieldRow label="Existing files">
+              <select
+                disabled={createSymlink}
+                value={options.conflict_resolution ?? "ask"}
+                onChange={(e) =>
+                  setOptions((current) => ({
+                    ...current,
+                    conflict_resolution:
+                      e.target.value === "ask"
+                        ? null
+                        : (e.target.value as IssueAction),
+                  }))
+                }
+              >
+                <option value="ask">Ask</option>
+                {CONFLICT_RESOLUTIONS.map((action) => (
+                  <option key={action} value={action}>
+                    {ACTION_LABELS[action]}
+                  </option>
+                ))}
+              </select>
+            </FieldRow>
             {checkbox("preserve_owner", "Preserve owner")}
             {checkbox("preserve_group", "Preserve group")}
             {(options.preserve_owner || options.preserve_group) && (
@@ -283,10 +307,6 @@ export default function CopyMove({
               )}
             </FieldGroup>
           )}
-          <p className={styles.hint}>
-            If a requested property cannot be preserved, choose Retry, Skip, or
-            Cancel in the operation dialog.
-          </p>
         </FieldFold>
       </DialogBody>
       <DialogFooter
