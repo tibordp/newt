@@ -76,6 +76,15 @@ fn check_failure_in(
 // Config: which capabilities the mock VFS advertises
 // ---------------------------------------------------------------------------
 
+/// Where a `create_new` write finds out the destination exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MockRefusal {
+    /// When opening, as local files do.
+    AtOpen,
+    /// On finish, after every byte was written, as S3 does.
+    AtFinish,
+}
+
 #[derive(Debug, Clone)]
 pub struct MockVfsConfig {
     pub can_read: bool,
@@ -103,6 +112,14 @@ pub struct MockVfsConfig {
     /// Time each `list_files` takes, so overlapping listings can be seen
     /// overlapping (`MockVfs::max_concurrent_listings`).
     pub list_latency: Option<std::time::Duration>,
+    /// How `create_new` is honoured by writes and `copy_within`; `None`
+    /// answers `NotSupported`.
+    pub create_new: Option<MockRefusal>,
+    /// `create_new` answers `NotSupported` for a size hint past this, or
+    /// none, as S3 does for anything larger than one request.
+    pub create_new_max_size: Option<u64>,
+    /// Offer `rename_no_replace`; off, it answers `NotSupported`.
+    pub rename_no_replace: bool,
 }
 
 impl Default for MockVfsConfig {
@@ -124,6 +141,9 @@ impl Default for MockVfsConfig {
             can_stat_directories: true,
             can_list_recursive: false,
             list_latency: None,
+            create_new: Some(MockRefusal::AtOpen),
+            create_new_max_size: None,
+            rename_no_replace: true,
         }
     }
 }
@@ -240,6 +260,11 @@ pub struct MockVfs {
     modified: HashMap<String, i64>,
     /// Paths opened through `open_read_async`, in call order.
     opened: Mutex<Vec<String>>,
+    /// Paths asked about through `file_info`, in call order.
+    stats: Mutex<Vec<String>>,
+    create_new: Option<MockRefusal>,
+    create_new_max_size: Option<u64>,
+    rename_no_replace: bool,
     /// Roots of other filesystems; empty means no entry reports a device.
     mounts: Vec<String>,
     list_latency: Option<std::time::Duration>,
@@ -296,7 +321,56 @@ impl MockVfs {
             .unwrap_or(requested)
     }
 
+    fn occupied(&self, path: &Path) -> bool {
+        key_exists(
+            &self.entries.lock(),
+            path.as_wire_str(),
+            self.case_insensitive,
+        )
+    }
+
+    /// `NotSupported` unless this `create_new` request is honoured.
+    fn check_create_new(
+        &self,
+        options: &crate::vfs::attributes::WriteOptions,
+    ) -> Result<Option<MockRefusal>, crate::Error> {
+        if !options.create_new {
+            return Ok(None);
+        }
+        let fits = self
+            .create_new_max_size
+            .is_none_or(|max| options.size_hint.is_some_and(|size| size <= max));
+        match self.create_new {
+            Some(refusal) if fits => Ok(Some(refusal)),
+            _ => Err(crate::Error::not_supported()),
+        }
+    }
+
     // -- State inspection helpers --
+
+    /// Put a file at `path` from outside, as another writer would.
+    pub fn put_file(&self, path: &str, content: &[u8]) {
+        self.entries.lock().insert(
+            PathBuf::from_wire_str(path).as_wire_str().to_string(),
+            MockEntry::File {
+                content: content.to_vec(),
+                mode: 0o644,
+                uid: 1000,
+                gid: 1000,
+            },
+        );
+    }
+
+    /// Paths `file_info` was asked about under `prefix`.
+    pub fn stats_under(&self, prefix: &str) -> Vec<String> {
+        let prefix = PathBuf::from_wire_str(prefix);
+        self.stats
+            .lock()
+            .iter()
+            .filter(|p| PathBuf::from_wire_str(p).starts_with(&prefix))
+            .cloned()
+            .collect()
+    }
 
     /// Snapshot of all paths and their types, sorted.
     pub fn inject_failure(&self, failure: FailureSpec) {
@@ -704,6 +778,7 @@ impl Vfs for MockVfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, crate::Error> {
+        self.stats.lock().push(path.as_wire_str().to_string());
         if let Some(e) = self.check_failure(path, "file_info") {
             return Err(e);
         }
@@ -790,16 +865,40 @@ impl Vfs for MockVfs {
         path: &Path,
         options: &crate::vfs::attributes::WriteOptions,
     ) -> Result<Box<dyn VfsAsyncWriter>, crate::Error> {
-        if !options.is_default() {
+        let refusal = self.check_create_new(options)?;
+        let attributes = crate::vfs::attributes::WriteOptions {
+            create_new: false,
+            ..options.clone()
+        };
+        if !attributes.is_default() {
             return Err(crate::Error::not_supported());
         }
         if let Some(e) = self.check_failure(path, "overwrite_async") {
             return Err(e);
         }
+        if refusal == Some(MockRefusal::AtOpen) {
+            if self.occupied(path) {
+                return Err(already_exists(path));
+            }
+            // The exclusive open creates the file, as O_EXCL does.
+            self.entries.lock().insert(
+                path.as_wire_str().to_string(),
+                MockEntry::File {
+                    content: Vec::new(),
+                    mode: 0o644,
+                    uid: 1000,
+                    gid: 1000,
+                },
+            );
+        }
         Ok(Box::new(MockWriter {
             buf: Vec::new(),
             path: path.as_wire_str().to_string(),
             entries: self.entries.clone(),
+            refuse_existing: refusal == Some(MockRefusal::AtFinish),
+            case_insensitive: self.case_insensitive,
+            failures: self.failures.clone(),
+            exclusive: refusal == Some(MockRefusal::AtOpen),
         }))
     }
 
@@ -1038,9 +1137,25 @@ impl Vfs for MockVfs {
     }
 
     async fn same_file(&self, a: &Path, b: &Path) -> Result<bool, crate::Error> {
+        if let Some(e) = self.check_failure(b, "same_file") {
+            return Err(e);
+        }
         let (a, b) = (self.lookup_key(a), self.lookup_key(b));
         let entries = self.entries.lock();
         Ok(a == b && entries.contains_key(&a))
+    }
+
+    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
+        if !self.rename_no_replace {
+            return Err(crate::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(from, "rename_no_replace") {
+            return Err(e);
+        }
+        if self.occupied(to) {
+            return Err(already_exists(to));
+        }
+        self.rename(from, to).await
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
@@ -1081,11 +1196,19 @@ impl Vfs for MockVfs {
         to: &Path,
         options: &crate::vfs::attributes::WriteOptions,
     ) -> Result<(), crate::Error> {
-        if !options.is_default() {
+        let refusal = self.check_create_new(options)?;
+        let attributes = crate::vfs::attributes::WriteOptions {
+            create_new: false,
+            ..options.clone()
+        };
+        if !attributes.is_default() {
             return Err(crate::Error::not_supported());
         }
         if let Some(e) = self.check_failure(from, "copy_within") {
             return Err(e);
+        }
+        if refusal.is_some() && self.occupied(to) {
+            return Err(already_exists(to));
         }
         let mut entries = self.entries.lock();
         match entries.get(from.as_wire_str()).cloned() {
@@ -1116,6 +1239,30 @@ struct MockWriter {
     /// Canonical wire-string key of the target path.
     path: String,
     entries: EntryMap,
+    /// `create_new` refused on finish.
+    refuse_existing: bool,
+    case_insensitive: bool,
+    /// Checked for "finish" specs on the target path.
+    failures: Arc<Mutex<Vec<FailureSpec>>>,
+    /// Created by the exclusive open and not yet finished: dropped now, it
+    /// is removed, as the local writer does.
+    exclusive: bool,
+}
+
+fn key_exists(
+    entries: &BTreeMap<String, MockEntry>,
+    requested: &str,
+    case_insensitive: bool,
+) -> bool {
+    entries.contains_key(requested)
+        || (case_insensitive && entries.keys().any(|k| k.eq_ignore_ascii_case(requested)))
+}
+
+fn already_exists(path: &Path) -> crate::Error {
+    crate::Error {
+        kind: crate::ErrorKind::AlreadyExists,
+        message: format!("already exists: {}", path),
+    }
 }
 
 impl MockWriter {
@@ -1135,7 +1282,9 @@ impl MockWriter {
 
 impl Drop for MockWriter {
     fn drop(&mut self) {
-        if !self.buf.is_empty() {
+        if self.exclusive {
+            self.entries.lock().remove(&self.path);
+        } else if !self.buf.is_empty() {
             self.commit();
         }
     }
@@ -1149,9 +1298,24 @@ impl VfsAsyncWriter for MockWriter {
     }
 
     async fn finish(mut self: Box<Self>) -> Result<(), crate::Error> {
+        if let Some(e) = check_failure_in(
+            &self.failures,
+            &PathBuf::from_wire_str(&self.path),
+            "finish",
+        ) {
+            self.buf.clear();
+            return Err(e);
+        }
+        if self.refuse_existing
+            && key_exists(&self.entries.lock(), &self.path, self.case_insensitive)
+        {
+            self.buf.clear();
+            return Err(already_exists(&PathBuf::from_wire_str(&self.path)));
+        }
         self.commit();
         // Clear buf so Drop doesn't double-insert
         self.buf.clear();
+        self.exclusive = false;
         Ok(())
     }
 }
@@ -1401,6 +1565,9 @@ impl MockVfsBuilder {
 
     pub fn build(self) -> Arc<MockVfs> {
         let strict_range_reads = self.config.strict_range_reads;
+        let create_new = self.config.create_new;
+        let create_new_max_size = self.config.create_new_max_size;
+        let rename_no_replace = self.config.rename_no_replace;
         let list_latency = self.config.list_latency;
         let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
             config: self.config,
@@ -1416,6 +1583,10 @@ impl MockVfsBuilder {
             read_order: self.read_order,
             modified: self.modified,
             opened: Mutex::new(Vec::new()),
+            stats: Mutex::new(Vec::new()),
+            create_new,
+            create_new_max_size,
+            rename_no_replace,
             mounts: self.mounts,
             list_latency,
             listings_in_flight: std::sync::atomic::AtomicUsize::new(0),

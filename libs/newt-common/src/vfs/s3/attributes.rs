@@ -1,4 +1,4 @@
-use super::{S3Vfs, sdk_err};
+use super::{S3Vfs, local_err, sdk_err};
 use crate::{
     Error,
     vfs::{
@@ -106,13 +106,13 @@ impl S3Vfs {
                             .key(key)
                             .value(value)
                             .build()
-                            .map_err(sdk_err)
+                            .map_err(local_err)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let tagging = aws_sdk_s3::types::Tagging::builder()
                     .set_tag_set(Some(tags))
                     .build()
-                    .map_err(sdk_err)?;
+                    .map_err(local_err)?;
                 client
                     .put_object_tagging()
                     .bucket(bucket)
@@ -165,7 +165,7 @@ pub(super) fn expires(
                 s,
                 aws_sdk_s3::primitives::DateTimeFormat::HttpDate,
             )
-            .map_err(sdk_err)
+            .map_err(local_err)
         })
         .transpose()
 }

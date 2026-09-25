@@ -61,6 +61,20 @@ pub(super) async fn execute_move(
             let source_local = source.path.clone();
             let mut overwrite_approved = false;
 
+            // A backend that refuses atomically moves the source or says
+            // something is in the way; any failure goes on to look.
+            match src_vfs.rename_no_replace(&source_local, &dest_local).await {
+                Ok(()) => {
+                    debug!("execute_move: renamed {} -> {}", source_local, dest_local);
+                    renamed_count += 1;
+                    continue;
+                }
+                Err(e) => debug!(
+                    "execute_move: no-replace rename of {} did not go through: {}",
+                    source_local, e
+                ),
+            }
+
             // Check for destination conflicts before renaming (rename silently
             // overwrites). A destination that *is* the source — `Foo` moved to
             // `foo` on a case-insensitive volume — is a re-spelling, not a
@@ -68,13 +82,36 @@ pub(super) async fn execute_move(
             // is actually in the way, keeping bulk moves to one probe apiece.
             // Hard links land here as well; see `execute_rename` for why
             // that ends in a deliberate no-op.
-            if let Ok(dest_file) = src_vfs.file_info(&dest_local).await
-                && !src_vfs.same_file(&source_local, &dest_local).await?
-            {
+            let dest_file =
+                match find_destination(&*src_vfs, &dest_local, reporter, &cancel).await? {
+                    Found::Skipped => continue,
+                    Found::Nothing => None,
+                    Found::File(file) => Some(*file),
+                };
+            let conflict = match dest_file {
+                None => None,
+                Some(dest_file) => {
+                    match same_file_or_skip(
+                        &*src_vfs,
+                        &source_local,
+                        &dest_local,
+                        reporter,
+                        &cancel,
+                    )
+                    .await?
+                    {
+                        None => continue,
+                        Some(true) => None,
+                        Some(false) => Some(dest_file),
+                    }
+                }
+            };
+            if let Some(dest_file) = conflict {
                 let source_file = src_vfs.file_info(&source_local).await?;
-                if dest_file.is_dir != source_file.is_dir {
+                let (source_dir, dest_dir) = directories(&source_file, &dest_file);
+                if dest_dir != source_dir {
                     // Type mismatch (file vs directory) — can only skip
-                    let msg = if dest_file.is_dir {
+                    let msg = if dest_dir {
                         format!("Cannot replace directory with file: {}", dest_local)
                     } else {
                         format!("Cannot replace file with directory: {}", dest_local)
@@ -87,7 +124,7 @@ pub(super) async fn execute_move(
                         Err(e) => return Err(e),
                         _ => unreachable!("not offered"),
                     }
-                } else if !dest_file.is_dir {
+                } else if !dest_dir {
                     if !reporter
                         .replace_existing(&dest_local, &source_file, &dest_file)
                         .await?
@@ -198,6 +235,74 @@ pub(super) async fn execute_move(
     .await
 }
 
+/// Whether a move of `source` onto `dest` takes each for a directory. A
+/// link moves as a link, whatever it points to; a link to a directory at
+/// the destination is a directory only to a directory merged into it
+/// (through the link, as `cp -R` does), and to anything else a link that
+/// the move replaces.
+fn directories(source: &File, dest: &File) -> (bool, bool) {
+    let source_dir = source.is_dir && !source.is_symlink;
+    let dest_dir = dest.is_dir && (source_dir || !dest.is_symlink);
+    (source_dir, dest_dir)
+}
+
+/// `Vfs::same_file`, failing as an issue rather than ending the
+/// operation; `None` when the user skipped the item.
+pub(super) async fn same_file_or_skip(
+    vfs: &dyn Vfs,
+    a: &Path,
+    b: &Path,
+    reporter: &mut ProgressReporter,
+    cancel: &CancellationToken,
+) -> Result<Option<bool>, crate::Error> {
+    loop {
+        match cancellable(cancel, vfs.same_file(a, b)).await {
+            Ok(same) => return Ok(Some(same)),
+            Err(e) => {
+                match reporter
+                    .handle_io_error(e, &format!("Cannot check {}", b), None, cancel, true)
+                    .await?
+                {
+                    IssueOutcome::Skip => return Ok(None),
+                    IssueOutcome::Retry => {}
+                }
+            }
+        }
+    }
+}
+
+/// What a look at a destination found.
+enum Found {
+    Nothing,
+    File(Box<File>),
+    /// The look failed and the user skipped the item.
+    Skipped,
+}
+
+/// Look at `path`. A failed look is an issue, not an empty destination.
+async fn find_destination(
+    vfs: &dyn Vfs,
+    path: &Path,
+    reporter: &mut ProgressReporter,
+    cancel: &CancellationToken,
+) -> Result<Found, crate::Error> {
+    loop {
+        match cancellable(cancel, vfs.file_info(path)).await {
+            Ok(file) => return Ok(Found::File(Box::new(file))),
+            Err(e) if e.kind == crate::ErrorKind::NotFound => return Ok(Found::Nothing),
+            Err(e) => {
+                match reporter
+                    .handle_io_error(e, &format!("Cannot check {}", path), None, cancel, true)
+                    .await?
+                {
+                    IssueOutcome::Skip => return Ok(Found::Skipped),
+                    IssueOutcome::Retry => {}
+                }
+            }
+        }
+    }
+}
+
 // --- Execute Rename ---
 
 pub(super) async fn execute_rename(
@@ -236,12 +341,46 @@ pub(super) async fn execute_rename(
         // Rare, and doing nothing is the safe end of the trade.
         let mut attempt_rename = true;
         let mut overwrite_approved = false;
-        if let Ok(dest_file) = vfs.file_info(&new_path.path).await
-            && !vfs.same_file(&source.path, &new_path.path).await?
-        {
+        match vfs.rename_no_replace(&source.path, &new_path.path).await {
+            Ok(()) => {
+                debug!("execute_rename: renamed {} -> {}", source, new_path);
+                reporter.send_prepared(0, 1);
+                reporter.maybe_send_progress(0, 1, &new_name);
+                return Ok(());
+            }
+            Err(e) => debug!(
+                "execute_rename: no-replace rename of {} did not go through: {}",
+                source, e
+            ),
+        }
+        let dest_file = match find_destination(&*vfs, &new_path.path, reporter, &cancel).await? {
+            Found::Skipped => {
+                reporter.send_prepared(0, 0);
+                return Ok(());
+            }
+            Found::Nothing => None,
+            Found::File(file) => Some(*file),
+        };
+        let conflict = match dest_file {
+            None => None,
+            Some(dest_file) => {
+                match same_file_or_skip(&*vfs, &source.path, &new_path.path, reporter, &cancel)
+                    .await?
+                {
+                    None => {
+                        reporter.send_prepared(0, 0);
+                        return Ok(());
+                    }
+                    Some(true) => None,
+                    Some(false) => Some(dest_file),
+                }
+            }
+        };
+        if let Some(dest_file) = conflict {
             let source_file = vfs.file_info(&source.path).await?;
-            if dest_file.is_dir != source_file.is_dir {
-                let msg = if dest_file.is_dir {
+            let (source_dir, dest_dir) = directories(&source_file, &dest_file);
+            if dest_dir != source_dir {
+                let msg = if dest_dir {
                     format!("Cannot replace directory with file: {}", new_path.path)
                 } else {
                     format!("Cannot replace file with directory: {}", new_path.path)
@@ -257,7 +396,7 @@ pub(super) async fn execute_rename(
                     Err(e) => return Err(e),
                     _ => unreachable!("not offered"),
                 }
-            } else if !dest_file.is_dir {
+            } else if !dest_dir {
                 match reporter
                     .raise_issue(
                         IssueKind::AlreadyExists,

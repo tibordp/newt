@@ -68,6 +68,14 @@ Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
 - `.img` support via content sniffing: the extension is ambiguous (raw disk images with partition tables vs raw ISO9660/UDF), so claiming it needs a cheap probe before mount rather than an extension match.
 - El Torito boot catalog: expose boot images as synthetic entries at the mount root.
 
+## Exclusive writes
+
+Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
+
+- SFTP answers `NotSupported` to `create_new` and `rename_no_replace`, so copies and moves to SFTP still stat every destination. `create_new` is `SSH_FXF_EXCL` (the refusal is a bare `SSH_FX_FAILURE`, classified by an lstat, as `rename` already does). The no-replace rename needs the plain v3 `SSH_FXP_RENAME`, which `openssh-sftp-client`'s `Fs::rename` never sends to a server offering `posix-rename`; its low-level write end is private, so this wants an upstream change.
+- Custom S3 endpoints never offer `create_new`. Verify which stores honour `If-None-Match` on PutObject, CompleteMultipartUpload and CopyObject (MinIO, R2, Ceph RGW, …) and allow them.
+- Confirm on Windows (derived from MS-FSA, not run): `CREATE_NEW` over a directory fails as access denied, classified to `AlreadyExists` by `create_new_refusal`; `rename_no_replace` over a file and a directory, and a case-only rename; `copy_within` under `create_new` (reservation, then `CopyFileExW` over it).
+
 ## Distribution
 
 - Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.

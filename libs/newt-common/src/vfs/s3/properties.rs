@@ -11,7 +11,7 @@ use crate::vfs::properties::{
     PropertyPatch, PropertySheet, PropertyValuePatch, text_field,
 };
 
-use super::{S3Vfs, sdk_err};
+use super::{S3Vfs, local_err, sdk_err};
 
 pub(super) fn grant_from_s3(grant: &aws_sdk_s3::types::Grant) -> Option<PropertyGrant> {
     use aws_sdk_s3::types::Type;
@@ -50,7 +50,7 @@ pub(super) fn grant_to_s3(grant: &PropertyGrant) -> Result<aws_sdk_s3::types::Gr
             .email_address(address)
             .build(),
     }
-    .map_err(sdk_err)?;
+    .map_err(local_err)?;
     Ok(Grant::builder()
         .grantee(grantee)
         .permission(Permission::from(grant.permission.as_str()))

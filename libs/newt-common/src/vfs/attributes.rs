@@ -109,13 +109,23 @@ pub struct WriteOptions {
     pub object_metadata: Option<ObjectMetadata>,
     pub object_storage_class: Option<String>,
     pub object_canned_acl: Option<String>,
+    /// Fail with `AlreadyExists` if anything is at the path: a file, a
+    /// directory, a symlink (dangling included). The refusal may come from
+    /// the open, a write or the finish; the destination is untouched
+    /// whichever it is.
+    pub create_new: bool,
+    /// Expected length of what will be written. Advisory: a wrong hint may
+    /// cost an optimization, never the contract.
+    pub size_hint: Option<u64>,
 }
 
 impl WriteOptions {
+    /// Asks nothing the VFS must honour; `size_hint` is advisory.
     pub fn is_default(&self) -> bool {
         !self.sparse
             && self.object_metadata.is_none()
             && self.object_storage_class.is_none()
             && self.object_canned_acl.is_none()
+            && !self.create_new
     }
 }

@@ -878,10 +878,16 @@ impl Vfs for SftpVfs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         debug!("sftp: rename {} -> {}", from, to);
         self.check_alive()?;
-        self.sftp
-            .fs()
-            .rename(sftp_path(from), sftp_path(to))
-            .await?;
+        let mut fs = self.sftp.fs();
+        if let Err(e) = fs.rename(sftp_path(from), sftp_path(to)).await {
+            let mut e = Error::from(e);
+            // v3 has no "exists" status: a server without posix-rename
+            // refuses an existing target with a bare failure.
+            if e.kind == ErrorKind::Other && fs.symlink_metadata(sftp_path(to)).await.is_ok() {
+                e.kind = ErrorKind::AlreadyExists;
+            }
+            return Err(e);
+        }
         self.notifier.notify(from);
         self.notifier.notify(to);
         Ok(())

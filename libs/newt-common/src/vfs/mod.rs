@@ -883,6 +883,14 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
+    /// `rename` that fails with `AlreadyExists` when anything is at `to`,
+    /// decided atomically by the backend. `NotSupported` where it cannot
+    /// refuse, which includes every case plain `rename` does not support.
+    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
+        let _ = (from, to);
+        Err(Error::not_supported())
+    }
+
     /// `options` follow the same rule as `overwrite_async`.
     async fn copy_within(
         &self,

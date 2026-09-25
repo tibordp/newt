@@ -1,25 +1,23 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
-use crate::Error;
 use crate::vfs::ToUnix;
 use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats};
 use crate::vfs::{FileChunk, FileDetails};
+use crate::{Error, ErrorKind};
 
 use super::properties::{PropertyPatch, PropertySheet};
 use super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsAsyncWriter, VfsChangeNotifier,
     VfsDescriptor, VfsRandomReader,
 };
-
-const MULTIPART_CHUNK_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 /// The dirent for an object listed under a prefix, `name` being the key
 /// past that prefix.
@@ -57,10 +55,55 @@ fn object_file(name: &str, obj: &aws_sdk_s3::types::Object) -> File {
     }
 }
 
-/// `SdkError`'s bare `Display` is just "service error" — render the full
-/// source chain (service error code and message included) instead.
-fn sdk_err<E: std::error::Error>(e: E) -> Error {
+/// Whether requests go somewhere other than AWS: the endpoint as the S3
+/// client resolves it, from the mount, `AWS_ENDPOINT_URL[_S3]` or the
+/// profile.
+fn uses_custom_endpoint(sdk_config: &aws_config::SdkConfig) -> bool {
+    sdk_config.endpoint_url().is_some()
+        || sdk_config.service_config().is_some_and(|config| {
+            aws_types::service_config::ServiceConfigKey::builder()
+                .service_id("S3")
+                .env("AWS_ENDPOINT_URL")
+                .profile("endpoint_url")
+                .build()
+                .ok()
+                .and_then(|key| config.load_config(key))
+                .is_some()
+        })
+}
+
+/// S3 Express One Zone buckets, whose names end in `--x-s3`.
+fn is_directory_bucket(bucket: &str) -> bool {
+    bucket.ends_with("--x-s3")
+}
+
+/// A failure on the client's side of the SDK: a builder, a body stream.
+/// Errors render their full source chain; `SdkError`'s bare `Display` is
+/// just "service error".
+fn local_err<E: std::error::Error>(e: E) -> Error {
     Error::custom(aws_sdk_s3::error::DisplayErrorContext(&e).to_string())
+}
+
+/// An SDK failure, its kind read from the HTTP status so a missing key and
+/// a refused conditional write are told apart from other failures.
+fn sdk_err<E>(e: aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>) -> Error
+where
+    E: aws_sdk_s3::error::ProvideErrorMetadata + std::error::Error + 'static,
+{
+    use aws_sdk_s3::error::ProvideErrorMetadata;
+    let kind = match e.raw_response().map(|r| r.status().as_u16()) {
+        Some(404) => ErrorKind::NotFound,
+        Some(403) => ErrorKind::PermissionDenied,
+        // A conditional write refused: the key exists (412), or a
+        // concurrent delete of it won the race (409).
+        Some(412) => ErrorKind::AlreadyExists,
+        Some(409) if e.code() == Some("ConditionalRequestConflict") => ErrorKind::AlreadyExists,
+        _ => ErrorKind::Other,
+    };
+    Error {
+        kind,
+        message: aws_sdk_s3::error::DisplayErrorContext(&e).to_string(),
+    }
 }
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -263,6 +306,10 @@ pub struct S3Vfs {
     pinned_region: bool,
     /// Change notifier for self-notification on mutations.
     notifier: VfsChangeNotifier,
+    /// AWS honours `If-None-Match` on writes; other S3-compatible stores
+    /// may ignore it and overwrite, so a custom endpoint never promises
+    /// `create_new`.
+    conditional_writes: bool,
 }
 
 impl S3Vfs {
@@ -386,6 +433,7 @@ impl S3Vfs {
     ) -> Self {
         Self {
             default_client,
+            conditional_writes: !uses_custom_endpoint(&sdk_config),
             sdk_config: aws_sdk_s3::config::Builder::from(&sdk_config),
             region_clients: Mutex::new(HashMap::new()),
             bucket_regions: Mutex::new(HashMap::new()),
@@ -732,9 +780,12 @@ impl S3Vfs {
 
 mod attributes;
 mod properties;
+mod writer;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writer_tests;
 
 #[async_trait::async_trait]
 impl Vfs for S3Vfs {
@@ -982,63 +1033,29 @@ impl Vfs for S3Vfs {
         if options.sparse {
             return Err(Error::not_supported());
         }
+        // The condition is checked when the upload completes, after its
+        // body is sent: only an object known to fit one request is worth
+        // sending on the chance it is refused.
+        if options.create_new
+            && !(self.conditional_writes
+                && options
+                    .size_hint
+                    .is_some_and(|size| size <= writer::PART_SIZE))
+        {
+            return Err(Error::not_supported());
+        }
         let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
-
-        debug!(
-            "s3: initiating multipart upload bucket={} key={}",
-            bucket, key
-        );
-
-        let mut request = client
-            .create_multipart_upload()
-            .bucket(&bucket)
-            .key(&key)
-            .set_storage_class(
-                options
-                    .object_storage_class
-                    .as_deref()
-                    .map(aws_sdk_s3::types::StorageClass::from),
-            )
-            .set_acl(
-                options
-                    .object_canned_acl
-                    .as_deref()
-                    .map(aws_sdk_s3::types::ObjectCannedAcl::from),
-            );
-        if let Some(meta) = &options.object_metadata {
-            request = request
-                .set_metadata(Some(meta.metadata.clone().into_iter().collect()))
-                .set_content_type(meta.content_type.clone())
-                .set_content_encoding(meta.content_encoding.clone())
-                .set_content_language(meta.content_language.clone())
-                .set_content_disposition(meta.content_disposition.clone())
-                .set_cache_control(meta.cache_control.clone())
-                .set_expires(attributes::expires(meta)?);
-        }
-        let resp = request.send().await.map_err(sdk_err)?;
-
-        let upload_id = resp
-            .upload_id()
-            .ok_or_else(|| Error::custom("no upload_id returned"))?
-            .to_string();
-
-        debug!("s3: multipart upload_id={}", upload_id);
-
-        Ok(Box::new(S3AsyncWriter {
+        Ok(Box::new(writer::S3AsyncWriter::new(
             client,
             bucket,
             key,
-            upload_id,
-            buffer: Vec::new(),
-            part_number: 1,
-            completed_parts: Vec::new(),
-            notifier: self.notifier.clone(),
-            path: path.to_owned(),
-            terminated: false,
-        }))
+            options.clone(),
+            self.notifier.clone(),
+            path.to_owned(),
+        )))
     }
 
     async fn remove_file(&self, path: &Path) -> Result<(), Error> {
@@ -1104,6 +1121,11 @@ impl Vfs for S3Vfs {
         let (dst_bucket, dst_key) = self.parse_path(to);
         let dst_bucket = dst_bucket.ok_or(Error::not_supported())?;
         let dst_key = dst_key.ok_or_else(|| Error::custom("no destination key"))?;
+        // Directory buckets take the condition on PutObject and
+        // CompleteMultipartUpload only.
+        if options.create_new && (!self.conditional_writes || is_directory_bucket(&dst_bucket)) {
+            return Err(Error::not_supported());
+        }
 
         debug!(
             "s3: copy_within {}/{} -> {}/{}",
@@ -1146,7 +1168,8 @@ impl Vfs for S3Vfs {
                     .object_canned_acl
                     .as_deref()
                     .map(aws_sdk_s3::types::ObjectCannedAcl::from),
-            );
+            )
+            .set_if_none_match(options.create_new.then(|| "*".to_string()));
         if let Some(meta) = &options.object_metadata {
             request = request
                 .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
@@ -1171,6 +1194,20 @@ impl Vfs for S3Vfs {
         let client = self.client_for_bucket(&bucket).await?;
 
         debug!("s3: touch bucket={} key={}", bucket, key);
+
+        // A store that ignores the condition would empty an existing
+        // object; ask first where the condition is not trusted.
+        if !self.conditional_writes {
+            match client.head_object().bucket(&bucket).key(&key).send().await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    let e = sdk_err(e);
+                    if e.kind != ErrorKind::NotFound {
+                        return Err(e);
+                    }
+                }
+            }
+        }
 
         // Conditional put: only create if the object doesn't already exist
         let result = client
@@ -1309,7 +1346,7 @@ async fn ranged_get(
         .body
         .collect()
         .await
-        .map_err(sdk_err)?
+        .map_err(local_err)?
         .into_bytes()
         .to_vec();
 
@@ -1352,157 +1389,5 @@ impl VfsRandomReader for S3RandomReader {
             self.etag = etag;
         }
         Ok(chunk.data)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// S3AsyncWriter — multipart upload writer
-// ---------------------------------------------------------------------------
-
-struct S3AsyncWriter {
-    client: aws_sdk_s3::Client,
-    bucket: String,
-    key: String,
-    upload_id: String,
-    buffer: Vec<u8>,
-    part_number: i32,
-    completed_parts: Vec<aws_sdk_s3::types::CompletedPart>,
-    notifier: VfsChangeNotifier,
-    path: PathBuf,
-    /// Set once the upload was completed or aborted — the Drop guard only
-    /// fires for writers discarded mid-stream (cancelled/failed operations),
-    /// which would otherwise leak the multipart upload.
-    terminated: bool,
-}
-
-impl S3AsyncWriter {
-    async fn flush_part(&mut self) -> Result<(), Error> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-        self.flush_part_unconditional().await
-    }
-
-    /// Upload the current buffer as a part, even if it's empty.
-    async fn flush_part_unconditional(&mut self) -> Result<(), Error> {
-        debug!(
-            "s3: uploading part {} ({} bytes) for upload_id={}",
-            self.part_number,
-            self.buffer.len(),
-            self.upload_id
-        );
-        let data = std::mem::take(&mut self.buffer);
-        let body = aws_sdk_s3::primitives::ByteStream::from(data);
-
-        let resp = self
-            .client
-            .upload_part()
-            .bucket(&self.bucket)
-            .key(&self.key)
-            .upload_id(&self.upload_id)
-            .part_number(self.part_number)
-            .body(body)
-            .send()
-            .await
-            .map_err(sdk_err)?;
-
-        self.completed_parts.push(
-            aws_sdk_s3::types::CompletedPart::builder()
-                .part_number(self.part_number)
-                .e_tag(resp.e_tag().unwrap_or_default())
-                .build(),
-        );
-        self.part_number += 1;
-
-        Ok(())
-    }
-
-    async fn abort(&mut self) {
-        warn!(
-            "s3: aborting multipart upload upload_id={} bucket={} key={}",
-            self.upload_id, self.bucket, self.key
-        );
-        self.terminated = true;
-        let _ = self
-            .client
-            .abort_multipart_upload()
-            .bucket(&self.bucket)
-            .key(&self.key)
-            .upload_id(&self.upload_id)
-            .send()
-            .await;
-    }
-}
-
-impl Drop for S3AsyncWriter {
-    fn drop(&mut self) {
-        if self.terminated {
-            return;
-        }
-        warn!(
-            "s3: writer dropped mid-upload, aborting multipart upload upload_id={} bucket={} key={}",
-            self.upload_id, self.bucket, self.key
-        );
-        let request = self
-            .client
-            .abort_multipart_upload()
-            .bucket(&self.bucket)
-            .key(&self.key)
-            .upload_id(&self.upload_id);
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let _ = request.send().await;
-            });
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl VfsAsyncWriter for S3AsyncWriter {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
-        self.buffer.extend_from_slice(buf);
-        if self.buffer.len() >= MULTIPART_CHUNK_SIZE
-            && let Err(e) = self.flush_part().await
-        {
-            self.abort().await;
-            return Err(e);
-        }
-        Ok(buf.len())
-    }
-
-    async fn finish(mut self: Box<Self>) -> Result<(), Error> {
-        // Always flush remaining data (even if empty) when no parts have been
-        // uploaded yet — CompleteMultipartUpload requires at least one part.
-        if (self.completed_parts.is_empty() || !self.buffer.is_empty())
-            && let Err(e) = self.flush_part_unconditional().await
-        {
-            self.abort().await;
-            return Err(e);
-        }
-
-        let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
-            .set_parts(Some(self.completed_parts.clone()))
-            .build();
-
-        self.client
-            .complete_multipart_upload()
-            .bucket(&self.bucket)
-            .key(&self.key)
-            .upload_id(&self.upload_id)
-            .multipart_upload(completed)
-            .send()
-            .await
-            .map_err(sdk_err)?;
-        self.terminated = true;
-
-        info!(
-            "s3: completed multipart upload upload_id={} bucket={} key={} ({} parts)",
-            self.upload_id,
-            self.bucket,
-            self.key,
-            self.completed_parts.len()
-        );
-        self.notifier.notify(&self.path);
-        Ok(())
     }
 }

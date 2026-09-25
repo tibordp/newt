@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::operation::*;
-use crate::test_support::{FailureSpec, MockVfs, MockVfsConfig};
+use crate::test_support::{FailureSpec, MockRefusal, MockVfs, MockVfsConfig};
 use crate::vfs::path::PathBuf;
 use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
@@ -1217,6 +1217,561 @@ async fn test_move_preset_overwrite_if_newer_keeps_skipped_sources() {
     assert!(!result.vfs.exists("/src/newer.txt"));
     assert_eq!(result.vfs.read_content("/dst/older.txt"), b"old");
     assert!(result.vfs.exists("/src/older.txt"));
+}
+
+// --- Exclusive writes: the destination refuses, the copy asks only then ---
+
+fn mock_config(change: impl FnOnce(&mut MockVfsConfig)) -> MockVfsConfig {
+    let mut config = MockVfsConfig::default();
+    change(&mut config);
+    config
+}
+
+fn issue_messages(events: &[OperationProgress]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            OperationProgress::Issue { issue, .. } => Some(issue.message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn failure(
+    path: &str,
+    operation: &'static str,
+    kind: crate::ErrorKind,
+    times: Option<u32>,
+) -> FailureSpec {
+    FailureSpec {
+        path: PathBuf::from_wire_str(path),
+        operation,
+        error: crate::Error {
+            kind,
+            message: format!("injected {operation} failure"),
+        },
+        remaining: times,
+    }
+}
+
+#[tokio::test]
+async fn test_copy_into_an_empty_destination_never_looks_at_it() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"a")
+        .file("/src/b.txt", b"b")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a", "b"], None), never_asked).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"a");
+    assert_eq!(result.vfs.read_content("/dst/b.txt"), b"b");
+    assert_eq!(result.vfs.stats_under("/dst"), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn test_copy_of_a_tree_into_prefix_directories_never_looks_at_the_destination() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.can_stat_directories = false))
+        .file("/src/tree/x.txt", b"x")
+        .file("/src/tree/sub/y.txt", b"y")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/tree")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/tree/sub/y.txt"), b"y");
+    assert_eq!(result.vfs.stats_under("/dst"), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn test_copy_refused_on_finish_prompts_and_reads_the_source_again() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.create_new = Some(MockRefusal::AtFinish)))
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), overwrite_all).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_messages(&result.events).len(), 1);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+    assert_eq!(result.vfs.opened_reads().len(), 2);
+}
+
+#[tokio::test]
+async fn test_copy_to_a_destination_that_cannot_refuse_looks_first() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.create_new = None))
+        .file("/src/a.txt", b"new")
+        .file("/src/b.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a", "b"], None), skip_all).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_messages(&result.events).len(), 1);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+    assert_eq!(result.vfs.read_content("/dst/b.txt"), b"new");
+    assert_eq!(
+        result.vfs.stats_under("/dst"),
+        vec!["/dst/a.txt", "/dst/b.txt"]
+    );
+}
+
+#[tokio::test]
+async fn test_copy_within_that_cannot_refuse_is_not_given_up_for_streaming() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| {
+            c.can_copy_within = true;
+            c.create_new = None;
+        }))
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), never_asked).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"a");
+    assert!(result.vfs.opened_reads().is_empty());
+}
+
+#[tokio::test]
+async fn test_copy_within_refusal_prompts() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.can_copy_within = true))
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), overwrite_all).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_messages(&result.events).len(), 1);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+    assert!(result.vfs.opened_reads().is_empty());
+}
+
+#[tokio::test]
+async fn test_a_refusal_the_destination_contradicts_is_tried_once_more() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .failure(failure(
+            "/dst/a.txt",
+            "overwrite_async",
+            crate::ErrorKind::AlreadyExists,
+            Some(1),
+        ))
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), never_asked).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"a");
+}
+
+#[tokio::test]
+async fn test_a_refusal_the_destination_keeps_contradicting_is_an_issue() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .failure(failure(
+            "/dst/a.txt",
+            "overwrite_async",
+            crate::ErrorKind::AlreadyExists,
+            None,
+        ))
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), skip_all).await;
+
+    assert!(has_completed(&result.events));
+    let messages = issue_messages(&result.events);
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].contains("refused as existing"), "{messages:?}");
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_a_destination_that_cannot_be_looked_at_is_not_taken_for_empty() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.create_new = None))
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .failure(failure(
+            "/dst/a.txt",
+            "file_info",
+            crate::ErrorKind::PermissionDenied,
+            None,
+        ))
+        .build();
+
+    let mut kinds = Vec::new();
+    let result = run_operation(vfs, copy_named(&["a"], None), |issue| {
+        kinds.push(issue.kind.clone());
+        skip_all(issue)
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(kinds, vec![IssueKind::PermissionDenied]);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+}
+
+#[tokio::test]
+async fn test_a_retry_is_not_refused_by_its_own_leftovers() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"data")
+        .dir("/dst")
+        .failure(failure(
+            "/dst/a.txt",
+            "finish",
+            crate::ErrorKind::Other,
+            Some(1),
+        ))
+        .build();
+
+    let mut messages = Vec::new();
+    let result = run_operation(vfs, copy_named(&["a"], None), |issue| {
+        messages.push(issue.message.clone());
+        IssueResponse {
+            action: IssueAction::Retry,
+            apply_to_all: false,
+        }
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(
+        messages[0].contains("injected finish failure"),
+        "{messages:?}"
+    );
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"data");
+}
+
+#[tokio::test]
+async fn test_an_unreadable_source_leaves_no_exclusive_create_behind() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .failure(failure(
+            "/src/a.txt",
+            "open_read_async",
+            crate::ErrorKind::PermissionDenied,
+            None,
+        ))
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), skip_all).await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_a_destination_that_cannot_refuse_costs_no_second_source_open() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.create_new = None))
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), never_asked).await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.opened_reads().len(), 1);
+}
+
+#[tokio::test]
+async fn test_a_failed_exclusive_write_leaves_nothing() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"data")
+        .dir("/dst")
+        .failure(failure(
+            "/dst/a.txt",
+            "finish",
+            crate::ErrorKind::Other,
+            None,
+        ))
+        .build();
+
+    let result = run_operation(vfs, copy_named(&["a"], None), skip_all).await;
+
+    assert!(has_completed(&result.events));
+    assert!(!result.vfs.exists("/dst/a.txt"));
+}
+
+#[tokio::test]
+async fn test_a_retry_after_a_failed_write_is_still_exclusive() {
+    for refusal in [MockRefusal::AtOpen, MockRefusal::AtFinish] {
+        let vfs = MockVfs::builder()
+            .config(mock_config(|c| c.create_new = Some(refusal)))
+            .file("/src/a.txt", b"mine")
+            .dir("/dst")
+            .failure(failure(
+                "/dst/a.txt",
+                "finish",
+                crate::ErrorKind::Other,
+                Some(1),
+            ))
+            .build();
+
+        // Someone else writes the destination while the failure is shown.
+        let planter = vfs.clone();
+        let mut messages = Vec::new();
+        let result = run_operation(vfs, copy_named(&["a"], None), |issue| {
+            messages.push(issue.message.clone());
+            if messages.len() == 1 {
+                planter.put_file("/dst/a.txt", b"theirs");
+                IssueResponse {
+                    action: IssueAction::Retry,
+                    apply_to_all: false,
+                }
+            } else {
+                skip_all(issue)
+            }
+        })
+        .await;
+
+        assert!(has_completed(&result.events), "{refusal:?}");
+        assert_eq!(messages.len(), 2, "{refusal:?}: {messages:?}");
+        assert!(
+            messages[1].contains("already exists"),
+            "{refusal:?}: {messages:?}"
+        );
+        assert_eq!(
+            result.vfs.read_content("/dst/a.txt"),
+            b"theirs",
+            "{refusal:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_a_failed_identity_check_is_an_issue() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .failure(failure(
+            "/dst/a.txt",
+            "same_file",
+            crate::ErrorKind::PermissionDenied,
+            Some(1),
+        ))
+        .build();
+
+    let mut kinds = Vec::new();
+    let result = run_operation(vfs, copy_named(&["a"], None), |issue| {
+        kinds.push(issue.kind.clone());
+        IssueResponse {
+            action: if kinds.len() == 1 {
+                IssueAction::Retry
+            } else {
+                IssueAction::Overwrite
+            },
+            apply_to_all: false,
+        }
+    })
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(
+        kinds,
+        vec![IssueKind::PermissionDenied, IssueKind::AlreadyExists]
+    );
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+}
+
+#[tokio::test]
+async fn test_a_move_whose_identity_check_fails_can_be_skipped() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .failure(failure(
+            "/dst/a.txt",
+            "same_file",
+            crate::ErrorKind::PermissionDenied,
+            None,
+        ))
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+    assert!(result.vfs.exists("/src/a.txt"));
+}
+
+#[tokio::test]
+async fn test_a_known_skip_skips_a_refusal_without_looking() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        copy_named(&["a"], Some(IssueAction::Skip)),
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+    assert_eq!(result.vfs.stats_under("/dst"), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn test_move_into_an_empty_destination_never_looks_at_it() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"a")
+        .dir("/dst")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"a");
+    assert!(!result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.stats_under("/dst"), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn test_move_refused_by_a_no_replace_rename_prompts() {
+    let vfs = MockVfs::builder()
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        overwrite_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(issue_messages(&result.events).len(), 1);
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"new");
+    assert!(!result.vfs.exists("/src/a.txt"));
+}
+
+#[tokio::test]
+async fn test_move_without_a_no_replace_rename_looks_first() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.rename_no_replace = false))
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+    assert!(result.vfs.exists("/src/a.txt"));
+    assert_eq!(result.vfs.stats_under("/dst"), vec!["/dst/a.txt"]);
+}
+
+#[tokio::test]
+async fn test_move_that_cannot_look_at_the_destination_does_not_rename_over_it() {
+    let vfs = MockVfs::builder()
+        .config(mock_config(|c| c.rename_no_replace = false))
+        .file("/src/a.txt", b"new")
+        .file("/dst/a.txt", b"old")
+        .failure(failure(
+            "/dst/a.txt",
+            "file_info",
+            crate::ErrorKind::PermissionDenied,
+            None,
+        ))
+        .build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/a.txt")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dst/a.txt"), b"old");
+    assert!(result.vfs.exists("/src/a.txt"));
+}
+
+#[tokio::test]
+async fn test_rename_to_a_free_name_never_looks_at_it() {
+    let vfs = MockVfs::builder().file("/dir/a.txt", b"a").build();
+
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/dir/a.txt"),
+            new_name: "b.txt".into(),
+        },
+        never_asked,
+    )
+    .await;
+
+    assert!(has_completed(&result.events));
+    assert_eq!(result.vfs.read_content("/dir/b.txt"), b"a");
+    assert_eq!(result.vfs.stats_under("/dir/b.txt"), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -3172,6 +3727,14 @@ mod local_symlink {
     use crate::vfs::{VfsId, VfsPath, VfsRegistry};
 
     async fn run(request: OperationRequest) -> Vec<OperationProgress> {
+        run_answering(request, IssueAction::Skip).await
+    }
+
+    /// Runs `request`, answering every issue with `action` for all.
+    async fn run_answering(
+        request: OperationRequest,
+        action: IssueAction,
+    ) -> Vec<OperationProgress> {
         let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
         let issue_resolvers: IssueResolvers =
             Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3200,7 +3763,7 @@ mod local_symlink {
                 && let Some(sender) = issue_resolvers.lock().remove(&issue.issue_id)
             {
                 let _ = sender.send(IssueResponse {
-                    action: IssueAction::Skip,
+                    action,
                     apply_to_all: true,
                 });
             }
@@ -3221,6 +3784,265 @@ mod local_symlink {
 
     fn vfs_path(path: &std::path::Path) -> VfsPath {
         VfsPath::new(VfsId::ROOT, PathBuf::from_native(path))
+    }
+
+    fn copy(source: &std::path::Path, destination: &std::path::Path) -> OperationRequest {
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path(source)],
+            destination: vfs_path(destination),
+            options: Default::default(),
+        }
+    }
+
+    fn move_to(source: &std::path::Path, destination: &std::path::Path) -> OperationRequest {
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path(source)],
+            destination: vfs_path(destination),
+            options: Default::default(),
+        }
+    }
+
+    fn link_target(path: &std::path::Path) -> Option<std::path::PathBuf> {
+        std::fs::symlink_metadata(path)
+            .ok()
+            .filter(|m| m.file_type().is_symlink())
+            .and_then(|_| std::fs::read_link(path).ok())
+    }
+
+    /// `src/` and `dst/` in a temp directory, with a directory `real`
+    /// holding a file, and `src/link` pointing at `new-target`.
+    struct Tree {
+        tmp: tempfile::TempDir,
+    }
+
+    impl Tree {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            for dir in ["src", "dst", "real"] {
+                std::fs::create_dir(tmp.path().join(dir)).expect("create_dir");
+            }
+            std::fs::write(tmp.path().join("real/keep.txt"), b"precious").expect("write");
+            std::os::unix::fs::symlink("new-target", tmp.path().join("src/link")).expect("symlink");
+            Self { tmp }
+        }
+
+        fn path(&self, rel: &str) -> std::path::PathBuf {
+            self.tmp.path().join(rel)
+        }
+
+        fn link(&self, rel: &str, target: &str) {
+            std::os::unix::fs::symlink(target, self.path(rel)).expect("symlink");
+        }
+
+        fn real_is_intact(&self) -> bool {
+            std::fs::read(self.path("real/keep.txt")).ok().as_deref() == Some(b"precious")
+        }
+    }
+
+    fn issues(events: &[OperationProgress]) -> usize {
+        events
+            .iter()
+            .filter(|e| matches!(e, OperationProgress::Issue { .. }))
+            .count()
+    }
+
+    fn completed(events: &[OperationProgress]) -> bool {
+        events
+            .iter()
+            .any(|e| matches!(e, OperationProgress::Completed { .. }))
+    }
+
+    /// Overwriting would truncate the source before reading it.
+    #[tokio::test]
+    async fn a_copy_onto_its_own_hard_link_is_already_done() {
+        let tree = Tree::new();
+        std::fs::write(tree.path("src/x"), b"payload").unwrap();
+        std::fs::hard_link(tree.path("src/x"), tree.path("dst/x")).unwrap();
+
+        let events = run_answering(
+            copy(&tree.path("src/x"), &tree.path("dst")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert!(completed(&events));
+        assert_eq!(issues(&events), 0);
+        assert_eq!(std::fs::read(tree.path("src/x")).unwrap(), b"payload");
+        assert_eq!(std::fs::read(tree.path("dst/x")).unwrap(), b"payload");
+    }
+
+    #[tokio::test]
+    async fn a_copy_over_a_hard_linked_snapshot_asks_nothing_about_unchanged_files() {
+        let tree = Tree::new();
+        std::fs::create_dir_all(tree.path("src/tree")).unwrap();
+        std::fs::create_dir_all(tree.path("dst/tree")).unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(tree.path(&format!("src/tree/{name}")), name).unwrap();
+            std::fs::hard_link(
+                tree.path(&format!("src/tree/{name}")),
+                tree.path(&format!("dst/tree/{name}")),
+            )
+            .unwrap();
+        }
+        std::fs::write(tree.path("src/tree/c"), b"c").unwrap();
+
+        let events = run(copy(&tree.path("src/tree"), &tree.path("dst"))).await;
+
+        assert!(completed(&events));
+        assert_eq!(issues(&events), 0);
+        for name in ["a", "b", "c"] {
+            assert_eq!(
+                std::fs::read(tree.path(&format!("dst/tree/{name}"))).unwrap(),
+                name.as_bytes()
+            );
+        }
+        assert_eq!(std::fs::read(tree.path("src/tree/a")).unwrap(), b"a");
+    }
+
+    #[tokio::test]
+    async fn a_copy_into_a_link_to_its_own_directory_is_already_done() {
+        let tree = Tree::new();
+        std::fs::write(tree.path("src/x"), b"payload").unwrap();
+        tree.link("dst/alias", "../src");
+
+        let events = run_answering(
+            copy(&tree.path("src/x"), &tree.path("dst/alias")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert!(completed(&events));
+        assert_eq!(issues(&events), 0);
+        assert_eq!(std::fs::read(tree.path("src/x")).unwrap(), b"payload");
+    }
+
+    #[tokio::test]
+    async fn a_move_onto_its_own_hard_link_leaves_both() {
+        let tree = Tree::new();
+        std::fs::write(tree.path("src/x"), b"payload").unwrap();
+        std::fs::hard_link(tree.path("src/x"), tree.path("dst/x")).unwrap();
+
+        let events = run_answering(
+            move_to(&tree.path("src/x"), &tree.path("dst")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert!(completed(&events));
+        assert_eq!(std::fs::read(tree.path("src/x")).unwrap(), b"payload");
+        assert_eq!(std::fs::read(tree.path("dst/x")).unwrap(), b"payload");
+    }
+
+    #[tokio::test]
+    async fn a_link_copied_over_a_link_replaces_the_link_whatever_it_points_at() {
+        for existing in ["real/keep.txt", "nowhere", "../real"] {
+            let tree = Tree::new();
+            tree.link("dst/link", existing);
+
+            run_answering(
+                copy(&tree.path("src/link"), &tree.path("dst")),
+                IssueAction::Overwrite,
+            )
+            .await;
+
+            assert_eq!(
+                link_target(&tree.path("dst/link")),
+                Some("new-target".into()),
+                "over a link to {existing}"
+            );
+            assert!(tree.real_is_intact(), "over a link to {existing}");
+            assert!(!tree.path("dst/nowhere").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_copied_over_a_link_to_a_directory_replaces_the_link() {
+        let tree = Tree::new();
+        std::fs::write(tree.path("src/f.txt"), b"new").expect("write");
+        tree.link("dst/f.txt", "../real");
+
+        run_answering(
+            copy(&tree.path("src/f.txt"), &tree.path("dst")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert_eq!(link_target(&tree.path("dst/f.txt")), None);
+        assert_eq!(std::fs::read(tree.path("dst/f.txt")).unwrap(), b"new");
+        assert!(tree.real_is_intact());
+    }
+
+    #[tokio::test]
+    async fn a_directory_copied_onto_a_link_to_a_directory_merges_through_it() {
+        let tree = Tree::new();
+        std::fs::create_dir(tree.path("src/d")).expect("create_dir");
+        std::fs::write(tree.path("src/d/x.txt"), b"x").expect("write");
+        tree.link("dst/d", "../real");
+
+        let events = run(copy(&tree.path("src/d"), &tree.path("dst"))).await;
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, OperationProgress::Completed { .. }))
+        );
+        assert_eq!(link_target(&tree.path("dst/d")), Some("../real".into()));
+        assert_eq!(std::fs::read(tree.path("real/x.txt")).unwrap(), b"x");
+        assert!(tree.real_is_intact());
+    }
+
+    #[tokio::test]
+    async fn a_link_moved_over_a_link_to_a_directory_replaces_the_link() {
+        let tree = Tree::new();
+        tree.link("dst/link", "../real");
+
+        run_answering(
+            move_to(&tree.path("src/link"), &tree.path("dst")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert_eq!(
+            link_target(&tree.path("dst/link")),
+            Some("new-target".into())
+        );
+        assert!(std::fs::symlink_metadata(tree.path("src/link")).is_err());
+        assert!(tree.real_is_intact());
+    }
+
+    #[tokio::test]
+    async fn a_file_moved_over_a_link_to_a_directory_replaces_the_link() {
+        let tree = Tree::new();
+        std::fs::write(tree.path("src/f.txt"), b"new").expect("write");
+        tree.link("dst/f.txt", "../real");
+
+        run_answering(
+            move_to(&tree.path("src/f.txt"), &tree.path("dst")),
+            IssueAction::Overwrite,
+        )
+        .await;
+
+        assert_eq!(link_target(&tree.path("dst/f.txt")), None);
+        assert_eq!(std::fs::read(tree.path("dst/f.txt")).unwrap(), b"new");
+        assert!(!tree.path("src/f.txt").exists());
+        assert!(tree.real_is_intact());
+    }
+
+    #[tokio::test]
+    async fn a_directory_moved_onto_a_link_to_a_directory_merges_through_it() {
+        let tree = Tree::new();
+        std::fs::create_dir(tree.path("src/d")).expect("create_dir");
+        std::fs::write(tree.path("src/d/x.txt"), b"x").expect("write");
+        tree.link("dst/d", "../real");
+
+        run(move_to(&tree.path("src/d"), &tree.path("dst"))).await;
+
+        assert_eq!(link_target(&tree.path("dst/d")), Some("../real".into()));
+        assert_eq!(std::fs::read(tree.path("real/x.txt")).unwrap(), b"x");
+        assert!(!tree.path("src/d").exists());
+        assert!(tree.real_is_intact());
     }
 
     /// Deleting a symlink must remove the link, never the tree it points at.

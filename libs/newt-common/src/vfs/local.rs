@@ -847,7 +847,20 @@ impl Vfs for LocalVfs {
         {
             return Err(Error::not_supported());
         }
-        let file = tokio::fs::File::create(path.to_native()).await?;
+        let native = path.to_native();
+        let file = if options.create_new {
+            match tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&native)
+                .await
+            {
+                Ok(file) => file,
+                Err(e) => return Err(create_new_refusal(&native, e).await),
+            }
+        } else {
+            tokio::fs::File::create(&native).await?
+        };
         #[cfg(windows)]
         if options.sparse {
             use std::os::windows::io::AsRawHandle;
@@ -874,6 +887,7 @@ impl Vfs for LocalVfs {
             sparse: options.sparse,
             length: 0,
             holes: Vec::new(),
+            exclusive: Exclusive(options.create_new.then_some(native)),
         }))
     }
 
@@ -1045,6 +1059,12 @@ impl Vfs for LocalVfs {
             .await?
     }
 
+    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
+        let from = from.to_native();
+        let to = to.to_native();
+        tokio::task::spawn_blocking(move || rename_no_replace(&from, &to)).await?
+    }
+
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
@@ -1092,32 +1112,40 @@ impl Vfs for LocalVfs {
     ) -> Result<(), Error> {
         // Kernel copies don't take write options; the streaming fallback
         // honours them.
+        let create_new = options.create_new;
+        let options = super::attributes::WriteOptions {
+            create_new: false,
+            ..options.clone()
+        };
         if !options.is_default() {
             return Err(Error::not_supported());
         }
         let from = from.to_native();
         let to = to.to_native();
         tokio::task::spawn_blocking(move || {
-            // Try FICLONE (instant COW clone) first on Linux.
-            #[cfg(target_os = "linux")]
-            {
-                use std::os::unix::io::AsRawFd;
-                let src = std::fs::File::open(&from)?;
-                let dst = std::fs::File::create(&to)?;
-                let ret = unsafe { libc::ioctl(dst.as_raw_fd(), libc::FICLONE, src.as_raw_fd()) };
-                if ret == 0 {
-                    return Ok(());
-                }
-                // FICLONE failed (unsupported FS), clean up and fall through to fs::copy
-                drop(dst);
+            if !create_new {
+                return kernel_copy(&from, &to);
+            }
+            // A reservation would make the clone fail, so a clone goes in
+            // under its own exclusive steps.
+            #[cfg(target_os = "macos")]
+            match clone_no_replace(&from, &to) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind == crate::ErrorKind::AlreadyExists => return Err(e),
+                Err(e) => debug!("copy_within: clonefile unavailable: {}", e),
+            }
+            let reserved = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&to)
+                .map_err(|e| create_new_refusal_blocking(&to, e))?;
+            let copied = copy_into_reserved(&from, &to, reserved);
+            // A failed exclusive copy leaves nothing: the file is the
+            // reservation.
+            if copied.is_err() {
                 let _ = std::fs::remove_file(&to);
             }
-
-            // Fall back to the platform's kernel-assisted path
-            // (copy_file_range/sendfile, fcopyfile, or CopyFileEx). This also
-            // preserves sparse-file behavior where the platform supports it.
-            std::fs::copy(&from, &to)?;
-            Ok(())
+            copied
         })
         .await?
     }
@@ -1131,6 +1159,216 @@ impl Vfs for LocalVfs {
 }
 
 // ---------------------------------------------------------------------------
+// Exclusive creation
+// ---------------------------------------------------------------------------
+
+/// A `create_new` open's error, with a refusal as `AlreadyExists`. Windows
+/// answers a directory in the way with access denied: the open checks
+/// "is a directory" before the name collision.
+async fn create_new_refusal(path: &StdPath, e: std::io::Error) -> Error {
+    #[cfg(windows)]
+    if e.kind() == std::io::ErrorKind::PermissionDenied
+        && tokio::fs::symlink_metadata(path).await.is_ok()
+    {
+        return Error {
+            kind: crate::ErrorKind::AlreadyExists,
+            message: e.to_string(),
+        };
+    }
+    let _ = path;
+    e.into()
+}
+
+/// [`create_new_refusal`] for blocking callers.
+fn create_new_refusal_blocking(path: &StdPath, e: std::io::Error) -> Error {
+    #[cfg(windows)]
+    if e.kind() == std::io::ErrorKind::PermissionDenied && std::fs::symlink_metadata(path).is_ok() {
+        return Error {
+            kind: crate::ErrorKind::AlreadyExists,
+            message: e.to_string(),
+        };
+    }
+    let _ = path;
+    e.into()
+}
+
+/// Copy `from` over `to` in the kernel where the platform can.
+fn kernel_copy(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+    // Try FICLONE (instant COW clone) first on Linux.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let src = std::fs::File::open(from)?;
+        let dst = std::fs::File::create(to)?;
+        let ret = unsafe { libc::ioctl(dst.as_raw_fd(), libc::FICLONE, src.as_raw_fd()) };
+        if ret == 0 {
+            return Ok(());
+        }
+        // FICLONE failed (unsupported FS); fs::copy truncates what is
+        // there.
+    }
+
+    // Fall back to the platform's kernel-assisted path
+    // (copy_file_range/sendfile, fcopyfile, or CopyFileEx). This also
+    // preserves sparse-file behavior where the platform supports it.
+    std::fs::copy(from, to)?;
+    Ok(())
+}
+
+/// Copy `from` into `dst`, the file just created at `to` by an exclusive
+/// open, through that descriptor: reopening `to` by name would follow
+/// whatever someone swapped in since.
+#[cfg(target_os = "macos")]
+fn copy_into_reserved(from: &StdPath, _to: &StdPath, dst: std::fs::File) -> Result<(), Error> {
+    use std::os::unix::io::AsRawFd;
+    let src = std::fs::File::open(from)?;
+    // What std's copy does once it has opened the destination.
+    let flags = libc::COPYFILE_METADATA | libc::COPYFILE_DATA;
+    if unsafe {
+        libc::fcopyfile(
+            src.as_raw_fd(),
+            dst.as_raw_fd(),
+            std::ptr::null_mut(),
+            flags,
+        )
+    } != 0
+    {
+        return Err(nix::Error::last().into());
+    }
+    Ok(())
+}
+
+/// Copy `from` into `dst`, the file just created at `to` by an exclusive
+/// open, through that descriptor: reopening `to` by name would follow
+/// whatever someone swapped in since.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn copy_into_reserved(from: &StdPath, _to: &StdPath, mut dst: std::fs::File) -> Result<(), Error> {
+    let mut src = std::fs::File::open(from)?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let ret = unsafe { libc::ioctl(dst.as_raw_fd(), libc::FICLONE, src.as_raw_fd()) };
+        if ret == 0 {
+            return Ok(());
+        }
+    }
+    // copy_file_range/sendfile between the two descriptors, and the
+    // source's mode, as std's copy gives.
+    std::io::copy(&mut src, &mut dst)?;
+    dst.set_permissions(src.metadata()?.permissions())?;
+    Ok(())
+}
+
+/// CopyFileExW takes names only, so the copy goes over the reservation by
+/// name; a symlink swapped in meanwhile needs the privilege to create one.
+#[cfg(windows)]
+fn copy_into_reserved(from: &StdPath, to: &StdPath, dst: std::fs::File) -> Result<(), Error> {
+    drop(dst);
+    std::fs::copy(from, to)?;
+    Ok(())
+}
+
+/// Clone `from` to `to` unless something is at `to`. clonefile follows a
+/// dangling symlink at its destination and creates the target, so the
+/// clone lands under an unguessable name beside `to` (retried on a
+/// collision) and is renamed into place with RENAME_EXCL, which refuses
+/// anything there. A clone that does not go in is removed.
+#[cfg(target_os = "macos")]
+fn clone_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+    let dir = to
+        .parent()
+        .ok_or_else(|| Error::custom("no directory to clone into"))?;
+    let staged = tempfile::Builder::new()
+        .prefix(".newt-clone-")
+        .make_in(dir, |path| clonefile(from, path))?
+        .into_temp_path();
+    rename_no_replace(&staged, to)?;
+    let _ = staged.keep();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn clonefile(from: &StdPath, to: &StdPath) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let nul = |_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains a NUL byte");
+    let from = std::ffi::CString::new(from.as_os_str().as_bytes()).map_err(nul)?;
+    let to = std::ffi::CString::new(to.as_os_str().as_bytes()).map_err(nul)?;
+    if unsafe { libc::clonefile(from.as_ptr(), to.as_ptr(), 0) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = std::ffi::CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    let to = std::ffi::CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    // The raw syscall: the musl the agents link has no renameat2 wrapper.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if ret == 0 {
+        return Ok(());
+    }
+    match nix::Error::last() {
+        // A filesystem without RENAME_NOREPLACE, or a kernel before 3.15.
+        nix::Error::EINVAL | nix::Error::ENOSYS => Err(Error::not_supported()),
+        e => Err(e.into()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = std::ffi::CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    let to = std::ffi::CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(nix::Error::last().into())
+    }
+}
+
+#[cfg(windows)]
+fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let wide = |p: &StdPath| {
+        p.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    };
+    let (from_w, to_w) = (wide(from), wide(to));
+    // Without MOVEFILE_REPLACE_EXISTING an existing target is refused.
+    if unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), 0) } == 0 {
+        return Err(create_new_refusal_blocking(
+            to,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
+    Err(Error::not_supported())
+}
+
+// ---------------------------------------------------------------------------
 // LocalAsyncWriter
 // ---------------------------------------------------------------------------
 
@@ -1139,6 +1377,30 @@ struct LocalAsyncWriter {
     sparse: bool,
     length: u64,
     holes: Vec<(u64, u64)>,
+    /// After `file`, so the file is closed first where the drop can see
+    /// it.
+    exclusive: Exclusive,
+}
+
+/// A file this writer created exclusively, until the write finishes.
+/// Dropped before that (a failed, abandoned or cancelled write) the file
+/// is removed: nothing else can have been there, and a failed exclusive
+/// write leaving nothing lets a retry stay exclusive.
+struct Exclusive(Option<std::path::PathBuf>);
+
+impl Drop for Exclusive {
+    fn drop(&mut self) {
+        let Some(path) = self.0.take() else {
+            return;
+        };
+        let remove = move || {
+            let _ = std::fs::remove_file(path);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => drop(handle.spawn_blocking(remove)),
+            Err(_) => remove(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -1176,6 +1438,7 @@ impl VfsAsyncWriter for LocalAsyncWriter {
                 .await??;
             }
         }
+        self.exclusive.0 = None;
         Ok(())
     }
 }
@@ -1500,5 +1763,215 @@ mod same_file_tests {
             .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["foo.txt".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod exclusive_write_tests {
+    use crate::ErrorKind;
+    use crate::vfs::Vfs;
+    use crate::vfs::attributes::WriteOptions;
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::path::PathBuf;
+
+    fn create_new() -> WriteOptions {
+        WriteOptions {
+            create_new: true,
+            ..Default::default()
+        }
+    }
+
+    /// Things a `create_new` must not write over, by name.
+    fn obstacles(dir: &std::path::Path) -> Vec<&'static str> {
+        std::fs::write(dir.join("file"), b"old").unwrap();
+        std::fs::create_dir(dir.join("dir")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("nowhere", dir.join("dangling")).unwrap();
+            vec!["file", "dir", "dangling"]
+        }
+        #[cfg(not(unix))]
+        vec!["file", "dir"]
+    }
+
+    /// The names `obstacles` makes, with `more`, sorted.
+    fn obstacles_and(more: &[&str]) -> Vec<String> {
+        let mut names = vec!["dir", "file"];
+        #[cfg(unix)]
+        names.push("dangling");
+        names.extend(more);
+        let mut names = names.into_iter().map(String::from).collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn create_new_refuses_whatever_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        for name in obstacles(dir.path()) {
+            let path = PathBuf::from_native(&dir.path().join(name));
+            let refused = vfs.overwrite_async(&path, &create_new()).await.err();
+            assert_eq!(
+                refused.map(|e| e.kind),
+                Some(ErrorKind::AlreadyExists),
+                "{name}"
+            );
+        }
+        assert_eq!(std::fs::read(dir.path().join("file")).unwrap(), b"old");
+        assert!(!dir.path().join("nowhere").exists());
+    }
+
+    /// Dropped off the runtime, the writer removes its file inline rather
+    /// than on the blocking pool, so the result is there to assert.
+    fn drop_off_runtime(writer: Box<dyn crate::vfs::VfsAsyncWriter>) {
+        std::thread::spawn(move || drop(writer)).join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_create_new_leaves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let native = dir.path().join("new");
+        let path = PathBuf::from_native(&native);
+
+        let writer = vfs.overwrite_async(&path, &create_new()).await.unwrap();
+        assert!(native.exists());
+        drop_off_runtime(writer);
+        assert!(!native.exists());
+
+        let mut writer = vfs.overwrite_async(&path, &create_new()).await.unwrap();
+        writer.write(b"partial").await.unwrap();
+        drop_off_runtime(writer);
+        assert!(!native.exists());
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_plain_write_leaves_what_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let native = dir.path().join("old");
+        std::fs::write(&native, b"old").unwrap();
+
+        let mut writer = vfs
+            .overwrite_async(&PathBuf::from_native(&native), &WriteOptions::default())
+            .await
+            .unwrap();
+        writer.write(b"partial").await.unwrap();
+        drop_off_runtime(writer);
+        assert!(native.exists());
+    }
+
+    #[tokio::test]
+    async fn create_new_finishes_an_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let native = dir.path().join("empty");
+        let writer = vfs
+            .overwrite_async(&PathBuf::from_native(&native), &create_new())
+            .await
+            .unwrap();
+        writer.finish().await.unwrap();
+        assert_eq!(std::fs::read(&native).unwrap(), b"");
+    }
+
+    #[tokio::test]
+    async fn copy_within_under_create_new_refuses_whatever_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        std::fs::write(dir.path().join("src"), b"new").unwrap();
+        let src = PathBuf::from_native(&dir.path().join("src"));
+        for name in obstacles(dir.path()) {
+            let path = PathBuf::from_native(&dir.path().join(name));
+            let refused = vfs.copy_within(&src, &path, &create_new()).await.err();
+            assert_eq!(
+                refused.map(|e| e.kind),
+                Some(ErrorKind::AlreadyExists),
+                "{name}"
+            );
+        }
+        assert_eq!(std::fs::read(dir.path().join("file")).unwrap(), b"old");
+        assert!(!dir.path().join("nowhere").exists());
+        let mut names = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, obstacles_and(&["src"]));
+
+        let fresh = dir.path().join("fresh");
+        vfs.copy_within(&src, &PathBuf::from_native(&fresh), &create_new())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reserved_copy_carries_the_data_and_the_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (src, to) = (dir.path().join("src"), dir.path().join("to"));
+        std::fs::write(&src, b"payload").unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let reserved = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&to)
+            .unwrap();
+
+        super::copy_into_reserved(&src, &to, reserved).unwrap();
+
+        assert_eq!(std::fs::read(&to).unwrap(), b"payload");
+        let mode = std::fs::metadata(&to).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reserved_copy_is_not_redirected_by_a_link_swapped_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let (src, to) = (dir.path().join("src"), dir.path().join("to"));
+        std::fs::write(&src, b"payload").unwrap();
+        let reserved = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&to)
+            .unwrap();
+        std::fs::remove_file(&to).unwrap();
+        std::os::unix::fs::symlink("elsewhere", &to).unwrap();
+
+        super::copy_into_reserved(&src, &to, reserved).unwrap();
+
+        assert!(!dir.path().join("elsewhere").exists());
+    }
+
+    #[tokio::test]
+    async fn rename_no_replace_refuses_whatever_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        std::fs::write(dir.path().join("src"), b"new").unwrap();
+        let src = PathBuf::from_native(&dir.path().join("src"));
+        for name in obstacles(dir.path()) {
+            let path = PathBuf::from_native(&dir.path().join(name));
+            match vfs.rename_no_replace(&src, &path).await {
+                // A filesystem without RENAME_NOREPLACE: nothing to test here.
+                Err(e) if e.kind == ErrorKind::NotSupported => return,
+                result => assert_eq!(
+                    result.err().map(|e| e.kind),
+                    Some(ErrorKind::AlreadyExists),
+                    "{name}"
+                ),
+            }
+        }
+        assert_eq!(std::fs::read(dir.path().join("src")).unwrap(), b"new");
+        assert_eq!(std::fs::read(dir.path().join("file")).unwrap(), b"old");
+
+        let fresh = dir.path().join("fresh");
+        vfs.rename_no_replace(&src, &PathBuf::from_native(&fresh))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
+        assert!(!dir.path().join("src").exists());
     }
 }

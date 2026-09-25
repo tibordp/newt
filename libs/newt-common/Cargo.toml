@@ -24,6 +24,7 @@ inventory = "0.3"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
 aws-sdk-sts = "1"
+aws-types = "1"
 mimetype-detector = "0"
 mime_guess = "2"
 regex = "1"
@@ -52,6 +53,8 @@ http-body-util = "0.1"
 
 [dev-dependencies]
 serde_json = "1"
+# A fake HTTP client standing in for S3 in the S3 writer's tests.
+aws-smithy-runtime-api = { version = "1", features = ["client"] }
 # Verifies archive-pack output (our ZipWriter) in operation tests.
 zip = "2"
 

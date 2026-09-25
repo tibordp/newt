@@ -104,6 +104,11 @@ impl ProgressReporter {
         self.send(OperationProgress::Cancelled { id: self.id() });
     }
 
+    /// Whether issues of `kind` are already answered with `action`.
+    pub(super) fn answers(&self, kind: &IssueKind, action: IssueAction) -> bool {
+        self.sticky_resolutions.get(kind) == Some(&action)
+    }
+
     /// Answer issues of `kind` up front, as "apply to all" would.
     pub(super) fn preset(&mut self, kind: IssueKind, action: Option<IssueAction>) {
         if let Some(action) = action {
