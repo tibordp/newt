@@ -700,7 +700,7 @@ function PaneInner(
     paneHandle: number;
     active: boolean;
     modalOpen: boolean;
-    modal?: ModalData;
+    modal: ModalData | null;
     vfsProgress?: VfsProgress;
     windowsDrives: boolean;
   },

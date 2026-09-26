@@ -6,7 +6,7 @@ import type { Terminal as TerminalType } from "./types";
 
 type Props = {
   terminals: TerminalType[];
-  activeTerminal?: number;
+  activeTerminal: number | null;
   panesFocused: boolean;
   modalOpen: boolean;
 };

@@ -47,15 +47,25 @@ pub struct EditorState {
     display_path: RwLock<Option<String>>,
 }
 
+/// The `update:editor` payload; see `MainWindowStateWire`.
+#[derive(Serialize, specta::Type)]
+#[specta(rename = "EditorState")]
+pub struct EditorStateWire {
+    language: String,
+    word_wrap: bool,
+    file_path: Option<VfsPath>,
+    display_path: Option<String>,
+}
+
 impl Serialize for EditorState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("EditorState", 4)?;
-        s.serialize_field("language", &*self.language.read())?;
-        s.serialize_field("word_wrap", &*self.word_wrap.read())?;
-        s.serialize_field("file_path", &*self.file_path.read())?;
-        s.serialize_field("display_path", &*self.display_path.read())?;
-        s.end()
+        EditorStateWire {
+            language: self.language.read().clone(),
+            word_wrap: *self.word_wrap.read(),
+            file_path: self.file_path.read().clone(),
+            display_path: self.display_path.read().clone(),
+        }
+        .serialize(serializer)
     }
 }
 

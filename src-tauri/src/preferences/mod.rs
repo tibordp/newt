@@ -648,6 +648,12 @@ impl PreferencesManager {
         Some(watcher)
     }
 
+    /// Preferences as resolved with no settings file on disk.
+    #[cfg(feature = "specta-bindings")]
+    pub fn defaults() -> ResolvedPreferences {
+        Self::resolve(SettingsFile::default(), None)
+    }
+
     fn load_and_resolve(config_dir: &std::path::Path) -> ResolvedPreferences {
         let settings_path = config_dir.join("settings.toml");
         let user_file = Self::load_settings_file(&settings_path);

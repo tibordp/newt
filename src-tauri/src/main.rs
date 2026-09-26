@@ -108,6 +108,12 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     export_bindings: Option<std::path::PathBuf>,
 
+    /// Write default preferences and runtime state as JSON to PATH and exit
+    /// (screenshot scene harness).
+    #[cfg(feature = "specta-bindings")]
+    #[arg(long, value_name = "PATH")]
+    export_scene_defaults: Option<std::path::PathBuf>,
+
     /// Increase log verbosity (-v: debug, -vv: trace). Ignored if RUST_LOG is set.
     #[arg(short, long, action = ArgAction::Count, conflicts_with = "quiet")]
     verbose: u8,
@@ -811,6 +817,16 @@ fn main() {
         cmd::create_specta_builder()
             .export(cmd::typescript_export_config(), path)
             .expect("failed to export tauri-specta bindings");
+        return;
+    }
+    #[cfg(feature = "specta-bindings")]
+    if let Some(path) = &args.export_scene_defaults {
+        let defaults = serde_json::json!({
+            "preferences": preferences::PreferencesManager::defaults(),
+            "runtime_state": runtime_state::RuntimeState::default(),
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&defaults).unwrap())
+            .expect("failed to write scene defaults");
         return;
     }
     apply_log_flags(args.verbose, args.quiet);

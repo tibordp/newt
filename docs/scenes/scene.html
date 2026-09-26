@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- The app document for a scene: index.html with the mocked backend. -->
+<html lang="en" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script type="module" src="/docs/scenes/harness.ts"></script>
+    <title>Newt</title>
+    <style>
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]) body {
+          background: #1e1e1e;
+        }
+      }
+      [data-theme="dark"] body {
+        background: #1e1e1e;
+      }
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

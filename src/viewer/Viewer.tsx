@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import styles from "./Viewer.module.scss";
-import { commands } from "../lib/bindings";
+import { commands, type ViewerState } from "../lib/bindings";
 import { useRemoteState, safe, unwrap } from "../lib/ipc";
 import { useScopedBindings } from "../lib/scopedBindings";
 import type { VfsPath } from "../lib/types";
@@ -26,22 +26,9 @@ import { PdfViewer } from "./PdfViewer";
 
 // --- Main Viewer component ---
 
-interface ViewerEncodingState {
-  detected: { encoding: string; bom_len: number } | null;
-  selected: string | null;
-}
-
-interface ViewerRemoteState {
-  mode: string;
-  file_path: VfsPath | null;
-  display_path: string | null;
-  file_server_base: string | null;
-  encoding: ViewerEncodingState;
-}
-
 function Viewer() {
   const [searchParams] = useSearchParams();
-  const viewerState = useRemoteState<ViewerRemoteState>("viewer");
+  const viewerState = useRemoteState<ViewerState>("viewer");
 
   // Read file info from remote state, fall back to search params
   const displayPath =

@@ -1,7 +1,7 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useFormatBytes } from "../lib/size";
 
-import { commands } from "../lib/bindings";
+import { commands, type EditorState } from "../lib/bindings";
 import { safeSilent, unwrap } from "../lib/ipc";
 import { usePreferences } from "../lib/preferences";
 import { useScopedBindings } from "../lib/scopedBindings";
@@ -148,17 +148,10 @@ interface FileInfo {
   is_dir: boolean;
 }
 
-interface EditorRemoteState {
-  language: string;
-  word_wrap: boolean;
-  file_path: VfsPath | null;
-  display_path: string | null;
-}
-
 function Editor() {
   const formatSize = useFormatBytes();
   const [searchParams] = useSearchParams();
-  const editorState = useRemoteState<EditorRemoteState>("editor");
+  const editorState = useRemoteState<EditorState>("editor");
 
   // Read file info from remote state, fall back to search params
   const displayPath =
@@ -181,6 +174,8 @@ function Editor() {
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
   const suppressDirtyRef = useRef(false);
+  // File text that loaded before Monaco mounted; applied on mount.
+  const pendingTextRef = useRef<string | null>(null);
 
   // Mirror dirty state into Rust so quit/terminate paths (Dock quit, logout)
   // can tell whether an unsaved-changes sweep is needed.
@@ -256,6 +251,8 @@ function Editor() {
           suppressDirtyRef.current = true;
           editorRef.current.setValue(text);
           suppressDirtyRef.current = false;
+        } else {
+          pendingTextRef.current = text;
         }
         setContent(text);
       } catch (e: unknown) {
@@ -390,6 +387,15 @@ function Editor() {
         setDirty(true);
       }
     });
+
+    if (pendingTextRef.current !== null) {
+      suppressDirtyRef.current = true;
+      editor.setValue(pendingTextRef.current);
+      suppressDirtyRef.current = false;
+      pendingTextRef.current = null;
+      editor.updateOptions({ readOnly: false });
+      editor.focus();
+    }
 
     // The Save action is registered in an effect keyed on the resolved
     // `editor_save` binding — see below.

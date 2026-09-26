@@ -38,6 +38,7 @@ use tauri::Wry;
 use crate::GlobalContext;
 use crate::common::Error;
 use crate::common::UpdatePublisher;
+use crate::common::specta_as;
 use crate::main_window::session::VfsInfo;
 
 use self::pane::Pane;
@@ -966,28 +967,62 @@ impl serde::Serialize for MountSummaryState {
     }
 }
 
+/// The `update:main_window` payload, borrowing the live state. Serializing
+/// through this derive keeps the wire shape and `MainWindowState` in
+/// `bindings.ts` one and the same.
+#[derive(serde::Serialize, specta::Type)]
+#[specta(rename = "MainWindowState")]
+pub struct MainWindowStateWire<'a> {
+    connection_status: &'a ConnectionState,
+    askpass: &'a AskpassState,
+    panes: &'a Panes,
+    terminals: &'a Terminals,
+    modal: &'a ModalState,
+    dnd: &'a DndState,
+    display_options: &'a DisplayOptions,
+    operations: &'a Operations,
+    window_title: &'a str,
+    foreground_operation_id: Option<OperationId>,
+    vfs_progress: &'a VfsProgressState,
+    mount_log: &'a MountLogState,
+    mount_summary: &'a MountSummaryState,
+}
+
+specta_as!(ConnectionState => ConnectionStatus);
+specta_as!(AskpassState => Option<AskpassPrompt>);
+specta_as!(Panes => Vec<pane::Pane>);
+specta_as!(pane::Pane => pane::PaneViewState);
+specta_as!(Terminals => HashMap<String, Terminal>);
+specta_as!(Terminal => terminal::TerminalView);
+specta_as!(ModalState => Option<ModalData>);
+specta_as!(DndState => Option<DndData>);
+specta_as!(DisplayOptions => DisplayOptionsInner);
+specta_as!(Operations => HashMap<String, OperationState>);
+specta_as!(VfsProgressState => HashMap<String, newt_common::vfs::VfsProgress>);
+specta_as!(MountLogState => Vec<String>);
+specta_as!(MountSummaryState => MountSummary);
+
 impl serde::Serialize for MainWindowState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
-        use serde::ser::SerializeStruct;
-        let foreground_id = self.operations.foreground_operation_id();
-        let mut s = serializer.serialize_struct("MainWindowState", 13)?;
-        s.serialize_field("connection_status", &self.connection_status)?;
-        s.serialize_field("askpass", &self.askpass)?;
-        s.serialize_field("panes", &self.panes)?;
-        s.serialize_field("terminals", &self.terminals)?;
-        s.serialize_field("modal", &self.modal)?;
-        s.serialize_field("dnd", &self.dnd)?;
-        s.serialize_field("display_options", &self.display_options)?;
-        s.serialize_field("operations", &self.operations)?;
-        s.serialize_field("window_title", &self.window_title)?;
-        s.serialize_field("foreground_operation_id", &foreground_id)?;
-        s.serialize_field("vfs_progress", &self.vfs_progress)?;
-        s.serialize_field("mount_log", &self.mount_log)?;
-        s.serialize_field("mount_summary", &self.mount_summary)?;
-        s.end()
+        MainWindowStateWire {
+            connection_status: &self.connection_status,
+            askpass: &self.askpass,
+            panes: &self.panes,
+            terminals: &self.terminals,
+            modal: &self.modal,
+            dnd: &self.dnd,
+            display_options: &self.display_options,
+            operations: &self.operations,
+            window_title: &self.window_title,
+            foreground_operation_id: self.operations.foreground_operation_id(),
+            vfs_progress: &self.vfs_progress,
+            mount_log: &self.mount_log,
+            mount_summary: &self.mount_summary,
+        }
+        .serialize(serializer)
     }
 }
 

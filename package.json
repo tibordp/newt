@@ -9,12 +9,13 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
-    "format": "prettier --write 'src/**/*.{ts,tsx,css,scss,json}'",
-    "format:check": "prettier --check 'src/**/*.{ts,tsx,css,scss,json}'",
+    "lint": "eslint src/ docs/scenes/",
+    "lint:fix": "eslint src/ docs/scenes/ --fix",
+    "format": "prettier --write 'src/**/*.{ts,tsx,css,scss,json}' 'docs/scenes/**/*.{ts,css}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,css,scss,json}' 'docs/scenes/**/*.{ts,css}'",
     "test": "vitest run",
     "test:watch": "vitest",
+    "screenshots": "node scripts/screenshots.mjs",
     "prepare": "husky"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
+    "playwright": "^1.63.0",
     "prettier": "^3.8.1",
     "sass": "^1.97.3",
     "typescript": "^6.0.3",
@@ -63,6 +65,13 @@
       "eslint --fix"
     ],
     "src/**/*.{css,scss,json}": [
+      "prettier --write"
+    ],
+    "docs/scenes/**/*.ts": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "docs/scenes/**/*.css": [
       "prettier --write"
     ]
   },

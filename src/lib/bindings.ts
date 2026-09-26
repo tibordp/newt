@@ -1662,6 +1662,25 @@ async connectRecent(paneHandle: PaneHandle, recent: RecentConnection) : Promise<
 /** user-defined types **/
 
 /**
+ * Per-entry annotation payload. Open taxonomy — one variant per
+ * annotation kind. The pane treats these as opaque (a generic
+ * per-entry overlay merged into `FileView.annotations`); only the
+ * frontend interprets the kinds it knows how to render.
+ * 
+ * Default (external) enum tagging only: this crosses the bincode RPC
+ * boundary, and bincode cannot deserialize `tag`/`content`/`untagged`
+ * representations. JSON shape is `{"git": "modified"}`.
+ */
+export type Annotation = { git: GitEntryStatus } | 
+/**
+ * Recursively computed size of a directory entry. `complete` is
+ * false while the walk is still running (or was cancelled) — the
+ * frontend renders such values with a trailing `+`. `unreadable`
+ * counts directories the walk could not list, which makes a
+ * finished value a lower bound, rendered with the `+` as well.
+ */
+{ recursive_size: { bytes: number; complete: boolean; unreadable: number } }
+/**
  * User-facing preferences that can be set in settings.toml.
  * 
  * Serde defaults ensure every field has a compiled-in default. The JSON Schema
@@ -1898,6 +1917,25 @@ open_in?: OpenIn }
 export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
 export type ContainerEntry = { id: string; name: string; image: string; state: string }
 /**
+ * Per-location badge (pane header / status bar), replace-by-kind per
+ * enricher. External tagging for the same bincode reason as
+ * [`Annotation`]; JSON shape is `{"git_branch": {...}}`.
+ */
+export type ContextBadge = { git_branch: { 
+/**
+ * Branch name, or short commit id when detached.
+ */
+name: string; detached: boolean; 
+/**
+ * Ahead/behind upstream; both 0 when there is no upstream.
+ */
+ahead: number; behind: number; 
+/**
+ * Whether the repository has any uncommitted changes at all
+ * (repo-wide, not just the listed directory).
+ */
+dirty: boolean } }
+/**
  * How to render a byte range when copying to the clipboard.
  */
 export type CopyFormat = 
@@ -1951,6 +1989,11 @@ export type DeleteConfirmMode =
  */
 "trash_unavailable"
 export type Density = "comfortable" | "compact"
+export type DetectedEncoding = { encoding: string; 
+/**
+ * Length of the byte-order mark the detection came from; 0 if none.
+ */
+bom_len: number }
 /**
  * Every dialog the host can open. Serialized as snake_case so the frontend
  * can keep sending string literals like `"navigate"` / `"mount_s3"` over
@@ -1991,6 +2034,10 @@ export type EditorPreferences = {
  * on an open file still overrides this for that file.
  */
 word_wrap: boolean }
+/**
+ * The `update:editor` payload; see `MainWindowStateWire`.
+ */
+export type EditorState = { language: string; word_wrap: boolean; file_path: VfsPath | null; display_path: string | null }
 export type EnricherPreferences = { 
 /**
  * Show git status in file listings: per-row colors for
@@ -2077,6 +2124,100 @@ export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[];
  * navigations into the same VFS.
  */
 partial: string | null }
+/**
+ * Display projection of `File` for the frontend. Carries everything
+ * `File` does, plus pre-rendered fields the frontend can't easily
+ * derive on its own — currently `source_display`, the source path
+ * formatted through the source VFS's descriptor for synthetic VFS
+ * entries (search results' "where from" hint).
+ * 
+ * Computing display strings on the descriptor is cheap and stays on
+ * the host process, so we don't carry the extra string across the RPC
+ * boundary; only `File` does. The conversion happens when the pane
+ * builds its window.
+ */
+export type FileView = ({ name: string; size: number | null; 
+/**
+ * Bytes actually allocated on disk (`st_blocks`-based), when the
+ * source filesystem reports it — sparse files (VM disk images,
+ * Docker.raw, …) allocate far less than their apparent `size`.
+ * The du enricher sums this when present so computed directory
+ * sizes match `du`, not the apparent-size sum.
+ */
+allocated_size: number | null; 
+/**
+ * Filesystem identity (`st_dev`), when the source reports it.
+ * Lets consumers detect mount boundaries — the du walker stops at
+ * them (`du -x`), and a future `--one-file-system` delete guard
+ * needs the same signal.
+ */
+device_id: number | null; 
+/**
+ * Inode number (`st_ino`); with `device_id`, identifies a file
+ * across hardlinks.
+ */
+inode: number | null; 
+/**
+ * Hardlink count (`st_nlink`) — consumers only need the
+ * `(device_id, inode)` dedup for entries with more than one link.
+ */
+hard_links: number | null; is_dir: boolean; is_hidden: boolean; is_symlink: boolean; 
+/**
+ * Raw link target as reported by the source FS. A string, not a path
+ * type: it may be relative (`../x`) or otherwise un-normalizable, and
+ * it crosses the agent↔host RPC boundary — no `std::path` there, its
+ * meaning belongs to the source OS, not the receiver's.
+ */
+symlink_target: string | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; 
+/**
+ * Raw Windows `FILE_ATTRIBUTE_*` bits, populated only by
+ * Windows-shaped local listings (the Attr column renders them).
+ */
+attributes: number | null; modified: number | null; accessed: number | null; created: number | null; 
+/**
+ * Directory-scoped identifier. When `None`, `name` is used as the
+ * identifier — the common case. Set explicitly by synthetic VFSes
+ * (e.g. flat search results, where `name` is the basename for display
+ * but multiple entries can share it). See `File::key()`.
+ */
+key: string | null; 
+/**
+ * Underlying source path for entries that are virtual references to a
+ * real file in another VFS — e.g. a search result. Frontend uses this
+ * for the "where from" secondary display; backend treats it as
+ * informational (the operative redirect is in `VfsRegistry`, see
+ * `Vfs::redirect_target`).
+ */
+source: VfsPath | null }) & { 
+/**
+ * Pre-rendered "where from" label — the parent directory of
+ * `file.source` rendered through the source VFS's `format_path`,
+ * when `source` is set and the source VFS is still mounted. `None`
+ * for ordinary entries.
+ */
+source_display: string | null; 
+/**
+ * Annotations from the enrichment overlay, in stable per-enricher
+ * order. Opaque to the pane; the frontend interprets the kinds it
+ * knows (git status → row coloring).
+ */
+annotations: Annotation[] }
+/**
+ * A windowed slice of the file list sent to the frontend.
+ */
+export type FileWindow = { 
+/**
+ * The files in the current window, projected for display.
+ */
+items: FileView[]; 
+/**
+ * Index of the first item in `items` within the full sorted/filtered list.
+ */
+offset: number; 
+/**
+ * Total number of files in the full sorted/filtered list.
+ */
+total_count: number }
 export type FilterMode = "quick_search" | "filter"
 export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number; 
 /**
@@ -2085,6 +2226,13 @@ export type FsStats = { free_bytes: number; available_bytes: number; total_bytes
  * VFS has no volume notion.
  */
 volume: VolumeInfo | null }
+/**
+ * Git working-tree status of a listed entry. For directories this is a
+ * rollup of everything beneath them (VSCode-style), with precedence
+ * `Conflicted > Modified > Renamed > Added > Untracked`; `Ignored` is
+ * only ever direct (a fully-ignored entry), never rolled up.
+ */
+export type GitEntryStatus = "ignored" | "untracked" | "added" | "renamed" | "modified" | "conflicted"
 /**
  * Frontend-visible view of a single history entry. Sent via the
  * HistoryNavigator modal. `is_alive` reflects whether the entry's VFS is
@@ -2130,6 +2278,12 @@ export type LayoutState = {
  * Terminal panel height in px. `None` uses the built-in default.
  */
 terminal_height: number | null }
+/**
+ * The `update:main_window` payload, borrowing the live state. Serializing
+ * through this derive keeps the wire shape and `MainWindowState` in
+ * `bindings.ts` one and the same.
+ */
+export type MainWindowState = { connection_status: ConnectionStatus; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary }
 /**
  * Which optional per-entry metadata families a VFS actually populates
  * on its `File`s — drives which file-list columns a pane offers (see
@@ -2613,6 +2767,41 @@ silent: boolean;
 scanning_items: number | null; scanning_bytes: number | null }
 export type OperationStatus = "scanning" | "running" | "completed" | "failed" | "cancelled" | "waiting_for_input"
 export type PaneHandle = number
+export type PaneStats = { file_count: number; dir_count: number; bytes: number; selected_file_count: number; selected_dir_count: number; selected_bytes: number; total_count: number | null; 
+/**
+ * Entries filtered out because hidden files are not shown. Always 0
+ * while `show_hidden` is on.
+ */
+hidden_count: number }
+/**
+ * View model for a pane.
+ */
+export type PaneViewState = { path: VfsPath; pending_path: VfsPath | null; loading: boolean; 
+/**
+ * Why the listing is incomplete, shown as `(partial)` with this on
+ * hover.
+ */
+partial: string | null; sorting: Sorting; file_window: FileWindow; focused: string | null; 
+/**
+ * Selected filenames intersected with the current window (for frontend rendering).
+ */
+selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: FsStats | null; stats: PaneStats; focused_index: number | null; display_path: string; vfs_display_name: string; is_host_local: boolean; 
+/**
+ * Which metadata families the pane's VFS populates — the frontend
+ * filters the configured column set by these (no mode/user/group
+ * on S3, an Attr column only on Windows-shaped FSes).
+ */
+metadata_traits: MetadataTraits; breadcrumbs: Breadcrumb[]; 
+/**
+ * Per-location badges from enrichers (branch indicator, …), in
+ * stable per-enricher order.
+ */
+context_badges: ContextBadge[]; 
+/**
+ * Status-bar labels of enrichers currently running, keyed by
+ * enricher id.
+ */
+enrichment_activity: Partial<{ [key in string]: string }> }
 export type PropertyField = { 
 /**
  * Stable key (e.g. `s3.meta`) — patch target and i18n/docs anchor.
@@ -2839,6 +3028,7 @@ export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
 export type TerminalHandle = number
+export type TerminalView = { handle: TerminalHandle; defunct: boolean }
 export type ThemeMode = "system" | "light" | "dark"
 /**
  * A single `[[command]]` entry in the TOML file.
@@ -2923,6 +3113,18 @@ volume: VolumeInfo | null;
  */
 available_bytes: number | null }
 /**
+ * Detection state for the viewer's current file.
+ */
+export type ViewerEncoding = { 
+/**
+ * `None` until the prefix read completes (or fails).
+ */
+detected: DetectedEncoding | null; 
+/**
+ * Explicit pick from the Encoding menu; overrides `detected`.
+ */
+selected: string | null }
+/**
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.
  */
@@ -2943,6 +3145,10 @@ export type ViewerSearchPattern = { Text: { text: string; encoding: string } } |
  * UTF-8, so they only match in UTF-8 files.
  */
 { Regex: string }
+/**
+ * The `update:viewer` payload; see `MainWindowStateWire`.
+ */
+export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding }
 export type VolumeInfo = { kind: VolumeKind; 
 /**
  * Filesystem name (NTFS, ext4, apfs, …).

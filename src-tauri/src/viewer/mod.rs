@@ -81,16 +81,27 @@ pub struct ViewerState {
     encoding: RwLock<ViewerEncoding>,
 }
 
+/// The `update:viewer` payload; see `MainWindowStateWire`.
+#[derive(Serialize, specta::Type)]
+#[specta(rename = "ViewerState")]
+pub struct ViewerStateWire {
+    mode: ViewerMode,
+    file_path: Option<VfsPath>,
+    display_path: Option<String>,
+    file_server_base: Option<String>,
+    encoding: ViewerEncoding,
+}
+
 impl Serialize for ViewerState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("ViewerState", 5)?;
-        s.serialize_field("mode", &*self.mode.read())?;
-        s.serialize_field("file_path", &*self.file_path.read())?;
-        s.serialize_field("display_path", &*self.display_path.read())?;
-        s.serialize_field("file_server_base", &*self.file_server_base.read())?;
-        s.serialize_field("encoding", &*self.encoding.read())?;
-        s.end()
+        ViewerStateWire {
+            mode: *self.mode.read(),
+            file_path: self.file_path.read().clone(),
+            display_path: self.display_path.read().clone(),
+            file_server_base: self.file_server_base.read().clone(),
+            encoding: self.encoding.read().clone(),
+        }
+        .serialize(serializer)
     }
 }
 

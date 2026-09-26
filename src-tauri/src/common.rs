@@ -20,6 +20,30 @@ pub enum Error {
     Cancelled,
 }
 
+/// `specta::Type` for a state wrapper whose hand-written `Serialize` emits
+/// exactly `$wire` (typically a lock guard's contents), so published state
+/// types in `bindings.ts` without a derive on the wrapper itself.
+macro_rules! specta_as {
+    ($wrapper:ty => $wire:ty) => {
+        impl specta::Type for $wrapper {
+            fn inline(
+                types: &mut specta::TypeCollection,
+                generics: specta::Generics,
+            ) -> specta::DataType {
+                <$wire as specta::Type>::inline(types, generics)
+            }
+
+            fn reference(
+                types: &mut specta::TypeCollection,
+                generics: &[specta::DataType],
+            ) -> specta::datatype::reference::Reference {
+                <$wire as specta::Type>::reference(types, generics)
+            }
+        }
+    };
+}
+pub(crate) use specta_as;
+
 impl From<newt_common::Error> for Error {
     fn from(value: newt_common::Error) -> Self {
         match value.kind {

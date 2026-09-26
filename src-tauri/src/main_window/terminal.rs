@@ -37,13 +37,19 @@ impl Terminal {
     }
 }
 
+#[derive(serde::Serialize, specta::Type)]
+pub struct TerminalView {
+    handle: TerminalHandle,
+    defunct: bool,
+}
+
 impl serde::Serialize for Terminal {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Terminal", 2)?;
-        s.serialize_field("handle", &self.handle)?;
-        s.serialize_field("defunct", &self.is_defunct())?;
-        s.end()
+        TerminalView {
+            handle: self.handle,
+            defunct: self.is_defunct(),
+        }
+        .serialize(serializer)
     }
 }
 

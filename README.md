@@ -66,7 +66,8 @@ cargo tauri build    # release bundles
 
 Remote and elevated sessions need agent binaries: `cargo xtask agents` builds them for every
 target the host can produce (Linux agents cross-compile from any host via cargo-zigbuild; see
-`cargo xtask help`). Rust tests run with `cargo test`, frontend tests with `npm test`. CI builds
+`cargo xtask help`). Rust tests run with `cargo test`, frontend tests with `npm test`;
+`npm run screenshots` renders the documentation screenshots ([docs/scenes](docs/scenes/README.md)). CI builds
 and tests every push to master; packaging (bundles for all three OSes) is a manual workflow run.
 
 ## License

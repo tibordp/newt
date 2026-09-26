@@ -86,9 +86,9 @@ The `cmd_*` middleware automatically closes any open modal before dispatching, s
 When adding state that affects the session's UI beyond a single component (e.g. a new panel, a toggle, a mode):
 
 1. Add the field to the appropriate Rust struct (`MainWindowState`, `DisplayOptions`, etc.).
-2. Derive/implement `Serialize` so the patch system picks it up.
+2. Derive/implement `Serialize` so the patch system picks it up, and `specta::Type` so it reaches `bindings.ts`. A new top-level field goes on `MainWindowStateWire`; a lock wrapper with a hand-written `Serialize` gets a `specta_as!` naming what it emits.
 3. Modify it via `with_update` / `with_update_async` in a command handler.
-4. Read it from `remoteState` on the frontend — do not duplicate it into `useState`.
+4. Read it from `remoteState` on the frontend — do not duplicate it into `useState`. The documentation scenes in `docs/scenes/` are typed against the same bindings, so `tsc` points at any scene the change leaves stale.
 
 ## Async and cancellability
 
@@ -115,6 +115,8 @@ When a task or direction is unclear — especially around architecture or design
 ## Commit checklist
 
 When adding new features or significantly reworking existing ones - make sure TODO.md and FEATURE_DUMP.md are updated. These docs are agent-consumption material, not user-facing copy: word the updates yourself in the style of the surrounding entries, don't ask the user for phrasing. Concretely: delete TODO.md items the change resolves, and slot new behaviour into the relevant FEATURE_DUMP.md section (and the settings reference, if a new preference was added). TODO.md should always be actionable future work, known limitations and implementation details belong into FEATURE_DUMP.md or code comments. Do not preface pending work with a list of things that were already done. I repeat: *Do not leave junk in TODO.md, remove it when done!*
+
+FEATURE_DUMP.md is primarily a user-centric view of Newt - it is feedstock to an agentic workflow that generates the user manual on Newt's website. Information that is only relevant to maintainers or people developing Newt, do not belong there. Newt users are power users, so some implementation details (e.g. which Win32 API call a certain file action maps to, to illustrate a limitation) may be included, but lengthy technical details, if necessary at all, should be put elsewhere. Exercise good judgement, but when in doubt, err on the side of including it.
 
 When changing third-party dependencies or adding third-party vendored assets (excluding original first-party assets): ensure that any new dependencies are GPLv3 compatible, update `xtask/src/notices_assets.md` if needed and run `cargo xtask notices` to regenerate the combined third party notices text.
 

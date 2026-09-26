@@ -393,10 +393,10 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::connections::connect_recent,
         ])
         // Types that flow through state pushes (UpdatePublisher events) rather
-        // than command return values. The frontend assembles MainWindowState
-        // from these leaves; we don't codegen the wrapper because its Rust
-        // representation uses Arc<RwLock<…>> wrappers with manual Serialize
-        // impls that don't fit specta::Type cleanly.
+        // than command return values.
+        .typ::<crate::main_window::MainWindowStateWire<'static>>()
+        .typ::<crate::viewer::ViewerStateWire>()
+        .typ::<crate::editor::EditorStateWire>()
         .typ::<newt_common::vfs::Breadcrumb>()
         .typ::<newt_common::vfs::File>()
         .typ::<newt_common::vfs::FileList>()

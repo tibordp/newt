@@ -1,0 +1,133 @@
+/* macOS 26 window chrome, measured off a native capture. */
+
+:root {
+  color-scheme: light dark;
+  --titlebar: #ffffff;
+  --title: #595959;
+  --rim: rgb(0 0 0 / 0.3);
+  --highlight: transparent;
+  --light-edge: rgb(0 0 0 / 0.12);
+  --index-bg: #f5f5f5;
+  --index-fg: #222;
+  --index-muted: #777;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --titlebar: #262626;
+    --title: #a6a6a6;
+    --rim: rgb(0 0 0 / 0.7);
+    --highlight: rgb(255 255 255 / 0.14);
+    --light-edge: rgb(0 0 0 / 0.25);
+    --index-bg: #1e1e1e;
+    --index-fg: #ddd;
+    --index-muted: #888;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+.backdrop {
+  display: inline-block;
+  /* Room for the shadow, which hangs lower than it spreads. */
+  padding: 38px 56px 74px;
+}
+
+.window {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--titlebar);
+  box-shadow:
+    0 0 0 0.5px var(--rim),
+    0 0 3px rgb(0 0 0 / 0.1),
+    0 22px 44px rgb(0 0 0 / 0.3),
+    0 14px 70px rgb(0 0 0 / 0.11);
+}
+
+/* Dark windows carry a light inner hairline. */
+.window::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px var(--highlight);
+  pointer-events: none;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  cursor: default;
+  user-select: none;
+}
+
+.lights {
+  display: flex;
+  gap: 9px;
+  margin-left: 9px;
+}
+
+.lights i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px var(--light-edge);
+}
+
+.lights i:nth-child(1) {
+  background: #ff5c5f;
+}
+.lights i:nth-child(2) {
+  background: #fac800;
+}
+.lights i:nth-child(3) {
+  background: #34c759;
+}
+
+.title {
+  margin-left: 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.window iframe {
+  display: block;
+  border: 0;
+}
+
+.index {
+  padding: 24px 32px;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--index-bg);
+  color: var(--index-fg);
+  font-size: 13px;
+}
+
+.index h1 {
+  font-size: 18px;
+}
+
+.index li {
+  margin: 6px 0;
+}
+
+.index a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.index span {
+  color: var(--index-muted);
+}

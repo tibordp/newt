@@ -40,6 +40,7 @@ import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
 import {
   KEYBOARD_MENU_EVENT,
   MainWindowState,
+  OperationState,
   isKeyboardContextMenu,
 } from "./types";
 import Pane from "./Pane";
@@ -182,7 +183,8 @@ function App() {
   // when one fails, so failed ones appear here like any other.
   const visibleOperations = useMemo(() => {
     const entries = Object.entries(remoteState?.operations ?? {}).filter(
-      ([, op]) => !op.silent || op.status === "failed",
+      (e): e is [string, OperationState] =>
+        !!e[1] && (!e[1].silent || e[1].status === "failed"),
     );
     return entries.length > 0 ? Object.fromEntries(entries) : null;
   }, [remoteState?.operations]);
@@ -432,7 +434,9 @@ function App() {
                     visible={remoteState.display_options.terminal_panel_visible}
                   >
                     <TerminalPanel
-                      terminals={Object.values(remoteState.terminals)}
+                      terminals={Object.values(remoteState.terminals).filter(
+                        (t) => t !== undefined,
+                      )}
                       activeTerminal={
                         remoteState.display_options.active_terminal
                       }
