@@ -18,7 +18,7 @@ hmac = "0.12"
 sha1 = "0.10"
 pbkdf2 = "0.12"
 getrandom = { version = "0.3", features = ["std"] }
-iluvatar = { version = "0.4", default-features = false, features = ["gzip", "bz2", "xz", "zstandard", "aes"] }
+iluvatar = { version = "0.5", default-features = false, features = ["gzip", "bz2", "xz", "zstandard", "aes"] }
 sha2 = "0.10"
 
 [dev-dependencies]

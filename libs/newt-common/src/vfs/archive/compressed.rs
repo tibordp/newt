@@ -36,9 +36,8 @@ use super::stream::{
 };
 use super::tree::DirectoryTree;
 
-/// How often the indexer parks a snapshot of its progress, so a cancelled
-/// run resumes from there instead of from the start.
-const SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// How often indexing reports its progress.
+const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 // ---------------------------------------------------------------------------
 // CompressedFileVfsDescriptor
@@ -157,8 +156,10 @@ pub fn entry_name(archive_name: &str) -> String {
 struct IndexState {
     /// The one entry, sized once the index is complete.
     tree: parking_lot::RwLock<DirectoryTree>,
-    /// Where a cancelled run left off; the next run resumes from it.
-    partial: parking_lot::Mutex<Option<StreamIndex>>,
+    /// The indexer between runs. A run holds the lock for its whole life
+    /// and drives the indexer in place, so a cancelled run leaves it
+    /// exactly where it stopped and the next run continues from there.
+    indexer: tokio::sync::Mutex<Option<StreamIndexer<FixedInterval>>>,
     completed: tokio::sync::OnceCell<StreamIndex>,
     error: tokio::sync::OnceCell<String>,
     /// Notified whenever the tree changes or indexing completes or fails.
@@ -173,8 +174,8 @@ pub struct CompressedFileVfs {
     display_path: String,
     name: String,
     state: Arc<IndexState>,
-    /// Lazy spawn on the first consumer, cancellation when the last one
-    /// leaves, resumed from the parked snapshot on the next.
+    /// Lazy spawn on the first consumer, paused when the last one leaves,
+    /// resumed by the next.
     job: super::super::BackgroundJob,
     reporter: Arc<dyn super::super::ProgressReporter>,
     pool: Arc<ReaderPool>,
@@ -200,7 +201,7 @@ impl CompressedFileVfs {
             name,
             state: Arc::new(IndexState {
                 tree: parking_lot::RwLock::new(tree),
-                partial: parking_lot::Mutex::new(None),
+                indexer: tokio::sync::Mutex::new(None),
                 completed: tokio::sync::OnceCell::new(),
                 error: tokio::sync::OnceCell::new(),
                 updated: Notify::new(),
@@ -252,26 +253,35 @@ impl CompressedFileVfs {
         reporter: Arc<dyn super::super::ProgressReporter>,
         job: &super::super::JobHandle,
     ) -> Result<(), Error> {
+        // Waits out a previous run that is still letting go of the indexer.
+        let mut slot = state.indexer.lock().await;
         if state.completed.get().is_some() {
             return Ok(());
         }
         let file_size = upstream.file_details(&archive_path).await?.size;
-        let format = detect_compression_from_name(archive_path.as_wire_str());
-        let strategy = FixedInterval::new(iluvatar::default_interval_for_format(format));
-        let mut indexer = match state.partial.lock().take() {
-            Some(index) => StreamIndexer::resume(index, strategy),
-            None => StreamIndexer::new(format.into(), strategy, Some(file_size)),
-        }
-        .map_err(|e| Error::custom(format!("failed to create indexer: {}", e)))?;
-        indexer.emit_output(false);
-        info!(
-            "archive: indexing compressed file {} (size={}, {:?})",
-            archive_path, file_size, format
-        );
+        let indexer = match &mut *slot {
+            Some(indexer) => {
+                info!("archive: resuming indexing of {}", archive_path);
+                indexer
+            }
+            None => {
+                let format = detect_compression_from_name(archive_path.as_wire_str());
+                let strategy = FixedInterval::new(iluvatar::default_interval_for_format(format));
+                let mut indexer = StreamIndexer::new(format.into(), strategy, Some(file_size))
+                    .map_err(|e| Error::custom(format!("failed to create indexer: {}", e)))?;
+                indexer.emit_output(false);
+                info!(
+                    "archive: indexing compressed file {} (size={}, {:?})",
+                    archive_path, file_size, format
+                );
+                slot.insert(indexer)
+            }
+        };
 
+        let cancel = job.cancel_token();
         let mut upstream_reader = open_read_at(&upstream, &archive_path).await?;
         let packed = 0..file_size;
-        let mut last_snapshot = tokio::time::Instant::now();
+        let mut last_report = tokio::time::Instant::now();
         let report = |at: u64| {
             let mut extra = std::collections::BTreeMap::new();
             extra.insert("path".to_string(), display_path.to_string());
@@ -282,41 +292,36 @@ impl CompressedFileVfs {
                 extra,
             }));
         };
-        report(0);
+        report(indexer.progress().compressed_pos);
         loop {
-            if job.is_cancelled() {
-                info!("archive: indexing cancelled for {}", archive_path);
-                *state.partial.lock() = Some(indexer.finish());
-                return Ok(());
-            }
-            match indexer.step() {
-                EngineRequest::NeedInput => {
-                    let at = indexer.progress().compressed_pos;
-                    match read_packed(upstream_reader.as_mut(), &packed, at, PACKED_SLICE).await? {
-                        Some(data) => indexer.provide_data(&data),
-                        None => indexer.signal_eof(),
-                    }
-                }
-                EngineRequest::SeekAndRead { offset, len } => {
-                    match read_packed(upstream_reader.as_mut(), &packed, offset, len as u64).await?
-                    {
-                        Some(data) => indexer.provide_data(&data),
-                        None => indexer.signal_eof(),
-                    }
-                }
-                EngineRequest::OutputReady => {}
+            let (at, len) = match indexer.step() {
+                EngineRequest::NeedInput => (indexer.progress().compressed_pos, PACKED_SLICE),
+                EngineRequest::SeekAndRead { offset, len } => (offset, len as u64),
+                EngineRequest::OutputReady => continue,
                 EngineRequest::Done => break,
                 EngineRequest::Error(e) => {
+                    *slot = None;
                     return Err(Error::custom(format!("failed to index {}: {}", name, e)));
                 }
+            };
+            let data = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    info!("archive: indexing paused for {}", archive_path);
+                    return Ok(());
+                }
+                data = read_packed(upstream_reader.as_mut(), &packed, at, len) => data?,
+            };
+            match data {
+                Some(data) => indexer.provide_data(&data),
+                None => indexer.signal_eof(),
             }
-            if last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
-                last_snapshot = tokio::time::Instant::now();
-                *state.partial.lock() = Some(indexer.snapshot());
+            if last_report.elapsed() >= PROGRESS_INTERVAL {
+                last_report = tokio::time::Instant::now();
                 report(indexer.progress().compressed_pos);
             }
         }
-        let index = indexer.finish();
+        let index = slot.take().expect("the indexer was just driven").finish();
         let len = index.unpacked_len.unwrap_or(0);
         info!("archive: indexed {} ({} bytes unpacked)", archive_path, len);
         *state.tree.write() = single_entry_tree(name, Some(len));
@@ -430,12 +435,6 @@ impl Vfs for CompressedFileVfs {
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
-            }
-            if self.job.status() == super::super::JobStatus::Cancelled {
-                return Ok(VfsFileList {
-                    files: self.state.tree.read().list(std_path)?,
-                    partial: Some("indexing cancelled".to_string()),
-                });
             }
             notified.await;
         }

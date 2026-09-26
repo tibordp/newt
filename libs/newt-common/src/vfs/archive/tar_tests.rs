@@ -361,3 +361,131 @@ async fn resolve_link_follows_the_archive_tree() {
         vp("/hello.txt")
     );
 }
+
+// ---------------------------------------------------------------------------
+// ar archives
+// ---------------------------------------------------------------------------
+
+/// A GNU-style ar archive of `(name, data)` members, in order.
+fn ar_archive(members: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = b"!<arch>\n".to_vec();
+    for (name, data) in members {
+        let header = format!(
+            "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+            format!("{name}/"),
+            0,
+            0,
+            0,
+            "100644",
+            data.len()
+        );
+        assert_eq!(header.len(), 60);
+        out.extend_from_slice(header.as_bytes());
+        out.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            out.push(b'\n');
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn ar_archive_lists_and_reads() {
+    let bytes = ar_archive(&[("foo.o", b"foo object"), ("bar.o", b"odd")]);
+    let vfs = mount(&bytes, ARCHIVE_PATH, MockVfsConfig::default());
+    let mut names: Vec<String> = vfs
+        .list_files(&vp("/"), None)
+        .await
+        .expect("list_files")
+        .files
+        .into_iter()
+        .map(|f| f.name)
+        .filter(|n| n != "..")
+        .collect();
+    names.sort();
+    assert_eq!(names, ["bar.o", "foo.o"]);
+    assert_eq!(read_to_vec(&vfs, "/foo.o").await, b"foo object");
+    assert_eq!(read_to_vec(&vfs, "/bar.o").await, b"odd");
+}
+
+/// A static library can hold two members of one name; the listing shows
+/// one row, and it's the last member, which is also what reads return.
+#[tokio::test]
+async fn duplicate_members_list_once_as_the_last() {
+    let bytes = ar_archive(&[("dup.o", b"first"), ("dup.o", b"second!")]);
+    let vfs = mount(&bytes, ARCHIVE_PATH, MockVfsConfig::default());
+    let files: Vec<_> = vfs
+        .list_files(&vp("/"), None)
+        .await
+        .expect("list_files")
+        .files
+        .into_iter()
+        .filter(|f| f.name != "..")
+        .collect();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].size, Some(7));
+    assert_eq!(read_to_vec(&vfs, "/dup.o").await, b"second!");
+}
+
+/// An archive cut off inside a member still mounts: everything before the
+/// cut lists and reads, the member it lands in lists and fails its read,
+/// and the listing is flagged partial.
+#[tokio::test]
+async fn truncated_archive_mounts_what_came_before_the_cut() {
+    let cut = &SIMPLE_TAR[..SIMPLE_TAR.len() / 2];
+    let vfs = mount(cut, ARCHIVE_PATH, MockVfsConfig::default());
+    let listing = vfs.list_files(&vp("/dir"), None).await.expect("list_files");
+    assert_eq!(listing.partial.as_deref(), Some("archive truncated"));
+    assert!(listing.files.iter().any(|f| f.name == "big.bin"));
+
+    assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
+    let mut reader = vfs
+        .open_read_async(&vp("/dir/big.bin"))
+        .await
+        .expect("open_read_async");
+    let mut out = Vec::new();
+    let err = reader
+        .read_to_end(&mut out)
+        .await
+        .expect_err("the cut member must not read as complete");
+    assert!(
+        err.to_string().contains("truncated"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Leaving the archive root while it indexes — entering one of its folders,
+/// or backing out and coming in again — pauses indexing, and the next
+/// listing or read picks it up rather than finding it stuck partial.
+#[tokio::test]
+async fn indexing_resumes_after_the_last_consumer_leaves() {
+    let vfs = mount(SIMPLE_TAR_GZ, "/archive.gz", MockVfsConfig::default());
+    for _ in 0..2 {
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let root = vp("/");
+        let listing = vfs.list_files(&root, Some(tx));
+        tokio::pin!(listing);
+        assert!(futures::poll!(listing.as_mut()).is_pending());
+    }
+
+    let deadline = std::time::Duration::from_secs(5);
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    let listing = tokio::time::timeout(deadline, vfs.list_files(&vp("/dir"), Some(tx)))
+        .await
+        .expect("listing finishes")
+        .expect("list_files");
+    assert_eq!(listing.partial, None);
+    let mut names: Vec<String> = listing
+        .files
+        .into_iter()
+        .map(|f| f.name)
+        .filter(|n| n != "..")
+        .collect();
+    names.sort();
+    assert_eq!(names, ["big.bin", "nested.txt"]);
+
+    let hello = tokio::time::timeout(deadline, read_to_vec(&vfs, "/hello.txt"))
+        .await
+        .expect("read finishes");
+    assert_eq!(hello, HELLO);
+}

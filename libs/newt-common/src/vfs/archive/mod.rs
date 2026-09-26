@@ -85,9 +85,12 @@ pub async fn mount(
 // Archive format detection
 // ---------------------------------------------------------------------------
 
+/// Everything iluvatar indexes: tar, cpio and ar (static libraries and
+/// Debian packages). Windows `.lib` is ar too, but the extension is shared
+/// with plain-text library formats (KiCad, SPICE), so it isn't claimed.
 const TAR_EXTENSIONS: &[&str] = &[
     "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tbz", "tar.xz", "txz", "tar.zst", "tzst",
-    "tar.zstd", "cpio", "cpio.gz", "cpio.bz2", "cpio.xz", "cpio.zst",
+    "tar.zstd", "cpio", "cpio.gz", "cpio.bz2", "cpio.xz", "cpio.zst", "a", "ar", "deb",
 ];
 
 const ZIP_EXTENSIONS: &[&str] = &["zip", "jar", "war", "ear", "apk", "ipa"];
@@ -179,6 +182,16 @@ mod name_tests {
         assert_eq!(entry_name("disk.img.XZ"), "disk.img");
         assert_eq!(entry_name(".gz"), ".gz");
         assert_eq!(entry_name("plain"), "plain");
+    }
+
+    #[test]
+    fn is_archive_name_ar() {
+        for name in ["libfoo.a", "x.ar", "pkg_1.0_amd64.deb", "LIBFOO.A"] {
+            assert!(is_archive_name(name), "{}", name);
+            assert!(!super::is_compressed_name(name), "{}", name);
+        }
+        assert!(!is_archive_name("foo.lib"));
+        assert!(!is_archive_name("data"));
     }
 
     #[test]

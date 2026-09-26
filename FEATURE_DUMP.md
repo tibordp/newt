@@ -199,7 +199,7 @@ Click a column header to sort ascending by that key; click the same header again
 | Loaded, no selection | "X files, Y directories", plus ", N hidden" when hidden files exist but Show Hidden is off |
 | Loaded, with selection | "X files, Y directories selected, Z bytes total" — Z includes computed recursive sizes of selected directories, so ⌘A after Calculate All Sizes totals the whole directory |
 | Filter active | "(showing X of Y)" appended |
-| Partial results | "(partial)" appended when the listing is incomplete — the reason on hover: "listing interrupted" when navigation moved on mid-stream, "cancelled" for a search or archive index cut short, "N entries could not be read" or "cannot list …" for a search that hit unreadable directories |
+| Partial results | "(partial)" appended when the listing is incomplete — the reason on hover: "listing interrupted" when navigation moved on mid-stream, "cancelled" for a search cut short, "archive truncated" for an archive that ends inside a member, "N entries could not be read" or "cannot list …" for a search that hit unreadable directories |
 
 ### Directory Loading
 
@@ -1076,6 +1076,7 @@ Mount and browse archive files as virtual read-only filesystems.
 | TAR + zstd | `.tar.zst`, `.tzst`, `.tar.zstd` |
 | CPIO | `.cpio` |
 | CPIO + compression | `.cpio.gz`, `.cpio.bz2`, `.cpio.xz`, `.cpio.zst` |
+| ar (static libraries, Debian packages) | `.a`, `.ar`, `.deb` — plain or compressed, detected by content. Windows `.lib` is ar too but isn't claimed, since the extension also names plain-text library files |
 | ZIP | `.zip`, `.jar`, `.war`, `.ear`, `.apk`, `.ipa` |
 | 7z | `.7z` |
 | Bare compressed file | `.gz`, `.bz2`, `.xz`, `.zst`, `.zstd` (not on a tar or cpio name) |
@@ -1085,9 +1086,11 @@ Mount and browse archive files as virtual read-only filesystems.
 **TAR indexing** (streaming/incremental):
 - Index is built by scanning the archive stream. Files appear incrementally in the UI as indexing progresses — you can browse partial results while the rest of the archive is still being indexed.
 - Periodic snapshots every 200ms update the file list.
-- If you navigate away before indexing completes, the indexing is cancelled.
+- Indexing runs while something is using the archive — a pane listing inside it, or a read in flight — and pauses when nothing is. Navigating out of the archive stops it; entering it again, or reading from it, continues from exactly where it stopped, with nothing redone. Moving between folders inside the archive keeps it going. A paused archive keeps its decoder state (for zstd and xz, typically the compression window — a few MB) until it's unmounted.
+- Members sharing a path (two `foo.o` in a static library, a tar appended to with `tar -r`) list as one entry: the last one, which is also what reads return.
+- An archive cut off inside a header or a member still mounts, compressed or not — a partially downloaded `.tar.gz` included: everything before the cut lists and reads, the listing carries the partial badge ("archive truncated"), and the member the cut lands in is listed but fails its read. A compressed stream that is corrupt rather than cut short still fails to mount with the decompressor's error. Only the first gzip member, bzip2 stream or xz stream of a concatenated file is read.
 
-**Bare compressed files** (`whatever.gz`): mount as a one-entry filesystem whose entry is the archive's name without its suffix (`notes.txt.gz` → `notes.txt`), with no mode, owner or timestamps — the containers carry nothing worth showing. Nothing but a full pass tells the unpacked length, so the stream is indexed in the background at first use like a tar: the listing lands at once without a size and refreshes with it when indexing completes (partial and refreshable if the pane left in between; a cancelled run resumes from its last snapshot), and reads wait for the complete index. Reads then go through the same reader pool and stream driver as tar and 7z.
+**Bare compressed files** (`whatever.gz`): mount as a one-entry filesystem whose entry is the archive's name without its suffix (`notes.txt.gz` → `notes.txt`), with no mode, owner or timestamps — the containers carry nothing worth showing. Nothing but a full pass tells the unpacked length, so the stream is indexed in the background at first use like a tar: the listing lands at once without a size and refreshes with it when indexing completes (indexing pauses like a tar's when nothing is using the file, and continues where it stopped on the next listing or read), and reads wait for the complete index. Reads then go through the same reader pool and stream driver as tar and 7z.
 
 **ZIP indexing** (one-shot, sans-IO): the in-tree `newt_archive::zip` reader (disc-image architecture, not the tar one — no external zip crate, no `spawn_blocking`/`block_on` anywhere) fetches the central directory at EOF in bounded 1 MiB slices with determinate progress, yielding the complete entry table; listings and `file_details` afterwards cost zero upstream reads. Reads are random-access: stored entries map 1:1 onto upstream range reads (ISO-extent style), compressed entries stream through a resumable decrypt→decompress cursor that gets parked per archive and resumed by the next sequential range read — the viewer's chunk fan-out costs one decompression pass total, not one per chunk. Dropping a read future drops the in-flight upstream read (async-native cancellation).
 

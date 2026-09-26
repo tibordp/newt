@@ -146,3 +146,27 @@ async fn listing_streams_the_entry_before_its_size_is_known() {
     assert_eq!(first[1].name, "simple.tar");
     assert_eq!(list.files[1].size, Some(SIMPLE_TAR.len() as u64));
 }
+
+/// A listing dropped mid-indexing pauses the indexer; the next consumer
+/// resumes it instead of getting a partial listing forever.
+#[tokio::test]
+async fn indexing_resumes_after_the_last_consumer_leaves() {
+    let vfs = mount(SIMPLE_TAR_GZ, "/simple.tar.gz");
+    {
+        let (tx, _rx) = tokio::sync::mpsc::channel(4);
+        let root = vp("/");
+        let listing = vfs.list_files(&root, Some(tx));
+        tokio::pin!(listing);
+        assert!(futures::poll!(listing.as_mut()).is_pending());
+    }
+    let list = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        vfs.list_files(&vp("/"), None),
+    )
+    .await
+    .expect("listing finishes")
+    .unwrap();
+    assert!(list.partial.is_none());
+    assert_eq!(list.files[1].size, Some(SIMPLE_TAR.len() as u64));
+    assert_eq!(read_to_vec(&vfs, "/simple.tar").await, SIMPLE_TAR);
+}

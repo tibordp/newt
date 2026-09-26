@@ -166,10 +166,19 @@ fn emit_indexing_progress(
 struct TarIndexingState {
     /// Incremental directory tree, updated periodically during indexing.
     tree: parking_lot::RwLock<DirectoryTree>,
+    /// The indexing engine between runs. A run holds the lock for its
+    /// whole life and drives the engine in place, so a cancelled run
+    /// leaves it exactly where it stopped and the next run continues
+    /// from there.
+    engine: tokio::sync::Mutex<Option<iluvatar::IndexingEngine>>,
     /// Completed archive index (set once indexing finishes successfully).
     completed_index: tokio::sync::OnceCell<iluvatar::ArchiveIndex>,
     /// Set if indexing failed with an error message.
     error: tokio::sync::OnceCell<String>,
+    /// Set when the archive ends inside a header or member. The index
+    /// still covers everything before the cut: the member it lands in is
+    /// listed, and reading it fails.
+    truncated: tokio::sync::OnceCell<String>,
     /// Notified whenever the tree is updated or indexing completes/fails.
     updated: Notify,
 }
@@ -185,10 +194,8 @@ pub struct TarArchiveVfs {
     mount_meta: Vec<u8>,
     state: Arc<TarIndexingState>,
     /// Background-job lifecycle: lazy spawn on first consumer (a
-    /// streaming `list_files` or any in-flight file read), cancellation
-    /// when the last consumer leaves, sticky-Cancelled — the partial
-    /// directory tree remains browsable, and `list_files` reports
-    /// `partial` until unmount.
+    /// streaming `list_files` or any in-flight file read), paused when
+    /// the last consumer leaves, resumed by the next one.
     job: super::super::BackgroundJob,
     reporter: Arc<dyn super::super::ProgressReporter>,
     /// Readers parked after a read, so the next entry in archive order
@@ -213,14 +220,13 @@ impl TarArchiveVfs {
                 tree: parking_lot::RwLock::new(DirectoryTree {
                     dirs: HashMap::new(),
                 }),
+                engine: tokio::sync::Mutex::new(None),
                 completed_index: tokio::sync::OnceCell::new(),
                 error: tokio::sync::OnceCell::new(),
+                truncated: tokio::sync::OnceCell::new(),
                 updated: Notify::new(),
             }),
-            // Tar's partial tree is fully usable as a partial listing,
-            // so Sticky: once cancelled, the tree stays as-is and is
-            // served as partial.
-            job: super::super::BackgroundJob::new(super::super::RestartPolicy::Sticky),
+            job: super::super::BackgroundJob::new(super::super::RestartPolicy::Resettable),
             reporter,
             pool: Arc::new(ReaderPool::new(MAX_READERS)),
         }
@@ -266,109 +272,138 @@ impl TarArchiveVfs {
         reporter: Arc<dyn super::super::ProgressReporter>,
         job: &super::super::JobHandle,
     ) -> Result<(), Error> {
-        let details = upstream.file_details(&archive_path).await?;
-        let file_size = details.size;
+        // Waits out a previous run that is still letting go of the engine.
+        let mut slot = state.engine.lock().await;
+        if state.completed_index.get().is_some() {
+            return Ok(());
+        }
+        let file_size = upstream.file_details(&archive_path).await?.size;
+        let engine = match &mut *slot {
+            Some(engine) => {
+                info!("archive: resuming indexing of {}", archive_path);
+                engine
+            }
+            None => {
+                let compression = detect_compression_from_name(archive_path.as_wire_str());
+                info!(
+                    "archive: indexing {} (size={}, compression={:?})",
+                    archive_path, file_size, compression,
+                );
+                slot.insert(
+                    iluvatar::IndexingEngine::new(compression, None, file_size).map_err(|e| {
+                        Error::custom(format!("failed to create indexing engine: {}", e))
+                    })?,
+                )
+            }
+        };
 
-        let compression = detect_compression_from_name(archive_path.as_wire_str());
-        info!(
-            "archive: indexing {} (size={}, compression={:?})",
-            archive_path, file_size, compression,
+        let cancel = job.cancel_token();
+        let mut reader = open_read_at(&upstream, &archive_path).await?;
+        let mut last_snapshot = tokio::time::Instant::now();
+        let mut last_snapshot_entries = 0usize;
+        let archive_label = archive_path.as_wire_str().to_string();
+        let progress = engine.progress();
+        // Replaces the spinner with a live "Indexing · n entries" line at once.
+        emit_indexing_progress(
+            &reporter,
+            progress.entries_found as u64,
+            file_size,
+            progress.compressed_bytes_processed,
+            &archive_label,
         );
 
-        {
-            // Drive the engine over one held-open upstream handle.
-            let mut engine = iluvatar::IndexingEngine::new(compression, None, file_size)
-                .map_err(|e| Error::custom(format!("failed to create indexing engine: {}", e)))?;
-
-            let mut reader = open_read_at(&upstream, &archive_path).await?;
-            let mut position: u64 = 0;
-            let mut last_snapshot = tokio::time::Instant::now();
-            let mut last_snapshot_entries = 0usize;
-            let archive_label = archive_path.as_wire_str().to_string();
-            // Initial progress report so the spinner is replaced with
-            // a live "Indexing · 0 entries" line immediately on mount.
-            emit_indexing_progress(&reporter, 0, file_size, position, &archive_label);
-
-            loop {
-                if job.is_cancelled() {
-                    info!("archive: indexing cancelled for {}", archive_path);
-                    let partial = engine.cancel();
-                    let entries: Vec<&iluvatar::IndexEntry> = partial.entries.values().collect();
-                    let tree = build_directory_tree_from_iluvatar(entries);
-                    *state.tree.write() = tree;
-                    state.updated.notify_waiters();
-                    return Ok(());
-                }
-
-                match engine.step() {
-                    iluvatar::EngineRequest::NeedInput => {
-                        // Don't read past the known end: not every upstream
-                        // returns an empty chunk there (S3 range GETs at/past
-                        // the object size are errors), and the decompressor
-                        // may ask for more input after consuming the whole
-                        // file (e.g. zstd probing for a concatenated frame).
-                        if position >= file_size {
-                            engine.signal_eof();
-                            continue;
-                        }
-                        let data = reader.read_at(position, VFS_READ_CHUNK_SIZE as u64).await?;
-                        if data.is_empty() {
-                            engine.signal_eof();
-                        } else {
-                            position += data.len() as u64;
-                            engine.provide_data(&data);
-                        }
+        let truncated = loop {
+            match engine.step() {
+                iluvatar::EngineRequest::NeedInput => {
+                    // Everything provided so far has been consumed, so this
+                    // is where the next read starts.
+                    let position = engine.progress().compressed_bytes_processed;
+                    // Don't read past the known end: not every upstream
+                    // returns an empty chunk there (S3 range GETs at/past
+                    // the object size are errors), and the decompressor
+                    // may ask for more input after consuming the whole
+                    // file (e.g. zstd probing for a concatenated frame).
+                    if position >= file_size {
+                        engine.signal_eof();
+                        continue;
                     }
-                    iluvatar::EngineRequest::Done => break,
-                    iluvatar::EngineRequest::Error(e) => {
-                        return Err(Error::custom(format!("failed to index archive: {}", e)));
+                    let data = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            info!("archive: indexing paused for {}", archive_path);
+                            return Ok(());
+                        }
+                        data = reader.read_at(position, VFS_READ_CHUNK_SIZE as u64) => data?,
+                    };
+                    if data.is_empty() {
+                        engine.signal_eof();
+                    } else {
+                        engine.provide_data(&data);
                     }
-                    _ => {}
                 }
-
-                let progress = engine.progress();
-                if progress.entries_found > last_snapshot_entries
-                    && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL
-                {
-                    info!(
-                        "archive: async partial snapshot at {} entries (+{}, {:.1}s)",
-                        progress.entries_found,
-                        progress.entries_found - last_snapshot_entries,
-                        last_snapshot.elapsed().as_secs_f64()
-                    );
-                    last_snapshot_entries = progress.entries_found;
-                    last_snapshot = tokio::time::Instant::now();
-                    let partial_index = engine.snapshot_index();
-                    let entries: Vec<&iluvatar::IndexEntry> =
-                        partial_index.entries.values().collect();
-                    let tree = build_directory_tree_from_iluvatar(entries);
-                    *state.tree.write() = tree;
-                    state.updated.notify_waiters();
-                    emit_indexing_progress(
-                        &reporter,
-                        progress.entries_found as u64,
-                        file_size,
-                        position,
-                        &archive_label,
-                    );
+                iluvatar::EngineRequest::Done => break None,
+                iluvatar::EngineRequest::Error(iluvatar::Error::TruncatedArchive(problem)) => {
+                    info!("archive: {} is truncated: {}", archive_path, problem);
+                    break Some(problem);
                 }
+                iluvatar::EngineRequest::Error(e) => {
+                    *slot = None;
+                    return Err(Error::custom(format!("failed to index archive: {}", e)));
+                }
+                _ => {}
             }
 
-            let index = engine.finish();
-            info!(
-                "archive: indexing finished, {} entries, building final tree",
-                index.entries.len()
-            );
-            let entries: Vec<&iluvatar::IndexEntry> = index.entries.values().collect();
-            let tree = build_directory_tree_from_iluvatar(entries);
-            *state.tree.write() = tree;
-            let _ = state.completed_index.set(index);
-            state.updated.notify_waiters();
-        }
+            let progress = engine.progress();
+            if progress.entries_found > last_snapshot_entries
+                && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL
+            {
+                info!(
+                    "archive: async partial snapshot at {} entries (+{}, {:.1}s)",
+                    progress.entries_found,
+                    progress.entries_found - last_snapshot_entries,
+                    last_snapshot.elapsed().as_secs_f64()
+                );
+                last_snapshot_entries = progress.entries_found;
+                last_snapshot = tokio::time::Instant::now();
+                let partial_index = engine.snapshot_index();
+                let tree = build_directory_tree_from_iluvatar(partial_index.entries());
+                *state.tree.write() = tree;
+                state.updated.notify_waiters();
+                emit_indexing_progress(
+                    &reporter,
+                    progress.entries_found as u64,
+                    file_size,
+                    progress.compressed_bytes_processed,
+                    &archive_label,
+                );
+            }
+        };
 
+        let engine = slot.take().expect("the engine was just driven");
+        let index = match truncated {
+            Some(problem) => {
+                let _ = state.truncated.set(problem);
+                engine.cancel()
+            }
+            None => engine.finish(),
+        };
+        info!(
+            "archive: indexing finished, {} entries, building final tree",
+            index.len()
+        );
+        let tree = build_directory_tree_from_iluvatar(index.entries());
+        *state.tree.write() = tree;
+        let _ = state.completed_index.set(index);
+        state.updated.notify_waiters();
         info!("archive: indexing complete for {}", archive_path);
-
         Ok(())
+    }
+
+    fn partial_reason(&self) -> Option<String> {
+        self.state
+            .truncated
+            .get()
+            .map(|_| "archive truncated".to_string())
     }
 
     /// Wait for the completed archive index (needed for file reads).
@@ -382,13 +417,14 @@ impl TarArchiveVfs {
         let guard = self.acquire_indexer();
 
         loop {
+            let notified = self.state.updated.notified();
             if let Some(index) = self.state.completed_index.get() {
                 return Ok((index, guard));
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
             }
-            self.state.updated.notified().await;
+            notified.await;
         }
     }
 
@@ -473,35 +509,22 @@ impl Vfs for TarArchiveVfs {
         // feed the wire form to its std-path-based lookups.
         let std_path = StdPath::new(path.as_wire_str());
 
-        // Acquire a consumer slot for the indexer. The guard is held
-        // for the entirety of this call — if the navigation that
-        // originated us is cancelled, dropping the guard cancels the
-        // indexer (provided no other consumer is holding one).
+        // A consumer slot for the whole call: indexing runs (or resumes)
+        // while it's held, and pauses once the last one is dropped.
         let _consumer = self.acquire_indexer();
 
-        // If indexing is already complete (Done), return immediately.
-        // Also honor a previously-cancelled state: the partial tree
-        // remains browsable, but we stamp `partial: true` so the
-        // status bar shows the badge.
-        let job_status = self.job.status();
-        if self.state.completed_index.get().is_some()
-            || job_status == super::super::JobStatus::Cancelled
-        {
+        if self.state.completed_index.get().is_some() {
             log::debug!(
-                "archive: list_files {} — index ready ({:?}), returning immediately",
-                path,
-                job_status,
+                "archive: list_files {} — index ready, returning immediately",
+                path
             );
+            let partial = self.partial_reason();
             return self
                 .state
                 .tree
                 .read()
                 .list(std_path)
-                .map(|files| super::super::VfsFileList {
-                    files,
-                    partial: (job_status == super::super::JobStatus::Cancelled)
-                        .then(|| "indexing cancelled".to_string()),
-                });
+                .map(|files| super::super::VfsFileList { files, partial });
         }
         if let Some(err) = self.state.error.get() {
             return Err(Error::custom(err.clone()));
@@ -520,7 +543,6 @@ impl Vfs for TarArchiveVfs {
             // Register the notification future BEFORE checking state to avoid races
             let notified = self.state.updated.notified();
 
-            // Check completion/error/cancellation.
             if self.state.completed_index.get().is_some() {
                 log::debug!(
                     "archive: list_files {} — indexing completed after {} updates",
@@ -531,13 +553,6 @@ impl Vfs for TarArchiveVfs {
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
-            }
-            if self.job.status() == super::super::JobStatus::Cancelled {
-                log::debug!(
-                    "archive: list_files {} — indexer cancelled, returning partial tree",
-                    path,
-                );
-                break;
             }
 
             // Send only NEW files as a delta batch
@@ -577,9 +592,7 @@ impl Vfs for TarArchiveVfs {
             path,
             result.as_ref().map(|f| f.len()).unwrap_or(0)
         );
-        // Cancelled during the streaming wait → partial; Done → full.
-        let partial = (self.job.status() == super::super::JobStatus::Cancelled)
-            .then(|| "indexing cancelled".to_string());
+        let partial = self.partial_reason();
         result.map(|files| super::super::VfsFileList { files, partial })
     }
 

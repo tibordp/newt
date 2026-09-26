@@ -264,9 +264,20 @@ pub(super) fn ensure_ancestors(
 /// Minimum time between partial tree snapshots during indexing.
 pub(super) const SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// `entries` in archive order. Of several members sharing a path, the last
+/// one is listed — the one `ArchiveIndex::get`, and so every read, resolves
+/// to — since a directory listing is keyed by name.
 pub(super) fn build_directory_tree_from_iluvatar(
-    entries: Vec<&iluvatar::IndexEntry>,
+    entries: &[iluvatar::IndexEntry],
 ) -> DirectoryTree {
+    let mut seen = std::collections::HashSet::new();
+    let mut entries: Vec<&iluvatar::IndexEntry> = entries
+        .iter()
+        .rev()
+        .filter(|e| seen.insert(e.path.as_str()))
+        .collect();
+    entries.reverse();
+
     // Build a quick lookup for hard link target sizes
     let entry_by_path: HashMap<&str, &iluvatar::IndexEntry> = entries
         .iter()
