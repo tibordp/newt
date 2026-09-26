@@ -514,9 +514,11 @@ pub async fn connect_profile(
         let app_handle = ctx.window().app_handle().clone();
         crate::main_window::spawn_main_window(
             &app_handle,
-            target,
-            format!("Newt [{}]", profile.name),
-            [None, None],
+            crate::main_window::SessionLaunch::new(
+                target,
+                crate::session_memory::SessionIdentity::of(&profile.kind),
+                format!("Newt [{}]", profile.name),
+            ),
         )?;
         ctx.with_update(|gs| {
             gs.close_modal();
@@ -646,9 +648,11 @@ pub async fn connect_kind(
         .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
     crate::main_window::spawn_main_window(
         &app_handle,
-        target,
-        format!("Newt [{}]", label),
-        [None, None],
+        crate::main_window::SessionLaunch::new(
+            target,
+            crate::session_memory::SessionIdentity::of(&kind),
+            format!("Newt [{}]", label),
+        ),
     )?;
     record_recent(&app_handle, kind, open_in);
     ctx.with_update(|gs| {

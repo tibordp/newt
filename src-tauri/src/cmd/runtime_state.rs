@@ -30,6 +30,9 @@ pub fn forget_recent_connection(
     kind: crate::connections::ConnectionKind,
 ) -> Result<(), Error> {
     global_ctx
+        .session_memory()
+        .forget(&crate::session_memory::SessionIdentity::of(&kind));
+    global_ctx
         .runtime_state()
         .forget_recent_connection(&kind.identity())
         .map_err(Error::Custom)

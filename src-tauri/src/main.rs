@@ -14,6 +14,7 @@ pub mod keychain;
 pub mod main_window;
 pub mod preferences;
 pub mod runtime_state;
+pub mod session_memory;
 pub mod shell_control;
 pub mod user_commands;
 pub mod viewer;
@@ -24,9 +25,10 @@ use log::debug;
 use log::info;
 use main_window::ConnectionTarget;
 use main_window::MainWindowContext;
-use main_window::spawn_main_window;
 use main_window::{AgentResolver, TauriAgentResolver};
+use main_window::{SessionLaunch, spawn_main_window};
 use parking_lot::Mutex;
+use session_memory::SessionIdentity;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -90,11 +92,15 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     config_dir: Option<std::path::PathBuf>,
 
-    /// Initial path for the left pane (defaults to cwd locally, $HOME on remote).
+    /// Left pane's path, then the right's (default: where they last were).
+    #[arg(value_name = "PATH", num_args = 0..=2, conflicts_with_all = ["cwd_left", "cwd_right"])]
+    paths: Vec<std::path::PathBuf>,
+
+    /// Initial path for the left pane.
     #[arg(long, value_name = "PATH")]
     cwd_left: Option<std::path::PathBuf>,
 
-    /// Initial path for the right pane (defaults to same as left).
+    /// Initial path for the right pane (defaults to the left pane's, if given).
     #[arg(long, value_name = "PATH")]
     cwd_right: Option<std::path::PathBuf>,
 
@@ -158,6 +164,7 @@ pub struct GlobalContext {
     agent_resolver: OnceLock<Arc<dyn AgentResolver>>,
     preferences: OnceLock<preferences::PreferencesManager>,
     runtime_state: OnceLock<runtime_state::RuntimeStateManager>,
+    session_memory: OnceLock<session_memory::SessionMemory>,
     /// A quit is in flight, waiting for the editor sweep (unsaved-changes
     /// prompts) to finish before the main windows close.
     pending_quit: AtomicBool,
@@ -179,6 +186,7 @@ impl Default for GlobalContext {
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
             runtime_state: OnceLock::new(),
+            session_memory: OnceLock::new(),
             pending_quit: AtomicBool::new(false),
             pending_close: Mutex::new(HashSet::new()),
             #[cfg(target_os = "macos")]
@@ -234,6 +242,99 @@ impl GlobalContext {
         self.runtime_state
             .get()
             .expect("RuntimeStateManager not initialized")
+    }
+
+    /// Must run after `init_preferences` — reuses its resolved config dir.
+    pub fn init_session_memory(&self) {
+        self.session_memory
+            .set(session_memory::SessionMemory::new(
+                self.preferences().config_dir(),
+            ))
+            .ok();
+    }
+
+    pub fn session_memory(&self) -> &session_memory::SessionMemory {
+        self.session_memory
+            .get()
+            .expect("SessionMemory not initialized")
+    }
+
+    /// Record a closing session: where its panes are (if restoring covers
+    /// its target) and its window geometry.
+    pub fn remember_session(&self, ctx: &MainWindowContext) {
+        use session_memory::LocationUpdate;
+        let prefs = ctx.preferences().load();
+        let locations = if prefs
+            .behavior
+            .restore_locations
+            .covers(ctx.connection_target())
+        {
+            ctx.current_locations()
+                .map_or(LocationUpdate::Keep, LocationUpdate::Set)
+        } else {
+            LocationUpdate::Clear
+        };
+        let geometry = if prefs.behavior.restore_window_geometry {
+            ctx.geometry()
+        } else {
+            None
+        };
+        self.session_memory()
+            .record(ctx.identity(), locations, geometry);
+    }
+
+    /// Record a closing viewer or editor window's size.
+    fn remember_child_size(&self, window: &tauri::Window) {
+        use session_memory::ChildWindow;
+        let label = window.label();
+        let kind = if self.viewer_windows.lock().contains_key(label) {
+            ChildWindow::Viewer
+        } else if self.editor_windows.lock().contains_key(label) {
+            ChildWindow::Editor
+        } else {
+            return;
+        };
+        if !self
+            .preferences()
+            .handle()
+            .load()
+            .behavior
+            .restore_window_geometry
+        {
+            return;
+        }
+        if let Some(size) = session_memory::capture_child_size(window) {
+            self.session_memory().record_child_size(kind, size);
+        }
+    }
+
+    /// Real main windows, least recently focused first — the order a quit
+    /// closes them in, so the last one used is what each target remembers.
+    fn main_windows_by_focus(&self) -> Vec<MainWindowContext> {
+        let mut windows: Vec<MainWindowContext> = self
+            .main_windows
+            .lock()
+            .iter()
+            .filter(|(k, ctx)| *k == ctx.main_window_label())
+            .map(|(_, ctx)| ctx.clone())
+            .collect();
+        windows.sort_by_key(|ctx| ctx.focus_seq());
+        windows
+    }
+
+    /// Logical outer positions of the live main windows.
+    pub fn main_window_positions(&self) -> Vec<(f64, f64)> {
+        // Collected before touching the windows: their getters may round-trip
+        // through the main thread, which must not find `main_windows` held.
+        self.main_windows_by_focus()
+            .iter()
+            .filter_map(|ctx| {
+                let window = ctx.window();
+                let scale = window.scale_factor().ok()?;
+                let p = window.outer_position().ok()?.to_logical::<f64>(scale);
+                Some((p.x, p.y))
+            })
+            .collect()
     }
 
     pub fn main_window(&self, webview: &Webview) -> Option<MainWindowContext> {
@@ -408,10 +509,8 @@ impl GlobalContext {
         let editors = self.active_editor_labels();
         if editors.is_empty() {
             self.pending_quit.store(false, Ordering::SeqCst);
-            for label in self.real_main_window_labels() {
-                if let Some(window) = app_handle.get_webview_window(&label) {
-                    let _ = window.close();
-                }
+            for ctx in self.main_windows_by_focus() {
+                let _ = ctx.window().close();
             }
         } else if !self.pending_quit.swap(true, Ordering::SeqCst) {
             // Not already sweeping — a second quit while a prompt is up
@@ -501,6 +600,10 @@ mod terminate_guard {
             global_ctx.quit(app_handle);
             NS_TERMINATE_CANCEL
         } else {
+            // The process dies without any window hearing of it.
+            for ctx in global_ctx.main_windows_by_focus() {
+                global_ctx.remember_session(&ctx);
+            }
             NS_TERMINATE_NOW
         }
     }
@@ -655,13 +758,13 @@ fn print_resolved_config(global_ctx: &GlobalContext) {
 fn resolve_profile(
     config_dir: &std::path::Path,
     name: &str,
-) -> Result<(ConnectionTarget, String), Error> {
+) -> Result<(ConnectionTarget, SessionIdentity, String), Error> {
     let profile = crate::connections::list_connections(config_dir)
         .into_iter()
         .find(|p| p.name == name || p.id == name)
         .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", name)))?;
     match crate::connections::connection_target_for(&profile.kind) {
-        Some((ct, _label)) => Ok((ct, profile.name)),
+        Some((ct, _label)) => Ok((ct, SessionIdentity::of(&profile.kind), profile.name)),
         None => Err(Error::Custom(format!(
             "profile '{}' is not a spawn-style profile; open it via Quick Connect inside the app",
             name
@@ -669,19 +772,49 @@ fn resolve_profile(
     }
 }
 
+/// Command-line paths as the session will expand them. Relative paths are
+/// the launching shell's, so they're made absolute here for sessions on
+/// this machine; other sessions have no notion of our cwd. A leading `~`
+/// is left for the session to expand, on whichever side it runs.
+fn resolve_explicit_paths(
+    paths: &[Option<std::path::PathBuf>; 2],
+    target: &ConnectionTarget,
+) -> [Option<String>; 2] {
+    let on_this_machine = matches!(target, ConnectionTarget::Local | ConnectionTarget::Elevated);
+    paths.clone().map(|path| {
+        let path = path?;
+        let path = if on_this_machine && !path.to_string_lossy().starts_with('~') {
+            std::path::absolute(&path).unwrap_or(path)
+        } else {
+            path
+        };
+        Some(path.to_string_lossy().into_owned())
+    })
+}
+
 /// Parse a `--target <scheme>:<spec>` argument into a startup `ConnectionTarget`.
 /// See the doc on `Args::target` for the supported schemes.
-fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
+fn parse_target(s: &str) -> Result<(ConnectionTarget, SessionIdentity, String), Error> {
     use crate::connections::{ConnectionKind, connection_target_for};
 
     // Schemes that take no spec.
     match s {
-        "local" => return Ok((ConnectionTarget::Local, "Newt".to_string())),
+        "local" => {
+            return Ok((
+                ConnectionTarget::Local,
+                SessionIdentity::local(),
+                "Newt".to_string(),
+            ));
+        }
         "pkexec" => {
             if cfg!(not(target_os = "linux")) {
                 return Err(Error::Custom("pkexec is only supported on Linux".into()));
             }
-            return Ok((ConnectionTarget::Elevated, "Elevated".to_string()));
+            return Ok((
+                ConnectionTarget::Elevated,
+                SessionIdentity::elevated(),
+                "Elevated".to_string(),
+            ));
         }
         // Cross-platform spelling: pkexec on Linux, UAC on Windows.
         "elevated" => {
@@ -690,7 +823,11 @@ fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
                     "elevated mode is not supported on this platform".into(),
                 ));
             }
-            return Ok((ConnectionTarget::Elevated, "Elevated".to_string()));
+            return Ok((
+                ConnectionTarget::Elevated,
+                SessionIdentity::elevated(),
+                "Elevated".to_string(),
+            ));
         }
         _ => {}
     }
@@ -763,8 +900,9 @@ fn parse_target(s: &str) -> Result<(ConnectionTarget, String), Error> {
         }
     };
 
-    connection_target_for(&kind)
-        .ok_or_else(|| Error::Custom("internal: scheme did not produce a spawn target".into()))
+    let (ct, label) = connection_target_for(&kind)
+        .ok_or_else(|| Error::Custom("internal: scheme did not produce a spawn target".into()))?;
+    Ok((ct, SessionIdentity::of(&kind), label))
 }
 
 /// Parse the kube spec: `[context/][namespace/]pod[:container]`.
@@ -837,17 +975,22 @@ fn main() {
 
     // Connection target for the non-profile cases — `--profile` is resolved
     // inside `setup` once the preferences directory is known.
-    let non_profile: Option<(ConnectionTarget, String)> = match (&args.target, &args.profile) {
-        (Some(spec), _) => match parse_target(spec) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!("newt: {}", e);
-                std::process::exit(2);
-            }
-        },
-        (None, None) => Some((ConnectionTarget::Local, "Newt".to_string())),
-        (None, Some(_)) => None,
-    };
+    let non_profile: Option<(ConnectionTarget, SessionIdentity, String)> =
+        match (&args.target, &args.profile) {
+            (Some(spec), _) => match parse_target(spec) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!("newt: {}", e);
+                    std::process::exit(2);
+                }
+            },
+            (None, None) => Some((
+                ConnectionTarget::Local,
+                SessionIdentity::local(),
+                "Newt".to_string(),
+            )),
+            (None, Some(_)) => None,
+        };
 
     // `--wsl[=NAME]` resolves to a WSL target at launch. It conflicts with
     // `--target`/`--profile`, so `non_profile` is the Local default here.
@@ -890,6 +1033,7 @@ fn main() {
                 ConnectionTarget::Wsl {
                     distro: distro.clone(),
                 },
+                SessionIdentity::wsl(&distro),
                 format!("WSL: {}", distro),
             ))
         }
@@ -900,7 +1044,11 @@ fn main() {
     // `--target`/`--profile`/`--wsl`, so this just overrides the default.
     #[cfg(any(target_os = "linux", windows))]
     let non_profile = if args.elevated {
-        Some((ConnectionTarget::Elevated, "Elevated".to_string()))
+        Some((
+            ConnectionTarget::Elevated,
+            SessionIdentity::elevated(),
+            "Elevated".to_string(),
+        ))
     } else {
         non_profile
     };
@@ -925,10 +1073,16 @@ fn main() {
     let profile_arg = args.profile.clone();
     let config_dir_arg = args.config_dir.clone();
     let print_config = args.print_config;
-    let initial_pane_paths: [Option<std::path::PathBuf>; 2] = [
-        args.cwd_left.clone(),
-        args.cwd_right.clone().or_else(|| args.cwd_left.clone()),
-    ];
+    let explicit_paths: [Option<std::path::PathBuf>; 2] = {
+        let mut positional = args.paths.clone().into_iter();
+        let left = args.cwd_left.clone().or_else(|| positional.next());
+        let right = args
+            .cwd_right
+            .clone()
+            .or_else(|| positional.next())
+            .or_else(|| left.clone());
+        [left, right]
+    };
     let global_ctx = GlobalContext::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -939,6 +1093,7 @@ fn main() {
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle(), config_dir_arg.clone());
             global_ctx.init_runtime_state(app.handle());
+            global_ctx.init_session_memory();
 
             if print_config {
                 print_resolved_config(&global_ctx);
@@ -949,7 +1104,7 @@ fn main() {
             // Resolve `--profile` now that the preferences manager (and thus
             // the config dir) is available; otherwise use the target picked
             // out of `--target` / default-local above.
-            let (ct, default_title) = match (&profile_arg, &non_profile) {
+            let (ct, identity, default_title) = match (&profile_arg, &non_profile) {
                 (Some(name), _) => {
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
                     resolve_profile(&config_dir, name)?
@@ -965,12 +1120,9 @@ fn main() {
                 None => format!("Newt [{}]", default_title),
             };
 
-            let (_window, ctx) = spawn_main_window(
-                app.handle(),
-                ct.clone(),
-                wt.clone(),
-                initial_pane_paths.clone(),
-            )?;
+            let mut launch = SessionLaunch::new(ct.clone(), identity, wt);
+            launch.start.explicit = resolve_explicit_paths(&explicit_paths, &ct);
+            let (_window, ctx) = spawn_main_window(app.handle(), launch)?;
 
             // Local mode: connect synchronously so state is ready before JS runs.
             // Remote/Elevated: `init` command triggers connect asynchronously.
@@ -1034,6 +1186,9 @@ fn main() {
                             .get(label)
                             .is_some_and(|ctx| ctx.main_window_label() == label);
                         if is_real_main {
+                            if let Some(ctx) = global_ctx.main_window_by_label(label) {
+                                global_ctx.remember_session(&ctx);
+                            }
                             for viewer in global_ctx.active_viewer_children(label) {
                                 if let Some(w) = app_handle.get_webview_window(&viewer) {
                                     let _ = w.close();
@@ -1049,6 +1204,8 @@ fn main() {
                                     }
                                 }
                             }
+                        } else {
+                            global_ctx.remember_child_size(window);
                         }
                     }
                     tauri::WindowEvent::Destroyed => {
@@ -1079,6 +1236,14 @@ fn main() {
                             app_handle.exit(0);
                         }
                     }
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                        if let Some(ctx) = global_ctx.main_window_by_label(window.label())
+                            && ctx.main_window_label() == window.label()
+                            && let Some(bounds) = session_memory::normal_bounds(window)
+                        {
+                            ctx.track_normal_bounds(bounds);
+                        }
+                    }
                     tauri::WindowEvent::Focused(true) => {
                         // On macOS, swap the app-wide menu to match the focused window
                         #[cfg(target_os = "macos")]
@@ -1093,6 +1258,7 @@ fn main() {
                         if let Some(ctx) =
                             global_ctx.main_windows.lock().get(window.label()).cloned()
                         {
+                            ctx.mark_focused();
                             tauri::async_runtime::spawn(async move {
                                 // Catch-all for drive changes that don't
                                 // broadcast WM_DEVICECHANGE (subst): sweep
@@ -1198,13 +1364,13 @@ mod target_tests {
 
     #[test]
     fn local_scheme() {
-        let (ct, _) = parse_target("local").unwrap();
+        let (ct, _, _) = parse_target("local").unwrap();
         assert!(matches!(ct, ConnectionTarget::Local));
     }
 
     #[test]
     fn ssh_scheme() {
-        let (ct, label) = parse_target("ssh:alice@host.example").unwrap();
+        let (ct, _, label) = parse_target("ssh:alice@host.example").unwrap();
         assert_eq!(label, "alice@host.example");
         match kind_of(&ct) {
             SpawnSpec::Bootstrap {
@@ -1222,7 +1388,7 @@ mod target_tests {
 
     #[test]
     fn ssh_agent_scheme() {
-        let (ct, _) = parse_target("ssh-agent:alice@host.example").unwrap();
+        let (ct, _, _) = parse_target("ssh-agent:alice@host.example").unwrap();
         match kind_of(&ct) {
             SpawnSpec::Bootstrap { transport_cmd, .. } => {
                 assert!(transport_cmd.contains(&"-A".to_string()));
@@ -1250,13 +1416,13 @@ mod target_tests {
 
     #[test]
     fn docker_defaults_to_bootstrapless() {
-        let (ct, _) = parse_target("docker:nt").unwrap();
+        let (ct, _, _) = parse_target("docker:nt").unwrap();
         assert!(matches!(kind_of(&ct), SpawnSpec::DirectCopy(_)));
     }
 
     #[test]
     fn docker_bootstrap_opts_into_sh_bootstrap() {
-        let (ct, _) = parse_target("docker-bootstrap:nt").unwrap();
+        let (ct, _, _) = parse_target("docker-bootstrap:nt").unwrap();
         match kind_of(&ct) {
             SpawnSpec::Bootstrap { transport_cmd, .. } => {
                 assert_eq!(transport_cmd.first().unwrap(), "docker");
@@ -1267,7 +1433,7 @@ mod target_tests {
 
     #[test]
     fn custom_command() {
-        let (ct, _) = parse_target(r#"custom:ssh foo@bar "$NEWT_BOOTSTRAP""#).unwrap();
+        let (ct, _, _) = parse_target(r#"custom:ssh foo@bar "$NEWT_BOOTSTRAP""#).unwrap();
         match kind_of(&ct) {
             SpawnSpec::CustomShell {
                 command,
@@ -1283,7 +1449,7 @@ mod target_tests {
 
     #[test]
     fn custom_raw_command() {
-        let (ct, _) = parse_target("custom-raw:my-pre-spawned-agent").unwrap();
+        let (ct, _, _) = parse_target("custom-raw:my-pre-spawned-agent").unwrap();
         match kind_of(&ct) {
             SpawnSpec::CustomShell { skip_bootstrap, .. } => {
                 assert!(skip_bootstrap);

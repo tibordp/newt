@@ -28,9 +28,10 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 - VFS selector "Locations" section (mounts slice, volume icon/label/target treatment, eject on ×) + mount-table change events on Unix (`mountinfo` is pollable; macOS focus-sweep or DiskArbitration) feeding the existing refresh path.
 - Breadcrumb/header enrichment via a pushed location-prefix → label map (open question whether v1).
 
-## Persisted UI state (runtime-state / `state.json`)
+## Session memory (`sessions.json`)
 
-- Persist window geometry (main + viewer/editor size/position/maximized) via `tauri-plugin-window-state`. Must handle the pre-warmed hidden viewer/editor windows (`PrewarmedWindow`, keyed per main-window label) so restore lands on the window that actually shows the file.
+- Per-profile start directory (`start_directory` on spawn-style connection profiles): explicit, so it beats the remembered location, WinSCP-style.
+- Record sessions when the OS ends the process on Windows (`WM_QUERYENDSESSION`/`WM_ENDSESSION` at logoff/shutdown) and Linux (SIGTERM from the session manager). Today only macOS's `applicationShouldTerminate:` path records; elsewhere a logoff loses whatever changed since each window last closed.
 
 ## Dialog visual uplift
 

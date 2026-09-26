@@ -40,6 +40,9 @@ use crate::common::Error;
 use crate::common::UpdatePublisher;
 use crate::common::specta_as;
 use crate::main_window::session::VfsInfo;
+use crate::session_memory::{
+    NormalBounds, SessionIdentity, SessionLocations, SessionStart, WindowGeometry,
+};
 
 use self::pane::Pane;
 use self::session::Session;
@@ -1195,12 +1198,15 @@ struct MainWindowContextInner {
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     preferences: crate::preferences::PreferencesHandle,
     connection_target: ConnectionTarget,
+    identity: SessionIdentity,
     window_title: String,
-    /// Per-pane initial paths from the CLI (`--cwd-left`, `--cwd-right`).
-    /// `None` per slot means "use the connection's default" (cwd locally,
-    /// `~` on remote). Only honoured during the initial connect; subsequent
-    /// reconnects ignore them.
-    initial_pane_paths: [Option<std::path::PathBuf>; 2],
+    /// Where the panes open on the next connect; a reconnect replaces it
+    /// with the panes as they were.
+    start: Mutex<SessionStart>,
+    /// Last bounds outside maximized/fullscreen/minimized.
+    normal_bounds: Mutex<Option<NormalBounds>>,
+    /// Position in the process-wide focus order; see `mark_focused`.
+    focus_seq: std::sync::atomic::AtomicU64,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
     clipboard: RwLock<arboard::Clipboard>,
@@ -1240,11 +1246,16 @@ impl specta::function::FunctionArg for MainWindowContext {
 impl MainWindowContext {
     pub fn new(
         window: WebviewWindow,
-        connection_target: ConnectionTarget,
-        window_title: String,
+        launch: SessionLaunch,
         preferences: crate::preferences::PreferencesHandle,
-        initial_pane_paths: [Option<std::path::PathBuf>; 2],
     ) -> Self {
+        let SessionLaunch {
+            target: connection_target,
+            identity,
+            title: window_title,
+            start,
+            ..
+        } = launch;
         let mut global_state = MainWindowState::new();
         global_state.window_title = window_title.clone();
         global_state.display_options.0.write().show_hidden =
@@ -1262,8 +1273,11 @@ impl MainWindowContext {
                 publisher,
                 preferences,
                 connection_target,
+                identity,
                 window_title,
-                initial_pane_paths,
+                start: Mutex::new(start),
+                normal_bounds: Mutex::new(None),
+                focus_seq: std::sync::atomic::AtomicU64::new(0),
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
                 askpass_response: Arc::new(parking_lot::Mutex::new(None)),
                 clipboard: RwLock::new(
@@ -1274,9 +1288,55 @@ impl MainWindowContext {
         }
     }
 
-    /// Per-pane initial paths from the CLI; consumed by session::connect.
-    pub fn initial_pane_paths(&self) -> &[Option<std::path::PathBuf>; 2] {
-        &self.inner.initial_pane_paths
+    pub fn session_start(&self) -> SessionStart {
+        self.inner.start.lock().clone()
+    }
+
+    pub fn identity(&self) -> &SessionIdentity {
+        &self.inner.identity
+    }
+
+    pub fn track_normal_bounds(&self, bounds: NormalBounds) {
+        *self.inner.normal_bounds.lock() = Some(bounds);
+    }
+
+    pub fn geometry(&self) -> Option<WindowGeometry> {
+        let window = self.inner.window.as_ref().window();
+        crate::session_memory::capture_geometry(&window, *self.inner.normal_bounds.lock())
+    }
+
+    /// Stamp this window as the most recently focused, from a process-wide
+    /// counter, so a quit can close windows oldest-focus first and leave the
+    /// last one used as each target's memory.
+    pub fn mark_focused(&self) {
+        static FOCUS_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        self.inner.focus_seq.store(
+            FOCUS_COUNTER.fetch_add(1, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn focus_seq(&self) -> u64 {
+        self.inner.focus_seq.load(Ordering::Relaxed)
+    }
+
+    /// Where each pane would reopen, or `None` if the session never got
+    /// panes (it failed to connect, or is mid-reconnect).
+    pub fn current_locations(&self) -> Option<SessionLocations> {
+        let panes = self.inner.main_window_state.panes.all();
+        let [left, right] = panes.as_slice() else {
+            return None;
+        };
+        Some(SessionLocations {
+            panes: [left.restorable_location(), right.restorable_location()],
+            active_pane: self
+                .inner
+                .main_window_state
+                .display_options
+                .0
+                .read()
+                .active_pane,
+        })
     }
 
     pub async fn connect(&self, agent_resolver: Arc<dyn AgentResolver>) -> Result<(), Error> {
@@ -1874,6 +1934,10 @@ impl MainWindowContext {
     /// window can be reconnected from scratch. Safe to call if there's no
     /// session (e.g. the previous one already disconnected).
     pub async fn disconnect_for_reconnect(&self) {
+        if let Some(locations) = self.current_locations() {
+            *self.inner.start.lock() = SessionStart::given(locations);
+        }
+
         // Best-effort: kill open PTYs while we still have a live terminal
         // client. If the session is already gone this is a no-op.
         if let Ok(tc) = self.terminal_client() {
@@ -1906,6 +1970,29 @@ impl MainWindowContext {
     }
 }
 
+/// What a new main window connects to and how it opens.
+pub struct SessionLaunch {
+    pub target: ConnectionTarget,
+    pub identity: SessionIdentity,
+    pub title: String,
+    pub start: SessionStart,
+    /// Geometry to open with instead of the target's remembered one (a New
+    /// Window taking its opener's).
+    pub geometry: Option<WindowGeometry>,
+}
+
+impl SessionLaunch {
+    pub fn new(target: ConnectionTarget, identity: SessionIdentity, title: String) -> Self {
+        Self {
+            target,
+            identity,
+            title,
+            start: SessionStart::remembered(),
+            geometry: None,
+        }
+    }
+}
+
 /// Create a new main window in the current process.
 ///
 /// Creates the `WebviewWindow`, constructs a `MainWindowContext`, registers it
@@ -1918,9 +2005,7 @@ impl MainWindowContext {
 /// `init` command drives the async connect.
 pub fn spawn_main_window(
     app_handle: &tauri::AppHandle,
-    connection_target: ConnectionTarget,
-    window_title: String,
-    initial_pane_paths: [Option<std::path::PathBuf>; 2],
+    launch: SessionLaunch,
 ) -> Result<(WebviewWindow, MainWindowContext), Error> {
     let global_ctx: State<GlobalContext> = app_handle.state();
 
@@ -1935,29 +2020,58 @@ pub fn spawn_main_window(
     };
 
     let prefs_handle = global_ctx.preferences().handle();
-    let theme = prefs_handle
-        .load()
+    let prefs = prefs_handle.load();
+    let theme = prefs
         .appearance
         .theme
         .to_tauri_theme()
         .or_else(crate::detect_theme);
 
-    let window =
+    let geometry = if prefs.behavior.restore_window_geometry {
+        launch
+            .geometry
+            .or_else(|| global_ctx.session_memory().geometry(&launch.identity))
+            .map(|g| {
+                let areas = crate::session_memory::work_areas(
+                    &app_handle.available_monitors().unwrap_or_default(),
+                );
+                crate::session_memory::place(&areas, &global_ctx.main_window_positions(), g)
+            })
+    } else {
+        None
+    };
+
+    let mut builder =
         tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App("/".into()))
-            .title(&window_title)
+            .title(&launch.title)
             .resizable(true)
-            .inner_size(1100.0, 800.0)
-            .theme(theme)
-            .build()?;
+            .theme(theme);
+    builder = match geometry {
+        Some(g) => {
+            builder = builder
+                .inner_size(g.size.0, g.size.1)
+                .maximized(g.maximized)
+                .prevent_overflow();
+            match g.position {
+                Some((x, y)) => builder.position(x, y),
+                None => builder,
+            }
+        }
+        None => builder.inner_size(1100.0, 800.0),
+    };
+    let window = builder.build()?;
     crate::tune_webview_settings(&window);
 
-    let ctx = MainWindowContext::new(
-        window.clone(),
-        connection_target,
-        window_title,
-        prefs_handle.clone(),
-        initial_pane_paths,
-    );
+    let ctx = MainWindowContext::new(window.clone(), launch, prefs_handle.clone());
+    // A window opened maximized reports no normal bounds until un-maximized.
+    if let Some(WindowGeometry {
+        position: Some(position),
+        size,
+        ..
+    }) = geometry
+    {
+        ctx.track_normal_bounds(NormalBounds { position, size });
+    }
     global_ctx
         .main_windows
         .lock()

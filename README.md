@@ -36,7 +36,7 @@ handling. Built with Tauri 2 — Rust backend, React/TypeScript frontend.
   prompts for input, and terminal or background execution, on their own palette (F9).
 - **Hot paths, history, and profiles** — bookmarks and standard folders one keystroke away,
   per-pane navigation history with a step-back overlay, connection profiles with quick connect,
-  and multiple windows. Preferences live in a hot-reloaded TOML file with a schema-driven
+  and multiple windows that reopen where each host's last one left off. Preferences live in a hot-reloaded TOML file with a schema-driven
   settings dialog, per-profile overrides, and light/dark/system themes.
 
 ## How it works

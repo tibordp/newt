@@ -211,6 +211,51 @@ pub enum DefaultSortKey {
     Created,
 }
 
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreLocations {
+    #[default]
+    #[schemars(title = "All sessions")]
+    All,
+    #[schemars(title = "Sessions on this machine")]
+    Local,
+    #[schemars(title = "Never")]
+    None,
+}
+
+impl RestoreLocations {
+    /// `local` covers every session on this machine: local, elevated, WSL.
+    pub fn covers(self, target: &crate::main_window::ConnectionTarget) -> bool {
+        use crate::main_window::ConnectionTarget;
+        match self {
+            RestoreLocations::All => true,
+            RestoreLocations::Local => match target {
+                ConnectionTarget::Spawn(_) => false,
+                #[cfg(windows)]
+                ConnectionTarget::Wsl { .. } => true,
+                ConnectionTarget::Local | ConnectionTarget::Elevated => true,
+            },
+            RestoreLocations::None => false,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NewWindowLocation {
+    #[default]
+    #[schemars(title = "Same as the current window")]
+    Inherit,
+    #[schemars(title = "Last closed window")]
+    Restore,
+    #[schemars(title = "Home")]
+    Default,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct BehaviorPreferences {
@@ -251,6 +296,21 @@ pub struct BehaviorPreferences {
     /// remote sessions currently always provide it.
     #[schemars(title = "Shell Integration")]
     pub shell_integration: bool,
+    /// Reopen panes where they were when a session to the same target last
+    /// closed: in `all` sessions, only `local` ones (local, elevated, WSL),
+    /// or `none`. Only paths on the session's own filesystem come back; a
+    /// pane on S3, SFTP or another mount reopens at the nearest such place.
+    #[schemars(title = "Restore Pane Locations")]
+    pub restore_locations: RestoreLocations,
+    /// Where New Window's panes open: `inherit` the window it was opened
+    /// from, `restore` the last closed local window's, or the `default`
+    /// (home).
+    #[schemars(title = "New Window Location")]
+    pub new_window_location: NewWindowLocation,
+    /// Reopen windows at their last size and position — main windows per
+    /// connection target, viewer and editor windows at one size each.
+    #[schemars(title = "Restore Window Geometry")]
+    pub restore_window_geometry: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -265,6 +325,9 @@ impl Default for BehaviorPreferences {
             default_sort: DefaultSort::default(),
             history_retention: 200,
             shell_integration: true,
+            restore_locations: RestoreLocations::default(),
+            new_window_location: NewWindowLocation::default(),
+            restore_window_geometry: true,
         }
     }
 }

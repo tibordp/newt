@@ -4,7 +4,8 @@ use tauri::{Manager, WebviewWindow, Window};
 use super::{EDITOR_WINDOW_SIZE, VIEWER_WINDOW_SIZE, show_prewarmed};
 use crate::common::Error;
 use crate::main_window::session::ConnectionTarget;
-use crate::main_window::{MainWindowContext, PaneHandle};
+use crate::main_window::{MainWindowContext, PaneHandle, SessionLaunch};
+use crate::session_memory::ChildWindow;
 
 /// Build a child WebviewWindow (viewer or editor) and register its parent
 /// MainWindowContext under the new label so IPC commands resolve correctly.
@@ -73,6 +74,37 @@ fn build_child_window(
     Ok((label, window))
 }
 
+/// The remembered size for a viewer or editor window, else its default.
+fn child_window_size(app_handle: &tauri::AppHandle, kind: ChildWindow) -> (f64, f64) {
+    let default = match kind {
+        ChildWindow::Viewer => VIEWER_WINDOW_SIZE,
+        ChildWindow::Editor => EDITOR_WINDOW_SIZE,
+    };
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    if !global_ctx
+        .preferences()
+        .handle()
+        .load()
+        .behavior
+        .restore_window_geometry
+    {
+        return default;
+    }
+    global_ctx
+        .session_memory()
+        .child_size(kind)
+        .unwrap_or(default)
+}
+
+/// Bring a pre-warmed window to the current remembered size — it was built
+/// before any window closed since — then show it.
+fn show_prewarmed_sized(app_handle: &tauri::AppHandle, window: &WebviewWindow, kind: ChildWindow) {
+    let (width, height) = child_window_size(app_handle, kind);
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    let _ = window.center();
+    show_prewarmed(window);
+}
+
 /// Create a pre-warmed hidden viewer window for a main window.
 pub(crate) fn prewarm_viewer(
     app_handle: &tauri::AppHandle,
@@ -84,7 +116,7 @@ pub(crate) fn prewarm_viewer(
         main_ctx,
         "/viewer",
         "Viewer",
-        VIEWER_WINDOW_SIZE,
+        child_window_size(app_handle, ChildWindow::Viewer),
         false,
     ) {
         Ok(pair) => pair,
@@ -111,7 +143,7 @@ pub(crate) fn prewarm_editor(
         main_ctx,
         "/editor",
         "Editor",
-        EDITOR_WINDOW_SIZE,
+        child_window_size(app_handle, ChildWindow::Editor),
         false,
     ) {
         Ok(pair) => pair,
@@ -165,7 +197,7 @@ pub(crate) fn open_viewer_window(
         crate::viewer::activate_viewer_window(&app_handle, &pw.label, &pw.window, &viewer_ctx.0)?;
 
         let _ = pw.window.set_title(&format!("{} - Viewer", path_display));
-        show_prewarmed(&pw.window);
+        show_prewarmed_sized(&app_handle, &pw.window, ChildWindow::Viewer);
     } else {
         // Fallback: create the window visible right away.
         let title = format!("{} - Viewer", path_display);
@@ -174,7 +206,7 @@ pub(crate) fn open_viewer_window(
             ctx,
             "/viewer",
             &title,
-            VIEWER_WINDOW_SIZE,
+            child_window_size(&app_handle, ChildWindow::Viewer),
             true,
         )?;
         let viewer = crate::viewer::create_viewer_window(&window);
@@ -210,7 +242,7 @@ pub(crate) fn open_editor_window(
         crate::editor::activate_editor_window(&app_handle, &pw.label, &pw.window, &editor_ctx.0)?;
 
         let _ = pw.window.set_title(&format!("{} - Editor", path_display));
-        show_prewarmed(&pw.window);
+        show_prewarmed_sized(&app_handle, &pw.window, ChildWindow::Editor);
     } else {
         // Fallback: create the window visible right away.
         let title = format!("{} - Editor", path_display);
@@ -219,7 +251,7 @@ pub(crate) fn open_editor_window(
             ctx,
             "/editor",
             &title,
-            EDITOR_WINDOW_SIZE,
+            child_window_size(&app_handle, ChildWindow::Editor),
             true,
         )?;
         let editor = crate::editor::create_editor_window(&window);
@@ -255,12 +287,32 @@ pub async fn cmd_new_window(
     webview: tauri::Webview,
     _pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    crate::main_window::spawn_main_window(
-        webview.app_handle(),
-        ConnectionTarget::Local,
-        "Newt".to_string(),
-        [None, None],
-    )?;
+    use crate::preferences::schema::NewWindowLocation;
+    use crate::session_memory::{Seed, SessionIdentity, SessionStart};
+
+    let app_handle = webview.app_handle();
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    let identity = SessionIdentity::local();
+    let mut launch = SessionLaunch::new(ConnectionTarget::Local, identity.clone(), "Newt".into());
+    let behavior = global_ctx.preferences().handle().load().behavior.clone();
+    match behavior.new_window_location {
+        NewWindowLocation::Inherit => {
+            // Only a local opener has anything to hand over: New Window is
+            // always a local session.
+            if let Some(opener) = global_ctx
+                .main_window(&webview)
+                .filter(|ctx| *ctx.identity() == identity)
+            {
+                if let Some(locations) = opener.current_locations() {
+                    launch.start = SessionStart::given(locations);
+                }
+                launch.geometry = opener.geometry();
+            }
+        }
+        NewWindowLocation::Restore => {}
+        NewWindowLocation::Default => launch.start.seed = Seed::Default,
+    }
+    crate::main_window::spawn_main_window(app_handle, launch)?;
     Ok(())
 }
 
@@ -300,9 +352,11 @@ pub async fn cmd_open_elevated(
 ) -> Result<(), Error> {
     crate::main_window::spawn_main_window(
         webview.app_handle(),
-        ConnectionTarget::Elevated,
-        "Newt [Elevated]".to_string(),
-        [None, None],
+        SessionLaunch::new(
+            ConnectionTarget::Elevated,
+            crate::session_memory::SessionIdentity::elevated(),
+            "Newt [Elevated]".to_string(),
+        ),
     )?;
     Ok(())
 }
@@ -333,11 +387,13 @@ pub async fn cmd_connect_wsl(
             let app_handle = ctx.window().app_handle().clone();
             crate::main_window::spawn_main_window(
                 &app_handle,
-                ConnectionTarget::Wsl {
-                    distro: name.clone(),
-                },
-                format!("Newt [WSL: {}]", name),
-                [None, None],
+                SessionLaunch::new(
+                    ConnectionTarget::Wsl {
+                        distro: name.clone(),
+                    },
+                    crate::session_memory::SessionIdentity::wsl(&name),
+                    format!("Newt [WSL: {}]", name),
+                ),
             )?;
             Ok(())
         }
@@ -360,11 +416,13 @@ pub async fn connect_wsl_distro(ctx: MainWindowContext, distro: String) -> Resul
     let app_handle = ctx.window().app_handle().clone();
     crate::main_window::spawn_main_window(
         &app_handle,
-        ConnectionTarget::Wsl {
-            distro: distro.clone(),
-        },
-        format!("Newt [WSL: {}]", distro),
-        [None, None],
+        SessionLaunch::new(
+            ConnectionTarget::Wsl {
+                distro: distro.clone(),
+            },
+            crate::session_memory::SessionIdentity::wsl(&distro),
+            format!("Newt [WSL: {}]", distro),
+        ),
     )?;
     ctx.with_update(|gs| {
         gs.close_modal();

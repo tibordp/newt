@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::common::Error;
 use crate::common::UpdatePublisher;
 use crate::main_window::session::VfsInfo;
+use crate::session_memory::PaneLocation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -319,6 +320,47 @@ impl Pane {
 
     pub fn file_list(&self) -> Arc<FileList> {
         self.file_list.read().clone()
+    }
+
+    /// Where this pane would reopen: its directory if that's on the
+    /// session's own filesystem, else the directory it leads back to (an
+    /// archive's or search's origin), else the latest history entry that
+    /// has one. S3, SFTP and agent mounts are never reopened themselves.
+    pub fn restorable_location(&self) -> Option<PaneLocation> {
+        let (path, focused) = {
+            let view_state = self.view_state.read();
+            (
+                view_state.path.clone(),
+                view_state.focused.clone().filter(|f| f != PARENT_KEY),
+            )
+        };
+        if path.vfs_id == VfsId::ROOT {
+            return Some(PaneLocation {
+                path: path.path,
+                focused,
+            });
+        }
+        let resolve = |path: &VfsPath| {
+            self.vfs_info
+                .resolve_terminal_cwd(path)
+                .map(|dir| PaneLocation {
+                    path: dir,
+                    focused: None,
+                })
+        };
+        resolve(&path).or_else(|| {
+            let history = self.history.lock();
+            history.back.iter().rev().find_map(|entry| {
+                if entry.path.vfs_id == VfsId::ROOT {
+                    Some(PaneLocation {
+                        path: entry.path.path.clone(),
+                        focused: entry.focused.clone().filter(|f| f != PARENT_KEY),
+                    })
+                } else {
+                    resolve(&entry.path)
+                }
+            })
+        })
     }
 
     /// Mutate the navigation history stacks at the moment the user lands on

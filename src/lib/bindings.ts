@@ -1841,7 +1841,25 @@ history_retention: number;
  * (per-session control socket + PATH shim). Applies to local sessions;
  * remote sessions currently always provide it.
  */
-shell_integration: boolean }
+shell_integration: boolean; 
+/**
+ * Reopen panes where they were when a session to the same target last
+ * closed: in `all` sessions, only `local` ones (local, elevated, WSL),
+ * or `none`. Only paths on the session's own filesystem come back; a
+ * pane on S3, SFTP or another mount reopens at the nearest such place.
+ */
+restore_locations: RestoreLocations; 
+/**
+ * Where New Window's panes open: `inherit` the window it was opened
+ * from, `restore` the last closed local window's, or the `default`
+ * (home).
+ */
+new_window_location: NewWindowLocation; 
+/**
+ * Reopen windows at their last size and position — main windows per
+ * connection target, viewer and editor windows at one size each.
+ */
+restore_window_geometry: boolean }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */
@@ -2692,6 +2710,7 @@ export type MountSummary = {
  * gates the Shift+<drive> shortcut, independent of the host OS.
  */
 has_split_root_vfs: boolean }
+export type NewWindowLocation = "inherit" | "restore" | "default"
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 
@@ -2902,6 +2921,7 @@ modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; b
  * the engine that would otherwise throw on them.
  */
 locale: string | null }
+export type RestoreLocations = "all" | "local" | "none"
 /**
  * App-wide runtime state persisted to `state.json` in the config dir.
  * Every field must default so old files keep deserializing as the

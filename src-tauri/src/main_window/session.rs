@@ -24,6 +24,7 @@ use std::sync::atomic::AtomicU64;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::common::{Error, UpdatePublisher};
+use crate::session_memory::{PaneLocation, Seed};
 
 use super::{MainWindowState, Operations, apply_operation_progress};
 
@@ -1079,6 +1080,43 @@ fn spawn_child_watcher(
     });
 }
 
+#[derive(Clone)]
+struct PaneStart {
+    dir: VfsPath,
+    focus: Option<String>,
+    /// From a remembered or handed-over location rather than named
+    /// explicitly.
+    restored: bool,
+}
+
+/// Where a pane asks to open, or `None` for the connection's default. No
+/// probing here: the first listing is non-strict, so a path that no longer
+/// exists lands on its nearest existing ancestor and a file on its
+/// directory, with the cursor on the entry leading back to it.
+async fn resolve_pane_start(
+    shell: &dyn ShellService,
+    explicit: Option<String>,
+    seeded: Option<PaneLocation>,
+) -> Option<PaneStart> {
+    if let Some(raw) = explicit {
+        let Ok(Some(path)) = shell.shell_expand(raw.clone()).await else {
+            log::warn!("could not resolve {:?}; opening the default", raw);
+            return None;
+        };
+        return Some(PaneStart {
+            dir: VfsPath::new(VfsId::ROOT, path),
+            focus: None,
+            restored: false,
+        });
+    }
+    let seeded = seeded?;
+    Some(PaneStart {
+        dir: VfsPath::new(VfsId::ROOT, seeded.path),
+        focus: seeded.focused,
+        restored: true,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Public connect entry point
 // ---------------------------------------------------------------------------
@@ -1245,37 +1283,52 @@ pub(super) async fn connect(
         }
     };
 
-    // Resolve initial directory for remote connections
-    let default_dir = if matches!(connection_target, ConnectionTarget::Local) {
-        services.initial_dir.clone()
-    } else {
-        match services.shell_service.shell_expand("~".to_string()).await {
-            Ok(Some(home)) => VfsPath::new(VfsId::ROOT, home),
-            _ => services.initial_dir.clone(),
-        }
+    // Home on either side of the connection. The process cwd is only a
+    // fallback: a desktop launch hands us `/`.
+    let default_dir = match services.shell_service.shell_expand("~".to_string()).await {
+        Ok(Some(home)) => VfsPath::new(VfsId::ROOT, home),
+        _ => services.initial_dir.clone(),
     };
 
-    // Per-pane CLI overrides (`--cwd-left`, `--cwd-right`). Passed through
-    // shell_expand so users can write `--cwd-left ~/projects` and have it
-    // resolve correctly on either side of the connection.
-    let mut pane_dirs: [VfsPath; 2] = [default_dir.clone(), default_dir.clone()];
-    for (slot, override_path) in main_window_ctx.initial_pane_paths().iter().enumerate() {
-        if let Some(path) = override_path {
-            let raw = path.to_string_lossy().into_owned();
-            match services.shell_service.shell_expand(raw).await {
-                Ok(Some(expanded)) => {
-                    pane_dirs[slot] = VfsPath::new(VfsId::ROOT, expanded);
-                }
-                _ => {
-                    log::warn!(
-                        "could not resolve --cwd-{} path {:?}; falling back to default",
-                        if slot == 0 { "left" } else { "right" },
-                        path
-                    );
-                }
-            }
+    let start = main_window_ctx.session_start();
+    let seeded = match start.seed {
+        Seed::Given(locations) => Some(locations),
+        Seed::Remembered
+            if preferences
+                .load()
+                .behavior
+                .restore_locations
+                .covers(connection_target) =>
+        {
+            use tauri::Manager;
+            let app_handle = main_window_ctx.window().app_handle().clone();
+            let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+            global_ctx
+                .session_memory()
+                .locations(main_window_ctx.identity())
         }
+        _ => None,
+    };
+    let (seeded_panes, seeded_active) = match seeded {
+        Some(s) => (s.panes, Some(s.active_pane)),
+        None => ([None, None], None),
+    };
+    let [seed_left, seed_right] = seeded_panes;
+    let [explicit_left, explicit_right] = start.explicit;
+    if explicit_left.is_none()
+        && explicit_right.is_none()
+        && let Some(active) = seeded_active
+    {
+        state.display_options.0.write().active_pane = active;
     }
+    let (left_start, right_start) = tokio::join!(
+        resolve_pane_start(&*services.shell_service, explicit_left, seed_left),
+        resolve_pane_start(&*services.shell_service, explicit_right, seed_right),
+    );
+    let pane_starts = [left_start, right_start];
+    let pane_dirs = pane_starts
+        .clone()
+        .map(|p| p.map_or(default_dir.clone(), |p| p.dir));
 
     // The root `LocalVfs` isn't mounted via the registry, so `mount_meta()`
     // isn't consulted — stamp the path style here. Remote root = the agent's
@@ -1391,7 +1444,27 @@ pub(super) async fn connect(
     ));
 
     set_status("Loading...");
-    state.refresh(true).await?;
+    for (pane, start) in state.panes.all().iter().zip(&pane_starts) {
+        match pane.refresh(None, true).await {
+            Ok(()) => {
+                // Only where it was remembered: after a walk-up the listing
+                // has already focused the way back.
+                if let Some(start) = start
+                    && let Some(name) = &start.focus
+                    && pane.path() == start.dir
+                {
+                    pane.focus_file(name);
+                }
+            }
+            // A remembered place that has become unreadable mustn't fail
+            // every later connect to this target.
+            Err(e) if start.as_ref().is_some_and(|s| s.restored) => {
+                log::warn!("restored location unreadable ({}); opening the default", e);
+                pane.navigate_to_replace(default_dir.clone()).await?;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 
     for pane in state.panes.all() {
         tauri::async_runtime::spawn(pane.clone().enrichment_loop());

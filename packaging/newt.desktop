@@ -2,7 +2,7 @@
 Name=Newt
 Comment=Dual-pane file manager
 GenericName=File Manager
-Exec=newt %U
+Exec=newt %F
 Icon=newt
 Terminal=false
 Type=Application
