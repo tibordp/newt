@@ -41,6 +41,10 @@ pub struct WalkOptions {
     /// on the VFS; a target already on the path from the root, or a chain
     /// longer than [`MAX_SYMLINK_HOPS`], is reported as a cycle instead.
     pub follow_symlinks: bool,
+    /// Walk a root that is a link to a directory as that directory, under
+    /// the root's own path (`find -H`): what was named is what's walked.
+    /// Links below the root still follow `follow_symlinks`.
+    pub follow_root: bool,
     /// Stop at mount points (rsync's `-x`, `du -x`). A root that is
     /// itself a mount point is always walked.
     pub one_file_system: bool,
@@ -274,7 +278,9 @@ impl Walker<'_> {
         {
             return Ok(Flow::Continue);
         }
-        if self.options.follow_symlinks && child.file.is_symlink {
+        let keep_path = child.root && self.options.follow_root;
+        if (self.options.follow_symlinks || keep_path) && child.file.is_symlink {
+            let link_path = child.path.clone();
             let mut ancestry = (*child.ancestry).clone();
             let mut hops = 0;
             while child.file.is_symlink {
@@ -315,6 +321,9 @@ impl Walker<'_> {
                 hops += 1;
             }
             child.ancestry = Arc::new(ancestry);
+            if keep_path {
+                child.path = link_path;
+            }
         }
 
         let mount_point = is_mount_point(child.parent_device, &child.file);
@@ -878,6 +887,69 @@ mod tests {
                 "file /top/real/x rel=top/to_real/x d=2",
                 "leave /top/real",
                 "leave /top",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_linked_root_is_walked_under_its_own_path_with_follow_root() {
+        let vfs = MockVfs::builder()
+            .dir("/real")
+            .file("/real/x", b"x")
+            .symlink("/real/up", "/real")
+            .symlink("/link", "/real")
+            .build();
+        let lines = run(&vfs, &["/link"], WalkOptions::default(), Log::default()).await;
+        assert_eq!(lines, ["link /link rel=link d=0"]);
+
+        let follow_root = WalkOptions {
+            follow_root: true,
+            ..Default::default()
+        };
+        let lines = run(&vfs, &["/link"], follow_root, Log::default()).await;
+        assert_eq!(
+            lines,
+            [
+                "dir /link rel=link d=0",
+                "link /link/up rel=link/up d=1",
+                "file /link/x rel=link/x d=1",
+                "leave /link",
+            ]
+        );
+    }
+
+    /// On a real filesystem, where a path through the linked root resolves:
+    /// in follow mode too the root keeps its path, and a link back to its
+    /// target is a cycle.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn follow_root_in_follow_mode_detects_a_link_back_to_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("x"), b"x").unwrap();
+        std::os::unix::fs::symlink(&real, real.join("up")).unwrap();
+        std::os::unix::fs::symlink("real", dir.path().join("link")).unwrap();
+
+        let vfs = crate::vfs::LocalVfs::new();
+        let root = PathBuf::from_native(&dir.path().join("link"));
+        let mut log = Log::default();
+        let options = WalkOptions {
+            follow_root: true,
+            follow_symlinks: true,
+            ..Default::default()
+        };
+        walk(&vfs, std::slice::from_ref(&root), &options, &mut log)
+            .await
+            .unwrap();
+        let root = root.as_wire_str();
+        assert_eq!(
+            log.lines,
+            [
+                format!("dir {root} rel=link d=0"),
+                format!("cycle {root}/up"),
+                format!("file {root}/x rel=link/x d=1"),
+                format!("leave {root}"),
             ]
         );
     }

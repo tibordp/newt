@@ -52,6 +52,7 @@ pub const API_GET_PROPERTY_SHEET: Api = Api(305);
 pub const API_OPEN_READ_AT: Api = Api(306);
 pub const API_READ_AT: Api = Api(307);
 pub const API_READ_AT_CLOSE: Api = Api(308);
+pub const API_RESOLVE_LINK: Api = Api(309);
 
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
@@ -331,6 +332,10 @@ impl Dispatcher for FilesystemDispatcher {
                 let ret = self.filesystem.file_details(path).await;
 
                 encode(&ret)?
+            }
+            API_RESOLVE_LINK => {
+                let path: VfsPath = decode(&req[..])?;
+                encode(&self.filesystem.resolve_link(path).await)?
             }
             API_GET_PROPERTY_SHEET => {
                 let path: VfsPath = decode(&req[..])?;
@@ -860,5 +865,43 @@ mod cancellation_tests {
             .await
             .expect("blocking listing producer survived invoke cancellation")
             .unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod resolve_link_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::rpc::Communicator;
+    use crate::vfs::path::PathBuf;
+    use crate::vfs::{LocalVfs, VfsRegistry, VfsRegistryFs};
+
+    /// A relative link climbing out of its directory (`src/hub ->
+    /// ../kubernetes/hub`) resolves where the OS takes it, across the RPC.
+    #[tokio::test]
+    async fn a_relative_link_resolves_over_the_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(base.join("kubernetes/hub")).unwrap();
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::os::unix::fs::symlink("../kubernetes/hub", base.join("src/hub")).unwrap();
+
+        let (client_stream, server_stream) = tokio::io::duplex(4096);
+        let (outbox, inbox) = Communicator::create_outbox();
+        let registry = Arc::new(VfsRegistry::with_root(Arc::new(LocalVfs::new())));
+        let dispatcher = FilesystemDispatcher::new(VfsRegistryFs::new(registry), outbox.clone());
+        let _server =
+            Communicator::with_dispatcher_and_outbox(dispatcher, server_stream, outbox, inbox);
+        let remote = crate::filesystem::Remote::new(Communicator::new(client_stream));
+
+        let link = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&base.join("src/hub")));
+        assert_eq!(
+            remote.resolve_link(link).await.unwrap(),
+            VfsPath::new(
+                VfsId::ROOT,
+                PathBuf::from_native(&base.join("kubernetes/hub"))
+            )
+        );
     }
 }

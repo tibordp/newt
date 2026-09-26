@@ -631,8 +631,11 @@ impl Walker {
                 .file_name()
                 .map_or(0, |name| name.len() + 1),
         };
+        // The root is the directory the user is looking at, reached
+        // through a link or not.
         let options = walk::WalkOptions {
             follow_symlinks: self.params.follow_symlinks,
+            follow_root: true,
             one_file_system: false,
             excludes: vec![PathBuf::from_wire_str("/proc")],
         };
@@ -1090,5 +1093,55 @@ mod progress_tests {
 
         let list = search_all(MockVfs::builder().file("/dir/a.txt", b""), "/dir").await;
         assert_eq!(list.partial, None);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod root_tests {
+    use std::sync::Arc;
+
+    use crate::vfs::path::PathBuf;
+    use crate::vfs::search::{SearchParams, SearchVfs};
+    use crate::vfs::{LocalVfs, Vfs, VfsId, VfsPath, VfsRegistry};
+
+    /// A pane inside a directory reached through a link searches that
+    /// directory, and the hits are keyed below it.
+    #[tokio::test]
+    async fn a_linked_root_is_searched() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        std::fs::write(real.join("sub/needle.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink("real", dir.path().join("link")).unwrap();
+
+        let source: Arc<dyn Vfs> = Arc::new(LocalVfs::new());
+        let registry = Arc::new(VfsRegistry::with_root(source.clone()));
+        let reader = Arc::new(crate::vfs::VfsRegistryFs::new(registry));
+        let root = PathBuf::from_native(&dir.path().join("link"));
+        let vfs = SearchVfs::new(
+            source,
+            reader,
+            VfsPath::new(VfsId::ROOT, root),
+            SearchParams {
+                name_pattern: Some("needle".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            Arc::new(crate::vfs::ScopedReporter::new(
+                Arc::new(crate::vfs::NoopProgressSink),
+                VfsId(1),
+            )),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let listing = vfs.list_files(&PathBuf::root(), Some(tx)).await.unwrap();
+        drain.await.unwrap();
+        let keys: Vec<_> = listing
+            .files
+            .iter()
+            .filter_map(|f| f.key.as_deref())
+            .collect();
+        assert_eq!(keys, ["sub/needle.txt"]);
     }
 }

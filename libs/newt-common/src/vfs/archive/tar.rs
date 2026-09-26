@@ -592,6 +592,16 @@ impl Vfs for TarArchiveVfs {
         Ok(None)
     }
 
+    /// Resolved over the tree indexed so far, as reads resolve.
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        let resolved = self
+            .state
+            .tree
+            .read()
+            .resolve_path(StdPath::new(path.as_wire_str()), true)?;
+        Ok(PathBuf::from_wire_str(&normalized_to_string(&resolved)))
+    }
+
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let (index, _guard) = self.wait_for_index().await?;
 

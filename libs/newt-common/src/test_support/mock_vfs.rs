@@ -562,7 +562,17 @@ impl Vfs for MockVfs {
             tokio::time::sleep(latency).await;
             self.listings_in_flight.fetch_sub(1, Relaxed);
         }
-        // Verify directory exists
+        // A link to a directory lists its target, as real listings do.
+        let linked = matches!(
+            self.entries.lock().get(path.as_wire_str()),
+            Some(MockEntry::Symlink { .. })
+        );
+        let target = if linked {
+            self.resolve_link(path).await?
+        } else {
+            path.to_owned()
+        };
+        let path = target.as_path();
         match self.entries.lock().get(path.as_wire_str()) {
             Some(MockEntry::Directory { .. }) => {}
             None if path.is_root() => {} // root always exists implicitly

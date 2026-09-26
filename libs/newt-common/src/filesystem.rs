@@ -68,6 +68,10 @@ pub trait Filesystem: Send + Sync {
 
     async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
 
+    /// Where a symlink leads, with every link along the way resolved the
+    /// way its filesystem resolves them — where following it lands.
+    async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, Error>;
+
     /// Per-VFS extras beyond `FileDetails` (S3 ACLs, user metadata) for
     /// the Properties dialog. Tolerated exception to the data-plane
     /// membership test — it lives here because it needs the same
@@ -228,6 +232,12 @@ impl Filesystem for Remote {
             .await?;
 
         Ok(ret?)
+    }
+
+    async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, Error> {
+        self.communicator
+            .invoke(crate::api::API_RESOLVE_LINK, &path)
+            .await?
     }
 
     async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {

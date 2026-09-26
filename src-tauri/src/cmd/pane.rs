@@ -446,19 +446,14 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
         // (`C:\Users\<user>\Cookies` — `Everyone:(DENY)(RD)`, unlistable
         // by design) resolve. Deliberately shallow: navigating to such a
         // path directly (Ctrl+L, a breadcrumb) still errors.
-        let symlink_fallback = if file.is_symlink {
+        let symlink_fallback = file.is_symlink && {
             let source_vfs = pane
                 .get_focused_source()
                 .map(|p| p.vfs_id)
                 .unwrap_or_else(|| pane.path().vfs_id);
-            let vfs_info = ctx.vfs_info()?;
-            vfs_info
+            ctx.vfs_info()?
                 .descriptor(source_vfs)
                 .is_some_and(|(d, meta)| !d.has_unified_root(&meta))
-                .then(|| focused_symlink_target(&*vfs_info, &pane))
-                .flatten()
-        } else {
-            None
         };
 
         // Directory entries from a synthetic VFS (e.g. a flat search hit
@@ -468,6 +463,7 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
             return Ok(());
         };
         drop(pane);
+        let link = target.clone();
         let logical = ctx
             .with_pane_update_async(pane_handle, |gs, pane| async move {
                 gs.close_modal();
@@ -475,15 +471,18 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
                 Ok(())
             })
             .await;
-        return match (logical, symlink_fallback) {
-            (Err(e), Some(target)) if !matches!(e, Error::Cancelled) => {
+        return match logical {
+            Err(e) if symlink_fallback && !matches!(e, Error::Cancelled) => {
+                let Ok(resolved) = ctx.fs()?.resolve_link(link).await else {
+                    return Err(e);
+                };
                 ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-                    pane.navigate_to(target).await?;
+                    pane.navigate_to(resolved).await?;
                     Ok(())
                 })
                 .await
             }
-            (result, _) => result,
+            result => result,
         };
     }
 
@@ -590,50 +589,6 @@ pub async fn cmd_open_archive(
     .await
 }
 
-/// Resolve the focused entry's raw symlink target into a fully-qualified
-/// `VfsPath`: absolute targets replace the path, relative ones join the
-/// entry's *real* parent (dereferenced, so search aliases resolve against
-/// where the entry actually lives).
-fn focused_symlink_target(
-    vfs_info: &dyn crate::main_window::session::VfsInfo,
-    pane: &crate::main_window::pane::Pane,
-) -> Option<VfsPath> {
-    let target = pane.get_focused_symlink_target()?;
-    // Symlink targets live in the entry's *real* parent directory,
-    // not in the synthetic VFS root, so deref before joining.
-    let source_parent = pane
-        .get_focused_source()
-        .and_then(|p| p.parent())
-        .unwrap_or_else(|| pane.path());
-    // `target` is the raw link string from the source FS. Native-decode
-    // it (drive prefixes, separators) when that FS is physically this
-    // machine's — the session root, or the client-local mount in a
-    // remote session — and treat it as a Unix-style string everywhere
-    // else.
-    let native =
-        source_parent.vfs_id == VfsId::ROOT || vfs_info.is_host_local(source_parent.vfs_id);
-    let target_path = if native {
-        newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(&target))
-    } else {
-        newt_common::vfs::path::PathBuf::from_components(
-            target.split('/').filter(|s| !s.is_empty()),
-        )
-    };
-    // Style-aware absoluteness: a `/…` target is absolute on the Unix FS
-    // it came from even when this process runs on Windows, where
-    // `Path::is_absolute` wants a drive prefix.
-    let absolute = target.starts_with('/') || std::path::Path::new(&target).is_absolute();
-    Some(if absolute {
-        VfsPath::new(source_parent.vfs_id, target_path)
-    } else {
-        let mut path = source_parent.path.clone();
-        for comp in target_path.components() {
-            path.push(comp);
-        }
-        VfsPath::new(source_parent.vfs_id, path)
-    })
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_follow_symlink(
@@ -653,10 +608,14 @@ pub async fn cmd_follow_symlink(
     {
         source
     } else {
-        match focused_symlink_target(&*ctx.vfs_info()?, &pane) {
-            Some(t) => t,
-            None => return Ok(()),
-        }
+        let Some(link) = pane
+            .get_focused_file_info()
+            .filter(|f| f.is_symlink)
+            .and_then(|_| pane.get_focused_source())
+        else {
+            return Ok(());
+        };
+        ctx.fs()?.resolve_link(link).await?
     };
 
     ctx.with_pane_update_async(pane_handle, |_, pane| async move {

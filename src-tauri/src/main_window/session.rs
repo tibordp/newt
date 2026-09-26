@@ -482,6 +482,18 @@ impl Filesystem for HairpinFs {
         }
     }
 
+    async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, newt_common::Error> {
+        if path.vfs_id == self.remote_vfs_id {
+            let resolved = self
+                .local_fs
+                .resolve_link(VfsPath::new(VfsId::ROOT, path.path))
+                .await?;
+            Ok(VfsPath::new(self.remote_vfs_id, resolved.path))
+        } else {
+            self.inner.resolve_link(path).await
+        }
+    }
+
     async fn get_property_sheet(
         &self,
         path: VfsPath,

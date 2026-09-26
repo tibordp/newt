@@ -350,3 +350,14 @@ async fn upstream_read_range_failure_during_indexing_surfaces() {
         err.message
     );
 }
+
+/// A link resolves through the archive's own tree, `..` included.
+#[tokio::test]
+async fn resolve_link_follows_the_archive_tree() {
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
+    vfs.list_files(&vp("/"), None).await.expect("list_files");
+    assert_eq!(
+        vfs.resolve_link(&vp("/links/soft.txt")).await.unwrap(),
+        vp("/hello.txt")
+    );
+}

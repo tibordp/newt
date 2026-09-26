@@ -65,6 +65,10 @@ impl Filesystem for EndlessListing {
         Err(Error::not_supported())
     }
 
+    async fn resolve_link(&self, _path: VfsPath) -> Result<VfsPath, Error> {
+        Err(Error::not_supported())
+    }
+
     async fn get_property_sheet(
         &self,
         _path: VfsPath,

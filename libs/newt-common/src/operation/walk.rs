@@ -99,6 +99,8 @@ pub(super) async fn walk_sources(
     };
     let walk_options = walk::WalkOptions {
         follow_symlinks: options.follow_symlinks,
+        // A selected link is copied or packed as the link.
+        follow_root: false,
         one_file_system: options.one_file_system,
         excludes: options.exclude.iter().cloned().collect(),
     };

@@ -646,6 +646,12 @@ impl Vfs for DiscVfs {
         Ok(None)
     }
 
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        let state = self.ensure_state().await?;
+        let (key, _) = self.resolve(state, path, true).await?;
+        Ok(PathBuf::from_wire_str(&key))
+    }
+
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let state = self.ensure_state().await?;
         let (_, entry) = self.resolve(state, path, true).await?;

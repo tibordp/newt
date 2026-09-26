@@ -261,6 +261,15 @@ impl Filesystem for VfsRegistryFs {
         vfs.file_details(&local_path).await
     }
 
+    async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, Error> {
+        let path = self.registry.dereference(&path).await;
+        let (vfs, local_path) = self.registry.resolve(&path)?;
+        Ok(VfsPath::new(
+            path.vfs_id,
+            vfs.resolve_link(&local_path).await?,
+        ))
+    }
+
     async fn get_property_sheet(&self, path: VfsPath) -> Result<PropertySheet, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;

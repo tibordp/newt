@@ -773,6 +773,14 @@ impl Vfs for SevenZArchiveVfs {
         Ok(None)
     }
 
+    async fn resolve_link(&self, path: &Path) -> Result<PathBuf, Error> {
+        let state = self.ensure_state().await?;
+        let resolved = state
+            .tree
+            .resolve_path(StdPath::new(path.as_wire_str()), true)?;
+        Ok(PathBuf::from_wire_str(&normalized_to_string(&resolved)))
+    }
+
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
         let state = self.ensure_state().await?;
         let entry = self.resolve_entry(state, path, true)?;
