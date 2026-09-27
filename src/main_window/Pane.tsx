@@ -33,7 +33,12 @@ import {
 import type { VfsProgress } from "../lib/bindings";
 import { useFormatBytes, useSizeUnits } from "../lib/size";
 import type { SizeUnits } from "../lib/bindings";
-import { ColumnHeader, getVisibleColumns, moveColumn } from "./columns";
+import {
+  ColumnHeader,
+  fitColumnWidth,
+  getVisibleColumns,
+  moveColumn,
+} from "./columns";
 import { rowHeightFor } from "./density";
 import { usePreferences } from "../lib/preferences";
 import { useLocale } from "../lib/locale";
@@ -255,6 +260,7 @@ const FileRow = memo(
         {columns.map((column) => (
           <div
             key={column.key}
+            data-column={column.key}
             style={{
               textAlign: column.align,
               width: `var(--${widthPrefix}-${column.key})`,
@@ -1717,37 +1723,24 @@ function PaneInner(
   const runtimeState = useRuntimeState();
   const savedWidths = runtimeState?.column_widths?.[String(paneHandle)];
 
-  const commitColumnWidth = (key: string, px: number) => {
-    safe(
-      commands.updateRuntimeState(
-        `column_widths.${paneHandle}.${key}`,
-        Math.round(px),
-      ),
-    );
+  const otherPaneHandle = 1 - paneHandle;
+  const columnPanes = (bothPanes: boolean) =>
+    bothPanes ? [paneHandle, otherPaneHandle] : [paneHandle];
+
+  const commitColumnWidth = (key: string, px: number, bothPanes: boolean) => {
+    for (const handle of columnPanes(bothPanes)) {
+      safe(
+        commands.updateRuntimeState(
+          `column_widths.${handle}.${key}`,
+          Math.round(px),
+        ),
+      );
+    }
   };
 
-  // Excel-style fit-to-content: widest rendered cell of the column (the
-  // list is virtualized, so this is the visible window — by design), with
-  // the header's own content as a floor. The column's width var is
-  // temporarily set to max-content so cells report intrinsic width (both
-  // growing and shrinking); everything is synchronous, so only the final
-  // width is ever painted.
-  const autoSizeColumn = (index: number, key: string) => {
-    const root = document.querySelector(":root") as HTMLElement;
-    const varName = `--${widthPrefix}-${key}`;
-    root.style.setProperty(varName, "max-content");
-    let width = 0;
-    const headerCell = tableHeaderRef.current?.querySelectorAll<HTMLElement>(
-      `.${columnStyles.column}`,
-    )[index];
-    if (headerCell) width = headerCell.getBoundingClientRect().width;
-    containerRef.current?.querySelectorAll("li").forEach((li) => {
-      const cell = li.children[index] as HTMLElement | undefined;
-      if (cell) width = Math.max(width, cell.getBoundingClientRect().width);
-    });
-    const px = Math.max(30, Math.ceil(width) + 2);
-    root.style.setProperty(varName, `${px}px`);
-    commitColumnWidth(key, px);
+  const autoSizeColumn = (key: string, bothPanes: boolean) => {
+    const panes = columnPanes(bothPanes);
+    commitColumnWidth(key, fitColumnWidth(panes, key), bothPanes);
   };
 
   // External drag-and-drop (files from outside the app).
@@ -1898,12 +1891,17 @@ function PaneInner(
                 <ColumnHeader
                   key={column.key}
                   widthPrefix={widthPrefix}
+                  linkedWidthPrefix={`pane-${otherPaneHandle}-column-`}
                   sorting={sorting}
                   column={column}
                   index={i}
                   savedWidth={savedWidths?.[column.key]}
-                  onWidthCommit={(px) => commitColumnWidth(column.key, px)}
-                  onAutoSize={() => autoSizeColumn(i, column.key)}
+                  onWidthCommit={(px, bothPanes) =>
+                    commitColumnWidth(column.key, px, bothPanes)
+                  }
+                  onAutoSize={(bothPanes) =>
+                    autoSizeColumn(column.key, bothPanes)
+                  }
                   onSort={(key, asc) => {
                     guarded(() =>
                       commands.setSorting(paneHandle, {

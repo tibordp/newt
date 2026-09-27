@@ -675,8 +675,43 @@ export function getVisibleColumns(
   return result;
 }
 
+/// The CSS custom property holding a pane's width for a column.
+export function columnWidthVar(paneHandle: number, key: string): string {
+  return `--pane-${paneHandle}-column--${key}`;
+}
+
+/// Excel-style fit-to-content across `paneHandles`: the widest rendered
+/// cell of the column in any of them (the lists are virtualized, so the
+/// visible windows — by design), with the header's own content as a
+/// floor. Each width var is set to max-content so cells report their
+/// intrinsic width, growing or shrinking; everything is synchronous, so
+/// only the final width is ever painted. Applies and returns the width.
+export function fitColumnWidth(paneHandles: number[], key: string): number {
+  const root = document.querySelector(":root") as HTMLElement;
+  for (const handle of paneHandles) {
+    root.style.setProperty(columnWidthVar(handle, key), "max-content");
+  }
+  let width = 0;
+  for (const handle of paneHandles) {
+    document
+      .querySelectorAll<HTMLElement>(
+        `[data-pane-handle="${handle}"] [data-column="${key}"]`,
+      )
+      .forEach((cell) => {
+        width = Math.max(width, cell.getBoundingClientRect().width);
+      });
+  }
+  const px = Math.max(30, Math.ceil(width) + 2);
+  for (const handle of paneHandles) {
+    root.style.setProperty(columnWidthVar(handle, key), `${px}px`);
+  }
+  return px;
+}
+
 type ColumnHeaderProps = {
   widthPrefix: string;
+  /// The other pane's prefix, which a Shift-held resize also drives.
+  linkedWidthPrefix: string;
   column: ColumnDef;
   sorting: Sorting;
   index: number;
@@ -684,12 +719,15 @@ type ColumnHeaderProps = {
   savedWidth?: number;
   onSort: (key: string, asc: boolean) => void;
   onReorder: (from: number, to: number) => void;
-  onWidthCommit: (px: number) => void;
-  onAutoSize: () => void;
+  /// `bothPanes` when Shift was held: the width applies to the other
+  /// pane's column too.
+  onWidthCommit: (px: number, bothPanes: boolean) => void;
+  onAutoSize: (bothPanes: boolean) => void;
 };
 
 export function ColumnHeader({
   widthPrefix,
+  linkedWidthPrefix,
   column,
   sorting,
   index,
@@ -709,10 +747,26 @@ export function ColumnHeader({
   // Last width applied during a resize drag; null while no actual
   // movement happened, so a plain click on the grip commits nothing.
   const resizeWidthRef = useRef<number | null>(null);
+  // The other pane's width when the drag began, put back whenever Shift
+  // is not held.
+  const linkedOriginalRef = useRef("");
+
+  const root = () => document.querySelector(":root") as HTMLElement;
+  const ownVar = `--${widthPrefix}-${column.key}`;
+  const linkedVar = `--${linkedWidthPrefix}-${column.key}`;
+
+  const applyLinked = (bothPanes: boolean) => {
+    const width = resizeWidthRef.current;
+    root().style.setProperty(
+      linkedVar,
+      bothPanes && width !== null ? `${width}px` : linkedOriginalRef.current,
+    );
+  };
 
   const onmousedown = (e: React.MouseEvent) => {
     e.preventDefault();
     resizeWidthRef.current = null;
+    linkedOriginalRef.current = root().style.getPropertyValue(linkedVar);
     setStartOffset(ref.current!.offsetWidth - e.clientX);
   };
 
@@ -721,7 +775,8 @@ export function ColumnHeader({
       e.preventDefault();
       setStartOffset(null);
       if (resizeWidthRef.current !== null) {
-        onWidthCommit(resizeWidthRef.current);
+        applyLinked(e.shiftKey);
+        onWidthCommit(resizeWidthRef.current, e.shiftKey);
         resizeWidthRef.current = null;
       }
     }
@@ -732,18 +787,31 @@ export function ColumnHeader({
       e.preventDefault();
       const width = startOffset + e.clientX;
       resizeWidthRef.current = width;
-      const root = document.querySelector(":root") as HTMLElement;
-      root.style.setProperty(`--${widthPrefix}-${column.key}`, `${width}px`);
+      root().style.setProperty(ownVar, `${width}px`);
+      applyLinked(e.shiftKey);
+    }
+  };
+
+  // Pressing or releasing Shift mid-drag takes effect without waiting
+  // for the mouse to move.
+  const onShift = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && resizeWidthRef.current !== null) {
+      applyLinked(e.type === "keydown");
     }
   };
 
   useEffect(() => {
+    if (startOffset === null) return;
     document.addEventListener("mouseup", onmouseup);
     document.addEventListener("mousemove", onmousemove);
+    document.addEventListener("keydown", onShift);
+    document.addEventListener("keyup", onShift);
 
     return () => {
       document.removeEventListener("mouseup", onmouseup);
       document.removeEventListener("mousemove", onmousemove);
+      document.removeEventListener("keydown", onShift);
+      document.removeEventListener("keyup", onShift);
     };
   }, [startOffset]);
 
@@ -839,6 +907,7 @@ export function ColumnHeader({
       <div
         ref={ref}
         className={styles.column}
+        data-column={column.key}
         onMouseDown={onReorderMouseDown}
         style={{
           width: `var(--${widthPrefix}-${column.key})`,
@@ -892,7 +961,7 @@ export function ColumnHeader({
       <div
         className={styles.columnGrip}
         onMouseDown={onmousedown}
-        onDoubleClick={onAutoSize}
+        onDoubleClick={(e) => onAutoSize(e.shiftKey)}
       ></div>
     </>
   );
