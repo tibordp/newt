@@ -1403,7 +1403,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## npm packages
 
-84 packages from the production dependency tree.
+85 packages from the production dependency tree.
 
   @floating-ui/core 1.8.0 — MIT
       Copyright (c) 2021-present Floating UI contributors
@@ -1515,7 +1515,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
   detect-node-es 1.1.0 — MIT
       Copyright (c) 2017 Ilya Kantor
-  dompurify 3.4.12 — (MPL-2.0 OR Apache-2.0)
+  dompurify 3.4.16 — (MPL-2.0 OR Apache-2.0)
   eventemitter3 5.0.4 — MIT
       Copyright (c) 2014 Arnout Kazemier
   fast-deep-equal 3.1.3 — MIT
@@ -1527,6 +1527,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   lodash.clamp 4.0.3 — MIT
   lodash.debounce 4.0.8 — MIT
   marked 14.0.0 — MIT
+      Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/)
+      Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
+  marked 18.0.14 — MIT
       Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/)
       Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
   monaco-editor 0.55.1 — MIT

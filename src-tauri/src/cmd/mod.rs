@@ -162,10 +162,16 @@ pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
 
 /// Hand a URL to the system's default browser. The webview installs no
 /// new-window handler, so an `<a target="_blank">` goes nowhere on any
-/// platform — every outbound link in the UI comes through here.
+/// platform — every outbound link in the UI comes through here. Only web
+/// and mail URLs: the opener also launches local files and programs, and
+/// the viewer renders links from files it doesn't trust.
 #[tauri::command]
 #[specta::specta]
 pub fn open_url(url: String) -> Result<(), Error> {
+    let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
+    if !matches!(scheme.as_deref(), Some("http" | "https" | "mailto")) {
+        return Err(Error::Custom(format!("not a web or mail link: {url}")));
+    }
     opener::open(&url)?;
     Ok(())
 }
@@ -242,6 +248,8 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::viewer::ping_viewer,
             crate::viewer::copy_viewer_range,
             crate::viewer::sniff_viewer_encoding,
+            crate::viewer::report_table_detection,
+            crate::viewer::open_in_viewer,
             crate::viewer::find_in_viewer,
             crate::viewer::image_exif,
             crate::editor::set_editor_language,
@@ -640,6 +648,27 @@ mod dispatch_tests {
                 registry.iter().any(|r| r == id),
                 "unknown id in dispatch table: {id}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod open_url_tests {
+    use super::open_url;
+
+    /// Rendered documents can carry any link; only web and mail URLs may
+    /// reach the opener, which would launch local files and programs.
+    #[test]
+    fn refuses_what_is_not_a_web_or_mail_link() {
+        for url in [
+            "file:///etc/passwd",
+            "/Applications/Calculator.app",
+            "C:\\Windows\\System32\\calc.exe",
+            "javascript:alert(1)",
+            "smb://host/share",
+            "relative/page.md",
+        ] {
+            assert!(open_url(url.to_string()).is_err(), "{url}");
         }
     }
 }

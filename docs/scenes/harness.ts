@@ -10,6 +10,7 @@ import type {
   ResolvedPreferences,
   RuntimeState,
   VfsPath,
+  TableDelimiter,
   ViewerState,
 } from "../../src/lib/bindings";
 import { scenes } from "./registry";
@@ -157,6 +158,19 @@ const handlers: Record<string, (args: any) => unknown> = {
   sniff_viewer_encoding: () => {
     const viewer = state as ViewerState;
     viewer.encoding.detected ??= { encoding: "UTF-8", bom_len: 0 };
+    void publish();
+    return null;
+  },
+  report_table_detection: ({
+    delimiter,
+    header,
+  }: {
+    delimiter: TableDelimiter;
+    header: boolean;
+  }) => {
+    const viewer = state as ViewerState;
+    viewer.table.detected_delimiter = delimiter;
+    viewer.table.detected_header = header;
     void publish();
     return null;
   },

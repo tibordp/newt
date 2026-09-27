@@ -23,6 +23,8 @@ import { HexViewer } from "./HexViewer";
 import { ImageViewer } from "./ImageViewer";
 import { MediaViewer } from "./MediaViewer";
 import { PdfViewer } from "./PdfViewer";
+import { TableViewer } from "./TableViewer";
+import { MarkdownViewer } from "./MarkdownViewer";
 
 // --- Main Viewer component ---
 
@@ -132,12 +134,20 @@ function Viewer() {
 
   // Window-level Escape handler — closing the viewer is fundamental and
   // deliberately not a rebindable command. Sub-viewers/SearchBar
-  // stopPropagation or preventDefault when they consume Escape.
+  // stopPropagation or preventDefault when they consume Escape. Tab has no
+  // job outside a text field; left alone it walks focus off the content,
+  // where no key reaches the viewer any more.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.key === "Escape") {
         safe(commands.closeWindow());
+        e.preventDefault();
+      } else if (
+        e.key === "Tab" &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
         e.preventDefault();
       }
     };
@@ -187,6 +197,36 @@ function Viewer() {
         fileSize={info.size}
         chunkCache={chunkCache}
         loadChunk={loadChunk}
+        autoMode={autoMode ?? currentMode}
+        encoding={encoding}
+        bomLen={bomLen}
+        encodingLabel={encodingLabel}
+        needsSniff={detectedEncoding === null}
+      />
+    );
+  } else if (currentMode === "table" && viewerState) {
+    content = (
+      <TableViewer
+        filePath={displayPath}
+        vfsPath={filePath}
+        fileSize={info.size}
+        chunkCache={chunkCache}
+        loadChunk={loadChunk}
+        autoMode={autoMode ?? currentMode}
+        encoding={encoding}
+        bomLen={bomLen}
+        encodingLabel={encodingLabel}
+        needsSniff={detectedEncoding === null}
+        options={viewerState.table}
+      />
+    );
+  } else if (currentMode === "markdown") {
+    content = (
+      <MarkdownViewer
+        filePath={displayPath}
+        vfsPath={filePath}
+        fileServerBase={fileServerBase}
+        fileSize={info.size}
         autoMode={autoMode ?? currentMode}
         encoding={encoding}
         bomLen={bomLen}

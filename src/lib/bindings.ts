@@ -44,7 +44,9 @@ async closeModal() : Promise<Result<null, string>> {
 /**
  * Hand a URL to the system's default browser. The webview installs no
  * new-window handler, so an `<a target="_blank">` goes nowhere on any
- * platform — every outbound link in the UI comes through here.
+ * platform — every outbound link in the UI comes through here. Only web
+ * and mail URLs: the opener also launches local files and programs, and
+ * the viewer renders links from files it doesn't trust.
  */
 async openUrl(url: string) : Promise<Result<null, string>> {
     try {
@@ -413,6 +415,30 @@ async copyViewerRange(path: VfsPath, offset: number, length: number, format: Cop
 async sniffViewerEncoding(prefix: number[], eof: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sniff_viewer_encoding", { prefix, eof }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Record what the table viewer detected from the file's first chunk, for
+ * the Table menu's Auto entries to name it.
+ */
+async reportTableDetection(delimiter: TableDelimiter, header: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("report_table_detection", { delimiter, header }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Show another file in this viewer window: a relative link followed from
+ * rendered Markdown.
+ */
+async openInViewer(path: VfsPath) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_in_viewer", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3047,6 +3073,17 @@ export type SizeUnits =
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
+export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
+export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 
+/**
+ * Honour `"` quoting (RFC 4180): quoted fields may hold delimiters,
+ * newlines and `""` for a quote.
+ */
+quoted: boolean; 
+/**
+ * Whether the first row is a header.
+ */
+header: boolean | null; detected_header: boolean | null }
 export type TerminalHandle = number
 export type TerminalView = { handle: TerminalHandle; defunct: boolean }
 export type ThemeMode = "system" | "light" | "dark"
@@ -3148,7 +3185,7 @@ selected: string | null }
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.
  */
-export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf"
+export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf" | "table" | "markdown"
 export type ViewerPreferences = { 
 /**
  * Backdrop behind images in the viewer's image mode.
@@ -3168,7 +3205,7 @@ export type ViewerSearchPattern = { Text: { text: string; encoding: string } } |
 /**
  * The `update:viewer` payload; see `MainWindowStateWire`.
  */
-export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding }
+export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding; table: TableOptions }
 export type VolumeInfo = { kind: VolumeKind; 
 /**
  * Filesystem name (NTFS, ext4, apfs, …).

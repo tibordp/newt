@@ -1,4 +1,5 @@
 pub mod encoding;
+mod table;
 
 use newt_common::find::{SearchMatch, SearchPattern};
 use newt_common::vfs::VfsPath;
@@ -13,6 +14,7 @@ use crate::GlobalContext;
 use crate::common::{Error, UpdatePublisher};
 use crate::main_window::MainWindowContext;
 use encoding::{DetectedEncoding, ViewerEncoding};
+pub use table::{TableDelimiter, TableOptions};
 
 /// Display mode for the file viewer. Wire format is snake_case to match
 /// the strings the frontend uses.
@@ -25,6 +27,8 @@ pub enum ViewerMode {
     Audio,
     Video,
     Pdf,
+    Table,
+    Markdown,
 }
 
 impl ViewerMode {
@@ -37,6 +41,8 @@ impl ViewerMode {
             ViewerMode::Audio => "audio",
             ViewerMode::Video => "video",
             ViewerMode::Pdf => "pdf",
+            ViewerMode::Table => "table",
+            ViewerMode::Markdown => "markdown",
         }
     }
 
@@ -48,6 +54,8 @@ impl ViewerMode {
             ViewerMode::Audio => "Audio",
             ViewerMode::Video => "Video",
             ViewerMode::Pdf => "PDF",
+            ViewerMode::Table => "Table",
+            ViewerMode::Markdown => "Markdown",
         }
     }
 
@@ -59,18 +67,30 @@ impl ViewerMode {
             "audio" => ViewerMode::Audio,
             "video" => ViewerMode::Video,
             "pdf" => ViewerMode::Pdf,
+            "table" => ViewerMode::Table,
+            "markdown" => ViewerMode::Markdown,
             _ => return None,
         })
     }
 
-    const ALL: [ViewerMode; 6] = [
+    const ALL: [ViewerMode; 8] = [
         ViewerMode::Text,
         ViewerMode::Hex,
+        ViewerMode::Table,
+        ViewerMode::Markdown,
         ViewerMode::Image,
         ViewerMode::Audio,
         ViewerMode::Video,
         ViewerMode::Pdf,
     ];
+
+    /// Modes that decode the file as text, and so take the Encoding menu.
+    fn is_textual(self) -> bool {
+        matches!(
+            self,
+            ViewerMode::Text | ViewerMode::Table | ViewerMode::Markdown
+        )
+    }
 }
 
 pub struct ViewerState {
@@ -79,6 +99,7 @@ pub struct ViewerState {
     display_path: RwLock<Option<String>>,
     file_server_base: RwLock<Option<String>>,
     encoding: RwLock<ViewerEncoding>,
+    table: RwLock<TableOptions>,
 }
 
 /// The `update:viewer` payload; see `MainWindowStateWire`.
@@ -90,6 +111,7 @@ pub struct ViewerStateWire {
     display_path: Option<String>,
     file_server_base: Option<String>,
     encoding: ViewerEncoding,
+    table: TableOptions,
 }
 
 impl Serialize for ViewerState {
@@ -100,6 +122,7 @@ impl Serialize for ViewerState {
             display_path: self.display_path.read().clone(),
             file_server_base: self.file_server_base.read().clone(),
             encoding: self.encoding.read().clone(),
+            table: self.table.read().clone(),
         }
         .serialize(serializer)
     }
@@ -121,7 +144,17 @@ impl ViewerWindow {
         // Reset mode for new file
         *state.mode.write() = ViewerMode::Text;
         *state.encoding.write() = ViewerEncoding::default();
+        *state.table.write() = TableOptions::default();
         let _ = self.publisher.publish_full();
+    }
+
+    /// Show another file in this window, as if it had been opened with F3.
+    fn retarget(&self, file_path: VfsPath, display_path: String, file_server_base: String) {
+        if let Some(window) = self.window.read().as_ref() {
+            let _ = window.set_title(&format!("{} - Viewer", display_path));
+        }
+        self.set_file(file_path, display_path, file_server_base);
+        self.rebuild_menu();
     }
 
     pub fn set_mode(&self, mode: ViewerMode) {
@@ -134,6 +167,13 @@ impl ViewerWindow {
         self.publisher.state().encoding.write().selected = selected;
         self.rebuild_menu();
         let _ = self.publisher.publish_full();
+    }
+
+    fn update_table(&self, f: impl FnOnce(&mut TableOptions) -> bool) {
+        if f(&mut self.publisher.state().table.write()) {
+            self.rebuild_menu();
+            let _ = self.publisher.publish_full();
+        }
     }
 
     fn set_detected(&self, detected: DetectedEncoding) {
@@ -157,7 +197,8 @@ impl ViewerWindow {
         let state = self.publisher.state();
         let mode = *state.mode.read();
         let encoding = state.encoding.read().clone();
-        let Ok(menu) = build_menu(app_handle, prefix, mode, &encoding) else {
+        let table = state.table.read().clone();
+        let Ok(menu) = build_menu(app_handle, prefix, mode, &encoding, &table) else {
             return;
         };
         #[cfg(target_os = "macos")]
@@ -206,6 +247,7 @@ pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
         display_path: RwLock::new(None),
         file_server_base: RwLock::new(None),
         encoding: RwLock::new(ViewerEncoding::default()),
+        table: RwLock::new(TableOptions::default()),
     };
     let publisher = Arc::new(UpdatePublisher::new(window.clone(), "viewer", state));
 
@@ -230,7 +272,8 @@ pub fn activate_viewer_window(
         let state = viewer.publisher.state();
         let mode = *state.mode.read();
         let encoding = state.encoding.read().clone();
-        build_menu(app_handle, &prefix, mode, &encoding)?
+        let table = state.table.read().clone();
+        build_menu(app_handle, &prefix, mode, &encoding, &table)?
     };
 
     #[cfg(target_os = "macos")]
@@ -283,6 +326,10 @@ pub fn activate_viewer_window(
             Some(v) => v,
             None => return,
         };
+        if let Some(item) = suffix.strip_prefix("tbl_") {
+            viewer.update_table(|options| options.apply_menu(item));
+            return;
+        }
         if let Some(enc) = suffix.strip_prefix("enc_") {
             if enc == "auto" {
                 viewer.set_encoding(None);
@@ -301,7 +348,7 @@ pub fn activate_viewer_window(
 }
 
 fn has_edit_menu(mode: ViewerMode) -> bool {
-    matches!(mode, ViewerMode::Text | ViewerMode::Hex)
+    matches!(mode, ViewerMode::Text | ViewerMode::Hex | ViewerMode::Table)
 }
 
 /// Edit submenu for modes without a custom one. macOS needs predefined items
@@ -335,7 +382,7 @@ fn native_edit_submenu(app_handle: &tauri::AppHandle) -> Result<Option<Submenu<W
 /// A checked CheckMenuItem when active, a plain MenuItem otherwise: a
 /// radio group without the empty checkbox indicators some GTK themes draw
 /// on unchecked check items.
-fn radio_item(
+pub(super) fn radio_item(
     app_handle: &tauri::AppHandle,
     id: String,
     label: &str,
@@ -412,6 +459,7 @@ fn build_menu(
     prefix: &str,
     mode: ViewerMode,
     encoding: &ViewerEncoding,
+    table: &TableOptions,
 ) -> Result<Menu<Wry>, Error> {
     let mode_items = ViewerMode::ALL
         .iter()
@@ -429,8 +477,12 @@ fn build_menu(
         mode_items.iter().map(|i| i.as_ref()).collect();
     let view_submenu = Submenu::with_items(app_handle, "View", true, &item_refs)?;
 
-    let encoding_submenu = (mode == ViewerMode::Text)
+    let encoding_submenu = mode
+        .is_textual()
         .then(|| encoding_submenu(app_handle, prefix, encoding))
+        .transpose()?;
+    let table_submenu = (mode == ViewerMode::Table)
+        .then(|| table::table_submenu(app_handle, prefix, table))
         .transpose()?;
 
     let close_item = MenuItem::with_id(
@@ -463,7 +515,11 @@ fn build_menu(
         let goto_item = MenuItem::with_id(
             app_handle,
             format!("{}goto", prefix),
-            "Go to Line/Offset",
+            if mode == ViewerMode::Table {
+                "Go to Row"
+            } else {
+                "Go to Line/Offset"
+            },
             true,
             None::<&str>,
         )?;
@@ -497,6 +553,9 @@ fn build_menu(
         items.push(edit);
     }
     items.push(&view_submenu);
+    if let Some(table) = &table_submenu {
+        items.push(table);
+    }
     if let Some(enc) = &encoding_submenu {
         items.push(enc);
     }
@@ -752,6 +811,44 @@ pub fn sniff_viewer_encoding(
     eof: bool,
 ) -> Result<(), Error> {
     ctx.0.set_detected(encoding::detect(&prefix, eof));
+    Ok(())
+}
+
+/// Show another file in this viewer window: a relative link followed from
+/// rendered Markdown.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_in_viewer(
+    ctx: MainWindowContext,
+    viewer: ViewerWindowContext,
+    path: VfsPath,
+) -> Result<(), Error> {
+    let display_path = ctx.format_vfs_path(&path);
+    if ctx.fs()?.file_details(path.clone()).await?.is_dir {
+        return Err(Error::Custom(format!("{display_path} is a directory")));
+    }
+    viewer
+        .0
+        .retarget(path, display_path, ctx.file_server_base_url()?);
+    Ok(())
+}
+
+/// Record what the table viewer detected from the file's first chunk, for
+/// the Table menu's Auto entries to name it.
+#[tauri::command]
+#[specta::specta]
+pub fn report_table_detection(
+    ctx: ViewerWindowContext,
+    delimiter: TableDelimiter,
+    header: bool,
+) -> Result<(), Error> {
+    ctx.0.update_table(|options| {
+        let changed = options.detected_delimiter != Some(delimiter)
+            || options.detected_header != Some(header);
+        options.detected_delimiter = Some(delimiter);
+        options.detected_header = Some(header);
+        changed
+    });
     Ok(())
 }
 

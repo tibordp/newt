@@ -61,7 +61,12 @@ export function isPdfMime(mime: string | null): boolean {
 export type { ViewerMode } from "../lib/bindings";
 import type { ViewerMode } from "../lib/bindings";
 
+const TABLE_MIME_TYPES = new Set(["text/csv", "text/tab-separated-values"]);
+const MARKDOWN_MIME_TYPES = new Set(["text/markdown", "text/x-markdown"]);
+
 export function detectAutoMode(mime: string | null): ViewerMode {
+  if (mime && TABLE_MIME_TYPES.has(mime)) return "table";
+  if (mime && MARKDOWN_MIME_TYPES.has(mime)) return "markdown";
   if (isVideoMime(mime)) return "video";
   if (isAudioMime(mime)) return "audio";
   if (isPdfMime(mime)) return "pdf";

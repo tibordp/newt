@@ -639,7 +639,14 @@ export function HexViewer({
               </div>
             </CM.Trigger>
             <CM.Portal>
-              <CM.Content className={menuStyles.content} loop>
+              <CM.Content
+                className={menuStyles.content}
+                loop
+                onCloseAutoFocus={(e) => {
+                  e.preventDefault();
+                  viewerRef.current?.focus();
+                }}
+              >
                 <CM.Item
                   className={menuStyles.item}
                   disabled={!hexSelection}

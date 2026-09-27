@@ -295,6 +295,13 @@ export function viewer(
     // Pointed at the fixture by the harness.
     file_server_base: null,
     encoding: { detected: null, selected: null },
+    table: {
+      delimiter: null,
+      detected_delimiter: null,
+      quoted: true,
+      header: null,
+      detected_header: null,
+    },
   };
 }
 

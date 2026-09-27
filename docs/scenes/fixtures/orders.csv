@@ -1,0 +1,33 @@
+order_id,date,customer,item,qty,unit_price,total,note
+10231,2026-07-01,Ana Novak,Espresso beans 1 kg,2,24.90,49.80,
+10232,2026-07-01,Marco Rossi,Hand grinder,1,89.00,89.00,Gift wrap
+10233,2026-07-02,Lena Fischer,Pour-over kettle,1,64.50,64.50,
+10234,2026-07-02,"Horvat, Petra",Paper filters (100),3,6.20,18.60,"Leave at the back door, the front bell is broken"
+10235,2026-07-03,Tomás García,Espresso beans 1 kg,1,24.90,24.90,
+10236,2026-07-03,Ana Novak,Milk jug 600 ml,1,19.90,19.90,
+10237,2026-07-04,Jonas Berg,Scale 0.1 g,1,42.00,42.00,Customer asked for an invoice
+10238,2026-07-04,Marco Rossi,Decaf beans 500 g,2,14.50,29.00,
+10239,2026-07-05,Sara Kim,Cold brew bottle,2,27.00,54.00,
+10240,2026-07-05,"Novak, Luka",Espresso beans 1 kg,4,24.90,99.60,Repeat order
+10241,2026-07-06,Lena Fischer,Paper filters (100),2,6.20,12.40,
+10242,2026-07-06,Elif Yılmaz,Hand grinder,1,89.00,89.00,
+10243,2026-07-07,Tomás García,Tamper 58 mm,1,34.00,34.00,
+10244,2026-07-07,Jonas Berg,Espresso beans 1 kg,1,24.90,24.90,
+10245,2026-07-08,Sara Kim,Pour-over kettle,1,64.50,64.50,"Wants the ""matte black"" one, not the steel"
+10246,2026-07-08,Ana Novak,Cleaning tablets,3,9.80,29.40,
+10247,2026-07-09,Marco Rossi,Scale 0.1 g,1,42.00,42.00,
+10248,2026-07-09,Elif Yılmaz,Decaf beans 500 g,1,14.50,14.50,
+10249,2026-07-10,"Horvat, Petra",Milk jug 600 ml,2,19.90,39.80,
+10250,2026-07-10,Lena Fischer,Espresso beans 1 kg,2,24.90,49.80,
+10251,2026-07-11,Jonas Berg,Cold brew bottle,1,27.00,27.00,
+10252,2026-07-11,Sara Kim,Tamper 58 mm,1,34.00,34.00,
+10253,2026-07-12,Tomás García,Cleaning tablets,2,9.80,19.60,
+10254,2026-07-12,"Novak, Luka",Hand grinder,1,89.00,89.00,
+10255,2026-07-13,Ana Novak,Paper filters (100),5,6.20,31.00,
+10256,2026-07-13,Elif Yılmaz,Espresso beans 1 kg,3,24.90,74.70,
+10257,2026-07-14,Marco Rossi,Pour-over kettle,1,64.50,64.50,
+10258,2026-07-14,Lena Fischer,Scale 0.1 g,1,42.00,42.00,
+10259,2026-07-15,Sara Kim,Decaf beans 500 g,2,14.50,29.00,
+10260,2026-07-15,Jonas Berg,Milk jug 600 ml,1,19.90,19.90,
+10261,2026-07-16,"Horvat, Petra",Espresso beans 1 kg,2,24.90,49.80,
+10262,2026-07-16,Tomás García,Cold brew bottle,1,27.00,27.00,

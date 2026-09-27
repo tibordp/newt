@@ -403,17 +403,22 @@ function Editor() {
   }, []);
 
   // Escape closes (prompts if dirty) — from a window listener rather than a
-  // Monaco keybinding so Monaco's own Escape consumers run first: it
-  // preventDefaults every Escape it spends on dismissing widgets (suggest,
-  // find, palette, snippet mode) or canceling a selection, and only an
-  // unclaimed Escape falls through to us.
+  // Monaco keybinding so Monaco's own Escape consumers run first. A command
+  // that spends an Escape (dismissing suggest, find, the palette, snippet
+  // mode; canceling a selection) stops its propagation, so it never gets
+  // here. Monaco's text-area input (WebKit's path) also preventDefaults
+  // every Escape it sees, spent or not: from there, a prevented Escape that
+  // still arrives was claimed by nothing. Anywhere else, prevented means
+  // handled.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeRef.current();
-      }
+      if (e.key !== "Escape") return;
+      const fromEditorText =
+        e.target instanceof HTMLElement &&
+        e.target.classList.contains("inputarea");
+      if (e.defaultPrevented && !fromEditorText) return;
+      e.preventDefault();
+      closeRef.current();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);

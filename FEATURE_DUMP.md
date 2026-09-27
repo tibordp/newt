@@ -623,10 +623,12 @@ Pre-warms are created only from the `init` command — i.e. after the main windo
 
 ### Mode Selection
 
-The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Image, Audio, Video, PDF. The initial mode is chosen automatically:
+The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Table, Markdown, Image, Audio, Video, PDF. The initial mode is chosen automatically:
 
 | Detected Type | Mode |
 |---------------|------|
+| `text/csv`, `text/tab-separated-values` (`.csv`, `.tsv`) | Table |
+| `text/markdown` (`.md`, `.markdown`) | Markdown |
 | `text/*`, `application/json`, `application/xml`, `application/javascript`, `application/typescript`, `application/x-sh`, `application/x-python`, `application/sql`, `application/x-yaml`, `application/toml`, `application/graphql`, `image/svg+xml`, anything ending in `+xml` or `+json` | Text |
 | `image/*` | Image |
 | `audio/*` | Audio |
@@ -636,13 +638,13 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 
 ### Mode Toggle
 
-The status bar includes mode toggle buttons on the right side. The auto-detected mode and Hex are always available as quick-switch options. Pressing **F3** toggles between the auto-detected mode and Hex (e.g., auto=Image, current=Image → F3 → Hex; auto=Image, current=Hex → F3 → Image).
+The status bar includes mode toggle buttons on the right side: the auto-detected mode and its counterpart. Pressing **F3** toggles between the two. The counterpart is Hex for most modes (auto=Image, current=Image → F3 → Hex → F3 → Image), Text for Hex, and Text — the source — for Table and Markdown.
 
 ### Text Mode
 
 - Line-numbered display with a non-selectable gutter. Gutter width adjusts to fit the number of digits in the total line count.
 - **Chunked loading**: Loads files in 128 KB chunks on demand. Large files don't need to be fully loaded before viewing. LRU cache holds up to 32 chunks (4 MB); older chunks are evicted as new ones load.
-- **Encodings**: Decoding happens in the webview with `TextDecoder`, so every WHATWG encoding it knows is available: UTF-8, UTF-16 LE/BE, the Windows-125x and ISO-8859-x families, KOI8, Mac, Shift_JIS, EUC-JP, ISO-2022-JP, GBK, GB18030, Big5, EUC-KR. The catalogue lives in `viewer/encoding.rs` (encoding_rs canonical names, which double as `TextDecoder` labels); UTF-32 has no `TextDecoder` and is not offered. The **Encoding** menu (Text mode only) has an *Auto-detect (name)* entry followed by the catalogue grouped by script; the pick is per viewer window and the status bar shows the effective encoding, with "(BOM)" when one was honoured.
+- **Encodings**: Decoding happens in the webview with `TextDecoder`, so every WHATWG encoding it knows is available: UTF-8, UTF-16 LE/BE, the Windows-125x and ISO-8859-x families, KOI8, Mac, Shift_JIS, EUC-JP, ISO-2022-JP, GBK, GB18030, Big5, EUC-KR. The catalogue lives in `viewer/encoding.rs` (encoding_rs canonical names, which double as `TextDecoder` labels); UTF-32 has no `TextDecoder` and is not offered. The **Encoding** menu (Text, Table and Markdown modes) has an *Auto-detect (name)* entry followed by the catalogue grouped by script; the pick is per viewer window and the status bar shows the effective encoding, with "(BOM)" when one was honoured.
   - **Detection** is sniffed from the data the viewer already has: once the first chunk lands, the text viewer hands its leading 64 KiB to `sniff_viewer_encoding`, which records the result in the viewer's Rust state (menu and status bar follow via the usual state push). Order: BOM (UTF-8, UTF-16 LE/BE), then BOM-less UTF-16 by null-byte parity, then UTF-8 validity (a sequence cut off by the prefix boundary is not held against it), then `chardetng` (Firefox's detector) for legacy codepages. The view renders as UTF-8 until the result lands and then switches once; the line index is rebuilt only when the newline scan changes (UTF-16 needs an aligned code-unit scan; every other catalogue encoding never places 0x0A inside a multibyte sequence) or when a BOM moves the start of line 0.
   - **Columns ↔ bytes**: selection columns are UTF-16 code units of the decoded line. Mapping back to bytes is 1:1 for single-byte encodings, 2:1 for UTF-16, a lead-byte count for UTF-8, and a byte-at-a-time streaming decode for the legacy multibyte encodings (the browser has no encoder for them). ISO-2022-JP is decoded per line, so a line that ends inside a JIS run shows the next line wrong until an escape resets it.
   - **Copy and search** transcode on the host with `encoding_rs`: copy decodes the selected bytes in the effective encoding, literal search encodes the query into it (UTF-16 spelled out by hand, since encoding_rs encodes UTF-16 as UTF-8 per WHATWG). Regex search stays a byte regex over the raw file, so non-ASCII regex literals only match in UTF-8 files. The hex viewer's text search is always UTF-8.
@@ -688,6 +690,27 @@ The status bar includes mode toggle buttons on the right side. The auto-detected
 **Status bar**: `path/to/file.txt | Text | Line 42 / 1250+ | Sel: L10 C5–C20 (0x00A5–0x00B4, 15) | 125.4 KB`
 
 The `+` after the line count indicates the file is still loading. Selection info shows line/column range with byte offsets and size.
+
+### Table Mode (CSV/TSV)
+
+A spreadsheet-style grid over delimited text. It streams like Text mode — the file loads in 128 KB chunks on demand, so a multi-GB CSV on S3 opens at once — and decodes in the encoding the Encoding menu picks (UTF-16 included; Excel's "Unicode Text" export is UTF-16 TSV).
+
+- **Parsing**: RFC 4180, leniently: a `"` at the start of a field opens a quoted field that may hold delimiters and line breaks, with `""` for a quote; a stray quote mid-field is data, and text after a closing quote is kept (like Python's `csv`). `\r\n` and `\n` both end rows. Rows are found by a streaming scan of the raw chunks that carries quote state across chunk boundaries, extended as the view approaches the scanned end — so row counts show a `+` until the scan reaches the end of the file, and the scrollbar is estimated from the average row size meanwhile.
+- **Table menu** (per viewer window): **Delimiter** — *Auto-detect (…)*, Comma, Semicolon, Tab, Pipe; **First Row Is Header** — *Auto-detect (Yes/No)*, Yes, No; **Quoted Fields** (on by default; off splits on the delimiter and line breaks only, keeping quotes as data). Auto-detection reads the first chunk: the delimiter is the one that splits its rows most consistently into more than one field (the extension breaks ties — `.tsv`/`.tab` → Tab, otherwise Comma); a header is recognized the way Python's `csv.Sniffer.has_header` does, by columns of numbers or fixed-width values under a label that isn't one.
+- **Layout**: a header row (the first row's values, or spreadsheet letters A, B, … AA when there is no header) stays on top and a row-number gutter on the left while the grid scrolls both ways; only the visible rows and columns are rendered. Numeric cells are right-aligned, and a line break inside a cell shows as `↵`. Column widths start fitted to the first chunk's values (capped at 300 px); drag a header's right edge to resize, double-click it to fit the column to the visible rows (up to 480 px).
+- **Selection**: a cell cursor with a rectangular range. The cursor starts on A1 (once the first data row is in; a table with no data rows — an empty file, a header on its own — has no cursor and its status shows `0 rows × N cols`). Click a cell, drag or Shift+click to extend; click a column header to select the column (drag or Shift+click for several), a row number for the row, the corner for everything. Keys: arrows move (Shift extends), Tab and Shift+Tab move right and left, Mod+arrows jump to the edge (Mod+Down scans to the end), Page Up/Down move a page, Home/End go to the first/last column, Mod+Home/End to the first/last cell; Escape shrinks the selection to the cursor, then closes the viewer.
+- **Select mode**, for copying part of a cell: double-click a cell, or press **Enter** or **F2** (Google Sheets' and Excel's keys for entering a cell), and it becomes a read-only text box showing the full value with its real line breaks. The box grows over its neighbours to fit the value: wider up to 640 px, then taller as long lines wrap (visually only — a copy keeps the text as it is), up to 12 lines, then it scrolls. The value starts out selected; the caret keys move and extend the selection as in any text field, Home and End going to the start and end of the value (typing, pasting and deleting do nothing), Mod+A selects the cell's text again, and Mod+C (or Edit ▸ Copy, or the context menu) copies the selected text — the whole value when nothing is selected. Escape or Enter returns to the cell cursor, Tab and Shift+Tab to the next and previous cell; clicking elsewhere in the grid leaves it too, and so does scrolling the cell out of view. The status bar names the cell while select mode is on.
+- **Copy** (Mod+C, Edit ▸ Copy): the selected cells as TSV, which pastes into Excel, Numbers and Google Sheets as cells — a field holding a tab, quote or line break is quoted. The context menu adds **Copy as CSV**. Copying whole columns includes their header. Up to 10 MB of the file per copy, like Text mode.
+- **Search** (Mod+F) is the text viewer's search bar, run over the raw file on the backend (remote files included); a hit selects the cell it falls in (a hit in the header selects its column). **Go to Row** (Mod+G, Edit ▸ Go to Row) jumps to a data row.
+- **Status bar**: path | Table | encoding | `Row r / n+ | Col C` | selection size | file size.
+
+### Markdown Mode
+
+Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks) with `marked`, styled after GitHub's and following the app's light/dark theme. Files over 4 MB open in Text mode instead.
+
+- **Safety**: the HTML is sanitized with DOMPurify (inline `style` attributes and `<style>`/`<form>` removed) and the sanitized DOM is inserted as is — never serialized and parsed again — into a shadow root, which keeps the document's styles and ids from touching the viewer's own; the viewer's CSP forbids inline scripts and inline event handlers besides. The CSP also keeps remote content out: images load only from the file itself (relative paths, served through the viewer's file server — so they work in remote sessions and archives too) or `data:` URIs, so README badges and tracking pixels don't load.
+- **Links**: `http(s):` and `mailto:` links open in the system browser; a relative link opens that file in the same viewer window (in whatever mode suits it); `#anchor` links scroll to the heading with GitHub's anchor for it. Links with any other scheme do nothing — the app's URL opener refuses anything but web and mail links, since it would otherwise launch local files and programs.
+- The document scrolls with the arrow and page keys, and the viewer's keys (Escape, F3, …) work as in any mode; text selection and Mod+C work as in a web page. It follows theme changes live.
 
 ### Hex Mode
 
@@ -1709,6 +1732,10 @@ Focus is a first-class concern — broken focus means reaching for the mouse, wh
 - **On close**: Focus *always* returns to the previously active pane or terminal. Implemented via `onCloseAutoFocus` on Radix Dialog, which calls `refocusActivePane` (increments `focusGeneration` → Pane re-runs its focus effect).
 - **Tab key**: Disabled inside modals (focus is managed by the app, not browser tab order).
 - **Command middleware**: All `cmd_*` commands automatically close any open modal before dispatching, preventing stale modal state.
+
+### Viewer Windows
+
+Focus stays on the viewer's content, so its keys keep working: Tab and Shift+Tab do nothing outside a text field (the table viewer uses them to move between cells) instead of walking focus off into the page, and closing a viewer's context menu returns focus to the viewer — or, in the table viewer's select mode, to the cell's text box.
 
 ### Focus Theft Prevention
 
