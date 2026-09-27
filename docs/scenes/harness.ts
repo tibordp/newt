@@ -228,7 +228,10 @@ mockIPC(
 );
 
 if (scene.window === "main") reportTitle(scene.state.window_title);
-if (scene.window === "viewer") reportTitle(scene.state.display_path ?? "");
+// Rust titles a viewer window when opening it; the webview never does.
+if (scene.window === "viewer") {
+  reportTitle(`${scene.state.display_path ?? ""} - Viewer`);
+}
 
 const frame = () => new Promise((r) => requestAnimationFrame(r));
 

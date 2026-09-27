@@ -10,6 +10,8 @@ const scene: Scene = {
   window: "editor",
   state: editor({ vfs_id: 0, path }, "rust"),
   files: { [path]: { url: walk, mime: "text/x-rust" } },
+  // Monaco loads the Rust grammar lazily and tokenizes after first paint.
+  ready: '.monaco-editor .view-line span[class*="mtk"]:not(.mtk1)',
 };
 
 export default scene;
