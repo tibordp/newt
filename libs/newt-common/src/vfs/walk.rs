@@ -942,6 +942,9 @@ mod tests {
         walk(&vfs, std::slice::from_ref(&root), &options, &mut log)
             .await
             .unwrap();
+        // Children come in the filesystem's listing order (hashed on ext4).
+        let children = log.lines.len() - 1;
+        log.lines[1..children].sort();
         let root = root.as_wire_str();
         assert_eq!(
             log.lines,

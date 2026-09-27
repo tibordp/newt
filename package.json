@@ -78,6 +78,6 @@
     ]
   },
   "overrides": {
-    "dompurify": "^3.4.12"
+    "dompurify": "$dompurify"
   }
 }
