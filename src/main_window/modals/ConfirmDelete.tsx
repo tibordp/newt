@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
@@ -31,7 +32,9 @@ export default function ConfirmDelete({
     <DialogShell>
       <DialogHeader title="Delete" />
       <DialogBody className={styles.body}>
-        {message}
+        <Dialog.Description asChild>
+          <span>{message}</span>
+        </Dialog.Description>
         {mode !== "trash" && (
           <FieldFold summary="More options">
             <FieldGroup>

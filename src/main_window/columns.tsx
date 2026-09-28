@@ -72,9 +72,9 @@ function FileName({
   );
 
   const iconElement = is_dir ? (
-    <div className="file-icon folder" />
+    <div className="file-icon folder" aria-hidden />
   ) : (
-    <div className="file-icon" style={{ color }}>
+    <div className="file-icon" style={{ color }} aria-hidden>
       {ch}
     </div>
   );
@@ -474,6 +474,8 @@ export const COLUMN_CHOICES = [
   { key: "attributes", label: "Attributes" },
   { key: "symlink_target", label: "Link Target" },
 ];
+
+const sortKeyLabels = new Map(COLUMN_CHOICES.map((c) => [c.key, c.label]));
 
 /// Columns that only exist where the pane's VFS populates their metadata
 /// family (see `MetadataTraits`). Unlisted keys are trait-free.
@@ -897,6 +899,21 @@ export function ColumnHeader({
     );
   }, [savedWidth]);
 
+  const sortIndicator = (
+    sortKey: string | undefined,
+    up: string,
+    down: string,
+  ) =>
+    sorting.key == sortKey && (
+      <span
+        className={styles.sortingIndicator}
+        role="img"
+        aria-label={sorting.asc ? "sorted ascending" : "sorted descending"}
+      >
+        {sorting.asc ? up : down}
+      </span>
+    );
+
   const defaultSubcolStyle = {
     flexGrow: 1,
     flexShrink: 1,
@@ -919,6 +936,11 @@ export function ColumnHeader({
             key={i}
             ref={ref}
             className={`${styles.subcolumn} ${subcol.sortKey ? styles.sortable : ""}`}
+            title={
+              subcol.sortKey
+                ? `Sort by ${sortKeyLabels.get(subcol.sortKey) ?? subcol.name}`
+                : undefined
+            }
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               if (didDragRef.current) {
@@ -934,32 +956,17 @@ export function ColumnHeader({
             }}
             style={subcol.style || defaultSubcolStyle}
           >
-            {column.align == "right" && (
-              <>
-                {sorting.key == subcol.sortKey && sorting.asc && (
-                  <span className={styles.sortingIndicator}>▲ </span>
-                )}
-                {sorting.key == subcol.sortKey && !sorting.asc && (
-                  <span className={styles.sortingIndicator}>▼ </span>
-                )}
-              </>
-            )}
+            {column.align == "right" &&
+              sortIndicator(subcol.sortKey, "▲ ", "▼ ")}
             {subcol.name}
-            {column.align == "left" && (
-              <>
-                {sorting.key == subcol.sortKey && sorting.asc && (
-                  <span className={styles.sortingIndicator}> ▲</span>
-                )}
-                {sorting.key == subcol.sortKey && !sorting.asc && (
-                  <span className={styles.sortingIndicator}> ▼</span>
-                )}
-              </>
-            )}
+            {column.align == "left" &&
+              sortIndicator(subcol.sortKey, " ▲", " ▼")}
           </div>
         ))}
       </div>
       <div
         className={styles.columnGrip}
+        aria-hidden
         onMouseDown={onmousedown}
         onDoubleClick={(e) => onAutoSize(e.shiftKey)}
       ></div>

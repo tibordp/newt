@@ -1,3 +1,5 @@
+@use "../styles/forced-colors" as fc;
+
 .datum,
 .column {
   overflow: hidden;
@@ -40,6 +42,7 @@
   display: none;
   pointer-events: none;
   z-index: 11;
+  @include fc.fill;
 }
 
 .subcolumn {
@@ -69,6 +72,7 @@
 // the flare.
 .reordering {
   background: var(--color-selected-bg);
+  @include fc.selected;
 }
 
 .reordering .sortable:hover {

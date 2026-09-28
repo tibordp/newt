@@ -165,7 +165,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
       }}
     >
       <Dialog.Title className="sr-only">Hot Paths</Dialog.Title>
-      <Palette shouldFilter={false} onKeyDown={onKeyDown}>
+      <Palette shouldFilter={false} onKeyDown={onKeyDown} label="Search paths">
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -173,7 +173,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
             placeholder="Search paths..."
           />
         </div>
-        <Command.List>
+        <Command.List label="Paths">
           {loading && <Command.Loading>Loading...</Command.Loading>}
           <Command.Empty>No paths found</Command.Empty>
           {grouped.map(({ category, items }) => (
@@ -227,7 +227,10 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                                   highlightClass={styles.highlight}
                                 />
                               </span>
-                              <span className={styles.path}>
+                              <span
+                                className={styles.path}
+                                title={displayPath(entry)}
+                              >
                                 <Highlight
                                   text={displayPath(entry)}
                                   filter={filter}
@@ -249,7 +252,8 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                           <button
                             className={styles.deleteBtn}
                             onClick={(e) => requestDelete(entry, e)}
-                            title="Remove bookmark"
+                            title="Remove bookmark (Delete)"
+                            aria-label="Remove bookmark"
                             tabIndex={-1}
                           >
                             &times;

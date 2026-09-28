@@ -56,6 +56,7 @@ export function GoToBar({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
+        aria-label={label}
         autoFocus
       />
       <button
@@ -75,6 +76,7 @@ export function GoToBar({
         className={styles.searchBtn}
         onClick={onClose}
         title="Close (Escape)"
+        aria-label="Close"
       >
         {"\u2715"}
       </button>

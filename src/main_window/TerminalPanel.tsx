@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { commands } from "../lib/bindings";
 import { safeSilent } from "../lib/ipc";
 import { useCommandShortcuts } from "../lib/scopedBindings";
@@ -23,38 +24,50 @@ export default function TerminalPanel({
   maximized,
 }: Props) {
   const shortcuts = useCommandShortcuts();
+  const idBase = useId();
+  const tabId = (handle: number) => `${idBase}-tab-${handle}`;
+  const panelId = (handle: number) => `${idBase}-panel-${handle}`;
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} role="region" aria-label="Terminal panel">
       <div className={styles.tabBar}>
-        {terminals.map((term, i) => (
-          <button
-            key={term.handle}
-            className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""} ${term.defunct ? styles.defunct : ""}`}
-            tabIndex={-1}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => safeSilent(commands.activateTerminal(term.handle))}
-          >
-            <span>
-              Terminal {i + 1}
-              {term.defunct ? " (exited)" : ""}
-            </span>
-            <span
-              className={styles.tabClose}
-              onClick={(e) => {
-                e.stopPropagation();
-                safeSilent(commands.closeTerminal(term.handle));
-              }}
+        <div className={styles.tabs} role="tablist" aria-label="Terminals">
+          {terminals.map((term, i) => (
+            <button
+              key={term.handle}
+              id={tabId(term.handle)}
+              className={`${styles.tab} ${term.handle === activeTerminal ? styles.active : ""} ${term.defunct ? styles.defunct : ""}`}
+              role="tab"
+              aria-selected={term.handle === activeTerminal}
+              aria-controls={panelId(term.handle)}
+              tabIndex={-1}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => safeSilent(commands.activateTerminal(term.handle))}
             >
-              ×
-            </span>
-          </button>
-        ))}
+              <span>
+                Terminal {i + 1}
+                {term.defunct ? " (exited)" : ""}
+              </span>
+              <span
+                className={styles.tabClose}
+                title="Close terminal"
+                aria-hidden
+                onClick={(e) => {
+                  e.stopPropagation();
+                  safeSilent(commands.closeTerminal(term.handle));
+                }}
+              >
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
         <button
           className={styles.addButton}
           tabIndex={-1}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => safeSilent(commands.cmdCreateTerminal(0))}
-          title="New Terminal"
+          aria-label="New terminal"
+          title={shortcuts.label("New terminal", "create_terminal")}
         >
           +
         </button>
@@ -69,6 +82,7 @@ export default function TerminalPanel({
             }
             safeSilent(commands.cmdToggleMaximized(0));
           }}
+          aria-label={maximized ? "Restore split layout" : "Maximize terminal"}
           title={shortcuts.label(
             maximized ? "Restore split layout" : "Maximize terminal",
             "toggle_maximized",
@@ -81,6 +95,9 @@ export default function TerminalPanel({
         {terminals.map((term) => (
           <div
             key={term.handle}
+            id={panelId(term.handle)}
+            role="tabpanel"
+            aria-labelledby={tabId(term.handle)}
             className={`${styles.terminalWrapper} ${term.handle !== activeTerminal ? styles.hidden : ""}`}
           >
             <Terminal

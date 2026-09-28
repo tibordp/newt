@@ -1,4 +1,5 @@
 @use "../styles/dialog-mixins" as dlg;
+@use "../styles/forced-colors" as fc;
 
 .content {
   @include dlg.dialog-surface;
@@ -73,6 +74,7 @@
   background: var(--color-border);
   border-radius: 4px;
   overflow: hidden;
+  @include fc.track;
 }
 
 .progressFill {
@@ -80,6 +82,7 @@
   background: var(--color-accent);
   border-radius: 4px;
   transition: width 0.1s linear;
+  @include fc.fill;
 }
 
 .progressInfo {

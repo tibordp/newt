@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,7 +20,7 @@ import {
   type TableOptions,
 } from "../lib/bindings";
 import { useFormatBytes } from "../lib/size";
-import { useScopedBindings } from "../lib/scopedBindings";
+import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import { GoToBar } from "./GoToDialog";
 import { SearchBar, type SearchMatch } from "./SearchBar";
 import { ModeToggle } from "./ModeToggle";
@@ -182,6 +183,8 @@ export function TableViewer({
   options,
 }: TableViewerProps) {
   const formatSize = useFormatBytes();
+  const shortcuts = useCommandShortcuts();
+  const gridId = useId();
   const viewerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -1201,6 +1204,19 @@ export function TableViewer({
     rect && rect.r0 === 0 && rect.r1 === Infinity ? rect : null;
   const selectedRows = rect && rect.c1 === Infinity ? rect : null;
 
+  // Focus stays on the viewer, not the cell; aria-activedescendant tells
+  // assistive tech which cell the cursor is on.
+  const cellId = (row: number, col: number) => `${gridId}-${row}-${col}`;
+  const activeCell =
+    head &&
+    !editing &&
+    head.row >= startRow &&
+    head.row - startRow < visibleData.length &&
+    head.col >= firstCol &&
+    head.col <= lastCol
+      ? cellId(head.row, head.col)
+      : undefined;
+
   const status = (() => {
     const cursor =
       head && knownRows > 0
@@ -1223,6 +1239,8 @@ export function TableViewer({
       className={styles.viewer}
       ref={viewerRef}
       tabIndex={-1}
+      role="group"
+      aria-activedescendant={activeCell}
       onKeyDown={handleKeyDown}
     >
       <CM.Root>
@@ -1233,6 +1251,12 @@ export function TableViewer({
             onScroll={handleScroll}
           >
             <div
+              role="grid"
+              aria-label={filePath}
+              aria-multiselectable
+              aria-rowcount={eofRef.current ? knownRows + 1 : -1}
+              aria-colcount={columnCount + 1}
+              aria-busy={!detected}
               style={{
                 position: "relative",
                 height: ROW_HEIGHT + scrollableHeight,
@@ -1242,10 +1266,15 @@ export function TableViewer({
               <div
                 className={tableStyles.headerRow}
                 ref={headerRef}
+                role="row"
+                aria-rowindex={1}
                 style={{ width: rowWidth, height: ROW_HEIGHT }}
               >
                 <div
                   className={tableStyles.corner}
+                  role="columnheader"
+                  aria-colindex={1}
+                  title={shortcuts.label("Select all", "viewer_select_all")}
                   style={{ width: gutterWidth }}
                   onMouseDown={(e) => {
                     if (e.button !== 0) return;
@@ -1255,11 +1284,13 @@ export function TableViewer({
                     selectAll();
                   }}
                 />
-                <div style={{ width: leftSpacer, flexShrink: 0 }} />
+                <div aria-hidden style={{ width: leftSpacer, flexShrink: 0 }} />
                 {cols.map((c) => (
                   <div
                     key={c}
                     data-col={c}
+                    role="columnheader"
+                    aria-colindex={c + 2}
                     title={labelOf(c)}
                     className={`${tableStyles.headerCell} ${
                       c >= (rect?.c0 ?? Infinity) && c <= (rect?.c1 ?? -1)
@@ -1276,6 +1307,7 @@ export function TableViewer({
                     <span className={tableStyles.cellText}>{labelOf(c)}</span>
                     <div
                       className={tableStyles.grip}
+                      aria-hidden
                       onMouseDown={(e) => {
                         if (e.button !== 0) return;
                         e.preventDefault();
@@ -1294,17 +1326,21 @@ export function TableViewer({
                   </div>
                 ))}
               </div>
-              <div style={{ height: topSpacer }} />
+              <div aria-hidden style={{ height: topSpacer }} />
               {visibleData.map((fields, i) => {
                 const row = startRow + i;
                 return (
                   <div
                     key={row}
                     className={tableStyles.row}
+                    role="row"
+                    aria-rowindex={row + 2}
                     style={{ width: rowWidth, height: ROW_HEIGHT }}
                   >
                     <div
                       data-row={row}
+                      role="rowheader"
+                      aria-colindex={1}
                       className={`${tableStyles.gutterCell} ${
                         rect && row >= rect.r0 && row <= rect.r1
                           ? selectedRows
@@ -1317,15 +1353,22 @@ export function TableViewer({
                     >
                       {row + 1}
                     </div>
-                    <div style={{ width: leftSpacer, flexShrink: 0 }} />
+                    <div
+                      aria-hidden
+                      style={{ width: leftSpacer, flexShrink: 0 }}
+                    />
                     {cols.map((c) => {
                       const value = fields[c] ?? "";
                       const cursor = head?.row === row && head?.col === c;
                       return (
                         <div
                           key={c}
+                          id={cellId(row, c)}
                           data-row={row}
                           data-col={c}
+                          role="gridcell"
+                          aria-colindex={c + 2}
+                          aria-selected={inRect(rect, row, c)}
                           className={`${tableStyles.cell} ${
                             isNumeric(value) ? tableStyles.numeric : ""
                           } ${inRect(rect, row, c) ? tableStyles.selected : ""} ${
@@ -1351,6 +1394,7 @@ export function TableViewer({
                   ref={editRef}
                   className={tableStyles.selectBox}
                   aria-readonly
+                  aria-label={`Cell ${columnName(editing.col)}${editing.row + 1} text`}
                   wrap="soft"
                   spellCheck={false}
                   autoCorrect="off"
@@ -1458,23 +1502,35 @@ export function TableViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>Table</span>
           {encodingLabel && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>{encodingLabel}</span>
             </>
           )}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{status}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
           {notice && (
             <>
-              <span className={styles.statusSeparator}>|</span>
-              <span className={styles.statusError}>{notice}</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
+              <span className={styles.statusError} role="alert">
+                {notice}
+              </span>
             </>
           )}
         </span>

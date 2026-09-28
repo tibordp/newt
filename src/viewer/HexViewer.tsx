@@ -560,6 +560,8 @@ export function HexViewer({
         className={styles.viewerContent}
         ref={containerRef}
         onScroll={handleScroll}
+        role="document"
+        aria-label={filePath}
       >
         <div style={{ height: scrollableHeight }}>
           <div style={{ height: topSpacerHeight }} />
@@ -707,10 +709,14 @@ export function HexViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>Hex</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>
             Offset {formatHexOffset(currentOffset)} /{" "}
             {formatHexOffset(discoveredSize)}
@@ -724,7 +730,9 @@ export function HexViewer({
               const byteCount = selEnd - selStart + 1;
               return (
                 <>
-                  <span className={styles.statusSeparator}>|</span>
+                  <span className={styles.statusSeparator} aria-hidden>
+                    |
+                  </span>
                   <span>
                     Sel: {formatHexOffset(selStart)}
                     {"\u2013"}
@@ -733,7 +741,9 @@ export function HexViewer({
                 </>
               );
             })()}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
         </span>
         <ModeToggle currentMode="hex" autoMode={autoMode} />

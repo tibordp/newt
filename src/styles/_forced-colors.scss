@@ -1,0 +1,48 @@
+// Windows High Contrast (`forced-colors: active`) replaces author text and
+// background colors with the theme's, so a state drawn only with them
+// vanishes. Authored system colors are kept, so these redraw such states in
+// the theme's own. Outlines and borders survive, recolored to CanvasText.
+
+// A selected or highlighted item. Forced colors backs every text run with a
+// Canvas plate, which on Highlight hides the text; `forced-color-adjust:
+// none` drops the plate but also stops forcing for the whole subtree, so the
+// item's and its descendants' colors (git status and file-type tints, match
+// highlights, key caps) are all set here. Not for containers holding form
+// fields, whose own colors would then go unforced.
+@mixin selected {
+  @media (forced-colors: active) {
+    forced-color-adjust: none;
+    background: Highlight !important;
+
+    &,
+    & * {
+      color: HighlightText !important;
+    }
+
+    & * {
+      background: transparent !important;
+    }
+  }
+}
+
+// A cursor, drawn apart from selection so the two show at once.
+@mixin cursor {
+  @media (forced-colors: active) {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+}
+
+// A shape whose fill carries meaning: progress, drop indicators.
+@mixin fill {
+  @media (forced-colors: active) {
+    background: Highlight;
+  }
+}
+
+// The track a fill runs in, whose own background is forced away.
+@mixin track {
+  @media (forced-colors: active) {
+    outline: 1px solid CanvasText;
+  }
+}

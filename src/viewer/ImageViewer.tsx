@@ -677,6 +677,7 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => zoomAtCenter(stateRef.current.zoom / KEY_ZOOM_FACTOR)}
         title={shortcuts.label("Zoom out", "viewer_zoom_out")}
+        aria-label="Zoom out"
       >
         <IconMinus />
       </button>
@@ -686,7 +687,7 @@ export function ImageViewer({
             className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarZoom}`}
             title="Zoom presets"
           >
-            {zoomPercent}% ▾
+            {zoomPercent}% <span aria-hidden>▾</span>
           </button>
         </DM.Trigger>
         <DM.Portal>
@@ -724,6 +725,7 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => zoomAtCenter(stateRef.current.zoom * KEY_ZOOM_FACTOR)}
         title={shortcuts.label("Zoom in", "viewer_zoom_in")}
+        aria-label="Zoom in"
       >
         <IconPlus />
       </button>
@@ -747,6 +749,7 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => rotate(-90)}
         title={shortcuts.label("Rotate counter-clockwise", "viewer_rotate_ccw")}
+        aria-label="Rotate counter-clockwise"
       >
         <IconRotateCcw />
       </button>
@@ -754,6 +757,7 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={() => rotate(90)}
         title={shortcuts.label("Rotate clockwise", "viewer_rotate_cw")}
+        aria-label="Rotate clockwise"
       >
         <IconRotateCw />
       </button>
@@ -761,6 +765,8 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${flipH ? styles.viewerToolbarBtnActive : ""}`}
         onClick={toggleFlipH}
         title={shortcuts.label("Flip horizontal", "viewer_flip_horizontal")}
+        aria-label="Flip horizontal"
+        aria-pressed={flipH}
       >
         <IconFlipH />
       </button>
@@ -768,6 +774,8 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${flipV ? styles.viewerToolbarBtnActive : ""}`}
         onClick={toggleFlipV}
         title={shortcuts.label("Flip vertical", "viewer_flip_vertical")}
+        aria-label="Flip vertical"
+        aria-pressed={flipV}
       >
         <IconFlipV />
       </button>
@@ -776,6 +784,7 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn}`}
         onClick={cycleBackground}
         title={shortcuts.label("Cycle background", "viewer_cycle_background")}
+        aria-label="Cycle background"
       >
         <IconChecker />
       </button>
@@ -783,6 +792,8 @@ export function ImageViewer({
         className={`${styles.viewerToolbarBtn} ${styles.viewerToolbarIconBtn} ${infoOpen ? styles.viewerToolbarBtnActive : ""}`}
         onClick={() => setInfoOpen((v) => !v)}
         title={shortcuts.label("Image info", "viewer_toggle_info")}
+        aria-label="Image info"
+        aria-pressed={infoOpen}
       >
         <IconInfo />
       </button>
@@ -790,7 +801,11 @@ export function ImageViewer({
   );
 
   const infoPanel = infoOpen && (
-    <div className={styles.imageInfoPanel}>
+    <div
+      className={styles.imageInfoPanel}
+      role="complementary"
+      aria-label="Image info"
+    >
       <div className={styles.imageInfoHeader}>Image</div>
       <dl className={styles.imageInfoList}>
         {naturalSize && (
@@ -854,7 +869,7 @@ export function ImageViewer({
               onDoubleClick={handleDoubleClick}
             >
               {imageError ? (
-                <div className={styles.imageErrorMessage}>
+                <div className={styles.imageErrorMessage} role="alert">
                   Unable to display image preview
                 </div>
               ) : (
@@ -1029,12 +1044,16 @@ export function ImageViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>Image</span>
           {naturalSize && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>
                 {naturalSize.w} x {naturalSize.h}
               </span>
@@ -1042,25 +1061,33 @@ export function ImageViewer({
           )}
           {!imageError && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>{zoomPercent}%</span>
             </>
           )}
           {orientation && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>{orientation}</span>
             </>
           )}
           {sel && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>
                 Sel: {sel.w} × {sel.h}
               </span>
             </>
           )}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
         </span>
         <ModeToggle currentMode="image" autoMode={autoMode} />

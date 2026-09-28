@@ -10,6 +10,7 @@ import {
   DialogSubmitButton,
   Field,
   FieldRow,
+  fieldHintId,
 } from "./primitives";
 
 type SelectByPatternProps = CommonDialogProps &
@@ -74,6 +75,7 @@ export default function SelectByPattern({
             autoFocus
             spellCheck={false}
             aria-invalid={matches === null}
+            aria-describedby={fieldHintId("pattern")}
           />
         </Field>
         <FieldRow label="Action">

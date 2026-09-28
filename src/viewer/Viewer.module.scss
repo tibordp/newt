@@ -1,3 +1,5 @@
+@use "../styles/forced-colors" as fc;
+
 .viewer {
   position: absolute;
   top: 0;
@@ -78,6 +80,7 @@
 
 .selInactive {
   background-color: rgba(128, 128, 128, 0.3);
+  @include fc.selected;
 }
 
 // Hex viewer structured columns
@@ -187,6 +190,7 @@
   background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
   color: var(--color-fg);
   border-color: var(--color-border, #555);
+  @include fc.selected;
 }
 
 .searchStatus {
@@ -424,6 +428,7 @@
 .viewerToolbarBtnActive {
   background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
   border-color: var(--color-border, #555);
+  @include fc.selected;
 }
 
 .viewerToolbarSep {
@@ -486,4 +491,5 @@
   background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
   color: var(--color-fg);
   border-color: var(--color-border, #555);
+  @include fc.selected;
 }

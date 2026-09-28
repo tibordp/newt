@@ -39,7 +39,7 @@ export default function SelectWslDistro({ distros }: SelectWslDistroProps) {
       <Dialog.Title className="sr-only">
         Connect to WSL Distribution
       </Dialog.Title>
-      <Palette shouldFilter={false}>
+      <Palette shouldFilter={false} label="Search WSL distributions">
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -47,7 +47,7 @@ export default function SelectWslDistro({ distros }: SelectWslDistroProps) {
             placeholder="Search WSL distributions..."
           />
         </div>
-        <Command.List>
+        <Command.List label="WSL distributions">
           <Command.Empty>No matching distributions.</Command.Empty>
           {filtered.map(({ distro: d }) => (
             <Command.Item key={d.name} value={d.name} onSelect={onSelect}>

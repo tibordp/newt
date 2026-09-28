@@ -169,7 +169,12 @@ export function SearchBar({
   if (!open) return null;
 
   return (
-    <div className={styles.searchBar} onKeyDown={handleKeyDown}>
+    <div
+      className={styles.searchBar}
+      role="search"
+      aria-busy={searching}
+      onKeyDown={handleKeyDown}
+    >
       <input
         ref={inputRef}
         className={styles.searchInput}
@@ -188,6 +193,7 @@ export function SearchBar({
               : "Search text..."
         }
         disabled={searching}
+        aria-label={hexMode ? "Find hex bytes" : "Find"}
       />
       {mode === "hex" && (
         <button
@@ -198,6 +204,7 @@ export function SearchBar({
             setStatus(null);
           }}
           title="Search as hex bytes"
+          aria-pressed={hexMode}
         >
           Hex
         </button>
@@ -210,6 +217,8 @@ export function SearchBar({
             setStatus(null);
           }}
           title="Use regular expression"
+          aria-label="Use regular expression"
+          aria-pressed={useRegex}
         >
           .*
         </button>
@@ -218,7 +227,8 @@ export function SearchBar({
         className={styles.searchBtn}
         onClick={findNext}
         disabled={searching || !query.trim()}
-        title="Find Next (Enter)"
+        title="Find next (Enter)"
+        aria-label="Find next"
       >
         {"\u25BC"}
       </button>
@@ -227,6 +237,7 @@ export function SearchBar({
         onClick={findPrev}
         disabled={searching || !query.trim()}
         title="Find from start (Shift+Enter)"
+        aria-label="Find from start"
       >
         {"\u25B2"}
       </button>
@@ -235,6 +246,7 @@ export function SearchBar({
         className={styles.searchBtn}
         onClick={onClose}
         title="Close (Escape)"
+        aria-label="Close"
       >
         {"\u2715"}
       </button>

@@ -304,6 +304,7 @@ export default function MountS3({
               <input
                 id="s3-access-key"
                 type="text"
+                aria-required
                 value={accessKeyId}
                 onChange={(e) => setAccessKeyId(e.target.value)}
                 autoComplete="off"
@@ -314,6 +315,7 @@ export default function MountS3({
               <input
                 id="s3-secret-key"
                 type="password"
+                aria-required
                 value={secretAccessKey}
                 onChange={(e) => setSecretAccessKey(e.target.value)}
                 autoComplete="off"
@@ -328,6 +330,7 @@ export default function MountS3({
               <input
                 id="s3-role-arn"
                 type="text"
+                aria-required
                 value={roleArn}
                 onChange={(e) => setRoleArn(e.target.value)}
                 placeholder="arn:aws:iam::123456789012:role/MyRole"

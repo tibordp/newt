@@ -101,7 +101,7 @@ export default function CommandPalette({
       onCloseAutoFocus={preventAutoFocus}
     >
       <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
-      <Palette shouldFilter={false}>
+      <Palette shouldFilter={false} label="Filter commands">
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -109,7 +109,7 @@ export default function CommandPalette({
             placeholder="Start typing to filter commands"
           />
         </div>
-        <Command.List>
+        <Command.List label="Commands">
           <Command.Empty>No commands found</Command.Empty>
           {filteredCommands.map((command, i) => (
             <Command.Item

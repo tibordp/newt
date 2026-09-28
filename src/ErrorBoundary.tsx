@@ -15,7 +15,9 @@ function ErrorDisplay({
   return (
     <div className={styles.container}>
       <h2>Something went wrong</h2>
-      <pre className={styles.message}>{message}</pre>
+      <pre className={styles.message} role="alert">
+        {message}
+      </pre>
       {stack && <pre className={styles.stack}>{stack}</pre>}
       {onRetry && (
         <button className={styles.retryButton} onClick={onRetry}>

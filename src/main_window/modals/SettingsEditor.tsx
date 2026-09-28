@@ -1,15 +1,21 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useId, useMemo, useState } from "react";
 
 import { safe, unwrap } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
+import { useCommandShortcuts } from "../../lib/scopedBindings";
 import styles from "./SettingsEditor.module.scss";
 import { CommandsEditor } from "./settings/CommandsEditor";
 import { KeybindingsEditor } from "./settings/KeybindingsEditor";
 import { CustomWidget, SettingControl } from "./settings/SettingControls";
 import { extractSettings } from "./settings/schema";
 import { commands, type PaneHandle } from "../../lib/bindings";
-import { DialogTabs, IconOpenExternal, IconRevealInPane } from "./primitives";
+import {
+  DialogTabs,
+  dialogTabId,
+  IconOpenExternal,
+  IconRevealInPane,
+} from "./primitives";
 
 type Tab = "settings" | "keybindings" | "commands";
 
@@ -27,6 +33,10 @@ export default function SettingsEditor({
   const [filter, setFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("settings");
+  const idBase = useId();
+  const shortcuts = useCommandShortcuts();
+  const categoryTabId = (key: string | null) =>
+    `${idBase}-category-${key ?? "all"}`;
 
   const allSettings = useMemo(
     () => (preferences ? extractSettings(preferences) : []),
@@ -85,6 +95,7 @@ export default function SettingsEditor({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Search settings..."
+          aria-label="Search settings"
           autoFocus
         />
       </div>
@@ -98,13 +109,28 @@ export default function SettingsEditor({
           value={activeTab}
           onChange={setActiveTab}
           stretch
+          label="Settings sections"
+          panelId={`${idBase}-panel`}
         />
       </div>
-      <div className={styles.body}>
+      <div
+        className={styles.body}
+        id={`${idBase}-panel`}
+        role="tabpanel"
+        aria-labelledby={dialogTabId(`${idBase}-panel`, activeTab)}
+      >
         {activeTab === "settings" && (
           <>
-            <div className={styles.sidebar}>
+            <div
+              className={styles.sidebar}
+              role="tablist"
+              aria-orientation="vertical"
+              aria-label="Categories"
+            >
               <div
+                id={categoryTabId(null)}
+                role="tab"
+                aria-selected={activeCategory === null}
                 className={
                   activeCategory === null
                     ? styles.sidebarItemActive
@@ -117,6 +143,9 @@ export default function SettingsEditor({
               {categories.map(([key, title]) => (
                 <div
                   key={key}
+                  id={categoryTabId(key)}
+                  role="tab"
+                  aria-selected={activeCategory === key}
                   className={
                     activeCategory === key
                       ? styles.sidebarItemActive
@@ -128,7 +157,11 @@ export default function SettingsEditor({
                 </div>
               ))}
             </div>
-            <div className={styles.settingsList}>
+            <div
+              className={styles.settingsList}
+              role="tabpanel"
+              aria-labelledby={categoryTabId(activeCategory)}
+            >
               {filteredSettings.length === 0 && (
                 <div
                   style={{
@@ -139,71 +172,93 @@ export default function SettingsEditor({
                   No settings found
                 </div>
               )}
-              {filteredSettings.map((setting, i) => (
-                <Fragment key={setting.key}>
-                  {/* With "All" selected the list spans every category, so
-                      break it into labelled sections; settings arrive grouped
-                      by category, so a header rides each category's first row. */}
-                  {activeCategory === null &&
-                    (i === 0 ||
-                      filteredSettings[i - 1].category !==
-                        setting.category) && (
-                      <div className={styles.categoryHeader}>
-                        {setting.categoryTitle}
+              {filteredSettings.map((setting, i) => {
+                const labelId = `${idBase}-${setting.key}-label`;
+                const descId = setting.description
+                  ? `${idBase}-${setting.key}-desc`
+                  : undefined;
+                return (
+                  <Fragment key={setting.key}>
+                    {/* With "All" selected the list spans every category, so
+                        break it into labelled sections; settings arrive grouped
+                        by category, so a header rides each category's first row. */}
+                    {activeCategory === null &&
+                      (i === 0 ||
+                        filteredSettings[i - 1].category !==
+                          setting.category) && (
+                        <div className={styles.categoryHeader}>
+                          {setting.categoryTitle}
+                        </div>
+                      )}
+                    <div
+                      className={
+                        setting.customWidget === "columns"
+                          ? styles.settingRowFull
+                          : styles.settingRow
+                      }
+                    >
+                      <div className={styles.settingInfo}>
+                        <div className={styles.settingLabel}>
+                          <span id={labelId}>{setting.title}</span>
+                          {/* Always render so the row's height stays
+                            constant when modified flips on/off — visibility
+                            rather than display preserves the slot. */}
+                          <button
+                            type="button"
+                            className={styles.resetButton}
+                            onClick={() => onReset(setting.key)}
+                            title="Reset to default"
+                            aria-label={`Reset ${setting.title}`}
+                            style={
+                              setting.modified
+                                ? undefined
+                                : { visibility: "hidden" }
+                            }
+                            tabIndex={setting.modified ? 0 : -1}
+                            aria-hidden={!setting.modified}
+                          >
+                            Reset
+                          </button>
+                        </div>
+                        {setting.description && (
+                          <div
+                            id={descId}
+                            className={styles.settingDescription}
+                          >
+                            {setting.description}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  <div
-                    className={
-                      setting.customWidget === "columns"
-                        ? styles.settingRowFull
-                        : styles.settingRow
-                    }
-                  >
-                    <div className={styles.settingInfo}>
-                      <div className={styles.settingLabel}>
-                        {setting.title}
-                        {/* Always render so the row's height stays
-                          constant when modified flips on/off — visibility
-                          rather than display preserves the slot. */}
-                        <button
-                          type="button"
-                          className={styles.resetButton}
-                          onClick={() => onReset(setting.key)}
-                          title="Reset to default"
-                          style={
-                            setting.modified
-                              ? undefined
-                              : { visibility: "hidden" }
-                          }
-                          tabIndex={setting.modified ? 0 : -1}
-                          aria-hidden={!setting.modified}
-                        >
-                          Reset
-                        </button>
-                      </div>
-                      {setting.description && (
-                        <div className={styles.settingDescription}>
-                          {setting.description}
+                      {setting.customWidget === "columns" ? (
+                        <CustomWidget
+                          setting={setting}
+                          onUpdate={onUpdate}
+                          labelledBy={labelId}
+                          describedBy={descId}
+                        />
+                      ) : (
+                        <div className={styles.settingControl}>
+                          {setting.type === "custom" ? (
+                            <CustomWidget
+                              setting={setting}
+                              onUpdate={onUpdate}
+                              labelledBy={labelId}
+                              describedBy={descId}
+                            />
+                          ) : (
+                            <SettingControl
+                              setting={setting}
+                              onUpdate={onUpdate}
+                              labelledBy={labelId}
+                              describedBy={descId}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
-                    {setting.customWidget === "columns" ? (
-                      <CustomWidget setting={setting} onUpdate={onUpdate} />
-                    ) : (
-                      <div className={styles.settingControl}>
-                        {setting.type === "custom" ? (
-                          <CustomWidget setting={setting} onUpdate={onUpdate} />
-                        ) : (
-                          <SettingControl
-                            setting={setting}
-                            onUpdate={onUpdate}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </Fragment>
-              ))}
+                  </Fragment>
+                );
+              })}
             </div>
           </>
         )}
@@ -224,15 +279,24 @@ export default function SettingsEditor({
       </div>
       <div className={styles.footer}>
         <div className={styles.fileActions}>
-          <span className={styles.fileActionsLabel}>Settings file</span>
-          <div className={styles.fileActionsGroup}>
+          <span
+            id={`${idBase}-file-actions`}
+            className={styles.fileActionsLabel}
+          >
+            Settings file
+          </span>
+          <div
+            className={styles.fileActionsGroup}
+            role="group"
+            aria-labelledby={`${idBase}-file-actions`}
+          >
             {canReveal && paneHandle !== null && (
               <button
                 type="button"
                 className={styles.iconButton}
                 onClick={() => safe(commands.revealConfigFile(paneHandle))}
-                title="Show in pane"
-                aria-label="Show settings file in pane"
+                title="Reveal in pane"
+                aria-label="Reveal in pane"
               >
                 <IconRevealInPane />
               </button>
@@ -241,8 +305,11 @@ export default function SettingsEditor({
               type="button"
               className={styles.iconButton}
               onClick={() => safe(commands.openConfigFile())}
-              title="Open in external editor"
-              aria-label="Open settings file in external editor"
+              title={shortcuts.label(
+                "Open in external editor",
+                "open_config_file",
+              )}
+              aria-label="Open in external editor"
             >
               <IconOpenExternal />
             </button>

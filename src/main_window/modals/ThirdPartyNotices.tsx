@@ -26,7 +26,13 @@ export default function ThirdPartyNoticesContent() {
           title="Third-Party Notices"
           summary="Newt is distributed with these components, each under its own licence."
         />
-        <pre className={styles.notices} ref={ref} tabIndex={0}>
+        <pre
+          className={styles.notices}
+          ref={ref}
+          tabIndex={0}
+          role="region"
+          aria-label="License texts"
+        >
           {notices}
         </pre>
         <DialogFooter>

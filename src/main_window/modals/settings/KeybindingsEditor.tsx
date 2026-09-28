@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useId, useMemo, useState } from "react";
 
 import { commands as ipc } from "../../../lib/bindings";
 import { unwrap, safeSilent } from "../../../lib/ipc";
@@ -37,6 +37,7 @@ export function KeybindingsEditor({
   bindings: ResolvedBinding[];
   filter: string;
 }) {
+  const idBase = useId();
   const [edit, setEdit] = useState<EditState | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Tracks the (keys, when) the user has explicitly acknowledged as a
@@ -119,7 +120,9 @@ export function KeybindingsEditor({
             <th>Command</th>
             <th>Shortcut</th>
             <th>When</th>
-            <th></th>
+            <th>
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -154,6 +157,7 @@ export function KeybindingsEditor({
             const showBanner =
               isEditing &&
               (hardConflicts.length > 0 || softConflicts.length > 0 || !!error);
+            const conflictId = `${idBase}-${cmd.id}-conflict`;
 
             return (
               <Fragment key={cmd.id}>
@@ -169,7 +173,12 @@ export function KeybindingsEditor({
                   <td>
                     {cmd.name}
                     {cmd.user_overridden && !isEditing && (
-                      <span className={styles.kbModifiedDot} title="Modified">
+                      <span
+                        className={styles.kbModifiedDot}
+                        title="Modified"
+                        role="img"
+                        aria-label="Modified"
+                      >
                         •
                       </span>
                     )}
@@ -188,12 +197,26 @@ export function KeybindingsEditor({
                                 setAcked(null);
                               }}
                               autoFocus={i === 0}
+                              label={
+                                edit.keys.length > 1
+                                  ? `Shortcut ${i + 1} for ${cmd.name}`
+                                  : `Shortcut for ${cmd.name}`
+                              }
+                              invalid={hardConflicts.some(
+                                (c) => c.binding.key === key,
+                              )}
+                              describedBy={
+                                conflicts.some((c) => c.binding.key === key)
+                                  ? conflictId
+                                  : undefined
+                              }
                             />
                             {edit.keys.length > 1 && (
                               <button
                                 type="button"
                                 className={styles.kbKeyRemove}
-                                title="Remove this binding"
+                                title="Remove binding"
+                                aria-label="Remove binding"
                                 onClick={() => {
                                   setEdit({
                                     ...edit,
@@ -216,7 +239,7 @@ export function KeybindingsEditor({
                             }
                             disabled={edit.keys.some((k) => !k)}
                           >
-                            + Add key
+                            <span aria-hidden>+</span> Add key
                           </button>
                         )}
                       </div>
@@ -233,7 +256,10 @@ export function KeybindingsEditor({
                         })}
                       </span>
                     ) : (
-                      <span className={styles.noShortcut}>&mdash;</span>
+                      <span className={styles.noShortcut}>
+                        <span aria-hidden>&mdash;</span>
+                        <span className="sr-only">No shortcut</span>
+                      </span>
                     )}
                   </td>
                   <td>
@@ -290,7 +316,7 @@ export function KeybindingsEditor({
                     <td></td>
                     <td colSpan={3}>
                       {hardConflicts.length > 0 && (
-                        <div className={styles.kbBannerError}>
+                        <div id={conflictId} className={styles.kbBannerError}>
                           <span>
                             Already used by{" "}
                             {hardConflicts
@@ -319,7 +345,7 @@ export function KeybindingsEditor({
 
                       {hardConflicts.length === 0 &&
                         softConflicts.length > 0 && (
-                          <div className={styles.kbBannerWarn}>
+                          <div id={conflictId} className={styles.kbBannerWarn}>
                             Also used by{" "}
                             {softConflicts
                               .map(
@@ -331,7 +357,9 @@ export function KeybindingsEditor({
                         )}
 
                       {error && (
-                        <div className={styles.kbBannerError}>{error}</div>
+                        <div className={styles.kbBannerError} role="alert">
+                          {error}
+                        </div>
                       )}
                     </td>
                   </tr>

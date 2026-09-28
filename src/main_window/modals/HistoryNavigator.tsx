@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -150,6 +151,9 @@ export default function HistoryNavigator({
   );
 
   const listRef = useRef<HTMLDivElement>(null);
+  const idBase = useId();
+  const listId = `${idBase}-list`;
+  const optionId = (i: number) => `${idBase}-option-${i}`;
   useEffect(() => {
     if (!open) return;
     const el = listRef.current?.querySelector<HTMLElement>(
@@ -196,6 +200,9 @@ export default function HistoryNavigator({
           className={`${menuStyles.content} ${styles.content}`}
           align="start"
           sideOffset={4}
+          aria-labelledby={`${idBase}-header`}
+          aria-controls={listId}
+          aria-activedescendant={optionId(previewIndex)}
           onCloseAutoFocus={(e) => {
             // Pane focus effect handles restoring focus to the active pane.
             e.preventDefault();
@@ -232,12 +239,15 @@ export default function HistoryNavigator({
             }
           }}
         >
-          <div className={styles.header}>History</div>
+          <div id={`${idBase}-header`} className={styles.header}>
+            History
+          </div>
           <div
             ref={listRef}
+            id={listId}
             className={styles.list}
             role="listbox"
-            aria-label="History"
+            aria-labelledby={`${idBase}-header`}
             style={pointerActive ? undefined : { pointerEvents: "none" }}
           >
             {entries.map((entry, i) => {
@@ -257,8 +267,10 @@ export default function HistoryNavigator({
                       isCurrent ? styles.itemCurrent : ""
                     } ${isPreviewed ? styles.itemPreviewed : ""}`}
                     data-disabled={entry.is_alive ? undefined : ""}
+                    id={optionId(i)}
                     role="option"
                     aria-selected={isPreviewed}
+                    aria-disabled={!entry.is_alive || undefined}
                     onMouseEnter={() => {
                       if (entry.is_alive) setPreviewIndex(i);
                     }}
@@ -268,7 +280,9 @@ export default function HistoryNavigator({
                       commit(i);
                     }}
                   >
-                    <span className={styles.path}>{entry.display_path}</span>
+                    <span className={styles.path} title={entry.display_path}>
+                      {entry.display_path}
+                    </span>
                     {isCurrent && (
                       <span className={styles.currentTag}>current</span>
                     )}
@@ -279,7 +293,7 @@ export default function HistoryNavigator({
                       <button
                         type="button"
                         className={styles.deleteButton}
-                        aria-label="Remove entry from history"
+                        aria-label="Remove from history"
                         title="Remove from history"
                         onMouseDown={(e) => {
                           e.stopPropagation();

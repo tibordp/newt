@@ -17,7 +17,12 @@ export function MountLogView({
   }, [lines]);
   if (!visible || !lines || lines.length === 0) return null;
   return (
-    <div ref={boxRef} className={styles.mountLog}>
+    <div
+      ref={boxRef}
+      className={styles.mountLog}
+      role="log"
+      aria-label="Connection log"
+    >
       {lines.map((l, i) => (
         <div key={i}>{l}</div>
       ))}

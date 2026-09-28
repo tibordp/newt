@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   commands,
   type CopyMoveDefaults,
@@ -83,6 +83,8 @@ export default function CopyMove({
   // A remembered advanced toggle must not hide behind the fold.
   const [advancedOpen, setAdvancedOpen] = useState(advancedStickyOn(defaults));
   const [name, setName] = useState(default_name ?? "");
+  const promptId = useId();
+  const destinationId = useId();
 
   const isCopy = kind === "copy";
   const title = isCopy ? "Copy" : "Move";
@@ -127,7 +129,7 @@ export default function CopyMove({
     <DialogShell onSubmit={onSubmit}>
       <DialogHeader title={title} />
       <DialogBody>
-        <p className={styles.hint}>
+        <p id={promptId} className={styles.hint}>
           {title} <b>{itemSummary}</b> {default_name != null ? "as:" : "into:"}
         </p>
         {default_name != null && (
@@ -138,9 +140,11 @@ export default function CopyMove({
             onFocus={selectStem}
             autoFocus
             size={50}
+            aria-labelledby={`${promptId} ${destinationId}`}
+            aria-invalid={nameInvalid}
           />
         )}
-        <p className={styles.hint}>
+        <p id={destinationId} className={styles.hint}>
           {default_name != null ? (
             <>
               in <b>{display_destination}</b>

@@ -295,10 +295,12 @@ function TimestampSubmenu({
   return (
     <CM.Sub>
       <CM.SubTrigger className={styles.item}>
-        <span className={styles.checkColumn}>{state !== "hidden" && "✓"}</span>
+        <span className={styles.checkColumn} aria-hidden>
+          {state !== "hidden" && "✓"}
+        </span>
         {label}
         <span className={styles.shortcut}>
-          {TIMESTAMP_STATE_LABELS[state]} ›
+          {TIMESTAMP_STATE_LABELS[state]} <span aria-hidden>›</span>
         </span>
       </CM.SubTrigger>
       <CM.Portal>
@@ -316,7 +318,7 @@ function TimestampSubmenu({
                 className={styles.item}
                 onSelect={(e) => e.preventDefault()}
               >
-                <span className={styles.checkColumn}>
+                <span className={styles.checkColumn} aria-hidden>
                   <CM.ItemIndicator>•</CM.ItemIndicator>
                 </span>
                 {TIMESTAMP_STATE_LABELS[s]}
@@ -395,7 +397,7 @@ export function ColumnsContextMenuContent({
               onSelect={(e) => e.preventDefault()}
               onCheckedChange={(checked) => toggle(col.key, checked === true)}
             >
-              <span className={styles.checkColumn}>
+              <span className={styles.checkColumn} aria-hidden>
                 <CM.ItemIndicator>✓</CM.ItemIndicator>
               </span>
               {col.label}

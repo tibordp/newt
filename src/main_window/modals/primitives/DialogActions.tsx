@@ -51,6 +51,11 @@ export function useSaveFlash(): [boolean, () => void] {
   return [saved, flash];
 }
 
+// DialogShell's Mod+S handler, spelled the way command shortcuts render.
+function saveShortcut() {
+  return navigator.platform.startsWith("Mac") ? "⌘+S" : "Ctrl+S";
+}
+
 type DialogSaveButtonProps = {
   pending?: boolean;
   saved?: boolean;
@@ -80,7 +85,7 @@ export function DialogSaveButton({
       onClick={onClick}
       disabled={disabled || pending}
       aria-busy={pending}
-      title="Save as connection profile (Mod+S)"
+      title={`Save as connection profile (${saveShortcut()})`}
     >
       {saved ? "Saved" : label}
     </button>
@@ -89,15 +94,17 @@ export function DialogSaveButton({
 
 type DialogErrorProps = {
   error: string | null;
+  // For a control's aria-describedby when the error concerns one field.
+  id?: string;
 };
 
 // Inline error banner for dialogs. Renders nothing when error is null, so it
 // can sit unconditionally in the dialog body.
-export function DialogError({ error }: DialogErrorProps) {
+export function DialogError({ error, id }: DialogErrorProps) {
   if (!error) return null;
   return (
     // pre-wrap (in the module): mount failures carry a multi-line log.
-    <div className={styles.error} role="alert">
+    <div id={id} className={styles.error} role="alert">
       {error}
     </div>
   );

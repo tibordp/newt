@@ -34,12 +34,13 @@ export function MediaViewer({
     <div className={styles.viewer} ref={viewerRef} tabIndex={-1}>
       <div className={styles.mediaContent}>
         {mediaError ? (
-          <div className={styles.imageErrorMessage}>
+          <div className={styles.imageErrorMessage} role="alert">
             Unable to play {modeName.toLowerCase()} preview: {mediaError}
           </div>
         ) : tag === "audio" ? (
           <audio
             className={styles.audioPlayer}
+            aria-label={filePath}
             controls
             src={fileUrl}
             onError={(e) => {
@@ -64,6 +65,7 @@ export function MediaViewer({
         ) : (
           <video
             className={styles.videoPlayer}
+            aria-label={filePath}
             controls
             src={fileUrl}
             onError={(e) => {
@@ -92,10 +94,14 @@ export function MediaViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{modeName}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
         </span>
         <ModeToggle currentMode={tag} autoMode={autoMode} />

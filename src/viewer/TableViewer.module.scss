@@ -1,3 +1,5 @@
+@use "../styles/forced-colors" as fc;
+
 .grid {
   position: relative;
   font-size: var(--font-size-sm);
@@ -90,11 +92,13 @@
 
 .selected {
   background: color-mix(in srgb, Highlight 22%, transparent);
+  @include fc.selected;
 }
 
 .cursor {
   outline: 2px solid Highlight;
   outline-offset: -2px;
+  @include fc.cursor;
 }
 
 .headerInRange {
@@ -104,6 +108,7 @@
 .headerSelected {
   background: color-mix(in srgb, Highlight 35%, var(--color-chrome));
   color: var(--color-fg);
+  @include fc.selected;
 }
 
 .selectBox {

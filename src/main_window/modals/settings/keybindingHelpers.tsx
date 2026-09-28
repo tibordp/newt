@@ -167,7 +167,12 @@ export function findBindingOverlaps(
 /// tooltip carries the detail.
 export function ConflictMark({ title }: { title: string }) {
   return (
-    <span className={styles.kbConflictMark} title={title}>
+    <span
+      className={styles.kbConflictMark}
+      title={title}
+      role="img"
+      aria-label={title}
+    >
       {"⚠︎"}
     </span>
   );
@@ -178,10 +183,16 @@ export function KeyCaptureInput({
   onChange,
   autoFocus,
   size = "compact",
+  label = "Press key combination",
+  invalid,
+  describedBy,
 }: {
   value: string;
   onChange: (key: string) => void;
   autoFocus?: boolean;
+  label?: string;
+  invalid?: boolean;
+  describedBy?: string;
   /// "compact" matches the keybindings table row height. "regular" matches
   /// the surrounding text inputs in standard forms (CommandsEditor).
   size?: "compact" | "regular";
@@ -222,7 +233,9 @@ export function KeyCaptureInput({
       ref={ref}
       tabIndex={0}
       role="textbox"
-      aria-label="Press key combination"
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       className={[
         recording ? styles.keyCaptureActive : styles.keyCapture,
         size === "regular" ? styles.keyCaptureRegular : "",
@@ -258,7 +271,8 @@ export function KeyCaptureInput({
             onChange("");
             ref.current?.focus();
           }}
-          title="Clear"
+          title="Clear shortcut"
+          aria-label="Clear shortcut"
         >
           ×
         </button>

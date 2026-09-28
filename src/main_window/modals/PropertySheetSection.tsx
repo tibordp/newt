@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   type PropertyField,
   type PropertyGrant,
@@ -188,6 +188,7 @@ function FieldEditor({
   allocRowId: () => number;
 }) {
   const v = field.value;
+  const labelId = useId();
 
   if ("text" in v) {
     const original = v.text.value;
@@ -200,9 +201,10 @@ function FieldEditor({
       );
     }
     return (
-      <FieldRow label={field.label}>
+      <FieldRow label={field.label} labelId={labelId}>
         <input
           type="text"
+          aria-labelledby={labelId}
           className={styles.sheetTextInput}
           value={textEdits[field.key] ?? original ?? ""}
           placeholder={mixed ? "(mixed)" : undefined}
@@ -241,8 +243,9 @@ function FieldEditor({
       );
     }
     return (
-      <FieldRow label={field.label}>
+      <FieldRow label={field.label} labelId={labelId}>
         <select
+          aria-labelledby={labelId}
           value={choiceEdits[field.key] ?? original ?? ""}
           onChange={(e) => {
             const value = e.target.value;
@@ -270,8 +273,8 @@ function FieldEditor({
   if ("map" in v) {
     const entries = Object.entries(v.map.entries);
     return (
-      <FieldRow label={field.label} block>
-        <div className={styles.mapGrid}>
+      <FieldRow label={field.label} labelId={labelId} block>
+        <div className={styles.mapGrid} role="group" aria-labelledby={labelId}>
           {entries.map(([key, value]) => {
             const deleted = mapEdit.deleted.includes(key);
             return (
@@ -286,6 +289,7 @@ function FieldEditor({
                 <span className={styles.mapKey}>{key}</span>
                 <input
                   type="text"
+                  aria-label={key}
                   value={mapEdit.edited[key] ?? value ?? ""}
                   placeholder={value === null ? "(mixed)" : undefined}
                   disabled={!field.editable || deleted}
@@ -306,7 +310,8 @@ function FieldEditor({
                   <button
                     type="button"
                     className={styles.sheetRowButton}
-                    title={deleted ? "Restore" : "Remove"}
+                    title={deleted ? `Restore ${key}` : `Remove ${key}`}
+                    aria-label={deleted ? `Restore ${key}` : `Remove ${key}`}
                     onClick={() =>
                       setMapEdit({
                         ...mapEdit,
@@ -328,6 +333,7 @@ function FieldEditor({
                 type="text"
                 value={row.key}
                 placeholder="key"
+                aria-label="New key"
                 autoComplete="off"
                 autoCorrect="off"
                 onChange={(e) =>
@@ -343,6 +349,7 @@ function FieldEditor({
                 type="text"
                 value={row.value}
                 placeholder="value"
+                aria-label="New value"
                 autoComplete="off"
                 autoCorrect="off"
                 onChange={(e) =>
@@ -357,7 +364,8 @@ function FieldEditor({
               <button
                 type="button"
                 className={styles.sheetRowButton}
-                title="Remove"
+                title="Remove entry"
+                aria-label="Remove entry"
                 onClick={() =>
                   setMapEdit({
                     ...mapEdit,
@@ -417,13 +425,14 @@ function FieldEditor({
   }
 
   return (
-    <FieldRow label={field.label} block>
-      <div className={styles.mapGrid}>
+    <FieldRow label={field.label} labelId={labelId} block>
+      <div className={styles.mapGrid} role="group" aria-labelledby={labelId}>
         {grants.map((grant, i) => (
           <div key={i} className={styles.grantRow}>
             {field.editable ? (
               <>
                 <select
+                  aria-label="Grantee type"
                   value={granteeKind(grant.grantee)}
                   onChange={(e) =>
                     setGrantEdit(
@@ -447,6 +456,7 @@ function FieldEditor({
                 </select>
                 <input
                   type="text"
+                  aria-label="Grantee"
                   value={granteeIdentifier(grant.grantee)}
                   autoComplete="off"
                   autoCorrect="off"
@@ -467,6 +477,7 @@ function FieldEditor({
                   }
                 />
                 <select
+                  aria-label="Permission"
                   value={grant.permission}
                   onChange={(e) =>
                     setGrantEdit(
@@ -489,7 +500,8 @@ function FieldEditor({
                 <button
                   type="button"
                   className={styles.sheetRowButton}
-                  title="Remove"
+                  title="Remove grant"
+                  aria-label="Remove grant"
                   onClick={() => setGrantEdit(grants.filter((_, j) => j !== i))}
                 >
                   {"×"}
@@ -526,16 +538,20 @@ function FieldEditor({
 
 function FieldRow({
   label,
+  labelId,
   block,
   children,
 }: {
   label: string;
+  labelId?: string;
   block?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className={block ? styles.sheetFieldBlock : styles.sheetFieldRow}>
-      <span className={styles.sheetFieldLabel}>{label}</span>
+      <span id={labelId} className={styles.sheetFieldLabel}>
+        {label}
+      </span>
       {children}
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { type ArchiveFormat, commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
@@ -77,6 +77,9 @@ export default function CreateArchive({
   );
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const promptId = useId();
+  const destinationId = useId();
+  const encryptionHintId = useId();
 
   const range = LEVEL_RANGE[format];
   const encryptable = format === "zip" || format === "seven_z";
@@ -128,8 +131,9 @@ export default function CreateArchive({
           tabs={FORMATS.map((f) => ({ value: f.tag, label: f.ext }))}
           value={format}
           onChange={switchFormat}
+          label="Archive format"
         />
-        <p className={styles.hint}>
+        <p id={promptId} className={styles.hint}>
           Pack <b>{summary}</b> into:
         </p>
         <input
@@ -139,8 +143,10 @@ export default function CreateArchive({
           onFocus={selectStem}
           autoFocus
           size={50}
+          aria-labelledby={`${promptId} ${destinationId}`}
+          aria-invalid={nameInvalid}
         />
-        <p className={styles.hint}>
+        <p id={destinationId} className={styles.hint}>
           in <b>{display_destination}</b>
         </p>
         <FieldGroup>
@@ -176,6 +182,9 @@ export default function CreateArchive({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="no encryption"
+                  aria-describedby={
+                    password !== "" ? encryptionHintId : undefined
+                  }
                 />
               </FieldRow>
               {password !== "" && (
@@ -186,9 +195,10 @@ export default function CreateArchive({
                       className={styles.passwordInput}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      aria-invalid={passwordMismatch}
                     />
                   </FieldRow>
-                  <p className={styles.hint}>
+                  <p id={encryptionHintId} className={styles.hint}>
                     {format === "zip"
                       ? "AES-256 — opens in 7-Zip, WinRAR, or Keka; not in Windows Explorer."
                       : "AES-256 — file names stay visible; opens in 7-Zip, WinRAR, or Keka."}

@@ -1,3 +1,5 @@
+@use "../styles/forced-colors" as fc;
+
 .pane {
   display: flex;
   flex-grow: 1;
@@ -101,6 +103,7 @@
 
   &.focused {
     background: var(--color-selected-bg);
+    @include fc.cursor;
   }
 
   &.selected {
@@ -113,6 +116,7 @@
     :global(.filename-part) {
       color: var(--color-accent);
     }
+    @include fc.selected;
   }
 }
 

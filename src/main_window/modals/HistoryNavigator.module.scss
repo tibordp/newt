@@ -1,3 +1,5 @@
+@use "../../styles/forced-colors" as fc;
+
 // Hidden trigger anchor — the dropdown anchors to this; the dialog is
 // keyboard-launched only so it has no visible click target. The anchor is
 // stretched across the pane's header area (minus a small margin on each
@@ -68,6 +70,7 @@
 .itemPreviewed {
   background: var(--color-accent) !important;
   color: var(--color-accent-fg) !important;
+  @include fc.selected;
 }
 
 .itemCurrent {

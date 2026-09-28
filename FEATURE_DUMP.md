@@ -23,6 +23,18 @@ Additional overlay elements:
 - Connection status indicator (during connect/disconnect/reconnect).
 - Modal dialogs (all driven by Rust state — never by React `useState`).
 
+### Accessibility
+
+Newt's windows are web content in the platform webview, so screen readers see them through the webview's own accessibility bridge — VoiceOver via WKWebView on macOS, Narrator/NVDA/JAWS via WebView2 (UI Automation) on Windows, Orca via WebKitGTK (AT-SPI) on Linux. Native menus and file dialogs are native controls.
+
+- **File lists** are listboxes named by the pane's path. As the cursor moves, the focused row is announced (by its visible columns — name, size, dates, …; file-type glyphs are silent), with marked files reported as selected and the row's position in the whole listing, even though only a window of rows is rendered. Quick search and the filter box drive the list the same way, so typing announces the row it lands on.
+- **Viewer table mode** is a grid: the cursor cell is announced with its row and column, selected cells are reported as selected, and the header row and row numbers act as headers.
+- **Dialogs** are named by their title and described by their summary or, for confirmations, by what will happen; form fields are labelled, with hints and validation errors attached to their field. Lists that are navigated from a search box (Quick Connect, Hot Paths, the command palette, history, sort menu) announce the highlighted entry.
+- **High contrast** (Windows `forced-colors`): states that are normally drawn with colour alone are redrawn in the theme's own colours — marked files, highlighted menu and palette entries, the active terminal tab, settings category and viewer toggles use the theme's selection colours, the file-list and table cursor is an outline (so it shows on a marked row too), and progress bars keep a visible fill and track.
+- **Tooltips**: every icon-only or abbreviated control carries a native tooltip, and one that runs a command shows its current shortcut (e.g. "Maximize pane (⌘+F11)" on macOS), following any rebinding. Truncated paths and names show in full on hover.
+
+The terminal and editor rely on xterm.js's and Monaco's own accessibility; neither yet switches to its screen-reader mode automatically.
+
 ### Dialog system
 
 All dialogs share a common visual language and a set of frontend primitives (`src/main_window/modals/primitives/`):

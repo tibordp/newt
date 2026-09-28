@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   commands,
   type ConnectionKind,
@@ -20,7 +20,9 @@ import {
   DialogSubmitButton,
   DialogSaveButton,
   DialogTabs,
+  dialogTabId,
   Field,
+  fieldHintId,
   CheckboxField,
   MountLogView,
   ProfileNameField,
@@ -200,6 +202,9 @@ function defaultProfileName(form: FormState): string {
   }
 }
 
+const OPEN_IN_HINT =
+  "Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network.";
+
 export default function ConnectRemote({
   initial,
   default_open_in,
@@ -216,6 +221,7 @@ export default function ConnectRemote({
     return f;
   });
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const panelId = useId();
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => {
@@ -332,8 +338,13 @@ export default function ConnectRemote({
           value={form.transport}
           onChange={(tag) => update("transport", tag)}
           disabled={pending}
+          label="Transport"
+          panelId={panelId}
         />
         <div
+          id={panelId}
+          role="tabpanel"
+          aria-labelledby={dialogTabId(panelId, form.transport)}
           className={
             form.transport === "custom" ? styles.layoutCompact : styles.layout
           }
@@ -408,12 +419,10 @@ export default function ConnectRemote({
         onCancel={cancel}
         cancelDisabled={pending}
         start={
-          <label
-            className={styles.openInLabel}
-            title="Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network."
-          >
+          <label className={styles.openInLabel} title={OPEN_IN_HINT}>
             <input
               type="checkbox"
+              title={OPEN_IN_HINT}
               checked={form.openIn === "window"}
               onChange={(e) =>
                 update("openIn", e.target.checked ? "window" : "pane")
@@ -462,6 +471,7 @@ function SshFormFields({ form, update, pending, firstInputRef }: FieldProps) {
           ref={firstInputRef}
           id="ssh-host"
           type="text"
+          aria-required
           value={form.sshHost}
           onChange={(e) => update("sshHost", e.target.value)}
           disabled={pending}
@@ -505,6 +515,7 @@ function ContainerFormFields({
           ref={firstInputRef}
           id="ctr-name"
           type="text"
+          aria-required
           value={form.containerName}
           onChange={(e) => update("containerName", e.target.value)}
           disabled={pending}
@@ -555,6 +566,7 @@ function KubeFormFields({ form, update, pending, firstInputRef }: FieldProps) {
           ref={firstInputRef}
           id="kube-pod"
           type="text"
+          aria-required
           value={form.kubePod}
           onChange={(e) => update("kubePod", e.target.value)}
           disabled={pending}
@@ -603,6 +615,8 @@ function CustomFormFields({
           ref={firstInputRef}
           id="custom-cmd"
           type="text"
+          aria-required
+          aria-describedby={fieldHintId("custom-cmd")}
           value={form.customCommand}
           onChange={(e) => update("customCommand", e.target.value)}
           placeholder={
@@ -647,10 +661,18 @@ function DiscoveryPanel(props: DiscoveryPanelProps) {
   }
 }
 
-function ListHeader({ title, count }: { title: string; count: number | null }) {
+function ListHeader({
+  id,
+  title,
+  count,
+}: {
+  id: string;
+  title: string;
+  count: number | null;
+}) {
   return (
     <div className={styles.listHeader}>
-      <span>{title}</span>
+      <span id={id}>{title}</span>
       <span>{count === null ? "" : `${count}`}</span>
     </div>
   );
@@ -669,6 +691,7 @@ function selectFormUpdate(
 }
 
 function SshList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
+  const headerId = useId();
   const [hosts, setHosts] = useState<SshHostEntry[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -685,8 +708,12 @@ function SshList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
   };
   return (
     <>
-      <ListHeader title="~/.ssh/config hosts" count={hosts.length} />
-      <div className={styles.listBody}>
+      <ListHeader
+        id={headerId}
+        title="~/.ssh/config hosts"
+        count={hosts.length}
+      />
+      <div className={styles.listBody} role="group" aria-labelledby={headerId}>
         {loading ? (
           <div className={styles.listEmpty}>Loading…</div>
         ) : hosts.length === 0 ? (
@@ -700,11 +727,17 @@ function SshList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
                 type="button"
                 key={`${h.host}-${h.user ?? ""}`}
                 className={`${styles.row}${selected ? " " + styles.selected : ""}`}
+                aria-current={selected || undefined}
                 onClick={() => pick(h)}
               >
-                <span className={styles.rowTitle}>{value}</span>
+                <span className={styles.rowTitle} title={value}>
+                  {value}
+                </span>
                 {h.hostname && h.hostname !== h.host && (
-                  <span className={styles.rowSub}>→ {h.hostname}</span>
+                  <span className={styles.rowSub} title={h.hostname}>
+                    <span aria-hidden>→ </span>
+                    {h.hostname}
+                  </span>
                 )}
               </button>
             );
@@ -721,6 +754,7 @@ function ContainerList({
   defaultProfileName,
   engine,
 }: DiscoveryPanelProps & { engine: "docker" | "podman" }) {
+  const headerId = useId();
   const [items, setItems] = useState<ContainerEntry[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -757,10 +791,11 @@ function ContainerList({
   return (
     <>
       <ListHeader
+        id={headerId}
         title={engine === "docker" ? "Docker containers" : "Podman containers"}
         count={warning ? null : items.length}
       />
-      <div className={styles.listBody}>
+      <div className={styles.listBody} role="group" aria-labelledby={headerId}>
         {loading ? (
           <div className={styles.listEmpty}>Loading…</div>
         ) : warning ? (
@@ -775,10 +810,16 @@ function ContainerList({
                 type="button"
                 key={c.id || c.name}
                 className={`${styles.row}${selected ? " " + styles.selected : ""}`}
+                aria-current={selected || undefined}
                 onClick={() => pick(c)}
               >
-                <span className={styles.rowTitle}>{c.name || c.id}</span>
-                <span className={styles.rowSub}>
+                <span className={styles.rowTitle} title={c.name || c.id}>
+                  {c.name || c.id}
+                </span>
+                <span
+                  className={styles.rowSub}
+                  title={`${c.image}${c.state ? ` · ${c.state}` : ""}`}
+                >
                   {c.image}
                   {c.state ? ` · ${c.state}` : ""}
                 </span>
@@ -792,6 +833,7 @@ function ContainerList({
 }
 
 function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
+  const headerId = useId();
   const [contexts, setContexts] = useState<string[]>([]);
   const [pods, setPods] = useState<KubePodEntry[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
@@ -845,15 +887,22 @@ function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
   return (
     <>
       <ListHeader
+        id={headerId}
         title="Kubernetes pods"
         count={warning ? null : pods.length}
       />
       {contexts.length > 1 && (
-        <div className={styles.contextChips}>
+        <div
+          className={styles.contextChips}
+          role="radiogroup"
+          aria-label="Kubernetes context"
+        >
           {contexts.map((c) => (
             <button
               type="button"
               key={c}
+              role="radio"
+              aria-checked={form.kubeContext === c}
               onClick={() => pickContext(c)}
               className={`${styles.chip}${form.kubeContext === c ? " " + styles.chipActive : ""}`}
             >
@@ -862,7 +911,7 @@ function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
           ))}
         </div>
       )}
-      <div className={styles.listBody}>
+      <div className={styles.listBody} role="group" aria-labelledby={headerId}>
         {loading ? (
           <div className={styles.listEmpty}>Loading…</div>
         ) : warning ? (
@@ -880,13 +929,20 @@ function KubeList({ form, setForm, defaultProfileName }: DiscoveryPanelProps) {
                 type="button"
                 key={`${p.namespace}/${p.name}`}
                 className={`${styles.row}${selected ? " " + styles.selected : ""}`}
+                aria-current={selected || undefined}
                 onClick={() => pick(p)}
               >
-                <span className={styles.rowTitle}>
+                <span
+                  className={styles.rowTitle}
+                  title={`${p.namespace}/${p.name}`}
+                >
                   {p.namespace}/{p.name}
                 </span>
                 {p.containers.length > 0 && (
-                  <span className={styles.rowSub}>
+                  <span
+                    className={styles.rowSub}
+                    title={p.containers.join(", ")}
+                  >
                     {p.containers.join(", ")}
                   </span>
                 )}

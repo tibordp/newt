@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useId, useState, useMemo } from "react";
 import {
   commands,
   type FsStats,
@@ -56,6 +56,8 @@ function formatTimestamp(
   return formatDateTime(Number(ms), dateFmt, timeFmt);
 }
 
+const PERM_CLASSES = ["Owner", "Group", "Other"];
+
 // Permission bit positions
 const PERM_BITS = [
   { label: "Read", bits: [0o400, 0o040, 0o004] },
@@ -103,13 +105,16 @@ function cycleBit(
 function TriStateCheckbox({
   state,
   onChange,
+  label,
 }: {
   state: TriState;
   onChange: () => void;
+  label?: string;
 }) {
   return (
     <input
       type="checkbox"
+      aria-label={label}
       checked={state === "checked"}
       ref={(el) => {
         if (el) el.indeterminate = state === "indeterminate";
@@ -123,10 +128,12 @@ function PermissionEditor({
   modeSet,
   modeClear,
   onChange,
+  labelledBy,
 }: {
   modeSet: number;
   modeClear: number;
   onChange: (modeSet: number, modeClear: number) => void;
+  labelledBy: string;
 }) {
   const toggle = (bit: number) => {
     const [s, c] = cycleBit(modeSet, modeClear, bit);
@@ -134,19 +141,22 @@ function PermissionEditor({
   };
 
   return (
-    <div className={styles.permGrid}>
+    <div className={styles.permGrid} role="group" aria-labelledby={labelledBy}>
       <div className={styles.permHeader}></div>
-      <div className={styles.permHeader}>Owner</div>
-      <div className={styles.permHeader}>Group</div>
-      <div className={styles.permHeader}>Other</div>
+      {PERM_CLASSES.map((cls) => (
+        <div key={cls} className={styles.permHeader}>
+          {cls}
+        </div>
+      ))}
       {PERM_BITS.map(({ label, bits }) => (
         <div key={label} className={styles.permRow}>
           <div className={styles.permLabel}>{label}</div>
-          {bits.map((bit) => (
+          {bits.map((bit, i) => (
             <div key={bit} className={styles.permCell}>
               <TriStateCheckbox
                 state={getBitState(modeSet, modeClear, bit)}
                 onChange={() => toggle(bit)}
+                label={`${PERM_CLASSES[i]} ${label.toLowerCase()}`}
               />
             </div>
           ))}
@@ -175,10 +185,12 @@ type OwnerEditState = {
 
 function OwnerEditor({
   label,
+  inputLabel,
   state,
   onChange,
 }: {
   label: string;
+  inputLabel: string;
   state: OwnerEditState;
   onChange: (s: OwnerEditState) => void;
 }) {
@@ -197,6 +209,7 @@ function OwnerEditor({
           type="text"
           className={styles.ownerInput}
           placeholder="name or numeric ID"
+          aria-label={inputLabel}
           value={state.value}
           autoComplete="off"
           autoCorrect="off"
@@ -310,6 +323,7 @@ export default function Properties({
   const dateFormat = preferences?.settings?.appearance?.date_format;
   const timeFormat = preferences?.settings?.appearance?.time_format;
   const isSingle = paths.length === 1;
+  const permHeaderId = useId();
   const hasDirs = is_dir || paths.length > 1;
 
   const octalDisplay = useMemo(() => {
@@ -474,8 +488,11 @@ export default function Properties({
 
           {canEdit && (
             <div className={styles.permSection}>
-              <div className={styles.permSectionHeader}>Permissions</div>
+              <div id={permHeaderId} className={styles.permSectionHeader}>
+                Permissions
+              </div>
               <PermissionEditor
+                labelledBy={permHeaderId}
                 modeSet={modeSet}
                 modeClear={modeClear}
                 onChange={(s, c) => {
@@ -484,17 +501,20 @@ export default function Properties({
                 }}
               />
               <div className={styles.octalDisplay}>
+                <span className="sr-only">Octal mode </span>
                 <code>{octalDisplay}</code>
               </div>
 
               <div className={styles.permSectionHeader}>Ownership</div>
               <OwnerEditor
                 label="Set owner"
+                inputLabel="New owner"
                 state={ownerEdit}
                 onChange={setOwnerEdit}
               />
               <OwnerEditor
                 label="Set group"
+                inputLabel="New group"
                 state={groupEdit}
                 onChange={setGroupEdit}
               />

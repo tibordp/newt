@@ -55,6 +55,26 @@ export function formatProgress(
   return "";
 }
 
+function progressBarAria(
+  op: OperationState,
+  formatSize: (bytes: number) => string,
+  label: string,
+) {
+  const determinate =
+    op.status !== "scanning" &&
+    ((op.total_bytes ?? 0) > 0 || (op.total_items ?? 0) > 0);
+  return {
+    role: "progressbar",
+    "aria-label": label,
+    "aria-valuemin": 0,
+    "aria-valuemax": 100,
+    "aria-valuenow": determinate
+      ? Math.round(progressFraction(op) * 100)
+      : undefined,
+    "aria-valuetext": formatProgress(op, formatSize) || undefined,
+  } as const;
+}
+
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) {
@@ -196,6 +216,7 @@ function IssueResolution({
                   <button
                     className={styles.splitMenuButton}
                     aria-label="More overwrite options"
+                    title="More overwrite options"
                     tabIndex={inModal ? 0 : -1}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => e.stopPropagation()}
@@ -236,6 +257,7 @@ function IssueResolution({
         )}
         <label
           className={styles.applyToAll}
+          title="Apply to all similar issues"
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -271,7 +293,9 @@ function OperationRow({ op }: { op: OperationState }) {
     >
       <div className={styles.operationInfo}>
         <span className={styles.operationKind}>{op.kind}</span>
-        <span className={styles.operationDescription}>{op.description}</span>
+        <span className={styles.operationDescription} title={op.description}>
+          {op.description}
+        </span>
       </div>
 
       {isWaiting ? (
@@ -280,7 +304,10 @@ function OperationRow({ op }: { op: OperationState }) {
         <div className={styles.operationProgress}>
           {(op.status === "scanning" || op.status === "running") && (
             <>
-              <div className={styles.progressBar}>
+              <div
+                className={styles.progressBar}
+                {...progressBarAria(op, formatSize, `${op.kind} progress`)}
+              >
                 <div
                   className={styles.progressFill}
                   style={{ width: `${progressFraction(op) * 100}%` }}
@@ -295,7 +322,7 @@ function OperationRow({ op }: { op: OperationState }) {
             <span className={styles.statusDone}>Completed</span>
           )}
           {op.status === "failed" && (
-            <span className={styles.statusFailed}>
+            <span className={styles.statusFailed} role="alert">
               Failed{op.error ? `: ${op.error}` : ""}
             </span>
           )}
@@ -404,7 +431,10 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
                 <>
                   {(op.status === "scanning" || op.status === "running") && (
                     <>
-                      <div className={modalStyles.progressBar}>
+                      <div
+                        className={modalStyles.progressBar}
+                        {...progressBarAria(op, formatSize, "Progress")}
+                      >
                         <div
                           className={modalStyles.progressFill}
                           style={{ width: `${fraction * 100}%` }}
@@ -436,6 +466,7 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
                   {op.status === "failed" && (
                     <div
                       className={`${modalStyles.status} ${modalStyles.statusFailed}`}
+                      role="alert"
                     >
                       Failed{op.error ? `: ${op.error}` : ""}
                     </div>
@@ -490,7 +521,11 @@ export default function OperationsPanel({
   if (ops.length === 0) return null;
 
   return (
-    <div className={styles.operationsPanel}>
+    <div
+      className={styles.operationsPanel}
+      role="region"
+      aria-label="Operations"
+    >
       {ops.map((op) => (
         <OperationRow key={op.id} op={op} />
       ))}

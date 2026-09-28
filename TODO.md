@@ -81,6 +81,13 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 
 - Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.
 
+## Accessibility
+
+- Live announcements: navigation finishing, operations completing or failing, selection counts, "Loading…" states — one polite live region fed from the existing flows, rather than per-component `aria-live`.
+- Screen-reader modes for the terminal (xterm.js `screenReaderMode`) and editor (Monaco `accessibilitySupport`, whose `auto` can't detect a reader inside a webview): detect a running reader natively (`NSWorkspace.isVoiceOverEnabled`, `SPI_GETSCREENREADER`, `org.a11y.Status.ScreenReaderEnabled` on D-Bus), publish it in state, and let a preference override it.
+- Keyboard gaps: Settings' category sidebar is click-only (tabs have roles but no key handling); the key-capture field's clear (×) button acts on mousedown only, and Enter/Space on it is captured as a key.
+- Regression check: the scene harness can assert ARIA snapshots (e.g. the focused file row is the list's active descendant) and run axe-core over every scene.
+
 ## Bug fixes and strengthening
 
 - `TerminalHandle` is minted per session (`Local::new()` per `session.rs`), so every window's first terminal is handle 0. Nothing routes by handle alone today (`terminal_data` emits are window-scoped), but the next thing that does will cross-talk. Kill the class rather than the instance: either a process-wide counter, or make `TerminalHandle` carry its session. See "Window-targeted events" in CLAUDE.md.

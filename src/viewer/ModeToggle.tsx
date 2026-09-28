@@ -2,6 +2,7 @@ import styles from "./Viewer.module.scss";
 import { safe } from "../lib/ipc";
 import type { ViewerMode } from "./helpers";
 import { commands } from "../lib/bindings";
+import { useCommandShortcuts } from "../lib/scopedBindings";
 
 interface ModeToggleProps {
   currentMode: ViewerMode;
@@ -35,24 +36,45 @@ export function getAlternateMode(
 }
 
 export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
+  const shortcuts = useCommandShortcuts();
   const other = counterpart(autoMode);
+  const alternate = getAlternateMode(currentMode, autoMode);
   const modes: [ViewerMode, string][] = [
     [autoMode, capitalize(autoMode)],
     [other, capitalize(other)],
   ];
 
   return (
-    <span className={styles.modeToggle}>
-      {modes.map(([mode, label]) => (
-        <button
-          key={mode}
-          tabIndex={-1}
-          className={`${styles.modeToggleBtn} ${mode === currentMode ? styles.modeToggleBtnActive : ""}`}
-          onClick={() => safe(commands.setViewerMode(mode))}
-        >
-          {label}
-        </button>
-      ))}
+    <span
+      className={styles.modeToggle}
+      role="radiogroup"
+      aria-label="View mode"
+    >
+      {modes.map(([mode, label]) => {
+        const checked = mode === currentMode;
+        return (
+          <button
+            key={mode}
+            tabIndex={-1}
+            role="radio"
+            aria-checked={checked}
+            className={`${styles.modeToggleBtn} ${checked ? styles.modeToggleBtnActive : ""}`}
+            onClick={() => safe(commands.setViewerMode(mode))}
+            title={
+              checked
+                ? undefined
+                : mode === alternate
+                  ? shortcuts.label(
+                      `Switch to ${mode} view`,
+                      "viewer_toggle_hex",
+                    )
+                  : `Switch to ${mode} view`
+            }
+          >
+            {label}
+          </button>
+        );
+      })}
     </span>
   );
 }

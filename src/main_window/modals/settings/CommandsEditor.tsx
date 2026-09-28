@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { commands as ipc } from "../../../lib/bindings";
 import { unwrap, safeSilent } from "../../../lib/ipc";
@@ -31,6 +31,7 @@ export function CommandsEditor({
   bindings: ResolvedBinding[];
   allCommands: CommandInfo[];
 }) {
+  const idBase = useId();
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<UserCommandEntry>(emptyCommand());
   const [isAdding, setIsAdding] = useState(false);
@@ -129,6 +130,12 @@ export function CommandsEditor({
     const ackMatches =
       !!acked && acked.key === candidateKey && acked.when === KEYBINDING_WHEN;
     const canSave = keyValid && (hardConflicts.length === 0 || ackMatches);
+    const invalidKeyId = `${idBase}-invalid-key`;
+    const conflictId = `${idBase}-conflict`;
+    const keyProblemIds =
+      [!keyValid && invalidKeyId, conflicts.length > 0 && conflictId]
+        .filter(Boolean)
+        .join(" ") || undefined;
 
     return (
       <div className={styles.commandForm}>
@@ -162,6 +169,9 @@ export function CommandsEditor({
                 setAcked(null);
               }}
               size="regular"
+              label="Key"
+              invalid={!keyValid || hardConflicts.length > 0}
+              describedBy={keyProblemIds}
             />
           </label>
           <label>
@@ -236,13 +246,13 @@ export function CommandsEditor({
         </div>
 
         {!keyValid && (
-          <div className={styles.kbBannerWarn}>
+          <div id={invalidKeyId} className={styles.kbBannerWarn}>
             Press a non-modifier key (letter, number, function key, etc.).
           </div>
         )}
 
         {hardConflicts.length > 0 && (
-          <div className={styles.kbBannerError}>
+          <div id={conflictId} className={styles.kbBannerError}>
             <span>
               Already used by{" "}
               {hardConflicts
@@ -265,7 +275,7 @@ export function CommandsEditor({
         )}
 
         {hardConflicts.length === 0 && softConflicts.length > 0 && (
-          <div className={styles.kbBannerWarn}>
+          <div id={conflictId} className={styles.kbBannerWarn}>
             Also used by{" "}
             {softConflicts
               .map((c) => `${c.commandName} (${whenLabel(c.binding.when)})`)
@@ -273,7 +283,11 @@ export function CommandsEditor({
           </div>
         )}
 
-        {error && <div className={styles.kbBannerError}>{error}</div>}
+        {error && (
+          <div className={styles.kbBannerError} role="alert">
+            {error}
+          </div>
+        )}
 
         <div className={styles.commandFormActions}>
           {!isAdding && editingIndex !== null && (

@@ -116,6 +116,7 @@ export default function MountSftp({
             ref={inputRef}
             type="text"
             id="host"
+            aria-required
             value={newHost}
             onChange={(e) => {
               setNewHost(e.target.value);

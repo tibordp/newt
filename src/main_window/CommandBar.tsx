@@ -31,6 +31,7 @@ export default function CommandBar({
       return {
         id,
         label: cmd?.short_name ?? cmd?.name ?? id,
+        name: (cmd?.name ?? id).replace(/(\.\.\.|…)$/, ""),
         shortcut: cmd?.shortcut_display ?? [],
       };
     });
@@ -52,6 +53,7 @@ export default function CommandBar({
           tabIndex={-1}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => handleClick(item.id)}
+          title={item.name !== item.label ? item.name : undefined}
         >
           <span className={styles.shortcut}>
             {item.shortcut.length > 0 ? item.shortcut.join("+") : "\u00A0"}

@@ -1,3 +1,5 @@
+@use "../styles/forced-colors" as fc;
+
 .operationsPanel {
   display: flex;
   flex-direction: column;
@@ -64,6 +66,7 @@
   background: var(--color-border);
   border-radius: 2px;
   overflow: hidden;
+  @include fc.track;
 }
 
 .progressFill {
@@ -71,6 +74,7 @@
   background: var(--color-accent);
   border-radius: 2px;
   transition: width 0.1s linear;
+  @include fc.fill;
 }
 
 .progressText {

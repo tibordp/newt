@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { commands, type Sorting, type SortingKey } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
@@ -68,6 +68,9 @@ export default function SortMenu({
   }, [open]);
 
   const pointerActive = useSuppressInitialPointer(open);
+  const idBase = useId();
+  const listId = `${idBase}-list`;
+  const optionId = (i: number) => `${idBase}-option-${i}`;
 
   // Holding Shift arms "reverse": Shift+<key> applies that sort descending,
   // and the Reverse row lights up while held. Tracked via window listeners so
@@ -128,6 +131,9 @@ export default function SortMenu({
           className={`${menuStyles.content} ${styles.content}`}
           align="start"
           sideOffset={4}
+          aria-labelledby={`${idBase}-header`}
+          aria-controls={listId}
+          aria-activedescendant={optionId(highlight)}
           onCloseAutoFocus={(e) => {
             // Pane focus effect restores focus to the active pane.
             e.preventDefault();
@@ -166,11 +172,14 @@ export default function SortMenu({
             }
           }}
         >
-          <div className={styles.header}>Sort by</div>
+          <div id={`${idBase}-header`} className={styles.header}>
+            Sort by
+          </div>
           <div
+            id={listId}
             className={styles.list}
             role="listbox"
-            aria-label="Sort by"
+            aria-labelledby={`${idBase}-header`}
             style={pointerActive ? undefined : { pointerEvents: "none" }}
           >
             {ROWS.map((row, i) => {
@@ -179,7 +188,7 @@ export default function SortMenu({
               return (
                 <Fragment key={row.kind === "sort" ? row.key : row.kind}>
                   {row.kind === "reverse" && (
-                    <div className={menuStyles.separator} />
+                    <div className={menuStyles.separator} role="none" />
                   )}
                   <div
                     className={`${menuStyles.item} ${styles.item} ${
@@ -189,8 +198,13 @@ export default function SortMenu({
                         ? styles.itemReverseArmed
                         : ""
                     }`}
+                    id={optionId(i)}
                     role="option"
                     aria-selected={i === highlight}
+                    aria-checked={
+                      row.kind === "folders" ? isChecked : undefined
+                    }
+                    aria-keyshortcuts={row.accel.toUpperCase()}
                     onMouseEnter={() => setHighlight(i)}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -205,10 +219,17 @@ export default function SortMenu({
                     )}
                     {isCurrent && (
                       <span className={styles.arrow}>
-                        {sorting.asc ? "▲" : "▼"}
+                        <span aria-hidden>{sorting.asc ? "▲" : "▼"}</span>
+                        <span className="sr-only">
+                          {sorting.asc ? "ascending" : "descending"}
+                        </span>
                       </span>
                     )}
-                    {isChecked && <span className={styles.arrow}>✓</span>}
+                    {isChecked && (
+                      <span className={styles.arrow} aria-hidden>
+                        ✓
+                      </span>
+                    )}
                   </div>
                 </Fragment>
               );

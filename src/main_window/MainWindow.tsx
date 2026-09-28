@@ -136,6 +136,7 @@ function AskpassDialog({
                 onChange={(e) => setValue(e.target.value)}
                 ref={inputRef}
                 size={40}
+                aria-label={prompt}
               />
             </DialogBody>
             <DialogFooter
@@ -527,7 +528,7 @@ function App() {
         {remoteState &&
           (remoteState.connection_status.status === "failed" ||
             remoteState.connection_status.status === "disconnected") && (
-            <div className="connection-status connection-error">
+            <div className="connection-status connection-error" role="alert">
               {remoteState.connection_status.error}{" "}
               <button
                 className="connection-retry"

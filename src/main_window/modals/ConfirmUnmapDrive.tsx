@@ -1,3 +1,4 @@
+import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
@@ -20,8 +21,12 @@ export default function ConfirmUnmapDrive({
     <DialogShell>
       <DialogHeader title="Unmap Network Drive" />
       <DialogBody>
-        Disconnect {drive}
-        {target ? ` (${target})` : ""}?
+        <Dialog.Description asChild>
+          <span>
+            Disconnect {drive}
+            {target ? ` (${target})` : ""}?
+          </span>
+        </Dialog.Description>
       </DialogBody>
       <DialogFooter onCancel={cancel}>
         <button

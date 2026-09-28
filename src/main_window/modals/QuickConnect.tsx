@@ -241,7 +241,11 @@ export default function QuickConnect({
       }}
     >
       <Dialog.Title className="sr-only">Quick Connect</Dialog.Title>
-      <Palette shouldFilter={false} onKeyDown={onKeyDown}>
+      <Palette
+        shouldFilter={false}
+        onKeyDown={onKeyDown}
+        label="Search connections"
+      >
         <div className={styles.header}>
           <Command.Input
             value={filter}
@@ -249,7 +253,7 @@ export default function QuickConnect({
             placeholder="Search connections..."
           />
         </div>
-        <Command.List>
+        <Command.List label="Connections">
           <Command.Empty>
             {connections.length === 0 && recentConnections.length === 0
               ? "No saved connections. Use the connect or mount dialogs to save one."
@@ -282,6 +286,7 @@ export default function QuickConnect({
                           className={styles.editBtn}
                           onClick={(e) => requestEdit(value, e)}
                           title="Edit before connecting (F4)"
+                          aria-label="Edit before connecting"
                           tabIndex={-1}
                         >
                           &#9998;
@@ -289,7 +294,8 @@ export default function QuickConnect({
                         <button
                           className={styles.deleteBtn}
                           onClick={(e) => requestDelete(value, e)}
-                          title="Forget connection"
+                          title="Forget connection (Delete)"
+                          aria-label="Forget connection"
                           tabIndex={-1}
                         >
                           &times;
@@ -322,7 +328,7 @@ export default function QuickConnect({
                               highlightClass={styles.highlight}
                             />
                           </span>
-                          <span className={styles.path}>
+                          <span className={styles.path} title={subtitle(c)}>
                             <Highlight
                               text={subtitle(c)}
                               filter={filter}
@@ -334,6 +340,7 @@ export default function QuickConnect({
                           className={styles.editBtn}
                           onClick={(e) => requestEdit(value, e)}
                           title="Edit connection (F4)"
+                          aria-label="Edit connection"
                           tabIndex={-1}
                         >
                           &#9998;
@@ -341,7 +348,8 @@ export default function QuickConnect({
                         <button
                           className={styles.deleteBtn}
                           onClick={(e) => requestDelete(value, e)}
-                          title="Remove connection"
+                          title="Remove connection (Delete)"
+                          aria-label="Remove connection"
                           tabIndex={-1}
                         >
                           &times;

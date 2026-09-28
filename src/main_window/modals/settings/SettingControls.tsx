@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import styles from "../SettingsEditor.module.scss";
 import {
@@ -14,18 +14,30 @@ import {
 } from "../../columns";
 import { SettingDef } from "./schema";
 
+type ControlLabelling = {
+  labelledBy: string;
+  describedBy?: string;
+};
+
 export function SettingControl({
   setting,
   onUpdate,
+  labelledBy,
+  describedBy,
 }: {
   setting: SettingDef;
   onUpdate: (key: string, value: any) => void;
-}) {
+} & ControlLabelling) {
+  const aria = {
+    "aria-labelledby": labelledBy,
+    "aria-describedby": describedBy,
+  };
   switch (setting.type) {
     case "boolean":
       return (
         <input
           type="checkbox"
+          {...aria}
           checked={setting.value ?? false}
           onChange={(e) => onUpdate(setting.key, e.target.checked)}
         />
@@ -34,6 +46,7 @@ export function SettingControl({
       return (
         <input
           type="number"
+          {...aria}
           value={setting.value ?? 0}
           onChange={(e) => onUpdate(setting.key, Number(e.target.value))}
           style={{ width: "80px" }}
@@ -42,6 +55,7 @@ export function SettingControl({
     case "enum":
       return (
         <select
+          {...aria}
           value={setting.value ?? setting.enumValues?.[0] ?? ""}
           onChange={(e) => onUpdate(setting.key, e.target.value)}
         >
@@ -57,6 +71,7 @@ export function SettingControl({
       return (
         <input
           type="text"
+          {...aria}
           value={setting.value ?? ""}
           onChange={(e) => onUpdate(setting.key, e.target.value)}
           style={{ width: "150px" }}
@@ -75,11 +90,14 @@ function ColumnsEditor({
   value,
   onUpdate,
   settingKey,
+  labelledBy,
+  describedBy,
 }: {
   value: string[];
   onUpdate: (key: string, value: any) => void;
   settingKey: string;
-}) {
+} & ControlLabelling) {
+  const idBase = useId();
   const current = value ?? COLUMN_CHOICES.map((c) => c.key);
   const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(
     null,
@@ -188,6 +206,8 @@ function ColumnsEditor({
             type="button"
             className={styles.columnDragHandle}
             title="Drag to reorder (arrow keys move)"
+            aria-label={`Reorder ${label}`}
+            aria-keyshortcuts="ArrowUp ArrowDown"
             onMouseDown={startDrag(id)}
             onKeyDown={(e) => {
               if (e.key === "ArrowUp") {
@@ -224,6 +244,7 @@ function ColumnsEditor({
             onChange={(e) =>
               setTimestamp(id, e.target.value as TimestampColumnState)
             }
+            aria-label={`${label} format`}
           >
             {(["datetime", "date", "split"] as const).map((s) => (
               <option key={s} value={s}>
@@ -237,13 +258,30 @@ function ColumnsEditor({
   };
 
   return (
-    <div className={styles.columnPanels}>
-      <div className={styles.columnList}>
-        <div className={styles.columnListHeader}>Visible</div>
+    <div
+      className={styles.columnPanels}
+      role="group"
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+    >
+      <div
+        className={styles.columnList}
+        role="group"
+        aria-labelledby={`${idBase}-visible`}
+      >
+        <div id={`${idBase}-visible`} className={styles.columnListHeader}>
+          Visible
+        </div>
         {displayIds.map((id) => renderRow(id, true))}
       </div>
-      <div className={styles.columnList}>
-        <div className={styles.columnListHeader}>Hidden</div>
+      <div
+        className={styles.columnList}
+        role="group"
+        aria-labelledby={`${idBase}-hidden`}
+      >
+        <div id={`${idBase}-hidden`} className={styles.columnListHeader}>
+          Hidden
+        </div>
         {hiddenIds.map((id) => renderRow(id, false))}
         {hiddenIds.length === 0 && (
           <div className={styles.columnListEmpty}>All columns visible</div>
@@ -266,18 +304,24 @@ function DefaultSortEditor({
   value,
   onUpdate,
   settingKey,
+  labelledBy,
+  describedBy,
 }: {
   value: { key: string; ascending: boolean } | undefined;
   onUpdate: (key: string, value: any) => void;
   settingKey: string;
-}) {
+} & ControlLabelling) {
   const current = value ?? { key: "name", ascending: true };
 
   return (
     <div
       style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}
+      role="group"
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
     >
       <select
+        aria-labelledby={labelledBy}
         value={current.key}
         onChange={(e) =>
           onUpdate(settingKey, { ...current, key: e.target.value })
@@ -313,10 +357,12 @@ function DefaultSortEditor({
 export function CustomWidget({
   setting,
   onUpdate,
+  labelledBy,
+  describedBy,
 }: {
   setting: SettingDef;
   onUpdate: (key: string, value: any) => void;
-}) {
+} & ControlLabelling) {
   switch (setting.customWidget) {
     case "columns":
       return (
@@ -324,6 +370,8 @@ export function CustomWidget({
           value={setting.value}
           onUpdate={onUpdate}
           settingKey={setting.key}
+          labelledBy={labelledBy}
+          describedBy={describedBy}
         />
       );
     case "default_sort":
@@ -332,6 +380,8 @@ export function CustomWidget({
           value={setting.value}
           onUpdate={onUpdate}
           settingKey={setting.key}
+          labelledBy={labelledBy}
+          describedBy={describedBy}
         />
       );
     default:

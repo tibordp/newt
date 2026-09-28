@@ -798,6 +798,8 @@ export function TextViewer({
         className={styles.viewerContent}
         ref={containerRef}
         onScroll={handleScroll}
+        role="document"
+        aria-label={filePath}
       >
         <div style={{ height: scrollableHeight }}>
           <div style={{ height: topSpacerHeight }} />
@@ -811,6 +813,7 @@ export function TextViewer({
                 <div
                   className={styles.viewerGutter}
                   style={{ width: gutterWidth }}
+                  aria-hidden
                 >
                   {visibleLineTexts.map((_, i) => (
                     <div key={startLine + i} className={styles.gutterLine}>
@@ -894,16 +897,22 @@ export function TextViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>Text</span>
           {encodingLabel && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>{encodingLabel}</span>
             </>
           )}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>
             Line {currentLine} / {lineCount}
             {!eofFoundRef.current && "+"}
@@ -921,7 +930,9 @@ export function TextViewer({
                 : `L${start.line + 1} C${start.col + 1} \u2013 L${end.line + 1} C${end.col + 1}`;
               return (
                 <>
-                  <span className={styles.statusSeparator}>|</span>
+                  <span className={styles.statusSeparator} aria-hidden>
+                    |
+                  </span>
                   <span>
                     Sel: {posText} ({formatHexOffset(startByte)}
                     {"\u2013"}
@@ -930,7 +941,9 @@ export function TextViewer({
                 </>
               );
             })()}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
         </span>
         <ModeToggle currentMode="text" autoMode={autoMode} />

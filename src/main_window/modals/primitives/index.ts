@@ -4,8 +4,15 @@ export {
   DialogBody,
   DialogFooter,
 } from "./DialogShell";
-export { Field, FieldGroup, FieldFold, CheckboxField, FieldRow } from "./Field";
-export { DialogTabs } from "./DialogTabs";
+export {
+  Field,
+  FieldGroup,
+  FieldFold,
+  CheckboxField,
+  FieldRow,
+  fieldHintId,
+} from "./Field";
+export { DialogTabs, dialogTabId } from "./DialogTabs";
 export {
   DialogSubmitButton,
   DialogSaveButton,

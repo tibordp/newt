@@ -211,6 +211,9 @@ export function MarkdownViewer({
         ref={hostRef}
         className={styles.viewerContent}
         tabIndex={-1}
+        role="document"
+        aria-label={filePath}
+        aria-busy={bytes === null && notice === null}
         style={{ outline: "none", background: "var(--color-bg)" }}
       />
       <div
@@ -218,21 +221,31 @@ export function MarkdownViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>Markdown</span>
           {encodingLabel && (
             <>
-              <span className={styles.statusSeparator}>|</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
               <span>{encodingLabel}</span>
             </>
           )}
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
           {notice && (
             <>
-              <span className={styles.statusSeparator}>|</span>
-              <span className={styles.statusError}>{notice}</span>
+              <span className={styles.statusSeparator} aria-hidden>
+                |
+              </span>
+              <span className={styles.statusError} role="alert">
+                {notice}
+              </span>
             </>
           )}
         </span>

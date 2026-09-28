@@ -55,7 +55,11 @@ export function DialogHeader({
   return (
     <header className={styles.header}>
       <Dialog.Title className={styles.title}>{title}</Dialog.Title>
-      {summary != null && <p className={styles.summary}>{summary}</p>}
+      {summary != null && (
+        <Dialog.Description className={styles.summary}>
+          {summary}
+        </Dialog.Description>
+      )}
     </header>
   );
 }

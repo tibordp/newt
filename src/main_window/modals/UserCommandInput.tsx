@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { commands } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
@@ -70,7 +71,11 @@ export default function UserCommandInput({
     return (
       <DialogShell>
         <DialogHeader title={command_title} />
-        <DialogBody>{confirms[0]}</DialogBody>
+        <DialogBody>
+          <Dialog.Description asChild>
+            <span>{confirms[0]}</span>
+          </Dialog.Description>
+        </DialogBody>
         <DialogFooter onCancel={cancel} cancelLabel="No">
           <button
             type="button"

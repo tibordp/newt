@@ -140,7 +140,9 @@ export function PdfViewer({
     <div className={styles.viewer}>
       {pdfError ? (
         <div className={styles.mediaContent}>
-          <div className={styles.imageErrorMessage}>{pdfError}</div>
+          <div className={styles.imageErrorMessage} role="alert">
+            {pdfError}
+          </div>
         </div>
       ) : (
         <>
@@ -150,6 +152,7 @@ export function PdfViewer({
               onClick={() => goToPage(currentPage - 1)}
               disabled={currentPage <= 1}
               title="Previous page"
+              aria-label="Previous page"
             >
               &#x25B2;
             </button>
@@ -161,6 +164,7 @@ export function PdfViewer({
               onClick={() => goToPage(currentPage + 1)}
               disabled={currentPage >= numPages}
               title="Next page"
+              aria-label="Next page"
             >
               &#x25BC;
             </button>
@@ -169,6 +173,7 @@ export function PdfViewer({
               className={styles.viewerToolbarBtn}
               onClick={zoomOut}
               title={shortcuts.label("Zoom out", "viewer_zoom_out")}
+              aria-label="Zoom out"
             >
               −
             </button>
@@ -179,6 +184,7 @@ export function PdfViewer({
               className={styles.viewerToolbarBtn}
               onClick={zoomIn}
               title={shortcuts.label("Zoom in", "viewer_zoom_in")}
+              aria-label="Zoom in"
             >
               +
             </button>
@@ -195,6 +201,9 @@ export function PdfViewer({
               ref={containerRef}
               className={styles.pdfContainer}
               tabIndex={0}
+              role="document"
+              aria-label={filePath}
+              aria-busy={numPages === 0}
             >
               <div id="viewer" className="pdfViewer" />
             </div>
@@ -206,10 +215,14 @@ export function PdfViewer({
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className={styles.statusText}>
-          <span>{filePath}</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span title={filePath}>{filePath}</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>PDF</span>
-          <span className={styles.statusSeparator}>|</span>
+          <span className={styles.statusSeparator} aria-hidden>
+            |
+          </span>
           <span>{formatSize(fileSize)}</span>
         </span>
         <ModeToggle currentMode="pdf" autoMode={autoMode} />

@@ -29,7 +29,12 @@ export default function ConnectionLogContent({
     >
       <DialogShell>
         <DialogHeader title="Connection Log" />
-        <pre className={styles.log} ref={ref}>
+        <pre
+          className={styles.log}
+          ref={ref}
+          role="log"
+          aria-label="Connection log"
+        >
           {log.length > 0 ? log.join("\n") : "(no log entries)"}
         </pre>
         <DialogFooter>

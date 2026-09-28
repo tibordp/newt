@@ -1,4 +1,10 @@
+import { useId } from "react";
 import styles from "./Field.module.scss";
+
+// Id of a Field's hint, for the control's aria-describedby.
+export function fieldHintId(htmlFor: string) {
+  return `${htmlFor}-hint`;
+}
 
 // Stacked label-above-control field.
 export function Field({
@@ -18,7 +24,14 @@ export function Field({
         {label}
       </label>
       {children}
-      {hint != null && <div className={styles.hint}>{hint}</div>}
+      {hint != null && (
+        <div
+          id={htmlFor ? fieldHintId(htmlFor) : undefined}
+          className={styles.hint}
+        >
+          {hint}
+        </div>
+      )}
     </div>
   );
 }
@@ -69,6 +82,7 @@ export function CheckboxField({
   // take a line of its own.
   title?: string;
 }) {
+  const hintId = useId();
   return (
     <div>
       <label className={styles.checkboxField} title={title}>
@@ -77,10 +91,18 @@ export function CheckboxField({
           checked={checked}
           disabled={disabled}
           onChange={(e) => onChange(e.target.checked)}
+          // The label's tooltip never reaches AT; on the input it becomes
+          // the checkbox's description.
+          title={title}
+          aria-describedby={hint != null ? hintId : undefined}
         />
         {label}
       </label>
-      {hint != null && <div className={styles.checkboxHint}>{hint}</div>}
+      {hint != null && (
+        <div id={hintId} className={styles.checkboxHint}>
+          {hint}
+        </div>
+      )}
     </div>
   );
 }

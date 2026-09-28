@@ -5,6 +5,7 @@ import {
   useMemo,
   useLayoutEffect,
   useCallback,
+  useId,
   memo,
   Fragment,
 } from "react";
@@ -63,6 +64,7 @@ function PathBreadcrumbs(props: {
   onMenuCloseAutoFocus: (e: Event) => void;
 }) {
   const { breadcrumbs, paneHandle, displayPath, onMenuCloseAutoFocus } = props;
+  const shortcuts = useCommandShortcuts();
 
   // The last breadcrumb gets the full display_path; earlier ones join labels.
   const pathUpTo = (index: number): string => {
@@ -75,31 +77,38 @@ function PathBreadcrumbs(props: {
 
   return (
     <>
-      {breadcrumbs.map((crumb, i) => (
-        <ContextMenu.Root key={i}>
-          <ContextMenu.Trigger asChild>
-            <a
-              className={styles.pathBreadcrumb}
-              href="#"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.preventDefault();
-                if (i === breadcrumbs.length - 1) {
-                  commands.dialog("navigate", paneHandle);
-                } else {
-                  safe(commands.navigate(paneHandle, crumb.nav_path, true));
+      {breadcrumbs.map((crumb, i) => {
+        const isLast = i === breadcrumbs.length - 1;
+        return (
+          <ContextMenu.Root key={i}>
+            <ContextMenu.Trigger asChild>
+              <a
+                className={styles.pathBreadcrumb}
+                href="#"
+                tabIndex={-1}
+                aria-current={isLast ? "location" : undefined}
+                title={
+                  isLast ? shortcuts.label("Go to path", "navigate") : undefined
                 }
-              }}
-            >
-              {crumb.label}
-            </a>
-          </ContextMenu.Trigger>
-          <BreadcrumbContextMenuContent
-            displayPath={pathUpTo(i)}
-            onCloseAutoFocus={onMenuCloseAutoFocus}
-          />
-        </ContextMenu.Root>
-      ))}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (isLast) {
+                    commands.dialog("navigate", paneHandle);
+                  } else {
+                    safe(commands.navigate(paneHandle, crumb.nav_path, true));
+                  }
+                }}
+              >
+                {crumb.label}
+              </a>
+            </ContextMenu.Trigger>
+            <BreadcrumbContextMenuContent
+              displayPath={pathUpTo(i)}
+              onCloseAutoFocus={onMenuCloseAutoFocus}
+            />
+          </ContextMenu.Root>
+        );
+      })}
     </>
   );
 }
@@ -206,6 +215,9 @@ function annotationsEqual(
 
 type FileRowProps = {
   row: FileView;
+  id: string;
+  posInSet: number;
+  setSize: number;
   columns: ColumnDef[];
   isFocused: boolean;
   isSelected: boolean;
@@ -225,6 +237,9 @@ type FileRowProps = {
 const FileRow = memo(
   function FileRow({
     row,
+    id,
+    posInSet,
+    setSize,
     columns,
     isFocused,
     isSelected,
@@ -252,6 +267,11 @@ const FileRow = memo(
     };
     return (
       <li
+        id={id}
+        role="option"
+        aria-selected={isSelected}
+        aria-posinset={posInSet}
+        aria-setsize={setSize}
         data-name={row.key ?? row.name}
         data-is-dir={row.is_dir ? "true" : undefined}
         className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
@@ -278,6 +298,9 @@ const FileRow = memo(
   (prev, next) =>
     prev.row.name === next.row.name &&
     prev.row.key === next.row.key &&
+    prev.id === next.id &&
+    prev.posInSet === next.posInSet &&
+    prev.setSize === next.setSize &&
     prev.row.source === next.row.source &&
     prev.row.size === next.row.size &&
     prev.row.modified === next.row.modified &&
@@ -347,6 +370,7 @@ function VfsSelector({
   open: boolean;
 }) {
   const formatBytes = useFormatBytes();
+  const shortcuts = useCommandShortcuts();
   // Track when we're opening a mount dialog so we don't steal focus back
   const openingDialogRef = useRef(false);
 
@@ -363,6 +387,7 @@ function VfsSelector({
           className={styles.vfsSelector}
           type="button"
           tabIndex={-1}
+          title={shortcuts.label("Switch filesystem", "select_vfs")}
           onClick={(e) => {
             e.stopPropagation();
             commands.dialog("select_vfs", paneHandle);
@@ -373,7 +398,7 @@ function VfsSelector({
             safeSilent(commands.focus(paneHandle, null));
           }}
         >
-          {vfsDisplayName} &#x25BE;
+          {vfsDisplayName} <span aria-hidden>&#x25BE;</span>
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -459,7 +484,9 @@ function VfsSelector({
                     }
                   }}
                 >
-                  <span className={menuStyles.itemIcon}>{kindIcon}</span>
+                  <span className={menuStyles.itemIcon} aria-hidden>
+                    {kindIcon}
+                  </span>
                   <span className={menuStyles.itemLabel}>
                     {isSplit ? (
                       // Under the group header: the drive, its volume
@@ -493,6 +520,10 @@ function VfsSelector({
                   {target.vfs_id != null && target.type_name !== "local" && (
                     <button
                       className={menuStyles.itemDismiss}
+                      title="Disconnect"
+                      // Mouse-only: focus never leaves the menu item, and
+                      // the keyboard route is the unmount_vfs command.
+                      aria-hidden
                       onClick={(e) => {
                         e.stopPropagation();
                         if (target.vfs_id !== null) {
@@ -520,6 +551,8 @@ function VfsSelector({
 function FilterInput({
   value,
   filterMode,
+  listId,
+  activeDescendant,
   inputRef,
   onKeyDown,
   onChange,
@@ -527,6 +560,8 @@ function FilterInput({
 }: {
   value: string | null;
   filterMode: string;
+  listId: string;
+  activeDescendant: string | undefined;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onKeyDown: React.KeyboardEventHandler;
   onChange: (value: string) => void;
@@ -543,10 +578,18 @@ function FilterInput({
     setLocalValue(value ?? "");
   }, [value]);
 
+  // Typing here moves the file list's focused row, as a combobox drives its
+  // listbox.
   const input = (
     <input
       className={isVisibleFilter ? styles.filterBarInput : undefined}
       type="text"
+      role="combobox"
+      aria-label={filterMode === "filter" ? "Filter" : "Quick search"}
+      aria-autocomplete="list"
+      aria-expanded
+      aria-controls={listId}
+      aria-activedescendant={activeDescendant}
       value={isVisibleFilter ? localValue : (value ?? "")}
       placeholder={isVisibleFilter ? "Filter (regex)" : undefined}
       onChange={(e) => {
@@ -651,18 +694,21 @@ function GitBranchBadge({ badge }: { badge: ContextBadge }) {
   const parts = [branch.name + (branch.dirty ? "*" : "")];
   if (branch.ahead > 0) parts.push(`↑${branch.ahead}`);
   if (branch.behind > 0) parts.push(`↓${branch.behind}`);
+  const commits = (n: number) => `${n} ${n === 1 ? "commit" : "commits"}`;
   const title = [
     branch.detached
-      ? `detached HEAD at ${branch.name}`
-      : `branch ${branch.name}`,
+      ? `Detached HEAD at ${branch.name}`
+      : `Branch ${branch.name}`,
     branch.dirty ? "uncommitted changes" : null,
+    branch.ahead > 0 ? `${commits(branch.ahead)} ahead` : null,
+    branch.behind > 0 ? `${commits(branch.behind)} behind` : null,
   ]
     .filter(Boolean)
     .join(" · ");
   return (
     <div className={styles.gitBadge} title={title}>
       {git && (
-        <span className={styles.gitBadgeIcon}>
+        <span className={styles.gitBadgeIcon} aria-hidden>
           {String.fromCodePoint(parseInt(git.fontCharacter, 16))}
         </span>
       )}
@@ -762,6 +808,17 @@ function PaneInner(
   const historyPersistent: boolean =
     (isHistoryNavigatorOpen && modal?.data?.persistent) || false;
   const focusedIndex = props.focused_index ?? -1;
+  const idBase = useId();
+  const listId = `${idBase}-files`;
+  const emptyId = `${idBase}-empty`;
+  const rowId = (index: number) => `${idBase}-row-${index}`;
+  // DOM focus stays on the list (or the filter input) while the focused row
+  // is only styled, so assistive tech learns of it via aria-activedescendant.
+  const activeDescendant =
+    focusedIndex >= file_window.offset &&
+    focusedIndex < file_window.offset + file_window.items.length
+      ? rowId(focusedIndex)
+      : undefined;
   // Allow interaction when loading (partial results visible) but not when pending_path is set (no files yet)
   const isBusy = !!pending_path && !loading;
   // Run a typed command, skipping it while the pane is busy (awaiting the
@@ -1672,6 +1729,8 @@ function PaneInner(
     }
   }, [path, paneHandle, rowHeight]);
 
+  const isEmpty = !showSpinner && !loading && file_window.total_count === 0;
+
   const topSpacerStyle = useMemo(
     () => ({ height: file_window.offset * rowHeight, flexShrink: 0 }),
     [file_window.offset, rowHeight],
@@ -1796,6 +1855,8 @@ function PaneInner(
     <div
       ref={paneRef}
       className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
+      role="region"
+      aria-label={paneHandle === 0 ? "Left pane" : "Right pane"}
       data-pane-handle={paneHandle}
       onClick={() => guarded(() => commands.focus(paneHandle, null))}
       onMouseDown={(e) => {
@@ -1811,6 +1872,8 @@ function PaneInner(
       <FilterInput
         value={filter}
         filterMode={filter_mode}
+        listId={listId}
+        activeDescendant={activeDescendant}
         inputRef={inputRef}
         onKeyDown={onkeydownFilter}
         onChange={(value) =>
@@ -1833,7 +1896,12 @@ function PaneInner(
               activePath={path.path}
               open={isVfsSelectorOpen}
             />
-            <div className={styles.headerPath}>
+            <div
+              className={styles.headerPath}
+              role="navigation"
+              aria-label="Path"
+              title={props.display_path}
+            >
               <PathBreadcrumbs
                 breadcrumbs={breadcrumbs}
                 paneHandle={paneHandle}
@@ -1849,6 +1917,7 @@ function PaneInner(
                 type="button"
                 className={styles.freeSpace}
                 tabIndex={-1}
+                title="Volume properties"
                 onMouseDown={(e) => {
                   // Don't let the pane's click handler steal focus.
                   e.stopPropagation();
@@ -1865,6 +1934,7 @@ function PaneInner(
               type="button"
               className={styles.maximizeButton}
               tabIndex={-1}
+              aria-label={maximized ? "Restore split layout" : "Maximize pane"}
               title={shortcuts.label(
                 maximized ? "Restore split layout" : "Maximize pane",
                 "toggle_maximized",
@@ -1970,6 +2040,13 @@ function PaneInner(
               className={`${styles.files} ${
                 filter && filter_mode === "filter" ? styles.filesFiltered : ""
               }`}
+              id={listId}
+              role="listbox"
+              aria-multiselectable
+              aria-label={props.display_path}
+              aria-activedescendant={activeDescendant}
+              aria-busy={isBusy || loading}
+              aria-describedby={isEmpty ? emptyId : undefined}
               ref={containerRef}
               onKeyDown={onkeydown}
               onMouseDown={onMouseDown}
@@ -1978,17 +2055,28 @@ function PaneInner(
               tabIndex={-1}
               onScroll={onScroll}
             >
-              <div style={topSpacerStyle} />
-              {!showSpinner && !loading && file_window.total_count === 0 && (
-                <li className={styles.emptyPlaceholder}>Nothing to see here</li>
+              <div style={topSpacerStyle} aria-hidden />
+              {isEmpty && (
+                <li
+                  id={emptyId}
+                  className={styles.emptyPlaceholder}
+                  aria-hidden
+                >
+                  Nothing to see here
+                </li>
               )}
-              {file_window.items.map((row) => {
+              {file_window.items.map((row, i) => {
                 const rowKey = row.key ?? row.name;
                 const isFocused = active && rowKey === focused;
                 return (
                   <FileRow
                     key={rowKey}
                     row={row}
+                    id={rowId(file_window.offset + i)}
+                    posInSet={file_window.offset + i + 1}
+                    // Unknown (-1) while streaming: the total moves with
+                    // every batch, and would re-render each row with it.
+                    setSize={loading ? -1 : file_window.total_count}
                     columns={columns}
                     isFocused={isFocused}
                     isSelected={selectedLookup.has(rowKey)}
@@ -2008,8 +2096,8 @@ function PaneInner(
                   />
                 );
               })}
-              <div style={bottomSpacerStyle} />
-              <div className={styles.dragRect} ref={dragRectRef} />
+              <div style={bottomSpacerStyle} aria-hidden />
+              <div className={styles.dragRect} ref={dragRectRef} aria-hidden />
             </ul>
           </ContextMenu.Trigger>
           {contextMenuOnFile ? (
@@ -2036,7 +2124,7 @@ function PaneInner(
           )}
         </ContextMenu.Root>
       )}
-      <div className="dnd-ghost" ref={dndGhostRef} />
+      <div className="dnd-ghost" ref={dndGhostRef} aria-hidden />
       {preferences?.settings.appearance?.show_pane_status !== false && (
         <div className={styles.statusbar}>
           <div className={styles.statusbarInner}>

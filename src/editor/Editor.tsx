@@ -439,7 +439,7 @@ function Editor() {
 
   return (
     <div className={styles.editor}>
-      <div className={styles.editorContent}>
+      <div className={styles.editorContent} aria-busy={!ready}>
         <MonacoEditor
           defaultValue=""
           language={language}
@@ -460,21 +460,29 @@ function Editor() {
       <div className={styles.editorStatus}>
         {ready ? (
           <>
-            <span>
+            <span title={displayPath}>
               {displayPath}
               {dirty ? " [Modified]" : ""}
             </span>
-            <span className={styles.statusSeparator}>|</span>
+            <span className={styles.statusSeparator} aria-hidden>
+              |
+            </span>
             <span>{language}</span>
-            <span className={styles.statusSeparator}>|</span>
+            <span className={styles.statusSeparator} aria-hidden>
+              |
+            </span>
             <span>
               Ln {cursorPosition.line}, Col {cursorPosition.column}
             </span>
-            <span className={styles.statusSeparator}>|</span>
+            <span className={styles.statusSeparator} aria-hidden>
+              |
+            </span>
             <span>{formatSize(fileSize)}</span>
             {saving && (
               <>
-                <span className={styles.statusSeparator}>|</span>
+                <span className={styles.statusSeparator} aria-hidden>
+                  |
+                </span>
                 <span>Saving...</span>
               </>
             )}

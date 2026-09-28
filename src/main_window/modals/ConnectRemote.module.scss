@@ -1,3 +1,5 @@
+@use "../../styles/forced-colors" as fc;
+
 .layout {
   display: flex;
   flex-wrap: wrap;
@@ -96,6 +98,7 @@
     background: var(--color-accent);
     color: var(--color-accent-fg);
     border-color: var(--color-accent);
+    @include fc.selected;
   }
 }
 
@@ -141,6 +144,7 @@
 
   &.selected {
     background: var(--color-selected-bg);
+    @include fc.selected;
   }
 }
 

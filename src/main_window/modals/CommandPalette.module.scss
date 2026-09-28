@@ -1,4 +1,5 @@
 @use "../../styles/dialog-mixins" as dlg;
+@use "../../styles/forced-colors" as fc;
 
 .content {
   @include dlg.dialog-surface;
@@ -34,6 +35,7 @@
         color: var(--color-accent-fg);
         background: rgba(255, 255, 255, 0.2);
       }
+      @include fc.selected;
     }
   }
 }
