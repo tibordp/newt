@@ -29,6 +29,7 @@ import {
   DndFileInfo,
   FileRowContext,
   KEYBOARD_MENU_EVENT,
+  REFOCUS_EVENT,
   isKeyboardContextMenu,
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
@@ -1642,20 +1643,30 @@ function PaneInner(
     [paneHandle],
   );
 
+  const focusSelf = useCallback(() => {
+    (filter != null ? inputRef : containerRef).current?.focus();
+  }, [filter]);
+
   /// Restore focus ourselves when a context menu closes. Radix would aim
   /// for whatever held focus when the menu opened, which is a node inside
   /// the previous menu whenever one context menu is opened directly from
   /// another — unmounted by then, leaving focus on `<body>`. The column
-  /// header additionally isn't focusable at all.
+  /// header additionally isn't focusable at all. A menu on a pane that
+  /// doesn't hold focus hands it back to the pane or terminal that does.
   const refocusPane = useCallback(
     (e: Event) => {
       e.preventDefault();
-      if (active && !modalOpen) {
-        (filter != null ? inputRef : containerRef).current?.focus();
-      }
+      if (modalOpen) return;
+      if (active) focusSelf();
+      else window.dispatchEvent(new Event(REFOCUS_EVENT));
     },
-    [active, modalOpen, filter],
+    [active, modalOpen, focusSelf],
   );
+  useEffect(() => {
+    if (!active || modalOpen) return;
+    window.addEventListener(REFOCUS_EVENT, focusSelf);
+    return () => window.removeEventListener(REFOCUS_EVENT, focusSelf);
+  }, [active, modalOpen, focusSelf]);
 
   const onContextMenu = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {

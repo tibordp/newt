@@ -11,6 +11,7 @@ import styles from "./Terminal.module.scss";
 
 import type { ITheme } from "@xterm/xterm";
 import { commands } from "../lib/bindings";
+import { REFOCUS_EVENT } from "./types";
 
 const lightTheme: ITheme = {
   background: "#ffffff",
@@ -224,6 +225,13 @@ export default function Terminal({
       terminalRef.current?.blur();
     }
   }, [active, handle, modalOpen]);
+
+  useEffect(() => {
+    if (!active || modalOpen) return;
+    const refocus = () => terminalRef.current?.focus();
+    window.addEventListener(REFOCUS_EVENT, refocus);
+    return () => window.removeEventListener(REFOCUS_EVENT, refocus);
+  }, [active, modalOpen]);
 
   return (
     <div className={styles.container}>

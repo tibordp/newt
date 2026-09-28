@@ -85,6 +85,11 @@ export type DndFileInfo = DndFile;
 /// pane, dispatched by the document-level handler in MainWindow.
 export const KEYBOARD_MENU_EVENT = "newt:keyboard-context-menu";
 
+/// Window event asking whatever holds focus in Rust state — the active pane
+/// or the active terminal — to take DOM focus back, sent when a menu closes
+/// on a pane that doesn't hold it.
+export const REFOCUS_EVENT = "newt:refocus";
+
 /// Whether a `contextmenu` event came from the keyboard rather than a
 /// pointer. The Menu key produces no keydown the panes can bind, only this
 /// event, and the webview aims it by hit-testing a point of its own
