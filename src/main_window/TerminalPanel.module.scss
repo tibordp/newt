@@ -95,6 +95,32 @@
   }
 }
 
+.maximizeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+
+  svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  &:hover {
+    background: var(--color-button-bg);
+    color: var(--color-fg);
+  }
+}
+
 .content {
   flex: 1;
   position: relative;

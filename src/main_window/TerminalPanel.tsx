@@ -1,5 +1,7 @@
 import { commands } from "../lib/bindings";
 import { safeSilent } from "../lib/ipc";
+import { useCommandShortcuts } from "../lib/scopedBindings";
+import { IconMaximize, IconRestore } from "./modals/primitives";
 import Terminal from "./Terminal";
 import styles from "./TerminalPanel.module.scss";
 import type { Terminal as TerminalType } from "./types";
@@ -9,6 +11,8 @@ type Props = {
   activeTerminal: number | null;
   panesFocused: boolean;
   modalOpen: boolean;
+  /// The panel is shown alone rather than below the panes.
+  maximized: boolean;
 };
 
 export default function TerminalPanel({
@@ -16,7 +20,9 @@ export default function TerminalPanel({
   activeTerminal,
   panesFocused,
   modalOpen,
+  maximized,
 }: Props) {
+  const shortcuts = useCommandShortcuts();
   return (
     <div className={styles.panel}>
       <div className={styles.tabBar}>
@@ -51,6 +57,24 @@ export default function TerminalPanel({
           title="New Terminal"
         >
           +
+        </button>
+        <button
+          className={styles.maximizeButton}
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={async () => {
+            // What maximizes is whatever has focus, so claim it first.
+            if (activeTerminal != null) {
+              await safeSilent(commands.activateTerminal(activeTerminal));
+            }
+            safeSilent(commands.cmdToggleMaximized(0));
+          }}
+          title={shortcuts.label(
+            maximized ? "Restore split layout" : "Maximize terminal",
+            "toggle_maximized",
+          )}
+        >
+          {maximized ? <IconRestore /> : <IconMaximize />}
         </button>
       </div>
       <div className={styles.content}>

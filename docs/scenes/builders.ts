@@ -229,6 +229,8 @@ export type MainWindowSpec = {
   /// Focus is in the terminal rather than the panes.
   terminalFocused?: boolean;
   showHidden?: boolean;
+  /// Only the focused pane (or the terminal) is shown.
+  maximized?: boolean;
   modal?: ModalData;
   operations?: OperationState[];
 };
@@ -252,6 +254,7 @@ export function mainWindow(spec: MainWindowSpec): MainWindowState {
       active_terminal: terminals[0] ?? null,
       panes_focused: !spec.terminalFocused,
       terminal_panel_visible: spec.terminalVisible ?? terminals.length > 0,
+      maximized: spec.maximized ?? false,
     },
     operations: Object.fromEntries(operations.map((op) => [String(op.id), op])),
     window_title: spec.title ?? "Newt",

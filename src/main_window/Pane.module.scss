@@ -245,6 +245,29 @@
   }
 }
 
+.maximizeButton {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+
+  svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  &:hover,
+  &:active {
+    background: none;
+    color: var(--color-fg);
+  }
+}
+
 .headerArea {
   position: relative;
   flex-shrink: 0;

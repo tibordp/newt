@@ -458,6 +458,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "toggle_maximized".into(),
+            name: "Toggle Maximized Layout".into(),
+            short_name: Some("Maximize".into()),
+            category: "View".into(),
+            default_keys: vec!["mod+f11".into()],
+            default_when: None,
+            needs_pane: false,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "sort".into(),
             name: "Sort...".into(),
             short_name: Some("Sort".into()),

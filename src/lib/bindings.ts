@@ -1013,6 +1013,14 @@ async cmdToggleHidden(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdToggleMaximized(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_toggle_maximized", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Switch the pane to explicit-filter mode, keeping whatever is already
  * typed. That covers both ways in: from the file list there is no filter
@@ -2064,7 +2072,12 @@ export type DiscoveryResult<T> = { items: T[];
  * dimmed under the combo-box instead of an empty list.
  */
 warning: string | null }
-export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean }
+export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandle; active_terminal: TerminalHandle | null; panes_focused: boolean; terminal_panel_visible: boolean; 
+/**
+ * Show only what has focus — the active pane or the terminal panel —
+ * instead of the split layout.
+ */
+maximized: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
 /**

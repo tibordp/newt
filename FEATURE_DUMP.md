@@ -13,6 +13,10 @@ The main window is divided into two zones by a resizable vertical splitter:
 
 Both splitters are user-resizable by dragging the divider. Clicking splitter dividers does not steal focus from the file list or terminal.
 
+### Maximized Layout
+
+**Toggle Maximized Layout** (Mod+F11, palette category View) replaces the split with whatever has focus: the active pane alone, or the terminal panel alone. Nothing else about navigation changes — the layout just follows focus. Tab still switches the active pane, which swaps the pane on screen; moving focus to the terminal (Alt+Down, Ctrl+\`, a new terminal, Send to Terminal) shows the terminal full-window, and moving it back (Alt+Up, hiding the terminal panel, the last terminal closing) shows the active pane again. For the mouse, the pane header and the terminal tab bar each carry a maximize/restore button; a pane's button first makes that pane active, so it is the one that fills the window. Splitter positions are kept while maximized and come back on restore. The state is per window and not persisted — new windows open split.
+
 Additional overlay elements:
 - Operations panel (shows background file operations and progress).
 - Askpass dialog (SSH/sudo password prompts, overlays the main window).
@@ -121,6 +125,8 @@ Each pane is an independent file browser with its own path, selection, filter, s
   - Archives: origin path + inner path, e.g., `/home/user/file.tar.gz/dir/subdir`
 - **Git branch badge**: When the pane's directory is inside a git repository, a quiet muted-text badge appears between the breadcrumbs and the free-space indicator: seti git glyph + branch name (short commit id when detached), a `*` suffix when the repo has uncommitted changes, and `↑N`/`↓M` ahead/behind counts when an upstream exists. Produced by the git enricher (see "Enrichers" below).
 - **Free space indicator**: Shows available disk space (e.g., "123.4 GB free") when the filesystem reports stats. Link-styled; clicking opens the volume-root Properties dialog (`root_properties`), whose Volume section carries the full detail (volume classification — local disk / removable / optical / network / RAM disk / subst — filesystem name, label, target, capacity/used/free). The dialog targets the volume the stats actually describe (`VolumeInfo.mount_point` — on Unix the containing mount point, e.g. `/proc`, not `/`; on Windows the drive/share root). Volume info is probed on the FS-owning side per listing (`VolumeInfo` on `FsStats`): Win32 volume APIs on Windows, `/proc/self/mountinfo` + `/dev/disk/by-label` on Linux, `statfs` on macOS. Only visible for VFS types that support `fs_stats` (local filesystem). Directory Properties invoked *at* a volume root shows the same Volume section.
+
+- **Maximize button**: A small icon button at the right end of the header, after the free-space indicator. Maximizes this pane (making it the active one) or, when maximized, restores the split layout — see "Maximized Layout". Clicking it leaves keyboard focus in the file list.
 
 The whole header can be hidden via the `appearance.show_pane_header` preference (default: on). When hidden, the VFS selector trigger stays mounted in an off-screen anchor so its keyboard shortcut still opens the dropdown anchored to the top of the pane.
 
@@ -915,6 +921,9 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 - **"+" button**: Creates a new terminal.
 - **"×" button** on each tab: Closes that terminal.
 - **Tab click**: Activates that terminal (switches visible terminal).
+- **Maximize button** (right end of the tab bar): Focuses the terminal and maximizes the panel, or restores the split layout when it is maximized — see "Maximized Layout".
+
+A hidden panel — toggled off, or behind a maximized pane — leaves the shell's window size as it was, so full-screen programs aren't squeezed to a single row while out of view.
 
 All terminals are always mounted in the DOM but only the active one is visible. This preserves terminal state (scrollback, running processes) when switching tabs.
 
@@ -974,6 +983,7 @@ When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus ter
 | Ctrl+PageUp | Previous terminal tab |
 | Alt+Up | Switch focus from terminal to file panes |
 | Alt+Down | Switch focus from file panes to terminal |
+| Mod+F11 | Toggle maximized layout (terminal alone ↔ split) |
 | Mod+Enter | Open focused file/directory in a new terminal (sets working directory) |
 | Enter (in defunct terminal) | Close the terminal tab |
 

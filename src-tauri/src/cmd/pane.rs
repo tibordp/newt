@@ -749,6 +749,16 @@ pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Re
 
 #[tauri::command]
 #[specta::specta]
+pub fn cmd_toggle_maximized(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
+    ctx.with_update(|c| {
+        let mut opts = c.display_options.0.write();
+        opts.maximized = !opts.maximized;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
 

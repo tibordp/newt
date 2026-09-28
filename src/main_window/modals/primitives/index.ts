@@ -12,7 +12,13 @@ export {
   DialogError,
   useSaveFlash,
 } from "./DialogActions";
-export { IconRevealInPane, IconOpenExternal, IconChevronDown } from "./icons";
+export {
+  IconRevealInPane,
+  IconOpenExternal,
+  IconChevronDown,
+  IconMaximize,
+  IconRestore,
+} from "./icons";
 export { MountLogView } from "./MountLog";
 export { ProfileNameField } from "./ProfileNameField";
 export { useAsyncAction } from "./useAsyncAction";

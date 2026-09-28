@@ -1,7 +1,8 @@
 import React from "react";
 
-// 16px stroke icons for dialog affordances, on the same grid as the viewer
-// toolbar set (1.5px stroke, round caps, currentColor).
+// 16px stroke icons for main-window affordances (dialogs, pane and terminal
+// chrome), on the same grid as the viewer toolbar set (1.5px stroke, round
+// caps, currentColor).
 
 function Icon({ children }: { children: React.ReactNode }) {
   return (
@@ -55,6 +56,30 @@ export function IconChevronDown() {
   return (
     <Icon>
       <polyline points="4.5 6.25 8 9.75 11.5 6.25" />
+    </Icon>
+  );
+}
+
+/// Arrows pointing out of opposite corners.
+export function IconMaximize() {
+  return (
+    <Icon>
+      <polyline points="10 2 14 2 14 6" />
+      <polyline points="6 14 2 14 2 10" />
+      <line x1="14" y1="2" x2="9.5" y2="6.5" />
+      <line x1="2" y1="14" x2="6.5" y2="9.5" />
+    </Icon>
+  );
+}
+
+/// Arrows pointing into the center from opposite corners.
+export function IconRestore() {
+  return (
+    <Icon>
+      <polyline points="2.5 9.5 6.5 9.5 6.5 13.5" />
+      <polyline points="13.5 6.5 9.5 6.5 9.5 2.5" />
+      <line x1="9.5" y1="6.5" x2="14" y2="2" />
+      <line x1="2" y1="14" x2="6.5" y2="9.5" />
     </Icon>
   );
 }

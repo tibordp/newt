@@ -89,6 +89,15 @@ export default function Terminal({
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
 
+  // A hidden panel is collapsed to zero size rather than removed, and fitting
+  // it would shrink the PTY to a single row under whatever is running.
+  const fitIfSized = () => {
+    const el = ref.current;
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      fitAddonRef.current?.fit();
+    }
+  };
+
   useEffect(() => {
     const term = new XTermJSTerminal({
       scrollback: 1000,
@@ -134,6 +143,12 @@ export default function Terminal({
       // Alt+Up / Alt+Down — focus panes / terminal
       if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown"))
         return false;
+      // Mod+F11 — toggle maximized layout
+      if (
+        e.key === "F11" &&
+        (navigator.platform.startsWith("Mac") ? e.metaKey : e.ctrlKey)
+      )
+        return false;
       return true;
     });
 
@@ -168,10 +183,10 @@ export default function Terminal({
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     fitAddonRef.current = fitAddon;
-    fitAddon.fit();
+    fitIfSized();
     const resizeObserver = new ResizeObserver(() => {
       if (visibleRef.current) {
-        fitAddon.fit();
+        fitIfSized();
       }
     });
     resizeObserver.observe(ref.current!);
@@ -197,9 +212,7 @@ export default function Terminal({
   useEffect(() => {
     if (visible) {
       // Defer fit() so the browser has reflowed the now-visible container
-      const raf = requestAnimationFrame(() => {
-        fitAddonRef.current?.fit();
-      });
+      const raf = requestAnimationFrame(fitIfSized);
       return () => cancelAnimationFrame(raf);
     }
   }, [visible]);

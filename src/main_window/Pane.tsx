@@ -41,6 +41,8 @@ import {
 } from "./columns";
 import { rowHeightFor } from "./density";
 import { usePreferences } from "../lib/preferences";
+import { useCommandShortcuts } from "../lib/scopedBindings";
+import { IconMaximize, IconRestore } from "./modals/primitives";
 import { useLocale } from "../lib/locale";
 import { useRuntimeState } from "../lib/runtimeState";
 import {
@@ -709,6 +711,8 @@ function PaneInner(
     modal: ModalData | null;
     vfsProgress?: VfsProgress;
     windowsDrives: boolean;
+    /// This pane is shown alone rather than in the split layout.
+    maximized: boolean;
   },
 ) {
   const {
@@ -716,6 +720,7 @@ function PaneInner(
     active,
     modalOpen,
     windowsDrives,
+    maximized,
     filter,
     filter_mode,
     path,
@@ -772,6 +777,7 @@ function PaneInner(
   };
 
   const preferences = usePreferences();
+  const shortcuts = useCommandShortcuts();
   // Passed explicitly to every Intl call rather than letting the runtime
   // pick — see `ResolvedPreferences.locale`.
   const locale = useLocale();
@@ -1855,6 +1861,29 @@ function PaneInner(
                 {formatBytes(fs_stats.available_bytes)} free
               </button>
             )}
+            <button
+              type="button"
+              className={styles.maximizeButton}
+              tabIndex={-1}
+              title={shortcuts.label(
+                maximized ? "Restore split layout" : "Maximize pane",
+                "toggle_maximized",
+              )}
+              onMouseDown={(e) => {
+                // Keep focus in the file list, and out of the pane's click
+                // handler.
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={async (e) => {
+                e.stopPropagation();
+                // What maximizes is whatever has focus, so claim it first.
+                await safe(commands.focus(paneHandle, null));
+                safe(commands.cmdToggleMaximized(paneHandle));
+              }}
+            >
+              {maximized ? <IconRestore /> : <IconMaximize />}
+            </button>
           </div>
         ) : (
           <div className={styles.hiddenAnchor} aria-hidden>

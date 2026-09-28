@@ -12,6 +12,7 @@ import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
 import ConnectionLog from "./ConnectionLog";
 import dialogStyles from "./modals/Dialog.module.scss";
+import styles from "./MainWindow.module.scss";
 import {
   DialogShell,
   DialogHeader,
@@ -191,6 +192,16 @@ function App() {
 
   const modalType = remoteState?.modal?.type;
   const modalOpen = !!modalType || !!foregroundOp || !!remoteState?.askpass;
+
+  // Maximized shows only what has focus: the terminal panel when it holds
+  // focus, otherwise the active pane. The split underneath is left as it
+  // is — the shown view is drawn over it — so restoring it is exact.
+  const display = remoteState?.display_options;
+  const terminalMaximized =
+    !!display?.maximized &&
+    !display.panes_focused &&
+    display.terminal_panel_visible;
+  const panesMaximized = !!display?.maximized && !terminalMaximized;
 
   // Build the binding lookup map from resolved preferences
   const bindingMap = useMemo(
@@ -385,6 +396,9 @@ function App() {
                   vertical
                   separator
                   proportionalLayout={false}
+                  className={
+                    display?.maximized ? styles.maximizedSplit : undefined
+                  }
                   onDragEnd={(sizes) => {
                     // [fileArea, terminal]; persist the terminal pane height.
                     const h = sizes[1];
@@ -398,32 +412,59 @@ function App() {
                     }
                   }}
                 >
-                  <Allotment.Pane minSize={200} priority={LayoutPriority.High}>
-                    <Allotment>
+                  <Allotment.Pane
+                    minSize={200}
+                    priority={LayoutPriority.High}
+                    className={
+                      panesMaximized
+                        ? styles.maximizedView
+                        : terminalMaximized
+                          ? styles.coveredView
+                          : undefined
+                    }
+                  >
+                    <Allotment
+                      className={
+                        panesMaximized ? styles.maximizedSplit : undefined
+                      }
+                    >
                       {remoteState.panes.map((props, i) => (
-                        <Pane
+                        <Allotment.Pane
                           key={i}
-                          paneHandle={i}
-                          {...props}
-                          modal={remoteState.modal}
-                          modalOpen={modalOpen}
-                          vfsProgress={
-                            remoteState.vfs_progress?.[
-                              // While a navigation streams, the pane is
-                              // still *on* the old path — the VFS doing
-                              // the work is the one it is heading to.
-                              String((props.pending_path ?? props.path).vfs_id)
-                            ]
+                          className={
+                            !panesMaximized
+                              ? undefined
+                              : remoteState.display_options.active_pane === i
+                                ? styles.maximizedView
+                                : styles.coveredView
                           }
-                          active={
-                            remoteState.display_options.panes_focused &&
-                            remoteState.display_options.active_pane === i
-                          }
-                          windowsDrives={
-                            remoteState.mount_summary?.has_split_root_vfs ??
-                            false
-                          }
-                        />
+                        >
+                          <Pane
+                            paneHandle={i}
+                            {...props}
+                            modal={remoteState.modal}
+                            modalOpen={modalOpen}
+                            vfsProgress={
+                              remoteState.vfs_progress?.[
+                                // While a navigation streams, the pane is
+                                // still *on* the old path — the VFS doing
+                                // the work is the one it is heading to.
+                                String(
+                                  (props.pending_path ?? props.path).vfs_id,
+                                )
+                              ]
+                            }
+                            active={
+                              remoteState.display_options.panes_focused &&
+                              remoteState.display_options.active_pane === i
+                            }
+                            windowsDrives={
+                              remoteState.mount_summary?.has_split_root_vfs ??
+                              false
+                            }
+                            maximized={panesMaximized}
+                          />
+                        </Allotment.Pane>
                       ))}
                     </Allotment>
                   </Allotment.Pane>
@@ -432,6 +473,13 @@ function App() {
                     minSize={100}
                     priority={LayoutPriority.Low}
                     visible={remoteState.display_options.terminal_panel_visible}
+                    className={
+                      terminalMaximized
+                        ? styles.maximizedView
+                        : panesMaximized
+                          ? styles.coveredView
+                          : undefined
+                    }
                   >
                     <TerminalPanel
                       terminals={Object.values(remoteState.terminals).filter(
@@ -442,6 +490,7 @@ function App() {
                       }
                       panesFocused={remoteState.display_options.panes_focused}
                       modalOpen={modalOpen}
+                      maximized={terminalMaximized}
                     />
                   </Allotment.Pane>
                 </Allotment>

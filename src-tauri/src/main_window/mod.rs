@@ -61,6 +61,9 @@ pub struct DisplayOptionsInner {
     pub active_terminal: Option<TerminalHandle>,
     pub panes_focused: bool,
     pub terminal_panel_visible: bool,
+    /// Show only what has focus — the active pane or the terminal panel —
+    /// instead of the split layout.
+    pub maximized: bool,
 }
 
 #[derive(Default, Clone)]
@@ -74,6 +77,7 @@ impl Default for DisplayOptionsInner {
             active_terminal: None,
             panes_focused: true,
             terminal_panel_visible: false,
+            maximized: false,
         }
     }
 }
