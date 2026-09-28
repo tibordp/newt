@@ -33,9 +33,9 @@ pub async fn navigate(
         // path claimed by a Windows-styled client-local mount).
         Some(vfs_path)
     } else if exact {
-        // Verbatim: no shell expansion/fuzzing. A breadcrumb hands us a
-        // native display path (`C:\Users\Tibor`, `/home/x`); `..` and
-        // other relative fragments fall through to relative resolution.
+        // Verbatim: no shell expansion/fuzzing. Shift+<drive> hands us a
+        // native display path (`C:\`); `..` and other relative fragments
+        // fall through to relative resolution.
         // Host-native decode is only sound when the session root speaks
         // the host's path syntax (local and elevated sessions). On a
         // Windows host in a Unix remote session a stray `C:\` — Shift+

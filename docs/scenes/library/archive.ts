@@ -51,12 +51,15 @@ const inside = pane({
 });
 // Origin breadcrumbs: the host path up to the archive, then the inside.
 inside.breadcrumbs = [
-  { label: "/", nav_path: "/" },
-  { label: "Users/", nav_path: "/" },
-  { label: "demo/", nav_path: "/" },
-  { label: "Downloads/", nav_path: "/" },
-  { label: "walker-0.4.2.tar.zst/", nav_path: "/" },
-  { label: "walker-0.4.2", nav_path: "/walker-0.4.2" },
+  { label: "/", path: { vfs_id: 0, path: "/" } },
+  { label: "Users/", path: { vfs_id: 0, path: "/Users" } },
+  { label: "demo/", path: { vfs_id: 0, path: HOME } },
+  { label: "Downloads/", path: { vfs_id: 0, path: `${HOME}/Downloads` } },
+  { label: "walker-0.4.2.tar.zst/", path: { vfs_id: ARCHIVE.id, path: "/" } },
+  {
+    label: "walker-0.4.2",
+    path: { vfs_id: ARCHIVE.id, path: "/walker-0.4.2" },
+  },
 ];
 
 const scene: Scene = {

@@ -265,9 +265,12 @@ pub fn local_display_path(path: &Path, style: PathStyle) -> String {
     comps_display(&comps, style)
 }
 
+fn comps_wire(comps: &[&str]) -> String {
+    format!("/{}", comps.join("/"))
+}
+
 /// Breadcrumbs for a host-shaped path. Each breadcrumb's `nav_path` is the
-/// display form of the path up to that segment, suitable for the
-/// path-input dialog.
+/// wire form of the path up to that segment (`/?/C:/Users`).
 pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
     if style == PathStyle::Unix {
         return unix_breadcrumbs(path);
@@ -288,7 +291,7 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
     if comps.len() < root_depth {
         crumbs.push(Breadcrumb {
             label: comps_display(&comps, style),
-            nav_path: comps_display(&comps, style),
+            nav_path: comps_wire(&comps),
         });
         return crumbs;
     }
@@ -296,16 +299,16 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
     // conventional form. When deeper segments follow, the *label* (the
     // concatenation unit) must end in a separator so the next segment
     // doesn't fuse onto it — `C:\` already does, `\\server\share` does
-    // not. `nav_path` stays the conventional form regardless.
+    // not.
     let root_disp = comps_display(&comps[..root_depth], style);
     let root_label = if comps.len() > root_depth && !root_disp.ends_with('\\') {
         format!("{root_disp}\\")
     } else {
-        root_disp.clone()
+        root_disp
     };
     crumbs.push(Breadcrumb {
         label: root_label,
-        nav_path: root_disp,
+        nav_path: comps_wire(&comps[..root_depth]),
     });
     for i in root_depth..comps.len() {
         let is_last = i + 1 == comps.len();
@@ -316,7 +319,7 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
         };
         crumbs.push(Breadcrumb {
             label,
-            nav_path: comps_display(&comps[..i + 1], style),
+            nav_path: comps_wire(&comps[..i + 1]),
         });
     }
     crumbs

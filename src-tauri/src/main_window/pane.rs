@@ -9,7 +9,7 @@ use newt_common::filesystem::ListFilesOptions;
 use newt_common::vfs::File;
 use newt_common::vfs::FileList;
 use newt_common::vfs::FsStats;
-use newt_common::vfs::{Breadcrumb, OriginKind, PathStyle, VfsId, VfsPath};
+use newt_common::vfs::{OriginKind, PathStyle, VfsId, VfsPath};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
@@ -943,7 +943,18 @@ impl Pane {
         ws.is_host_local = self.vfs_info.is_host_local(ws.path.vfs_id);
         let shown_path = ws.pending_path.as_ref().unwrap_or(&ws.path);
         if let Some((shown_desc, shown_meta)) = self.vfs_info.descriptor(shown_path.vfs_id) {
-            ws.breadcrumbs = shown_desc.breadcrumbs(&shown_path.path, &shown_meta);
+            ws.breadcrumbs = shown_desc
+                .breadcrumbs(&shown_path.path, &shown_meta)
+                .into_iter()
+                .map(|crumb| PaneBreadcrumb {
+                    path: Self::resolve_breadcrumb(
+                        self.vfs_info.as_ref(),
+                        shown_path.vfs_id,
+                        &crumb.nav_path,
+                    ),
+                    label: crumb.label,
+                })
+                .collect();
         }
     }
 
@@ -1018,9 +1029,9 @@ impl Pane {
     /// origin.
     ///
     /// `rel` is a relative fragment (`..`, `a/b`) — never an absolute or
-    /// native OS path. Absolute inputs (breadcrumb display paths, typed
-    /// absolute paths) are decoded into a `VfsPath` at the navigate
-    /// boundary (see `cmd::pane::navigate`) and routed through
+    /// native OS path. Absolute inputs (typed paths, Shift+<drive>) are
+    /// decoded into a `VfsPath` at the navigate boundary (see
+    /// `cmd::pane::navigate`) and routed through
     /// `navigate_to`, so they never reach here. We tokenize ourselves
     /// rather than going through `std::path::Component`, whose model would
     /// — on Windows — fabricate a drive `Prefix` and silently corrupt the
@@ -1034,14 +1045,14 @@ impl Pane {
     /// `..` that later escapes into a differently-styled origin VFS does
     /// not retroactively change what the string meant.
     pub(crate) fn resolve_relative(&self, base: &VfsPath, rel: &str) -> VfsPath {
-        let mut vfs_id = base.vfs_id;
+        let vfs_id = base.vfs_id;
         let separators = self
             .vfs_info
             .descriptor(vfs_id)
             .map(|(_, meta)| PathStyle::from_mount_meta(&meta))
             .unwrap_or(PathStyle::Unix)
             .separators();
-        let mut path = if rel.starts_with(separators) {
+        let path = if rel.starts_with(separators) {
             // An absolute fragment carries no drive of its own, so it means
             // "the root of where I am": `/` on a unified-root FS, and the
             // current drive or share root on a split-root one — which is
@@ -1055,25 +1066,49 @@ impl Pane {
         } else {
             base.path.clone()
         };
+        Self::walk(
+            self.vfs_info.as_ref(),
+            VfsPath::new(vfs_id, path),
+            rel.split(separators),
+        )
+    }
 
-        for seg in rel.split(separators) {
+    /// Where a breadcrumb made by the VFS `vfs_id` leads (see
+    /// `Breadcrumb::nav_path`).
+    fn resolve_breadcrumb(vfs_info: &dyn VfsInfo, vfs_id: VfsId, nav_path: &str) -> VfsPath {
+        Self::walk(
+            vfs_info,
+            VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::root()),
+            nav_path.split('/'),
+        )
+    }
+
+    fn walk<'a>(
+        vfs_info: &dyn VfsInfo,
+        from: VfsPath,
+        segments: impl Iterator<Item = &'a str>,
+    ) -> VfsPath {
+        let VfsPath {
+            mut vfs_id,
+            mut path,
+        } = from;
+        for seg in segments {
             match seg {
                 "" | "." => {}
                 ".." => {
                     // Ask the descriptor what "up" means — most just pop
                     // one segment, but `LocalVfs` on Windows refuses to
                     // go above a drive/share root.
-                    let popped = self
-                        .vfs_info
+                    let popped = vfs_info
                         .descriptor(vfs_id)
                         .and_then(|(desc, meta)| desc.navigable_parent(&path, &meta));
                     match popped {
                         Some(parent) => path = parent,
                         None => {
                             // At root — try to escape to origin VFS.
-                            if let Some((desc, _)) = self.vfs_info.descriptor(vfs_id)
+                            if let Some((desc, _)) = vfs_info.descriptor(vfs_id)
                                 && desc.origin_kind() != OriginKind::None
-                                && let Some(origin) = self.vfs_info.origin(vfs_id)
+                                && let Some(origin) = vfs_info.origin(vfs_id)
                             {
                                 vfs_id = origin.vfs_id;
                                 path = origin.path.clone();
@@ -1588,6 +1623,13 @@ pub struct FileWindow {
     pub total_count: usize,
 }
 
+/// A segment of the pane's path bar, and where clicking it goes.
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct PaneBreadcrumb {
+    pub label: String,
+    pub path: VfsPath,
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct PaneViewState {
@@ -1618,7 +1660,7 @@ pub struct PaneViewState {
     /// filters the configured column set by these (no mode/user/group
     /// on S3, an Attr column only on Windows-shaped FSes).
     pub metadata_traits: newt_common::vfs::MetadataTraits,
-    pub breadcrumbs: Vec<Breadcrumb>,
+    pub breadcrumbs: Vec<PaneBreadcrumb>,
     /// Per-location badges from enrichers (branch indicator, …), in
     /// stable per-enricher order.
     pub context_badges: Vec<ContextBadge>,
@@ -2598,6 +2640,136 @@ fn compile_select_pattern(pattern: &str) -> Option<NameMatcher> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mounted VFSes by id: descriptor type, mount meta, and origin.
+    struct Mounts(Vec<(VfsId, &'static str, Vec<u8>, Option<VfsPath>)>);
+
+    impl Mounts {
+        fn mount(
+            &mut self,
+            id: u32,
+            type_name: &'static str,
+            meta: Vec<u8>,
+            origin: Option<VfsPath>,
+        ) {
+            self.0.push((VfsId(id), type_name, meta, origin));
+        }
+
+        /// An archive mounted from `origin`, its meta built as
+        /// `build_origin_meta` builds it.
+        fn mount_archive(&mut self, id: u32, origin: VfsPath) {
+            let (desc, meta) = self.descriptor(origin.vfs_id).unwrap();
+            let crumbs: Vec<String> = desc
+                .breadcrumbs(&origin.path, &meta)
+                .into_iter()
+                .map(|b| b.label)
+                .collect();
+            let sep = if crumbs.iter().any(|c| c.ends_with('\\')) {
+                '\\'
+            } else {
+                '/'
+            };
+            let display = desc.format_path(&origin.path, &meta);
+            let meta = bincode::serialize(&(display, crumbs, sep)).unwrap();
+            self.mount(id, "archive", meta, Some(origin));
+        }
+
+        fn crumb_targets(&self, at: VfsPath) -> Vec<(String, u32, String)> {
+            let (desc, meta) = self.descriptor(at.vfs_id).unwrap();
+            desc.breadcrumbs(&at.path, &meta)
+                .into_iter()
+                .map(|crumb| {
+                    let target = Pane::resolve_breadcrumb(self, at.vfs_id, &crumb.nav_path);
+                    (
+                        crumb.label,
+                        target.vfs_id.0,
+                        target.path.as_wire_str().to_string(),
+                    )
+                })
+                .collect()
+        }
+    }
+
+    impl VfsInfo for Mounts {
+        fn descriptor(
+            &self,
+            vfs_id: VfsId,
+        ) -> Option<(&'static dyn newt_common::vfs::VfsDescriptor, Vec<u8>)> {
+            let (_, type_name, meta, _) = self.0.iter().find(|m| m.0 == vfs_id)?;
+            Some((
+                newt_common::vfs::registry::lookup_descriptor(type_name)?,
+                meta.clone(),
+            ))
+        }
+        fn origin(&self, vfs_id: VfsId) -> Option<VfsPath> {
+            self.0.iter().find(|m| m.0 == vfs_id)?.3.clone()
+        }
+        fn is_host_local(&self, _: VfsId) -> bool {
+            false
+        }
+        fn display_name(&self, _: VfsId) -> Option<String> {
+            None
+        }
+        fn host_local_vfs_id(&self) -> Option<VfsId> {
+            None
+        }
+    }
+
+    fn at(vfs_id: u32, path: &str) -> VfsPath {
+        VfsPath::from_wire_str(VfsId(vfs_id), path)
+    }
+
+    fn targets(expected: &[(&str, u32, &str)]) -> Vec<(String, u32, String)> {
+        expected
+            .iter()
+            .map(|(label, id, path)| (label.to_string(), *id, path.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn breadcrumbs_of_a_nested_archive_lead_out_through_each_origin() {
+        let mut mounts = Mounts(Vec::new());
+        mounts.mount(0, "local", PathStyle::Unix.encode(), None);
+        mounts.mount_archive(2, at(0, "/home/demo/w.tar"));
+        mounts.mount_archive(3, at(2, "/w/inner.zip"));
+        assert_eq!(
+            mounts.crumb_targets(at(3, "/src")),
+            targets(&[
+                ("/", 0, "/"),
+                ("home/", 0, "/home"),
+                ("demo/", 0, "/home/demo"),
+                ("w.tar/", 2, "/"),
+                ("w/", 2, "/w"),
+                ("inner.zip/", 3, "/"),
+                ("src", 3, "/src"),
+            ])
+        );
+    }
+
+    #[test]
+    fn breadcrumbs_on_a_windows_drive_lead_to_their_own_directories() {
+        let mut mounts = Mounts(Vec::new());
+        mounts.mount(0, "local", PathStyle::Windows.encode(), None);
+        mounts.mount_archive(2, at(0, "/?/C:/Users/demo/w.zip"));
+        assert_eq!(
+            mounts.crumb_targets(at(0, "/?/C:/Users/demo")),
+            targets(&[
+                ("C:\\", 0, "/?/C:"),
+                ("Users\\", 0, "/?/C:/Users"),
+                ("demo", 0, "/?/C:/Users/demo"),
+            ])
+        );
+        assert_eq!(
+            mounts.crumb_targets(at(2, "/src")),
+            targets(&[
+                ("C:\\", 0, "/?/C:"),
+                ("Users\\", 0, "/?/C:/Users"),
+                ("demo\\", 0, "/?/C:/Users/demo"),
+                ("w.zip\\", 2, "/"),
+                ("src", 2, "/src"),
+            ])
+        );
+    }
 
     fn view_state(focused: Option<&str>, selected: &[&str]) -> PaneViewState {
         PaneViewState {

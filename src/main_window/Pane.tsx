@@ -16,7 +16,7 @@ import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result } from "../lib/bindings";
 import { safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
-import { Breadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
+import { PaneBreadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
 import SortMenu from "./modals/SortMenu";
 import type { ModalData } from "../lib/bindings";
@@ -59,7 +59,7 @@ import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
 
 function PathBreadcrumbs(props: {
-  breadcrumbs: Breadcrumb[];
+  breadcrumbs: PaneBreadcrumb[];
   paneHandle: number;
   displayPath: string;
   onMenuCloseAutoFocus: (e: Event) => void;
@@ -96,7 +96,7 @@ function PathBreadcrumbs(props: {
                   if (isLast) {
                     commands.dialog("navigate", paneHandle);
                   } else {
-                    safe(commands.navigate(paneHandle, crumb.nav_path, true));
+                    safe(commands.navigateToPath(paneHandle, crumb.path));
                   }
                 }}
               >

@@ -40,7 +40,7 @@ for (const item of view.file_window.items) {
     item.source_display = item.source.path.replace(/\/[^/]*$/, "");
   }
 }
-view.breadcrumbs = [{ label, nav_path: "/" }];
+view.breadcrumbs = [{ label, path: { ...view.path, path: "/" } }];
 
 const scene: Scene = {
   description: "Find in Folder results as a flat result filesystem",

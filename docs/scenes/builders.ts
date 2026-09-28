@@ -174,7 +174,7 @@ export function pane(spec: PaneSpec): PaneViewState {
     vfs_display_name: vfs.name,
     is_host_local: vfs.hostLocal,
     metadata_traits: { unix_owner: vfs.hostLocal, windows_attributes: false },
-    breadcrumbs: breadcrumbs(spec.path, vfs.rootLabel),
+    breadcrumbs: breadcrumbs(vfs.id, spec.path, vfs.rootLabel),
     context_badges: badges,
     enrichment_activity: {},
     ...spec.override,
@@ -198,14 +198,17 @@ function sortEntries(entries: File[], sorting: Sorting): File[] {
 }
 
 /// Mirrors `unix_breadcrumbs` in newt-common.
-function breadcrumbs(path: string, rootLabel: string) {
+function breadcrumbs(vfsId: number, path: string, rootLabel: string) {
   const segs = path.split("/").filter(Boolean);
   let acc = "";
   return [
-    { label: rootLabel, nav_path: "/" },
+    { label: rootLabel, path: { vfs_id: vfsId, path: "/" } },
     ...segs.map((seg, i) => {
       acc += `/${seg}`;
-      return { label: i === segs.length - 1 ? seg : `${seg}/`, nav_path: acc };
+      return {
+        label: i === segs.length - 1 ? seg : `${seg}/`,
+        path: { vfs_id: vfsId, path: acc },
+      };
     }),
   ];
 }

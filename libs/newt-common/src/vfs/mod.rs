@@ -124,9 +124,13 @@ use path::{Path, PathBuf};
 // Breadcrumb — a segment in a display path
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Breadcrumb {
     pub label: String,
+    /// Where the segment leads: a `/`-separated path from the root of the
+    /// VFS that made it, in which a `..` above that root steps out into
+    /// the VFS's origin (an archive's crumbs lead back up the directories
+    /// holding it). Not a display path.
     pub nav_path: String,
 }
 

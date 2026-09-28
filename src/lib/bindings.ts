@@ -1983,7 +1983,6 @@ restore_window_geometry: boolean }
  * A single `[[bookmark]]` entry in the TOML file.
  */
 export type BookmarkEntry = { path: string; name?: string | null }
-export type Breadcrumb = { label: string; nav_path: string }
 /**
  * Command metadata for the command palette.
  */
@@ -2914,6 +2913,10 @@ silent: boolean;
  */
 scanning_items: number | null; scanning_bytes: number | null }
 export type OperationStatus = "scanning" | "running" | "completed" | "failed" | "cancelled" | "waiting_for_input"
+/**
+ * A segment of the pane's path bar, and where clicking it goes.
+ */
+export type PaneBreadcrumb = { label: string; path: VfsPath }
 export type PaneHandle = number
 export type PaneStats = { file_count: number; dir_count: number; bytes: number; selected_file_count: number; selected_dir_count: number; selected_bytes: number; total_count: number | null; 
 /**
@@ -2939,7 +2942,7 @@ selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: Fs
  * filters the configured column set by these (no mode/user/group
  * on S3, an Attr column only on Windows-shaped FSes).
  */
-metadata_traits: MetadataTraits; breadcrumbs: Breadcrumb[]; 
+metadata_traits: MetadataTraits; breadcrumbs: PaneBreadcrumb[]; 
 /**
  * Per-location badges from enrichers (branch indicator, …), in
  * stable per-enricher order.

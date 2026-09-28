@@ -2,7 +2,7 @@
 /// `bindings.ts` (generated from Rust by tauri-specta); this module exists so
 /// non-IPC code can import them without coupling to the generated path.
 export type {
-  Breadcrumb,
+  PaneBreadcrumb,
   HistoryEntryView,
   HotPathCategory,
   HotPathEntry,
