@@ -52,7 +52,8 @@ This is a keyboard-centric app. All UX decisions should keep efficient keyboard 
 Focus management is critical — broken focus means the user has to reach for the mouse, which defeats the purpose of the app.
 
 - **Dialog open**: Always auto-focus the most likely control (e.g. the text input in a rename dialog, the confirm button in a confirmation dialog). Use `autoFocus` or a ref-based `.focus()` in `useEffect`.
-- **Dialog close**: Focus **must** return to the active pane/terminal. This is handled by `onCloseAutoFocus` on the Radix Dialog, which calls `refocusActivePane` (increments `focusGeneration` → Pane re-runs its focus effect). New dialogs must wire this up — never let focus drop to `<body>` after a dialog closes.
+- **Dialog close**: Focus **must** return to the active pane/terminal — never let it drop to `<body>`. Dialogs pass `onCloseAutoFocus={preventAutoFocus}` so Radix doesn't restore focus to a stale element; the pane and terminal focus effects depend on `modalOpen`, so when the Rust `modal` clears they take focus back themselves. A dialog rendered through `ModalRouter` gets this for free; one rendered elsewhere must prevent Radix's auto-focus the same way.
+- **Menu close**: Context menus and dropdowns aren't modal state, so they restore focus in their own `onCloseAutoFocus` (`refocusPane` in `Pane.tsx`). A menu on a pane that doesn't hold focus dispatches `REFOCUS_EVENT`, which the active pane or terminal answers by focusing itself.
 - **Between panes**: Tab switches panes. The active pane is tracked in `DisplayOptions.active_pane` (Rust state), not in React focus state.
 - **Pane ↔ Terminal**: Focus ownership is tracked in `DisplayOptions.panes_focused`. Clicking a terminal or pressing the toggle shortcut updates this in Rust, and the frontend follows.
 
