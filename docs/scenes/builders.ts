@@ -231,6 +231,9 @@ export type MainWindowSpec = {
   showHidden?: boolean;
   /// Only the focused pane (or the terminal) is shown.
   maximized?: boolean;
+  /// Quick View shows this in the right slot (`viewer(...)`); a pane's
+  /// focused folder is `null`.
+  preview?: ViewerState | null;
   modal?: ModalData;
   operations?: OperationState[];
 };
@@ -255,6 +258,7 @@ export function mainWindow(spec: MainWindowSpec): MainWindowState {
       panes_focused: !spec.terminalFocused,
       terminal_panel_visible: spec.terminalVisible ?? terminals.length > 0,
       maximized: spec.maximized ?? false,
+      quick_view: spec.preview !== undefined,
     },
     operations: Object.fromEntries(operations.map((op) => [String(op.id), op])),
     window_title: spec.title ?? "Newt",
@@ -262,6 +266,7 @@ export function mainWindow(spec: MainWindowSpec): MainWindowState {
     vfs_progress: {},
     mount_log: [],
     mount_summary: { has_split_root_vfs: false },
+    preview: spec.preview ?? emptyViewer,
   };
 }
 
@@ -285,6 +290,21 @@ export function operation(
     ...fields,
   };
 }
+
+const emptyViewer: ViewerState = {
+  mode: "text",
+  file_path: null,
+  display_path: null,
+  file_server_base: null,
+  encoding: { detected: null, selected: null },
+  table: {
+    delimiter: null,
+    detected_delimiter: null,
+    quoted: true,
+    header: null,
+    detected_header: null,
+  },
+};
 
 export function viewer(
   path: VfsPath,

@@ -1,8 +1,8 @@
 import styles from "./Viewer.module.scss";
 import { safe } from "../lib/ipc";
 import type { ViewerMode } from "./helpers";
-import { commands } from "../lib/bindings";
 import { useCommandShortcuts } from "../lib/scopedBindings";
+import { useViewerHost } from "./host";
 
 interface ModeToggleProps {
   currentMode: ViewerMode;
@@ -37,6 +37,9 @@ export function getAlternateMode(
 
 export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
   const shortcuts = useCommandShortcuts();
+  const viewerHost = useViewerHost();
+  // Quick View picks the mode from its bar instead.
+  if (viewerHost.embedded) return null;
   const other = counterpart(autoMode);
   const alternate = getAlternateMode(currentMode, autoMode);
   const modes: [ViewerMode, string][] = [
@@ -59,7 +62,7 @@ export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
             role="radio"
             aria-checked={checked}
             className={`${styles.modeToggleBtn} ${checked ? styles.modeToggleBtnActive : ""}`}
-            onClick={() => safe(commands.setViewerMode(mode))}
+            onClick={() => safe(viewerHost.setMode(mode))}
             title={
               checked
                 ? undefined

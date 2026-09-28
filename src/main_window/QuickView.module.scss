@@ -1,0 +1,37 @@
+.quickView {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  outline: none;
+}
+
+.content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+// A layer loading beneath the one on screen keeps its size, so it renders
+// as it will be shown.
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+.hiddenLayer {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-fg-muted);
+  font-style: italic;
+  user-select: none;
+}

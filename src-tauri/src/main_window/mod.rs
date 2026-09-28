@@ -64,6 +64,8 @@ pub struct DisplayOptionsInner {
     /// Show only what has focus — the active pane or the terminal panel —
     /// instead of the split layout.
     pub maximized: bool,
+    /// Quick View: the right slot previews the active pane's focused file.
+    pub quick_view: bool,
 }
 
 #[derive(Default, Clone)]
@@ -78,6 +80,7 @@ impl Default for DisplayOptionsInner {
             panes_focused: true,
             terminal_panel_visible: false,
             maximized: false,
+            quick_view: false,
         }
     }
 }
@@ -947,6 +950,8 @@ pub struct MainWindowState {
     pub vfs_progress: VfsProgressState,
     pub mount_log: MountLogState,
     pub mount_summary: MountSummaryState,
+    /// Quick View's file; shown while `DisplayOptions::quick_view` is on.
+    pub preview: Arc<crate::viewer::ViewerState>,
     /// Last pattern applied from the select-by-pattern dialog, pre-filled
     /// on the next open.
     pub select_pattern: Arc<parking_lot::Mutex<String>>,
@@ -993,6 +998,7 @@ pub struct MainWindowStateWire<'a> {
     vfs_progress: &'a VfsProgressState,
     mount_log: &'a MountLogState,
     mount_summary: &'a MountSummaryState,
+    preview: &'a crate::viewer::ViewerState,
 }
 
 specta_as!(ConnectionState => ConnectionStatus);
@@ -1028,6 +1034,7 @@ impl serde::Serialize for MainWindowState {
             vfs_progress: &self.vfs_progress,
             mount_log: &self.mount_log,
             mount_summary: &self.mount_summary,
+            preview: &self.preview,
         }
         .serialize(serializer)
     }
@@ -1050,6 +1057,7 @@ impl MainWindowState {
             vfs_progress: VfsProgressState::default(),
             mount_log: MountLogState::default(),
             mount_summary: MountSummaryState::default(),
+            preview: Default::default(),
             select_pattern: Default::default(),
         }
     }

@@ -23,3 +23,15 @@
 .coveredView {
   visibility: hidden;
 }
+
+// Quick View stacks both panes in the left slot; only the active one shows.
+.paneSlot {
+  position: absolute;
+  inset: 0;
+}
+
+.hiddenPaneSlot {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+}

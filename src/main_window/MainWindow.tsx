@@ -13,6 +13,10 @@ import "allotment/dist/style.css";
 import ConnectionLog from "./ConnectionLog";
 import dialogStyles from "./modals/Dialog.module.scss";
 import styles from "./MainWindow.module.scss";
+import QuickView from "./QuickView";
+
+/// How long the focused row must rest before Quick View loads it.
+const PREVIEW_DELAY_MS = 80;
 import {
   DialogShell,
   DialogHeader,
@@ -203,6 +207,55 @@ function App() {
     !display.panes_focused &&
     display.terminal_panel_visible;
   const panesMaximized = !!display?.maximized && !terminalMaximized;
+  const quickView = !!display?.quick_view;
+
+  // Quick View follows the active pane's focused row, once it stops moving.
+  const previewPane = quickView
+    ? remoteState?.panes[display.active_pane]
+    : null;
+  const previewKey = previewPane
+    ? JSON.stringify([
+        display?.active_pane,
+        previewPane.path,
+        previewPane.focused,
+      ])
+    : null;
+  useEffect(() => {
+    if (previewKey === null) return;
+    const timer = setTimeout(
+      () => safeSilent(commands.previewFocused()),
+      PREVIEW_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [previewKey]);
+
+  const renderPane = (i: number) => {
+    if (!remoteState) return null;
+    const props = remoteState.panes[i];
+    return (
+      <Pane
+        paneHandle={i}
+        {...props}
+        modal={remoteState.modal}
+        modalOpen={modalOpen}
+        vfsProgress={
+          remoteState.vfs_progress?.[
+            // While a navigation streams, the pane is
+            // still *on* the old path — the VFS doing
+            // the work is the one it is heading to.
+            String((props.pending_path ?? props.path).vfs_id)
+          ]
+        }
+        active={
+          remoteState.display_options.panes_focused &&
+          remoteState.display_options.active_pane === i
+        }
+        windowsDrives={remoteState.mount_summary?.has_split_root_vfs ?? false}
+        maximized={panesMaximized}
+        swappable={quickView || panesMaximized}
+      />
+    );
+  };
 
   // Build the binding lookup map from resolved preferences
   const bindingMap = useMemo(
@@ -387,7 +440,8 @@ function App() {
                     !target.closest("input") &&
                     !target.closest("textarea") &&
                     !target.closest("button") &&
-                    !target.closest("[class*='xterm']")
+                    !target.closest("[class*='xterm']") &&
+                    !target.closest("[data-quick-view]")
                   ) {
                     e.preventDefault();
                   }
@@ -429,42 +483,47 @@ function App() {
                         panesMaximized ? styles.maximizedSplit : undefined
                       }
                     >
-                      {remoteState.panes.map((props, i) => (
+                      {[0, 1].map((slot) => (
                         <Allotment.Pane
-                          key={i}
+                          key={slot}
                           className={
                             !panesMaximized
                               ? undefined
-                              : remoteState.display_options.active_pane === i
+                              : slot ===
+                                  (quickView
+                                    ? 0
+                                    : remoteState.display_options.active_pane)
                                 ? styles.maximizedView
                                 : styles.coveredView
                           }
                         >
-                          <Pane
-                            paneHandle={i}
-                            {...props}
-                            modal={remoteState.modal}
-                            modalOpen={modalOpen}
-                            vfsProgress={
-                              remoteState.vfs_progress?.[
-                                // While a navigation streams, the pane is
-                                // still *on* the old path — the VFS doing
-                                // the work is the one it is heading to.
-                                String(
-                                  (props.pending_path ?? props.path).vfs_id,
-                                )
-                              ]
-                            }
-                            active={
-                              remoteState.display_options.panes_focused &&
-                              remoteState.display_options.active_pane === i
-                            }
-                            windowsDrives={
-                              remoteState.mount_summary?.has_split_root_vfs ??
-                              false
-                            }
-                            maximized={panesMaximized}
-                          />
+                          {quickView && slot === 1 ? (
+                            <QuickView
+                              state={remoteState.preview}
+                              activePane={
+                                remoteState.display_options.active_pane
+                              }
+                              panesFocused={
+                                remoteState.display_options.panes_focused
+                              }
+                            />
+                          ) : (
+                            // In Quick View the left slot holds both panes
+                            // and shows the active one.
+                            (quickView ? [0, 1] : [slot]).map((i) => (
+                              <div
+                                key={i}
+                                className={
+                                  quickView &&
+                                  i !== remoteState.display_options.active_pane
+                                    ? styles.hiddenPaneSlot
+                                    : styles.paneSlot
+                                }
+                              >
+                                {renderPane(i)}
+                              </div>
+                            ))
+                          )}
                         </Allotment.Pane>
                       ))}
                     </Allotment>

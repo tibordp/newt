@@ -35,6 +35,7 @@ import {
 import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
+import { useEmbeddedCopy, useViewerHost } from "./host";
 
 interface TextPosition {
   line: number;
@@ -134,6 +135,7 @@ export function TextViewer({
   needsSniff,
 }: TextViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textPreRef = useRef<HTMLPreElement>(null);
@@ -210,7 +212,7 @@ export function TextViewer({
         if (ci === 0 && needsSniff && !sniffSentRef.current) {
           sniffSentRef.current = true;
           safe(
-            commands.sniffViewerEncoding(
+            viewerHost.sniffEncoding(
               Array.from(chunk.subarray(0, SNIFF_PREFIX_LEN)),
               chunk.length < CHUNK_SIZE,
             ),
@@ -246,8 +248,8 @@ export function TextViewer({
 
   // Focus
   useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) viewerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   // Container height
   useLayoutEffect(() => {
@@ -446,6 +448,12 @@ export function TextViewer({
       }),
     );
   }, [vfsPath, selectionByteRange, encoding]);
+  useEmbeddedCopy(() => {
+    const range = selectionByteRange();
+    if (!range || range[1] <= range[0]) return false;
+    copySelection();
+    return true;
+  });
 
   const selectAll = useCallback(() => {
     const lastLine = lineCountRef.current - 1;
@@ -703,7 +711,7 @@ export function TextViewer({
     }
   }, [clampedTopRow, lineHeight, scale]);
 
-  useScopedBindings("viewer", {
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_copy: copySelection,
     viewer_select_all: selectAll,
     viewer_goto: goToLine,

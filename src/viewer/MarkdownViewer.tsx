@@ -24,6 +24,7 @@ import {
   renderMarkdown,
   resolveRelative,
 } from "./markdown";
+import { useViewerHost } from "./host";
 
 /// Larger files open as text: rendering is all-at-once.
 const MAX_RENDER_BYTES = 4 * 1024 * 1024;
@@ -86,13 +87,14 @@ export function MarkdownViewer({
   needsSniff,
 }: MarkdownViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const hostRef = useRef<HTMLDivElement>(null);
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (fileSize > MAX_RENDER_BYTES) {
-      safe(commands.setViewerMode("text"));
+      safe(viewerHost.setMode("text"));
       return;
     }
     let cancelled = false;
@@ -108,7 +110,7 @@ export function MarkdownViewer({
         if (cancelled) return;
         if (needsSniff) {
           safe(
-            commands.sniffViewerEncoding(
+            viewerHost.sniffEncoding(
               Array.from(data.subarray(0, SNIFF_PREFIX_LEN)),
               true,
             ),
@@ -171,7 +173,7 @@ export function MarkdownViewer({
           void (async () => {
             try {
               await unwrap(
-                commands.openInViewer({
+                viewerHost.openFile({
                   vfs_id: vfsPath.vfs_id,
                   path: target.path,
                 }),
@@ -183,7 +185,7 @@ export function MarkdownViewer({
           break;
       }
     },
-    [vfsPath],
+    [vfsPath, viewerHost],
   );
 
   // On the shadow root, where the target is the real element rather than
@@ -202,8 +204,8 @@ export function MarkdownViewer({
   }, [followLink, bytes]);
 
   useEffect(() => {
-    hostRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) hostRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   return (
     <div className={styles.viewer}>

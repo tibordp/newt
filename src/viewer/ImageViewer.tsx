@@ -24,6 +24,7 @@ import {
   IconRotateCw,
 } from "./icons";
 import { ModeToggle } from "./ModeToggle";
+import { useEmbeddedCopy, useViewerHost } from "./host";
 
 export interface ImageViewerProps {
   filePath: string;
@@ -144,6 +145,7 @@ export function ImageViewer({
   autoMode,
 }: ImageViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const preferences = usePreferences();
   const shortcuts = useCommandShortcuts();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -182,8 +184,8 @@ export function ImageViewer({
   stateRef.current = { zoom, pan, naturalSize, rotation, flipH, flipV, sel };
 
   useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) viewerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   const applyView = useCallback((z: number, px: number, py: number) => {
     const container = containerRef.current;
@@ -428,7 +430,14 @@ export function ImageViewer({
     [applyView],
   );
 
-  useScopedBindings("viewer", {
+  useEmbeddedCopy(() => {
+    const sel = stateRef.current.sel;
+    if (!sel) return false;
+    void copyToClipboard(sel);
+    return true;
+  });
+
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_zoom_in: () => zoomAtCenter(stateRef.current.zoom * KEY_ZOOM_FACTOR),
     viewer_zoom_out: () =>
       zoomAtCenter(stateRef.current.zoom / KEY_ZOOM_FACTOR),

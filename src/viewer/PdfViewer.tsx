@@ -14,6 +14,7 @@ import styles from "./Viewer.module.scss";
 import { type ViewerMode } from "./helpers";
 import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
+import { useViewerHost } from "./host";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -31,6 +32,7 @@ export function PdfViewer({
   autoMode,
 }: PdfViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerInstanceRef = useRef<PDFJSViewer | null>(null);
   const eventBusRef = useRef<EventBus | null>(null);
@@ -69,14 +71,16 @@ export function PdfViewer({
       setScale(evt.scale);
     });
 
-    container.focus();
-
     return () => {
       viewer.cleanup();
       viewerInstanceRef.current = null;
       eventBusRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!viewerHost.embedded) containerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   // Load PDF document when fileUrl changes
   useEffect(() => {
@@ -130,7 +134,7 @@ export function PdfViewer({
     }
   }, []);
 
-  useScopedBindings("viewer", {
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_zoom_in: zoomIn,
     viewer_zoom_out: zoomOut,
     viewer_zoom_fit: zoomReset,

@@ -102,7 +102,67 @@ pub struct ViewerState {
     table: RwLock<TableOptions>,
 }
 
-/// The `update:viewer` payload; see `MainWindowStateWire`.
+impl Default for ViewerState {
+    fn default() -> Self {
+        Self {
+            mode: RwLock::new(ViewerMode::Text),
+            file_path: RwLock::new(None),
+            display_path: RwLock::new(None),
+            file_server_base: RwLock::new(None),
+            encoding: RwLock::new(ViewerEncoding::default()),
+            table: RwLock::new(TableOptions::default()),
+        }
+    }
+}
+
+impl ViewerState {
+    pub fn file_path(&self) -> Option<VfsPath> {
+        self.file_path.read().clone()
+    }
+
+    /// Show `file_path`, starting over from auto-detection.
+    pub fn set_file(&self, file_path: VfsPath, display_path: String, file_server_base: String) {
+        *self.file_path.write() = Some(file_path);
+        *self.display_path.write() = Some(display_path);
+        *self.file_server_base.write() = Some(file_server_base);
+        *self.mode.write() = ViewerMode::Text;
+        *self.encoding.write() = ViewerEncoding::default();
+        *self.table.write() = TableOptions::default();
+    }
+
+    /// Show nothing.
+    pub fn clear(&self) {
+        *self.file_path.write() = None;
+        *self.display_path.write() = None;
+        *self.encoding.write() = ViewerEncoding::default();
+        *self.table.write() = TableOptions::default();
+    }
+
+    pub fn set_mode(&self, mode: ViewerMode) {
+        *self.mode.write() = mode;
+    }
+
+    fn set_detected(&self, detected: DetectedEncoding) {
+        self.encoding.write().detected = Some(detected);
+    }
+
+    fn set_selected_encoding(&self, selected: Option<String>) {
+        self.encoding.write().selected = selected;
+    }
+
+    /// Record what the table viewer detected; true when it changed.
+    fn set_table_detection(&self, delimiter: TableDelimiter, header: bool) -> bool {
+        let mut options = self.table.write();
+        let changed = options.detected_delimiter != Some(delimiter)
+            || options.detected_header != Some(header);
+        options.detected_delimiter = Some(delimiter);
+        options.detected_header = Some(header);
+        changed
+    }
+}
+
+/// The `update:viewer` payload, and the main window's Quick View; see
+/// `MainWindowStateWire`.
 #[derive(Serialize, specta::Type)]
 #[specta(rename = "ViewerState")]
 pub struct ViewerStateWire {
@@ -113,6 +173,8 @@ pub struct ViewerStateWire {
     encoding: ViewerEncoding,
     table: TableOptions,
 }
+
+crate::common::specta_as!(ViewerState => ViewerStateWire);
 
 impl Serialize for ViewerState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -137,14 +199,9 @@ pub struct ViewerWindow {
 
 impl ViewerWindow {
     pub fn set_file(&self, file_path: VfsPath, display_path: String, file_server_base: String) {
-        let state = self.publisher.state();
-        *state.file_path.write() = Some(file_path);
-        *state.display_path.write() = Some(display_path);
-        *state.file_server_base.write() = Some(file_server_base);
-        // Reset mode for new file
-        *state.mode.write() = ViewerMode::Text;
-        *state.encoding.write() = ViewerEncoding::default();
-        *state.table.write() = TableOptions::default();
+        self.publisher
+            .state()
+            .set_file(file_path, display_path, file_server_base);
         let _ = self.publisher.publish_full();
     }
 
@@ -158,13 +215,13 @@ impl ViewerWindow {
     }
 
     pub fn set_mode(&self, mode: ViewerMode) {
-        *self.publisher.state().mode.write() = mode;
+        self.publisher.state().set_mode(mode);
         self.rebuild_menu();
         let _ = self.publisher.publish_full();
     }
 
     pub fn set_encoding(&self, selected: Option<String>) {
-        self.publisher.state().encoding.write().selected = selected;
+        self.publisher.state().set_selected_encoding(selected);
         self.rebuild_menu();
         let _ = self.publisher.publish_full();
     }
@@ -177,7 +234,7 @@ impl ViewerWindow {
     }
 
     fn set_detected(&self, detected: DetectedEncoding) {
-        self.publisher.state().encoding.write().detected = Some(detected);
+        self.publisher.state().set_detected(detected);
         self.rebuild_menu();
         let _ = self.publisher.publish_full();
     }
@@ -241,15 +298,11 @@ impl specta::function::FunctionArg for ViewerWindowContext {
 /// Create a ViewerWindow with UpdatePublisher but no menu.
 /// Used both for pre-warming and direct creation.
 pub fn create_viewer_window(window: &WebviewWindow) -> Arc<ViewerWindow> {
-    let state = ViewerState {
-        mode: RwLock::new(ViewerMode::Text),
-        file_path: RwLock::new(None),
-        display_path: RwLock::new(None),
-        file_server_base: RwLock::new(None),
-        encoding: RwLock::new(ViewerEncoding::default()),
-        table: RwLock::new(TableOptions::default()),
-    };
-    let publisher = Arc::new(UpdatePublisher::new(window.clone(), "viewer", state));
+    let publisher = Arc::new(UpdatePublisher::new(
+        window.clone(),
+        "viewer",
+        ViewerState::default(),
+    ));
 
     Arc::new(ViewerWindow {
         publisher,
@@ -842,13 +895,15 @@ pub fn report_table_detection(
     delimiter: TableDelimiter,
     header: bool,
 ) -> Result<(), Error> {
-    ctx.0.update_table(|options| {
-        let changed = options.detected_delimiter != Some(delimiter)
-            || options.detected_header != Some(header);
-        options.detected_delimiter = Some(delimiter);
-        options.detected_header = Some(header);
-        changed
-    });
+    if ctx
+        .0
+        .publisher
+        .state()
+        .set_table_detection(delimiter, header)
+    {
+        ctx.0.rebuild_menu();
+        ctx.0.publish_full();
+    }
     Ok(())
 }
 
@@ -887,4 +942,179 @@ pub async fn find_in_viewer(
         .fs()?
         .find_in_file(path, offset, pattern, max_length)
         .await?)
+}
+
+// --- Quick View: the viewer in the main window's right slot ---
+
+/// Point Quick View at the active pane's focused file — the file itself,
+/// for an entry of a synthetic VFS such as search results. A folder, `..`
+/// or an empty listing shows nothing.
+fn preview_active_focus(ctx: &MainWindowContext) -> Result<(), Error> {
+    let target = ctx
+        .active_pane()
+        .filter(|pane| !pane.is_focused_dir())
+        .and_then(|pane| pane.get_focused_source());
+    let target = match target {
+        Some(path) => Some((
+            ctx.format_vfs_path(&path),
+            path,
+            ctx.file_server_base_url()?,
+        )),
+        None => None,
+    };
+    ctx.with_update(|gs| {
+        match target {
+            Some((display_path, path, base)) => {
+                if gs.preview.file_path().as_ref() != Some(&path) {
+                    gs.preview.set_file(path, display_path, base);
+                }
+            }
+            None => gs.preview.clear(),
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_toggle_quick_view(
+    ctx: MainWindowContext,
+    _pane_handle: crate::main_window::PaneHandle,
+) -> Result<(), Error> {
+    let on = ctx.with_update(|gs| {
+        let mut opts = gs.display_options.0.write();
+        opts.quick_view = !opts.quick_view;
+        Ok(opts.quick_view)
+    })?;
+    if on {
+        preview_active_focus(&ctx)
+    } else {
+        ctx.with_update(|gs| {
+            gs.preview.clear();
+            Ok(())
+        })
+    }
+}
+
+/// Follow the active pane's focus; the frontend calls this, debounced, as
+/// the focused row moves.
+#[tauri::command]
+#[specta::specta]
+pub fn preview_focused(ctx: MainWindowContext) -> Result<(), Error> {
+    preview_active_focus(&ctx)
+}
+
+// The preview's counterparts of the viewer window's commands carry the file
+// they concern: rendering one file can report after Quick View has moved on
+// to the next, and that report must not land on it.
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_preview_mode(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    mode: ViewerMode,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        if gs.preview.file_path().as_ref() == Some(&path) {
+            gs.preview.set_mode(mode);
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn sniff_preview_encoding(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    prefix: Vec<u8>,
+    eof: bool,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        if gs.preview.file_path().as_ref() == Some(&path) {
+            gs.preview.set_detected(encoding::detect(&prefix, eof));
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn report_preview_table_detection(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    delimiter: TableDelimiter,
+    header: bool,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        if gs.preview.file_path().as_ref() == Some(&path) {
+            gs.preview.set_table_detection(delimiter, header);
+        }
+        Ok(())
+    })
+}
+
+/// Open `path` in a viewer window: a relative link followed from Markdown
+/// rendered in Quick View.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_viewer(ctx: MainWindowContext, path: VfsPath) -> Result<(), Error> {
+    if ctx.fs()?.file_details(path.clone()).await?.is_dir {
+        let display_path = ctx.format_vfs_path(&path);
+        return Err(Error::Custom(format!("{display_path} is a directory")));
+    }
+    crate::cmd::window::open_viewer_window(&ctx, &path)
+}
+
+/// Pick the preview's encoding; `None` is auto-detect.
+#[tauri::command]
+#[specta::specta]
+pub fn set_preview_encoding(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    selected: Option<String>,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        if gs.preview.file_path().as_ref() == Some(&path) {
+            gs.preview.set_selected_encoding(selected);
+        }
+        Ok(())
+    })
+}
+
+/// Apply a table option to the preview, named as the viewer window's Table
+/// menu names it (`delim_comma`, `header_auto`, `quoted`, …).
+#[tauri::command]
+#[specta::specta]
+pub fn set_preview_table_option(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    option: String,
+) -> Result<(), Error> {
+    ctx.with_update(|gs| {
+        if gs.preview.file_path().as_ref() == Some(&path) {
+            gs.preview.table.write().apply_menu(&option);
+        }
+        Ok(())
+    })
+}
+
+#[derive(Serialize, specta::Type)]
+pub struct EncodingGroupView {
+    label: &'static str,
+    encodings: &'static [&'static str],
+}
+
+/// The viewer window's Encoding menu, for Quick View's.
+#[tauri::command]
+#[specta::specta]
+pub fn encoding_catalogue() -> Vec<EncodingGroupView> {
+    encoding::CATALOGUE
+        .iter()
+        .map(|g| EncodingGroupView {
+            label: g.label,
+            encodings: g.encodings,
+        })
+        .collect()
 }

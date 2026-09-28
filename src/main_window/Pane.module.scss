@@ -272,6 +272,10 @@
   }
 }
 
+.swapButton {
+  composes: maximizeButton;
+}
+
 .headerArea {
   position: relative;
   flex-shrink: 0;

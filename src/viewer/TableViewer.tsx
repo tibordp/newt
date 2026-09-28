@@ -49,6 +49,7 @@ import {
   parseRows,
   type Dialect,
 } from "./table";
+import { useEmbeddedCopy, useViewerHost } from "./host";
 
 const ROW_HEIGHT = 22;
 const DEFAULT_WIDTH = 100;
@@ -183,6 +184,7 @@ export function TableViewer({
   options,
 }: TableViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const shortcuts = useCommandShortcuts();
   const gridId = useId();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -208,7 +210,7 @@ export function TableViewer({
       if (needsSniff && !sniffSentRef.current) {
         sniffSentRef.current = true;
         safe(
-          commands.sniffViewerEncoding(
+          viewerHost.sniffEncoding(
             Array.from(chunk.subarray(0, SNIFF_PREFIX_LEN)),
             chunk.length < CHUNK_SIZE,
           ),
@@ -234,7 +236,7 @@ export function TableViewer({
         header,
         sampleRows: complete ? rows : rows.slice(0, -1),
       });
-      safe(commands.reportTableDetection(auto, header));
+      safe(viewerHost.reportTableDetection(auto, header));
     })();
     return () => {
       cancelled = true;
@@ -1012,6 +1014,19 @@ export function TableViewer({
     if (editingRef.current) editRef.current?.select();
     else selectAll();
   }, [selectAll]);
+  // The cursor alone is always a one-cell selection; it takes more than
+  // that (or the cell-text box) to count.
+  useEmbeddedCopy(() => {
+    const sel = selectionRef.current;
+    const beyondCursor =
+      !!sel &&
+      (sel.kind !== "cells" ||
+        sel.anchor.row !== sel.head.row ||
+        sel.anchor.col !== sel.head.col);
+    if (!editingRef.current && !beyondCursor) return false;
+    copyCommand();
+    return true;
+  });
   const copyCommandRef = useRef(copyCommand);
   copyCommandRef.current = copyCommand;
   const selectAllCommandRef = useRef(selectAllCommand);
@@ -1039,7 +1054,7 @@ export function TableViewer({
     };
   }, []);
 
-  useScopedBindings("viewer", {
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_copy: copyCommand,
     viewer_select_all: selectAllCommand,
     viewer_goto: () => setGoToOpen(true),
@@ -1047,8 +1062,8 @@ export function TableViewer({
   });
 
   useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) viewerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

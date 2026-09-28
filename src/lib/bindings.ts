@@ -466,6 +466,91 @@ async imageExif(path: VfsPath) : Promise<Result<ExifRow[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdToggleQuickView(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_toggle_quick_view", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Follow the active pane's focus; the frontend calls this, debounced, as
+ * the focused row moves.
+ */
+async previewFocused() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_focused") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPreviewMode(path: VfsPath, mode: ViewerMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_preview_mode", { path, mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sniffPreviewEncoding(path: VfsPath, prefix: number[], eof: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sniff_preview_encoding", { path, prefix, eof }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async reportPreviewTableDetection(path: VfsPath, delimiter: TableDelimiter, header: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("report_preview_table_detection", { path, delimiter, header }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open `path` in a viewer window: a relative link followed from Markdown
+ * rendered in Quick View.
+ */
+async openViewer(path: VfsPath) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_viewer", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Pick the preview's encoding; `None` is auto-detect.
+ */
+async setPreviewEncoding(path: VfsPath, selected: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_preview_encoding", { path, selected }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Apply a table option to the preview, named as the viewer window's Table
+ * menu names it (`delim_comma`, `header_auto`, `quoted`, …).
+ */
+async setPreviewTableOption(path: VfsPath, option: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_preview_table_option", { path, option }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The viewer window's Encoding menu, for Quick View's.
+ */
+async encodingCatalogue() : Promise<EncodingGroupView[]> {
+    return await TAURI_INVOKE("encoding_catalogue");
+},
 async setEditorLanguage(language: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_editor_language", { language }) };
@@ -2077,7 +2162,11 @@ export type DisplayOptionsInner = { show_hidden: boolean; active_pane: PaneHandl
  * Show only what has focus — the active pane or the terminal panel —
  * instead of the split layout.
  */
-maximized: boolean }
+maximized: boolean; 
+/**
+ * Quick View: the right slot previews the active pane's focused file.
+ */
+quick_view: boolean }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
 /**
@@ -2095,6 +2184,7 @@ word_wrap: boolean }
  * The `update:editor` payload; see `MainWindowStateWire`.
  */
 export type EditorState = { language: string; word_wrap: boolean; file_path: VfsPath | null; display_path: string | null }
+export type EncodingGroupView = { label: string; encodings: string[] }
 export type EnricherPreferences = { 
 /**
  * Show git status in file listings: per-row colors for
@@ -2340,7 +2430,7 @@ terminal_height: number | null }
  * through this derive keeps the wire shape and `MainWindowState` in
  * `bindings.ts` one and the same.
  */
-export type MainWindowState = { connection_status: ConnectionStatus; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary }
+export type MainWindowState = { connection_status: ConnectionStatus; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary; preview: ViewerState }
 /**
  * Which optional per-entry metadata families a VFS actually populates
  * on its `File`s — drives which file-list columns a pane offers (see
@@ -3216,7 +3306,8 @@ export type ViewerSearchPattern = { Text: { text: string; encoding: string } } |
  */
 { Regex: string }
 /**
- * The `update:viewer` payload; see `MainWindowStateWire`.
+ * The `update:viewer` payload, and the main window's Quick View; see
+ * `MainWindowStateWire`.
  */
 export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding; table: TableOptions }
 export type VolumeInfo = { kind: VolumeKind; 

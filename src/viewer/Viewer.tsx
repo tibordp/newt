@@ -6,6 +6,7 @@ import styles from "./Viewer.module.scss";
 import { commands, type ViewerState } from "../lib/bindings";
 import { useRemoteState, safe, unwrap } from "../lib/ipc";
 import { useScopedBindings } from "../lib/scopedBindings";
+import { useViewerHost } from "./host";
 import type { VfsPath } from "../lib/types";
 import {
   CHUNK_SIZE,
@@ -26,22 +27,25 @@ import { PdfViewer } from "./PdfViewer";
 import { TableViewer } from "./TableViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
 
-// --- Main Viewer component ---
+type ViewerBodyProps = {
+  displayPath: string;
+  filePath: VfsPath | null;
+  fileServerBase: string;
+  viewerState: ViewerState | null;
+  /// Called once the file can be shown in its mode (or has failed to load).
+  onReady?: () => void;
+};
 
-function Viewer() {
-  const [searchParams] = useSearchParams();
-  const viewerState = useRemoteState<ViewerState>("viewer");
-
-  // Read file info from remote state, fall back to search params
-  const displayPath =
-    viewerState?.display_path ?? searchParams.get("path") ?? "";
-  const filePath: VfsPath | null =
-    viewerState?.file_path ??
-    (searchParams.has("vfs_path")
-      ? JSON.parse(searchParams.get("vfs_path")!)
-      : null);
-  const fileServerBase =
-    viewerState?.file_server_base ?? searchParams.get("file_server_base") ?? "";
+/// The file in the mode its state names, in a viewer window or in Quick
+/// View (see `ViewerHost`).
+export function ViewerBody({
+  displayPath,
+  filePath,
+  fileServerBase,
+  viewerState,
+  onReady,
+}: ViewerBodyProps) {
+  const viewerHost = useViewerHost();
   const fileUrl = filePath
     ? buildFileUrl(fileServerBase, filePath.vfs_id, filePath.path)
     : "";
@@ -51,35 +55,58 @@ function Viewer() {
   const [autoMode, setAutoMode] = useState<ViewerMode | null>(null);
 
   const chunkCache = useRef(new LruChunkCache(MAX_CACHED_CHUNKS));
+  // Which file this is: display paths can repeat (a search VFS shows its
+  // own label for every entry).
+  const fileKey = filePath ? JSON.stringify(filePath) : "";
 
   // Fetch file info when file path becomes available and push auto-detected mode to Rust
   useEffect(() => {
-    if (!displayPath || !filePath) return;
+    if (!filePath) return;
     // Reset state for new file
     setInfo(null);
     setError(null);
     setAutoMode(null);
     chunkCache.current.clear();
-    document.title = displayPath;
 
+    let cancelled = false;
     (async () => {
       try {
         const fi = (await unwrap(commands.fileDetails(filePath))) as FileInfo;
+        if (cancelled) return;
         setInfo(fi);
         const mode = detectAutoMode(fi.mime_type);
         setAutoMode(mode);
-        safe(commands.setViewerMode(mode));
+        safe(viewerHost.setMode(mode));
       } catch (e: any) {
+        if (cancelled) return;
         setError(e.toString());
-        await message(e.toString(), { kind: "error", title: "Error" });
+        if (!viewerHost.embedded) {
+          await message(e.toString(), { kind: "error", title: "Error" });
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayPath]);
+  }, [fileKey]);
 
-  const currentMode = filePath
+  const stateMode = filePath
     ? ((viewerState?.mode as ViewerMode) ?? null)
     : null;
+  // A new file starts in text mode until its detected mode comes back from
+  // Rust; until then, show the mode just detected rather than text.
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (autoMode && stateMode === autoMode) setConfirmedFor(fileKey);
+  }, [autoMode, stateMode, fileKey]);
+  const currentMode = confirmedFor === fileKey ? stateMode : autoMode;
+
+  const ready = !!error || (!!info && !!currentMode);
+  useEffect(() => {
+    if (ready) onReady?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   // Text mode decodes as UTF-8 until the sniff result lands or the user
   // picks an encoding. The BOM is skipped only when the effective encoding
@@ -129,37 +156,14 @@ function Viewer() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [displayPath],
+    [fileKey],
   );
 
-  // Window-level Escape handler — closing the viewer is fundamental and
-  // deliberately not a rebindable command. Sub-viewers/SearchBar
-  // stopPropagation or preventDefault when they consume Escape. Tab has no
-  // job outside a text field; left alone it walks focus off the content,
-  // where no key reaches the viewer any more.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (e.key === "Escape") {
-        safe(commands.closeWindow());
-        e.preventDefault();
-      } else if (
-        e.key === "Tab" &&
-        !(e.target instanceof HTMLInputElement) &&
-        !(e.target instanceof HTMLTextAreaElement)
-      ) {
-        e.preventDefault();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  useScopedBindings("viewer", {
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_toggle_hex: () => {
       if (!currentMode) return false;
       const resolved = autoMode ?? currentMode;
-      safe(commands.setViewerMode(getAlternateMode(currentMode, resolved)));
+      safe(viewerHost.setMode(getAlternateMode(currentMode, resolved)));
     },
   });
 
@@ -278,6 +282,60 @@ function Viewer() {
   }
 
   return <>{content}</>;
+}
+
+// --- The viewer window ---
+
+function Viewer() {
+  const [searchParams] = useSearchParams();
+  const viewerState = useRemoteState<ViewerState>("viewer");
+
+  // Read file info from remote state, fall back to search params
+  const displayPath =
+    viewerState?.display_path ?? searchParams.get("path") ?? "";
+  const filePath: VfsPath | null =
+    viewerState?.file_path ??
+    (searchParams.has("vfs_path")
+      ? JSON.parse(searchParams.get("vfs_path")!)
+      : null);
+  const fileServerBase =
+    viewerState?.file_server_base ?? searchParams.get("file_server_base") ?? "";
+
+  useEffect(() => {
+    if (displayPath) document.title = displayPath;
+  }, [displayPath]);
+
+  // Window-level Escape handler — closing the viewer is fundamental and
+  // deliberately not a rebindable command. Sub-viewers/SearchBar
+  // stopPropagation or preventDefault when they consume Escape. Tab has no
+  // job outside a text field; left alone it walks focus off the content,
+  // where no key reaches the viewer any more.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key === "Escape") {
+        safe(commands.closeWindow());
+        e.preventDefault();
+      } else if (
+        e.key === "Tab" &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  return (
+    <ViewerBody
+      displayPath={displayPath}
+      filePath={filePath}
+      fileServerBase={fileServerBase}
+      viewerState={viewerState}
+    />
+  );
 }
 
 export default Viewer;

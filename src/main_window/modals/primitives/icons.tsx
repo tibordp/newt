@@ -83,3 +83,31 @@ export function IconRestore() {
     </Icon>
   );
 }
+
+/// Dual-pane frame with one half filled: the pane on screen.
+export function IconPaneSide({ side }: { side: number }) {
+  return (
+    <Icon>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+      <line x1="8" y1="2.75" x2="8" y2="13.25" />
+      <rect
+        x={side === 0 ? 3.5 : 9.75}
+        y="4.5"
+        width="2.75"
+        height="7"
+        fill="currentColor"
+        stroke="none"
+      />
+    </Icon>
+  );
+}
+
+/// A cross: close.
+export function IconClose() {
+  return (
+    <Icon>
+      <line x1="4" y1="4" x2="12" y2="12" />
+      <line x1="12" y1="4" x2="4" y2="12" />
+    </Icon>
+  );
+}

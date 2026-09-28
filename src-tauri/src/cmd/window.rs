@@ -166,7 +166,9 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     if pane.is_focused_dir() {
         return Ok(());
     }
-    let full_path = match pane.get_focused_file() {
+    // The file itself, for an entry of a synthetic VFS such as search
+    // results, whose own path displays as the search's label.
+    let full_path = match pane.get_focused_source() {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -273,7 +275,7 @@ pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     if pane.is_focused_dir() {
         return Ok(());
     }
-    let full_path = match pane.get_focused_file() {
+    let full_path = match pane.get_focused_source() {
         Some(s) => s,
         None => return Ok(()),
     };

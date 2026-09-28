@@ -25,6 +25,8 @@ export {
   IconChevronDown,
   IconMaximize,
   IconRestore,
+  IconPaneSide,
+  IconClose,
 } from "./icons";
 export { MountLogView } from "./MountLog";
 export { ProfileNameField } from "./ProfileNameField";

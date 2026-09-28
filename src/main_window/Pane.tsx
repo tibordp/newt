@@ -44,7 +44,7 @@ import {
 import { rowHeightFor } from "./density";
 import { usePreferences } from "../lib/preferences";
 import { useCommandShortcuts } from "../lib/scopedBindings";
-import { IconMaximize, IconRestore } from "./modals/primitives";
+import { IconMaximize, IconPaneSide, IconRestore } from "./modals/primitives";
 import { useLocale } from "../lib/locale";
 import { useRuntimeState } from "../lib/runtimeState";
 import {
@@ -760,6 +760,9 @@ function PaneInner(
     windowsDrives: boolean;
     /// This pane is shown alone rather than in the split layout.
     maximized: boolean;
+    /// Only one pane is on screen (Quick View, maximized): offer a switch to
+    /// the other.
+    swappable?: boolean;
   },
 ) {
   const {
@@ -768,6 +771,7 @@ function PaneInner(
     modalOpen,
     windowsDrives,
     maximized,
+    swappable,
     filter,
     filter_mode,
     path,
@@ -1899,6 +1903,31 @@ function PaneInner(
       <div className={styles.headerArea}>
         {preferences?.settings.appearance?.show_pane_header !== false ? (
           <div className={styles.header}>
+            {swappable && (
+              <button
+                type="button"
+                className={styles.swapButton}
+                tabIndex={-1}
+                aria-label={
+                  paneHandle === 0 ? "Show right pane" : "Show left pane"
+                }
+                title={
+                  paneHandle === 0
+                    ? "Show right pane (Tab)"
+                    : "Show left pane (Tab)"
+                }
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  safe(commands.focus(1 - paneHandle, null));
+                }}
+              >
+                <IconPaneSide side={paneHandle} />
+              </button>
+            )}
             <VfsSelector
               vfsDisplayName={vfs_display_name}
               vfsTargets={vfsTargets}

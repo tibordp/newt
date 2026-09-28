@@ -7,6 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import type {
   FileChunk,
   FileDetails,
+  MainWindowState,
   ResolvedPreferences,
   RuntimeState,
   VfsPath,
@@ -108,12 +109,15 @@ const bytesOf = (path: VfsPath) => {
   return fixtureBytes.get(url)!;
 };
 
-if (scene.window === "viewer" && scene.state.file_path) {
-  // `buildFileUrl` appends `/<vfs_id>` and then replaces the query, so a
-  // base ending in `?` resolves to the fixture itself.
-  const url = new URL(fixture(scene.state.file_path).url, location.href);
-  (state as ViewerState).file_server_base = `${url.href}?`;
-}
+// `buildFileUrl` appends `/<vfs_id>` and then replaces the query, so a base
+// ending in `?` resolves to the fixture itself.
+const pointAtFixture = (viewer: ViewerState) => {
+  if (!viewer.file_path) return;
+  const url = new URL(fixture(viewer.file_path).url, location.href);
+  viewer.file_server_base = `${url.href}?`;
+};
+if (scene.window === "viewer") pointAtFixture(state as ViewerState);
+if (scene.window === "main") pointAtFixture((state as MainWindowState).preview);
 
 const terminalsWritten = new Set<number>();
 
@@ -179,6 +183,36 @@ const handlers: Record<string, (args: any) => unknown> = {
     void publish();
     return null;
   },
+  // Quick View: the main window's counterparts, on its `preview`.
+  sniff_preview_encoding: () => {
+    const { preview } = state as MainWindowState;
+    preview.encoding.detected ??= { encoding: "UTF-8", bom_len: 0 };
+    void publish();
+    return null;
+  },
+  report_preview_table_detection: ({
+    delimiter,
+    header,
+  }: {
+    delimiter: TableDelimiter;
+    header: boolean;
+  }) => {
+    const { preview } = state as MainWindowState;
+    preview.table.detected_delimiter = delimiter;
+    preview.table.detected_header = header;
+    void publish();
+    return null;
+  },
+  set_preview_mode: () => {
+    void publish();
+    return null;
+  },
+  preview_focused: () => null,
+  set_preview_encoding: () => null,
+  set_preview_table_option: () => null,
+  encoding_catalogue: () => [
+    { label: "Unicode", encodings: ["UTF-8", "UTF-16LE", "UTF-16BE"] },
+  ],
   set_editor_language: () => {
     void publish();
     return null;

@@ -43,6 +43,7 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 
 ## Viewer and editor follow-ups
 
+- Alternate view (Alt+F3, reserved): F3, but always opening in text/hex whatever the file's type. Quick View's Mod+Shift+F3 is provisional.
 - Editor (F4) is UTF-8 only. Reuse the viewer's encoding catalogue and sniffer (`viewer/encoding.rs`) on open, re-encode on save with the same encoding, and give the editor its own Encoding menu.
 - Prev/next file navigation from the viewer window (`viewer_next_file`/`viewer_prev_file`, default `n`/`p`, arrows navigating at fit zoom in image mode). The keybinding side is ready (viewer commands live in the central registry); what remains is the session side — ask MainWindowState for the pane-order neighbor of the same class and re-target the window, generic across viewer modes.
 - Decode-in-Rust fallback for formats the webview can't render (TIFF on Windows, HEIC off macOS, RAW via embedded-preview extraction). Big surface — deliberately deferred.

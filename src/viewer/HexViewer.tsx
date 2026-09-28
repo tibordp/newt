@@ -31,6 +31,7 @@ import {
 import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
+import { useEmbeddedCopy, useViewerHost } from "./host";
 
 export interface HexViewerProps {
   filePath: string;
@@ -77,6 +78,7 @@ export function HexViewer({
   autoMode,
 }: HexViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const viewerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hexColRef = useRef<HTMLDivElement>(null);
@@ -129,8 +131,8 @@ export function HexViewer({
   );
 
   useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) viewerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   // Measure monospace character width
   useEffect(() => {
@@ -348,6 +350,14 @@ export function HexViewer({
   );
 
   // Menu event listener (for native menu Copy/Select All/Go to Offset)
+  // A click alone leaves a one-byte selection; only a dragged one counts.
+  useEmbeddedCopy(() => {
+    const sel = hexSelectionRef.current;
+    if (!sel || sel.anchor === sel.head) return false;
+    copyHexSelection();
+    return true;
+  });
+
   const copyHexSelectionRef = useRef(copyHexSelection);
   copyHexSelectionRef.current = copyHexSelection;
   const selectAllRef = useRef(selectAll);
@@ -493,7 +503,7 @@ export function HexViewer({
     }
   }, [clampedTopRow, rowHeight, scale]);
 
-  useScopedBindings("viewer", {
+  useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_copy: copyHexSelection,
     viewer_select_all: selectAll,
     viewer_goto: goToOffset,

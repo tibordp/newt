@@ -12,9 +12,10 @@ type ScopedHandler = () => void | false;
 /// editor window. Commands fire only in windows/modes that register a
 /// handler for them; fundamental keys (Escape, arrows, page keys) are
 /// deliberately not commands and stay hardcoded in the components, which
-/// consume them before this hook sees the event.
+/// consume them before this hook sees the event. A `null` scope registers
+/// nothing: a viewer embedded in the main window leaves keys to it.
 export function useScopedBindings(
-  scope: Exclude<CommandScope, "main">,
+  scope: Exclude<CommandScope, "main"> | null,
   handlers: Record<string, ScopedHandler>,
 ) {
   const preferences = usePreferences();
@@ -23,7 +24,7 @@ export function useScopedBindings(
 
   const bindingMap = useMemo(() => {
     const map = new Map<string, { command: string; when: string | null }[]>();
-    if (!preferences) return map;
+    if (!preferences || !scope) return map;
     const scoped = new Set(
       preferences.commands.filter((c) => c.scope === scope).map((c) => c.id),
     );

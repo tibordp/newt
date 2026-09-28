@@ -4,6 +4,7 @@ import { useFormatBytes } from "../lib/size";
 import styles from "./Viewer.module.scss";
 import { type ViewerMode } from "./helpers";
 import { ModeToggle } from "./ModeToggle";
+import { useViewerHost } from "./host";
 
 export interface MediaViewerProps {
   tag: "audio" | "video";
@@ -21,12 +22,13 @@ export function MediaViewer({
   autoMode,
 }: MediaViewerProps) {
   const formatSize = useFormatBytes();
+  const viewerHost = useViewerHost();
   const viewerRef = useRef<HTMLDivElement>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   useEffect(() => {
-    viewerRef.current?.focus();
-  }, []);
+    if (!viewerHost.embedded) viewerRef.current?.focus();
+  }, [viewerHost.embedded]);
 
   const modeName = tag === "audio" ? "Audio" : "Video";
 

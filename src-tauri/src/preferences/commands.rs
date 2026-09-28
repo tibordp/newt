@@ -468,6 +468,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "toggle_quick_view".into(),
+            name: "Toggle Quick View".into(),
+            short_name: Some("Quick View".into()),
+            category: "View".into(),
+            default_keys: vec!["mod+shift+f3".into()],
+            default_when: None,
+            needs_pane: false,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "sort".into(),
             name: "Sort...".into(),
             short_name: Some("Sort".into()),
