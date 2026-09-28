@@ -245,8 +245,8 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
 
 #[cfg(target_os = "linux")]
 fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::{Reader, XmlVersion};
     use std::collections::HashMap;
     use std::fs;
 
@@ -264,17 +264,23 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
-                if e.name().as_ref() == b"bookmark" =>
+                if e.name().as_ref() == "bookmark" =>
             {
                 let mut href = None;
                 let mut modified = None;
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"href" => {
-                            href = String::from_utf8(attr.value.to_vec()).ok();
+                        "href" => {
+                            href = attr
+                                .normalized_value(XmlVersion::Explicit1_0)
+                                .ok()
+                                .map(|v| v.into_owned());
                         }
-                        b"modified" => {
-                            modified = String::from_utf8(attr.value.to_vec()).ok();
+                        "modified" => {
+                            modified = attr
+                                .normalized_value(XmlVersion::Explicit1_0)
+                                .ok()
+                                .map(|v| v.into_owned());
                         }
                         _ => {}
                     }

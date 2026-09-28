@@ -1248,7 +1248,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 ### Connection Profiles and Quick Connect
 
-**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Linux Secret Service via `keyring` crate) under the service name `com.newt.credentials`.
+**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service via the `keyring` crate) under the service name `com.newt.credentials`.
 
 **Profile types**:
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.

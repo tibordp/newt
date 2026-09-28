@@ -16,7 +16,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
 serde_json = "1"
-opener = "0.6"
+opener = "0.8"
 drag = "2.1"
 once_cell = "1"
 notify = "8"
@@ -32,15 +32,15 @@ treediff = { version = "5", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }
 tokio = { version = "1", features = ["full"] }
 libc = "*"
-shell-quote = "0.7"
+shell-quote = "0.8"
 tokio-stream = "0.1"
 tokio-util = "0.7"
 async-trait = "0.1"
 bytes = "1"
 bincode = "1.3.3"
-toml = "0.8"
-toml_edit = "0.22"
-schemars = "0.8"
+toml = "1"
+toml_edit = "0.25"
+schemars = "1"
 log = "0.4"
 pretty_env_logger = "0.5"
 tokio-duplex = "1.0.1"
@@ -51,7 +51,7 @@ blake3 = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 arc-swap = "1.8.2"
-keyring = { version = "3", features = ["apple-native", "linux-native", "windows-native"] }
+keyring = "4"
 minijinja = "2"
 tempfile = "3.27.0"
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
@@ -65,8 +65,9 @@ nix = { version = "0.31", features = ["fs", "hostname"] }
 pty-process = { path = "../libs/pty-process" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_WNet",
     "Win32_System_Console",
     "Win32_System_SystemInformation",
@@ -80,8 +81,8 @@ windows-sys = { version = "0.59", features = [
 ] }
 # Versions pinned to match wry's WebView2 bindings so the controller handed
 # to `WebviewWindow::with_webview` casts to our interface cleanly.
-webview2-com = "0.38"
-windows = { version = "0.61", features = [
+webview2-com = "0.39"
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",

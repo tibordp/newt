@@ -84,14 +84,11 @@ export function PdfViewer({
     if (!viewer) return;
 
     let cancelled = false;
-    const loadingTask = pdfjsLib.getDocument(fileUrl);
+    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
 
     loadingTask.promise.then(
       (doc) => {
-        if (cancelled) {
-          doc.destroy();
-          return;
-        }
+        if (cancelled) return;
         viewer.setDocument(doc);
         setNumPages(doc.numPages);
         setPdfError(null);

@@ -44,7 +44,7 @@ function extractEnum(propSchema: any): {
 }
 
 export function resolveRef(schema: any, refPath: string): any {
-  // Resolve "#/definitions/Foo" style $ref pointers
+  // Resolve "#/$defs/Foo" style $ref pointers
   const parts = refPath.replace(/^#\//, "").split("/");
   let node = schema;
   for (const part of parts) {
@@ -55,12 +55,7 @@ export function resolveRef(schema: any, refPath: string): any {
 
 export function resolveSchema(root: any, node: any): any {
   if (!node) return node;
-  // Direct $ref
   if (node.$ref) return resolveRef(root, node.$ref);
-  // allOf with a single $ref (schemars pattern)
-  if (node.allOf?.length === 1 && node.allOf[0].$ref) {
-    return resolveRef(root, node.allOf[0].$ref);
-  }
   return node;
 }
 
@@ -91,8 +86,13 @@ export function extractSettings(preferences: PreferencesState): SettingDef[] {
       const key = `${category}.${prop}`;
       const title =
         rawPropSchema.title || propSchema.title || prop.replace(/_/g, " ");
-      const description =
-        rawPropSchema.description || propSchema.description || "";
+      // schemars keeps the doc comment's hard wraps; unwrap them so search
+      // matches across lines.
+      const description = (
+        rawPropSchema.description ||
+        propSchema.description ||
+        ""
+      ).replace(/(?<!\n)\n(?!\n)/g, " ");
 
       const { values: enumValues, labels: enumLabels } =
         extractEnum(propSchema);

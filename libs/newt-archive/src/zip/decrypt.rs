@@ -1,7 +1,7 @@
 //! Decryption for ZIP entries: traditional PKWARE ("ZipCrypto") and WinZip
 //! AES (AE-1/AE-2), the read-side mirror of `crate::crypto`.
 
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 
@@ -225,7 +225,7 @@ impl AesCtr {
             AesStrength::Aes192 => AnyAes::Aes192(aes::Aes192::new_from_slice(aes_key).unwrap()),
             AesStrength::Aes256 => AnyAes::Aes256(aes::Aes256::new_from_slice(aes_key).unwrap()),
         };
-        let hmac = <Hmac<Sha1> as Mac>::new_from_slice(hmac_key).unwrap();
+        let hmac = <Hmac<Sha1> as KeyInit>::new_from_slice(hmac_key).unwrap();
         AesCtr {
             cipher,
             hmac: Some(hmac),

@@ -484,7 +484,7 @@ fn zip64_entries() {
 fn archive_comment_is_decoded() {
     use std::io::Write;
     let mut w = foreign_writer();
-    w.set_comment("release notes");
+    w.set_comment("release notes").unwrap();
     w.start_file("a.txt", opts(zip::CompressionMethod::Stored))
         .unwrap();
     w.write_all(b"a").unwrap();

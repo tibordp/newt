@@ -9,7 +9,7 @@
 use std::io;
 
 use aes::Aes256;
-use aes::cipher::{BlockEncrypt, KeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 
@@ -42,7 +42,7 @@ impl AesCtrEncryptor {
         pbkdf2::pbkdf2_hmac::<Sha1>(password.as_bytes(), salt, PBKDF2_ROUNDS, &mut derived);
 
         let cipher = Aes256::new_from_slice(&derived[..KEY_LEN]).unwrap();
-        let hmac = <Hmac<Sha1> as Mac>::new_from_slice(&derived[KEY_LEN..2 * KEY_LEN]).unwrap();
+        let hmac = <Hmac<Sha1> as KeyInit>::new_from_slice(&derived[KEY_LEN..2 * KEY_LEN]).unwrap();
 
         let mut prelude = salt.to_vec();
         prelude.extend_from_slice(&derived[2 * KEY_LEN..]);
@@ -127,10 +127,7 @@ impl AesCbcEncryptor {
         for (b, (p, v)) in block.iter_mut().zip(plain.iter().zip(&self.prev)) {
             *b = p ^ v;
         }
-        self.cipher
-            .encrypt_block(aes::cipher::generic_array::GenericArray::from_mut_slice(
-                &mut block,
-            ));
+        self.cipher.encrypt_block((&mut block).into());
         self.prev = block;
         block
     }

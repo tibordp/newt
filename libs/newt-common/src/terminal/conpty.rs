@@ -182,7 +182,7 @@ struct ExitState {
 /// `ctx` is a `*const ExitState` obtained from `Arc::into_raw`; we only
 /// *borrow* it here (the matching `Arc::from_raw` happens in `Drop` after
 /// `UnregisterWaitEx` has guaranteed this callback is no longer running).
-unsafe extern "system" fn exit_trampoline(ctx: *mut c_void, _timed_out: u8) {
+unsafe extern "system" fn exit_trampoline(ctx: *mut c_void, _timed_out: bool) {
     let state = unsafe { &*(ctx as *const ExitState) };
     let _ = state.tx.send(true);
 }

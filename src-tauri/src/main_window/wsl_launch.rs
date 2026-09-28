@@ -82,7 +82,7 @@ fn ensure_hidden_console() {
             return;
         }
 
-        // From consoleapi.h; absent from windows-sys 0.59, and it has to
+        // From consoleapi.h; absent from windows-sys 0.61, and it has to
         // be resolved dynamically regardless — older Windows lacks it.
         #[repr(C)]
         struct AllocConsoleOptions {

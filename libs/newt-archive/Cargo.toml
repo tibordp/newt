@@ -9,18 +9,18 @@ description = "Sans-IO archive machinery for Newt: streaming tar/zip writers and
 flate2 = "1"
 xz2 = "0.1"
 lzma-sys = "0.1"
-zstd = "0.13"
-bzip2 = "0.5"
+zstd = "0.14"
+bzip2 = "0.6"
 deflate64 = "0.1"
 crc32fast = "1"
-aes = "0.8"
-hmac = "0.12"
-sha1 = "0.10"
-pbkdf2 = "0.12"
-getrandom = { version = "0.3", features = ["std"] }
+aes = "0.9"
+hmac = "0.13"
+sha1 = "0.11"
+pbkdf2 = "0.13"
+getrandom = { version = "0.4", features = ["std"] }
 iluvatar = { version = "0.5", default-features = false, features = ["gzip", "bz2", "xz", "zstandard", "aes"] }
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 tar = "0.4"
-zip = "2"
+zip = "8"
