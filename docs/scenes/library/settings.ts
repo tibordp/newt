@@ -8,7 +8,7 @@ const scene: Scene = {
   state: behindDialog({
     type: "settings",
     context: { pane_handle: 0 },
-    data: { can_reveal: true },
+    data: { can_reveal: true, association: null },
   }),
 };
 

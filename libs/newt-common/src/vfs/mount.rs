@@ -17,7 +17,7 @@ use super::path::VfsPath;
 use super::s3::S3Credentials;
 use super::{
     NoopProgressSink, ProgressReporter, ScopedReporter, Vfs, VfsDescriptor, VfsId, VfsProgressSink,
-    VfsRegistry, is_archive_name, is_disc_image_name, search,
+    VfsRegistry, search,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -35,6 +35,7 @@ pub enum MountRequest {
     },
     Archive {
         origin: VfsPath,
+        format: super::archive::ArchiveFormat,
     },
     /// Browse into an ISO 9660 / UDF disc image file.
     Disc {
@@ -63,12 +64,16 @@ pub enum MountRequest {
     },
 }
 
-/// The mount request for entering a file entry as a browsable VFS
-/// (archives, disc images), or `None` when the name isn't enterable.
-pub fn enterable_mount_request(name: &str, origin: VfsPath) -> Option<MountRequest> {
-    if is_archive_name(name) {
-        Some(MountRequest::Archive { origin })
-    } else if is_disc_image_name(name) {
+/// How many leading bytes [`sniff_mount_request`] looks at.
+pub const SNIFF_LEN: u64 = super::disc::DISC_SNIFF_LEN;
+
+/// The mount request a file's first [`SNIFF_LEN`] bytes call for — an
+/// archive reader or a disc image — or `None` when nothing there is
+/// recognisable.
+pub fn sniff_mount_request(header: &[u8], origin: VfsPath) -> Option<MountRequest> {
+    if let Some(format) = super::archive::sniff_format(header) {
+        Some(MountRequest::Archive { origin, format })
+    } else if super::disc::is_disc_image(header) {
         Some(MountRequest::Disc { origin })
     } else {
         None
@@ -315,7 +320,9 @@ impl VfsManager for VfsRegistryManager {
             MountRequest::Agent { spec, kind, label } => {
                 super::agent::mount(spec, kind, label, &ctx).await?
             }
-            MountRequest::Archive { origin } => super::archive::mount(origin, &ctx).await?,
+            MountRequest::Archive { origin, format } => {
+                super::archive::mount(origin, format, &ctx).await?
+            }
             MountRequest::Disc { origin } => super::disc::mount(origin, &ctx).await?,
             MountRequest::Search { root, params } => {
                 // Content matching runs `Filesystem::find_in_file`; the

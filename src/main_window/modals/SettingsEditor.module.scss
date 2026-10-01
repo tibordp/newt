@@ -754,3 +754,200 @@
   background: var(--color-danger-bg, rgba(204, 51, 51, 0.12));
   color: var(--color-fg);
 }
+
+// -- File associations --
+
+.associationPreview {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.associationGrid {
+  display: flex;
+  flex-direction: column;
+}
+
+.associationHead,
+.associationRow {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1.2fr) minmax(0, 1.5fr) minmax(0, 1fr)
+    minmax(0, 1fr) 4.5em;
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.associationHead {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  padding: 0 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+
+  // Line the headers up with the cell buttons' text.
+  > :nth-child(n + 2) {
+    padding-left: var(--space-3);
+  }
+}
+
+.associationRow {
+  min-height: 30px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.associationSection {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+  padding: var(--space-5) 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.associationName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.associationPattern {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  overflow-wrap: anywhere;
+}
+
+.associationMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+}
+
+.associationKindButton {
+  composes: iconButton;
+  font-size: var(--font-size-xs);
+  padding: 1px var(--space-3);
+
+  &[aria-pressed="true"] {
+    color: var(--color-fg);
+    background: var(--color-selected-bg);
+  }
+}
+
+// A cell is the value it shows; the button around it surfaces on hover
+// and focus only, as a table cell rather than a row of dropdowns.
+.associationCell {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  color: var(--color-fg-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: default;
+
+  &:hover,
+  &[data-state="open"] {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+  }
+}
+
+.associationCellSet {
+  color: var(--color-fg);
+}
+
+.associationCellLabel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.associationCellDetail {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+}
+
+.associationNone {
+  padding: 0 var(--space-3);
+  color: var(--color-fg-muted);
+}
+
+.associationReset {
+  text-align: right;
+}
+
+.associationMenuScroll {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+// The add row reads as a row still to be filled in: no field chrome until
+// it has focus, a muted "+" where a pattern would be.
+.associationAddRow {
+  padding: var(--space-3) 0;
+}
+
+.associationAddMark {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+  width: 1ch;
+  flex-shrink: 0;
+}
+
+// `[type]` outranks the base text-input rule.
+.associationAddInput[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-color: transparent;
+  background: none;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  font-size: var(--font-size-sm);
+
+  &::placeholder {
+    font-family: system-ui, sans-serif;
+    color: var(--color-fg-muted);
+  }
+
+  &:hover,
+  &:focus {
+    border-color: var(--color-input-border);
+    background: var(--color-input-bg);
+  }
+}
+
+// Stands in for the three value cells until a pattern is typed.
+.associationAddHint {
+  grid-column: span 3;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+
+  &:last-child {
+    grid-column: auto;
+    text-align: right;
+  }
+}
+
+.associationEmpty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+}

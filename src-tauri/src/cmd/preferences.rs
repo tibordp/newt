@@ -3,6 +3,7 @@ use tauri::Manager;
 use crate::GlobalContext;
 use crate::common::Error;
 use crate::main_window::{MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle};
+use crate::preferences::schema::AssociationKind;
 
 #[tauri::command]
 #[specta::specta]
@@ -281,4 +282,67 @@ pub fn cmd_open_config_file(ctx: MainWindowContext, _pane_handle: PaneHandle) ->
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();
     open_config_file(global_ctx)
+}
+
+/// Every association in effect as a row of the Associations tab,
+/// narrowed by `query` (see `Associations::table`).
+#[tauri::command]
+#[specta::specta]
+pub fn association_table(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    query: String,
+) -> crate::associations::AssociationTable {
+    global_ctx
+        .preferences()
+        .handle()
+        .associations()
+        .table(&query)
+}
+
+/// The Associations row for a pattern as typed, whether or not anything
+/// sets it yet.
+#[tauri::command]
+#[specta::specta]
+pub fn association_row(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    pattern: String,
+    kind: AssociationKind,
+) -> Option<crate::associations::AssociationRow> {
+    global_ctx
+        .preferences()
+        .handle()
+        .associations()
+        .row_for(&pattern, kind)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_association(
+    global_ctx: tauri::State<'_, GlobalContext>,
+    pattern: String,
+    kind: AssociationKind,
+    change: crate::preferences::AssociationChange,
+) -> Result<(), Error> {
+    global_ctx
+        .preferences()
+        .set_association(&pattern, kind, change)
+        .map_err(Error::Custom)
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct EditorLanguage {
+    pub id: String,
+    pub label: String,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn editor_languages() -> Vec<EditorLanguage> {
+    crate::associations::LANGUAGES
+        .iter()
+        .map(|(id, label)| EditorLanguage {
+            id: id.to_string(),
+            label: label.to_string(),
+        })
+        .collect()
 }

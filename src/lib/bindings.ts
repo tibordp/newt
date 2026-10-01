@@ -356,6 +356,18 @@ async fileDetails(path: VfsPath) : Promise<Result<FileDetails, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * `file_details`, plus the mode the viewer opens the file in and the
+ * language the editor gives it.
+ */
+async inspectFile(path: VfsPath) : Promise<Result<InspectedFile, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("inspect_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async readFileRange(path: VfsPath, offset: number, length: number) : Promise<Result<unknown, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("read_file_range", { path, offset, length }) };
@@ -844,6 +856,31 @@ async resetPreference(key: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Every association in effect as a row of the Associations tab,
+ * narrowed by `query` (see `Associations::table`).
+ */
+async associationTable(query: string) : Promise<AssociationTable> {
+    return await TAURI_INVOKE("association_table", { query });
+},
+/**
+ * The Associations row for a pattern as typed, whether or not anything
+ * sets it yet.
+ */
+async associationRow(pattern: string, kind: AssociationKind) : Promise<AssociationRow | null> {
+    return await TAURI_INVOKE("association_row", { pattern, kind });
+},
+async setAssociation(pattern: string, kind: AssociationKind, change: AssociationChange) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_association", { pattern, kind, change }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editorLanguages() : Promise<EditorLanguage[]> {
+    return await TAURI_INVOKE("editor_languages");
+},
 async getPreferencesSchema() : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_preferences_schema") };
@@ -1118,6 +1155,18 @@ async cmdOpenSettings(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Settings, on the Associations row that decides the focused entry — or
+ * offering to add one for its extension or name.
+ */
+async cmdChangeAssociation(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_change_association", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdNewWindow(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_new_window", { paneHandle }) };
@@ -1197,9 +1246,14 @@ async cmdOpen(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async cmdOpenArchive(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+/**
+ * Into the focused entry whatever Enter does with it: a directory or
+ * package is entered, a file browsed as its association's format, or as
+ * whatever its first bytes say.
+ */
+async cmdBrowseInto(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cmd_open_archive", { paneHandle }) };
+    return { status: "ok", data: await TAURI_INVOKE("cmd_browse_into", { paneHandle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1950,6 +2004,59 @@ export type AskpassPrompt = {
  * answered prompt renders as a fresh dialog.
  */
 id: number; prompt: string; is_secret: boolean }
+/**
+ * One property of a row: what its own entry sets, and what applies when
+ * it sets nothing.
+ */
+export type AssociationCell<T> = { set: T | null; inherited: T | null; origin: Origin }
+/**
+ * A change to the `[[association]]` entry for one pattern.
+ */
+export type AssociationChange = 
+/**
+ * What Enter does; `None` leaves it to the entries below.
+ */
+{ property: "enter"; value: EnterChoice | null } | 
+/**
+ * Enter browses the file as `format`.
+ */
+{ property: "browse_as"; format: BrowseFormat } | { property: "format"; value: BrowseFormat | null } | { property: "viewer"; value: ViewerMode | null } | { property: "language"; value: string | null } | 
+/**
+ * Everything the pattern's entry sets; a shared entry just loses
+ * the pattern.
+ */
+{ property: "clear" }
+/**
+ * The Associations row the Settings dialog opens at.
+ */
+export type AssociationFocus = { pattern: string; kind: AssociationKind; 
+/**
+ * A pattern in effect has the row; otherwise the dialog offers to add
+ * it.
+ */
+exists: boolean }
+export type AssociationKind = "file" | "directory"
+/**
+ * A name pattern and what happens to what it matches.
+ */
+export type AssociationRow = { pattern: string; kind: AssociationKind; 
+/**
+ * The settings-file entry this row edits holds these patterns too.
+ */
+shared_with: string[]; 
+/**
+ * The settings file has an entry for the pattern.
+ */
+customized: boolean; enter: AssociationCell<EnterChoice>; format: AssociationCell<BrowseFormat>; viewer: AssociationCell<ViewerMode>; language: AssociationCell<string> }
+export type AssociationTable = { rows: AssociationRow[]; 
+/**
+ * The query, read as a file name.
+ */
+name: NamePreview | null; 
+/**
+ * When no row matches: the pattern the query would add.
+ */
+candidate: string | null }
 export type BehaviorPreferences = { 
 /**
  * Ask for confirmation before deleting files.
@@ -2014,11 +2121,30 @@ new_window_location: NewWindowLocation;
  * Reopen windows at their last size and position — main windows per
  * connection target, viewer and editor windows at one size each.
  */
-restore_window_geometry: boolean }
+restore_window_geometry: boolean; 
+/**
+ * Enter opens app bundles and other packages (`.app`, `.xcodeproj`,
+ * `.pages`, …) instead of going into them. Browse Into in their
+ * context menu goes in either way.
+ */
+open_packages: boolean }
 /**
  * A single `[[bookmark]]` entry in the TOML file.
  */
 export type BookmarkEntry = { path: string; name?: string | null }
+export type BrowseFormat = "zip" | "7z" | 
+/**
+ * tar, cpio or ar, plain or compressed.
+ */
+"tar" | 
+/**
+ * A single gzip, bzip2, xz or zstd file.
+ */
+"compressed" | 
+/**
+ * An ISO 9660 or UDF disc image.
+ */
+"disc"
 /**
  * Command metadata for the command palette.
  */
@@ -2209,6 +2335,7 @@ export type DndFile = { name: string; is_dir: boolean }
  * id stays stable across renames so the profile is updated in place.
  */
 export type EditingProfile = { id: string; name: string }
+export type EditorLanguage = { id: string; label: string }
 export type EditorPreferences = { 
 /**
  * Wrap long lines in the built-in text editor by default. Toggling wrap
@@ -2228,6 +2355,11 @@ export type EnricherPreferences = {
  * (on the remote host in remote sessions).
  */
 git_status: boolean }
+/**
+ * What Enter does, as an entry sets it: an action, and for `command` the
+ * command it runs.
+ */
+export type EnterChoice = { action: "open" } | { action: "browse" } | { action: "view" } | { action: "edit" } | { action: "command"; command: string }
 export type EnvironmentPreferences = { 
 /**
  * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
@@ -2382,7 +2514,11 @@ source_display: string | null;
  * order. Opaque to the pane; the frontend interprets the kinds it
  * knows (git status → row coloring).
  */
-annotations: Annotation[] }
+annotations: Annotation[]; 
+/**
+ * What the row's context menu offers besides what Enter does.
+ */
+actions: RowActions }
 /**
  * A windowed slice of the file list sent to the frontend.
  */
@@ -2443,6 +2579,10 @@ mounts: boolean;
  */
 recent_folders: boolean }
 export type ImageBackground = "dark" | "checkerboard" | "light"
+/**
+ * A file's details, with what its associations make of it.
+ */
+export type InspectedFile = { details: FileDetails; viewer_mode: ViewerMode; language: string }
 export type IssueAction = "skip" | "overwrite" | 
 /**
  * Overwrite when the source was modified later than the destination.
@@ -2679,7 +2819,11 @@ moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: {
  * Whether the session can point a pane at the settings file, i.e.
  * whether the host machine's filesystem is mounted at all.
  */
-can_reveal: boolean } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+can_reveal: boolean; 
+/**
+ * Open on the Associations tab, at this pattern's row.
+ */
+association: AssociationFocus | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.
@@ -2877,7 +3021,11 @@ moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: {
  * Whether the session can point a pane at the settings file, i.e.
  * whether the host machine's filesystem is mounted at all.
  */
-can_reveal: boolean } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+can_reveal: boolean; 
+/**
+ * Open on the Associations tab, at this pattern's row.
+ */
+association: AssociationFocus | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.
@@ -2895,6 +3043,14 @@ export type MountSummary = {
  * gates the Shift+<drive> shortcut, independent of the host OS.
  */
 has_split_root_vfs: boolean }
+/**
+ * What happens to a file of a given name, everything considered.
+ */
+export type NamePreview = { name: string; enter: EnterChoice | null; format: BrowseFormat | null; 
+/**
+ * `None`: the file's contents decide.
+ */
+viewer: ViewerMode | null; language: string | null }
 export type NewWindowLocation = "inherit" | "restore" | "default"
 export type OpenIn = "window" | "pane"
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
@@ -2970,6 +3126,23 @@ silent: boolean;
  */
 scanning_items: number | null; scanning_bytes: number | null }
 export type OperationStatus = "scanning" | "running" | "completed" | "failed" | "cancelled" | "waiting_for_input"
+/**
+ * Where a value a row doesn't set itself comes from.
+ */
+export type Origin = 
+/**
+ * Another of the user's entries — a profile's when `profile`.
+ */
+{ source: "entry"; patterns: string[]; profile: boolean } | { source: "built_in" } | 
+/**
+ * The MIME type the name implies.
+ */
+{ source: "file_type" } | 
+/**
+ * Nothing: Enter opens a file in its default application and goes
+ * into a directory, and Browse Into reads the file's first bytes.
+ */
+{ source: "default" }
 /**
  * A segment of the pane's path bar, and where clicking it goes.
  */
@@ -3111,6 +3284,18 @@ modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; b
  */
 locale: string | null }
 export type RestoreLocations = "all" | "local" | "none"
+/**
+ * What a pane row's context menu offers besides what Enter does.
+ */
+export type RowActions = { 
+/**
+ * Open in Default App does something Enter doesn't.
+ */
+open_default: boolean; 
+/**
+ * Browse Into does something Enter doesn't.
+ */
+browse_into: boolean }
 /**
  * App-wide runtime state persisted to `state.json` in the config dir.
  * Every field must default so old files keep deserializing as the

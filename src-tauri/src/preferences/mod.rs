@@ -23,6 +23,10 @@ pub struct ResolvedPreferences {
     pub commands: Vec<CommandInfo>,
     pub bookmarks: Vec<BookmarkEntry>,
     pub user_commands: Vec<UserCommandEntry>,
+    /// Every association in effect — a profile's, the user's, then the
+    /// shipped defaults — ready to resolve.
+    #[serde(skip)]
+    pub compiled_associations: Arc<crate::associations::Associations>,
     /// BCP-47 tag the frontend formats numbers and dates with: the
     /// `appearance.locale` preference when set, else the system's regional
     /// format. `None` leaves the choice to the webview — which on Windows
@@ -101,12 +105,23 @@ pub struct CommandInfo {
 #[derive(Clone)]
 pub struct PreferencesHandle {
     settings: Arc<arc_swap::ArcSwap<AppPreferences>>,
+    associations: Arc<arc_swap::ArcSwap<crate::associations::Associations>>,
     notify: tokio::sync::watch::Receiver<()>,
 }
 
 impl PreferencesHandle {
     pub fn load(&self) -> arc_swap::Guard<Arc<AppPreferences>> {
         self.settings.load()
+    }
+
+    pub fn associations(&self) -> Arc<crate::associations::Associations> {
+        self.associations.load_full()
+    }
+
+    fn store(&self, resolved: &ResolvedPreferences) {
+        self.settings.store(Arc::new(resolved.settings.clone()));
+        self.associations
+            .store(resolved.compiled_associations.clone());
     }
 
     pub fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
@@ -141,21 +156,22 @@ impl PreferencesManager {
         }
 
         let initial = Self::load_and_resolve(&config_dir);
-        let settings = Arc::new(arc_swap::ArcSwap::from_pointee(initial.settings.clone()));
         let (notify_tx, notify_rx) = tokio::sync::watch::channel(());
-        let resolved = Arc::new(RwLock::new(initial));
-
         let handle = PreferencesHandle {
-            settings: settings.clone(),
+            settings: Arc::new(arc_swap::ArcSwap::from_pointee(initial.settings.clone())),
+            associations: Arc::new(arc_swap::ArcSwap::new(
+                initial.compiled_associations.clone(),
+            )),
             notify: notify_rx,
         };
+        let resolved = Arc::new(RwLock::new(initial));
 
         // Set up file watcher
         let watcher = Self::setup_watcher(
             app_handle,
             &config_dir,
             resolved.clone(),
-            settings,
+            handle.clone(),
             notify_tx.clone(),
         );
 
@@ -197,9 +213,7 @@ impl PreferencesManager {
             let mut guard = self.resolved.write();
             *guard = new_resolved.clone();
         }
-        self.handle
-            .settings
-            .store(Arc::new(new_resolved.settings.clone()));
+        self.handle.store(&new_resolved);
         let _ = self.notify_tx.send(());
         let _ = self.app_handle.emit("update:preferences", &new_resolved);
     }
@@ -360,6 +374,24 @@ impl PreferencesManager {
         Ok(())
     }
 
+    /// Change what the `[[association]]` entry for `pattern` sets.
+    pub fn set_association(
+        &self,
+        pattern: &str,
+        kind: schema::AssociationKind,
+        change: AssociationChange,
+    ) -> Result<(), String> {
+        let file_path = self.settings_file_path();
+        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        std::fs::write(
+            &file_path,
+            apply_set_association(&content, pattern, kind, change)?,
+        )
+        .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
+        self.reload();
+        Ok(())
+    }
+
     /// Remove a user command entry from settings.toml by index.
     pub fn remove_user_command(&self, index: usize) -> Result<(), String> {
         let file_path = self.settings_file_path();
@@ -402,6 +434,12 @@ impl PreferencesManager {
         if index >= arr.len() {
             return Err(format!("Command index {} out of range", index));
         }
+
+        let old_title = arr
+            .get(index)
+            .and_then(|t| t.get("title"))
+            .and_then(|t| t.as_str())
+            .map(str::to_string);
 
         // Remove old entry and build replacement
         arr.remove(index);
@@ -451,6 +489,9 @@ impl PreferencesManager {
             for t in tables {
                 arr.push(t);
             }
+        }
+        if let Some(old_title) = old_title.filter(|t| *t != entry.title) {
+            rename_association_command(&mut doc, &old_title, &entry.title);
         }
 
         std::fs::write(&file_path, doc.to_string())
@@ -574,7 +615,7 @@ impl PreferencesManager {
         app_handle: &tauri::AppHandle,
         config_dir: &std::path::Path,
         resolved: Arc<RwLock<ResolvedPreferences>>,
-        settings: Arc<arc_swap::ArcSwap<AppPreferences>>,
+        handle: PreferencesHandle,
         notify_tx: tokio::sync::watch::Sender<()>,
     ) -> Option<RecommendedWatcher> {
         let config_dir_owned = config_dir.to_owned();
@@ -633,13 +674,14 @@ impl PreferencesManager {
                         || guard.bookmarks != new_resolved.bookmarks
                         || guard.user_commands != new_resolved.user_commands
                         || guard.commands != new_resolved.commands
+                        || guard.compiled_associations != new_resolved.compiled_associations
                     {
                         *guard = new_resolved.clone();
                     } else {
                         continue;
                     }
                 }
-                settings.store(Arc::new(new_resolved.settings.clone()));
+                handle.store(&new_resolved);
                 let _ = notify_tx.send(());
                 let _ = app_handle.emit("update:preferences", &new_resolved);
             }
@@ -844,8 +886,26 @@ impl PreferencesManager {
             keys
         };
 
+        // Associations: a profile's override the user's, as its settings do.
+        let compiled_associations = Arc::new(crate::associations::Associations::new(
+            profile_file
+                .as_ref()
+                .map(|pf| pf.associations.clone())
+                .unwrap_or_default(),
+            user_file.associations.clone(),
+            settings.behavior.open_packages,
+        ));
+
         let schema = schemars::schema_for!(AppPreferences);
-        let schema_json = serde_json::to_value(schema).unwrap_or_default();
+        let mut schema_json = serde_json::to_value(schema).unwrap_or_default();
+        // Packages are a macOS thing; the setting does nothing elsewhere.
+        if !cfg!(target_os = "macos")
+            && let Some(behavior) =
+                schema_json.pointer_mut("/definitions/BehaviorPreferences/properties")
+            && let Some(properties) = behavior.as_object_mut()
+        {
+            properties.remove("open_packages");
+        }
 
         let locale = Some(settings.appearance.locale.clone())
             .filter(|l| !l.is_empty())
@@ -859,6 +919,7 @@ impl PreferencesManager {
             commands,
             bookmarks,
             user_commands,
+            compiled_associations,
             locale,
         }
     }
@@ -1185,22 +1246,214 @@ fn apply_reset_keybinding(
 
 /// Replace the `[[bookmark]]` array-of-tables of `doc` with `entries`,
 /// dropping the key entirely when the list is empty.
-fn set_bookmark_array(doc: &mut toml_edit::DocumentMut, entries: Vec<toml_edit::Table>) {
-    doc.remove("bookmark");
+fn set_table_array(doc: &mut toml_edit::DocumentMut, key: &str, entries: Vec<toml_edit::Table>) {
+    doc.remove(key);
     if !entries.is_empty() {
         let mut arr = toml_edit::ArrayOfTables::new();
         for t in entries {
             arr.push(t);
         }
-        doc.insert("bookmark", toml_edit::Item::ArrayOfTables(arr));
+        doc.insert(key, toml_edit::Item::ArrayOfTables(arr));
     }
 }
 
-fn bookmark_tables(doc: &toml_edit::DocumentMut) -> Vec<toml_edit::Table> {
-    doc.get("bookmark")
+fn table_array(doc: &toml_edit::DocumentMut, key: &str) -> Vec<toml_edit::Table> {
+    doc.get(key)
         .and_then(|i| i.as_array_of_tables())
         .map(|arr| arr.iter().cloned().collect())
         .unwrap_or_default()
+}
+
+/// The string a unit enum variant serializes as.
+fn word<T: serde::Serialize>(value: T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(s)) => s,
+        other => unreachable!("not a unit variant: {other:?}"),
+    }
+}
+
+/// A change to the `[[association]]` entry for one pattern.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+#[serde(tag = "property", rename_all = "snake_case")]
+pub enum AssociationChange {
+    /// What Enter does; `None` leaves it to the entries below.
+    Enter {
+        value: Option<crate::associations::EnterChoice>,
+    },
+    /// Enter browses the file as `format`.
+    BrowseAs {
+        format: schema::BrowseFormat,
+    },
+    Format {
+        value: Option<schema::BrowseFormat>,
+    },
+    Viewer {
+        value: Option<crate::viewer::ViewerMode>,
+    },
+    Language {
+        value: Option<String>,
+    },
+    /// Everything the pattern's entry sets; a shared entry just loses
+    /// the pattern.
+    Clear,
+}
+
+fn table_patterns(table: &toml_edit::Table) -> Vec<String> {
+    match table.get("match") {
+        Some(item) if item.is_str() => item.as_str().into_iter().map(str::to_string).collect(),
+        Some(item) => item
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
+fn set_table_patterns(table: &mut toml_edit::Table, patterns: &[String]) {
+    match patterns {
+        [one] => table.insert("match", toml_edit::value(one.as_str())),
+        many => table.insert(
+            "match",
+            toml_edit::value(
+                many.iter()
+                    .map(String::as_str)
+                    .collect::<toml_edit::Array>(),
+            ),
+        ),
+    };
+}
+
+/// Pure transformation powering `set_association`. The entry for
+/// `pattern` is changed where it stands, so comments and order survive;
+/// a pattern without one gets a new entry at the end.
+fn apply_set_association(
+    content: &str,
+    pattern: &str,
+    kind: schema::AssociationKind,
+    change: AssociationChange,
+) -> Result<String, String> {
+    use crate::associations::EnterChoice;
+    use schema::EnterAction;
+
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
+    if !doc.contains_key("association") {
+        doc.insert(
+            "association",
+            toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+        );
+    }
+    let tables = doc["association"]
+        .as_array_of_tables_mut()
+        .ok_or_else(|| "'association' key exists but is not an array of tables".to_string())?;
+    let kind_word = word(kind);
+    let own = tables.iter().position(|table| {
+        table.get("kind").and_then(|k| k.as_str()).unwrap_or("file") == kind_word
+            && table_patterns(table)
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(pattern))
+    });
+
+    let writes: Vec<(&str, Option<String>)> = match change {
+        AssociationChange::Clear => {
+            if let Some(index) = own {
+                let table = tables.get_mut(index).unwrap();
+                let rest: Vec<String> = table_patterns(table)
+                    .into_iter()
+                    .filter(|p| !p.eq_ignore_ascii_case(pattern))
+                    .collect();
+                if rest.is_empty() {
+                    tables.remove(index);
+                } else {
+                    set_table_patterns(table, &rest);
+                }
+            }
+            Vec::new()
+        }
+        AssociationChange::Enter { value } => {
+            let (enter, command) = match value {
+                None => (None, None),
+                Some(EnterChoice::Command { command }) => {
+                    (Some(EnterAction::Command), Some(command))
+                }
+                Some(choice) => (
+                    Some(match choice {
+                        EnterChoice::Open => EnterAction::Open,
+                        EnterChoice::Browse => EnterAction::Browse,
+                        EnterChoice::View => EnterAction::View,
+                        EnterChoice::Edit => EnterAction::Edit,
+                        EnterChoice::Command { .. } => unreachable!(),
+                    }),
+                    None,
+                ),
+            };
+            vec![("enter", enter.map(word)), ("command", command)]
+        }
+        AssociationChange::BrowseAs { format } => vec![
+            ("enter", Some(word(EnterAction::Browse))),
+            ("command", None),
+            ("format", Some(word(format))),
+        ],
+        AssociationChange::Format { value } => vec![("format", value.map(word))],
+        AssociationChange::Viewer { value } => vec![("viewer", value.map(word))],
+        AssociationChange::Language { value } => vec![("language", value)],
+    };
+
+    if !writes.is_empty() {
+        match own {
+            Some(index) => {
+                let table = tables.get_mut(index).unwrap();
+                for (key, value) in writes {
+                    match value {
+                        Some(value) => table.insert(key, toml_edit::value(value)),
+                        None => table.remove(key),
+                    };
+                }
+                let sets_something = table.iter().any(|(key, _)| key != "match" && key != "kind");
+                if !sets_something {
+                    tables.remove(index);
+                }
+            }
+            None if writes.iter().any(|(_, value)| value.is_some()) => {
+                let mut table = toml_edit::Table::new();
+                set_table_patterns(&mut table, &[pattern.to_string()]);
+                if kind != schema::AssociationKind::File {
+                    table.insert("kind", toml_edit::value(kind_word));
+                }
+                for (key, value) in writes {
+                    if let Some(value) = value {
+                        table.insert(key, toml_edit::value(value));
+                    }
+                }
+                tables.push(table);
+            }
+            None => {}
+        }
+    }
+    if tables.is_empty() {
+        doc.remove("association");
+    }
+    Ok(doc.to_string())
+}
+
+/// Point every `[[association]]` that runs the command titled `from` at
+/// `to` instead.
+fn rename_association_command(doc: &mut toml_edit::DocumentMut, from: &str, to: &str) {
+    if let Some(arr) = doc
+        .get_mut("association")
+        .and_then(|i| i.as_array_of_tables_mut())
+    {
+        for table in arr.iter_mut() {
+            if table.get("command").and_then(|c| c.as_str()) == Some(from) {
+                table.insert("command", toml_edit::value(to));
+            }
+        }
+    }
 }
 
 /// Pure transformation powering `add_bookmark`: prepend an entry for `path`,
@@ -1216,7 +1469,7 @@ fn apply_add_bookmark(
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
 
-    let existing = bookmark_tables(&doc);
+    let existing = table_array(&doc, "bookmark");
     let mut kept: Vec<toml_edit::Table> = Vec::with_capacity(existing.len() + 1);
 
     let mut entry = toml_edit::Table::new();
@@ -1234,7 +1487,7 @@ fn apply_add_bookmark(
     let was_bookmarked = retained.len() != before;
     kept.extend(retained);
 
-    set_bookmark_array(&mut doc, kept);
+    set_table_array(&mut doc, "bookmark", kept);
 
     Ok((doc.to_string(), was_bookmarked))
 }
@@ -1247,11 +1500,11 @@ fn apply_remove_bookmark(content: &str, path: &str) -> Result<String, String> {
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
 
-    let kept: Vec<toml_edit::Table> = bookmark_tables(&doc)
+    let kept: Vec<toml_edit::Table> = table_array(&doc, "bookmark")
         .into_iter()
         .filter(|t| t.get("path").and_then(|v| v.as_str()) != Some(path))
         .collect();
-    set_bookmark_array(&mut doc, kept);
+    set_table_array(&mut doc, "bookmark", kept);
 
     Ok(doc.to_string())
 }
@@ -1266,7 +1519,7 @@ fn apply_restore_bookmarks(content: &str, snapshot: &str) -> Result<String, Stri
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("Failed to parse bookmark snapshot: {}", e))?;
 
-    set_bookmark_array(&mut doc, bookmark_tables(&snapshot_doc));
+    set_table_array(&mut doc, "bookmark", table_array(&snapshot_doc, "bookmark"));
 
     Ok(doc.to_string())
 }

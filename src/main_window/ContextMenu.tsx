@@ -1,7 +1,11 @@
 import { useMemo } from "react";
 import { ContextMenu as CM } from "../lib/menus";
 
-import { commands as ipc, type MetadataTraits } from "../lib/bindings";
+import {
+  commands as ipc,
+  type MetadataTraits,
+  type RowActions,
+} from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { usePreferences, CommandInfo } from "../lib/preferences";
 import {
@@ -59,6 +63,8 @@ type FileContextMenuProps = {
   paneHandle: number;
   isParentDir: boolean;
   follow: FollowKind;
+  /// What the entry offers besides what Enter does with it.
+  actions: RowActions | null;
   onShellMenu?: () => void;
   onCloseAutoFocus?: (e: Event) => void;
 };
@@ -67,6 +73,7 @@ export function FileContextMenuContent({
   paneHandle,
   isParentDir,
   follow,
+  actions,
   onShellMenu,
   onCloseAutoFocus,
 }: FileContextMenuProps) {
@@ -82,10 +89,35 @@ export function FileContextMenuContent({
         <CM.Item
           className={styles.item}
           disabled={isParentDir}
-          onSelect={() => safe(ipc.cmdOpen(paneHandle))}
+          onSelect={() => safe(ipc.enter(paneHandle))}
         >
           Open
-          <Shortcut commands={commands} id="open" />
+        </CM.Item>
+        {actions?.open_default && (
+          <CM.Item
+            className={styles.item}
+            onSelect={() => safe(ipc.cmdOpen(paneHandle))}
+          >
+            Open in Default App
+            <Shortcut commands={commands} id="open" />
+          </CM.Item>
+        )}
+        {actions?.browse_into && (
+          <CM.Item
+            className={styles.item}
+            onSelect={() => safe(ipc.cmdBrowseInto(paneHandle))}
+          >
+            Browse Into
+            <Shortcut commands={commands} id="browse_into" />
+          </CM.Item>
+        )}
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdChangeAssociation(paneHandle))}
+        >
+          Change Association…
+          <Shortcut commands={commands} id="change_association" />
         </CM.Item>
         {follow && (
           <CM.Item

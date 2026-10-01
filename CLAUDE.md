@@ -96,6 +96,10 @@ When adding state that affects the session's UI beyond a single component (e.g. 
 3. Modify it via `with_update` / `with_update_async` in a command handler.
 4. Read it from `remoteState` on the frontend — do not duplicate it into `useState`. The documentation scenes in `docs/scenes/` are typed against the same bindings, so `tsc` points at any scene the change leaves stale.
 
+### Preferences: the Settings dialog is the config file
+
+The Settings dialog maps 1:1 onto `settings.toml`. Everything the file can hold is editable in the dialog, and every control writes exactly one thing in the file. There is no UI-only state, no file-only setting, and no dialog-side model that drifts from the file. A structure too rich for a row widget (keybindings, user commands, file associations) gets its own tab rather than staying file-only. When adding to the schema, add its UI in the same change.
+
 ## Async and cancellability
 
 We prefer async code over sync code, even at the slight expense of efficiency. The main reason for this is ease of cancellation (by dropping the pending future). We are willing to go above and beyond to make things async-friendly, including reimplementation of popular crates. Dropping a future to cancel is preferred over cancellation tokens, though cancellation tokens are acceptable. 

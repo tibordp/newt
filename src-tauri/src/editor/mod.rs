@@ -10,35 +10,7 @@ use tauri::{Emitter, Manager, State, WebviewWindow, Wry};
 use crate::GlobalContext;
 use crate::common::{Error, UpdatePublisher};
 
-const LANGUAGES: &[(&str, &str)] = &[
-    ("plaintext", "Plain Text"),
-    ("c", "C"),
-    ("cpp", "C++"),
-    ("csharp", "C#"),
-    ("css", "CSS"),
-    ("dockerfile", "Dockerfile"),
-    ("go", "Go"),
-    ("html", "HTML"),
-    ("ini", "INI / TOML"),
-    ("java", "Java"),
-    ("javascript", "JavaScript"),
-    ("json", "JSON"),
-    ("kotlin", "Kotlin"),
-    ("lua", "Lua"),
-    ("markdown", "Markdown"),
-    ("perl", "Perl"),
-    ("php", "PHP"),
-    ("python", "Python"),
-    ("ruby", "Ruby"),
-    ("rust", "Rust"),
-    ("scss", "SCSS"),
-    ("shell", "Shell"),
-    ("sql", "SQL"),
-    ("swift", "Swift"),
-    ("typescript", "TypeScript"),
-    ("xml", "XML"),
-    ("yaml", "YAML"),
-];
+use crate::associations::LANGUAGES;
 
 pub struct EditorState {
     language: RwLock<String>,

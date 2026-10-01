@@ -63,6 +63,7 @@ export default function ModalRouter({
           <SettingsEditorContent
             preferences={preferences}
             canReveal={state?.modal?.data?.can_reveal ?? false}
+            association={state?.modal?.data?.association ?? null}
             paneHandle={state?.modal?.context?.pane_handle ?? null}
           />
         );

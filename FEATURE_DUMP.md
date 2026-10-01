@@ -273,12 +273,41 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 
 Numpad-only defaults are deliberate: `+`/`-`/`*` on the main row are printable characters and start quick search. `normalizeKeyEvent` names the numpad operators by `KeyboardEvent.code` (`numpad_add`, `numpad_subtract`, `numpad_multiply`, `numpad_divide`) since `e.key` is identical for both rows, and the pane's printable-key heuristic skips those codes so they reach the dispatcher. Laptop users rebind (`shift+=` etc.) in the Keybindings tab.
 
-**Enter behavior** depends on what's focused:
-- **Directory**: Navigate into it.
-- **Archive file** (`.tar.gz`, `.zip`, etc.) or **disc image** (`.iso`, `.udf`): Mount as VFS and navigate into its root.
+**Enter behavior** depends on what's focused, and on its [file associations](#file-associations):
+- **Directory**: Navigate into it — unless an association says otherwise: on macOS, with **Open Packages** on, app bundles and other packages open instead.
+- **Archive file** (`.tar.gz`, `.zip`, etc.) or **disc image** (`.iso`, `.udf`): Mount as VFS and navigate into its root (an association with `enter = "browse"`).
 - **Symlink to directory**: Enter it logically — the pane keeps the link path, listing goes through the link (both Unix and healthy Windows links, `mklink /D`/`/J`). On Windows-shaped FSes, if the logical entry fails, Enter falls back to the resolved link *target*: the app-compat junctions (`C:\Users\<user>\Cookies` & co.) carry an `Everyone:(DENY)(RD)` ACE and are unlistable by design, so resolving is the only useful move (TC resolves; Salamander errors). Deliberately shallow: direct navigation to a link path (Ctrl+L, breadcrumb) is unchanged and may error.
-- **Regular file**: Open with system default application. For host-local files this opens directly via the OS opener; for files on a non-host-local VFS (S3, SFTP, archives, remote), the file is first downloaded to a temp directory on the host using the standard Copy operation, and the system handler is launched on completion.
+- **Regular file**: Open with system default application, unless an association picks Newt's viewer, its editor or a user command. For host-local files this opens directly via the OS opener; for files on a non-host-local VFS (S3, SFTP, archives, remote), the file is first downloaded to a temp directory on the host using the standard Copy operation, and the system handler is launched on completion.
 - **`..`**: Navigate to parent directory.
+
+### File Associations
+
+What Enter does with a file or directory, what **Browse Into** browses a file as, the mode the viewer (F3, Quick View) opens it in and the language the editor (F4) gives it all come from associations: `[[association]]` entries in `settings.toml`, edited on the Settings dialog's **Associations** tab, followed by the built-in ones.
+
+```toml
+[[association]]
+match = ["*.nupkg", "*.vsix"]   # name globs, case-insensitive; one string or a list
+enter = "browse"                # "open" (default app), "browse", "view", "edit" or "command"
+format = "zip"                  # "zip", "7z", "tar" (tar, cpio or ar), "compressed" or "disc"
+
+[[association]]
+match = "*.log"
+viewer = "text"                 # text, hex, table, markdown, image, audio, video, pdf
+language = "plaintext"          # a Monaco language id, as in the editor's Language menu
+
+[[association]]
+match = "build"
+kind = "directory"              # "file" (default) or "directory"
+enter = "command"
+command = "Build"               # the title of a [[command]]
+```
+
+- **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity a profile's before the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode or language no entry sets comes from the file's MIME type, then Hex mode and plain text.
+- **Built-ins** cover the archive and disc formats below, the editor's language table, `.ts`/`.tsx`/`.cts` as TypeScript text (MIME databases know `.ts` only as an MPEG transport stream; `.mts`, AVCHD video as often as a TypeScript module, keeps its video type), and containers that open in their own application but can be browsed into from the context menu: Office and OpenDocument files, EPUB, Python wheels, NuGet and VS Code packages (`zip`) and Rust crates (`tar`).
+- **Enter actions**: `open` hands the file to the system's default application, `browse` goes in (into a directory, or into a file as `format`), `view` and `edit` open Newt's viewer and editor, `command` runs a user command as picking it from the palette would. A renamed command takes its associations along. A directory can only be opened on this computer's own filesystem; elsewhere Enter goes in.
+- **Packages** (macOS only): app bundles, frameworks, plugins, Xcode projects and workspaces, `.rtfd`, photo libraries and iWork documents are directories that Finder shows as files. Enter goes into them; **Behavior ▸ Open Packages** makes it open them instead.
+- **Browse Into** (`browse_into`, unbound; context menu) goes into the focused entry whatever Enter does with it: a directory or package is entered, a file browsed as its association's format — or, when nothing names one, as whatever its first bytes say (ZIP, 7z, tar, cpio and ar headers, gzip/bzip2/xz/zstd streams, ISO 9660 and UDF volumes). A tar or compressed file whose name doesn't say which compression it uses is decompressed by what its first bytes say.
+- **Open in Default App** (`open`, unbound; context menu) always hands the entry to the system's default application, downloading it first when it isn't on this computer.
 
 ### Mouse Interactions
 
@@ -310,7 +339,10 @@ The default browser context menu is suppressed in the main window (but not in th
 
 | Item | Shortcut |
 |------|----------|
-| Open | |
+| Open | Enter |
+| Open in Default App | (`open`, unbound; when Enter does something else, or on a macOS package) |
+| Browse Into | (`browse_into`, unbound; when Enter doesn't go in but could — a package set to open, a document that is a ZIP inside) |
+| Change Association… | (`change_association`, unbound) — the Settings dialog's Associations tab, at the entry's row |
 | Follow Symlink / Reveal Source | Shift+Enter (symlinks and aliased entries only) |
 | View | F3 |
 | Edit | F4 |
@@ -666,7 +698,7 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | `application/pdf` | PDF |
 | Everything else | Hex |
 
-A `.ts` file counts as TypeScript (`application/typescript`) rather than an MPEG transport stream; for a video, pick Video from the View menu.
+A [file association](#file-associations) with a `viewer` mode comes before the table — the built-ins open `.ts` as text, not as an MPEG transport stream video.
 
 ### Mode Toggle
 
@@ -856,12 +888,14 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 
 ### Language Detection
 
+The language comes from [file associations](#file-associations); the built-in ones are below, and an association with a `language` overrides them.
+
 **By file extension** (prioritized):
 
 | Extensions | Language |
 |-----------|----------|
 | `.js`, `.mjs`, `.cjs`, `.jsx` | JavaScript |
-| `.ts`, `.tsx` | TypeScript |
+| `.ts`, `.tsx`, `.mts`, `.cts` | TypeScript |
 | `.py` | Python |
 | `.rs` | Rust |
 | `.go` | Go |
@@ -882,7 +916,8 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 | `.bat`, `.cmd` | Batch |
 | `.html`, `.htm` | HTML |
 | `.css` | CSS |
-| `.scss`, `.less` | SCSS/Less |
+| `.scss` | SCSS |
+| `.less` | Less |
 | `.json`, `.jsonc` | JSON |
 | `.yaml`, `.yml` | YAML |
 | `.toml`, `.ini` | INI/TOML |
@@ -892,9 +927,8 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 | `.graphql`, `.gql` | GraphQL |
 | `.dockerfile` | Dockerfile |
 | `.tf` | HCL (Terraform) |
-| `.diff`, `.patch` | Diff |
 
-**By filename** (case-insensitive): `Dockerfile` → Dockerfile, `Makefile`/`GNUmakefile` → Makefile.
+**By filename** (case-insensitive): `Dockerfile` → Dockerfile.
 
 **By MIME type** (fallback): `application/json` → JSON, `application/xml` → XML, `text/x-python` → Python, etc.
 
@@ -1149,7 +1183,7 @@ Mount and browse archive files as virtual read-only filesystems.
 | 7z | `.7z` |
 | Bare compressed file | `.gz`, `.bz2`, `.xz`, `.zst`, `.zstd` (not on a tar or cpio name) |
 
-**Auto-detection**: Pressing Enter on a file with a recognized archive extension mounts it automatically and navigates into the archive root (instead of opening the file).
+**Auto-detection**: Pressing Enter on a file with a recognized archive extension mounts it automatically and navigates into the archive root (instead of opening the file). The extensions above are built-in [file associations](#file-associations); an association can browse other names as any of these formats, or open an archive in its application instead, and Browse Into mounts any file by what its first bytes say.
 
 **TAR indexing** (streaming/incremental):
 - Index is built by scanning the archive stream. Files appear incrementally in the UI as indexing progresses — you can browse partial results while the rest of the archive is still being indexed.
@@ -1617,6 +1651,7 @@ shell_integration = true    # `newt` CLI in built-in terminals / user commands (
 restore_locations = "all"   # Reopen panes where the target's last session left them: "all", "local" (local/elevated/WSL), "none"
 new_window_location = "inherit"  # New Window panes: "inherit" (opener's), "restore" (last closed local window's), "default" (home)
 restore_window_geometry = true   # Reopen windows at their last size/position (per target; viewer/editor one size each)
+open_packages = false       # macOS: Enter opens app bundles and other packages instead of entering them
 
 [enrichers]
 git_status = true           # Git enricher: per-row status colors + branch badge
@@ -1657,6 +1692,15 @@ run = "echo {{ file.name }}"
 key = "alt+z"               # Optional
 terminal = true             # Optional, default false
 applies_to = "file"         # Optional
+
+[[association]]             # See File Associations; first match first, property by property
+match = ["*.nupkg", "*.vsix"]
+enter = "browse"            # Optional: "open", "browse", "view", "edit", "command"
+format = "zip"              # Optional: "zip", "7z", "tar", "compressed", "disc"
+kind = "file"               # Optional: "file" or "directory"
+command = "My Command"      # With enter = "command": a [[command]] title
+viewer = "text"             # Optional: viewer mode
+language = "typescript"     # Optional: editor language
 ```
 
 ### Profile System
@@ -1665,7 +1709,7 @@ The `profile` field in `settings.toml` loads an additional TOML file from `profi
 
 ### Settings Dialog (Mod+,)
 
-Three tabs:
+Four tabs:
 
 **Settings tab**:
 - Sidebar with category filter (All, Appearance, Behavior, Hot Paths). Category names from schema titles.
@@ -1708,6 +1752,14 @@ Available in debug builds only. Provides:
 - **Edit mode**: the row is replaced by a form (title, run textarea, Key — same KeyCaptureInput as the Keybindings tab in `regular` size, Applies to — Any focused item / Files only / Directories only / Selection, Run in terminal). Conflict detection runs against all bindings (built-in + user). Action bar: Delete on the far left, Cancel + Save on the far right (Save is the rightmost primary action).
 - **Add Command** button stays visible while editing an existing command.
 - Expandable template reference panel showing variables, filters, and functions, with example commands rendered as the same kind of `<pre>` blocks used in row view.
+
+**Associations tab**: a table of name patterns — one row per pattern, the user's ("Yours") above the built-ins — with what happens to a match in three columns: **Enter**, **View (F3)** — the mode the viewer opens it in — and **Syntax highlighting (F4)**, the language the editor highlights it as (F4 always opens Newt's editor). Directory rows have only Enter.
+- **Adding**: the first row is an add row — type a pattern into its Name field (`.rtf` is read as `*.rtf`; a glob, or an exact name like `Makefile`), pick Files or Folders, and its cells show at once what that pattern would inherit; setting any of them adds it, and the field empties for the next one. Enter in the field moves to its Enter cell. Typing a pattern that is already listed edits that row.
+- **Every cell shows what applies.** A value the row's own `[[association]]` entry sets is shown plainly with an accent dot; one it inherits is muted, and says on hover where it comes from — built-in, by file type, or another of the user's patterns (`*.gz` showing through on `*.tar.gz`).
+- **A cell is a menu.** Click it, or focus it and press Enter or Space: the first choice is always *Default — what would apply otherwise*, which takes the row's own setting away; the rest are the values. Enter's menu has Open in default app, Open in viewer, Open in editor, Browse as ZIP / 7-Zip / tar / compressed file / disc image, and each user command; for a file Enter doesn't browse, a Browse Into submenu picks the format Browse Into uses. A choice writes one key of the pattern's entry in `settings.toml`, in place — comments and the order of entries survive — or adds a one-pattern entry for a pattern that had none. **Delete** on a row of the user's removes its entry (or, from an entry shared with other patterns, just that pattern), and the pattern goes back to whatever applied before.
+- **Arrow keys move between cells**, Home and End along a row; Down from the search box goes into the table and Up from its top row back.
+- **The search box** narrows the table to patterns containing the text or matching it as a file name, so typing `release.tar.gz` lists `*.tar.gz` and `*.gz` and sums up what happens to that file above the table. When nothing matches, **Add** puts the text into the add row.
+- **Change Association…** (`change_association`, unbound; file context menu, palette) opens this tab at the row that decides the focused entry — the most specific pattern matching it — or, when none does, with the add row holding its extension (`*.rtf`) or, for a name without one, the name itself.
 
 **Footer**: a "Settings file" label beside a segmented pair of icon buttons — **Show in pane** navigates the pane the dialog was opened from to `settings.toml` and focuses it (closing the dialog), **Open in external editor** hands the file to the system handler. Both create the file with a commented skeleton if it doesn't exist yet. Show in pane needs the host machine's filesystem mounted in the session (`VfsInfo::host_local_vfs_id` — always true locally, true in a remote session while the client-local mount is present) and is hidden otherwise, leaving external open as the only route.
 

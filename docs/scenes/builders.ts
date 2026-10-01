@@ -158,6 +158,7 @@ export function pane(spec: PaneSpec): PaneViewState {
         ...f,
         source_display: null,
         annotations: annotations(f.name),
+        actions: { open_default: false, browse_into: false },
       })),
       offset: 0,
       total_count: items.length,

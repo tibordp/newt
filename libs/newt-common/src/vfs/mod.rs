@@ -24,16 +24,16 @@ pub mod walk;
 
 pub use agent::{AGENT_VFS_DESCRIPTOR, AgentVfsDescriptor};
 pub use archive::{
-    CompressedFileVfs, SevenZArchiveVfs, TarArchiveVfs, ZipArchiveVfs, is_archive_name, is_zip_name,
+    ArchiveFormat, CompressedFileVfs, SevenZArchiveVfs, TarArchiveVfs, ZipArchiveVfs,
 };
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use change_notifier::VfsChangeNotifier;
-pub use disc::{DiscVfs, is_disc_image_name};
+pub use disc::DiscVfs;
 pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, ToUnix, UserGroup};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use mount::{
-    MountContext, MountRequest, MountResponse, MountedVfsInfo, SftpAskpass, VfsManager,
-    VfsManagerRemote, VfsRegistryManager, enterable_mount_request,
+    MountContext, MountRequest, MountResponse, MountedVfsInfo, SNIFF_LEN, SftpAskpass, VfsManager,
+    VfsManagerRemote, VfsRegistryManager, sniff_mount_request,
 };
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,

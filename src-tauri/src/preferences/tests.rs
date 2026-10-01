@@ -913,3 +913,115 @@ fn apply_restore_bookmarks_keeps_unrelated_edits_made_since_the_snapshot() {
         "unrelated [[bind]] entry survived"
     );
 }
+
+// ---------------------------------------------------------------------------
+// [[association]] edits
+// ---------------------------------------------------------------------------
+
+fn associations_in(content: &str) -> Vec<AssociationEntry> {
+    toml::from_str::<SettingsFile>(content)
+        .unwrap()
+        .associations
+}
+
+fn set(content: &str, pattern: &str, change: AssociationChange) -> String {
+    apply_set_association(content, pattern, AssociationKind::File, change).unwrap()
+}
+
+#[test]
+fn a_change_creates_an_entry_for_its_pattern() {
+    let out = set(
+        "",
+        "*.cb7",
+        AssociationChange::BrowseAs {
+            format: BrowseFormat::SevenZ,
+        },
+    );
+    assert_eq!(
+        out,
+        "[[association]]\nmatch = \"*.cb7\"\nenter = \"browse\"\nformat = \"7z\"\n"
+    );
+    let dir = apply_set_association(
+        "",
+        "build",
+        AssociationKind::Directory,
+        AssociationChange::Enter {
+            value: Some(crate::associations::EnterChoice::Command {
+                command: "Build".into(),
+            }),
+        },
+    )
+    .unwrap();
+    let entry = &associations_in(&dir)[0];
+    assert_eq!(entry.kind, AssociationKind::Directory);
+    assert_eq!(entry.enter, Some(EnterAction::Command));
+    assert_eq!(entry.command.as_deref(), Some("Build"));
+    // Resetting what isn't set writes nothing.
+    assert_eq!(
+        set("", "*.x", AssociationChange::Viewer { value: None }),
+        ""
+    );
+}
+
+#[test]
+fn changes_edit_the_entry_where_it_stands() {
+    let content = "[[association]]\n# mine\nmatch = \"*.LOG\"\nviewer = \"hex\"\n\n\
+        [[association]]\nmatch = \"*.zip\"\nenter = \"open\"\n";
+    let out = set(
+        content,
+        "*.log",
+        AssociationChange::Language {
+            value: Some("plaintext".into()),
+        },
+    );
+    assert!(
+        out.starts_with("[[association]]\n# mine\nmatch = \"*.LOG\"\nviewer = \"hex\""),
+        "{out}"
+    );
+    assert_eq!(
+        associations_in(&out)[0].language.as_deref(),
+        Some("plaintext")
+    );
+    // Choosing an action that isn't a command drops the command.
+    let out = set(
+        "[[association]]\nmatch = \"*.py\"\nenter = \"command\"\ncommand = \"Run\"\n",
+        "*.py",
+        AssociationChange::Enter {
+            value: Some(crate::associations::EnterChoice::View),
+        },
+    );
+    assert_eq!(associations_in(&out)[0].command, None);
+    assert_eq!(associations_in(&out)[0].enter, Some(EnterAction::View));
+}
+
+#[test]
+fn an_entry_left_setting_nothing_goes() {
+    let content = "[[association]]\nmatch = \"*.log\"\nviewer = \"hex\"\n";
+    let out = set(content, "*.log", AssociationChange::Viewer { value: None });
+    assert!(!out.contains("association"), "{out}");
+    let out = set(content, "*.log", AssociationChange::Clear);
+    assert!(!out.contains("association"), "{out}");
+}
+
+#[test]
+fn clearing_a_shared_entry_takes_only_its_pattern() {
+    let content =
+        "[[association]]\nmatch = [\"*.nupkg\", \"*.vsix\", \"*.xpi\"]\nenter = \"browse\"\n";
+    let out = set(content, "*.vsix", AssociationChange::Clear);
+    assert_eq!(associations_in(&out)[0].patterns, ["*.nupkg", "*.xpi"]);
+    let out = set(&out, "*.xpi", AssociationChange::Clear);
+    assert!(out.contains("match = \"*.nupkg\""), "{out}");
+}
+
+#[test]
+fn renaming_a_command_follows_into_associations() {
+    let mut doc = "[[command]]\ntitle = \"Build\"\nrun = \"make\"\n\n\
+        [[association]]\nmatch = \"build\"\nkind = \"directory\"\nenter = \"command\"\ncommand = \"Build\"\n\n\
+        [[association]]\nmatch = \"*.x\"\ncommand = \"Other\"\n"
+        .parse::<toml_edit::DocumentMut>()
+        .unwrap();
+    rename_association_command(&mut doc, "Build", "Make");
+    let entries = associations_in(&doc.to_string());
+    assert_eq!(entries[0].command.as_deref(), Some("Make"));
+    assert_eq!(entries[1].command.as_deref(), Some("Other"));
+}

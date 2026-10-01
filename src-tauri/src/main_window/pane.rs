@@ -234,6 +234,7 @@ impl Pane {
                 let prefs = preferences.load();
                 PaneViewState {
                     vfs_info: Some(vfs_info.clone()),
+                    preferences: Some(preferences.clone()),
                     sorting: Sorting {
                         key: match prefs.behavior.default_sort.key {
                             crate::preferences::schema::DefaultSortKey::Name => SortingKey::Name,
@@ -1618,6 +1619,8 @@ pub struct FileView {
     /// order. Opaque to the pane; the frontend interprets the kinds it
     /// knows (git status → row coloring).
     pub annotations: Vec<Annotation>,
+    /// What the row's context menu offers besides what Enter does.
+    pub actions: crate::associations::RowActions,
 }
 
 /// A windowed slice of the file list sent to the frontend.
@@ -1718,6 +1721,9 @@ pub struct PaneViewState {
     /// derive `Default` for tests / placeholder values.
     #[serde(skip)]
     vfs_info: Option<Arc<dyn VfsInfo>>,
+    /// For each row's file associations, at window projection.
+    #[serde(skip)]
+    preferences: Option<crate::preferences::PreferencesHandle>,
 }
 
 impl PaneViewState {
@@ -1878,10 +1884,22 @@ impl PaneViewState {
             .values()
             .filter_map(|entries| entries.get(f.key()).cloned())
             .collect();
+        let actions = match (&self.preferences, &self.vfs_info) {
+            (Some(preferences), Some(info)) => {
+                let vfs_id = f.source.as_ref().map_or(self.path.vfs_id, |s| s.vfs_id);
+                preferences.associations().row_actions(
+                    &f.name,
+                    f.is_dir,
+                    info.is_host_local(vfs_id),
+                )
+            }
+            _ => Default::default(),
+        };
         FileView {
             file: f.clone(),
             source_display,
             annotations,
+            actions,
         }
     }
 

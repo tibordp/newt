@@ -42,112 +42,6 @@ import type { VfsPath } from "../lib/types";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
-// Map file extensions to Monaco language IDs
-const EXT_TO_LANGUAGE: Record<string, string> = {
-  // Web
-  js: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  jsx: "javascript",
-  ts: "typescript",
-  tsx: "typescript",
-  html: "html",
-  htm: "html",
-  css: "css",
-  scss: "scss",
-  less: "less",
-  json: "json",
-  jsonc: "json",
-  // Config
-  yaml: "yaml",
-  yml: "yaml",
-  toml: "ini",
-  ini: "ini",
-  xml: "xml",
-  svg: "xml",
-  // Programming
-  py: "python",
-  rs: "rust",
-  go: "go",
-  java: "java",
-  kt: "kotlin",
-  kts: "kotlin",
-  c: "c",
-  h: "c",
-  cpp: "cpp",
-  cc: "cpp",
-  cxx: "cpp",
-  hpp: "cpp",
-  hxx: "cpp",
-  cs: "csharp",
-  rb: "ruby",
-  php: "php",
-  swift: "swift",
-  m: "objective-c",
-  r: "r",
-  lua: "lua",
-  pl: "perl",
-  pm: "perl",
-  // Shell
-  sh: "shell",
-  bash: "shell",
-  zsh: "shell",
-  fish: "shell",
-  ps1: "powershell",
-  bat: "bat",
-  cmd: "bat",
-  // Data / Markup
-  md: "markdown",
-  mdx: "markdown",
-  sql: "sql",
-  graphql: "graphql",
-  gql: "graphql",
-  // DevOps
-  dockerfile: "dockerfile",
-  tf: "hcl",
-  // Other
-  diff: "diff",
-  patch: "diff",
-};
-
-function detectLanguage(filePath: string, mimeType: string | null): string {
-  // Try extension first
-  const lastSegment = filePath.split("/").pop() ?? "";
-
-  // Handle dotfiles like Dockerfile, Makefile
-  const lowerName = lastSegment.toLowerCase();
-  if (lowerName === "dockerfile") return "dockerfile";
-  if (lowerName === "makefile" || lowerName === "gnumakefile")
-    return "makefile";
-
-  const ext = lastSegment.includes(".")
-    ? lastSegment.split(".").pop()?.toLowerCase()
-    : undefined;
-  if (ext && ext in EXT_TO_LANGUAGE) {
-    return EXT_TO_LANGUAGE[ext];
-  }
-
-  // Fallback to MIME
-  if (mimeType) {
-    if (mimeType === "application/json" || mimeType.endsWith("+json"))
-      return "json";
-    if (mimeType === "application/xml" || mimeType.endsWith("+xml"))
-      return "xml";
-    if (mimeType === "application/javascript") return "javascript";
-    if (mimeType === "application/typescript") return "typescript";
-    if (mimeType === "text/x-python") return "python";
-    if (mimeType === "text/x-shellscript") return "shell";
-  }
-
-  return "plaintext";
-}
-
-interface FileInfo {
-  size: number;
-  mime_type: string | null;
-  is_dir: boolean;
-}
-
 function Editor() {
   const formatSize = useFormatBytes();
   const [searchParams] = useSearchParams();
@@ -235,11 +129,9 @@ function Editor() {
 
     (async () => {
       try {
-        // Get file info for language detection
-        const info = (await unwrap(commands.fileDetails(filePath))) as FileInfo;
-        setFileSize(info.size);
-        const detectedLang = detectLanguage(displayPath, info.mime_type);
-        safeSilent(commands.setEditorLanguage(detectedLang));
+        const inspected = await unwrap(commands.inspectFile(filePath));
+        setFileSize(inspected.details.size);
+        safeSilent(commands.setEditorLanguage(inspected.language));
 
         // Read the entire file (with size limit enforced server-side)
         const data = await unwrapBytes(

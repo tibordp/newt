@@ -30,14 +30,14 @@ use super::origin::{
 };
 use super::{Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsPath};
 
-const DISC_EXTENSIONS: &[&str] = &["iso", "udf"];
-
-pub fn is_disc_image_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    DISC_EXTENSIONS
-        .iter()
-        .any(|ext| lower.ends_with(&format!(".{}", ext)))
+/// Whether a file's first [`DISC_SNIFF_LEN`] bytes hold an ISO 9660 or
+/// UDF volume recognition sequence: its first descriptor sits at 32 KiB,
+/// its standard identifier one byte in.
+pub fn is_disc_image(header: &[u8]) -> bool {
+    matches!(header.get(32769..32774), Some(b"CD001" | b"BEA01"))
 }
+
+pub const DISC_SNIFF_LEN: u64 = 32774;
 
 /// Metadata reads go through an aligned block cache so a directory walk
 /// over a high-latency upstream (S3) coalesces into a few range GETs

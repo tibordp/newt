@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  isTextMime,
-  isImageMime,
-  isAudioMime,
-  isVideoMime,
-  isPdfMime,
-  detectAutoMode,
   buildFileUrl,
   formatHexOffset,
   hexByte,
@@ -40,104 +34,6 @@ describe("buildFileUrl", () => {
 
 // ---------------------------------------------------------------------------
 // MIME type detection
-// ---------------------------------------------------------------------------
-
-describe("isTextMime", () => {
-  it("returns false for null", () => {
-    expect(isTextMime(null)).toBe(false);
-  });
-
-  it("detects text/* prefixes", () => {
-    expect(isTextMime("text/plain")).toBe(true);
-    expect(isTextMime("text/html")).toBe(true);
-    expect(isTextMime("text/css")).toBe(true);
-  });
-
-  it("detects known application types", () => {
-    expect(isTextMime("application/json")).toBe(true);
-    expect(isTextMime("application/xml")).toBe(true);
-    expect(isTextMime("application/javascript")).toBe(true);
-    expect(isTextMime("application/x-sh")).toBe(true);
-  });
-
-  it("detects +xml and +json suffixes", () => {
-    expect(isTextMime("application/ld+json")).toBe(true);
-    expect(isTextMime("image/svg+xml")).toBe(true);
-    expect(isTextMime("application/vnd.custom+json")).toBe(true);
-    expect(isTextMime("application/soap+xml")).toBe(true);
-  });
-
-  it("rejects non-text types", () => {
-    expect(isTextMime("image/png")).toBe(false);
-    expect(isTextMime("application/octet-stream")).toBe(false);
-    expect(isTextMime("video/mp4")).toBe(false);
-  });
-});
-
-describe("detectAutoMode", () => {
-  it("returns hex for null", () => {
-    expect(detectAutoMode(null)).toBe("hex");
-  });
-
-  it("detects video", () => {
-    expect(detectAutoMode("video/mp4")).toBe("video");
-  });
-
-  it("detects audio", () => {
-    expect(detectAutoMode("audio/mpeg")).toBe("audio");
-  });
-
-  it("detects pdf", () => {
-    expect(detectAutoMode("application/pdf")).toBe("pdf");
-  });
-
-  it("detects image", () => {
-    expect(detectAutoMode("image/png")).toBe("image");
-  });
-
-  it("detects text", () => {
-    expect(detectAutoMode("text/plain")).toBe("text");
-  });
-
-  it("falls back to hex", () => {
-    expect(detectAutoMode("application/octet-stream")).toBe("hex");
-  });
-
-  it("svg+xml is text, not image", () => {
-    // svg+xml matches both isImageMime (image/) and isTextMime.
-    // But detectAutoMode checks image first, so image/svg+xml -> image
-    expect(detectAutoMode("image/svg+xml")).toBe("image");
-  });
-});
-
-describe("isImageMime, isAudioMime, isVideoMime, isPdfMime", () => {
-  it("isImageMime", () => {
-    expect(isImageMime("image/png")).toBe(true);
-    expect(isImageMime("text/plain")).toBe(false);
-    expect(isImageMime(null)).toBe(false);
-  });
-
-  it("isAudioMime", () => {
-    expect(isAudioMime("audio/mpeg")).toBe(true);
-    expect(isAudioMime("video/mp4")).toBe(false);
-    expect(isAudioMime(null)).toBe(false);
-  });
-
-  it("isVideoMime", () => {
-    expect(isVideoMime("video/mp4")).toBe(true);
-    expect(isVideoMime("audio/mpeg")).toBe(false);
-    expect(isVideoMime(null)).toBe(false);
-  });
-
-  it("isPdfMime", () => {
-    expect(isPdfMime("application/pdf")).toBe(true);
-    expect(isPdfMime("text/pdf")).toBe(false);
-    expect(isPdfMime(null)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Format helpers
 // ---------------------------------------------------------------------------
 
 describe("formatHexOffset", () => {

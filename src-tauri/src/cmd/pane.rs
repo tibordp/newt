@@ -1,9 +1,13 @@
 use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
 
+use tauri::Manager;
+
+use crate::associations::Action;
 use crate::common::Error;
 use crate::main_window::pane::{FilterMode, PARENT_KEY, Sorting};
 use crate::main_window::{MainWindowContext, PaneHandle};
+use crate::preferences::schema::BrowseFormat;
 
 #[tauri::command]
 #[specta::specta]
@@ -390,11 +394,15 @@ pub async fn cmd_open_in_other_pane(
         },
     };
 
-    if let Some(request) =
-        newt_common::vfs::enterable_mount_request(&file.name, target_path.clone())
+    if !file.is_dir
+        && let Action::Browse(format) = ctx.preferences().associations().action(
+            &file.name,
+            false,
+            ctx.vfs_info()?.is_host_local(target_path.vfs_id),
+        )
     {
-        let response = ctx.mount_vfs(request).await?;
-        target_path = VfsPath::root(response.vfs_id);
+        let request = browse_request(&ctx, &file.name, target_path, format).await?;
+        target_path = VfsPath::root(ctx.mount_vfs(request).await?.vfs_id);
     }
 
     ctx.with_pane_update_async(target, |_gs, pane| async move {
@@ -428,85 +436,161 @@ pub async fn cmd_open_in_right_pane(
 #[specta::specta]
 pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let file = match pane.get_focused_file_info() {
-        Some(f) => f,
-        None => return Ok(()),
+    let Some(file) = pane.get_focused_file_info() else {
+        return Ok(());
     };
-
     if file.name == ".." {
+        drop(pane);
         return navigate(ctx, pane_handle, &file.name, true).await;
     }
+    let Some(source) = pane.get_focused_source() else {
+        return Ok(());
+    };
+    drop(pane);
 
-    if file.is_dir {
-        // On a Windows-shaped FS, arm a fallback for directory symlinks/
-        // junctions: enter logically first (the pane keeps the link path,
-        // as on Unix), and only when that listing fails land on the
-        // resolved link *target* instead. Healthy links (`mklink /D`)
-        // enter in place; the ACL-denied app-compat junctions
-        // (`C:\Users\<user>\Cookies` — `Everyone:(DENY)(RD)`, unlistable
-        // by design) resolve. Deliberately shallow: navigating to such a
-        // path directly (Ctrl+L, a breadcrumb) still errors.
-        let symlink_fallback = file.is_symlink && {
-            let source_vfs = pane
-                .get_focused_source()
-                .map(|p| p.vfs_id)
-                .unwrap_or_else(|| pane.path().vfs_id);
-            ctx.vfs_info()?
-                .descriptor(source_vfs)
-                .is_some_and(|(d, meta)| !d.has_unified_root(&meta))
-        };
-
-        // Directory entries from a synthetic VFS (e.g. a flat search hit
-        // that happens to be a directory) should land on the *real*
-        // directory in the underlying source VFS, not the in-search path.
-        let Some(target) = pane.get_focused_source() else {
-            return Ok(());
-        };
-        drop(pane);
-        let link = target.clone();
-        let logical = ctx
-            .with_pane_update_async(pane_handle, |gs, pane| async move {
-                gs.close_modal();
-                pane.navigate_to(target).await?;
-                Ok(())
-            })
-            .await;
-        return match logical {
-            Err(e) if symlink_fallback && !matches!(e, Error::Cancelled) => {
-                let Ok(resolved) = ctx.fs()?.resolve_link(link).await else {
-                    return Err(e);
-                };
-                ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-                    pane.navigate_to(resolved).await?;
-                    Ok(())
-                })
-                .await
-            }
-            result => result,
-        };
+    let host_local = ctx.vfs_info()?.is_host_local(source.vfs_id);
+    let action = ctx
+        .preferences()
+        .associations()
+        .action(&file.name, file.is_dir, host_local);
+    match action {
+        Action::Navigate => enter_directory(ctx, pane_handle).await,
+        Action::Open => open_default(&ctx, source, &file.name, file.is_dir).await,
+        Action::Browse(format) => browse(ctx, pane_handle, &file.name, source, format).await,
+        Action::View => super::window::cmd_view(ctx, pane_handle).await,
+        Action::Edit => super::window::cmd_edit(ctx, pane_handle).await,
+        Action::Command(title) => run_command_titled(ctx, pane_handle, &title).await,
     }
+}
 
-    if newt_common::vfs::is_archive_name(&file.name)
-        || newt_common::vfs::is_disc_image_name(&file.name)
-    {
-        return cmd_open_archive(ctx, pane_handle).await;
-    }
-
-    // Default: open with system handler. Use the dereferenced path so
-    // search results open the real underlying file.
-    let full_path = match pane.get_focused_source() {
-        Some(s) => s,
-        None => return Ok(()),
+/// Go into the focused directory.
+async fn enter_directory(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let Some(file) = pane.get_focused_file_info() else {
+        return Ok(());
+    };
+    // On a Windows-shaped FS, arm a fallback for directory symlinks/
+    // junctions: enter logically first (the pane keeps the link path,
+    // as on Unix), and only when that listing fails land on the
+    // resolved link *target* instead. Healthy links (`mklink /D`)
+    // enter in place; the ACL-denied app-compat junctions
+    // (`C:\Users\<user>\Cookies` — `Everyone:(DENY)(RD)`, unlistable
+    // by design) resolve. Deliberately shallow: navigating to such a
+    // path directly (Ctrl+L, a breadcrumb) still errors.
+    let symlink_fallback = file.is_symlink && {
+        let source_vfs = pane
+            .get_focused_source()
+            .map(|p| p.vfs_id)
+            .unwrap_or_else(|| pane.path().vfs_id);
+        ctx.vfs_info()?
+            .descriptor(source_vfs)
+            .is_some_and(|(d, meta)| !d.has_unified_root(&meta))
     };
 
-    // Open through shell if on local VFS
-    if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(full_path.path.to_native())?;
-    } else {
-        download_and_open(&ctx, full_path, &file.name).await?;
+    // Directory entries from a synthetic VFS (e.g. a flat search hit
+    // that happens to be a directory) should land on the *real*
+    // directory in the underlying source VFS, not the in-search path.
+    let Some(target) = pane.get_focused_source() else {
+        return Ok(());
+    };
+    drop(pane);
+    let link = target.clone();
+    let logical = ctx
+        .with_pane_update_async(pane_handle, |gs, pane| async move {
+            gs.close_modal();
+            pane.navigate_to(target).await?;
+            Ok(())
+        })
+        .await;
+    match logical {
+        Err(e) if symlink_fallback && !matches!(e, Error::Cancelled) => {
+            let Ok(resolved) = ctx.fs()?.resolve_link(link).await else {
+                return Err(e);
+            };
+            ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+                pane.navigate_to(resolved).await?;
+                Ok(())
+            })
+            .await
+        }
+        result => result,
     }
+}
 
+/// Mount `source` as a filesystem and go into it.
+async fn browse(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    name: &str,
+    source: VfsPath,
+    format: Option<BrowseFormat>,
+) -> Result<(), Error> {
+    let request = browse_request(&ctx, name, source, format).await?;
+    let root = VfsPath::root(ctx.mount_vfs(request).await?.vfs_id);
+    ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {
+        pane.navigate_to(root).await?;
+        Ok(())
+    })
+    .await
+}
+
+/// The mount request for browsing `origin` as `format`, or as whatever its
+/// first bytes say when no association names a format.
+async fn browse_request(
+    ctx: &MainWindowContext,
+    name: &str,
+    origin: VfsPath,
+    format: Option<BrowseFormat>,
+) -> Result<MountRequest, Error> {
+    if let Some(format) = format {
+        return Ok(format.mount_request(origin));
+    }
+    let header = ctx
+        .fs()?
+        .read_range(origin.clone(), 0, newt_common::vfs::SNIFF_LEN)
+        .await?
+        .data;
+    newt_common::vfs::sniff_mount_request(&header, origin)
+        .ok_or_else(|| Error::Custom(format!("{name} is not an archive or a disc image")))
+}
+
+/// Hand `source` to the system's default application. A file elsewhere
+/// than this computer is downloaded first; a directory can't be.
+async fn open_default(
+    ctx: &MainWindowContext,
+    source: VfsPath,
+    name: &str,
+    is_dir: bool,
+) -> Result<(), Error> {
+    if ctx.vfs_info()?.is_host_local(source.vfs_id) {
+        opener::open(source.path.to_native())?;
+    } else if is_dir {
+        return Err(Error::Custom(format!(
+            "{name} is not on this computer, so it can't be opened in an application"
+        )));
+    } else {
+        download_and_open(ctx, source, name).await?;
+    }
     Ok(())
+}
+
+/// Run the `[[command]]` titled `title`, as picking it from the palette
+/// would.
+async fn run_command_titled(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    title: &str,
+) -> Result<(), Error> {
+    let app = ctx.window().app_handle().clone();
+    let global: tauri::State<crate::GlobalContext> = app.state();
+    let index = global
+        .preferences()
+        .resolved()
+        .user_commands
+        .iter()
+        .position(|command| command.title == title)
+        .ok_or_else(|| Error::Custom(format!("There is no user command titled \"{title}\"")))?;
+    crate::user_commands::run_user_command(ctx, global, pane_handle, index).await
 }
 
 /// Download a file from a non-host-local VFS to a temp directory on the host,
@@ -552,41 +636,37 @@ async fn download_and_open(
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    enter(ctx, pane_handle).await
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let Some(file) = pane.get_focused_file_info().filter(|f| f.name != "..") else {
+        return Ok(());
+    };
+    let Some(source) = pane.get_focused_source() else {
+        return Ok(());
+    };
+    drop(pane);
+    open_default(&ctx, source, &file.name, file.is_dir).await
 }
 
+/// Into the focused entry whatever Enter does with it: a directory or
+/// package is entered, a file browsed as its association's format, or as
+/// whatever its first bytes say.
 #[tauri::command]
 #[specta::specta]
-pub async fn cmd_open_archive(
-    ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
+pub async fn cmd_browse_into(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let file = match pane.get_focused_file_info() {
-        Some(f) => f,
-        None => return Ok(()),
+    let Some(file) = pane.get_focused_file_info().filter(|f| f.name != "..") else {
+        return Ok(());
     };
-    // Mount on the *real* archive path, not the in-SearchVfs alias.
-    let origin = match pane.get_focused_source() {
-        Some(s) => s,
-        None => return Ok(()),
+    // Mount on the *real* file, not the in-SearchVfs alias.
+    let Some(source) = pane.get_focused_source() else {
+        return Ok(());
     };
-
-    // Explicit invocation on a name no matcher claims still tries the
-    // archive path (its tar fallback handles odd extensions).
-    let request = newt_common::vfs::enterable_mount_request(&file.name, origin.clone()).unwrap_or(
-        MountRequest::Archive {
-            origin: origin.clone(),
-        },
-    );
-    let response = ctx.mount_vfs(request).await?;
-    let vfs_path = VfsPath::root(response.vfs_id);
-
-    ctx.with_pane_update_async(pane_handle, |_gs, pane| async move {
-        pane.navigate_to(vfs_path).await?;
-        Ok(())
-    })
-    .await
+    drop(pane);
+    if file.is_dir {
+        return enter_directory(ctx, pane_handle).await;
+    }
+    let format = ctx.preferences().associations().format(&file.name);
+    browse(ctx, pane_handle, &file.name, source, format).await
 }
 
 #[tauri::command]

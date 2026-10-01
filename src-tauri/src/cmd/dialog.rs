@@ -699,6 +699,7 @@ pub fn dialog(
                     can_reveal: ctx
                         .vfs_info()
                         .is_ok_and(|info| info.host_local_vfs_id().is_some()),
+                    association: None,
                 },
                 DialogKind::Debug => {
                     if !cfg!(debug_assertions) {
@@ -907,6 +908,50 @@ cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
 cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
 cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);
 cmd_dialog!(cmd_open_settings, DialogKind::Settings);
+
+/// Settings, on the Associations row that decides the focused entry — or
+/// offering to add one for its extension or name.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_change_association(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
+    use crate::preferences::schema::AssociationKind;
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let Some(file) = pane.get_focused_file_info().filter(|f| f.name != "..") else {
+        return Ok(());
+    };
+    drop(pane);
+    let kind = if file.is_dir {
+        AssociationKind::Directory
+    } else {
+        AssociationKind::File
+    };
+    let (pattern, exists) = ctx
+        .preferences()
+        .associations()
+        .pattern_for(&file.name, kind);
+    let can_reveal = ctx
+        .vfs_info()
+        .is_ok_and(|info| info.host_local_vfs_id().is_some());
+    ctx.with_update(|gs| {
+        *gs.modal.0.write() = Some(ModalData {
+            kind: ModalDataKind::Settings {
+                can_reveal,
+                association: Some(crate::main_window::AssociationFocus {
+                    pattern,
+                    kind,
+                    exists,
+                }),
+            },
+            context: ModalContext {
+                pane_handle: Some(pane_handle),
+            },
+        });
+        Ok(())
+    })
+}
 cmd_dialog!(cmd_debug, DialogKind::Debug);
 cmd_dialog!(cmd_connection_log, DialogKind::ConnectionLog);
 cmd_dialog!(cmd_about, DialogKind::About);

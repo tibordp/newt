@@ -12,7 +12,6 @@ import {
   CHUNK_SIZE,
   MAX_CACHED_CHUNKS,
   LruChunkCache,
-  detectAutoMode,
   buildFileUrl,
   fileVersion,
   type FileInfo,
@@ -64,7 +63,8 @@ export function ViewerBody({
   // own label for every entry).
   const fileKey = filePath ? JSON.stringify(filePath) : "";
 
-  // Fetch file info when file path becomes available and push auto-detected mode to Rust
+  // Fetch file info when file path becomes available and push its
+  // associated mode to Rust
   useEffect(() => {
     if (!filePath) return;
     // Reset state for new file
@@ -76,12 +76,11 @@ export function ViewerBody({
     let cancelled = false;
     (async () => {
       try {
-        const fi = (await unwrap(commands.fileDetails(filePath))) as FileInfo;
+        const inspected = await unwrap(commands.inspectFile(filePath));
         if (cancelled) return;
-        setInfo(fi);
-        const mode = detectAutoMode(fi.mime_type);
-        setAutoMode(mode);
-        safe(viewerHost.setMode(mode));
+        setInfo(inspected.details as FileInfo);
+        setAutoMode(inspected.viewer_mode);
+        safe(viewerHost.setMode(inspected.viewer_mode));
       } catch (e: any) {
         if (cancelled) return;
         setError(e.toString());

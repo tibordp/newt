@@ -271,14 +271,6 @@ pub struct FileChunk {
 /// Guess MIME type from a file path's extension.
 /// Returns `None` if the extension is not recognized.
 pub fn guess_mime_type(path: &std::path::Path) -> Option<String> {
-    // mime_guess knows `.ts` only as an MPEG transport stream; in a file
-    // manager it is far more often TypeScript.
-    if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
-    {
-        return Some("application/typescript".into());
-    }
     mime_guess::from_path(path)
         .first()
         .map(|m| m.essence_str().to_string())
@@ -313,16 +305,5 @@ mod mime_tests {
         assert_eq!(guess("a.tsv").as_deref(), Some("text/tab-separated-values"));
         assert_eq!(guess("README.md").as_deref(), Some("text/markdown"));
         assert_eq!(guess("notes.markdown").as_deref(), Some("text/markdown"));
-    }
-
-    #[test]
-    fn ts_is_typescript() {
-        let guess = |name: &str| guess_mime_type(std::path::Path::new(name));
-        assert_eq!(guess("main.ts").as_deref(), Some("application/typescript"));
-        assert_eq!(guess("MAIN.TS").as_deref(), Some("application/typescript"));
-        assert_eq!(
-            guess("clip.m2ts").as_deref(),
-            Some("video/vnd.dlna.mpeg-tts")
-        );
     }
 }

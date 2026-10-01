@@ -302,6 +302,26 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "change_association".into(),
+            name: "Change Association...".into(),
+            short_name: Some("Association".into()),
+            category: "File".into(),
+            default_keys: vec![],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
+            id: "browse_into".into(),
+            name: "Browse Into".into(),
+            short_name: None,
+            category: "File".into(),
+            default_keys: vec![],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "follow_symlink".into(),
             // Also follows the alias for synthetic-VFS entries (search
             // results) — i.e. reveals the underlying file in the source

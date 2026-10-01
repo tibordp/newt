@@ -312,6 +312,11 @@ pub struct BehaviorPreferences {
     /// connection target, viewer and editor windows at one size each.
     #[schemars(title = "Restore Window Geometry")]
     pub restore_window_geometry: bool,
+    /// Enter opens app bundles and other packages (`.app`, `.xcodeproj`,
+    /// `.pages`, …) instead of going into them. Browse Into in their
+    /// context menu goes in either way.
+    #[schemars(title = "Open Packages")]
+    pub open_packages: bool,
 }
 
 impl Default for BehaviorPreferences {
@@ -329,6 +334,7 @@ impl Default for BehaviorPreferences {
             restore_locations: RestoreLocations::default(),
             new_window_location: NewWindowLocation::default(),
             restore_window_geometry: true,
+            open_packages: false,
         }
     }
 }
@@ -546,6 +552,11 @@ pub struct SettingsFile {
     /// User-defined command entries.
     #[serde(default, rename = "command")]
     pub commands: Vec<UserCommandEntry>,
+
+    /// File association entries; see `crate::associations` for how they
+    /// resolve.
+    #[serde(default, rename = "association")]
+    pub associations: Vec<AssociationEntry>,
 }
 
 impl SettingsFile {
@@ -583,6 +594,7 @@ impl Default for SettingsFile {
             bindings: Vec::new(),
             bookmarks: Vec::new(),
             commands: Vec::new(),
+            associations: Vec::new(),
         }
     }
 }
@@ -628,4 +640,85 @@ pub struct BookmarkEntry {
     pub path: String,
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// A single `[[association]]` entry in the TOML file. Every property but
+/// `match` is optional: one left out falls through to the next entry that
+/// matches and sets it, and in the end to the shipped defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct AssociationEntry {
+    /// Name globs (`*.tar.gz`, `Dockerfile`), matched case-insensitively.
+    /// One string or a list.
+    #[serde(rename = "match", deserialize_with = "one_or_many")]
+    pub patterns: Vec<String>,
+    #[serde(default)]
+    pub kind: AssociationKind,
+    /// What Enter (and a double-click) does.
+    #[serde(default)]
+    pub enter: Option<EnterAction>,
+    /// What the file is browsed as, by Enter (`enter = "browse"`) or by
+    /// Browse Into.
+    #[serde(default)]
+    pub format: Option<BrowseFormat>,
+    /// The title of the `[[command]]` run by `enter = "command"`.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// The mode the viewer (F3, Quick View) opens the file in.
+    #[serde(default)]
+    pub viewer: Option<crate::viewer::ViewerMode>,
+    /// The editor's (F4) language, a Monaco language id.
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AssociationKind {
+    #[default]
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum EnterAction {
+    /// The system's default application.
+    Open,
+    /// Into the file as a filesystem (`format`), or into the directory.
+    Browse,
+    /// Newt's viewer.
+    View,
+    /// Newt's editor.
+    Edit,
+    /// A user command (`command`).
+    Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowseFormat {
+    Zip,
+    #[serde(rename = "7z")]
+    SevenZ,
+    /// tar, cpio or ar, plain or compressed.
+    Tar,
+    /// A single gzip, bzip2, xz or zstd file.
+    Compressed,
+    /// An ISO 9660 or UDF disc image.
+    Disc,
+}
+
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
 }

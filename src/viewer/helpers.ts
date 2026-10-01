@@ -1,80 +1,8 @@
 export type { VfsPath } from "../lib/types";
 export type { ExifRow, FileDetails as FileInfo } from "../lib/bindings";
 
-export const TEXT_MIME_PREFIXES = ["text/"];
-export const TEXT_MIME_TYPES = new Set([
-  "application/json",
-  "application/xml",
-  "application/javascript",
-  "application/typescript",
-  "application/xhtml+xml",
-  "application/x-sh",
-  "application/x-csh",
-  "application/x-httpd-php",
-  "application/graphql",
-  "application/sql",
-  "application/x-yaml",
-  "application/toml",
-  "application/x-perl",
-  "application/x-ruby",
-  "application/x-python",
-  "application/x-lua",
-  "application/wasm",
-  "application/ld+json",
-  "application/manifest+json",
-  "application/schema+json",
-  "image/svg+xml",
-]);
-
-export function isTextMime(mime: string | null): boolean {
-  if (!mime) return false;
-  if (TEXT_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;
-  if (TEXT_MIME_TYPES.has(mime)) return true;
-  // Catch-all for +xml, +json suffixes
-  if (mime.endsWith("+xml") || mime.endsWith("+json")) return true;
-  return false;
-}
-
-export function isImageMime(mime: string | null): boolean {
-  if (!mime) return false;
-  return mime.startsWith("image/");
-}
-
-export function isAudioMime(mime: string | null): boolean {
-  if (!mime) return false;
-  return mime.startsWith("audio/");
-}
-
-export function isVideoMime(mime: string | null): boolean {
-  if (!mime) return false;
-  return mime.startsWith("video/");
-}
-
-export function isPdfMime(mime: string | null): boolean {
-  return mime === "application/pdf";
-}
-
 export type { ViewerMode } from "../lib/bindings";
-import type { ViewerMode } from "../lib/bindings";
 
-const TABLE_MIME_TYPES = new Set(["text/csv", "text/tab-separated-values"]);
-const MARKDOWN_MIME_TYPES = new Set(["text/markdown", "text/x-markdown"]);
-
-export function detectAutoMode(mime: string | null): ViewerMode {
-  if (mime && TABLE_MIME_TYPES.has(mime)) return "table";
-  if (mime && MARKDOWN_MIME_TYPES.has(mime)) return "markdown";
-  if (isVideoMime(mime)) return "video";
-  if (isAudioMime(mime)) return "audio";
-  if (isPdfMime(mime)) return "pdf";
-  if (isImageMime(mime)) return "image";
-  if (isTextMime(mime)) return "text";
-  return "hex";
-}
-
-/// A file-server URL for `path`. `version` (see `fileVersion`) changes
-/// whenever the file does: the page reuses an image it has loaded by URL
-/// alone, whatever the response's cache headers say, and a viewer in the
-/// main window lives as long as the session.
 export function buildFileUrl(
   fileServerBase: string,
   vfsId: number,

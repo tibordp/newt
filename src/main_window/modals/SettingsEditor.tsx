@@ -5,11 +5,16 @@ import { safe, unwrap } from "../../lib/ipc";
 import { PreferencesState } from "../../lib/preferences";
 import { useCommandShortcuts } from "../../lib/scopedBindings";
 import styles from "./SettingsEditor.module.scss";
+import { AssociationsEditor } from "./settings/AssociationsEditor";
 import { CommandsEditor } from "./settings/CommandsEditor";
 import { KeybindingsEditor } from "./settings/KeybindingsEditor";
 import { CustomWidget, SettingControl } from "./settings/SettingControls";
 import { extractSettings } from "./settings/schema";
-import { commands, type PaneHandle } from "../../lib/bindings";
+import {
+  commands,
+  type AssociationFocus,
+  type PaneHandle,
+} from "../../lib/bindings";
 import {
   DialogTabs,
   dialogTabId,
@@ -17,22 +22,27 @@ import {
   IconRevealInPane,
 } from "./primitives";
 
-type Tab = "settings" | "keybindings" | "commands";
+type Tab = "settings" | "keybindings" | "commands" | "associations";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
 export default function SettingsEditor({
   preferences,
   canReveal,
+  association,
   paneHandle,
 }: {
   preferences: PreferencesState | null;
   canReveal: boolean;
+  /// Open on the Associations tab, at this row.
+  association: AssociationFocus | null;
   paneHandle: PaneHandle | null;
 }) {
   const [filter, setFilter] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("settings");
+  const [activeTab, setActiveTab] = useState<Tab>(
+    association ? "associations" : "settings",
+  );
   const idBase = useId();
   const shortcuts = useCommandShortcuts();
   const categoryTabId = (key: string | null) =>
@@ -94,9 +104,30 @@ export default function SettingsEditor({
           type="text"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search settings..."
-          aria-label="Search settings"
-          autoFocus
+          onKeyDown={(e) => {
+            // From a typed pattern straight into its row's cells.
+            if (activeTab === "associations" && e.key === "ArrowDown") {
+              const cell = document
+                .getElementById(`${idBase}-panel`)
+                ?.querySelector<HTMLElement>("[data-cell]");
+              if (cell) {
+                e.preventDefault();
+                cell.focus();
+              }
+            }
+          }}
+          placeholder={
+            activeTab === "associations"
+              ? "Search patterns, or try a file name..."
+              : "Search settings..."
+          }
+          aria-label={
+            activeTab === "associations"
+              ? "Search associations"
+              : "Search settings"
+          }
+          // Change Association puts focus on its row instead.
+          autoFocus={!association}
         />
       </div>
       <div className={styles.tabStrip}>
@@ -105,6 +136,7 @@ export default function SettingsEditor({
             { value: "settings", label: "Preferences" },
             { value: "keybindings", label: "Keybindings" },
             { value: "commands", label: "Commands" },
+            { value: "associations", label: "Associations" },
           ]}
           value={activeTab}
           onChange={setActiveTab}
@@ -274,6 +306,15 @@ export default function SettingsEditor({
             commands={preferences?.user_commands ?? []}
             bindings={preferences?.bindings ?? []}
             allCommands={preferences?.commands ?? []}
+          />
+        )}
+        {activeTab === "associations" && (
+          <AssociationsEditor
+            filter={filter}
+            onClearFilter={() => setFilter("")}
+            preferences={preferences}
+            userCommands={preferences?.user_commands ?? []}
+            focus={association}
           />
         )}
       </div>

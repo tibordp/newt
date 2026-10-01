@@ -667,6 +667,30 @@ pub async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileD
     Ok(info)
 }
 
+/// A file's details, with what its associations make of it.
+#[derive(serde::Serialize, specta::Type)]
+pub struct InspectedFile {
+    pub details: FileDetails,
+    pub viewer_mode: crate::viewer::ViewerMode,
+    pub language: String,
+}
+
+/// `file_details`, plus the mode the viewer opens the file in and the
+/// language the editor gives it.
+#[tauri::command]
+#[specta::specta]
+pub async fn inspect_file(ctx: MainWindowContext, path: VfsPath) -> Result<InspectedFile, Error> {
+    let details = ctx.fs()?.file_details(path.clone()).await?;
+    let name = path.file_name().unwrap_or_default();
+    let mime = details.mime_type.as_deref();
+    let associations = ctx.preferences().associations();
+    Ok(InspectedFile {
+        viewer_mode: associations.viewer_mode(name, mime),
+        language: associations.language(name, mime),
+        details,
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn read_file_range(

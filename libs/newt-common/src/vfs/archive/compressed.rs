@@ -30,7 +30,7 @@ use super::super::pipelined_read::PipelinedReader;
 use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, Vfs, VfsDescriptor, VfsFileList, VfsPath,
 };
-use super::detect_compression_from_name;
+use super::detect_compression;
 use super::stream::{
     GuardedRead, MAX_READERS, PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed,
 };
@@ -265,7 +265,7 @@ impl CompressedFileVfs {
                 indexer
             }
             None => {
-                let format = detect_compression_from_name(archive_path.as_wire_str());
+                let format = detect_compression(&upstream, &archive_path).await?;
                 let strategy = FixedInterval::new(iluvatar::default_interval_for_format(format));
                 let mut indexer = StreamIndexer::new(format.into(), strategy, Some(file_size))
                     .map_err(|e| Error::custom(format!("failed to create indexer: {}", e)))?;

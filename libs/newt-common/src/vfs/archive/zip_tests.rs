@@ -245,9 +245,13 @@ async fn mount_with(
     h: &Harness,
     askpass: Option<&Arc<dyn AskpassProvider>>,
 ) -> Arc<dyn crate::vfs::Vfs> {
-    super::super::mount(h.archive_origin.clone(), &h.ctx(askpass))
-        .await
-        .expect("mount")
+    super::super::mount(
+        h.archive_origin.clone(),
+        super::super::ArchiveFormat::Zip,
+        &h.ctx(askpass),
+    )
+    .await
+    .expect("mount")
 }
 
 async fn read_to_vec(vfs: &Arc<dyn crate::vfs::Vfs>, path: &str) -> Result<Vec<u8>, crate::Error> {

@@ -24,7 +24,7 @@ use super::super::{
     Breadcrumb, DisplayPathMatch, RegisteredDescriptor, VFS_READ_CHUNK_SIZE, Vfs, VfsDescriptor,
     VfsPath,
 };
-use super::detect_compression_from_name;
+use super::detect_compression;
 use super::stream::{GuardedRead, MAX_READERS, ReaderPool, StreamDriver, drive_reader};
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
@@ -284,7 +284,7 @@ impl TarArchiveVfs {
                 engine
             }
             None => {
-                let compression = detect_compression_from_name(archive_path.as_wire_str());
+                let compression = detect_compression(&upstream, &archive_path).await?;
                 info!(
                     "archive: indexing {} (size={}, compression={:?})",
                     archive_path, file_size, compression,

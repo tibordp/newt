@@ -8,6 +8,7 @@ import { marked } from "marked";
 
 import type {
   FileDetails,
+  InspectedFile,
   MainWindowState,
   MarkdownNode,
   ResolvedPreferences,
@@ -123,6 +124,33 @@ const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
     .map(toNode);
 };
 
+const detailsOf = async (path: VfsPath): Promise<FileDetails> => ({
+  size: (await bytesOf(path)).length,
+  mime_type: fixture(path).mime,
+  is_dir: false,
+  is_symlink: false,
+  symlink_target: null,
+  user: { name: "demo" },
+  group: { name: "staff" },
+  mode: 0o100644,
+  modified: null,
+  accessed: null,
+  created: null,
+});
+
+/// The viewer mode `inspect_file` resolves for a fixture, by MIME type
+/// alone; scenes don't carry associations.
+const viewerModeOf = (mime: string): ViewerMode =>
+  mime === "text/csv" || mime === "text/tab-separated-values"
+    ? "table"
+    : mime === "text/markdown"
+      ? "markdown"
+      : mime === "application/pdf"
+        ? "pdf"
+        : ((["video", "audio", "image", "text"] as const).find((kind) =>
+            mime.startsWith(`${kind}/`),
+          ) ?? "hex");
+
 const bytesOf = (path: VfsPath) => {
   const url = fixture(path).url;
   if (!fixtureBytes.has(url)) {
@@ -156,19 +184,16 @@ const handlers: Record<string, (args: any) => unknown> = {
   },
   get_preferences: () => preferences,
   get_runtime_state: () => runtimeState,
-  file_details: async ({ path }: { path: VfsPath }): Promise<FileDetails> => ({
-    size: (await bytesOf(path)).length,
-    mime_type: fixture(path).mime,
-    is_dir: false,
-    is_symlink: false,
-    symlink_target: null,
-    user: { name: "demo" },
-    group: { name: "staff" },
-    mode: 0o100644,
-    modified: null,
-    accessed: null,
-    created: null,
-  }),
+  file_details: ({ path }: { path: VfsPath }) => detailsOf(path),
+  inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
+    const details = await detailsOf(path);
+    return {
+      details,
+      viewer_mode: viewerModeOf(details.mime_type ?? ""),
+      language: scene.window === "editor" ? scene.state.language : "plaintext",
+    };
+  },
+
   // Raw responses arrive as an ArrayBuffer.
   read_file: async ({ path }: { path: VfsPath }) =>
     (await bytesOf(path)).slice().buffer,

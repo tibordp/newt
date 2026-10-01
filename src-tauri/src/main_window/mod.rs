@@ -504,6 +504,16 @@ pub enum PropertySheetState {
     },
 }
 
+/// The Associations row the Settings dialog opens at.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct AssociationFocus {
+    pub pattern: String,
+    pub kind: crate::preferences::schema::AssociationKind,
+    /// A pattern in effect has the row; otherwise the dialog offers to add
+    /// it.
+    pub exists: bool,
+}
+
 // One short-lived instance exists at a time; the size spread between
 // variants doesn't matter.
 #[allow(clippy::large_enum_variant)]
@@ -714,6 +724,8 @@ pub enum ModalDataKind {
         /// Whether the session can point a pane at the settings file, i.e.
         /// whether the host machine's filesystem is mounted at all.
         can_reveal: bool,
+        /// Open on the Associations tab, at this pattern's row.
+        association: Option<AssociationFocus>,
     },
     ConfirmDelete {
         message: String,
@@ -1747,7 +1759,7 @@ impl MainWindowContext {
         //
         // Staleness is handled separately by `Vfs::revalidate`, called by
         // the navigation layer when a pane re-enters this VFS.
-        if let newt_common::vfs::MountRequest::Archive { origin } = &request
+        if let newt_common::vfs::MountRequest::Archive { origin, .. } = &request
             && let Some(existing) = self.with_session(|s| {
                 s.mounted_vfs.read().iter().find_map(|(_, info)| {
                     // Match on type too — searches also carry an origin

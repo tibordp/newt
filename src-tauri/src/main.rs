@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 extern crate objc; // v0.2.7
 
+pub mod associations;
 pub mod cmd;
 pub mod common;
 pub mod connections;

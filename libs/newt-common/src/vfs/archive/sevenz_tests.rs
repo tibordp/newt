@@ -236,7 +236,12 @@ async fn mount_with(
     h: &Harness,
     askpass: Option<&Arc<dyn AskpassProvider>>,
 ) -> Result<Arc<dyn Vfs>, crate::Error> {
-    super::super::mount(h.archive_origin.clone(), &h.ctx(askpass)).await
+    super::super::mount(
+        h.archive_origin.clone(),
+        super::super::ArchiveFormat::SevenZ,
+        &h.ctx(askpass),
+    )
+    .await
 }
 
 async fn mount(h: &Harness) -> Arc<dyn Vfs> {
@@ -660,7 +665,9 @@ async fn reads_through_local_vfs_with_timeout() {
         extra_path: &[],
         progress_reporter: &reporter,
     };
-    let vfs = super::super::mount(origin, &ctx).await.unwrap();
+    let vfs = super::super::mount(origin, super::super::ArchiveFormat::SevenZ, &ctx)
+        .await
+        .unwrap();
     let files = solid_set();
     let t = Duration::from_secs(10);
     let root = tokio::time::timeout(t, vfs.list_files(&vp("/"), None))

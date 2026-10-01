@@ -14,7 +14,7 @@ import { ContextMenu } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
 import iconMapping from "../assets/mapping.json";
 import { fileIconGlyph } from "../lib/fileIcons";
-import { commands, type Result } from "../lib/bindings";
+import { commands, type Result, type RowActions } from "../lib/bindings";
 import { rawCommands, safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
 import { PaneBreadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
@@ -1641,6 +1641,8 @@ function PaneInner(
   const contextMenuPosRef = useRef({ x: 0, y: 0 });
   const [contextMenuIsParentDir, setContextMenuIsParentDir] = useState(false);
   const [contextMenuFollow, setContextMenuFollow] = useState<FollowKind>(null);
+  const [contextMenuActions, setContextMenuActions] =
+    useState<RowActions | null>(null);
 
   const [contextMenuOnFile, setContextMenuOnFile] = useState(true);
 
@@ -1715,6 +1717,7 @@ function PaneInner(
         setContextMenuOnFile(false);
         setContextMenuIsParentDir(false);
         setContextMenuFollow(null);
+        setContextMenuActions(null);
         return;
       }
 
@@ -1735,13 +1738,11 @@ function PaneInner(
       const targetKey = inSelection
         ? (focusedRef.current ?? fileName)
         : fileName;
-      setContextMenuFollow(
-        followKind(
-          fileWindowRef.current.items.find(
-            (f) => (f.key ?? f.name) === targetKey,
-          ),
-        ),
+      const row = fileWindowRef.current.items.find(
+        (f) => (f.key ?? f.name) === targetKey,
       );
+      setContextMenuFollow(followKind(row));
+      setContextMenuActions(row?.actions ?? null);
     },
     [paneHandle, shellMenuAvailable, openShellMenu],
   );
@@ -2185,6 +2186,7 @@ function PaneInner(
               paneHandle={paneHandle}
               isParentDir={contextMenuIsParentDir}
               follow={contextMenuFollow}
+              actions={contextMenuActions}
               onCloseAutoFocus={refocusPane}
               onShellMenu={
                 shellMenuAvailable
