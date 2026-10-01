@@ -42,6 +42,7 @@ const scene: Scene = {
         display_destination: destination,
         summary: `${selected.length} items`,
         default_name: null,
+        default_name_is_dir: false,
         name_separators: "/",
         defaults: {
           preserve_timestamps: true,

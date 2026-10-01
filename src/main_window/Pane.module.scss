@@ -96,7 +96,7 @@
   display: flex;
   cursor: default;
   width: fit-content;
-  padding: 0 20px 0 var(--space-3);
+  padding: 0 20px 0 3px;
   font-size: var(--font-size-sm);
 }
 
@@ -128,7 +128,7 @@
   display: flex;
   width: fit-content;
   height: var(--row-height);
-  padding: 0 20px 0 var(--space-3);
+  padding: 0 20px 0 3px;
 
   // Row highlights are inset from the pane's edges.
   &::before {

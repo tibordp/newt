@@ -10,13 +10,19 @@
 }
 
 .fieldLabel {
-  padding-bottom: var(--space-1);
+  padding-bottom: var(--space-3);
 }
 
 .hint {
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--color-fg-muted);
+  overflow-wrap: anywhere;
+
+  // What the hint is about (a destination path) reads at full strength.
+  b {
+    color: var(--color-fg);
+  }
 }
 
 .group {

@@ -564,6 +564,9 @@ pub enum ModalDataKind {
     Rename {
         base_path: VfsPath,
         name: String,
+        /// A directory's whole name is preselected; a file's up to its
+        /// extension.
+        is_dir: bool,
     },
     CopyMove {
         kind: String,
@@ -576,6 +579,8 @@ pub enum ModalDataKind {
         /// Single-source transfers offer a rename field prefilled with the
         /// source's leaf name; `None` (multi-selection) hides it.
         default_name: Option<String>,
+        /// Whether that single source is a directory (see `Rename::is_dir`).
+        default_name_is_dir: bool,
         /// Characters that cannot appear in the rename field, because the
         /// value becomes a single leaf under `destination`. Taken from the
         /// *destination's* `PathStyle`, so `\` is rejected only where it

@@ -9,9 +9,11 @@ import {
   DialogFooter,
   DialogSubmitButton,
   DialogTabs,
+  Field,
   FieldGroup,
   FieldRow,
   CheckboxField,
+  fieldHintId,
 } from "./primitives";
 import styles from "./CreateArchive.module.scss";
 
@@ -77,8 +79,7 @@ export default function CreateArchive({
   );
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const promptId = useId();
-  const destinationId = useId();
+  const nameId = useId();
   const encryptionHintId = useId();
 
   const range = LEVEL_RANGE[format];
@@ -133,22 +134,31 @@ export default function CreateArchive({
           onChange={switchFormat}
           label="Archive format"
         />
-        <p id={promptId} className={styles.hint}>
-          Pack <b>{summary}</b> into:
-        </p>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onFocus={selectStem}
-          autoFocus
-          size={50}
-          aria-labelledby={`${promptId} ${destinationId}`}
-          aria-invalid={nameInvalid}
-        />
-        <p id={destinationId} className={styles.hint}>
-          in <b>{display_destination}</b>
-        </p>
+        <Field
+          label={
+            <>
+              Pack <b>{summary}</b> into:
+            </>
+          }
+          htmlFor={nameId}
+          hint={
+            <>
+              in <b>{display_destination}</b>
+            </>
+          }
+        >
+          <input
+            type="text"
+            id={nameId}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onFocus={selectStem}
+            autoFocus
+            size={50}
+            aria-describedby={fieldHintId(nameId)}
+            aria-invalid={nameInvalid}
+          />
+        </Field>
         <FieldGroup>
           {range && (
             <FieldRow label="Compression level">

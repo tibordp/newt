@@ -29,6 +29,7 @@ export {
   IconClose,
 } from "./icons";
 export { MountLogView } from "./MountLog";
+export { editableNameEnd } from "./nameSelection";
 export { ProfileNameField } from "./ProfileNameField";
 export { useAsyncAction } from "./useAsyncAction";
 export type { AsyncAction, AsyncActionState } from "./useAsyncAction";

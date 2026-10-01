@@ -1,5 +1,5 @@
-.hint {
+// Many items have no name to edit: the prompt is plain text.
+.prompt {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-fg-muted);
+  overflow-wrap: anywhere;
 }

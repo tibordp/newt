@@ -1541,6 +1541,14 @@ impl Pane {
         self.view_state.write().focus(name.to_string());
     }
 
+    pub fn is_dir_entry(&self, key: &str) -> bool {
+        self.view_state
+            .read()
+            .files
+            .iter()
+            .any(|f| f.key() == key && f.is_dir)
+    }
+
     pub fn is_focused_dir(&self) -> bool {
         let view_state = self.view_state.read();
         let focused = match view_state.focused.as_ref() {

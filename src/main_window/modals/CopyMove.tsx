@@ -17,7 +17,10 @@ import {
   FieldGroup,
   FieldFold,
   CheckboxField,
+  Field,
   FieldRow,
+  fieldHintId,
+  editableNameEnd,
 } from "./primitives";
 import styles from "./CopyMove.module.scss";
 
@@ -62,6 +65,7 @@ export default function CopyMove({
   display_destination,
   summary: itemSummary,
   default_name,
+  default_name_is_dir,
   name_separators,
   defaults,
   cancel,
@@ -83,8 +87,7 @@ export default function CopyMove({
   // A remembered advanced toggle must not hide behind the fold.
   const [advancedOpen, setAdvancedOpen] = useState(advancedStickyOn(defaults));
   const [name, setName] = useState(default_name ?? "");
-  const promptId = useId();
-  const destinationId = useId();
+  const nameId = useId();
 
   const isCopy = kind === "copy";
   const title = isCopy ? "Copy" : "Move";
@@ -98,8 +101,10 @@ export default function CopyMove({
     (name === "" || [...name_separators].some((sep) => name.includes(sep)));
 
   function selectStem(e: React.FocusEvent<HTMLInputElement>) {
-    const dot = name.lastIndexOf(".");
-    e.currentTarget.setSelectionRange(0, dot > 0 ? dot : name.length);
+    e.currentTarget.setSelectionRange(
+      0,
+      editableNameEnd(name, default_name_is_dir),
+    );
   }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -129,30 +134,37 @@ export default function CopyMove({
     <DialogShell onSubmit={onSubmit}>
       <DialogHeader title={title} />
       <DialogBody>
-        <p id={promptId} className={styles.hint}>
-          {title} <b>{itemSummary}</b> {default_name != null ? "as:" : "into:"}
-        </p>
-        {default_name != null && (
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onFocus={selectStem}
-            autoFocus
-            size={50}
-            aria-labelledby={`${promptId} ${destinationId}`}
-            aria-invalid={nameInvalid}
-          />
+        {default_name != null ? (
+          <Field
+            label={
+              <>
+                {title} <b>{itemSummary}</b> as:
+              </>
+            }
+            htmlFor={nameId}
+            hint={
+              <>
+                in <b>{display_destination}</b>
+              </>
+            }
+          >
+            <input
+              type="text"
+              id={nameId}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onFocus={selectStem}
+              autoFocus
+              size={50}
+              aria-describedby={fieldHintId(nameId)}
+              aria-invalid={nameInvalid}
+            />
+          </Field>
+        ) : (
+          <p className={styles.prompt}>
+            {title} <b>{itemSummary}</b> into <b>{display_destination}</b>
+          </p>
         )}
-        <p id={destinationId} className={styles.hint}>
-          {default_name != null ? (
-            <>
-              in <b>{display_destination}</b>
-            </>
-          ) : (
-            <b>{display_destination}</b>
-          )}
-        </p>
         <FieldGroup>
           {isCopy && isSingleFile && (
             <CheckboxField

@@ -215,7 +215,7 @@ export const allColumns: ColumnDef[] = [
         );
       }
       return (
-        <>{info.size != null ? size(info.size) : info.is_dir ? "DIR" : "???"}</>
+        <>{info.size != null ? size(info.size) : info.is_dir ? "—" : "???"}</>
       );
     },
   },

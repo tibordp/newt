@@ -9,6 +9,7 @@ import {
   DialogFooter,
   DialogSubmitButton,
   Field,
+  editableNameEnd,
 } from "./primitives";
 
 type RenameProps = CommonDialogProps & ModalDataOf<"rename">;
@@ -16,6 +17,7 @@ type RenameProps = CommonDialogProps & ModalDataOf<"rename">;
 export default function Rename({
   base_path,
   name,
+  is_dir,
   cancel,
   context,
 }: RenameProps) {
@@ -30,8 +32,8 @@ export default function Rename({
   }
 
   useEffect(() => {
-    inputRef.current?.select();
-  }, []);
+    inputRef.current?.setSelectionRange(0, editableNameEnd(name, is_dir));
+  }, [name, is_dir]);
 
   return (
     <DialogShell onSubmit={onSubmit}>

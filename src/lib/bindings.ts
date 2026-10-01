@@ -2486,12 +2486,21 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Volume stats + classification. `Some` only for a volume root
  * (DirectoryProperties at a root, or the RootProperties dialog).
  */
-fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string; 
+/**
+ * A directory's whole name is preselected; a file's up to its
+ * extension.
+ */
+is_dir: boolean } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
  */
 default_name: string | null; 
+/**
+ * Whether that single source is a directory (see `Rename::is_dir`).
+ */
+default_name_is_dir: boolean; 
 /**
  * Characters that cannot appear in the rename field, because the
  * value becomes a single leaf under `destination`. Taken from the
@@ -2675,12 +2684,21 @@ group_id: number | null; modified: number | null; accessed: number | null; creat
  * Volume stats + classification. `Some` only for a volume root
  * (DirectoryProperties at a root, or the RootProperties dialog).
  */
-fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
+fs_stats: FsStats | null } } | { type: "navigate"; data: { path: VfsPath; display_path: string } } | { type: "rename"; data: { base_path: VfsPath; name: string; 
+/**
+ * A directory's whole name is preselected; a file's up to its
+ * extension.
+ */
+is_dir: boolean } } | { type: "copy_move"; data: { kind: string; object_destination: boolean; object_source: boolean; sources: VfsPath[]; destination: VfsPath; display_destination: string; summary: string; 
 /**
  * Single-source transfers offer a rename field prefilled with the
  * source's leaf name; `None` (multi-selection) hides it.
  */
 default_name: string | null; 
+/**
+ * Whether that single source is a directory (see `Rename::is_dir`).
+ */
+default_name_is_dir: boolean; 
 /**
  * Characters that cannot appear in the rename field, because the
  * value becomes a single leaf under `destination`. Taken from the

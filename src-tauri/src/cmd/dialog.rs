@@ -452,6 +452,7 @@ pub fn dialog(
                     ModalDataKind::Rename {
                         base_path: pane.path(),
                         name,
+                        is_dir: pane.is_focused_dir(),
                     }
                 }
                 DialogKind::Copy | DialogKind::Move => {
@@ -479,6 +480,10 @@ pub fn dialog(
                     } else {
                         None
                     };
+                    let default_name_is_dir = match pane.effective_selection_keys().as_slice() {
+                        [key] => pane.is_dir_entry(key),
+                        _ => false,
+                    };
                     let name_separators = leaf_name_separators(&ctx, &destination);
                     let is_object = |path: &VfsPath| {
                         ctx.vfs_info()
@@ -490,6 +495,7 @@ pub fn dialog(
                         object_destination: is_object(&destination),
                         object_source: sources.iter().any(is_object),
                         default_name,
+                        default_name_is_dir,
                         name_separators,
                         // Frontend distinguishes copy/move by this string.
                         kind: match dialog {

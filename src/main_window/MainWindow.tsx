@@ -226,6 +226,18 @@ function App() {
   const panesMaximized = !!display?.maximized && !terminalMaximized;
   const quickView = !!display?.quick_view;
 
+  // The title leads with where the active pane is, ahead of the session's
+  // own title ("Newt", "Newt [host]").
+  const baseTitle = remoteState?.window_title;
+  const here =
+    remoteState?.panes[display?.active_pane ?? 0]?.breadcrumbs.at(-1)?.label;
+  useEffect(() => {
+    if (baseTitle === undefined) return;
+    safeSilent(
+      commands.setWindowTitle(here ? `${here} - ${baseTitle}` : baseTitle),
+    );
+  }, [here, baseTitle]);
+
   // Quick View follows the active pane's focused row, once it stops moving.
   const previewPane = quickView
     ? remoteState?.panes[display.active_pane]
