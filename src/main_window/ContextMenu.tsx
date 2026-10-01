@@ -1,12 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ContextMenu as CM } from "../lib/menus";
 
 import {
   commands as ipc,
   type MetadataTraits,
+  type OpenWithApp,
   type RowActions,
 } from "../lib/bindings";
-import { safe } from "../lib/ipc";
+import { safe, unwrap } from "../lib/ipc";
 import { usePreferences, CommandInfo } from "../lib/preferences";
 import {
   COLUMN_CHOICES,
@@ -65,15 +66,66 @@ type FileContextMenuProps = {
   follow: FollowKind;
   /// What the entry offers besides what Enter does with it.
   actions: RowActions | null;
+  /// A file, which Open With offers applications for.
+  isFile: boolean;
   onShellMenu?: () => void;
   onCloseAutoFocus?: (e: Event) => void;
 };
+
+/// The applications the system offers for the focused file, asked for
+/// when the submenu opens, and the system's own chooser for any other.
+function OpenWithItems({
+  paneHandle,
+  commands,
+}: {
+  paneHandle: number;
+  commands?: CommandInfo[];
+}) {
+  const [apps, setApps] = useState<OpenWithApp[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    unwrap(ipc.openWithApps(paneHandle))
+      .then((a) => !cancelled && setApps(a))
+      .catch(() => !cancelled && setApps([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [paneHandle]);
+  return (
+    <>
+      {apps === null && (
+        <CM.Item className={styles.item} disabled>
+          Looking for applications…
+        </CM.Item>
+      )}
+      {apps?.map((app) => (
+        <CM.Item
+          key={app.id}
+          className={styles.item}
+          onSelect={() => safe(ipc.openWithApp(paneHandle, app.id))}
+        >
+          <span className={styles.itemLabel}>{app.name}</span>
+          {app.is_default && <span className={styles.itemMeta}>default</span>}
+        </CM.Item>
+      ))}
+      {!!apps?.length && <CM.Separator className={styles.separator} />}
+      <CM.Item
+        className={styles.item}
+        onSelect={() => safe(ipc.cmdOpenWith(paneHandle))}
+      >
+        Other…
+        <Shortcut commands={commands} id="open_with" />
+      </CM.Item>
+    </>
+  );
+}
 
 export function FileContextMenuContent({
   paneHandle,
   isParentDir,
   follow,
   actions,
+  isFile,
   onShellMenu,
   onCloseAutoFocus,
 }: FileContextMenuProps) {
@@ -101,6 +153,21 @@ export function FileContextMenuContent({
             Open in Default App
             <Shortcut commands={commands} id="open" />
           </CM.Item>
+        )}
+        {isFile && (
+          <CM.Sub>
+            <CM.SubTrigger className={styles.item}>
+              Open With
+              <span className={styles.shortcut} aria-hidden>
+                ›
+              </span>
+            </CM.SubTrigger>
+            <CM.Portal>
+              <CM.SubContent className={styles.content} loop>
+                <OpenWithItems paneHandle={paneHandle} commands={commands} />
+              </CM.SubContent>
+            </CM.Portal>
+          </CM.Sub>
         )}
         {actions?.browse_into && (
           <CM.Item

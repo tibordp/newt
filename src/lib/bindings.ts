@@ -1259,6 +1259,39 @@ async cmdBrowseInto(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The system's chooser for the focused file.
+ */
+async cmdOpenWith(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_open_with", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The applications the system offers for the focused file.
+ */
+async openWithApps(paneHandle: PaneHandle) : Promise<Result<OpenWithApp[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_with_apps", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the focused file in `app`, an `OpenWithApp::id`.
+ */
+async openWithApp(paneHandle: PaneHandle, app: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_with_app", { paneHandle, app }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdOpenFolder(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_open_folder", { paneHandle }) };
@@ -3053,6 +3086,15 @@ export type NamePreview = { name: string; enter: EnterChoice | null; format: Bro
 viewer: ViewerMode | null; language: string | null }
 export type NewWindowLocation = "inherit" | "restore" | "default"
 export type OpenIn = "window" | "pane"
+/**
+ * An application that can open a file.
+ */
+export type OpenWithApp = { 
+/**
+ * What `open_with` takes: the application bundle's path on macOS,
+ * the handler's executable on Windows, the desktop file id on Linux.
+ */
+id: string; name: string; is_default: boolean }
 export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 
 /**

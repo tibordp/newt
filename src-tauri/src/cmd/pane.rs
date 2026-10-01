@@ -562,16 +562,15 @@ async fn open_default(
     name: &str,
     is_dir: bool,
 ) -> Result<(), Error> {
-    if ctx.vfs_info()?.is_host_local(source.vfs_id) {
-        opener::open(source.path.to_native())?;
-    } else if is_dir {
+    if is_dir && !ctx.vfs_info()?.is_host_local(source.vfs_id) {
         return Err(Error::Custom(format!(
             "{name} is not on this computer, so it can't be opened in an application"
         )));
-    } else {
-        download_and_open(ctx, source, name).await?;
     }
-    Ok(())
+    with_local_copy(ctx, source, name, |path| {
+        opener::open(path).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Run the `[[command]]` titled `title`, as picking it from the palette
@@ -593,14 +592,24 @@ async fn run_command_titled(
     crate::user_commands::run_user_command(ctx, global, pane_handle, index).await
 }
 
-/// Download a file from a non-host-local VFS to a temp directory on the host,
-/// then open it with the system's default handler when the copy completes.
-async fn download_and_open(
+/// Run `then` on `source` as a file on this computer: the file itself when
+/// it is one, else — once the download finishes — a copy downloaded with
+/// the standard Copy operation into a temporary directory. Only the first
+/// case can report an error; a failure after a download is logged.
+async fn with_local_copy(
     ctx: &MainWindowContext,
     source: VfsPath,
     filename: &str,
+    then: impl FnOnce(std::path::PathBuf) -> Result<(), String> + Send + 'static,
 ) -> Result<(), Error> {
     let vfs_info = ctx.vfs_info()?;
+    if vfs_info.is_host_local(source.vfs_id) {
+        let path = source.path.launch_cwd();
+        return tokio::task::spawn_blocking(move || then(path))
+            .await
+            .map_err(|e| Error::Custom(e.to_string()))?
+            .map_err(Error::Custom);
+    }
     let host_vfs = vfs_info.host_local_vfs_id().ok_or_else(|| {
         Error::Custom("No local filesystem mounted — cannot open files externally".to_string())
     })?;
@@ -626,11 +635,68 @@ async fn download_and_open(
     ctx.operations().register_completion_callback(
         op_id,
         Box::new(move || {
-            let _ = opener::open(&dest_path);
+            if let Err(e) = then(dest_path) {
+                log::warn!("opening a downloaded file: {e}");
+            }
         }),
     );
 
     Ok(())
+}
+
+/// The focused file (not a directory) and where it really is.
+fn focused_file(ctx: &MainWindowContext, pane_handle: PaneHandle) -> Option<(String, VfsPath)> {
+    let pane = ctx.panes().get(pane_handle).unwrap();
+    let file = pane
+        .get_focused_file_info()
+        .filter(|f| f.name != ".." && !f.is_dir)?;
+    Some((file.name, pane.get_focused_source()?))
+}
+
+/// The applications the system offers for the focused file.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_with_apps(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<Vec<crate::open_with::OpenWithApp>, Error> {
+    let Some((name, _)) = focused_file(&ctx, pane_handle) else {
+        return Ok(Vec::new());
+    };
+    tokio::task::spawn_blocking(move || crate::open_with::apps_for(&name))
+        .await
+        .map_err(|e| Error::Custom(e.to_string()))
+}
+
+/// Open the focused file in `app`, an `OpenWithApp::id`.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_with_app(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    app: String,
+) -> Result<(), Error> {
+    let Some((name, source)) = focused_file(&ctx, pane_handle) else {
+        return Ok(());
+    };
+    with_local_copy(&ctx, source, &name, move |path| {
+        crate::open_with::open_with(&path, &app)
+    })
+    .await
+}
+
+/// The system's chooser for the focused file.
+#[tauri::command]
+#[specta::specta]
+pub async fn cmd_open_with(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    let Some((name, source)) = focused_file(&ctx, pane_handle) else {
+        return Ok(());
+    };
+    let window = ctx.window();
+    with_local_copy(&ctx, source, &name, move |path| {
+        crate::open_with::choose(&window, path)
+    })
+    .await
 }
 
 #[tauri::command]

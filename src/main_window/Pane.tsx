@@ -1643,6 +1643,7 @@ function PaneInner(
   const [contextMenuFollow, setContextMenuFollow] = useState<FollowKind>(null);
   const [contextMenuActions, setContextMenuActions] =
     useState<RowActions | null>(null);
+  const [contextMenuIsFile, setContextMenuIsFile] = useState(false);
 
   const [contextMenuOnFile, setContextMenuOnFile] = useState(true);
 
@@ -1718,6 +1719,7 @@ function PaneInner(
         setContextMenuIsParentDir(false);
         setContextMenuFollow(null);
         setContextMenuActions(null);
+        setContextMenuIsFile(false);
         return;
       }
 
@@ -1743,6 +1745,7 @@ function PaneInner(
       );
       setContextMenuFollow(followKind(row));
       setContextMenuActions(row?.actions ?? null);
+      setContextMenuIsFile(!!row && !row.is_dir && row.name !== "..");
     },
     [paneHandle, shellMenuAvailable, openShellMenu],
   );
@@ -2187,6 +2190,7 @@ function PaneInner(
               isParentDir={contextMenuIsParentDir}
               follow={contextMenuFollow}
               actions={contextMenuActions}
+              isFile={contextMenuIsFile}
               onCloseAutoFocus={refocusPane}
               onShellMenu={
                 shellMenuAvailable

@@ -13,6 +13,7 @@ pub mod editor;
 pub mod file_server;
 pub mod keychain;
 pub mod main_window;
+pub mod open_with;
 pub mod preferences;
 pub mod runtime_state;
 pub mod session_memory;

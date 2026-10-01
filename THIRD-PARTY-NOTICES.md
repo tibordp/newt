@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-731 crates, the superset across every target platform and feature.
+732 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -849,6 +849,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   objc2-io-surface 0.3.2 — Zlib OR Apache-2.0 OR MIT
   objc2-quartz-core 0.3.2 — Zlib OR Apache-2.0 OR MIT
   objc2-ui-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT
+  objc2-uniform-type-identifiers 0.3.2 — Zlib OR Apache-2.0 OR MIT
   objc2-user-notifications 0.3.2 — Zlib OR Apache-2.0 OR MIT
   objc2-web-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT
   once_cell 1.21.4 — MIT OR Apache-2.0

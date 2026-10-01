@@ -312,6 +312,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "open_with".into(),
+            name: "Open With...".into(),
+            short_name: Some("Open With".into()),
+            category: "File".into(),
+            default_keys: vec![],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "browse_into".into(),
             name: "Browse Into".into(),
             short_name: None,

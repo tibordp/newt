@@ -77,11 +77,11 @@ const ID_FIRST: u32 = 1;
 const ID_LAST: u32 = 0x7FFF;
 const SUBCLASS_ID: usize = 0x7477656e; // "newt"
 
-struct ComInit(bool);
+pub(crate) struct ComInit(bool);
 impl ComInit {
     /// The main thread is already STA under wry (OLE for drag-drop), so
     /// this is a ref-count bump; balanced on drop iff it succeeded.
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
         Self(unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok())
     }

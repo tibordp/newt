@@ -309,6 +309,16 @@ command = "Build"               # the title of a [[command]]
 - **Browse Into** (`browse_into`, unbound; context menu) goes into the focused entry whatever Enter does with it: a directory or package is entered, a file browsed as its association's format — or, when nothing names one, as whatever its first bytes say (ZIP, 7z, tar, cpio and ar headers, gzip/bzip2/xz/zstd streams, ISO 9660 and UDF volumes). A tar or compressed file whose name doesn't say which compression it uses is decompressed by what its first bytes say.
 - **Open in Default App** (`open`, unbound; context menu) always hands the entry to the system's default application, downloading it first when it isn't on this computer.
 
+### Open With
+
+The file context menu's **Open With ▸** lists the applications the system offers for the file — from Launch Services on macOS, the shell's recommended handlers for the extension on Windows, the desktop's applications for its MIME type on Linux — with the default first and marked, and opens the file in the one picked. Its last item, **Other…**, is the **Open With…** command (`open_with`, unbound; palette), the system's own chooser:
+
+- **Windows**: the shell's "How do you want to open this file?" dialog (`SHOpenWithDialog`), with "Always use this app"; the file opens in what is chosen.
+- **Linux**: the desktop portal's app chooser (`org.freedesktop.portal.OpenURI.OpenFile` with `ask`) — GNOME's and KDE's own — which opens the file in what is chosen. Without `xdg-desktop-portal` running, Open With… reports that no chooser is available.
+- **macOS**, where only Finder has a chooser: the same one Finder's "Open With ▸ Other…" shows — an open panel on Applications, as a sheet on the window, with *Enable: Recommended Applications / All Applications* (only the applications recommended for the file can be chosen until "All" is picked) and *Always Open With*, which makes the choice the default for files of its type.
+
+A file that isn't on this computer (S3, SFTP, an archive, a remote session) is downloaded to a temporary directory first, as Open in Default App does, and opens once the copy finishes. Directories and packages aren't offered: Open With is for files.
+
 ### Mouse Interactions
 
 | Action | Behavior |
@@ -342,6 +352,7 @@ The default browser context menu is suppressed in the main window (but not in th
 | Open | Enter |
 | Open in Default App | (`open`, unbound; when Enter does something else, or on a macOS package) |
 | Browse Into | (`browse_into`, unbound; when Enter doesn't go in but could — a package set to open, a document that is a ZIP inside) |
+| Open With ▸ | Files only: the applications the system offers for the file, the default marked, then **Other…** (`open_with`, unbound) |
 | Change Association… | (`change_association`, unbound) — the Settings dialog's Associations tab, at the entry's row |
 | Follow Symlink / Reveal Source | Shift+Enter (symlinks and aliased entries only) |
 | View | F3 |
