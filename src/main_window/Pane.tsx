@@ -84,7 +84,7 @@ function PathBreadcrumbs(props: {
           <ContextMenu.Root key={i}>
             <ContextMenu.Trigger asChild>
               <a
-                className={styles.pathBreadcrumb}
+                className={`${styles.pathBreadcrumb} ${isLast ? styles.pathBreadcrumbCurrent : ""}`}
                 href="#"
                 tabIndex={-1}
                 aria-current={isLast ? "location" : undefined}
@@ -214,12 +214,21 @@ function annotationsEqual(
   return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
+/// Whether a press here drags files rather than starting a drag
+/// rectangle: anywhere in the name cell (`stem` when the extension has a
+/// column of its own).
+function isDndHandle(target: HTMLElement): boolean {
+  return target.closest('[data-column="name"], [data-column="stem"]') !== null;
+}
+
 type FileRowProps = {
   row: FileView;
   id: string;
   posInSet: number;
   setSize: number;
   columns: ColumnDef[];
+  /// The pane's cursor row, whether or not the pane has focus.
+  isCursor: boolean;
   isFocused: boolean;
   isSelected: boolean;
   filter: string | null;
@@ -242,6 +251,7 @@ const FileRow = memo(
     posInSet,
     setSize,
     columns,
+    isCursor,
     isFocused,
     isSelected,
     filter,
@@ -275,7 +285,7 @@ const FileRow = memo(
         aria-setsize={setSize}
         data-name={row.key ?? row.name}
         data-is-dir={row.is_dir ? "true" : undefined}
-        className={`${styles.fileItem} ${isFocused ? styles.focused : ""} ${isSelected ? styles.selected : ""}`}
+        className={`${styles.fileItem} ${isFocused ? styles.focused : isCursor ? styles.cursor : ""} ${isSelected ? styles.selected : ""}`}
         onClick={onClick}
         onMouseDown={onMouseDown}
         onDoubleClick={() => onOpen(row)}
@@ -310,6 +320,7 @@ const FileRow = memo(
     prev.row.is_symlink === next.row.is_symlink &&
     annotationsEqual(prev.row.annotations, next.row.annotations) &&
     prev.columns === next.columns &&
+    prev.isCursor === next.isCursor &&
     prev.isFocused === next.isFocused &&
     prev.isSelected === next.isSelected &&
     prev.filter === next.filter &&
@@ -1140,10 +1151,9 @@ function PaneInner(
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLUListElement>) => {
       if (e.button !== 0 || e.shiftKey) return;
-      // Only start drag from empty space — not on file icon or filename text
-      const target = e.target as HTMLElement;
-      if (target.closest(".file-icon") || target.closest(".filename-part"))
-        return;
+      // The name cell drags files (onDndMouseDown); everywhere else starts
+      // a drag rectangle.
+      if (isDndHandle(e.target as HTMLElement)) return;
       e.preventDefault(); // block text selection
 
       const container = containerRef.current;
@@ -1189,9 +1199,7 @@ function PaneInner(
   const onDndMouseDown = useCallback(
     (e: React.MouseEvent<HTMLLIElement>) => {
       if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (!target.closest(".file-icon") && !target.closest(".filename-part"))
-        return;
+      if (!isDndHandle(e.target as HTMLElement)) return;
       const fileName = e.currentTarget.dataset.name;
       if (!fileName || fileName === "..") return;
 
@@ -1299,7 +1307,7 @@ function PaneInner(
             icon.className = f.is_dir ? "file-icon folder" : "file-icon";
             if (!f.is_dir) {
               const { ch, color } = getFileIconChar(f.name, f.is_dir);
-              icon.style.color = color;
+              icon.style.setProperty("--icon-color", color);
               icon.textContent = ch;
             }
             ghost.replaceChildren(icon, ` ${f.name}`);
@@ -1902,7 +1910,10 @@ function PaneInner(
       />
       <div className={styles.headerArea}>
         {preferences?.settings.appearance?.show_pane_header !== false ? (
-          <div className={styles.header}>
+          <div
+            className={`${styles.header} ${active ? styles.headerActive : ""}`}
+          >
+            <span className={styles.focusDot} aria-hidden />
             {swappable && (
               <button
                 type="button"
@@ -2107,7 +2118,8 @@ function PaneInner(
               )}
               {file_window.items.map((row, i) => {
                 const rowKey = row.key ?? row.name;
-                const isFocused = active && rowKey === focused;
+                const isCursor = rowKey === focused;
+                const isFocused = active && isCursor;
                 return (
                   <FileRow
                     key={rowKey}
@@ -2118,6 +2130,7 @@ function PaneInner(
                     // every batch, and would re-render each row with it.
                     setSize={loading ? -1 : file_window.total_count}
                     columns={columns}
+                    isCursor={isCursor}
                     isFocused={isFocused}
                     isSelected={selectedLookup.has(rowKey)}
                     filter={isFocused ? filter : null}

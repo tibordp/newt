@@ -29,7 +29,9 @@ export default function TerminalPanel({
   const panelId = (handle: number) => `${idBase}-panel-${handle}`;
   return (
     <div className={styles.panel} role="region" aria-label="Terminal panel">
-      <div className={styles.tabBar}>
+      <div
+        className={`${styles.tabBar} ${panesFocused ? "" : styles.tabBarFocused}`}
+      >
         <div className={styles.tabs} role="tablist" aria-label="Terminals">
           {terminals.map((term, i) => (
             <button

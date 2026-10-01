@@ -15,6 +15,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   vertical-align: top;
+  color: var(--icon-color);
 
   &.folder {
     background-image: var(--icon-folder);

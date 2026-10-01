@@ -129,6 +129,7 @@ Each pane is an independent file browser with its own path, selection, filter, s
 
 ### Pane Header
 
+- **Focus dot**: A small accent dot at the start of the header of the pane that has focus. The other pane keeps the space empty, so both paths start at the same offset.
 - **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes sort first and show an unmount (×) button; below a separator, unmounted types (S3, SFTP, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
 - **Breadcrumb path**: Current directory path displayed as clickable breadcrumb segments. Clicking any segment navigates to that directory. Clicking the *last* segment opens the Navigate (Go To) dialog instead of navigating. Breadcrumb format varies by VFS type:
   - Local: `/home/user/documents`
@@ -150,7 +151,9 @@ Bottom strip on each pane showing loading state, the current file's full display
 
 Server-side windowed list with a fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
 
-Row height comes from the `appearance.density` preference: `comfortable` (22px, default) or `compact` (20px). It reaches the styles as the `--row-height` token, keyed off a `data-density` attribute on the document element; the row icon box, the column header and the resize grip follow it, so nothing else carries a per-density value. Icon artwork — seti glyph, folder image, symlink badge — is a fixed size regardless of density. The pane's virtualization arithmetic (spacer heights, viewport reports, PageUp/PageDown, drag-rectangle → index) needs the number rather than a computed style, so `src/main_window/density.ts` restates the same pixel values — the two must stay in step. Rust is density-agnostic: viewport hints cross the boundary as row indices and counts.
+Each pane keeps its cursor on screen: a solid accent bar in the pane that has focus, and neutral grey in the other one — and in both while the terminal has focus — so the cursor a Tab or a click on the other pane would land on is always visible. Marked files get a light accent tint, joined into one block across a run of them, with the name in the accent colour. While the window itself is in the background (another app, another Newt window, or a native dialog has the keyboard), the focus marks all turn grey — the cursor like the other pane's, the header's focus dot, and the active terminal tab's line — and come back when the window does.
+
+Row height comes from the `appearance.density` preference: `compact` (20px), `comfortable` (22px, default) or `spacious` (24px). It reaches the styles as the `--row-height` token, keyed off a `data-density` attribute on the document element; the row icon box, the column header and the resize grip follow it, so nothing else carries a per-density value. Icon artwork — seti glyph, folder image, symlink badge — is a fixed size regardless of density. The pane's virtualization arithmetic (spacer heights, viewport reports, PageUp/PageDown, drag-rectangle → index) needs the number rather than a computed style, so `src/main_window/density.ts` restates the same pixel values — the two must stay in step. Rust is density-agnostic: viewport hints cross the boundary as row indices and counts.
 
 **Default columns** (all sortable by clicking the header):
 
@@ -285,7 +288,7 @@ Numpad-only defaults are deliberate: `+`/`-`/`*` on the main row are printable c
 | Shift+Click | Range select from focused file to clicked file |
 | Double-click | Open/enter (same as Enter key) |
 | Right-click | If clicked file is NOT selected: focus it (clears selection), show context menu. If clicked file IS selected: keep selection, show context menu. |
-| Drag on empty area | Rectangle (marquee) selection — see below |
+| Drag outside the Name column | Rectangle (marquee) selection — see below |
 | Drag on file icon/name | Initiate drag-and-drop to other pane — see below |
 
 **Rectangle (marquee) selection**:
@@ -343,7 +346,7 @@ The Follow row appears only when it would do something: labelled "Reveal Source"
 
 ### Drag and Drop
 
-- Drag one or more files from one pane to the other by clicking and dragging the file icon or name.
+- Drag one or more files from one pane to the other by dragging anywhere in the Name column — the icon, the name, or the blank space after it. Dragging in any other column or below the last row draws a selection rectangle instead.
 - **Multi-file drag**: If multiple files are selected, dragging any selected file drags them all. A ghost preview shows "N items" at the cursor.
 - **Drop targets**: Drop on a folder to copy/move into it. Drop on the pane background to copy/move to the pane's current directory.
 - **Modifier keys**: Normal drop = copy. Shift+drop = move.
@@ -1580,7 +1583,7 @@ folders_first = true        # Directories before files in sort order
 show_command_bar = true     # Show F-key bar at bottom of window
 show_pane_header = true     # Show breadcrumb / VFS selector / free-space header per pane
 show_pane_status = true     # Show file count / selection size status bar per pane
-density = "comfortable"     # File list row spacing: "comfortable" (22px) or "compact" (20px)
+density = "comfortable"     # File list row spacing: "compact" (20px), "comfortable" (22px) or "spacious" (24px)
 theme = "system"            # "system", "light", or "dark"
 columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
 si_size_prefixes = false    # Size column shows "1.5 GB" instead of exact byte counts

@@ -18,7 +18,7 @@
     padding: var(--space-3);
 
     &:hover {
-      background: var(--color-surface);
+      background: var(--color-cursor-inactive);
     }
 
     &[data-selected="true"] {

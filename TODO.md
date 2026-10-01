@@ -37,6 +37,10 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 
 - `HotPaths.module.scss` deleteBtn hover keeps an `opacity !important`; HistoryNavigator and SortMenu each keep two `!important`s fighting Menu.module's `data-highlighted` styling — all need a structural fix in Menu.module.scss to remove.
 
+## Per-platform look
+
+- A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
+
 ## Drag and drop
 
 - Drag-out for non-host-local sources (S3/SFTP/remote sessions) needs materialization: either download-to-tempdir before the native drag starts (reuse the `download_and_open` pattern), or per-platform file-promise APIs (NSFilePromiseProvider / CFSTR_FILEDESCRIPTOR / XDS) — no cross-platform crate wraps those today.

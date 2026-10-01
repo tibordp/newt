@@ -39,9 +39,21 @@
   // (the selection fill) so a selected row still separates from it.
   --_bg-filtered: #f3f8fd;
 
+  // Dialogs, menus and palettes
+  --_surface: #f6f6f6;
+
+  // Push buttons
+  --_control-bg: #ffffff;
+  --_control-hover-bg: #f7f7f7;
+  --_control-active-bg: #ececec;
+  --_control-border: rgba(0, 0, 0, 0.15);
+  --_control-border-bottom: rgba(0, 0, 0, 0.22);
+
   // Borders & shadows
   --_border: rgba(0, 0, 0, 0.15);
   --_border-strong: rgba(0, 0, 0, 0.18);
+  --_separator: rgba(0, 0, 0, 0.09);
+  --_cursor-inactive: rgba(0, 0, 0, 0.07);
   --_input-border: rgba(0, 0, 0, 0.18);
   // No backdrop scrim behind dialogs — elevation alone separates them, so
   // the shadow is slightly deeper than a typical raised-surface shadow.

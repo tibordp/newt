@@ -1,20 +1,14 @@
+// The rows start at the top; the fraction of a row the panel's height
+// leaves over falls at the bottom.
 .container {
-  padding: 0 0 0.5em 0.5em;
+  padding: var(--space-2) 0 0 0.5em;
   height: 100%;
   width: 100%;
 }
 
 .terminal {
-  padding-top: 0.2em;
-  display: flex;
-  flex-direction: column;
   height: 100%;
   width: 100%;
-
-  &::before {
-    content: "";
-    flex-grow: 1;
-  }
 }
 
 :global(.xterm) {

@@ -36,13 +36,32 @@
   display: flex;
   align-items: baseline;
   gap: 5px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
   background: var(--color-chrome-light);
-  border-bottom: none;
+  border-bottom: 1px solid var(--color-separator);
   z-index: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+// Marks the pane that has focus. Every pane reserves the space, so the
+// two panes' paths start at the same offset.
+.focusDot {
+  align-self: center;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+
+  .headerActive & {
+    background: var(--color-accent);
+    @include fc.fill;
+  }
+
+  :global(:root[data-window-inactive]) .headerActive & {
+    background: var(--color-fg-muted);
+  }
 }
 
 .headerPath {
@@ -52,6 +71,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  // The VFS selector's border, so the bar is as tall without one (Quick
+  // View's bar has none).
+  padding: 1px 0;
+
+  // Keeps a line's height with nothing in it (Quick View on a folder).
+  &:empty::before {
+    content: "\200b";
+  }
 }
 
 .tableHeader {
@@ -59,8 +86,8 @@
   flex-shrink: 0;
   overflow-x: hidden;
   z-index: 1;
-  background: var(--color-chrome);
-  box-shadow: var(--shadow-header);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-separator);
 }
 
 .tableHeaderInner {
@@ -69,8 +96,8 @@
   display: flex;
   cursor: default;
   width: fit-content;
-  padding-right: 20px;
-  font-weight: bold;
+  padding: 0 20px 0 var(--space-3);
+  font-size: var(--font-size-sm);
 }
 
 .files {
@@ -96,27 +123,93 @@
 }
 
 .fileItem {
+  position: relative;
+  isolation: isolate;
   display: flex;
   width: fit-content;
   height: var(--row-height);
-  padding-right: 20px;
+  padding: 0 20px 0 var(--space-3);
 
-  &.focused {
-    background: var(--color-selected-bg);
-    @include fc.cursor;
+  // Row highlights are inset from the pane's edges.
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 var(--space-1);
+    z-index: -1;
+    border-radius: var(--radius-md);
   }
 
   &.selected {
-    color: var(--color-accent);
+    &::before {
+      background: var(--color-selected-bg);
+    }
 
     // Selection always beats per-row enricher decorations: the git
     // status classes color .filename-part directly, which would
-    // otherwise override the inherited selection color. Three classes
-    // of specificity vs. their two.
+    // otherwise override the selection color. Three classes of
+    // specificity vs. their two.
     :global(.filename-part) {
       color: var(--color-accent);
     }
     @include fc.selected;
+  }
+
+  // A run of marked files joins into one block, which the focused cursor
+  // breaks.
+  &.selected:not(.focused) + &.selected:not(.focused)::before {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  &.selected:not(.focused):has(+ .selected:not(.focused))::before {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  &.cursor::before {
+    background: var(--color-cursor-inactive);
+  }
+
+  &.cursor.selected::before {
+    background:
+      linear-gradient(
+        var(--color-cursor-inactive),
+        var(--color-cursor-inactive)
+      ),
+      var(--color-selected-bg);
+  }
+
+  &.focused {
+    @include fc.cursor;
+  }
+
+  :global(:root:not([data-window-inactive])) &.focused {
+    color: var(--color-accent-fg);
+
+    &::before {
+      background: var(--color-accent);
+    }
+
+    // Type colors would vanish into the accent fill.
+    :global(.filename-part),
+    :global(.file-icon) {
+      color: var(--color-accent-fg);
+    }
+  }
+
+  // With the window in the background, the focused pane's cursor looks
+  // like the other pane's.
+  :global(:root[data-window-inactive]) &.focused::before {
+    background: var(--color-cursor-inactive);
+  }
+
+  :global(:root[data-window-inactive]) &.focused.selected::before {
+    background:
+      linear-gradient(
+        var(--color-cursor-inactive),
+        var(--color-cursor-inactive)
+      ),
+      var(--color-selected-bg);
   }
 }
 
@@ -167,8 +260,11 @@
 }
 
 .statusbar {
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-chrome);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-chrome-light);
+  border-top: 1px solid var(--color-separator);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
 }
 
 // Inner clipping wrapper. Keeping `overflow: hidden` off the flex
@@ -208,6 +304,10 @@
     color: var(--color-fg);
     text-decoration: underline;
   }
+}
+
+.pathBreadcrumbCurrent {
+  font-weight: 600;
 }
 
 .partial {
@@ -274,6 +374,9 @@
 
 .swapButton {
   composes: maximizeButton;
+  // Matches the VFS selector's inner padding, so the button sits evenly
+  // between the focus dot and the selector's label.
+  margin-left: var(--space-2);
 }
 
 .headerArea {

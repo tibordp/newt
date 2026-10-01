@@ -2,7 +2,7 @@
 :root {
   // Surface
   --color-bg: var(--_gray-0);
-  --color-surface: var(--_gray-200);
+  --color-surface: var(--_surface);
   --color-surface-raised: var(--_gray-200);
 
   // Text
@@ -27,10 +27,17 @@
   --color-checker-a: var(--_gray-400);
   --color-checker-b: var(--_gray-200);
 
-  // Buttons
+  // Hover fill for flat controls (header cells, selectors, tabs)
   --color-button-bg: var(--_gray-300);
   --color-button-hover-bg: var(--_gray-400);
   --color-button-active-bg: var(--_gray-500);
+
+  // Push buttons: a raised face with a hairline edge
+  --color-control-bg: var(--_control-bg);
+  --color-control-hover-bg: var(--_control-hover-bg);
+  --color-control-active-bg: var(--_control-active-bg);
+  --color-control-border: var(--_control-border);
+  --color-control-border-bottom: var(--_control-border-bottom);
 
   // Input
   --color-input-bg: var(--_gray-50);
@@ -57,6 +64,12 @@
   // Borders
   --color-border: var(--_border);
   --color-border-strong: var(--_border-strong);
+  // Hairline between chrome and content (location bar, column header,
+  // status bar).
+  --color-separator: var(--_separator);
+
+  // The file list's cursor in a pane that doesn't have focus.
+  --color-cursor-inactive: var(--_cursor-inactive);
 
   // Shadows
   --shadow-dialog: var(--_shadow-dialog);
@@ -85,6 +98,8 @@
   // File list row height. Row icons and cell metrics scale off it, and
   // `density.ts` restates it for the pane's virtualization arithmetic.
   --row-height: 22px;
+  // The column header above the file list.
+  --header-height: calc(var(--row-height) + 2px);
 
   // Radii
   --radius-sm: 3px;
@@ -104,4 +119,8 @@
 // Set from the `appearance.density` preference (MainWindow).
 [data-density="compact"] {
   --row-height: 20px;
+}
+
+[data-density="spacious"] {
+  --row-height: 24px;
 }

@@ -9,11 +9,14 @@
 
 .tabBar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   height: 28px;
   min-height: 28px;
   background: var(--color-chrome-light);
-  padding: 0 var(--space-2);
+  // An inset shadow rather than a border, so the active tab paints over
+  // it and runs into the terminal below.
+  box-shadow: inset 0 -1px 0 var(--color-separator);
+  padding-right: var(--space-2);
   gap: var(--space-1);
   overflow-x: auto;
   overflow-y: hidden;
@@ -22,8 +25,7 @@
 // Groups the tabs for the tablist role without affecting the tab bar's flow.
 .tabs {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
+  align-items: stretch;
 
   &:empty {
     display: none;
@@ -34,11 +36,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-4);
-  height: 22px;
+  padding: 0 var(--space-5);
   background: none;
   border: none;
-  border-radius: var(--radius-sm);
+  border-right: 1px solid var(--color-separator);
+  border-radius: 0;
   color: var(--color-fg-muted);
   cursor: pointer;
   font: inherit;
@@ -46,13 +48,22 @@
   white-space: nowrap;
 
   &:hover {
-    background: var(--color-button-bg);
+    background: var(--color-cursor-inactive);
   }
 
   &.active {
-    background: var(--color-chrome);
+    background: var(--color-bg);
     color: var(--color-fg);
     @include fc.selected;
+  }
+
+  // An accent line along the top while the terminal has focus.
+  .tabBarFocused &.active {
+    box-shadow: inset 0 2px 0 var(--color-accent);
+  }
+
+  :global(:root[data-window-inactive]) .tabBarFocused &.active {
+    box-shadow: inset 0 2px 0 var(--color-fg-muted);
   }
 
   &.defunct {
@@ -83,12 +94,13 @@
   }
 
   &:hover {
-    background: var(--color-button-hover-bg);
+    background: var(--color-cursor-inactive);
     color: var(--color-fg);
   }
 }
 
 .addButton {
+  align-self: center;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -104,12 +116,13 @@
   flex-shrink: 0;
 
   &:hover {
-    background: var(--color-button-bg);
+    background: var(--color-cursor-inactive);
     color: var(--color-fg);
   }
 }
 
 .maximizeButton {
+  align-self: center;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -130,7 +143,7 @@
   }
 
   &:hover {
-    background: var(--color-button-bg);
+    background: var(--color-cursor-inactive);
     color: var(--color-fg);
   }
 }

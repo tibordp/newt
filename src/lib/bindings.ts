@@ -2124,7 +2124,7 @@ export type DeleteConfirmMode =
  * items will be deleted permanently. Delete Permanently / Cancel.
  */
 "trash_unavailable"
-export type Density = "comfortable" | "compact"
+export type Density = "compact" | "comfortable" | "spacious"
 export type DetectedEncoding = { encoding: string; 
 /**
  * Length of the byte-order mark the detection came from; 0 if none.

@@ -114,9 +114,10 @@ pub struct AppearancePreferences {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Density {
+    Compact,
     #[default]
     Comfortable,
-    Compact,
+    Spacious,
 }
 
 /// Which unit system displayed sizes use.

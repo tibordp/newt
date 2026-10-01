@@ -74,7 +74,11 @@ function FileName({
   const iconElement = is_dir ? (
     <div className="file-icon folder" aria-hidden />
   ) : (
-    <div className="file-icon" style={{ color }} aria-hidden>
+    <div
+      className="file-icon"
+      style={{ "--icon-color": color } as React.CSSProperties}
+      aria-hidden
+    >
       {ch}
     </div>
   );
@@ -899,18 +903,23 @@ export function ColumnHeader({
     );
   }, [savedWidth]);
 
-  const sortIndicator = (
-    sortKey: string | undefined,
-    up: string,
-    down: string,
-  ) =>
+  const sortIndicator = (sortKey: string | undefined) =>
     sorting.key == sortKey && (
       <span
         className={styles.sortingIndicator}
         role="img"
         aria-label={sorting.asc ? "sorted ascending" : "sorted descending"}
       >
-        {sorting.asc ? up : down}
+        <svg viewBox="0 0 10 6" width="9" height="6" aria-hidden>
+          <polyline
+            points={sorting.asc ? "1 5 5 1 9 5" : "1 1 5 5 9 1"}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </span>
     );
 
@@ -935,7 +944,7 @@ export function ColumnHeader({
           <div
             key={i}
             ref={ref}
-            className={`${styles.subcolumn} ${subcol.sortKey ? styles.sortable : ""}`}
+            className={`${styles.subcolumn} ${column.align == "right" ? styles.alignRight : ""} ${subcol.sortKey ? styles.sortable : ""} ${subcol.sortKey && sorting.key == subcol.sortKey ? styles.sorted : ""}`}
             title={
               subcol.sortKey
                 ? `Sort by ${sortKeyLabels.get(subcol.sortKey) ?? subcol.name}`
@@ -956,11 +965,9 @@ export function ColumnHeader({
             }}
             style={subcol.style || defaultSubcolStyle}
           >
-            {column.align == "right" &&
-              sortIndicator(subcol.sortKey, "▲ ", "▼ ")}
-            {subcol.name}
-            {column.align == "left" &&
-              sortIndicator(subcol.sortKey, " ▲", " ▼")}
+            {column.align == "right" && sortIndicator(subcol.sortKey)}
+            <span className={styles.subcolumnLabel}>{subcol.name}</span>
+            {column.align == "left" && sortIndicator(subcol.sortKey)}
           </div>
         ))}
       </div>

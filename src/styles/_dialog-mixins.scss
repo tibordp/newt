@@ -65,29 +65,28 @@
 // QuickConnect and SelectWslDistro). Include inside the dialog's `.content`
 // selector — scoping the [cmdk-*] rules keeps the two palettes' styles from
 // clobbering each other, which the old unscoped :global blocks did.
+// The search field is the palette's whole header, borderless: it is the
+// only thing that ever has focus, so the caret marks it.
 @mixin palette-header {
-  padding: var(--space-3);
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: center;
   background: var(--color-surface);
-  box-shadow: var(--shadow-header);
+  border-bottom: 1px solid var(--color-separator);
 
   :global([cmdk-input]) {
     font-family: inherit;
-    font-size: inherit;
+    font-size: var(--font-size-lg);
     color: var(--color-fg);
-    background: var(--color-input-bg);
-    border: 1px solid var(--color-input-border);
-    border-radius: var(--radius-md);
-    padding: var(--space-3) var(--space-4);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: var(--space-5) var(--space-6);
     width: 100%;
-    outline: none;
 
+    &,
     &:focus {
-      outline: var(--focus-ring);
-      outline-offset: -1px;
+      outline: none;
     }
   }
 }

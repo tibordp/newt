@@ -185,13 +185,10 @@
 // outline with a hairline between them.
 .fileActionsGroup {
   display: flex;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-control-border);
+  border-bottom-color: var(--color-control-border-bottom);
   border-radius: var(--radius-md);
   overflow: hidden;
-
-  > * + * {
-    border-left: 1px solid var(--color-border);
-  }
 }
 
 .iconButton {
@@ -199,10 +196,14 @@
   align-items: center;
   // Vertical padding matches the base button's, so the 16px glyph lines the
   // group up with the text buttons beside it.
-  padding: var(--space-4) var(--space-5);
+  padding: 5px var(--space-4);
   color: var(--color-fg-muted);
   border: none;
   border-radius: 0;
+
+  & + & {
+    border-left: 1px solid var(--color-control-border);
+  }
 
   &:hover {
     color: var(--color-fg);

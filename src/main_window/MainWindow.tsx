@@ -180,6 +180,23 @@ function App() {
     document.documentElement.dataset.density = density ?? "comfortable";
   }, [density]);
 
+  // While another window has the keyboard, focus marks (the cursor, the
+  // active pane's dot, the terminal tab's line) turn grey.
+  useEffect(() => {
+    const root = document.documentElement;
+    const update = () => {
+      if (document.hasFocus()) delete root.dataset.windowInactive;
+      else root.dataset.windowInactive = "";
+    };
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+    };
+  }, []);
+
   const foregroundOp =
     remoteState?.foreground_operation_id != null
       ? remoteState.operations[remoteState.foreground_operation_id]

@@ -5,8 +5,9 @@ import type { Density } from "../lib/bindings";
 /// number itself, so it is stated here rather than read back off computed
 /// style; the two must stay in step or rows and spacers drift apart.
 export const ROW_HEIGHT: Record<Density, number> = {
-  comfortable: 22,
   compact: 20,
+  comfortable: 22,
+  spacious: 24,
 };
 
 export function rowHeightFor(density: Density | undefined): number {

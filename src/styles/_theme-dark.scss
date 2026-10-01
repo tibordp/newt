@@ -1,6 +1,6 @@
 // Dark theme primitives
 @mixin dark-primitives {
-  --_gray-0: #000000;
+  --_gray-0: #1e1e1e;
   --_gray-50: #1e1e1e;
   --_gray-100: #252525;
   --_gray-200: #2a2a2a;
@@ -35,8 +35,18 @@
   // File list while a filter hides rows; see the light theme.
   --_bg-filtered: #141d2a;
 
+  --_surface: #2a2a2a;
+
+  --_control-bg: #3a3a3a;
+  --_control-hover-bg: #424242;
+  --_control-active-bg: #4a4a4a;
+  --_control-border: rgba(255, 255, 255, 0.08);
+  --_control-border-bottom: rgba(0, 0, 0, 0.35);
+
   --_border: rgba(255, 255, 255, 0.12);
   --_border-strong: rgba(255, 255, 255, 0.18);
+  --_separator: rgba(255, 255, 255, 0.08);
+  --_cursor-inactive: rgba(255, 255, 255, 0.09);
   --_input-border: rgba(255, 255, 255, 0.18);
   --_shadow-dialog:
     0 6px 28px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.3);
