@@ -1871,9 +1871,9 @@ Scroll offset is the one thing that stays put — it lives in the DOM, not in pa
 
 When a symlink is focused, navigates to where it leads, with the target focused in its directory. The link is resolved by the filesystem it lives on, the way that filesystem resolves links — `realpath` on the local and remote filesystems and over SFTP, the archive's or disc image's own tree inside one — so relative targets climbing out with `..`, chains of links, and links under a linked directory all land where the OS would. The pane lands on the resolved (physical) path, not a path through the link. A link that leads nowhere reports the error.
 
-### Open Folder / Reveal (Shift+F3)
+### Reveal in File Manager (Shift+F3)
 
-Opens the focused file's parent directory (or the focused directory itself) in the system's default file manager (Nautilus, Dolphin, Finder, etc.).
+Shows the focused entry in the system's file manager, selected in its folder: `SHOpenFolderAndSelectItems` on Windows (Explorer's `/select`), Finder's reveal (`open -R`) on macOS, and on Linux `org.freedesktop.FileManager1.ShowItems` over D-Bus — which Nautilus, Dolphin, Nemo and most others implement — falling back to the desktop portal's Open Directory where no file manager provides it. In a search-results pane it reveals the matched file where it actually lives. On `..` (or in an empty folder) it opens the pane's directory instead. Host-local filesystems only.
 
 ### Navigate Dialog (Mod+L)
 
@@ -1932,7 +1932,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 |----------|--------|---------|
 | F2 | Rename | Pane focused |
 | F3 | View file | Pane focused |
-| Shift+F3 | Open folder in system file manager | Pane focused |
+| Shift+F3 | Reveal the focused entry in the system file manager | Pane focused |
 | F4 | Edit file | Pane focused |
 | Shift+F4 | Create and edit file | Pane focused |
 | F5 | Copy to other pane | Pane focused |

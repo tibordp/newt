@@ -683,7 +683,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "open_folder".into(),
-            name: "Open Folder in Default File Manager".into(),
+            name: "Reveal in File Manager".into(),
             short_name: Some("Reveal".into()),
             category: "File".into(),
             default_keys: vec!["shift+f3".into()],

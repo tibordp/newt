@@ -2,7 +2,7 @@ use newt_common::operation::{CopyOptions, OperationRequest};
 use newt_common::vfs::{MountRequest, PathStyle, VfsId, VfsPath};
 
 use crate::common::Error;
-use crate::main_window::pane::{FilterMode, Sorting};
+use crate::main_window::pane::{FilterMode, PARENT_KEY, Sorting};
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 #[tauri::command]
@@ -634,11 +634,31 @@ pub async fn cmd_follow_symlink(
 #[specta::specta]
 pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
     let pane = ctx.panes().get(pane_handle).unwrap();
-    let full_path = pane.path();
-
-    if ctx.vfs_info()?.is_host_local(full_path.vfs_id) {
-        opener::open(full_path.path.to_native())?;
+    let vfs_info = ctx.vfs_info()?;
+    let focused = pane
+        .get_focused_file_info()
+        .filter(|f| f.key() != PARENT_KEY)
+        .and_then(|_| pane.get_focused_source());
+    let (target, select) = match focused {
+        Some(source) => (source, true),
+        None => (pane.path(), false),
+    };
+    if !vfs_info.is_host_local(target.vfs_id) {
+        return Ok(());
     }
+
+    // Both block on another process: the file manager's D-Bus reply (which
+    // can mean starting it), the shell's COM call, or `open` exiting.
+    let native = target.path.to_native();
+    tokio::task::spawn_blocking(move || {
+        if select {
+            opener::reveal(native)
+        } else {
+            opener::open(native)
+        }
+    })
+    .await
+    .map_err(|e| Error::Custom(e.to_string()))??;
 
     Ok(())
 }
