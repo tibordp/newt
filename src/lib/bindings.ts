@@ -421,6 +421,18 @@ async sniffViewerEncoding(prefix: number[], eof: boolean) : Promise<Result<null,
 }
 },
 /**
+ * At most `max_size` bytes of `path`, decoded from `encoding` after a
+ * `bom_len`-byte BOM, as rendered Markdown.
+ */
+async renderMarkdown(path: VfsPath, maxSize: number, encoding: string, bomLen: number) : Promise<Result<MarkdownNode[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("render_markdown", { path, maxSize, encoding, bomLen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Record what the table viewer detected from the file's first chunk, for
  * the Table menu's Auto entries to name it.
  */
@@ -2453,6 +2465,10 @@ terminal_height: number | null }
  * `bindings.ts` one and the same.
  */
 export type MainWindowState = { connection_status: ConnectionStatus; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary; preview: ViewerState }
+/**
+ * A node of a rendered document.
+ */
+export type MarkdownNode = string | { tag: string; attrs: ([string, string])[]; children: MarkdownNode[] }
 /**
  * Which optional per-entry metadata families a VFS actually populates
  * on its `File`s — drives which file-list columns a pane offers (see

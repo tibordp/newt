@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyLink, resolveRelative, slugify } from "./markdown";
+import { classifyLink, resolveRelative } from "./markdown";
 
 const doc = "/home/me/proj/docs/README.md";
 
@@ -56,13 +56,5 @@ describe("classifyLink", () => {
       path: "/home/me/proj/src/main.rs",
     });
     expect(classifyLink(null, doc)).toEqual({ kind: "none" });
-  });
-});
-
-describe("slugify", () => {
-  it("matches GitHub's heading anchors", () => {
-    expect(slugify("Getting Started")).toBe("getting-started");
-    expect(slugify("  What's new in v2.0?  ")).toBe("whats-new-in-v20");
-    expect(slugify("Über & co")).toBe("über--co");
   });
 });

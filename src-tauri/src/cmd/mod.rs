@@ -248,6 +248,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::viewer::ping_viewer,
             crate::viewer::copy_viewer_range,
             crate::viewer::sniff_viewer_encoding,
+            crate::viewer::render_markdown,
             crate::viewer::report_table_detection,
             crate::viewer::open_in_viewer,
             crate::viewer::find_in_viewer,

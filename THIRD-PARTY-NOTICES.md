@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-725 crates, the superset across every target platform and feature.
+731 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -311,6 +311,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   camino 1.2.6 — MIT OR Apache-2.0
   cargo-platform 0.1.9 — MIT OR Apache-2.0
   cargo_metadata 0.19.2 — MIT
+  caseless 0.2.2 — MIT
+      Copyright (c) 2017 Simon Sapin
   cbc 0.2.1 — MIT OR Apache-2.0
       Copyright (c) 2018-2022 RustCrypto Developers
       Copyright (c) 2018 Artyom Pavlov
@@ -345,6 +347,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2018 the rustasync developers
   compression-core 0.4.33 — MIT OR Apache-2.0
       Copyright (c) 2018 the rustasync developers
+  comrak 0.55.0 — BSD-2-Clause
+      Copyright (c) 2017–2025, Comrak contributors
   concurrent-queue 2.5.0 — Apache-2.0 OR MIT
   concurrent_arena 0.1.11 — MIT
       Copyright (c) 2021 Jiahao XU
@@ -480,6 +484,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2016-2021 Diggory Blake, and other contributors.
   filetime 0.2.29 — MIT/Apache-2.0
       Copyright (c) 2014 Alex Crichton
+  finl_unicode 1.5.0 — (MIT OR Apache-2.0) AND Unicode-DFS-2016
+      Copyright © 1991-2023 Unicode, Inc.
   flate2 1.1.10 — MIT OR Apache-2.0
       Copyright (c) 2014-2026 Alex Crichton
   fnv 1.0.7 — Apache-2.0 / MIT
@@ -682,6 +688,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2021, Tauri Programme within The Commons Conservancy.
   javascriptcore-rs-sys 1.1.1 — MIT
       Copyright (c) 2013-2017, The Gtk-rs Project Developers.
+  jetscii 0.5.3 — MIT OR Apache-2.0
+      Copyright (c) 2015-2018 Jake Goulding
   jiff 0.2.37 — Unlicense OR MIT
       Copyright (c) 2015 Andrew Gallant
   jiff-core 0.1.1 — Unlicense OR MIT
@@ -1222,6 +1230,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   try-lock 0.2.5 — MIT
       Copyright (c) 2018-2023 Sean McArthur
       Copyright (c) 2016 Alex Crichton
+  typed-arena 2.0.2 — MIT
+      Copyright (c) 2018 The typed-arena developers
   typeid 1.0.3 — MIT OR Apache-2.0
   typenum 1.20.1 — MIT OR Apache-2.0
       Copyright (c) 2014 Paho Lurie-Gregg
@@ -1231,6 +1241,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2014-2026 Sean McArthur
   unicode-ident 1.0.26 — (MIT OR Apache-2.0) AND Unicode-3.0
       Copyright © 1991-2023 Unicode, Inc.
+  unicode-normalization 0.1.25 — MIT OR Apache-2.0
+      Copyright (c) 2015 The Rust Project Developers
   unicode-segmentation 1.13.3 — MIT OR Apache-2.0
       Copyright (c) 2015 The Rust Project Developers
   untrusted 0.9.0 — ISC
@@ -1469,7 +1481,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## npm packages
 
-85 packages from the production dependency tree.
+84 packages from the production dependency tree.
 
   @floating-ui/core 1.8.0 — MIT
       Copyright (c) 2021-present Floating UI contributors
@@ -1593,9 +1605,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   lodash.clamp 4.0.3 — MIT
   lodash.debounce 4.0.8 — MIT
   marked 14.0.0 — MIT
-      Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/)
-      Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
-  marked 18.0.14 — MIT
       Copyright (c) 2018+, MarkedJS (https://github.com/markedjs/)
       Copyright (c) 2011-2018, Christopher Jeffrey (https://github.com/chjj/)
   monaco-editor 0.57.0 — MIT
@@ -2532,6 +2541,10 @@ SPDX-License-Identifier: Unicode-3.0
 Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 ```
+
+### Unicode-DFS-2016
+
+No dependency ships a copy of this licence. See <https://spdx.org/licenses/Unicode-DFS-2016.html>.
 
 ### Unlicense
 

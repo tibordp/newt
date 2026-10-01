@@ -9,27 +9,26 @@ import {
 import { ContextMenu as CM } from "../lib/menus";
 import styles from "./Viewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
-import { commands } from "../lib/bindings";
+import { commands, type MarkdownNode } from "../lib/bindings";
 import { safe, unwrap, unwrapBytes } from "../lib/ipc";
 import { useFormatBytes } from "../lib/size";
 import { ModeToggle } from "./ModeToggle";
 import {
   SNIFF_PREFIX_LEN,
   buildFileUrl,
-  makeDecoder,
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
 import {
-  HEADING_ID_PREFIX,
+  ID_PREFIX,
+  buildMarkdown,
   classifyLink,
-  renderMarkdown,
   resolveRelative,
 } from "./markdown";
 import { useViewerHost } from "./host";
 import { REFOCUS_EVENT } from "../main_window/types";
 
-/// Larger files open as text: rendering is all-at-once.
+/// Larger files open as text: the whole document is parsed at once.
 const MAX_RENDER_BYTES = 4 * 1024 * 1024;
 
 /// The document's stylesheet, scoped to its shadow root. The app's theme
@@ -58,20 +57,20 @@ th { background: var(--color-chrome); }
 img { max-width: 100%; }
 hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5em 0; }
 li > input[type=checkbox] { margin-right: 0.4em; }
-/* Bullets and numbers are generated content, not list markers: WebKit
-   paints a selection set from script over ::marker but not one made by
-   dragging, and leaves it painted once the selection is gone. Generated
-   content is never part of a selection. */
 /* Blocks off screen skip style, layout and paint until they scroll into
    view; until then they count as a few lines tall. */
 article > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
 /* Containment keeps a block's edge margins inside it instead of letting
-   them merge with its own, so drop the ones that used to escape. */
+   them merge with its own, so drop the ones that would otherwise escape. */
 blockquote > :first-child,
 article > :is(ul, ol) > li:first-child > :first-child { margin-top: 0; }
 blockquote > :last-child,
 article > details > :last-child,
 article > :is(ul, ol) > li:last-child > :last-child { margin-bottom: 0; }
+/* Bullets and numbers are generated content, not list markers: WebKit
+   paints a selection set from script over ::marker but not one made by
+   dragging, and leaves it painted once the selection is gone. Generated
+   content is never part of a selection. */
 ul, ol { list-style: none; padding-left: 2em; }
 li { position: relative; }
 /* Shapes drawn with borders, which forced colors keep. */
@@ -126,32 +125,30 @@ export function MarkdownViewer({
     range: StaticRange | null;
   } | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
-  const [bytes, setBytes] = useState<Uint8Array | null>(null);
+  const [nodes, setNodes] = useState<MarkdownNode[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    setNodes(null);
+    setNotice(null);
     if (fileSize > MAX_RENDER_BYTES) {
       safe(viewerHost.setMode("text"));
       return;
     }
+    if (!needsSniff) return;
     let cancelled = false;
-    setBytes(null);
-    setNotice(null);
     (async () => {
       try {
-        const data = await unwrapBytes(
-          commands.readFile(vfsPath, MAX_RENDER_BYTES),
+        const prefix = await unwrapBytes(
+          commands.readFileRange(vfsPath, 0, SNIFF_PREFIX_LEN),
         );
         if (cancelled) return;
-        if (needsSniff) {
-          safe(
-            viewerHost.sniffEncoding(
-              Array.from(data.subarray(0, SNIFF_PREFIX_LEN)),
-              true,
-            ),
-          );
-        }
-        setBytes(data);
+        safe(
+          viewerHost.sniffEncoding(
+            Array.from(prefix),
+            fileSize <= SNIFF_PREFIX_LEN,
+          ),
+        );
       } catch (e) {
         if (!cancelled) setNotice(String(e));
       }
@@ -162,9 +159,30 @@ export function MarkdownViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, fileSize]);
 
+  // Rendered as UTF-8 while detection runs, and again only if it disagrees;
+  // the document on screen stays until the new one is ready.
+  useEffect(() => {
+    if (fileSize > MAX_RENDER_BYTES) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tree = await unwrap(
+          commands.renderMarkdown(vfsPath, MAX_RENDER_BYTES, encoding, bomLen),
+        );
+        if (!cancelled) setNodes(tree);
+      } catch (e) {
+        if (!cancelled) setNotice(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, fileSize, encoding, bomLen]);
+
   const imageUrl = useCallback(
     (src: string): string | null => {
-      if (/^data:image\//i.test(src) || /^https?:/i.test(src)) return src;
+      if (/^data:image\//i.test(src)) return src;
       if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("//")) {
         return null;
       }
@@ -181,20 +199,15 @@ export function MarkdownViewer({
     const style = document.createElement("style");
     style.textContent = DOCUMENT_CSS;
     const article = document.createElement("article");
-    if (bytes) {
-      const source = makeDecoder(encoding).decode(bytes.subarray(bomLen));
-      article.appendChild(renderMarkdown(source, imageUrl));
-      // The CSS numbers lists itself (see DOCUMENT_CSS); carry `start` over.
-      for (const ol of article.querySelectorAll("ol[start]")) {
-        const start = Number(ol.getAttribute("start"));
-        if (Number.isFinite(start)) {
-          (ol as HTMLElement).style.counterReset = `item ${start - 1}`;
-        }
-      }
-    }
     root.replaceChildren(style, article);
     host.scrollTop = 0;
-  }, [bytes, encoding, bomLen, imageUrl]);
+    if (!nodes) return;
+    let cancelled = false;
+    void buildMarkdown(article, nodes, imageUrl, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [nodes, imageUrl]);
 
   const followLink = useCallback(
     (href: string | null) => {
@@ -206,8 +219,8 @@ export function MarkdownViewer({
         case "anchor": {
           const root = hostRef.current?.shadowRoot;
           (
-            root?.getElementById(HEADING_ID_PREFIX + target.id) ??
-            root?.getElementById(HEADING_ID_PREFIX + target.id.toLowerCase())
+            root?.getElementById(ID_PREFIX + target.id) ??
+            root?.getElementById(ID_PREFIX + target.id.toLowerCase())
           )?.scrollIntoView();
           break;
         }
@@ -243,7 +256,7 @@ export function MarkdownViewer({
     };
     root.addEventListener("click", onClick);
     return () => root.removeEventListener("click", onClick);
-  }, [followLink, bytes]);
+  }, [followLink, nodes]);
 
   useEffect(() => {
     if (!viewerHost.embedded) hostRef.current?.focus();
@@ -310,7 +323,7 @@ export function MarkdownViewer({
             tabIndex={-1}
             role="document"
             aria-label={filePath}
-            aria-busy={bytes === null && notice === null}
+            aria-busy={nodes === null && notice === null}
             style={{ outline: "none", background: "var(--color-bg)" }}
           />
         </CM.Trigger>

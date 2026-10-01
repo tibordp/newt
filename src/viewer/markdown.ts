@@ -1,5 +1,4 @@
-import DOMPurify from "dompurify";
-import { marked } from "marked";
+import type { MarkdownNode } from "../lib/bindings";
 
 /// What following a link in a rendered document does.
 export type LinkTarget =
@@ -57,48 +56,68 @@ export function classifyLink(href: string | null, base: string): LinkTarget {
   return path ? { kind: "file", path } : { kind: "none" };
 }
 
-/// GitHub's heading anchor: lowercase, punctuation dropped, each space a
-/// hyphen.
-export function slugify(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .replace(/\s/g, "-");
+/// The prefix of every id in a rendered document, as on GitHub; matches
+/// `ID_PREFIX` in `src-tauri/src/viewer/markdown.rs`.
+export const ID_PREFIX = "user-content-";
+
+/// How long one slice of building may hold the main thread.
+const SLICE_MS = 8;
+
+/// A task boundary without `setTimeout`'s nesting clamp: input and
+/// rendering get their turn between slices.
+const nextTask = () =>
+  new Promise<void>((resolve) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => resolve();
+    port2.postMessage(null);
+  });
+
+/// Build a document from `render_markdown` into `parent`, a slice of
+/// top-level blocks per task so a long one doesn't hold up input and paint.
+/// `imageUrl` maps each image's `src` to what the page may load, or null to
+/// drop it. Stops early once `cancelled()`.
+export async function buildMarkdown(
+  parent: Element,
+  nodes: MarkdownNode[],
+  imageUrl: (src: string) => string | null,
+  cancelled: () => boolean,
+): Promise<void> {
+  let next = 0;
+  while (next < nodes.length) {
+    const start = performance.now();
+    const slice = document.createDocumentFragment();
+    while (next < nodes.length && performance.now() - start < SLICE_MS) {
+      slice.appendChild(createNode(nodes[next++], imageUrl));
+    }
+    parent.appendChild(slice);
+    if (next < nodes.length) {
+      await nextTask();
+      if (cancelled()) return;
+    }
+  }
 }
 
-/// Heading ids carry GitHub's prefix, as GitHub's do, so `#anchor` links
-/// written for GitHub resolve the same way.
-export const HEADING_ID_PREFIX = "user-content-";
-
-/// Render GitHub-flavored Markdown to a sanitized DOM fragment, to be
-/// inserted as is — never serialized and parsed again, which is where
-/// mutation XSS lives. Headings get GitHub-style ids for `#anchor` links;
-/// `imageUrl` maps each image's `src` to what the page may load, or null
-/// to drop it.
-export function renderMarkdown(
-  source: string,
+function createNode(
+  node: MarkdownNode,
   imageUrl: (src: string) => string | null,
-): DocumentFragment {
-  const html = marked.parse(source, { gfm: true, async: false });
-  const fragment = DOMPurify.sanitize(html, {
-    RETURN_DOM_FRAGMENT: true,
-    FORBID_TAGS: ["style", "form"],
-    FORBID_ATTR: ["style"],
-  });
-  const seen = new Map<string, number>();
-  fragment.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((heading) => {
-    const slug = slugify(heading.textContent ?? "");
-    const n = seen.get(slug) ?? 0;
-    seen.set(slug, n + 1);
-    heading.id = HEADING_ID_PREFIX + (n > 0 ? `${slug}-${n}` : slug);
-  });
-  fragment.querySelectorAll("img").forEach((img) => {
-    const src = img.getAttribute("src");
-    const url = src ? imageUrl(src) : null;
-    if (url) img.setAttribute("src", url);
-    else img.removeAttribute("src");
-    img.removeAttribute("srcset");
-  });
-  return fragment;
+): Node {
+  if (typeof node === "string") return document.createTextNode(node);
+  const el = document.createElement(node.tag);
+  for (const [name, value] of node.attrs) {
+    if (node.tag === "img" && name === "src") {
+      const url = imageUrl(value);
+      if (url) el.setAttribute("src", url);
+    } else {
+      el.setAttribute(name, value);
+    }
+  }
+  // The CSS numbers lists itself (see DOCUMENT_CSS); carry `start` over.
+  const start = node.tag === "ol" ? Number(el.getAttribute("start")) : NaN;
+  if (Number.isFinite(start) && el.hasAttribute("start")) {
+    el.style.counterReset = `item ${start - 1}`;
+  }
+  for (const child of node.children) {
+    el.appendChild(createNode(child, imageUrl));
+  }
+  return el;
 }

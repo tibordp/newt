@@ -1,4 +1,5 @@
 pub mod encoding;
+mod markdown;
 mod table;
 
 use newt_common::find::{SearchMatch, SearchPattern};
@@ -865,6 +866,27 @@ pub fn sniff_viewer_encoding(
 ) -> Result<(), Error> {
     ctx.0.set_detected(encoding::detect(&prefix, eof));
     Ok(())
+}
+
+/// At most `max_size` bytes of `path`, decoded from `encoding` after a
+/// `bom_len`-byte BOM, as rendered Markdown.
+#[tauri::command]
+#[specta::specta]
+pub async fn render_markdown(
+    ctx: MainWindowContext,
+    path: VfsPath,
+    max_size: u64,
+    encoding: String,
+    bom_len: u32,
+) -> Result<Vec<markdown::MarkdownNode>, Error> {
+    let data = ctx.fs()?.read_file(path, max_size).await?;
+    // Tens of milliseconds of parsing for a large document.
+    tokio::task::spawn_blocking(move || {
+        let body = data.get(bom_len as usize..).unwrap_or_default();
+        markdown::render(&encoding::decode(body, &encoding))
+    })
+    .await
+    .map_err(|e| Error::Custom(e.to_string()))
 }
 
 /// Show another file in this viewer window: a relative link followed from

@@ -4,10 +4,12 @@
 import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
+import { marked } from "marked";
 
 import type {
   FileDetails,
   MainWindowState,
+  MarkdownNode,
   ResolvedPreferences,
   RuntimeState,
   VfsPath,
@@ -84,9 +86,14 @@ const event = { main: "main_window", viewer: "viewer", editor: "editor" }[
   scene.window
 ];
 let version = 0;
+/// A copy each time: the mock event bus hands the page this very object,
+/// and a mutated one in place reads as unchanged.
 const publish = () => {
   published = true;
-  return emit(`update:${event}`, { state, version: version++ });
+  return emit(`update:${event}`, {
+    state: structuredClone(state),
+    version: version++,
+  });
 };
 
 const reportTitle = (title: string) =>
@@ -96,6 +103,25 @@ const fixture = (path: VfsPath) =>
   scene.files?.[path.path] ?? fail(`no fixture for ${path.path}`);
 
 const fixtureBytes = new Map<string, Promise<Uint8Array>>();
+/// `render_markdown`, with marked standing in for comrak; the fixtures are
+/// trusted, so nothing is sanitized.
+const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
+  const source = new TextDecoder().decode(await bytesOf(path));
+  const html = marked.parse(source, { gfm: true, async: false });
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  const toNode = (node: Node): MarkdownNode =>
+    node instanceof Element
+      ? {
+          tag: node.localName,
+          attrs: [...node.attributes].map((a) => [a.name, a.value]),
+          children: [...node.childNodes].map(toNode),
+        }
+      : (node.textContent ?? "");
+  return [...body.childNodes]
+    .filter((node) => node instanceof Element || node.textContent?.trim())
+    .map(toNode);
+};
+
 const bytesOf = (path: VfsPath) => {
   const url = fixture(path).url;
   if (!fixtureBytes.has(url)) {
@@ -145,6 +171,7 @@ const handlers: Record<string, (args: any) => unknown> = {
   // Raw responses arrive as an ArrayBuffer.
   read_file: async ({ path }: { path: VfsPath }) =>
     (await bytesOf(path)).slice().buffer,
+  render_markdown: ({ path }: { path: VfsPath }) => renderMarkdown(path),
   read_file_range: async ({
     path,
     offset,
