@@ -14,6 +14,7 @@ import {
   LruChunkCache,
   detectAutoMode,
   buildFileUrl,
+  fileVersion,
   type FileInfo,
   type ViewerMode,
 } from "./helpers";
@@ -45,11 +46,16 @@ export function ViewerBody({
   onReady,
 }: ViewerBodyProps) {
   const viewerHost = useViewerHost();
-  const fileUrl = filePath
-    ? buildFileUrl(fileServerBase, filePath.vfs_id, filePath.path)
-    : "";
-
   const [info, setInfo] = useState<FileInfo | null>(null);
+  const fileUrl =
+    filePath && info
+      ? buildFileUrl(
+          fileServerBase,
+          filePath.vfs_id,
+          filePath.path,
+          fileVersion(info),
+        )
+      : "";
   const [error, setError] = useState<string | null>(null);
   const [autoMode, setAutoMode] = useState<ViewerMode | null>(null);
 

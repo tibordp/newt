@@ -666,6 +666,8 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | `application/pdf` | PDF |
 | Everything else | Hex |
 
+A `.ts` file counts as TypeScript (`application/typescript`) rather than an MPEG transport stream; for a video, pick Video from the View menu.
+
 ### Mode Toggle
 
 The status bar includes mode toggle buttons on the right side: the auto-detected mode and its counterpart. Pressing **F3** toggles between the two. The counterpart is Hex for most modes (auto=Image, current=Image → F3 → Hex → F3 → Image), Text for Hex, and Text — the source — for Table and Markdown.

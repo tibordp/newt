@@ -71,15 +71,24 @@ export function detectAutoMode(mime: string | null): ViewerMode {
   return "hex";
 }
 
+/// A file-server URL for `path`. `version` (see `fileVersion`) changes
+/// whenever the file does: the page reuses an image it has loaded by URL
+/// alone, whatever the response's cache headers say, and a viewer in the
+/// main window lives as long as the session.
 export function buildFileUrl(
   fileServerBase: string,
   vfsId: number,
   path: string,
+  version?: string,
 ): string {
   const url = new URL(`${fileServerBase}/${vfsId}`);
   url.searchParams.set("path", path);
+  if (version) url.searchParams.set("v", version);
   return url.toString();
 }
+
+export const fileVersion = (info: { modified: number | null; size: number }) =>
+  `${info.modified ?? ""}-${info.size}`;
 
 export const CHUNK_SIZE = 128 * 1024;
 export const HEX_BYTES_PER_ROW = 16;

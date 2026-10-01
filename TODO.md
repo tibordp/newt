@@ -47,6 +47,7 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiti
 
 ## Viewer and editor follow-ups
 
+- File associations in preferences: map extensions (or glob patterns) to a viewer mode and an editor language, overriding the MIME guess. The `.ts` special case in `guess_mime_type` (`libs/newt-common/src/vfs/file.rs`) becomes a shipped default; `.mts` (TypeScript module or AVCHD video) is the next obvious one.
 - Alternate view (Alt+F3, reserved): F3, but always opening in text/hex whatever the file's type. Quick View's Mod+Shift+F3 is provisional.
 - Editor (F4) is UTF-8 only. Reuse the viewer's encoding catalogue and sniffer (`viewer/encoding.rs`) on open, re-encode on save with the same encoding, and give the editor its own Encoding menu.
 - Prev/next file navigation from the viewer window (`viewer_next_file`/`viewer_prev_file`, default `n`/`p`, arrows navigating at fit zoom in image mode). The keybinding side is ready (viewer commands live in the central registry); what remains is the session side — ask MainWindowState for the pane-order neighbor of the same class and re-target the window, generic across viewer modes.
@@ -104,5 +105,6 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 ## Major new features (groom/write design docs first)
 
 - Batch rename (probably with enrichers preview)
+- Quick Open (VS Code's Ctrl+P): fuzzy-find files under the current directory, as a lighter alternative to the search VFS — matches stream in live as the walk proceeds, and choosing one jumps to it. Wants a breadth-first mode for the walker (`libs/newt-common/src/vfs/walk.rs` is depth-first only) so near files surface first.
 - Compare & synchronize directories
 - Custom styling / theming

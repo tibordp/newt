@@ -14,6 +14,7 @@ import type {
   RuntimeState,
   VfsPath,
   TableDelimiter,
+  ViewerMode,
   ViewerState,
 } from "../../src/lib/bindings";
 import { scenes } from "./registry";
@@ -200,8 +201,11 @@ const handlers: Record<string, (args: any) => unknown> = {
     void publish();
     return null;
   },
-  // The viewer proposes its auto-detected mode on load; the scene's wins.
-  set_viewer_mode: () => {
+  // The viewer pushes its auto-detected mode on load, and shows it until
+  // the state echoes it back, as Rust's does; `settled` then applies the
+  // scene's mode.
+  set_viewer_mode: ({ mode }: { mode: ViewerMode }) => {
+    (state as ViewerState).mode = mode;
     void publish();
     return null;
   },
@@ -225,7 +229,8 @@ const handlers: Record<string, (args: any) => unknown> = {
     void publish();
     return null;
   },
-  set_preview_mode: () => {
+  set_preview_mode: ({ mode }: { mode: ViewerMode }) => {
+    (state as MainWindowState).preview.mode = mode;
     void publish();
     return null;
   },
@@ -298,10 +303,33 @@ if (scene.window === "viewer") {
 
 const frame = () => new Promise((r) => requestAnimationFrame(r));
 
-/// Resolves once the app has nothing left to load: state delivered, no IPC
-/// in flight, fonts and images loaded, the window's ready selectors present
-/// — and still so after two frames, so follow-up requests are caught.
+/// The viewer whose mode the scene names: the viewer window's own, or Quick
+/// View's.
+const sceneViewer = (s: typeof state): ViewerState | null =>
+  scene.window === "viewer"
+    ? (s as ViewerState)
+    : scene.window === "main"
+      ? (s as MainWindowState).preview
+      : null;
+
+/// Resolves once the app has nothing left to load (see `idle`). A scene
+/// whose viewer mode isn't the detected one gets it then, the way a user's
+/// switch would arrive, and settles again.
 async function settled(): Promise<void> {
+  await quiet();
+  const viewer = sceneViewer(state);
+  const mode = sceneViewer(scene.state)?.mode;
+  if (viewer && mode && viewer.mode !== mode) {
+    viewer.mode = mode;
+    await publish();
+    await quiet();
+  }
+}
+
+/// State delivered, no IPC in flight, fonts and images loaded, the
+/// window's ready selectors present — and still so after two frames, so
+/// follow-up requests are caught.
+async function quiet(): Promise<void> {
   const idle = () =>
     published &&
     inFlight === 0 &&
