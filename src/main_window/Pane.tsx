@@ -219,8 +219,14 @@ function annotationsEqual(
 /// Whether a press here drags files rather than starting a drag
 /// rectangle: anywhere in the name cell (`stem` when the extension has a
 /// column of its own).
+/// The name cell of a draggable row; `..` can't be dragged, so its name
+/// cell starts a drag rectangle like the rest of the row.
 function isDndHandle(target: HTMLElement): boolean {
-  return target.closest('[data-column="name"], [data-column="stem"]') !== null;
+  const cell = target.closest('[data-column="name"], [data-column="stem"]');
+  return (
+    cell !== null &&
+    cell.closest<HTMLElement>("li[data-name]")?.dataset.name !== ".."
+  );
 }
 
 type FileRowProps = {
@@ -1203,7 +1209,7 @@ function PaneInner(
       if (e.button !== 0) return;
       if (!isDndHandle(e.target as HTMLElement)) return;
       const fileName = e.currentTarget.dataset.name;
-      if (!fileName || fileName === "..") return;
+      if (!fileName) return;
 
       if (!e.shiftKey) {
         safeSilent(commands.focus(paneHandle, fileName));
