@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { DropdownMenu } from "../lib/menus";
 
 import { commands } from "../lib/bindings";
 import type { IssueAction, OperationState } from "../lib/bindings";

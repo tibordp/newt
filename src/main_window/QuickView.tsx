@@ -1,4 +1,5 @@
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { DropdownMenu } from "../lib/menus";
+import { ownsEvent } from "../lib/events";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -32,6 +33,9 @@ const MODIFIERS = new Set(["Meta", "Control", "Shift", "Alt", "AltGraph"]);
 /// list and is replayed there. A replayed event has no default action, so
 /// if it lands in a text field (quick search) its editing is done here.
 function forwardKey(e: React.KeyboardEvent, root: HTMLElement) {
+  // A viewer's context menu is a portal: its keys arrive here too, and
+  // are the menu's.
+  if (!ownsEvent(root, e)) return;
   const key = e.nativeEvent;
   // A modifier alone does nothing, and moving focus for it would drop the
   // preview's text selection before the chord (the copy shortcut) arrives.

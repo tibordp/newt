@@ -53,9 +53,14 @@ Focus management is critical — broken focus means the user has to reach for th
 
 - **Dialog open**: Always auto-focus the most likely control (e.g. the text input in a rename dialog, the confirm button in a confirmation dialog). Use `autoFocus` or a ref-based `.focus()` in `useEffect`.
 - **Dialog close**: Focus **must** return to the active pane/terminal — never let it drop to `<body>`. Dialogs pass `onCloseAutoFocus={preventAutoFocus}` so Radix doesn't restore focus to a stale element; the pane and terminal focus effects depend on `modalOpen`, so when the Rust `modal` clears they take focus back themselves. A dialog rendered through `ModalRouter` gets this for free; one rendered elsewhere must prevent Radix's auto-focus the same way.
-- **Menu close**: Context menus and dropdowns aren't modal state, so they restore focus in their own `onCloseAutoFocus` (`refocusPane` in `Pane.tsx`). A menu on a pane that doesn't hold focus dispatches `REFOCUS_EVENT`, which the active pane or terminal answers by focusing itself.
+- **Menu close**: Context menus and dropdowns aren't modal state, so they restore focus themselves. Import them from `src/lib/menus.tsx` (ESLint rejects importing Radix's directly): its `Content` dispatches `REFOCUS_EVENT` on close by default, which the active pane or terminal answers by focusing itself. Pass `onCloseAutoFocus` only to send focus somewhere more specific (`refocusPane` in `Pane.tsx`, a viewer's own content) — and then it must actually focus something; `preventDefault()` alone leaves focus on `<body>`.
+- **Backstops**: `useFocusWatchdog` (MainWindow) hands focus that lands on `<body>` back to its owner and warns in development builds — a warning means a code path above is missing. A mousedown in the pane Rust holds as focused re-takes DOM focus, so a lost focus is always recoverable with a click.
 - **Between panes**: Tab switches panes. The active pane is tracked in `DisplayOptions.active_pane` (Rust state), not in React focus state.
 - **Pane ↔ Terminal**: Focus ownership is tracked in `DisplayOptions.panes_focused`. Clicking a terminal or pressing the toggle shortcut updates this in Rust, and the frontend follows.
+
+### Footgun: Events from portals
+
+React bubbles an event up the **component** tree it was rendered from, not the page's: a menu, popover or dialog rendered in a portal lives elsewhere in the page, but its keydowns and mousedowns still reach the handlers of the component that rendered it. A capture or bubble handler on a container (`onKeyDownCapture`, `onMouseDownCapture`, …) therefore hears its overlays' events too. Before acting on one — moving focus, forwarding a key — check `ownsEvent(root, e)` from `src/lib/events.ts`. Getting this wrong makes the container and the overlay's focus trap pull focus back and forth until the stack overflows.
 
 ### Footgun: Window-targeted events
 

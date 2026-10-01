@@ -109,6 +109,14 @@ pub async fn cmd_create_terminal(
     Ok(())
 }
 
+/// The clipboard's text, for the terminal's Paste menu item: reading it
+/// through the webview can prompt for permission.
+#[tauri::command]
+#[specta::specta]
+pub fn read_clipboard_text(ctx: MainWindowContext) -> Result<String, Error> {
+    Ok(ctx.clipboard().get_text()?)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn close_terminal(ctx: MainWindowContext, handle: TerminalHandle) -> Result<(), Error> {

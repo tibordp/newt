@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import * as CM from "@radix-ui/react-context-menu";
+import { ContextMenu as CM } from "../lib/menus";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import styles from "./Viewer.module.scss";

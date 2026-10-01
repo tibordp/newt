@@ -1,4 +1,5 @@
-import { useEffect, useRef, useContext } from "react";
+import { useEffect, useRef, useContext, useState } from "react";
+import { ContextMenu as CM } from "../lib/menus";
 import { Terminal as XTermJSTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import {
@@ -12,6 +13,7 @@ import styles from "./Terminal.module.scss";
 import type { ITheme } from "@xterm/xterm";
 import { commands } from "../lib/bindings";
 import { REFOCUS_EVENT } from "./types";
+import { TerminalMenuContent } from "./TerminalMenus";
 
 const lightTheme: ITheme = {
   background: "#ffffff",
@@ -74,13 +76,16 @@ export default function Terminal({
   visible,
   modalOpen,
   defunct,
+  maximized,
 }: {
   handle: number;
   active: boolean;
   visible: boolean;
   modalOpen: boolean;
   defunct: boolean;
+  maximized: boolean;
 }) {
+  const [hasSelection, setHasSelection] = useState(false);
   const terminalRef = useRef<XTermJSTerminal>(null);
   const fitAddonRef = useRef<FitAddon>(null);
   const visibleRef = useRef(visible);
@@ -234,13 +239,47 @@ export default function Terminal({
   }, [active, modalOpen]);
 
   return (
-    <div className={styles.container}>
-      <div
-        className={styles.terminal}
-        ref={ref}
-        tabIndex={-1}
-        onFocus={() => safeSilent(commands.terminalFocus(handle))}
+    <CM.Root
+      onOpenChange={(open) => {
+        if (open) setHasSelection(!!terminalRef.current?.hasSelection());
+      }}
+    >
+      <CM.Trigger
+        asChild
+        onContextMenu={(e) => {
+          // A program reporting the mouse (tmux, vim with mouse=a) gets the
+          // right-click; Shift+right-click reaches the menu regardless, as
+          // Shift+drag selects regardless. Preventing the default here also
+          // keeps Radix from opening.
+          const tracking = terminalRef.current?.modes.mouseTrackingMode;
+          if (tracking && tracking !== "none" && !e.shiftKey)
+            e.preventDefault();
+        }}
+      >
+        <div className={styles.container}>
+          <div
+            className={styles.terminal}
+            ref={ref}
+            tabIndex={-1}
+            onFocus={() => safeSilent(commands.terminalFocus(handle))}
+          />
+        </div>
+      </CM.Trigger>
+      <TerminalMenuContent
+        handle={handle}
+        hasSelection={hasSelection}
+        maximized={maximized}
+        onCopy={() => {
+          const sel = terminalRef.current?.getSelection();
+          if (sel) navigator.clipboard.writeText(sel);
+        }}
+        onPaste={async () => {
+          const text = await commands.readClipboardText();
+          if (text.status === "ok") terminalRef.current?.paste(text.data);
+        }}
+        onSelectAll={() => terminalRef.current?.selectAll()}
+        onClear={() => terminalRef.current?.clear()}
       />
-    </div>
+    </CM.Root>
   );
 }

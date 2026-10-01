@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import * as CM from "@radix-ui/react-context-menu";
-import * as DM from "@radix-ui/react-dropdown-menu";
+import { ContextMenu as CM } from "../lib/menus";
+import { DropdownMenu as DM } from "../lib/menus";
 import { message } from "@tauri-apps/plugin-dialog";
 
 import { useFormatBytes } from "../lib/size";

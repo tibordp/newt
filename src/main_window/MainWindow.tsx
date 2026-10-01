@@ -53,6 +53,7 @@ import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
 import { useRuntimeState } from "../lib/runtimeState";
 import CommandBar from "./CommandBar";
+import { useFocusWatchdog } from "./focusWatchdog";
 
 enablePatches();
 
@@ -179,6 +180,8 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.density = density ?? "comfortable";
   }, [density]);
+
+  useFocusWatchdog();
 
   // While another window has the keyboard, focus marks (the cursor, the
   // active pane's dot, the terminal tab's line) turn grey.

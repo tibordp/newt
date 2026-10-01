@@ -8,7 +8,7 @@ import React, {
 
 import { useFormatBytes } from "../lib/size";
 
-import * as CM from "@radix-ui/react-context-menu";
+import { ContextMenu as CM } from "../lib/menus";
 
 import { safe } from "../lib/ipc";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";

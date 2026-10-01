@@ -282,6 +282,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             terminal::terminal_resize,
             terminal::terminal_focus,
             terminal::close_terminal,
+            terminal::read_clipboard_text,
             terminal::activate_terminal,
             // Drag & drop
             dnd::start_dnd,

@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { DropdownMenu } from "../../lib/menus";
 import { commands, type HistoryEntryView } from "../../lib/bindings";
 import { safe } from "../../lib/ipc";
 import { useSuppressInitialPointer } from "../../lib/useSuppressInitialPointer";

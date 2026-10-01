@@ -9,8 +9,9 @@ import {
   memo,
   Fragment,
 } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import * as ContextMenu from "@radix-ui/react-context-menu";
+import { DropdownMenu } from "../lib/menus";
+import { ContextMenu } from "../lib/menus";
+import { ownsEvent } from "../lib/events";
 import iconMapping from "../assets/mapping.json";
 import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result } from "../lib/bindings";
@@ -50,7 +51,7 @@ import { useRuntimeState } from "../lib/runtimeState";
 import {
   FileContextMenuContent,
   PaneContextMenuContent,
-  BreadcrumbContextMenuContent,
+  LocationContextMenuContent,
   ColumnsContextMenuContent,
   type FollowKind,
 } from "./ContextMenu";
@@ -103,7 +104,8 @@ function PathBreadcrumbs(props: {
                 {crumb.label}
               </a>
             </ContextMenu.Trigger>
-            <BreadcrumbContextMenuContent
+            <LocationContextMenuContent
+              paneHandle={paneHandle}
               displayPath={pathUpTo(i)}
               onCloseAutoFocus={onMenuCloseAutoFocus}
             />
@@ -1882,6 +1884,14 @@ function PaneInner(
       aria-label={paneHandle === 0 ? "Left pane" : "Right pane"}
       data-pane-handle={paneHandle}
       onClick={() => guarded(() => commands.focus(paneHandle, null))}
+      onMouseDownCapture={(e) => {
+        // A click on the pane that has focus re-takes it. Rust already
+        // holds it as focused, so no state change would; this recovers
+        // with the mouse if the DOM ever loses track.
+        if (active && !modalOpen && ownsEvent(paneRef.current, e)) {
+          focusSelf();
+        }
+      }}
       onMouseDown={(e) => {
         if (e.button === 3) {
           e.preventDefault();
@@ -1910,102 +1920,113 @@ function PaneInner(
       />
       <div className={styles.headerArea}>
         {preferences?.settings.appearance?.show_pane_header !== false ? (
-          <div
-            className={`${styles.header} ${active ? styles.headerActive : ""}`}
-          >
-            <span className={styles.focusDot} aria-hidden />
-            {swappable && (
-              <button
-                type="button"
-                className={styles.swapButton}
-                tabIndex={-1}
-                aria-label={
-                  paneHandle === 0 ? "Show right pane" : "Show left pane"
-                }
-                title={
-                  paneHandle === 0
-                    ? "Show right pane (Tab)"
-                    : "Show left pane (Tab)"
-                }
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  safe(commands.focus(1 - paneHandle, null));
-                }}
+          <ContextMenu.Root>
+            <ContextMenu.Trigger asChild>
+              <div
+                className={`${styles.header} ${active ? styles.headerActive : ""}`}
               >
-                <IconPaneSide side={paneHandle} />
-              </button>
-            )}
-            <VfsSelector
-              vfsDisplayName={vfs_display_name}
-              vfsTargets={vfsTargets}
+                <span className={styles.focusDot} aria-hidden />
+                {swappable && (
+                  <button
+                    type="button"
+                    className={styles.swapButton}
+                    tabIndex={-1}
+                    aria-label={
+                      paneHandle === 0 ? "Show right pane" : "Show left pane"
+                    }
+                    title={
+                      paneHandle === 0
+                        ? "Show right pane (Tab)"
+                        : "Show left pane (Tab)"
+                    }
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      safe(commands.focus(1 - paneHandle, null));
+                    }}
+                  >
+                    <IconPaneSide side={paneHandle} />
+                  </button>
+                )}
+                <VfsSelector
+                  vfsDisplayName={vfs_display_name}
+                  vfsTargets={vfsTargets}
+                  paneHandle={paneHandle}
+                  activeVfsId={path.vfs_id}
+                  activePath={path.path}
+                  open={isVfsSelectorOpen}
+                />
+                <div
+                  className={styles.headerPath}
+                  role="navigation"
+                  aria-label="Path"
+                  title={props.display_path}
+                >
+                  <PathBreadcrumbs
+                    breadcrumbs={breadcrumbs}
+                    paneHandle={paneHandle}
+                    displayPath={props.display_path}
+                    onMenuCloseAutoFocus={refocusPane}
+                  />
+                </div>
+                {(context_badges ?? []).map((badge, i) => (
+                  <GitBranchBadge key={i} badge={badge} />
+                ))}
+                {fs_stats?.available_bytes !== undefined && (
+                  <button
+                    type="button"
+                    className={styles.freeSpace}
+                    tabIndex={-1}
+                    title="Volume properties"
+                    onMouseDown={(e) => {
+                      // Don't let the pane's click handler steal focus.
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      commands.dialog("root_properties", paneHandle);
+                    }}
+                  >
+                    {formatBytes(fs_stats.available_bytes)} free
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={styles.maximizeButton}
+                  tabIndex={-1}
+                  aria-label={
+                    maximized ? "Restore split layout" : "Maximize pane"
+                  }
+                  title={shortcuts.label(
+                    maximized ? "Restore split layout" : "Maximize pane",
+                    "toggle_maximized",
+                  )}
+                  onMouseDown={(e) => {
+                    // Keep focus in the file list, and out of the pane's click
+                    // handler.
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    // What maximizes is whatever has focus, so claim it first.
+                    await safe(commands.focus(paneHandle, null));
+                    safe(commands.cmdToggleMaximized(paneHandle));
+                  }}
+                >
+                  {maximized ? <IconRestore /> : <IconMaximize />}
+                </button>
+              </div>
+            </ContextMenu.Trigger>
+            <LocationContextMenuContent
               paneHandle={paneHandle}
-              activeVfsId={path.vfs_id}
-              activePath={path.path}
-              open={isVfsSelectorOpen}
+              displayPath={props.display_path}
+              onCloseAutoFocus={refocusPane}
             />
-            <div
-              className={styles.headerPath}
-              role="navigation"
-              aria-label="Path"
-              title={props.display_path}
-            >
-              <PathBreadcrumbs
-                breadcrumbs={breadcrumbs}
-                paneHandle={paneHandle}
-                displayPath={props.display_path}
-                onMenuCloseAutoFocus={refocusPane}
-              />
-            </div>
-            {(context_badges ?? []).map((badge, i) => (
-              <GitBranchBadge key={i} badge={badge} />
-            ))}
-            {fs_stats?.available_bytes !== undefined && (
-              <button
-                type="button"
-                className={styles.freeSpace}
-                tabIndex={-1}
-                title="Volume properties"
-                onMouseDown={(e) => {
-                  // Don't let the pane's click handler steal focus.
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  commands.dialog("root_properties", paneHandle);
-                }}
-              >
-                {formatBytes(fs_stats.available_bytes)} free
-              </button>
-            )}
-            <button
-              type="button"
-              className={styles.maximizeButton}
-              tabIndex={-1}
-              aria-label={maximized ? "Restore split layout" : "Maximize pane"}
-              title={shortcuts.label(
-                maximized ? "Restore split layout" : "Maximize pane",
-                "toggle_maximized",
-              )}
-              onMouseDown={(e) => {
-                // Keep focus in the file list, and out of the pane's click
-                // handler.
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onClick={async (e) => {
-                e.stopPropagation();
-                // What maximizes is whatever has focus, so claim it first.
-                await safe(commands.focus(paneHandle, null));
-                safe(commands.cmdToggleMaximized(paneHandle));
-              }}
-            >
-              {maximized ? <IconRestore /> : <IconMaximize />}
-            </button>
-          </div>
+          </ContextMenu.Root>
         ) : (
           <div className={styles.hiddenAnchor} aria-hidden>
             <VfsSelector

@@ -23,5 +23,25 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Menus come from src/lib/menus.tsx, whose Content returns focus to its
+    // owner when a menu closes.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/menus.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "@radix-ui/react-context-menu",
+            "@radix-ui/react-dropdown-menu",
+          ].map((name) => ({
+            name,
+            message: "Import menus from src/lib/menus.tsx instead.",
+          })),
+        },
+      ],
+    },
+  },
   prettierConfig,
 );

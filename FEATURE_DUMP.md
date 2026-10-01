@@ -339,11 +339,19 @@ The Follow row appears only when it would do something: labelled "Reveal Source"
 
 **Windows shell context menu** (Windows host, host-local files): the trailing "Windows Menu" item — or Shift+right-click to skip our menu entirely — pops the classic `IContextMenu` shell menu (not the Windows 11 abbreviated one) for the effective selection; on empty space (or the `..` row) it targets the current directory itself. Implementation (`main_window/shell_menu.rs`, `shell_context_menu` command): runs synchronously on the main thread (`TrackPopupMenuEx` pumps its own modal loop), `SHParseDisplayName` on de-verbatimed paths (`launch_cwd`) → parent `IShellFolder::GetUIObjectOf` → `QueryContextMenu` → `TrackPopupMenuEx(TPM_RETURNCMD)` → `InvokeCommand`, with the Tauri window temporarily subclassed to forward `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MEASUREITEM`/`WM_MENUCHAR` to `IContextMenu2/3` so dynamic submenus ("Open with", "Send to") populate. User-cancelled verbs (`ERROR_CANCELLED`) are not errors; shell-side mutations (delete, rename, …) reach the pane through the directory watcher. In **elevated sessions** the menu is still built and invoked by the non-elevated UI process — items the desktop user can't read (e.g. `C:\Windows\System32\config\*`) fail at `SHParseDisplayName` with an error, and any verb that did run would run non-elevated. Deliberate: an agent-side menu (feasible for the UAC transport, which shares the interactive desktop) would invoke *every* verb elevated — "Open"/"Open with" silently spawning admin-token processes — which is why Explorer refuses to run elevated too. Power users who need shell verbs on admin-only files can just run `newt.exe` itself elevated.
 
-**Right-click a breadcrumb** in the path bar:
+**Right-click the path bar** — a breadcrumb, or anywhere else in the bar:
 
-| Item | Description |
-|------|-------------|
-| Copy Path | Copies the display path up to that breadcrumb segment |
+| Item | Shortcut |
+|------|----------|
+| Copy Path | (the display path up to that breadcrumb, or the folder's own off the breadcrumbs) |
+| Go To… | Mod+L |
+| Hot Paths… | Mod+P |
+| Add to Bookmarks | Mod+B |
+| New Terminal Here | Ctrl+Shift+~ |
+| Directory Properties… | |
+| Refresh | |
+
+All but Copy Path are the pane's ordinary commands, acting on the pane whose bar was clicked.
 
 ### Drag and Drop
 
@@ -732,7 +740,7 @@ Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks) 
 
 - **Safety**: the HTML is sanitized with DOMPurify (inline `style` attributes and `<style>`/`<form>` removed) and the sanitized DOM is inserted as is — never serialized and parsed again — into a shadow root, which keeps the document's styles and ids from touching the viewer's own; the viewer's CSP forbids inline scripts and inline event handlers besides. The CSP also keeps remote content out: images load only from the file itself (relative paths, served through the viewer's file server — so they work in remote sessions and archives too) or `data:` URIs, so README badges and tracking pixels don't load.
 - **Links**: `http(s):` and `mailto:` links open in the system browser; a relative link opens that file in the same viewer window (in whatever mode suits it); `#anchor` links scroll to the heading with GitHub's anchor for it. Links with any other scheme do nothing — the app's URL opener refuses anything but web and mail links, since it would otherwise launch local files and programs.
-- The document scrolls with the arrow and page keys, and the viewer's keys (Escape, F3, …) work as in any mode; text selection and Mod+C work as in a web page. It follows theme changes live.
+- The document scrolls with the arrow and page keys, and the viewer's keys (Escape, F3, …) work as in any mode; text selection and Mod+C work as in a web page. Right-clicking the document offers Copy (with a selection) and Select All, in the viewer window and in Quick View alike. It follows theme changes live.
 
 ### Hex Mode
 
@@ -946,6 +954,7 @@ Like the viewer, editor windows are **pre-warmed** — a hidden window with Mona
 - **"×" button** on each tab: Closes that terminal.
 - **Tab click**: Activates that terminal (switches visible terminal).
 - **Maximize button** (right end of the tab bar): Focuses the terminal and maximizes the panel, or restores the split layout when it is maximized — see "Maximized Layout".
+- **Context menus**: every terminal menu ends with New Terminal, Maximize Terminal (Restore Split Layout when maximized) and Hide Terminal Panel. Right-clicking a tab adds Close Terminal and Close Other Terminals for that tab; right-clicking inside a terminal adds Copy (with a selection), Paste, Select All, Clear (the scrollback, keeping the prompt) and Close Terminal. Paste reads the clipboard through the host, so the webview never asks for clipboard permission, and goes in as a bracketed paste where the shell asked for one. While the program in the terminal is reporting the mouse (tmux, vim with `mouse=a`, htop), a right-click goes to the program instead; Shift+right-click opens the menu regardless, as Shift+drag selects text regardless. Right-clicking the empty part of the tab bar offers just the panel items.
 
 A hidden panel — toggled off, or behind a maximized pane — leaves the shell's window size as it was, so full-screen programs aren't squeezed to a single row while out of view.
 
@@ -1746,7 +1755,7 @@ Shows clickable buttons for frequently used commands, each displaying the comman
 
 Command Palette | Rename | View | Edit | Copy | Move | Create Directory | Delete | User Commands
 
-Clicking a button executes the command.
+Clicking a button executes the command. Right-clicking the bar offers Hide Command Bar, which turns the preference off; Settings turns it back on.
 
 ---
 

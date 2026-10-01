@@ -720,6 +720,18 @@ async closeTerminal(handle: TerminalHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The clipboard's text, for the terminal's Paste menu item: reading it
+ * through the webview can prompt for permission.
+ */
+async readClipboardText() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_clipboard_text") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async activateTerminal(handle: TerminalHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("activate_terminal", { handle }) };

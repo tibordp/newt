@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import * as CM from "@radix-ui/react-context-menu";
+import { ContextMenu as CM } from "../lib/menus";
 
 import { commands as ipc, type MetadataTraits } from "../lib/bindings";
 import { safe } from "../lib/ipc";
@@ -17,13 +17,19 @@ import {
 } from "./columns";
 import styles from "./Menu.module.scss";
 
-function Shortcut({ commands, id }: { commands?: CommandInfo[]; id: string }) {
+export function Shortcut({
+  commands,
+  id,
+}: {
+  commands?: CommandInfo[];
+  id: string;
+}) {
   const display = commands?.find((c) => c.id === id)?.shortcut_display;
   if (!display || display.length === 0) return null;
   return <span className={styles.shortcut}>{display.join("+")}</span>;
 }
 
-function useCommands() {
+export function useCommands() {
   const preferences = usePreferences();
   return useMemo(() => preferences?.commands, [preferences?.commands]);
 }
@@ -409,15 +415,21 @@ export function ColumnsContextMenuContent({
   );
 }
 
-type BreadcrumbContextMenuProps = {
+type LocationContextMenuProps = {
+  paneHandle: number;
+  /// What Copy Path copies: the right-clicked breadcrumb's path, or the
+  /// pane's own.
   displayPath: string;
   onCloseAutoFocus?: (e: Event) => void;
 };
 
-export function BreadcrumbContextMenuContent({
+/// The location bar's menu: the folder the pane is in.
+export function LocationContextMenuContent({
+  paneHandle,
   displayPath,
   onCloseAutoFocus,
-}: BreadcrumbContextMenuProps) {
+}: LocationContextMenuProps) {
+  const commands = useCommands();
   return (
     <CM.Portal>
       <CM.Content
@@ -430,6 +442,50 @@ export function BreadcrumbContextMenuContent({
           onSelect={() => navigator.clipboard.writeText(displayPath)}
         >
           Copy Path
+        </CM.Item>
+        <CM.Separator className={styles.separator} />
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdNavigate(paneHandle))}
+        >
+          Go To…
+          <Shortcut commands={commands} id="navigate" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdHotPaths(paneHandle))}
+        >
+          Hot Paths…
+          <Shortcut commands={commands} id="hot_paths" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdAddBookmark(paneHandle))}
+        >
+          Add to Bookmarks
+          <Shortcut commands={commands} id="add_bookmark" />
+        </CM.Item>
+        <CM.Separator className={styles.separator} />
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdCreateTerminal(paneHandle))}
+        >
+          New Terminal Here
+          <Shortcut commands={commands} id="create_terminal" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdDirectoryProperties(paneHandle))}
+        >
+          Directory Properties…
+          <Shortcut commands={commands} id="directory_properties" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdRefresh(paneHandle))}
+        >
+          Refresh
+          <Shortcut commands={commands} id="refresh" />
         </CM.Item>
       </CM.Content>
     </CM.Portal>
