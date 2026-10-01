@@ -46,7 +46,8 @@ pub fn choose(_window: &tauri::WebviewWindow, path: PathBuf) -> Result<(), Strin
         .map_err(|e| e.to_string())?;
     let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let fds = gio::UnixFDList::new();
-    let index = fds.append(&file).map_err(|e| e.to_string())?;
+    // The list keeps a duplicate of the descriptor; ours closes on drop.
+    let index = fds.append(file).map_err(|e| e.to_string())?;
     let options = gio::glib::VariantDict::new(None);
     options.insert_value("ask", &true.to_variant());
     let parameters = gio::glib::Variant::tuple_from_iter([
