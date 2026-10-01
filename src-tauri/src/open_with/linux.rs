@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use gio::glib::translate::{IntoGlib, ToGlibPtr, from_glib_full};
 use gio::prelude::*;
 
 use super::OpenWithApp;
@@ -57,19 +58,38 @@ pub fn choose(_window: &tauri::WebviewWindow, path: PathBuf) -> Result<(), Strin
         gio::glib::variant::Handle(index).to_variant(),
         options.end(),
     ]);
-    connection
-        .call_with_unix_fd_list_sync(
-            Some("org.freedesktop.portal.Desktop"),
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.OpenURI",
-            "OpenFile",
-            Some(&parameters),
-            Some(gio::glib::VariantTy::new("(o)").unwrap()),
-            gio::DBusCallFlags::NONE,
+    // gio 0.18's `call_with_unix_fd_list_sync` wraps the reply's fd list as
+    // if it were never NULL, but GLib leaves it NULL for a reply without
+    // descriptors — OpenFile's — and the binding panics. Later gio returns
+    // it as an `Option` (0.22 does); until the GTK stack Tauri pins moves
+    // past 0.18, call GLib directly and decline the reply's descriptors.
+    let reply_type = gio::glib::VariantTy::new("(o)").unwrap();
+    // SAFETY: every pointer comes from a live value borrowed for the call;
+    // a NULL `out_fd_list` tells GLib not to return descriptors.
+    let error = unsafe {
+        let mut error = std::ptr::null_mut();
+        let reply = gio::ffi::g_dbus_connection_call_with_unix_fd_list_sync(
+            connection.to_glib_none().0,
+            "org.freedesktop.portal.Desktop".to_glib_none().0,
+            "/org/freedesktop/portal/desktop".to_glib_none().0,
+            "org.freedesktop.portal.OpenURI".to_glib_none().0,
+            "OpenFile".to_glib_none().0,
+            parameters.to_glib_none().0,
+            reply_type.to_glib_none().0,
+            gio::DBusCallFlags::NONE.into_glib(),
             -1,
-            Some(&fds),
-            None::<&gio::Cancellable>,
-        )
-        .map(drop)
-        .map_err(|e| format!("no app chooser available (xdg-desktop-portal): {e}"))
+            fds.to_glib_none().0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut error,
+        );
+        if error.is_null() {
+            drop(from_glib_full::<_, gio::glib::Variant>(reply));
+            return Ok(());
+        }
+        from_glib_full::<_, gio::glib::Error>(error)
+    };
+    Err(format!(
+        "no app chooser available (xdg-desktop-portal): {error}"
+    ))
 }
