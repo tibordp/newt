@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import {
   FileView,
   ColumnDef,
@@ -55,21 +55,39 @@ function FileName({
 
   const { ch, color } = fileIconGlyph(name);
 
-  const nameElement = (
-    <>
-      {(!focused || filter == null || filterMode === "filter") && (
-        <>{displayName}</>
-      )}
-      {focused && filter != null && filterMode !== "filter" && (
-        <>
-          <span className={styles.filterHead}>
-            {displayName.substr(0, filter.length)}
-          </span>
-          <span>{displayName.substr(filter.length)}</span>
-        </>
-      )}
-    </>
-  );
+  // Quick search draws a caret after the typed prefix, positioned from
+  // the rendered text so the name stays one text node.
+  const quickSearch = focused && filter != null && filterMode !== "filter";
+  const partRef = useRef<HTMLDivElement>(null);
+  const [caret, setCaret] = useState<{
+    left: number;
+    top: number;
+    height: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    const part = partRef.current;
+    const text = part?.firstChild;
+    const box = part?.parentElement;
+    if (!quickSearch || !box || !(text instanceof Text) || !text.length) {
+      setCaret(null);
+      return;
+    }
+    // A collapsed range measures as an empty rect in WebKit, so measure a
+    // character instead: the one before the caret (its right edge), or
+    // the first (its left edge) with nothing typed.
+    const at = Math.min(filter!.length, text.length);
+    const range = document.createRange();
+    range.setStart(text, Math.max(at - 1, 0));
+    range.setEnd(text, Math.max(at, 1));
+    const rects = range.getClientRects();
+    const glyph = rects[rects.length - 1];
+    const origin = box.getBoundingClientRect();
+    setCaret({
+      left: (at > 0 ? glyph.right : glyph.left) - origin.left,
+      top: glyph.top - origin.top,
+      height: glyph.height,
+    });
+  }, [quickSearch, filter, displayName]);
 
   const iconElement = is_dir ? (
     <div className="file-icon folder" aria-hidden />
@@ -92,12 +110,22 @@ function FileName({
       } ${git ? `git-${git}` : ""}`}
     >
       {iconElement}
-      <div className={focused ? "filename-part focused" : "filename-part"}>
-        {nameElement}
+      <div
+        ref={partRef}
+        className={focused ? "filename-part focused" : "filename-part"}
+      >
+        {displayName}
         {info.source_display && (
           <span className={styles.sourceHint}> ({info.source_display})</span>
         )}
       </div>
+      {caret && (
+        <div
+          className={styles.caret}
+          style={{ left: caret.left, top: caret.top, height: caret.height }}
+          aria-hidden
+        />
+      )}
     </div>
   );
 }

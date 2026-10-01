@@ -35,8 +35,9 @@
 .tab {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-5);
+  gap: var(--space-4);
+  // Less on the right, where the close button brings its own margin.
+  padding: 0 var(--space-2) 0 var(--space-5);
   background: none;
   border: none;
   border-right: 1px solid var(--color-separator);
@@ -76,17 +77,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
   color: var(--color-fg-muted);
   cursor: pointer;
-  font-size: 12px;
   padding: 0;
-  line-height: 1;
   opacity: 0;
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
 
   .tab:hover &,
   .tab.active & {

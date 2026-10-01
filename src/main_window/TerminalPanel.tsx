@@ -2,7 +2,7 @@ import { useId } from "react";
 import { commands } from "../lib/bindings";
 import { safeSilent } from "../lib/ipc";
 import { useCommandShortcuts } from "../lib/scopedBindings";
-import { IconMaximize, IconRestore } from "./modals/primitives";
+import { IconClose, IconMaximize, IconRestore } from "./modals/primitives";
 import Terminal from "./Terminal";
 import styles from "./TerminalPanel.module.scss";
 import type { Terminal as TerminalType } from "./types";
@@ -58,7 +58,7 @@ export default function TerminalPanel({
                   safeSilent(commands.closeTerminal(term.handle));
                 }}
               >
-                ×
+                <IconClose />
               </span>
             </button>
           ))}
