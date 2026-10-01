@@ -1,11 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { createContext, useEffect, useRef, useState } from "react";
 import { Event } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyPatches, Patch } from "immer";
 
-import type { Result } from "./bindings";
+import { commands, type Result, type VfsPath } from "./bindings";
 
 /// Settle a typed `commands.X(...)` promise into `{ ok: T } | { err: string }`.
 /// tauri-specta's generated commands return `Result<T, string>` on user
@@ -74,6 +74,45 @@ export const unwrap = async <T>(
   return r.ok;
 };
 
+/// Invoke a command taking `RawArgs` (`src-tauri/src/common.rs`): its JSON
+/// arguments and `data` travel as one raw body, a `u32` length of the JSON
+/// first.
+async function invokeRaw<T>(
+  cmd: string,
+  args: object,
+  data: Uint8Array,
+): Promise<Result<T, string>> {
+  const json = new TextEncoder().encode(JSON.stringify(args));
+  const body = new Uint8Array(4 + json.length + data.length);
+  new DataView(body.buffer).setUint32(0, json.length, true);
+  body.set(json, 4);
+  body.set(data, 4 + json.length);
+  try {
+    return { status: "ok", data: await invoke<T>(cmd, body) };
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    return { status: "error", error: e as string };
+  }
+}
+
+/// The commands that carry bytes; their generated bindings take no
+/// parameters.
+export const rawCommands = {
+  writeFile: (path: VfsPath, data: Uint8Array) =>
+    invokeRaw<null>("write_file", { path }, data),
+  terminalWrite: (handle: number, data: Uint8Array) =>
+    invokeRaw<null>("terminal_write", { handle }, data),
+  dndDragOut: (image: Uint8Array) =>
+    invokeRaw<boolean>("dnd_drag_out", {}, image),
+};
+
+/// `unwrap` for a command returning `RawBytes` (`read_file`,
+/// `read_file_range`): its result arrives as an `ArrayBuffer`.
+export const unwrapBytes = async (
+  promise: Promise<Result<unknown, string>>,
+): Promise<Uint8Array> =>
+  new Uint8Array((await unwrap(promise)) as ArrayBuffer);
+
 // Dynamic-name escape hatches. Prefer the typed wrappers above; these
 // stringly-typed shims exist for call sites that compute the command name at
 // runtime (command-palette `cmd_<id>` dispatch, context menus) where TS can't
@@ -117,11 +156,6 @@ export type ChangePayload<T> = {
   state?: T;
   patch?: Patch[];
   version: number;
-};
-
-export type TerminalData = {
-  handle: string;
-  data: number[];
 };
 
 export const TerminalData = createContext({});
@@ -225,10 +259,10 @@ export const useRemoteState = <T>(
   return state;
 };
 
-export type DataCallback = (data: number[]) => void;
+export type DataCallback = (data: Uint8Array) => void;
 
 type TerminalDataListener = {
-  messages: number[][];
+  messages: Uint8Array[];
   listener?: DataCallback;
   disconnected?: boolean;
 };
@@ -241,28 +275,26 @@ export const useTerminalData = (deps: any[] = []): any => {
   const state = useRef<TerminalDataState>({});
 
   useEffect(() => {
-    const appWindow = getCurrentWebviewWindow();
-    const listenPromise = appWindow.listen(
-      "terminal_data",
-      (event: Event<TerminalData>) => {
-        if (!(event.payload.handle in state.current)) {
-          state.current[event.payload.handle] = {
-            messages: [],
-            listener: undefined,
-          };
+    // Each message is a little-endian `u32` terminal handle, then output.
+    const channel = new Channel<unknown>((message) => {
+      const frame = message as ArrayBuffer;
+      const handle = new DataView(frame).getUint32(0, true);
+      const data = new Uint8Array(frame, 4);
+      if (!(handle in state.current)) {
+        state.current[handle] = { messages: [], listener: undefined };
+      }
+      const cur = state.current[handle];
+      if (!cur.disconnected) {
+        if (cur.listener) {
+          cur.listener(data);
+        } else {
+          cur.messages.push(data);
         }
-        const cur = state.current[event.payload.handle];
-        if (!cur.disconnected) {
-          if (cur.listener) {
-            cur.listener(event.payload.data);
-          } else {
-            cur.messages.push(event.payload.data);
-          }
-        }
-      },
-    );
+      }
+    });
+    safeSilent(commands.attachTerminalOutput(channel));
     return () => {
-      listenPromise.then((unlisten) => unlisten());
+      channel.onmessage = () => {};
     };
   }, deps);
 

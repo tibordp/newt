@@ -1,11 +1,11 @@
 /// App-frame entry for a scene: stands in for the Tauri backend with
 /// `mockIPC`, then boots the real app on the scene window's route.
 
+import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 
 import type {
-  FileChunk,
   FileDetails,
   MainWindowState,
   ResolvedPreferences,
@@ -120,6 +120,7 @@ if (scene.window === "viewer") pointAtFixture(state as ViewerState);
 if (scene.window === "main") pointAtFixture((state as MainWindowState).preview);
 
 const terminalsWritten = new Set<number>();
+let terminalOutput: Channel<ArrayBuffer> | undefined;
 
 const handlers: Record<string, (args: any) => unknown> = {
   ping: () => {
@@ -141,8 +142,9 @@ const handlers: Record<string, (args: any) => unknown> = {
     accessed: null,
     created: null,
   }),
+  // Raw responses arrive as an ArrayBuffer.
   read_file: async ({ path }: { path: VfsPath }) =>
-    Array.from(await bytesOf(path)),
+    (await bytesOf(path)).slice().buffer,
   read_file_range: async ({
     path,
     offset,
@@ -151,14 +153,7 @@ const handlers: Record<string, (args: any) => unknown> = {
     path: VfsPath;
     offset: number;
     length: number;
-  }): Promise<FileChunk> => {
-    const bytes = await bytesOf(path);
-    return {
-      data: Array.from(bytes.subarray(offset, offset + length)),
-      offset,
-      total_size: bytes.length,
-    };
-  },
+  }) => (await bytesOf(path)).slice(offset, offset + length).buffer,
   sniff_viewer_encoding: () => {
     const viewer = state as ViewerState;
     viewer.encoding.detected ??= { encoding: "UTF-8", bom_len: 0 };
@@ -221,12 +216,19 @@ const handlers: Record<string, (args: any) => unknown> = {
     reportTitle(title);
     return null;
   },
+  attach_terminal_output: ({ channel }: { channel: Channel<ArrayBuffer> }) => {
+    terminalOutput = channel;
+    return null;
+  },
   terminal_resize: ({ handle }: { handle: number }) => {
     const output = scene.window === "main" && scene.terminals?.[handle];
-    if (output && !terminalsWritten.has(handle)) {
+    if (output && terminalOutput && !terminalsWritten.has(handle)) {
       terminalsWritten.add(handle);
       const data = new TextEncoder().encode(output.replace(/\r?\n/g, "\r\n"));
-      void emit("terminal_data", { handle, data: Array.from(data) });
+      const frame = new Uint8Array(4 + data.length);
+      new DataView(frame.buffer).setUint32(0, handle, true);
+      frame.set(data, 4);
+      terminalOutput.onmessage(frame.buffer);
     }
     return null;
   },

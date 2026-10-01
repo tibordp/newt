@@ -4,8 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use log::info;
 
 use newt_common::terminal::TerminalClient;
-use tauri::Emitter;
-use tauri::WebviewWindow;
 
 use crate::common::Error;
 
@@ -16,12 +14,6 @@ use super::TerminalHandle;
 pub enum Command {
     Resize(u16, u16),
     Input(Vec<u8>),
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct TerminalData {
-    pub handle: TerminalHandle,
-    pub data: Vec<u8>,
 }
 
 pub struct Terminal {
@@ -73,15 +65,9 @@ impl Terminal {
     /// for the required ordering.
     /// `force_keep_open` holds the terminal open past exit even when
     /// `behavior.keep_terminal_open` is off; it cannot force the reverse.
-    pub fn spawn_reader(
-        &self,
-        context: MainWindowContext,
-        window: WebviewWindow,
-        force_keep_open: bool,
-    ) {
+    pub fn spawn_reader(&self, context: MainWindowContext, force_keep_open: bool) {
         Self::spawn_reader_task(
             context,
-            window,
             self.handle,
             self.terminal_client.clone(),
             force_keep_open,
@@ -90,7 +76,6 @@ impl Terminal {
 
     fn spawn_reader_task(
         context: MainWindowContext,
-        window: WebviewWindow,
         handle: TerminalHandle,
         terminal_client: Arc<dyn TerminalClient>,
         force_keep_open: bool,
@@ -98,19 +83,12 @@ impl Terminal {
         tauri::async_runtime::spawn({
             let terminal_client = terminal_client.clone();
             async move {
-                let window_clone = window.clone();
                 let reader = tauri::async_runtime::spawn({
                     let terminal_client = terminal_client.clone();
+                    let output = context.clone();
                     async move {
                         while let Some(data) = terminal_client.read(handle).await? {
-                            // `emit` goes to *every* window; terminal handles
-                            // are per-session and both start at 0, so a
-                            // broadcast lands in the other window's terminal 0.
-                            window_clone.emit_to(
-                                window_clone.label(),
-                                "terminal_data",
-                                TerminalData { handle, data },
-                            )?;
+                            output.send_terminal_output(handle, &data)?;
                         }
 
                         Ok::<_, Error>(())
@@ -148,14 +126,7 @@ impl Terminal {
                             "\r\n\x1b[90m[Process exited. Press Enter to close.]\x1b[0m".to_string()
                         }
                     };
-                    let _ = window.emit_to(
-                        window.label(),
-                        "terminal_data",
-                        TerminalData {
-                            handle,
-                            data: msg.into_bytes(),
-                        },
-                    );
+                    let _ = context.send_terminal_output(handle, msg.as_bytes());
                 }
 
                 context.with_update(|c| {

@@ -1,7 +1,7 @@
 use newt_common::operation::{OperationId, OperationRequest};
 use newt_common::vfs::VfsPath;
 
-use crate::common::Error;
+use crate::common::{Error, RawArgs};
 use crate::main_window::{DndData, DndFile, MainWindowContext, MainWindowState, PaneHandle};
 
 #[tauri::command]
@@ -121,7 +121,11 @@ pub async fn execute_dnd(
 /// image bytes).
 #[tauri::command]
 #[specta::specta]
-pub fn dnd_drag_out(ctx: MainWindowContext, image: Vec<u8>) -> Result<bool, Error> {
+pub fn dnd_drag_out(
+    ctx: MainWindowContext,
+    raw: RawArgs<serde::de::IgnoredAny>,
+) -> Result<bool, Error> {
+    let image = raw.data;
     let vfs_info = ctx.vfs_info()?;
 
     // Validate and flip to outbound under one lock so a concurrent

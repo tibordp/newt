@@ -13,7 +13,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import styles from "./Viewer.module.scss";
 import tableStyles from "./TableViewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
-import { safe, unwrap } from "../lib/ipc";
+import { safe, unwrapBytes } from "../lib/ipc";
 import {
   commands,
   type TableDelimiter,
@@ -32,7 +32,6 @@ import {
   collectBytes,
   makeDecoder,
   newlineScan,
-  type FileChunk,
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
@@ -847,13 +846,9 @@ export function TableViewer({
         const chunkStart = ci * CHUNK_SIZE;
         const chunk =
           chunkCache.current.get(ci) ??
-          new Uint8Array(
-            (
-              (await unwrap(
-                commands.readFileRange(vfsPath, chunkStart, CHUNK_SIZE),
-              )) as FileChunk
-            ).data,
-          );
+          (await unwrapBytes(
+            commands.readFileRange(vfsPath, chunkStart, CHUNK_SIZE),
+          ));
         const from = Math.max(start, chunkStart);
         const to = Math.min(end, chunkStart + chunk.length);
         if (to <= from) break;

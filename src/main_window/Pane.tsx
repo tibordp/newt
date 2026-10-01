@@ -15,7 +15,7 @@ import { ownsEvent } from "../lib/events";
 import iconMapping from "../assets/mapping.json";
 import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result } from "../lib/bindings";
-import { safe, safeSilent } from "../lib/ipc";
+import { rawCommands, safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
 import { PaneBreadcrumb, VfsTarget, HistoryEntryView } from "../lib/types";
 import HistoryNavigator from "./modals/HistoryNavigator";
@@ -161,7 +161,7 @@ function getFileIconChar(
  * Rendered at 1x: canvas PNGs carry no DPI metadata, so a 2x bitmap would
  * draw double-size; slight blur on retina displays is accepted.
  */
-async function renderDragImage(files: DndFileInfo[]): Promise<number[]> {
+async function renderDragImage(files: DndFileInfo[]): Promise<Uint8Array> {
   try {
     const label = files.length === 1 ? files[0].name : `${files.length} items`;
     const bodyStyle = getComputedStyle(document.body);
@@ -173,7 +173,7 @@ async function renderDragImage(files: DndFileInfo[]): Promise<number[]> {
 
     const canvas = document.createElement("canvas");
     const c = canvas.getContext("2d");
-    if (!c) return [];
+    if (!c) return new Uint8Array();
     c.font = font;
     const textW = Math.ceil(c.measureText(label).width);
     canvas.width = Math.min(padX * 2 + iconW + textW, 320);
@@ -200,10 +200,10 @@ async function renderDragImage(files: DndFileInfo[]): Promise<number[]> {
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/png"),
     );
-    if (!blob) return [];
-    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    if (!blob) return new Uint8Array();
+    return new Uint8Array(await blob.arrayBuffer());
   } catch {
-    return [];
+    return new Uint8Array();
   }
 }
 
@@ -1251,7 +1251,7 @@ function PaneInner(
       dnd.escalating = true;
       try {
         const image = await renderDragImage(dnd.files);
-        const accepted = await commands.dndDragOut(image);
+        const accepted = await rawCommands.dndDragOut(image);
         if (accepted.status === "ok" && accepted.data) {
           cleanupDnd();
           dndRef.current = null;

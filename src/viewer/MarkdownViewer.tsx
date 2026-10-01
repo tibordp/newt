@@ -10,7 +10,7 @@ import { ContextMenu as CM } from "../lib/menus";
 import styles from "./Viewer.module.scss";
 import menuStyles from "../main_window/Menu.module.scss";
 import { commands } from "../lib/bindings";
-import { safe, unwrap } from "../lib/ipc";
+import { safe, unwrap, unwrapBytes } from "../lib/ipc";
 import { useFormatBytes } from "../lib/size";
 import { ModeToggle } from "./ModeToggle";
 import {
@@ -62,6 +62,16 @@ li > input[type=checkbox] { margin-right: 0.4em; }
    paints a selection set from script over ::marker but not one made by
    dragging, and leaves it painted once the selection is gone. Generated
    content is never part of a selection. */
+/* Blocks off screen skip style, layout and paint until they scroll into
+   view; until then they count as a few lines tall. */
+article > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
+/* Containment keeps a block's edge margins inside it instead of letting
+   them merge with its own, so drop the ones that used to escape. */
+blockquote > :first-child,
+article > :is(ul, ol) > li:first-child > :first-child { margin-top: 0; }
+blockquote > :last-child,
+article > details > :last-child,
+article > :is(ul, ol) > li:last-child > :last-child { margin-bottom: 0; }
 ul, ol { list-style: none; padding-left: 2em; }
 li { position: relative; }
 /* Shapes drawn with borders, which forced colors keep. */
@@ -129,10 +139,8 @@ export function MarkdownViewer({
     setNotice(null);
     (async () => {
       try {
-        const data = new Uint8Array(
-          (await unwrap(
-            commands.readFile(vfsPath, MAX_RENDER_BYTES),
-          )) as number[],
+        const data = await unwrapBytes(
+          commands.readFile(vfsPath, MAX_RENDER_BYTES),
         );
         if (cancelled) return;
         if (needsSniff) {

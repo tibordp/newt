@@ -1,7 +1,7 @@
 use newt_common::terminal::TerminalHandle;
 use shell_quote::Quote;
 
-use crate::common::Error;
+use crate::common::{Error, RawArgs, RawBytes};
 use crate::main_window::{MainWindowContext, PaneHandle};
 
 #[tauri::command]
@@ -46,14 +46,13 @@ pub async fn cmd_send_to_terminal(
 #[specta::specta]
 pub async fn terminal_write(
     ctx: MainWindowContext,
-    handle: TerminalHandle,
-    data: Vec<u8>,
+    raw: RawArgs<TerminalWriteArgs>,
 ) -> Result<(), Error> {
     let term = ctx
         .terminals()
-        .get(handle)
+        .get(raw.args.handle)
         .ok_or_else(|| Error::Custom("terminal does not exist".into()))?;
-    term.input(data).await?;
+    term.input(raw.data).await?;
 
     Ok(())
 }
@@ -106,6 +105,23 @@ pub async fn cmd_create_terminal(
         None => None,
     };
     ctx.create_terminal(cwd.as_deref()).await?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct TerminalWriteArgs {
+    handle: TerminalHandle,
+}
+
+/// Where this window's terminal output goes; the page attaches it once
+/// it can receive.
+#[tauri::command]
+#[specta::specta]
+pub fn attach_terminal_output(
+    ctx: MainWindowContext,
+    channel: tauri::ipc::Channel<RawBytes>,
+) -> Result<(), Error> {
+    ctx.attach_terminal_output(channel);
     Ok(())
 }
 

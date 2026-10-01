@@ -2,7 +2,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useFormatBytes } from "../lib/size";
 
 import { commands, type EditorState } from "../lib/bindings";
-import { safeSilent, unwrap } from "../lib/ipc";
+import { rawCommands, safeSilent, unwrap, unwrapBytes } from "../lib/ipc";
 import { usePreferences } from "../lib/preferences";
 import { useScopedBindings } from "../lib/scopedBindings";
 import { monacoKeybinding } from "./monacoKeys";
@@ -242,9 +242,11 @@ function Editor() {
         safeSilent(commands.setEditorLanguage(detectedLang));
 
         // Read the entire file (with size limit enforced server-side)
-        const data = await unwrap(commands.readFile(filePath, MAX_FILE_SIZE));
+        const data = await unwrapBytes(
+          commands.readFile(filePath, MAX_FILE_SIZE),
+        );
         const decoder = new TextDecoder("utf-8", { fatal: false });
-        const text = decoder.decode(new Uint8Array(data));
+        const text = decoder.decode(data);
 
         // Set content in Monaco if already mounted, suppressing dirty flag
         if (editorRef.current) {
@@ -274,8 +276,8 @@ function Editor() {
     try {
       const text = ed.getValue();
       const encoder = new TextEncoder();
-      const data = Array.from(encoder.encode(text));
-      await unwrap(commands.writeFile(filePath, data));
+      const data = encoder.encode(text);
+      await unwrap(rawCommands.writeFile(filePath, data));
       setDirty(false);
       setFileSize(data.length);
     } catch (e: unknown) {

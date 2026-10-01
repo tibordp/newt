@@ -356,7 +356,7 @@ async fileDetails(path: VfsPath) : Promise<Result<FileDetails, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async readFileRange(path: VfsPath, offset: number, length: number) : Promise<Result<FileChunk, string>> {
+async readFileRange(path: VfsPath, offset: number, length: number) : Promise<Result<unknown, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("read_file_range", { path, offset, length }) };
 } catch (e) {
@@ -364,7 +364,7 @@ async readFileRange(path: VfsPath, offset: number, length: number) : Promise<Res
     else return { status: "error", error: e  as any };
 }
 },
-async readFile(path: VfsPath, maxSize: number) : Promise<Result<number[], string>> {
+async readFile(path: VfsPath, maxSize: number) : Promise<Result<unknown, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("read_file", { path, maxSize }) };
 } catch (e) {
@@ -372,9 +372,9 @@ async readFile(path: VfsPath, maxSize: number) : Promise<Result<number[], string
     else return { status: "error", error: e  as any };
 }
 },
-async writeFile(path: VfsPath, data: number[]) : Promise<Result<null, string>> {
+async writeFile() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("write_file", { path, data }) };
+    return { status: "ok", data: await TAURI_INVOKE("write_file") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -688,9 +688,9 @@ async confirmUnmapDrive() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async terminalWrite(handle: TerminalHandle, data: number[]) : Promise<Result<null, string>> {
+async terminalWrite() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("terminal_write", { handle, data }) };
+    return { status: "ok", data: await TAURI_INVOKE("terminal_write") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -727,6 +727,18 @@ async closeTerminal(handle: TerminalHandle) : Promise<Result<null, string>> {
 async readClipboardText() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("read_clipboard_text") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where this window's terminal output goes; the page attaches it once
+ * it can receive.
+ */
+async attachTerminalOutput(channel: TAURI_CHANNEL<unknown>) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("attach_terminal_output", { channel }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -775,9 +787,9 @@ async executeDnd(destinationPane: PaneHandle, subdirectory: string | null, isMov
  * vector falls back to the app icon (the macOS backend aborts on invalid
  * image bytes).
  */
-async dndDragOut(image: number[]) : Promise<Result<boolean, string>> {
+async dndDragOut() : Promise<Result<boolean, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("dnd_drag_out", { image }) };
+    return { status: "ok", data: await TAURI_INVOKE("dnd_drag_out") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2267,7 +2279,6 @@ key: string | null;
  * `Vfs::redirect_target`).
  */
 source: VfsPath | null }
-export type FileChunk = { data: number[]; offset: number; total_size: number }
 export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; 
 /**
  * Raw link target as reported by the source FS (see `File::symlink_target`).
@@ -3209,6 +3220,7 @@ export type SizeUnits =
 export type Sorting = { key: SortingKey; asc: boolean }
 export type SortingKey = "name" | "extension" | "size" | "user" | "mode" | "group" | "attributes" | "modified" | "accessed" | "created"
 export type SshHostEntry = { host: string; hostname: string | null; user: string | null }
+export type TAURI_CHANNEL<TSend> = null
 export type TableDelimiter = "comma" | "semicolon" | "tab" | "pipe"
 export type TableOptions = { delimiter: TableDelimiter | null; detected_delimiter: TableDelimiter | null; 
 /**

@@ -411,7 +411,7 @@ async fn execute_rendered(
             opts.terminal_panel_visible = true;
             Ok(terminal)
         })?;
-        terminal.spawn_reader(ctx.clone(), ctx.window(), mode.keep_terminal_open);
+        terminal.spawn_reader(ctx.clone(), mode.keep_terminal_open);
     } else {
         let id = ctx.next_operation_id()?;
 

@@ -44,6 +44,63 @@ macro_rules! specta_as {
 }
 pub(crate) use specta_as;
 
+/// A command result sent as a raw body rather than JSON: the page receives
+/// an `ArrayBuffer`, not an array of numbers. The bindings type it
+/// `unknown`; `unwrapBytes()` in `src/lib/ipc.ts` turns it into a `Uint8Array`.
+pub struct RawBytes(pub Vec<u8>);
+
+impl tauri::ipc::IpcResponse for RawBytes {
+    fn body(self) -> tauri::Result<tauri::ipc::InvokeResponseBody> {
+        Ok(tauri::ipc::InvokeResponseBody::Raw(self.0))
+    }
+}
+
+impl specta::Type for RawBytes {
+    fn inline(_: &mut specta::TypeCollection, _: specta::Generics) -> specta::DataType {
+        specta::DataType::Unknown
+    }
+}
+
+/// A command's arguments sent alongside bytes, as one raw request body:
+/// a little-endian `u32` length, that many bytes of JSON arguments, then
+/// the bytes. Sent by `invokeRaw` in `src/lib/ipc.ts`; a command taking
+/// one has no parameters in its generated binding.
+pub struct RawArgs<T> {
+    pub args: T,
+    pub data: Vec<u8>,
+}
+
+impl<'de, R: tauri::Runtime, T: serde::de::DeserializeOwned> tauri::ipc::CommandArg<'de, R>
+    for RawArgs<T>
+{
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        let malformed =
+            || tauri::ipc::InvokeError::from(format!("{}: malformed raw body", command.name));
+        let tauri::ipc::InvokeBody::Raw(body) = command.message.payload() else {
+            return Err(malformed());
+        };
+        let (json, data) = split_raw_args(body).ok_or_else(malformed)?;
+        Ok(Self {
+            args: serde_json::from_slice(json).map_err(|_| malformed())?,
+            data: data.to_vec(),
+        })
+    }
+}
+
+/// A `RawArgs` body's JSON arguments and bytes.
+fn split_raw_args(body: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (len, rest) = body.split_first_chunk::<4>()?;
+    rest.split_at_checked(u32::from_le_bytes(*len) as usize)
+}
+
+impl<T> specta::function::FunctionArg for RawArgs<T> {
+    fn to_datatype(_: &mut specta::TypeCollection) -> Option<specta::DataType> {
+        None
+    }
+}
+
 impl From<newt_common::Error> for Error {
     fn from(value: newt_common::Error) -> Self {
         match value.kind {
@@ -299,5 +356,27 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_raw_args;
+
+    #[test]
+    fn raw_args_split_at_the_length_prefix() {
+        let mut body = 7u32.to_le_bytes().to_vec();
+        body.extend_from_slice(br#"{"a":1}"#);
+        body.extend_from_slice(&[0, 255, 10]);
+        assert_eq!(
+            split_raw_args(&body),
+            Some((&br#"{"a":1}"#[..], &[0u8, 255, 10][..]))
+        );
+    }
+
+    #[test]
+    fn raw_args_reject_a_short_body() {
+        assert_eq!(split_raw_args(&[1, 0]), None);
+        assert_eq!(split_raw_args(&[9, 0, 0, 0, b'{']), None);
     }
 }

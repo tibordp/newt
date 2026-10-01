@@ -1231,6 +1231,9 @@ struct MainWindowContextInner {
     /// bookmark bubble's Undo. Kept here rather than in `ModalDataKind` so
     /// the user's settings file doesn't ride along in every state push.
     bookmark_undo: Mutex<Option<String>>,
+    /// Terminal output, framed as a little-endian `u32` handle and then
+    /// the bytes. Output before the page attaches it is dropped.
+    terminal_output: Mutex<Option<tauri::ipc::Channel<crate::common::RawBytes>>>,
 }
 
 #[derive(Clone)]
@@ -1301,6 +1304,7 @@ impl MainWindowContext {
                     arboard::Clipboard::new().expect("failed to initialize clipboard"),
                 ),
                 bookmark_undo: Mutex::new(None),
+                terminal_output: Mutex::new(None),
             }),
         }
     }
@@ -1412,6 +1416,21 @@ impl MainWindowContext {
 
     pub fn window_title(&self) -> &str {
         &self.inner.window_title
+    }
+
+    pub fn attach_terminal_output(&self, channel: tauri::ipc::Channel<crate::common::RawBytes>) {
+        *self.inner.terminal_output.lock() = Some(channel);
+    }
+
+    pub fn send_terminal_output(&self, handle: TerminalHandle, data: &[u8]) -> Result<(), Error> {
+        let Some(channel) = self.inner.terminal_output.lock().clone() else {
+            return Ok(());
+        };
+        let mut frame = Vec::with_capacity(4 + data.len());
+        frame.extend_from_slice(&handle.0.to_le_bytes());
+        frame.extend_from_slice(data);
+        channel.send(crate::common::RawBytes(frame))?;
+        Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
@@ -1590,7 +1609,7 @@ impl MainWindowContext {
             opts.terminal_panel_visible = true;
             Ok(terminal)
         })?;
-        terminal.spawn_reader(self.clone(), self.inner.window.clone(), false);
+        terminal.spawn_reader(self.clone(), false);
         Ok(terminal)
     }
 

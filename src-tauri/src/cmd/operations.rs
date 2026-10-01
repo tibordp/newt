@@ -2,12 +2,12 @@ use newt_common::operation::{
     ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
     ResolveIssueRequest, StartOperationRequest,
 };
+use newt_common::vfs::FileDetails;
 use newt_common::vfs::VfsPath;
-use newt_common::vfs::{FileChunk, FileDetails};
 use tauri::Manager;
 
 use crate::GlobalContext;
-use crate::common::Error;
+use crate::common::{Error, RawArgs, RawBytes};
 use crate::main_window::{
     DeleteConfirmMode, MainWindowContext, ModalContext, ModalData, ModalDataKind, OperationState,
     OperationStatus, PaneHandle,
@@ -674,9 +674,9 @@ pub async fn read_file_range(
     path: VfsPath,
     offset: u64,
     length: u64,
-) -> Result<FileChunk, Error> {
+) -> Result<RawBytes, Error> {
     let chunk = ctx.fs()?.read_range(path, offset, length).await?;
-    Ok(chunk)
+    Ok(RawBytes(chunk.data))
 }
 
 #[tauri::command]
@@ -685,16 +685,21 @@ pub async fn read_file(
     ctx: MainWindowContext,
     path: VfsPath,
     max_size: u64,
-) -> Result<Vec<u8>, Error> {
+) -> Result<RawBytes, Error> {
     let data = ctx.fs()?.read_file(path, max_size).await?;
-    Ok(data)
+    Ok(RawBytes(data))
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn write_file(ctx: MainWindowContext, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-    ctx.fs()?.write_file(path, data).await?;
+pub async fn write_file(ctx: MainWindowContext, raw: RawArgs<WriteFileArgs>) -> Result<(), Error> {
+    ctx.fs()?.write_file(raw.args.path, raw.data).await?;
     Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct WriteFileArgs {
+    path: VfsPath,
 }
 
 /// Kick off a synthetic long-running operation. Reachable only from the

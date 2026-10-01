@@ -4,6 +4,7 @@ import { Terminal as XTermJSTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import {
   TerminalData,
+  rawCommands,
   registerTerminalDataHandler,
   safeSilent,
 } from "../lib/ipc";
@@ -162,7 +163,6 @@ export default function Terminal({
       termDataContext,
       handle,
       (data) => {
-        // @ts-expect-error data is number[] but xterm accepts it
         term.write(data);
       },
     );
@@ -176,7 +176,7 @@ export default function Terminal({
     const onUserInput = (data: string) => {
       const binaryData = new TextEncoder().encode(data);
       writeChain = writeChain.then(() =>
-        safeSilent(commands.terminalWrite(handle, [...binaryData])),
+        safeSilent(rawCommands.terminalWrite(handle, binaryData)),
       );
     };
 

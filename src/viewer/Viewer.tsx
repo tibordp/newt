@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 
 import styles from "./Viewer.module.scss";
 import { commands, type ViewerState } from "../lib/bindings";
-import { useRemoteState, safe, unwrap } from "../lib/ipc";
+import { useRemoteState, safe, unwrap, unwrapBytes } from "../lib/ipc";
 import { useScopedBindings } from "../lib/scopedBindings";
 import { useViewerHost } from "./host";
 import type { VfsPath } from "../lib/types";
@@ -14,7 +14,6 @@ import {
   LruChunkCache,
   detectAutoMode,
   buildFileUrl,
-  type FileChunk,
   type FileInfo,
   type ViewerMode,
 } from "./helpers";
@@ -130,10 +129,10 @@ export function ViewerBody({
     const fp = filePath;
     (async () => {
       try {
-        const chunk = (await unwrap(
-          commands.readFileRange(fp, 0, CHUNK_SIZE),
-        )) as FileChunk;
-        chunkCache.current.set(0, new Uint8Array(chunk.data));
+        chunkCache.current.set(
+          0,
+          await unwrapBytes(commands.readFileRange(fp, 0, CHUNK_SIZE)),
+        );
       } catch (e: any) {
         console.error("Failed to preload first chunk", e);
       }
@@ -147,10 +146,12 @@ export function ViewerBody({
       if (chunkCache.current.has(chunkIndex)) return;
       const offset = chunkIndex * CHUNK_SIZE;
       try {
-        const chunk = (await unwrap(
-          commands.readFileRange(filePath, offset, CHUNK_SIZE),
-        )) as FileChunk;
-        chunkCache.current.set(chunkIndex, new Uint8Array(chunk.data));
+        chunkCache.current.set(
+          chunkIndex,
+          await unwrapBytes(
+            commands.readFileRange(filePath, offset, CHUNK_SIZE),
+          ),
+        );
       } catch (e: any) {
         console.error("Failed to load chunk", chunkIndex, e);
       }
