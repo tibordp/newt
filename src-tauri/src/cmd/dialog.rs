@@ -1,9 +1,11 @@
+use newt_common::quick_open::QuickOpenOptions;
 use newt_common::vfs::{PathStyle, VfsPath};
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
 use crate::common::Error;
 use crate::main_window::pane::FilterMode;
+use crate::main_window::quick_open::QuickOpenRun;
 use crate::main_window::{
     MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle, PropertySheetState,
 };
@@ -46,6 +48,7 @@ pub enum DialogKind {
     CommandPalette,
     UserCommands,
     HotPaths,
+    QuickOpen,
     Settings,
     Debug,
     ConnectionLog,
@@ -695,6 +698,23 @@ pub fn dialog(
                     category_filter: Some("User".to_string()),
                 },
                 DialogKind::HotPaths => ModalDataKind::HotPaths,
+                DialogKind::QuickOpen => {
+                    let root = pane.unwrap().path();
+                    let quick_open = &ctx.preferences().load().quick_open;
+                    let options = QuickOpenOptions {
+                        show_hidden: gs.display_options.0.read().show_hidden,
+                        follow_symlinks: quick_open.follow_symlinks,
+                        gitignore: quick_open.gitignore,
+                        exclude: quick_open.exclude.clone(),
+                        limit: quick_open.limit,
+                    };
+                    ModalDataKind::QuickOpen {
+                        root_display: ctx.format_vfs_path(&root),
+                        run: QuickOpenRun::start(&ctx, root.clone(), options)?,
+                        root,
+                        update: None,
+                    }
+                }
                 DialogKind::Settings => ModalDataKind::Settings {
                     can_reveal: ctx
                         .vfs_info()
@@ -907,6 +927,40 @@ pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
 cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
 cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);
+cmd_dialog!(cmd_quick_open, DialogKind::QuickOpen);
+
+/// The Go to File palette's query changed.
+#[tauri::command]
+#[specta::specta]
+pub fn quick_open_query(ctx: MainWindowContext, query: String) {
+    if let Some(ModalData {
+        kind: ModalDataKind::QuickOpen { run, .. },
+        ..
+    }) = &*ctx.modal().0.read()
+    {
+        run.set_query(query);
+    }
+}
+
+/// Close the Go to File palette and focus `rel`, a path below its root, in
+/// the pane it was opened from.
+#[tauri::command]
+#[specta::specta]
+pub async fn quick_open_accept(ctx: MainWindowContext, rel: String) -> Result<(), Error> {
+    ctx.with_update_async(|gs| async move {
+        let Some(ModalData {
+            kind: ModalDataKind::QuickOpen { root, .. },
+            context,
+        }) = gs.modal.0.read().clone()
+        else {
+            return Ok(());
+        };
+        gs.close_modal();
+        let pane = gs.panes.get(context.pane_handle.unwrap()).unwrap();
+        pane.reveal(root.join(&rel)).await
+    })
+    .await
+}
 cmd_dialog!(cmd_open_settings, DialogKind::Settings);
 
 /// Settings, on the Associations row that decides the focused entry — or

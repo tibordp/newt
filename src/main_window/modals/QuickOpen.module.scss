@@ -1,0 +1,66 @@
+@use "../../styles/dialog-mixins" as dlg;
+@use "../../styles/forced-colors" as fc;
+
+.content {
+  @include dlg.dialog-surface;
+  @include dlg.dialog-top-anchored;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  @include dlg.palette-list(420px);
+  --row-height: 22px;
+
+  :global([cmdk-item]) {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    border-radius: var(--radius-md);
+    min-height: 24px;
+    padding: var(--space-1) var(--space-3);
+
+    &:hover {
+      background: var(--color-cursor-inactive);
+    }
+
+    &[data-selected="true"] {
+      background: var(--color-accent);
+      color: var(--color-accent-fg);
+
+      .dir {
+        color: var(--color-accent-fg);
+        opacity: 0.7;
+      }
+      @include fc.selected;
+    }
+  }
+}
+
+.header {
+  @include dlg.palette-header;
+}
+
+.status {
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-separator);
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.highlight {
+  font-weight: bold;
+}
+
+.name {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dir {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

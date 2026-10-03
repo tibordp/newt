@@ -122,13 +122,7 @@ pub async fn reveal_config_file(
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        let parent = target.parent().unwrap_or_else(|| target.clone());
-        let name = target.file_name().map(str::to_string);
-        pane.navigate_to(parent).await?;
-        if let Some(name) = name {
-            pane.view_state_mut().focus(name);
-        }
-        Ok(())
+        pane.reveal(target).await
     })
     .await
 }

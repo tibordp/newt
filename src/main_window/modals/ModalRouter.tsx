@@ -7,6 +7,7 @@ import CommandPaletteContent from "./CommandPalette";
 import ConnectionLogContent from "./ConnectionLogDialog";
 import HotPathsContent from "./HotPaths";
 import QuickConnectContent from "./QuickConnect";
+import QuickOpenContent from "./QuickOpen";
 import SelectWslDistroContent from "./SelectWslDistro";
 import SettingsEditorContent from "./SettingsEditor";
 import ThirdPartyNoticesContent from "./ThirdPartyNotices";
@@ -50,6 +51,13 @@ export default function ModalRouter({
         );
       case "hot_paths":
         return <HotPathsContent state={state} />;
+      case "quick_open":
+        return (
+          <QuickOpenContent
+            rootDisplay={state?.modal?.data?.root_display ?? ""}
+            update={state?.modal?.data?.update ?? null}
+          />
+        );
       case "quick_connect":
         return (
           <QuickConnectContent

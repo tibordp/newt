@@ -1145,6 +1145,17 @@ impl Pane {
         Ok(())
     }
 
+    /// Navigate to `target`'s directory and focus `target` in it.
+    pub async fn reveal(&self, target: VfsPath) -> Result<(), Error> {
+        let parent = target.parent().unwrap_or_else(|| target.clone());
+        let name = target.file_name().map(str::to_string);
+        self.navigate_to(parent).await?;
+        if let Some(name) = name {
+            self.view_state_mut().focus(name);
+        }
+        Ok(())
+    }
+
     /// Like [`navigate_to`](Self::navigate_to), but the new path takes over
     /// the current history entry instead of pushing it onto the back stack.
     /// Used when the current entry is superseded rather than left (search

@@ -822,6 +822,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "quick_open".into(),
+            name: "Go to File...".into(),
+            short_name: None,
+            category: "Navigation".into(),
+            default_keys: vec!["mod+g".into()],
+            default_when: None,
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "user_commands".into(),
             name: "User Commands...".into(),
             short_name: None,

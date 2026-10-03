@@ -11,6 +11,7 @@ pub mod hot_paths;
 pub mod locale;
 pub mod operation;
 pub mod proc;
+pub mod quick_open;
 pub mod rpc;
 pub mod shell;
 pub mod shell_control;

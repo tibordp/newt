@@ -50,6 +50,8 @@ hyper = { version = "1", features = ["http1", "server", "client"] }
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+nucleo-matcher = { version = "0.3", default-features = false, features = ["unicode-normalization", "unicode-casefold"] }
+ignore = "0.4"
 
 [dev-dependencies]
 serde_json = "1"

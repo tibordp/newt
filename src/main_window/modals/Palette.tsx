@@ -18,27 +18,38 @@ import { useSuppressInitialPointer } from "../../lib/useSuppressInitialPointer";
  */
 export function Palette({
   onKeyDown: externalOnKeyDown,
+  selected,
+  onSelectedChange,
   children,
   ...props
 }: {
   onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void;
+  /// The selected item's value, for a caller that moves the selection
+  /// itself; the palette keeps it otherwise.
+  selected?: string;
+  onSelectedChange?: (value: string) => void;
   children: ReactNode;
 } & Omit<
   React.ComponentProps<typeof Command>,
   "loop" | "value" | "onValueChange" | "onKeyDown"
 >) {
-  const [value, setValue] = useState("");
+  const [ownValue, setOwnValue] = useState("");
+  const value = selected ?? ownValue;
+  const setValue = onSelectedChange ?? setOwnValue;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleValueChange = useCallback((v: string) => {
-    setValue(v);
-    requestAnimationFrame(() => {
-      const el = containerRef.current?.querySelector(
-        `[cmdk-item][data-value="${CSS.escape(v)}"]`,
-      );
-      el?.scrollIntoView({ block: "nearest" });
-    });
-  }, []);
+  const handleValueChange = useCallback(
+    (v: string) => {
+      setValue(v);
+      requestAnimationFrame(() => {
+        const el = containerRef.current?.querySelector(
+          `[cmdk-item][data-value="${CSS.escape(v)}"]`,
+        );
+        el?.scrollIntoView({ block: "nearest" });
+      });
+    },
+    [setValue],
+  );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {

@@ -67,6 +67,13 @@ pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 pub const API_START_ENRICHMENT: Api = Api(700);
 pub const API_ENRICHMENT_EVENT: Api = Api(701);
 
+// Quick Open — long-lived streaming invoke; updates ride
+// API_QUICK_OPEN_UPDATE notifications and query changes come as
+// API_QUICK_OPEN_QUERY signals, both correlated by QuickOpenId.
+pub const API_QUICK_OPEN: Api = Api(710);
+pub const API_QUICK_OPEN_UPDATE: Api = Api(711);
+pub const API_QUICK_OPEN_QUERY: Api = Api(712);
+
 // Connect-dialog discovery — runs on the session owner, so pane-scoped
 // agent mounts list the targets they would actually reach.
 pub const API_DISCOVER_SSH_HOSTS: Api = Api(510);
@@ -667,6 +674,117 @@ impl Dispatcher for EnricherDispatcher {
 
     async fn notify(&self, _api: Api, _req: bytes::Bytes) -> Result<bool, Error> {
         Ok(false)
+    }
+}
+
+/// Serves Quick Open runs; the side of the session that owns the
+/// filesystem.
+pub struct QuickOpenDispatcher {
+    quick_open: Arc<crate::quick_open::QuickOpen>,
+    outbox: Outbox,
+    /// Each run's query, for the signals that change it.
+    queries: Mutex<HashMap<crate::quick_open::QuickOpenId, tokio::sync::watch::Sender<String>>>,
+}
+
+impl QuickOpenDispatcher {
+    pub fn new(outbox: Outbox, quick_open: Arc<crate::quick_open::QuickOpen>) -> Self {
+        Self {
+            quick_open,
+            outbox,
+            queries: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for QuickOpenDispatcher {
+    async fn invoke(&self, api: Api, req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        use crate::quick_open::{QuickOpenId, QuickOpenOptions, QuickOpenUpdate};
+        if api != API_QUICK_OPEN {
+            return Ok(None);
+        }
+        let (id, root, options, query): (QuickOpenId, VfsPath, QuickOpenOptions, String) =
+            decode(&req[..])?;
+        let (query_tx, query_rx) = tokio::sync::watch::channel(query);
+        self.queries.lock().insert(id, query_tx);
+        struct Guard<'a> {
+            id: QuickOpenId,
+            queries: &'a Mutex<HashMap<QuickOpenId, tokio::sync::watch::Sender<String>>>,
+        }
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                self.queries.lock().remove(&self.id);
+            }
+        }
+        let _guard = Guard {
+            id,
+            queries: &self.queries,
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<QuickOpenUpdate>(4);
+        let run = self.quick_open.run(root, options, query_rx, tx);
+        tokio::pin!(run);
+        let ret = loop {
+            tokio::select! {
+                ret = &mut run => break ret,
+                update = rx.recv() => {
+                    let Some(update) = update else {
+                        break (&mut run).await;
+                    };
+                    self.outbox
+                        .send(Message::Notify(API_QUICK_OPEN_UPDATE, encode(&(id, update))?.into()))
+                        .await
+                        .map_err(|_| Error::connection())?;
+                }
+            }
+        };
+        Ok(Some(encode(&ret)?.into()))
+    }
+
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api != API_QUICK_OPEN_QUERY {
+            return Ok(false);
+        }
+        let (id, query): (crate::quick_open::QuickOpenId, String) = decode(&req[..])?;
+        // A run that has ended may still be sent the last keystrokes.
+        if let Some(tx) = self.queries.lock().get(&id) {
+            tx.send_replace(query);
+        }
+        Ok(true)
+    }
+}
+
+/// Routes Quick Open updates to the runs waiting for them; the side of
+/// the session that asked.
+pub struct QuickOpenUpdateDispatcher {
+    pending: crate::quick_open::PendingQuickOpens,
+}
+
+impl QuickOpenUpdateDispatcher {
+    pub fn new(pending: crate::quick_open::PendingQuickOpens) -> Self {
+        Self { pending }
+    }
+}
+
+#[async_trait::async_trait]
+impl Dispatcher for QuickOpenUpdateDispatcher {
+    async fn invoke(&self, _api: Api, _req: bytes::Bytes) -> Result<Option<bytes::Bytes>, Error> {
+        Ok(None)
+    }
+
+    async fn notify(&self, api: Api, req: bytes::Bytes) -> Result<bool, Error> {
+        if api != API_QUICK_OPEN_UPDATE {
+            return Ok(false);
+        }
+        let (id, update): (
+            crate::quick_open::QuickOpenId,
+            crate::quick_open::QuickOpenUpdate,
+        ) = decode(&req[..])?;
+        let tx = self.pending.lock().get(&id).cloned();
+        if let Some(tx) = tx {
+            let _ = tx.send(update).await;
+        }
+        Ok(true)
     }
 }
 

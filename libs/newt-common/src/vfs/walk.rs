@@ -1,4 +1,5 @@
-//! Depth-first walk of one VFS's subtrees, reported to a [`Visitor`].
+//! Walk of one VFS's subtrees, reported to a [`Visitor`]: depth-first,
+//! or breadth-first where the nearest entries matter most.
 //!
 //! Every tree traversal in the crate — copy planning, delete, recursive
 //! attributes, du, search — drives this one loop, so the rules live in
@@ -15,11 +16,11 @@
 //! symlinks, so follow mode changes nothing there.
 //!
 //! Directory-at-a-time walks list ahead: up to [`PREFETCH`] directories
-//! still to come in depth-first order are being listed while the visitor
-//! works on the current one, so a networked VFS overlaps its round
-//! trips. Events are not reordered; only the I/O is.
+//! still to come in walk order are being listed while the visitor works
+//! on the current one, so a networked VFS overlaps its round trips.
+//! Events are not reordered; only the I/O is.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -32,8 +33,12 @@ use super::path::{Path, PathBuf};
 use super::{File, FlatEntry, MAX_SYMLINK_HOPS, Vfs};
 use crate::{Error, ErrorKind};
 
-/// Directories listed ahead of the walk, per walk.
+/// Directories listed ahead of a depth-first walk.
 pub const PREFETCH: usize = 4;
+
+/// Directories listed ahead of a breadth-first walk, whose queue is rarely
+/// short of directories to list.
+pub const PREFETCH_BREADTH_FIRST: usize = 8;
 
 #[derive(Debug, Default, Clone)]
 pub struct WalkOptions {
@@ -99,8 +104,15 @@ pub trait Visitor: Send {
     /// Every entry, directories before their contents.
     async fn entry(&mut self, entry: Entry<'_>) -> Result<Control, Error>;
 
+    /// A directory's listing, before any of its entries is reported. Not
+    /// called for a flat listing.
+    async fn listed(&mut self, path: &Path, children: &[File]) -> Result<(), Error> {
+        let _ = (path, children);
+        Ok(())
+    }
+
     /// A directory whose contents have all been reported, including one
-    /// whose listing failed and was skipped.
+    /// whose listing failed and was skipped. Depth-first walks only.
     async fn leave(&mut self, path: &Path, file: &File) -> Result<(), Error> {
         let _ = (path, file);
         Ok(())
@@ -169,69 +181,44 @@ pub async fn walk(
     options: &WalkOptions,
     visitor: &mut dyn Visitor,
 ) -> Result<(), Error> {
-    let mut walker = Walker {
-        vfs,
-        options,
-        visitor,
-        stack: Vec::new(),
-        inflight: FuturesUnordered::new(),
-        pending: HashSet::new(),
-        ready: HashMap::new(),
-    };
-    for root in roots {
-        let file = root_entry(vfs, root).await?;
-        let parent_device = parent_device(vfs, root, &file).await;
-        let child = Child {
-            path: root.clone(),
-            rel: root.file_name().unwrap_or_default().to_string(),
-            file,
-            parent_device,
-            ancestry: Arc::new(Vec::new()),
-            root: true,
-        };
-        if walker.visit(child, 0).await? == Flow::Stop {
-            return Ok(());
-        }
-        while let Some(frame) = walker.stack.last_mut() {
-            let Some(file) = frame.children.next() else {
-                let frame = walker.stack.pop().unwrap();
-                walker.forget_under(&frame.path);
-                walker.visitor.leave(&frame.path, &frame.file).await?;
-                continue;
-            };
-            if file.name == ".." {
-                continue;
-            }
-            let depth = frame.depth + 1;
-            let child = Child {
-                path: frame.path.join(&file.name),
-                rel: if frame.rel.is_empty() {
-                    file.name.clone()
-                } else {
-                    format!("{}/{}", frame.rel, file.name)
-                },
-                file,
-                parent_device: frame.file.device_id,
-                ancestry: frame.ancestry.clone(),
-                root: false,
-            };
-            walker.list_ahead();
-            if walker.visit(child, depth).await? == Flow::Stop {
-                return Ok(());
-            }
-        }
-    }
-    Ok(())
+    Walker::new(vfs, options, visitor, Order::DepthFirst)
+        .run(roots)
+        .await
+}
+
+/// Walk `roots` in order, each breadth-first: a directory's entries all
+/// come before any of its subdirectories', so the shallowest come first.
+/// `Visitor::leave` is never called; a subtree is finished only near the
+/// end of the walk. A flat listing stays in path order.
+pub async fn walk_breadth_first(
+    vfs: &dyn Vfs,
+    roots: &[PathBuf],
+    options: &WalkOptions,
+    visitor: &mut dyn Visitor,
+) -> Result<(), Error> {
+    Walker::new(vfs, options, visitor, Order::BreadthFirst)
+        .run(roots)
+        .await
 }
 
 type Listing = Result<Vec<File>, Error>;
 type ListingAhead<'a> = Pin<Box<dyn Future<Output = (String, Listing)> + Send + 'a>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    DepthFirst,
+    BreadthFirst,
+}
+
 struct Walker<'a> {
     vfs: &'a dyn Vfs,
     options: &'a WalkOptions,
     visitor: &'a mut dyn Visitor,
+    order: Order,
+    /// Depth-first: the directories being listed out, innermost last.
     stack: Vec<Frame>,
+    /// Breadth-first: the directories entered and not yet listed.
+    queue: VecDeque<Dir>,
     /// Listings started ahead of the walk, keyed by wire path on
     /// completion.
     inflight: FuturesUnordered<ListingAhead<'a>>,
@@ -241,14 +228,36 @@ struct Walker<'a> {
     ready: HashMap<String, Listing>,
 }
 
-/// A directory being listed out.
-struct Frame {
+/// A directory the walk enters.
+struct Dir {
     path: PathBuf,
     rel: String,
     depth: usize,
     file: File,
     /// Normalized targets of the directory symlinks followed to get here.
     ancestry: Arc<Vec<PathBuf>>,
+}
+
+impl Dir {
+    fn child(&self, file: File) -> Child {
+        Child {
+            path: self.path.join(&file.name),
+            rel: if self.rel.is_empty() {
+                file.name.clone()
+            } else {
+                format!("{}/{}", self.rel, file.name)
+            },
+            parent_device: self.file.device_id,
+            ancestry: self.ancestry.clone(),
+            file,
+            root: false,
+        }
+    }
+}
+
+/// A directory being listed out.
+struct Frame {
+    dir: Dir,
     children: std::vec::IntoIter<File>,
 }
 
@@ -268,7 +277,90 @@ enum Flow {
     Stop,
 }
 
-impl Walker<'_> {
+impl<'a> Walker<'a> {
+    fn new(
+        vfs: &'a dyn Vfs,
+        options: &'a WalkOptions,
+        visitor: &'a mut dyn Visitor,
+        order: Order,
+    ) -> Self {
+        Walker {
+            vfs,
+            options,
+            visitor,
+            order,
+            stack: Vec::new(),
+            queue: VecDeque::new(),
+            inflight: FuturesUnordered::new(),
+            pending: HashSet::new(),
+            ready: HashMap::new(),
+        }
+    }
+
+    async fn run(mut self, roots: &[PathBuf]) -> Result<(), Error> {
+        for root in roots {
+            let file = root_entry(self.vfs, root).await?;
+            let parent_device = parent_device(self.vfs, root, &file).await;
+            let child = Child {
+                path: root.clone(),
+                rel: root.file_name().unwrap_or_default().to_string(),
+                file,
+                parent_device,
+                ancestry: Arc::new(Vec::new()),
+                root: true,
+            };
+            if self.visit(child, 0).await? == Flow::Stop {
+                return Ok(());
+            }
+            let flow = match self.order {
+                Order::DepthFirst => self.depth_first().await?,
+                Order::BreadthFirst => self.breadth_first().await?,
+            };
+            if flow == Flow::Stop {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    async fn depth_first(&mut self) -> Result<Flow, Error> {
+        while let Some(frame) = self.stack.last_mut() {
+            let Some(file) = frame.children.next() else {
+                let Frame { dir, .. } = self.stack.pop().unwrap();
+                self.forget_under(&dir.path);
+                self.visitor.leave(&dir.path, &dir.file).await?;
+                continue;
+            };
+            if file.name == ".." {
+                continue;
+            }
+            let depth = frame.dir.depth + 1;
+            let child = frame.dir.child(file);
+            self.list_ahead();
+            if self.visit(child, depth).await? == Flow::Stop {
+                return Ok(Flow::Stop);
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
+    async fn breadth_first(&mut self) -> Result<Flow, Error> {
+        while let Some(dir) = self.queue.pop_front() {
+            self.list_ahead_in_queue();
+            let children = self.list_dir(&dir.path).await?;
+            self.visitor.listed(&dir.path, &children).await?;
+            for file in children {
+                if file.name == ".." {
+                    continue;
+                }
+                if self.visit(dir.child(file), dir.depth + 1).await? == Flow::Stop {
+                    return Ok(Flow::Stop);
+                }
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
     async fn visit(&mut self, mut child: Child, depth: usize) -> Result<Flow, Error> {
         if self
             .options
@@ -350,31 +442,46 @@ impl Walker<'_> {
             return Ok(Flow::Continue);
         }
 
-        if child.root && self.vfs.descriptor().can_list_recursive() {
-            return self.flat(&child, depth).await;
-        }
-        let children = loop {
-            match self.listing(&child.path).await {
-                Ok(files) => break files,
-                Err(e) if e.kind == ErrorKind::Cancelled => return Err(e),
-                Err(e) => {
-                    log::debug!("walk: cannot list {}: {}", child.path, e);
-                    match self.visitor.failed(Failed::Listing(&child.path), e).await? {
-                        Resume::Retry => {}
-                        Resume::Skip => break Vec::new(),
-                    }
-                }
-            }
-        };
-        self.stack.push(Frame {
+        let dir = Dir {
             path: child.path,
             rel: child.rel,
             depth,
             file: child.file,
             ancestry: child.ancestry,
-            children: children.into_iter(),
-        });
+        };
+        if child.root && self.vfs.descriptor().can_list_recursive() {
+            return self.flat(&dir).await;
+        }
+        match self.order {
+            Order::DepthFirst => {
+                let children = self.list_dir(&dir.path).await?;
+                self.visitor.listed(&dir.path, &children).await?;
+                self.stack.push(Frame {
+                    dir,
+                    children: children.into_iter(),
+                });
+            }
+            Order::BreadthFirst => self.queue.push_back(dir),
+        }
         Ok(Flow::Continue)
+    }
+
+    /// The listing of a directory being entered; one that fails is the
+    /// visitor's to retry, or empty.
+    async fn list_dir(&mut self, path: &Path) -> Result<Vec<File>, Error> {
+        loop {
+            match self.listing(path).await {
+                Ok(files) => return Ok(files),
+                Err(e) if e.kind == ErrorKind::Cancelled => return Err(e),
+                Err(e) => {
+                    log::debug!("walk: cannot list {}: {}", path, e);
+                    match self.visitor.failed(Failed::Listing(path), e).await? {
+                        Resume::Retry => {}
+                        Resume::Skip => return Ok(Vec::new()),
+                    }
+                }
+            }
+        }
     }
 
     /// The listing of `path`: the one started ahead if there is one,
@@ -402,38 +509,65 @@ impl Walker<'_> {
     /// [`PREFETCH`] at a time counting those already done and waiting.
     fn list_ahead(&mut self) {
         let mut budget = PREFETCH.saturating_sub(self.pending.len() + self.ready.len());
-        for frame in self.stack.iter().rev() {
-            if budget == 0 {
-                break;
-            }
+        let mut ahead = Vec::new();
+        'frames: for frame in self.stack.iter().rev() {
             for file in frame.children.as_slice() {
                 if budget == 0 {
-                    break;
+                    break 'frames;
                 }
                 if file.name == ".."
                     || !file.is_dir
                     || file.is_symlink
-                    || (self.options.one_file_system && is_mount_point(frame.file.device_id, file))
+                    || (self.options.one_file_system
+                        && is_mount_point(frame.dir.file.device_id, file))
                 {
                     continue;
                 }
-                let path = frame.path.join(&file.name);
-                if self.options.excludes.iter().any(|e| path.starts_with(e)) {
+                let path = frame.dir.path.join(&file.name);
+                if self.options.excludes.iter().any(|e| path.starts_with(e))
+                    || self.listed_ahead(&path)
+                {
                     continue;
                 }
-                let key = path.as_wire_str().to_string();
-                if self.pending.contains(&key) || self.ready.contains_key(&key) {
-                    continue;
-                }
-                let vfs = self.vfs;
-                self.pending.insert(key.clone());
-                self.inflight.push(Box::pin(async move {
-                    let listing = vfs.list_files(&path, None).await.map(|l| l.files);
-                    (key, listing)
-                }));
+                ahead.push(path);
                 budget -= 1;
             }
         }
+        for path in ahead {
+            self.start_listing(path);
+        }
+    }
+
+    /// Start listing the directories next in the queue, up to
+    /// [`PREFETCH_BREADTH_FIRST`] at a time counting those already done
+    /// and waiting. Everything queued is entered.
+    fn list_ahead_in_queue(&mut self) {
+        let budget = PREFETCH_BREADTH_FIRST.saturating_sub(self.pending.len() + self.ready.len());
+        let ahead: Vec<PathBuf> = self
+            .queue
+            .iter()
+            .filter(|dir| !self.listed_ahead(&dir.path))
+            .take(budget)
+            .map(|dir| dir.path.clone())
+            .collect();
+        for path in ahead {
+            self.start_listing(path);
+        }
+    }
+
+    fn listed_ahead(&self, path: &Path) -> bool {
+        let key = path.as_wire_str();
+        self.pending.contains(key) || self.ready.contains_key(key)
+    }
+
+    fn start_listing(&mut self, path: PathBuf) {
+        let vfs = self.vfs;
+        let key = path.as_wire_str().to_string();
+        self.pending.insert(key.clone());
+        self.inflight.push(Box::pin(async move {
+            let listing = vfs.list_files(&path, None).await.map(|l| l.files);
+            (key, listing)
+        }));
     }
 
     /// Drop what was listed ahead under a directory the walk has left:
@@ -448,6 +582,13 @@ impl Walker<'_> {
         self.pending.retain(|key| !under(key));
     }
 
+    async fn leave(&mut self, path: &Path, file: &File) -> Result<(), Error> {
+        match self.order {
+            Order::DepthFirst => self.visitor.leave(path, file).await,
+            Order::BreadthFirst => Ok(()),
+        }
+    }
+
     /// Walk a root through its flat listing. Entries are reported as
     /// the batches arrive: a directory is
     /// opened when its own entry or its first descendant comes up and
@@ -455,12 +596,12 @@ impl Walker<'_> {
     /// goes through the visitor; on Retry it is restarted and everything
     /// up to the last path consumed is dropped, which path order makes
     /// exact. Nothing here has a device, so nothing is a mount point.
-    async fn flat(&mut self, root: &Child, depth: usize) -> Result<Flow, Error> {
+    async fn flat(&mut self, root: &Dir) -> Result<Flow, Error> {
         let vfs = self.vfs;
         let mut state = Flat {
             root_path: root.path.clone(),
             root_rel: root.rel.clone(),
-            depth,
+            depth: root.depth,
             open: vec![(root.path.clone(), root.file.clone())],
             passing: None,
             last: None,
@@ -510,7 +651,7 @@ impl Walker<'_> {
             }
         }
         while let Some((p, f)) = state.open.pop() {
-            self.visitor.leave(&p, &f).await?;
+            self.leave(&p, &f).await?;
         }
         Ok(Flow::Continue)
     }
@@ -536,7 +677,7 @@ impl Walker<'_> {
         }
         while !path.starts_with(&state.open.last().unwrap().0) {
             let (p, f) = state.open.pop().unwrap();
-            self.visitor.leave(&p, &f).await?;
+            self.leave(&p, &f).await?;
         }
         // Directories between the innermost open one and this entry.
         let top = state.open.last().unwrap().0.clone();
@@ -1208,6 +1349,98 @@ mod tests {
             (2..=PREFETCH + 1).contains(&overlap),
             "listings should overlap up to the prefetch bound, saw {overlap}"
         );
+    }
+
+    #[tokio::test]
+    async fn breadth_first_reports_shallowest_first_and_never_leaves() {
+        let vfs = MockVfs::builder()
+            .dir("/top")
+            .dir("/top/a")
+            .file("/top/a/deep.txt", b"d")
+            .dir("/top/a/b")
+            .file("/top/a/b/deeper.txt", b"d")
+            .dir("/top/skipped")
+            .file("/top/skipped/x", b"x")
+            .file("/top/z.txt", b"z")
+            .build();
+        let mut log = Log {
+            skip: vec!["/top/skipped"],
+            ..Log::default()
+        };
+        walk_breadth_first(&*vfs, &roots(&["/top"]), &WalkOptions::default(), &mut log)
+            .await
+            .unwrap();
+        assert_eq!(
+            log.lines,
+            [
+                "dir /top rel=top d=0",
+                "dir /top/a rel=top/a d=1",
+                "dir /top/skipped rel=top/skipped d=1",
+                "file /top/z.txt rel=top/z.txt d=1",
+                "dir /top/a/b rel=top/a/b d=2",
+                "file /top/a/deep.txt rel=top/a/deep.txt d=2",
+                "file /top/a/b/deeper.txt rel=top/a/b/deeper.txt d=3",
+            ]
+        );
+
+        let mut log = Log {
+            stop_at: Some("/top/a/b"),
+            ..Log::default()
+        };
+        walk_breadth_first(&*vfs, &roots(&["/top"]), &WalkOptions::default(), &mut log)
+            .await
+            .unwrap();
+        assert_eq!(log.lines.last().unwrap(), "dir /top/a/b rel=top/a/b d=2");
+    }
+
+    #[tokio::test]
+    async fn breadth_first_skips_an_unreadable_directory_and_goes_on() {
+        let vfs = MockVfs::builder()
+            .dir("/top/bad")
+            .file("/top/bad/x", b"x")
+            .dir("/top/good")
+            .file("/top/good/y", b"y")
+            .failure(FailureSpec {
+                path: PathBuf::from_wire_str("/top/bad"),
+                operation: "list_files",
+                error: Error::custom("denied"),
+                remaining: None,
+            })
+            .build();
+        let mut log = Log::default();
+        walk_breadth_first(&*vfs, &roots(&["/top"]), &WalkOptions::default(), &mut log)
+            .await
+            .unwrap();
+        assert!(
+            log.lines
+                .iter()
+                .any(|l| l.starts_with("failed list /top/bad"))
+        );
+        assert!(
+            log.lines
+                .contains(&"file /top/good/y rel=top/good/y d=2".to_string())
+        );
+        assert!(!log.lines.iter().any(|l| l.starts_with("leave")));
+    }
+
+    #[tokio::test]
+    async fn breadth_first_flat_listings_stay_in_path_order_without_leaving() {
+        let vfs = flat_tree(true);
+        let mut log = Log::default();
+        walk_breadth_first(&*vfs, &roots(&["/top"]), &WalkOptions::default(), &mut log)
+            .await
+            .unwrap();
+        let mut depth_first = Log::default();
+        walk(
+            &*vfs,
+            &roots(&["/top"]),
+            &WalkOptions::default(),
+            &mut depth_first,
+        )
+        .await
+        .unwrap();
+        depth_first.lines.retain(|l| !l.starts_with("leave"));
+        assert_eq!(log.lines, depth_first.lines);
     }
 
     #[tokio::test]

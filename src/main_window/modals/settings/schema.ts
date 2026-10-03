@@ -6,7 +6,7 @@ export type SettingDef = {
   description: string;
   category: string;
   categoryTitle: string;
-  type: "boolean" | "string" | "number" | "enum" | "custom";
+  type: "boolean" | "string" | "number" | "enum" | "list" | "custom";
   enumValues?: string[];
   enumLabels?: Record<string, string>;
   customWidget?: string;
@@ -112,7 +112,9 @@ export function extractSettings(preferences: PreferencesState): SettingDef[] {
             ? "boolean"
             : propSchema.type === "integer" || propSchema.type === "number"
               ? "number"
-              : "string";
+              : propSchema.type === "array"
+                ? "list"
+                : "string";
 
       const value = (values as any)?.[category]?.[prop];
 

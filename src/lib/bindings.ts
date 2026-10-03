@@ -1706,6 +1706,32 @@ async cmdHotPaths(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdQuickOpen(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_quick_open", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The Go to File palette's query changed.
+ */
+async quickOpenQuery(query: string) : Promise<void> {
+    await TAURI_INVOKE("quick_open_query", { query });
+},
+/**
+ * Close the Go to File palette and focus `rel`, a path below its root, in
+ * the pane it was opened from.
+ */
+async quickOpenAccept(rel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("quick_open_accept", { rel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdAddBookmark(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_add_bookmark", { paneHandle }) };
@@ -1935,7 +1961,7 @@ export type Annotation = { git: GitEntryStatus } |
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; quick_open?: QuickOpenPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
 export type AppearancePreferences = { 
 /**
  * Show hidden files by default when opening a new window.
@@ -2367,7 +2393,7 @@ export type DialogKind = "navigate" | "create_directory" | "select_by_pattern" |
 /**
  * The connect dialog, but scoped to a pane mount (VFS selector entry).
  */
-"mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "settings" | "debug" | "connection_log" | "about" | "third_party_notices"
+"mount_remote" | "quick_connect" | "select_vfs" | "history_back" | "history_forward" | "history" | "command_palette" | "user_commands" | "hot_paths" | "quick_open" | "settings" | "debug" | "connection_log" | "about" | "third_party_notices"
 export type DiscoveryResult<T> = { items: T[]; 
 /**
  * Best-effort failure note. When present, the dialog should show this
@@ -2870,7 +2896,11 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: { 
+moved: boolean } } | { type: "hot_paths" } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
+/**
+ * The latest ranking; `None` until the first arrives.
+ */
+update: QuickOpenUpdate | null } } | { type: "settings"; data: { 
 /**
  * Whether the session can point a pane at the settings file, i.e.
  * whether the host machine's filesystem is mounted at all.
@@ -3072,7 +3102,11 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "settings"; data: { 
+moved: boolean } } | { type: "hot_paths" } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
+/**
+ * The latest ranking; `None` until the first arrives.
+ */
+update: QuickOpenUpdate | null } } | { type: "settings"; data: { 
 /**
  * Whether the session can point a pane at the settings file, i.e.
  * whether the host machine's filesystem is mounted at all.
@@ -3315,6 +3349,51 @@ export type PropertyValuePatch =
  * Grants: whole-list replace (no per-grant merge semantics).
  */
 { replace_grants: { grants: PropertyGrant[] } }
+export type QuickOpenHit = { 
+/**
+ * `/`-separated, relative to the root.
+ */
+rel: string; is_dir: boolean; 
+/**
+ * Character indices into `rel` that matched, ascending.
+ */
+highlights: number[] }
+export type QuickOpenPreferences = { 
+/**
+ * Leave out what `.gitignore` files and the repository's
+ * `.git/info/exclude` ignore.
+ */
+gitignore: boolean; 
+/**
+ * Enter directories reached through symlinks.
+ */
+follow_symlinks: boolean; 
+/**
+ * Names never shown or descended into, as globs (`node_modules`,
+ * `*.pyc`). `.git` is always left out.
+ */
+exclude: string[]; 
+/**
+ * Entries looked at before the search stops.
+ */
+limit: number }
+export type QuickOpenUpdate = { 
+/**
+ * The query the results are ranked against.
+ */
+query: string; results: QuickOpenHit[]; matched: number; walked: number; walking: boolean; 
+/**
+ * Directories that could not be listed.
+ */
+unreadable: number; 
+/**
+ * The walk stopped at the limit.
+ */
+truncated: boolean; 
+/**
+ * Why the root itself could not be walked.
+ */
+error: string | null }
 /**
  * A remembered ad-hoc connection target. Carries only the secret-free
  * `ConnectionKind` (S3 keys, SSH auth, etc. never land here) plus how it

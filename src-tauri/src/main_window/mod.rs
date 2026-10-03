@@ -5,6 +5,7 @@ pub mod elevate;
 #[cfg(target_os = "macos")]
 pub mod menu;
 pub mod pane;
+pub mod quick_open;
 pub mod session;
 #[cfg(windows)]
 pub mod shell_menu;
@@ -720,6 +721,14 @@ pub enum ModalDataKind {
         moved: bool,
     },
     HotPaths,
+    QuickOpen {
+        root: VfsPath,
+        root_display: String,
+        /// The latest ranking; `None` until the first arrives.
+        update: Option<newt_common::quick_open::QuickOpenUpdate>,
+        #[serde(skip)]
+        run: quick_open::QuickOpenRun,
+    },
     Settings {
         /// Whether the session can point a pane at the settings file, i.e.
         /// whether the host machine's filesystem is mounted at all.
@@ -1494,6 +1503,12 @@ impl MainWindowContext {
         self.with_session(|s| s.hot_paths_provider.clone())
     }
 
+    pub fn quick_open_client(
+        &self,
+    ) -> Result<Arc<dyn newt_common::quick_open::QuickOpenClient>, Error> {
+        self.with_session(|s| s.quick_open_client.clone())
+    }
+
     pub fn file_server_base_url(&self) -> Result<String, Error> {
         self.with_session(|s| {
             format!(
@@ -1564,6 +1579,10 @@ impl MainWindowContext {
 
     pub fn panes(&self) -> &Panes {
         &self.inner.main_window_state.panes
+    }
+
+    pub fn modal(&self) -> &ModalState {
+        &self.inner.main_window_state.modal
     }
 
     pub fn active_pane_handle(&self) -> PaneHandle {

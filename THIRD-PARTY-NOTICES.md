@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-732 crates, the superset across every target platform and feature.
+736 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -384,6 +384,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   crc32fast 1.5.2 — MIT OR Apache-2.0
       Copyright (c) 2018 Sam Rijs, Alex Crichton and contributors
   crossbeam-channel 0.5.17 — MIT OR Apache-2.0
+      Copyright (c) 2019 The Crossbeam Project Developers
+  crossbeam-deque 0.8.8 — MIT OR Apache-2.0
+      Copyright (c) 2019 The Crossbeam Project Developers
+  crossbeam-epoch 0.9.21 — MIT OR Apache-2.0
       Copyright (c) 2019 The Crossbeam Project Developers
   crossbeam-utils 0.8.23 — MIT OR Apache-2.0
       Copyright (c) 2019 The Crossbeam Project Developers
@@ -651,6 +655,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2013-2025 The rust-url developers
   idna_adapter 1.2.2 — Apache-2.0 OR MIT
       Copyright (c) The rust-url developers
+  ignore 0.4.33 — Unlicense OR MIT
+      Copyright (c) 2015 Andrew Gallant
   iluvatar 0.5.0 — MIT OR Apache-2.0
       Copyright (c) 2025 iluvatar contributors
   image 0.25.10 — MIT OR Apache-2.0
@@ -809,6 +815,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   notify 8.2.0 — CC0-1.0
   notify-types 2.1.0 — MIT OR Apache-2.0
       Copyright (c) 2023 Notify Contributors
+  nucleo-matcher 0.3.1 — MPL-2.0
   num 0.4.3 — MIT OR Apache-2.0
       Copyright (c) 2014 The Rust Project Developers
   num-bigint 0.4.8 — MIT OR Apache-2.0

@@ -104,6 +104,5 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 ## Major new features (groom/write design docs first)
 
 - Batch rename (probably with enrichers preview)
-- Quick Open (VS Code's Ctrl+P): fuzzy-find files under the current directory, as a lighter alternative to the search VFS — matches stream in live as the walk proceeds, and choosing one jumps to it. Wants a breadth-first mode for the walker (`libs/newt-common/src/vfs/walk.rs` is depth-first only) so near files surface first.
 - Compare & synchronize directories
 - Custom styling / theming

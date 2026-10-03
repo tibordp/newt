@@ -349,6 +349,10 @@ async fn run_agent() -> Result<(), Error> {
     let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
         .chain(ShellServiceDispatcher::new(LocalShellService))
         .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
+        .chain(newt_common::api::QuickOpenDispatcher::new(
+            outbox.clone(),
+            Arc::new(newt_common::quick_open::QuickOpen::new(registry.clone())),
+        ))
         .chain(TerminalDispatcher::new(
             newt_common::terminal::Local::with_shell_integration(shell_integration),
         ))

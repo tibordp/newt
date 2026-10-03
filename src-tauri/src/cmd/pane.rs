@@ -764,15 +764,10 @@ pub async fn cmd_follow_symlink(
         ctx.fs()?.resolve_link(link).await?
     };
 
-    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        let parent = resolved.parent().unwrap_or_else(|| resolved.clone());
-        let filename = resolved.file_name().map(str::to_string);
-        pane.navigate_to(parent).await?;
-        if let Some(name) = filename {
-            pane.view_state_mut().focus(name);
-        }
-        Ok(())
-    })
+    ctx.with_pane_update_async(
+        pane_handle,
+        |_, pane| async move { pane.reveal(resolved).await },
+    )
     .await
 }
 

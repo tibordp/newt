@@ -25,6 +25,9 @@ pub struct AppPreferences {
     #[schemars(title = "Hot Paths")]
     pub hot_paths: HotPathsPreferences,
     #[serde(default)]
+    #[schemars(title = "Go to File")]
+    pub quick_open: QuickOpenPreferences,
+    #[serde(default)]
     #[schemars(title = "Environment")]
     pub environment: EnvironmentPreferences,
     #[serde(default)]
@@ -397,6 +400,36 @@ impl Default for HotPathsPreferences {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct QuickOpenPreferences {
+    /// Leave out what `.gitignore` files and the repository's
+    /// `.git/info/exclude` ignore.
+    #[schemars(title = "Respect .gitignore")]
+    pub gitignore: bool,
+    /// Enter directories reached through symlinks.
+    #[schemars(title = "Follow Symlinks")]
+    pub follow_symlinks: bool,
+    /// Names never shown or descended into, as globs (`node_modules`,
+    /// `*.pyc`). `.git` is always left out.
+    #[schemars(title = "Exclude")]
+    pub exclude: Vec<String>,
+    /// Entries looked at before the search stops.
+    #[schemars(title = "Limit", range(min = 1))]
+    pub limit: u32,
+}
+
+impl Default for QuickOpenPreferences {
+    fn default() -> Self {
+        Self {
+            gitignore: true,
+            follow_symlinks: false,
+            exclude: Vec::new(),
+            limit: 200_000,
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, specta::Type,
 )]
@@ -530,6 +563,9 @@ pub struct SettingsFile {
     pub hot_paths: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
+    pub quick_open: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub environment: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
@@ -565,6 +601,7 @@ impl SettingsFile {
             "enrichers" => &mut self.enrichers,
             "archives" => &mut self.archives,
             "hot_paths" => &mut self.hot_paths,
+            "quick_open" => &mut self.quick_open,
             "environment" => &mut self.environment,
             "editor" => &mut self.editor,
             "viewer" => &mut self.viewer,
@@ -577,13 +614,14 @@ impl SettingsFile {
     /// defaults, modified-key detection) — a new `AppPreferences` group
     /// must be added here, in `section_mut` and as a field above, or its
     /// TOML section is reported as not a setting on load.
-    pub fn sections(&self) -> [(&'static str, &toml::Value); 8] {
+    pub fn sections(&self) -> [(&'static str, &toml::Value); 9] {
         [
             ("appearance", &self.appearance),
             ("behavior", &self.behavior),
             ("enrichers", &self.enrichers),
             ("archives", &self.archives),
             ("hot_paths", &self.hot_paths),
+            ("quick_open", &self.quick_open),
             ("environment", &self.environment),
             ("editor", &self.editor),
             ("viewer", &self.viewer),
@@ -599,6 +637,7 @@ impl Default for SettingsFile {
             enrichers: default_toml_table(),
             archives: default_toml_table(),
             hot_paths: default_toml_table(),
+            quick_open: default_toml_table(),
             environment: default_toml_table(),
             editor: default_toml_table(),
             viewer: default_toml_table(),

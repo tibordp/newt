@@ -1486,6 +1486,16 @@ Each category can be independently toggled on/off in preferences (Hot Paths sect
 
 Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsPath` — `vfs_id` included, so an entry on a mounted VFS lands on that VFS. Removal is keyed by `bookmark_key`, the verbatim `[[bookmark]]` `path` from settings.toml, which is a display path rather than the wire form.
 
+### Go to File (Mod+G)
+
+A palette that finds files and folders anywhere under the active pane's directory by name, as you type — the file manager's take on VS Code's Ctrl+P. Enter focuses the chosen entry in the pane it was opened from: the pane goes to the entry's folder and puts the cursor on it, a folder as much as a file. Opening it from there is the pane's own Enter, so Mod+G, a few characters, Enter, Enter opens a file through its association.
+
+- **Live**: the directory is walked when the palette opens, nearest entries first (breadth-first: everything in a folder before anything in its subfolders), and results appear and re-rank while the walk goes on. A status line under the input counts the entries seen ("Searching… 12,345 items"), says when the walk stopped at the limit, and how many folders couldn't be read. Nothing is cached: each opening walks afresh, and closing the palette stops the walk.
+- **Matching** is VS Code's: an entry matches when the query's characters appear in its path in order, ignoring case — `fobr` finds `foo_bar.txt`. Spaces split the query into pieces that all have to match (`pane tsx`). There is no other query syntax.
+- **Ranking**: a match within the name ranks above one that needs the folders too, so `pane` puts `Pane.tsx` before `pane_helpers/x.ts`, while `mw/pane` still reaches `main_window/Pane.tsx`. Among matches of the same kind, runs of consecutive characters and characters at word starts (after `/`, `_`, `-`, `.`, a case change) score higher; ties go to the shallower entry, then the shorter path. With an empty query the list is simply the nearest entries. The top 100 are shown, with the matched characters in bold.
+- **What's left out**: hidden entries, unless the pane is showing hidden files; `.git` always; names matching `quick_open.exclude`; and, with `quick_open.gitignore` (on by default), whatever `.gitignore` files ignore — those in the folders walked, those in the folders above up to the repository's top, and the repository's `.git/info/exclude`. The user's global git excludes file is not consulted, and no `git` is run: the rules are read and applied as the walk goes, on any filesystem. Symlinked folders are entered only with `quick_open.follow_symlinks`; the walk stays on one filesystem and stops after `quick_open.limit` entries (200,000).
+- **Where it runs**: next to the files — in a remote session on the remote host, so only the top results cross the connection, whatever the size of the tree; this machine's own files, browsed from a remote session, are walked here. It works on any filesystem a pane can show: local, SFTP, S3, archives, disc images.
+
 ### Bookmark Operations
 
 - **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory. Optional custom name (defaults to the directory name). Stored as `[[bookmark]]` in `settings.toml`. The new entry goes to the *top* of the list, and bookmarking an already-bookmarked path moves it there instead of adding a second copy (any duplicates a hand-edited file already had are collapsed at the same time).
@@ -1684,6 +1694,12 @@ system_bookmarks = true     # Show GTK bookmarks (Linux)
 mounts = true               # Show mounted volumes
 recent_folders = true       # Show recently visited directories
 
+[quick_open]                # Go to File (Mod+G)
+gitignore = true            # Leave out what .gitignore files and .git/info/exclude ignore
+follow_symlinks = false     # Enter folders reached through symlinks
+exclude = []                # Name globs never shown or descended into, e.g. ["node_modules", "*.pyc"]
+limit = 200000              # Entries looked at before the search stops
+
 [editor]
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
@@ -1728,6 +1744,7 @@ Four tabs:
   - Enum → dropdown.
   - Number → number input.
   - String → text input.
+  - List of strings → a text input per item with a × to remove it, and a dashed row at the end that adds what's typed into it (Enter or leaving the row); an item emptied out is removed.
   - Custom widgets for complex preferences (rendered below the description):
     - **Columns**: Visible/Hidden panels side by side — visible rows carry a drag handle (mouse drag to reorder, arrow keys when focused); checkboxes toggle simple columns; timestamps get a presentation dropdown (Date & time / Date only / Separate columns).
     - **Default Sort**: Dropdown for sort key + ascending checkbox.
@@ -2040,6 +2057,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Mod+. | Copy pane path to other pane | Pane focused |
 | Mod+U | Swap panes (whole pane state, history included) | Pane focused |
 | Mod+P | Hot paths | Any |
+| Mod+G | Go to file | Any |
 | Mod+B | Add bookmark | Pane focused |
 | Mod+Shift+L | Select VFS | Pane focused |
 

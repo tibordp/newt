@@ -6,6 +6,7 @@ use newt_common::filesystem::{Filesystem, PendingStreams, StreamId};
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
 #[cfg(target_os = "linux")]
 use newt_common::proc::NoConsoleWindow;
+use newt_common::quick_open::PendingQuickOpens;
 use newt_common::rpc::Communicator;
 use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
@@ -233,6 +234,7 @@ pub struct Session {
     pub(super) terminal_client: Arc<dyn TerminalClient>,
     pub(super) operations_client: Arc<dyn OperationsClient>,
     pub(super) hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+    pub(super) quick_open_client: Arc<dyn newt_common::quick_open::QuickOpenClient>,
     pub(super) discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     pub(super) mounted_vfs: Arc<RwLock<HashMap<VfsId, MountedVfsInfo>>>,
     pub(super) next_operation_id: AtomicU64,
@@ -368,6 +370,33 @@ impl VfsInfo for MountedVfsInfoService {
 // the RemoteVfs (client-local filesystem) to a local VfsRegistryFs instead
 // of round-tripping through the agent.
 // ---------------------------------------------------------------------------
+
+/// Go to File on the hairpinned VFS, walked in-process over the host's own
+/// registry like [`HairpinFs`]. Hits are relative paths, so nothing needs
+/// rewriting on the way back.
+struct HairpinQuickOpen {
+    remote_vfs_id: VfsId,
+    local: newt_common::quick_open::Local,
+    inner: Arc<dyn newt_common::quick_open::QuickOpenClient>,
+}
+
+#[async_trait::async_trait]
+impl newt_common::quick_open::QuickOpenClient for HairpinQuickOpen {
+    async fn run(
+        &self,
+        root: VfsPath,
+        options: newt_common::quick_open::QuickOpenOptions,
+        query: tokio::sync::watch::Receiver<String>,
+        updates: tokio::sync::mpsc::Sender<newt_common::quick_open::QuickOpenUpdate>,
+    ) -> Result<(), newt_common::Error> {
+        if root.vfs_id == self.remote_vfs_id {
+            let root = VfsPath::new(VfsId::ROOT, root.path);
+            self.local.run(root, options, query, updates).await
+        } else {
+            self.inner.run(root, options, query, updates).await
+        }
+    }
+}
 
 struct HairpinFs {
     remote_vfs_id: VfsId,
@@ -767,6 +796,7 @@ struct Services {
     operations_client: Arc<dyn OperationsClient>,
     enricher_client: Arc<dyn EnricherClient>,
     hot_paths_provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+    quick_open_client: Arc<dyn newt_common::quick_open::QuickOpenClient>,
     discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     initial_dir: VfsPath,
 }
@@ -855,6 +885,9 @@ fn create_local_services(
                 .with(Arc::new(DuEnricher)),
         ))),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
+        quick_open_client: Arc::new(newt_common::quick_open::Local::new(Arc::new(
+            newt_common::quick_open::QuickOpen::new(registry.clone()),
+        ))),
         discovery_provider: Arc::new(newt_common::discovery::Local::new(
             preferences.load().environment.extra_path.clone(),
         )),
@@ -870,6 +903,7 @@ fn create_remote_services(
     communicator: Communicator,
     pending_streams: PendingStreams,
     pending_enrichments: PendingEnrichments,
+    pending_quick_opens: PendingQuickOpens,
 ) -> Services {
     Services {
         fs: Arc::new(newt_common::filesystem::Remote::new_with_streams(
@@ -885,6 +919,10 @@ fn create_remote_services(
             pending_enrichments,
         )),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator.clone())),
+        quick_open_client: Arc::new(newt_common::quick_open::Remote::new(
+            communicator.clone(),
+            pending_quick_opens,
+        )),
         discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator)),
         initial_dir: VfsPath::root(VfsId::ROOT),
     }
@@ -907,6 +945,7 @@ fn create_rpc_services(
 
     let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
     let pending_enrichments: PendingEnrichments = Arc::new(parking_lot::Mutex::new(HashMap::new()));
+    let pending_quick_opens = PendingQuickOpens::default();
 
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
@@ -926,6 +965,9 @@ fn create_rpc_services(
         window: publisher.window().clone(),
     };
     let base = host_dispatcher
+        .chain(newt_common::api::QuickOpenUpdateDispatcher::new(
+            pending_quick_opens.clone(),
+        ))
         .chain(askpass_dispatcher)
         .chain(fetch_dispatcher)
         .chain(shell_control_dispatcher);
@@ -938,8 +980,12 @@ fn create_rpc_services(
     } else {
         Communicator::with_dispatcher_and_outbox(base, stream, outbox, inbox)
     };
-    let services =
-        create_remote_services(communicator, pending_streams.clone(), pending_enrichments);
+    let services = create_remote_services(
+        communicator,
+        pending_streams.clone(),
+        pending_enrichments,
+        pending_quick_opens,
+    );
     (services, pending_streams)
 }
 
@@ -1410,6 +1456,13 @@ pub(super) async fn connect(
                     local_fs: VfsRegistryFs::new(local_registry.clone()),
                     inner: services.fs,
                 });
+                services.quick_open_client = Arc::new(HairpinQuickOpen {
+                    remote_vfs_id: resp.vfs_id,
+                    local: newt_common::quick_open::Local::new(Arc::new(
+                        newt_common::quick_open::QuickOpen::new(local_registry.clone()),
+                    )),
+                    inner: services.quick_open_client,
+                });
             }
             Err(e) => {
                 log::warn!("failed to mount remote VFS: {}", e);
@@ -1511,6 +1564,7 @@ pub(super) async fn connect(
         terminal_client: services.terminal_client,
         operations_client: services.operations_client,
         hot_paths_provider: services.hot_paths_provider,
+        quick_open_client: services.quick_open_client,
         discovery_provider: services.discovery_provider,
         mounted_vfs,
         vfs_info,

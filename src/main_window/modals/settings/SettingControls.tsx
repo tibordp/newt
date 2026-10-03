@@ -67,6 +67,16 @@ export function SettingControl({
           ))}
         </select>
       );
+    case "list":
+      return (
+        <StringListEditor
+          value={setting.value ?? []}
+          onUpdate={onUpdate}
+          settingKey={setting.key}
+          labelledBy={labelledBy}
+          describedBy={describedBy}
+        />
+      );
     case "string":
       return (
         <input
@@ -80,6 +90,85 @@ export function SettingControl({
     default:
       return null;
   }
+}
+
+/// A list of strings: a row per item, and an empty row at the end that
+/// adds what is typed into it.
+function StringListEditor({
+  value,
+  onUpdate,
+  settingKey,
+  labelledBy,
+  describedBy,
+}: {
+  value: string[];
+  onUpdate: (key: string, value: any) => void;
+  settingKey: string;
+} & ControlLabelling) {
+  const [draft, setDraft] = useState("");
+  const set = (next: string[]) => onUpdate(settingKey, next);
+  const add = () => {
+    if (!draft.trim()) return;
+    set([...value, draft.trim()]);
+    setDraft("");
+  };
+  return (
+    <div
+      className={styles.stringList}
+      role="group"
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+    >
+      {value.map((item, i) => (
+        <div key={i} className={styles.stringListRow}>
+          <input
+            type="text"
+            value={item}
+            aria-label={`Item ${i + 1}`}
+            onChange={(e) =>
+              set(value.map((x, j) => (j === i ? e.target.value : x)))
+            }
+            onBlur={() => {
+              if (!item.trim()) set(value.filter((_, j) => j !== i));
+            }}
+          />
+          <button
+            type="button"
+            className={styles.stringListRemove}
+            aria-label={`Remove ${item}`}
+            title="Remove"
+            onClick={() => set(value.filter((_, j) => j !== i))}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className={styles.stringListRow}>
+        <input
+          type="text"
+          className={styles.stringListAdd}
+          value={draft}
+          placeholder="Add…"
+          aria-label="Add an item"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          onBlur={add}
+        />
+        {/* Keeps the input as wide as the ones above. */}
+        <span
+          className={`${styles.stringListRemove} ${styles.stringListSpacer}`}
+          aria-hidden
+        >
+          ×
+        </span>
+      </div>
+    </div>
+  );
 }
 
 /// Rows of the columns widget: the pickable columns with timestamp
