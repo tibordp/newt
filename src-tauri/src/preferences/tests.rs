@@ -141,69 +141,6 @@ fn render_shortcut_single_key() {
     assert_eq!(parts, vec!["Escape"]);
 }
 
-// ---------------------------------------------------------------------------
-// merge_preferences
-// ---------------------------------------------------------------------------
-
-#[test]
-fn merge_preferences_empty_file_returns_defaults() {
-    let defaults = AppPreferences::default();
-    let file = SettingsFile::default();
-    let merged = PreferencesManager::merge_preferences(&defaults, &file);
-    assert_eq!(merged, defaults);
-}
-
-#[test]
-fn merge_preferences_overrides_single_field() {
-    let defaults = AppPreferences::default();
-    let mut file = SettingsFile::default();
-
-    // Override show_hidden to true (default is false)
-    let mut table = toml::map::Map::new();
-    table.insert("show_hidden".into(), toml::Value::Boolean(true));
-    file.appearance = toml::Value::Table(table);
-
-    let merged = PreferencesManager::merge_preferences(&defaults, &file);
-    assert!(merged.appearance.show_hidden);
-    // Other fields should remain default
-    assert!(merged.appearance.folders_first);
-    assert!(merged.behavior.confirm_delete);
-}
-
-#[test]
-fn merge_preferences_preserves_unset_fields() {
-    let defaults = AppPreferences::default();
-    let mut file = SettingsFile::default();
-
-    // Only set confirm_delete
-    let mut table = toml::map::Map::new();
-    table.insert("confirm_delete".into(), toml::Value::Boolean(false));
-    file.behavior = toml::Value::Table(table);
-
-    let merged = PreferencesManager::merge_preferences(&defaults, &file);
-    assert!(!merged.behavior.confirm_delete);
-    // keep_terminal_open should still be the default (true)
-    assert!(merged.behavior.keep_terminal_open);
-}
-
-#[test]
-fn merge_preferences_wrong_type_falls_back() {
-    let defaults = AppPreferences::default();
-    let mut file = SettingsFile::default();
-
-    // Set show_hidden to a string instead of bool — should fall back to defaults
-    let mut table = toml::map::Map::new();
-    table.insert(
-        "show_hidden".into(),
-        toml::Value::String("not_a_bool".into()),
-    );
-    file.appearance = toml::Value::Table(table);
-
-    let merged = PreferencesManager::merge_preferences(&defaults, &file);
-    // Should fall back to defaults since deserialization fails
-    assert_eq!(merged, defaults);
-}
-
 #[test]
 fn command_registry_invariants() {
     let defs = default_commands();
@@ -226,7 +163,8 @@ fn command_registry_invariants() {
 
 #[test]
 fn settings_file_sections_cover_all_preference_groups() {
-    // A group absent from SettingsFile/sections() is silently ignored on load.
+    // A group absent from SettingsFile/sections() is reported as not a
+    // setting on load.
     let table = toml::Value::try_from(AppPreferences::default()).unwrap();
     let file = SettingsFile::default();
     let section_names: Vec<&str> = file.sections().iter().map(|(n, _)| *n).collect();
@@ -237,31 +175,6 @@ fn settings_file_sections_cover_all_preference_groups() {
             key
         );
     }
-}
-
-#[test]
-fn merge_preferences_cascading_user_then_profile() {
-    let defaults = AppPreferences::default();
-
-    // User file: show_hidden = true
-    let mut user_file = SettingsFile::default();
-    let mut table = toml::map::Map::new();
-    table.insert("show_hidden".into(), toml::Value::Boolean(true));
-    user_file.appearance = toml::Value::Table(table);
-
-    let user_prefs = PreferencesManager::merge_preferences(&defaults, &user_file);
-    assert!(user_prefs.appearance.show_hidden);
-
-    // Profile: folders_first = false
-    let mut profile_file = SettingsFile::default();
-    let mut table2 = toml::map::Map::new();
-    table2.insert("folders_first".into(), toml::Value::Boolean(false));
-    profile_file.appearance = toml::Value::Table(table2);
-
-    let final_prefs = PreferencesManager::merge_preferences(&user_prefs, &profile_file);
-    // Both overrides should be present
-    assert!(final_prefs.appearance.show_hidden); // from user
-    assert!(!final_prefs.appearance.folders_first); // from profile
 }
 
 // ---------------------------------------------------------------------------
@@ -669,14 +582,11 @@ when = "pane_focused"
 // merge_preferences
 // ---------------------------------------------------------------------------
 
-/// Regression: `[archives]` and `[environment]` used to be silently
-/// dropped on load — `SettingsFile` didn't deserialize them and
-/// `merge_preferences` didn't merge them, so the settings editor
-/// persisted values a restart discarded. Every `AppPreferences` group
-/// must round-trip through a settings file.
+/// Every `AppPreferences` group round-trips through a settings file: a
+/// group the loader doesn't know is lost on restart.
 #[test]
-fn merge_preferences_covers_every_group() {
-    let file: SettingsFile = toml::from_str(
+fn loading_covers_every_group() {
+    let loaded = load::parse(
         r#"
 [appearance]
 folders_first = false
@@ -705,7 +615,8 @@ image_background = "checkerboard"
     )
     .unwrap();
 
-    let merged = PreferencesManager::merge_preferences(&AppPreferences::default(), &file);
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    let merged = loaded.settings;
     assert!(!merged.appearance.folders_first);
     assert!(!merged.behavior.quick_search);
     assert!(!merged.enrichers.git_status);
@@ -1024,4 +935,149 @@ fn renaming_a_command_follows_into_associations() {
     let entries = associations_in(&doc.to_string());
     assert_eq!(entries[0].command.as_deref(), Some("Make"));
     assert_eq!(entries[1].command.as_deref(), Some("Other"));
+}
+
+// ---------------------------------------------------------------------------
+// Lenient loading
+// ---------------------------------------------------------------------------
+
+fn loaded(content: &str) -> load::Loaded {
+    load::parse(content).unwrap()
+}
+
+fn locations(loaded: &load::Loaded) -> Vec<(&str, Option<u32>)> {
+    loaded
+        .problems
+        .iter()
+        .map(|p| (p.location.as_str(), p.line))
+        .collect()
+}
+
+#[test]
+fn an_empty_file_is_the_defaults() {
+    let loaded = loaded("");
+    assert_eq!(loaded.settings, AppPreferences::default());
+    assert!(loaded.problems.is_empty());
+}
+
+#[test]
+fn settings_apply_one_by_one() {
+    let loaded = loaded(
+        "[appearance]\nshow_hidden = true\nfolders_first = \"no\"\n\n\
+         [behavior]\nconfirm_delete = false\nhistory_retention = -3\n",
+    );
+    assert!(loaded.settings.appearance.show_hidden);
+    assert!(!loaded.settings.behavior.confirm_delete);
+    // The ones that don't read keep their defaults, and say where they are.
+    assert!(loaded.settings.appearance.folders_first);
+    assert_eq!(loaded.settings.behavior.history_retention, 200);
+    assert_eq!(
+        locations(&loaded),
+        [
+            ("appearance.folders_first", Some(3)),
+            ("behavior.history_retention", Some(7)),
+        ]
+    );
+}
+
+#[test]
+fn unknown_keys_are_reported() {
+    let loaded = loaded(
+        "profile = \"work\"\ntheme = \"dark\"\n[appearance]\nshow_hiden = true\n[apperance]\n",
+    );
+    assert_eq!(
+        locations(&loaded),
+        [
+            ("profile", Some(1)),
+            ("theme", Some(2)),
+            ("appearance.show_hiden", Some(4)),
+            ("apperance", Some(5)),
+        ]
+    );
+    assert!(loaded.problems[0].message.contains("no longer supported"));
+}
+
+#[test]
+fn a_file_that_is_not_toml_reads_as_nothing() {
+    let problem = load::parse("[appearance]\nshow_hidden = \n").unwrap_err();
+    assert_eq!(problem.location, "settings.toml");
+    assert_eq!(problem.line, Some(2));
+}
+
+#[test]
+fn entries_that_do_not_read_are_left_out() {
+    let loaded = loaded(
+        "[[command]]\ntitle = \"A\"\nrun = \"a\"\n\n\
+         [[command]]\nrun = \"no title\"\n\n\
+         [[command]]\ntitle = \"C\"\nrun = \"c\"\n\n\
+         [[association]]\nmatch = \"*.log\"\nviewer = \"txt\"\n\n\
+         [[association]]\nmatch = \"*.md\"\nviewer = \"text\"\n",
+    );
+    let titles: Vec<_> = loaded
+        .file
+        .commands
+        .iter()
+        .map(|c| c.title.as_str())
+        .collect();
+    assert_eq!(titles, ["A", "C"]);
+    // Edits find "C" as the third [[command]], where it is in the file.
+    assert_eq!(loaded.command_slots, [0, 2]);
+    assert_eq!(loaded.file.associations.len(), 1);
+    assert_eq!(
+        locations(&loaded),
+        [
+            ("[[command]] #2", Some(5)),
+            ("[[association]] #1", Some(12))
+        ]
+    );
+}
+
+#[test]
+fn settings_that_cannot_work_are_reported() {
+    let loaded = loaded(
+        "[[bind]]\nkey = \"shift+ctrl+x\"\ncommand = \"copy\"\n\n\
+         [[bind]]\nkey = \"f5\"\ncommand = \"no_such_command\"\n\n\
+         [[command]]\ntitle = \"Run\"\nrun = \"x\"\napplies_to = \"files\"\n\n\
+         [[association]]\nmatch = [\"*.py\", \"[\"]\nenter = \"command\"\ncommand = \"Gone\"\nlanguage = \"cobol\"\n",
+    );
+    let messages: Vec<_> = loaded.problems.iter().map(|p| p.message.as_str()).collect();
+    assert!(messages[0].contains("never fires"), "{messages:?}");
+    assert!(messages[1].contains("no_such_command"), "{messages:?}");
+    assert!(messages[2].contains("applies_to"), "{messages:?}");
+    assert!(messages[3].contains("not a pattern"), "{messages:?}");
+    assert!(messages[4].contains("\"Gone\""), "{messages:?}");
+    assert!(messages[5].contains("cobol"), "{messages:?}");
+    // Reported, but kept: they read.
+    assert_eq!(loaded.file.bindings.len(), 2);
+    assert_eq!(loaded.file.associations.len(), 1);
+}
+
+#[test]
+fn a_reload_that_is_not_toml_keeps_what_was_in_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "[appearance]\nshow_hidden = true\n").unwrap();
+    let mut good = PreferencesManager::load_and_resolve(dir.path(), None);
+    assert!(good.settings.appearance.show_hidden);
+    assert!(good.problems.is_empty());
+
+    std::fs::write(&path, "[appearance\n").unwrap();
+    let broken = PreferencesManager::load_and_resolve(dir.path(), Some(&good));
+    assert!(broken.settings.appearance.show_hidden);
+    assert_eq!(broken.problems.len(), 1);
+    assert!(!broken.problems_dismissed);
+
+    // Dismissed problems stay dismissed while they are the same ones.
+    let mut dismissed = broken.clone();
+    dismissed.problems_dismissed = true;
+    let again = PreferencesManager::load_and_resolve(dir.path(), Some(&dismissed));
+    assert!(again.problems_dismissed);
+    std::fs::write(&path, "[appearance]\nshow_hidden = 1\n").unwrap();
+    let different = PreferencesManager::load_and_resolve(dir.path(), Some(&dismissed));
+    assert!(!different.problems_dismissed);
+
+    // At startup there is nothing to keep.
+    std::fs::write(&path, "[appearance\n").unwrap();
+    good = PreferencesManager::load_and_resolve(dir.path(), None);
+    assert_eq!(good.settings, AppPreferences::default());
 }

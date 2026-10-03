@@ -11,6 +11,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
 import ConnectionLog from "./ConnectionLog";
+import { ConfigProblemsToast } from "./ConfigProblemsToast";
 import dialogStyles from "./modals/Dialog.module.scss";
 import styles from "./MainWindow.module.scss";
 import QuickView from "./QuickView";
@@ -455,6 +456,12 @@ function App() {
   return (
     <TerminalData.Provider value={terminalData}>
       <ModalRouter state={remoteState} preferences={preferences} />
+      {remoteState && !remoteState.modal && (
+        <ConfigProblemsToast
+          preferences={preferences}
+          paneHandle={remoteState.display_options.active_pane}
+        />
+      )}
       {foregroundOp && <OperationProgressModal op={foregroundOp} />}
       <div className="container">
         {remoteState &&

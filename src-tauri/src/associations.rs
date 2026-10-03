@@ -15,9 +15,8 @@ use crate::preferences::schema::{AssociationEntry, AssociationKind, BrowseFormat
 use crate::viewer::ViewerMode;
 
 pub struct Associations {
-    /// A profile's entries, the settings file's, then the shipped ones.
+    /// The settings file's entries, then the shipped ones.
     entries: Vec<AssociationEntry>,
-    profile_len: usize,
     user_len: usize,
     globs: GlobSet,
     /// The entry each of `globs`' patterns belongs to, and how specific
@@ -97,17 +96,9 @@ pub struct RowActions {
 }
 
 impl Associations {
-    pub fn new(
-        profile: Vec<AssociationEntry>,
-        user: Vec<AssociationEntry>,
-        open_packages: bool,
-    ) -> Self {
-        let (profile_len, user_len) = (profile.len(), user.len());
-        let entries: Vec<_> = profile
-            .into_iter()
-            .chain(user)
-            .chain(defaults(open_packages))
-            .collect();
+    pub fn new(user: Vec<AssociationEntry>, open_packages: bool) -> Self {
+        let user_len = user.len();
+        let entries: Vec<_> = user.into_iter().chain(defaults(open_packages)).collect();
         let mut builder = GlobSetBuilder::new();
         let mut owners = Vec::new();
         let mut glob_patterns = Vec::new();
@@ -133,7 +124,6 @@ impl Associations {
         });
         Self {
             entries,
-            profile_len,
             user_len,
             globs,
             owners,
@@ -308,10 +298,9 @@ fn sample_name(pattern: &str) -> (String, usize) {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum Origin {
-    /// Another of the user's entries — a profile's when `profile`.
+    /// Another of the user's entries.
     Entry {
         patterns: Vec<String>,
-        profile: bool,
     },
     BuiltIn,
     /// The MIME type the name implies.
@@ -392,10 +381,9 @@ fn mime_of(name: &str) -> Option<String> {
 
 impl Associations {
     fn origin(&self, index: usize) -> Origin {
-        if index < self.profile_len + self.user_len {
+        if index < self.user_len {
             Origin::Entry {
                 patterns: self.entries[index].patterns.clone(),
-                profile: index < self.profile_len,
             }
         } else {
             Origin::BuiltIn
@@ -404,7 +392,7 @@ impl Associations {
 
     /// The settings-file entry a row for `pattern` edits.
     fn own_entry(&self, pattern: &str, kind: AssociationKind) -> Option<usize> {
-        (self.profile_len..self.profile_len + self.user_len).find(|&index| {
+        (0..self.user_len).find(|&index| {
             let entry = &self.entries[index];
             entry.kind == kind
                 && entry
@@ -856,11 +844,11 @@ mod tests {
             association: Vec<AssociationEntry>,
         }
         let file: File = toml::from_str(toml).unwrap();
-        Associations::new(Vec::new(), file.association, false)
+        Associations::new(file.association, false)
     }
 
     fn defaults_only() -> Associations {
-        Associations::new(Vec::new(), Vec::new(), false)
+        Associations::new(Vec::new(), false)
     }
 
     #[test]

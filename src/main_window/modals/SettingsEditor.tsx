@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Fragment, useId, useMemo, useState } from "react";
 
 import { safe, unwrap } from "../../lib/ipc";
+import { ProblemText } from "../ConfigProblemsToast";
 import { PreferencesState } from "../../lib/preferences";
 import { useCommandShortcuts } from "../../lib/scopedBindings";
 import styles from "./SettingsEditor.module.scss";
@@ -39,6 +40,7 @@ export default function SettingsEditor({
   paneHandle: PaneHandle | null;
 }) {
   const [filter, setFilter] = useState("");
+  const [problemsHidden, setProblemsHidden] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(
     association ? "associations" : "settings",
@@ -130,6 +132,47 @@ export default function SettingsEditor({
           autoFocus={!association}
         />
       </div>
+      {preferences && preferences.problems.length > 0 && !problemsHidden && (
+        <div className={styles.problems} role="alert">
+          <span className={styles.problemsMark} aria-hidden>
+            ⚠
+          </span>
+          <div className={styles.problemsBody}>
+            <div className={styles.problemsTitle}>
+              {preferences.problems.length === 1
+                ? "settings.toml has a problem"
+                : `settings.toml has ${preferences.problems.length} problems`}
+            </div>
+            <ul className={styles.problemsList}>
+              {preferences.problems.map((p, i) => (
+                <li key={i}>
+                  <span className={styles.problemsLine}>
+                    {p.line !== null && `Line ${p.line}`}
+                  </span>
+                  <span>
+                    <ProblemText problem={p} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button type="button" onClick={() => safe(commands.openConfigFile())}>
+            Open settings.toml
+          </button>
+          <button
+            type="button"
+            className={styles.problemsDismiss}
+            onClick={() => {
+              setProblemsHidden(true);
+              void commands.dismissConfigProblems();
+            }}
+            aria-label="Dismiss"
+            title="Dismiss until settings.toml changes"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className={styles.tabStrip}>
         <DialogTabs
           tabs={[

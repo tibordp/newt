@@ -864,6 +864,12 @@ async associationTable(query: string) : Promise<AssociationTable> {
     return await TAURI_INVOKE("association_table", { query });
 },
 /**
+ * Stop showing the problems in settings.toml until they change.
+ */
+async dismissConfigProblems() : Promise<void> {
+    await TAURI_INVOKE("dismiss_config_problems");
+},
+/**
  * The Associations row for a pattern as typed, whether or not anything
  * sets it yet.
  */
@@ -2233,6 +2239,23 @@ scope: CommandScope }
  * default keys, and rebindability.
  */
 export type CommandScope = "main" | "viewer" | "editor"
+/**
+ * Something in `settings.toml` that was ignored or won't work.
+ */
+export type ConfigProblem = { 
+/**
+ * A setting (`behavior.history_retention`), an entry
+ * (`[[association]] #3`), or the file.
+ */
+location: string; 
+/**
+ * 1-based line in the file, when known.
+ */
+line: number | null; 
+/**
+ * What's wrong there, as a phrase that follows the location.
+ */
+message: string }
 export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean; login_shell?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,
@@ -3173,9 +3196,9 @@ export type OperationStatus = "scanning" | "running" | "completed" | "failed" | 
  */
 export type Origin = 
 /**
- * Another of the user's entries — a profile's when `profile`.
+ * Another of the user's entries.
  */
-{ source: "entry"; patterns: string[]; profile: boolean } | { source: "built_in" } | 
+{ source: "entry"; patterns: string[] } | { source: "built_in" } | 
 /**
  * The MIME type the name implies.
  */
@@ -3308,9 +3331,17 @@ export type ResolvedBinding = { key: string; command: string; when: string | nul
 export type ResolvedPreferences = { settings: AppPreferences; schema: JsonValue; 
 /**
  * Dotted keys that are explicitly set in the user's settings file
- * (i.e. not inherited from defaults or profile).
+ * (i.e. not inherited from defaults).
  */
 modified_keys: string[]; bindings: ResolvedBinding[]; commands: CommandInfo[]; bookmarks: BookmarkEntry[]; user_commands: UserCommandEntry[]; 
+/**
+ * What in settings.toml was ignored or can't work, by line.
+ */
+problems: ConfigProblem[]; 
+/**
+ * The user has seen `problems`; true until they change.
+ */
+problems_dismissed: boolean; 
 /**
  * BCP-47 tag the frontend formats numbers and dates with: the
  * `appearance.locale` preference when set, else the system's regional

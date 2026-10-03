@@ -508,14 +508,11 @@ fn default_toml_table() -> toml::Value {
     toml::Value::Table(toml::map::Map::new())
 }
 
-/// Raw TOML file structure — settings plus optional profile name and keybinding
-/// overrides.
+/// Raw TOML file structure: the settings sections and the arrays of
+/// keybindings, bookmarks, user commands and file associations.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct SettingsFile {
-    /// Active profile name (loads `profiles/<name>.toml` on top).
-    pub profile: Option<String>,
-
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
     pub appearance: toml::Value,
@@ -560,11 +557,26 @@ pub struct SettingsFile {
 }
 
 impl SettingsFile {
+    /// The raw table of the section `name`, one of `sections()`.
+    pub fn section_mut(&mut self, name: &str) -> &mut toml::Value {
+        match name {
+            "appearance" => &mut self.appearance,
+            "behavior" => &mut self.behavior,
+            "enrichers" => &mut self.enrichers,
+            "archives" => &mut self.archives,
+            "hot_paths" => &mut self.hot_paths,
+            "environment" => &mut self.environment,
+            "editor" => &mut self.editor,
+            "viewer" => &mut self.viewer,
+            other => unreachable!("no settings section `{other}`"),
+        }
+    }
+
     /// Every settings section as `(name, raw TOML table)`. The single
     /// source of truth for section-wise processing (merging onto
     /// defaults, modified-key detection) — a new `AppPreferences` group
-    /// must be added here (and as a field above) or its TOML section is
-    /// silently ignored on load.
+    /// must be added here, in `section_mut` and as a field above, or its
+    /// TOML section is reported as not a setting on load.
     pub fn sections(&self) -> [(&'static str, &toml::Value); 8] {
         [
             ("appearance", &self.appearance),
@@ -582,7 +594,6 @@ impl SettingsFile {
 impl Default for SettingsFile {
     fn default() -> Self {
         Self {
-            profile: None,
             appearance: default_toml_table(),
             behavior: default_toml_table(),
             enrichers: default_toml_table(),

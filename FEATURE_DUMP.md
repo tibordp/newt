@@ -302,7 +302,7 @@ enter = "command"
 command = "Build"               # the title of a [[command]]
 ```
 
-- **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity a profile's before the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode or language no entry sets comes from the file's MIME type, then Hex mode and plain text.
+- **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode or language no entry sets comes from the file's MIME type, then Hex mode and plain text.
 - **Built-ins** cover the archive and disc formats below, the editor's language table, `.ts`/`.tsx`/`.cts` as TypeScript text (MIME databases know `.ts` only as an MPEG transport stream; `.mts`, AVCHD video as often as a TypeScript module, keeps its video type), and containers that open in their own application but can be browsed into from the context menu: Office and OpenDocument files, EPUB, Python wheels, NuGet and VS Code packages (`zip`) and Rust crates (`tar`).
 - **Enter actions**: `open` hands the file to the system's default application, `browse` goes in (into a directory, or into a file as `format`), `view` and `edit` open Newt's viewer and editor, `command` runs a user command as picking it from the palette would. A renamed command takes its associations along. A directory can only be opened on this computer's own filesystem; elsewhere Enter goes in.
 - **Packages** (macOS only): app bundles, frameworks, plugins, Xcode projects and workspaces, `.rtfd`, photo libraries and iWork documents are directories that Finder shows as files. Enter goes into them; **Behavior ▸ Open Packages** makes it open them instead.
@@ -1625,6 +1625,10 @@ Stored as `settings.toml` under Tauri's platform-specific application configurat
 
 The file is hot-reloaded — changes are picked up within 200ms and applied without restart.
 
+**Mistakes don't cost the rest of the file.** Each setting is read on its own: one with the wrong type (`history_retention = "lots"`), an unknown key, or a `[[bind]]`/`[[command]]`/`[[bookmark]]`/`[[association]]` entry that doesn't read is left out, and everything else applies — a left-out setting keeps its default. Settings that read but can't work are flagged too: a binding to a command that doesn't exist, a key whose modifiers aren't in the order `meta`, `ctrl`, `shift`, `alt` (it would never fire), a pattern that isn't a valid glob, an association whose `command` names no user command, an editor language that doesn't exist. Only a file that isn't TOML at all is ignored as a whole; on a reload, the settings in force before stay in force.
+
+When the file has problems — at startup or after any reload — a toast appears over the main window: the first problem with its line, and how many more there are. It doesn't time out, and offers **Show** (opens Settings) and **Open settings.toml**; once dismissed (×), it stays away until a reload turns up a different set of problems, and goes on its own once the file is fixed. The Settings dialog lists every problem with its line at the top, whether or not the toast was dismissed.
+
 ### Runtime State File
 
 `state.json` in the same platform-specific application configuration directory — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Per-target pane locations and window geometry live in `sessions.json` instead (see Reopening Where You Left Off). No file watcher — external edits apply on next launch.
@@ -1632,8 +1636,6 @@ The file is hot-reloaded — changes are picked up within 200ms and applied with
 ### Full Settings Structure
 
 ```toml
-profile = "work"  # Optional: loads profiles/work.toml under the app configuration directory
-
 [appearance]
 show_hidden = false         # Show files starting with "."
 folders_first = true        # Directories before files in sort order
@@ -1714,10 +1716,6 @@ viewer = "text"             # Optional: viewer mode
 language = "typescript"     # Optional: editor language
 ```
 
-### Profile System
-
-The `profile` field in `settings.toml` loads an additional TOML file from `profiles/<name>.toml` under the same platform-specific application configuration directory. Profile settings deep-merge on top of user settings (scalars are replaced, tables are merged).
-
 ### Settings Dialog (Mod+,)
 
 Four tabs:
@@ -1779,7 +1777,6 @@ Available in debug builds only. Provides:
 Bindings are resolved in cascade order (later overrides earlier):
 1. **Default bindings**: Built into the application (see shortcut reference table).
 2. **User overrides**: `[[bind]]` entries in `settings.toml`.
-3. **Profile overrides**: `[[bind]]` entries in the profile TOML.
 
 **Key format**: Lowercase, `+`-separated. Examples: `mod+shift+p`, `f5`, `alt+enter`, `ctrl+shift+~`.
 

@@ -1,5 +1,8 @@
 pub mod commands;
+mod load;
 pub mod schema;
+
+pub use load::ConfigProblem;
 
 #[cfg(test)]
 mod tests;
@@ -7,7 +10,7 @@ mod tests;
 use log::{info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use schema::{AppPreferences, BookmarkEntry, SettingsFile, UserCommandEntry};
+use schema::{AppPreferences, BookmarkEntry, UserCommandEntry};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -17,14 +20,21 @@ pub struct ResolvedPreferences {
     pub settings: AppPreferences,
     pub schema: serde_json::Value,
     /// Dotted keys that are explicitly set in the user's settings file
-    /// (i.e. not inherited from defaults or profile).
+    /// (i.e. not inherited from defaults).
     pub modified_keys: Vec<String>,
     pub bindings: Vec<ResolvedBinding>,
     pub commands: Vec<CommandInfo>,
     pub bookmarks: Vec<BookmarkEntry>,
     pub user_commands: Vec<UserCommandEntry>,
-    /// Every association in effect — a profile's, the user's, then the
-    /// shipped defaults — ready to resolve.
+    /// The `[[command]]` in settings.toml each of `user_commands` is.
+    #[serde(skip)]
+    pub user_command_slots: Vec<usize>,
+    /// What in settings.toml was ignored or can't work, by line.
+    pub problems: Vec<ConfigProblem>,
+    /// The user has seen `problems`; true until they change.
+    pub problems_dismissed: bool,
+    /// Every association in effect — the user's, then the shipped
+    /// defaults — ready to resolve.
     #[serde(skip)]
     pub compiled_associations: Arc<crate::associations::Associations>,
     /// BCP-47 tag the frontend formats numbers and dates with: the
@@ -155,7 +165,7 @@ impl PreferencesManager {
             warn!("Failed to create config dir {:?}: {}", config_dir, e);
         }
 
-        let initial = Self::load_and_resolve(&config_dir);
+        let initial = Self::load_and_resolve(&config_dir, None);
         let (notify_tx, notify_rx) = tokio::sync::watch::channel(());
         let handle = PreferencesHandle {
             settings: Arc::new(arc_swap::ArcSwap::from_pointee(initial.settings.clone())),
@@ -208,7 +218,8 @@ impl PreferencesManager {
     /// Reload preferences from disk, update stored state, notify subscribers,
     /// and emit to the frontend.
     pub fn reload(&self) {
-        let new_resolved = Self::load_and_resolve(&self.config_dir);
+        let previous = self.resolved.read().clone();
+        let new_resolved = Self::load_and_resolve(&self.config_dir, Some(&previous));
         {
             let mut guard = self.resolved.write();
             *guard = new_resolved.clone();
@@ -216,6 +227,27 @@ impl PreferencesManager {
         self.handle.store(&new_resolved);
         let _ = self.notify_tx.send(());
         let _ = self.app_handle.emit("update:preferences", &new_resolved);
+    }
+
+    /// The user has seen the problems in settings.toml; stop showing them
+    /// until they change.
+    pub fn dismiss_problems(&self) {
+        let resolved = {
+            let mut guard = self.resolved.write();
+            guard.problems_dismissed = true;
+            guard.clone()
+        };
+        let _ = self.app_handle.emit("update:preferences", &resolved);
+    }
+
+    /// The `[[command]]` in settings.toml the user command at `index` is.
+    fn command_slot(&self, index: usize) -> Result<usize, String> {
+        self.resolved
+            .read()
+            .user_command_slots
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("Command index {index} out of range"))
     }
 
     /// Update a single preference value via dotted path (e.g. "appearance.show_hidden").
@@ -394,6 +426,7 @@ impl PreferencesManager {
 
     /// Remove a user command entry from settings.toml by index.
     pub fn remove_user_command(&self, index: usize) -> Result<(), String> {
+        let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let mut doc = content
@@ -421,6 +454,7 @@ impl PreferencesManager {
         index: usize,
         entry: &UserCommandEntry,
     ) -> Result<(), String> {
+        let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let mut doc = content
@@ -583,6 +617,7 @@ impl PreferencesManager {
     /// run-filter and other fields are left intact. To edit those, use
     /// `update_user_command`.
     fn set_user_command_key(&self, index: usize, new_key: Option<String>) -> Result<(), String> {
+        let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
         let content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let mut doc = content
@@ -649,12 +684,6 @@ impl PreferencesManager {
             return None;
         }
 
-        // Also watch the profiles subdirectory if it exists
-        let profiles_dir = config_dir.join("profiles");
-        if profiles_dir.exists() {
-            let _ = watcher.watch(&profiles_dir, RecursiveMode::NonRecursive);
-        }
-
         // Spawn debounce thread
         std::thread::spawn(move || {
             while let Ok(()) = rx.recv() {
@@ -666,10 +695,12 @@ impl PreferencesManager {
                 }
 
                 info!("Config file changed, reloading preferences");
-                let new_resolved = Self::load_and_resolve(&config_dir_owned);
+                let previous = resolved.read().clone();
+                let new_resolved = Self::load_and_resolve(&config_dir_owned, Some(&previous));
                 {
                     let mut guard = resolved.write();
                     if guard.settings != new_resolved.settings
+                        || guard.problems != new_resolved.problems
                         || guard.bindings != new_resolved.bindings
                         || guard.bookmarks != new_resolved.bookmarks
                         || guard.user_commands != new_resolved.user_commands
@@ -693,48 +724,49 @@ impl PreferencesManager {
     /// Preferences as resolved with no settings file on disk.
     #[cfg(feature = "specta-bindings")]
     pub fn defaults() -> ResolvedPreferences {
-        Self::resolve(SettingsFile::default(), None)
+        Self::resolve(load::Loaded::default())
     }
 
-    fn load_and_resolve(config_dir: &std::path::Path) -> ResolvedPreferences {
-        let settings_path = config_dir.join("settings.toml");
-        let user_file = Self::load_settings_file(&settings_path);
-
-        // Load profile if specified
-        let profile_file = user_file.profile.as_ref().and_then(|name| {
-            let profile_path = config_dir.join("profiles").join(format!("{}.toml", name));
-            if profile_path.exists() {
-                Some(Self::load_settings_file(&profile_path))
-            } else {
-                warn!("Profile '{}' not found at {:?}", name, profile_path);
-                None
-            }
-        });
-
-        Self::resolve(user_file, profile_file)
-    }
-
-    fn load_settings_file(path: &std::path::Path) -> SettingsFile {
-        match std::fs::read_to_string(path) {
-            Ok(content) => match toml::from_str(&content) {
-                Ok(file) => file,
-                Err(e) => {
-                    warn!("Failed to parse {:?}: {}. Using defaults.", path, e);
-                    SettingsFile::default()
-                }
-            },
-            Err(_) => SettingsFile::default(),
-        }
-    }
-
-    fn resolve(user_file: SettingsFile, profile_file: Option<SettingsFile>) -> ResolvedPreferences {
-        // Cascade scalar settings: defaults → user → profile
-        let defaults = AppPreferences::default();
-        let user_prefs = Self::merge_preferences(&defaults, &user_file);
-        let settings = match &profile_file {
-            Some(pf) => Self::merge_preferences(&user_prefs, pf),
-            None => user_prefs,
+    /// Read settings.toml again. A file that isn't TOML leaves `previous`
+    /// in force (half-saved from an editor, most likely) and reports why;
+    /// at startup there is nothing previous, and the defaults apply.
+    fn load_and_resolve(
+        config_dir: &std::path::Path,
+        previous: Option<&ResolvedPreferences>,
+    ) -> ResolvedPreferences {
+        let path = config_dir.join("settings.toml");
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => Ok(content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(ConfigProblem {
+                location: "settings.toml".into(),
+                line: None,
+                message: format!("can't be read: {e}"),
+            }),
         };
+        let mut resolved = match content.and_then(|content| load::parse(&content)) {
+            Ok(loaded) => Self::resolve(loaded),
+            Err(problem) => {
+                warn!("settings.toml: {}", problem.message);
+                let mut kept = previous
+                    .cloned()
+                    .unwrap_or_else(|| Self::resolve(load::Loaded::default()));
+                kept.problems = vec![problem];
+                kept
+            }
+        };
+        resolved.problems_dismissed =
+            previous.is_some_and(|p| p.problems_dismissed && p.problems == resolved.problems);
+        resolved
+    }
+
+    fn resolve(loaded: load::Loaded) -> ResolvedPreferences {
+        let load::Loaded {
+            file: user_file,
+            settings,
+            command_slots: user_command_slots,
+            problems,
+        } = loaded;
 
         // Build command table and default bindings
         let command_defs = commands::default_commands();
@@ -754,18 +786,7 @@ impl PreferencesManager {
             bindings.push((entry.key.clone(), entry.command.clone(), entry.when.clone()));
         }
 
-        // 3. Profile overrides
-        if let Some(pf) = &profile_file {
-            for entry in &pf.bindings {
-                bindings.push((entry.key.clone(), entry.command.clone(), entry.when.clone()));
-            }
-        }
-
-        // Merge user commands from user + profile
-        let mut user_commands = user_file.commands.clone();
-        if let Some(pf) = &profile_file {
-            user_commands.extend(pf.commands.iter().cloned());
-        }
+        let user_commands = user_file.commands.clone();
 
         // Add user command keybindings before resolution
         for (i, uc) in user_commands.iter().enumerate() {
@@ -867,11 +888,7 @@ impl PreferencesManager {
             });
         }
 
-        // Cascade bookmarks: user + profile
-        let mut bookmarks = user_file.bookmarks.clone();
-        if let Some(pf) = &profile_file {
-            bookmarks.extend(pf.bookmarks.iter().cloned());
-        }
+        let bookmarks = user_file.bookmarks.clone();
 
         // Determine which keys the user has explicitly set in their settings file
         let modified_keys = {
@@ -886,12 +903,7 @@ impl PreferencesManager {
             keys
         };
 
-        // Associations: a profile's override the user's, as its settings do.
         let compiled_associations = Arc::new(crate::associations::Associations::new(
-            profile_file
-                .as_ref()
-                .map(|pf| pf.associations.clone())
-                .unwrap_or_default(),
             user_file.associations.clone(),
             settings.behavior.open_packages,
         ));
@@ -919,39 +931,12 @@ impl PreferencesManager {
             commands,
             bookmarks,
             user_commands,
+            user_command_slots,
+            problems,
+            problems_dismissed: false,
             compiled_associations,
             locale,
         }
-    }
-
-    /// Merge a `SettingsFile`'s raw TOML values on top of an existing `AppPreferences`.
-    ///
-    /// Serializes `base` to a TOML table, deep-merges only the keys present in
-    /// `file` (so unset keys keep the base value), then deserializes back.
-    fn merge_preferences(base: &AppPreferences, file: &SettingsFile) -> AppPreferences {
-        let mut base_table =
-            toml::Value::try_from(base).unwrap_or(toml::Value::Table(Default::default()));
-
-        // Merge each section's raw TOML table on top of the serialized base
-        if let toml::Value::Table(ref mut root) = base_table {
-            for (section, value) in file.sections() {
-                if let toml::Value::Table(t) = value {
-                    deep_merge_table(
-                        root.entry(section)
-                            .or_insert(toml::Value::Table(Default::default())),
-                        &toml::Value::Table(t.clone()),
-                    );
-                }
-            }
-        }
-
-        base_table.try_into().unwrap_or_else(|e| {
-            warn!(
-                "Failed to deserialize merged preferences: {}. Using base.",
-                e
-            );
-            base.clone()
-        })
     }
 }
 

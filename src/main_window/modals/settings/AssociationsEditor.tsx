@@ -74,7 +74,7 @@ function enterLabel(
 function originLabel(origin: Origin): string {
   switch (origin.source) {
     case "entry":
-      return `from ${origin.patterns.join(", ")}${origin.profile ? " (profile)" : ""}`;
+      return `from ${origin.patterns.join(", ")}`;
     case "built_in":
       return "built-in";
     case "file_type":

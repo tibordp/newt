@@ -298,6 +298,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             preferences::update_preference,
             preferences::reset_preference,
             preferences::association_table,
+            preferences::dismiss_config_problems,
             preferences::association_row,
             preferences::set_association,
             preferences::editor_languages,

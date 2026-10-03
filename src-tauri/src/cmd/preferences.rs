@@ -346,3 +346,10 @@ pub fn editor_languages() -> Vec<EditorLanguage> {
         })
         .collect()
 }
+
+/// Stop showing the problems in settings.toml until they change.
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_config_problems(global_ctx: tauri::State<'_, GlobalContext>) {
+    global_ctx.preferences().dismiss_problems();
+}
