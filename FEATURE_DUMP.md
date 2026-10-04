@@ -476,7 +476,7 @@ While rows are hidden, the file list carries a faint accent tint (`--color-bg-fi
 
 ### Create Directory (F7)
 
-Modal dialog with a single name input field (auto-focused). Creates a new directory in the active pane's current path.
+Modal dialog with a single name input field (auto-focused). Creates a new directory in the active pane's current path. A name typed here — or into Create File, Rename, or Copy/Move's new name — that climbs out of the directory (`..`, `../x`) is refused.
 
 ### Create File (from command palette)
 
@@ -1566,7 +1566,7 @@ If the user declines a `confirm()`, the entire command is aborted.
 
 Everything a template interpolates is quoted for the shell the command runs in, so a file name is always one argument, whatever characters it holds — a name like `x'; rm -rf ~ #` is just a name. The shell is the one of the machine the command runs on: `sh` (POSIX quoting; dash on Debian and Ubuntu has no `$'…'`) or, on Windows, `cmd.exe` (double quotes, with `%` and `"` written outside them; a value with a line break can't be expressed and fails the command). In a remote session that's the remote machine's shell.
 
-- A list interpolates as one word per item: `{{ files | map(attribute='name') }}` → `'a b.txt' c.txt`. `join` keeps that, quoting each item around a literal joiner.
+- A list interpolates as one word per item: `{{ files | map(attribute='name') }}` → `'a b.txt' c.txt`. `join` works as in Jinja — plain values join into one string, so `join(', ')` makes text for a `confirm()` message, or one word on the command line — while values already quoted (`map('shell_quote') | join(' ')`) stay separate words.
 - Text in the template itself is not quoted: `{{ file.stem }}.tar.gz` → `'my file'.tar.gz`, which the shell reads as one word.
 - `| raw` inserts a value as-is, for a value meant as shell syntax — say `{{ prompt("Flags") | raw }}` for several flags at once (a list goes in space-separated). Jinja's `| safe` does the same for a single value.
 - `| shell_quote` quotes explicitly and marks the result quoted, so it's never quoted twice.
@@ -1604,7 +1604,7 @@ Everything a template interpolates is quoted for the shell the command runs in, 
 | `regex_replace(pattern, replacement)` | Regex substitution | `{{ file.name \| regex_replace("\.bak$", "") }}` |
 | `join_path` | Join path segments | `{{ [dir, "subdir"] \| join_path }}` |
 
-All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`, `lower`, `selectattr`, etc.); `join` quotes item by item (see Quoting).
+All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`, `lower`, `selectattr`, etc.); see Quoting for `join`.
 
 ### Custom Functions
 

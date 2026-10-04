@@ -1400,7 +1400,9 @@ impl MainWindowContext {
     /// Whether a close may go ahead. While operations are running it asks
     /// instead, and returns false until the user confirms.
     pub fn may_close(&self) -> bool {
-        if self.inner.close_confirmed.load(Ordering::SeqCst) {
+        // One close per confirmation: a close then refused (an editor's
+        // unsaved-changes prompt) asks again next time.
+        if self.inner.close_confirmed.swap(false, Ordering::SeqCst) {
             return true;
         }
         let running = self.operations().running().len();

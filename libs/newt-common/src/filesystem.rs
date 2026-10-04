@@ -91,8 +91,8 @@ pub trait Filesystem: Send + Sync {
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
     /// The file's whole new contents, swapped in at once where the VFS can
     /// promise that for it (`WriteOptions::replace`), written in place
-    /// otherwise.
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
+    /// otherwise. Returns the file as written.
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error>;
     async fn find_in_file(
         &self,
         path: VfsPath,
@@ -288,8 +288,8 @@ impl Filesystem for Remote {
         Ok(ret?.into_vec())
     }
 
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error> {
+        let ret: Result<FileDetails, Error> = self
             .communicator
             .invoke(
                 crate::api::API_WRITE_FILE,

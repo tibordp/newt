@@ -13,6 +13,16 @@ use crate::main_window::{
     OperationStatus, PaneHandle,
 };
 
+/// A name typed into a dialog, refused if joining it would leave the
+/// directory it's for.
+fn typed_name(name: &str) -> Result<(), Error> {
+    if newt_common::vfs::path::stays_below(name) {
+        Ok(())
+    } else {
+        Err(Error::Custom(format!("“{name}” isn't a name here")))
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn create_directory(
@@ -21,6 +31,7 @@ pub async fn create_directory(
     path: VfsPath,
     name: String,
 ) -> Result<(), Error> {
+    typed_name(&name)?;
     let dir_path = path.join(&name);
 
     ctx.fs()?.create_directory(dir_path).await?;
@@ -47,6 +58,7 @@ pub async fn touch_file(
     name: String,
     open_editor: Option<bool>,
 ) -> Result<(), Error> {
+    typed_name(&name)?;
     let file_path = path.join(&name);
 
     ctx.fs()?.touch(file_path.clone()).await?;
@@ -193,6 +205,7 @@ pub async fn rename(
     old_name: String,
     new_name: String,
 ) -> Result<(), Error> {
+    typed_name(&new_name)?;
     let request = OperationRequest::Rename {
         source: base_path.join(&old_name),
         new_name: new_name.clone(),
@@ -570,6 +583,9 @@ pub async fn start_copy_move(
     rename_to: Option<String>,
 ) -> Result<OperationId, Error> {
     let rename_to = rename_to.filter(|_| sources.len() == 1);
+    if let Some(name) = &rename_to {
+        typed_name(name)?;
+    }
     let request = match kind.as_str() {
         "copy" => OperationRequest::Copy {
             rename_to,
@@ -711,9 +727,11 @@ pub async fn read_file(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn write_file(ctx: MainWindowContext, raw: RawArgs<WriteFileArgs>) -> Result<(), Error> {
-    ctx.fs()?.write_file(raw.args.path, raw.data).await?;
-    Ok(())
+pub async fn write_file(
+    ctx: MainWindowContext,
+    raw: RawArgs<WriteFileArgs>,
+) -> Result<newt_common::vfs::FileDetails, Error> {
+    Ok(ctx.fs()?.write_file(raw.args.path, raw.data).await?)
 }
 
 #[derive(serde::Deserialize)]

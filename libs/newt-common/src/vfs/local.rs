@@ -1515,10 +1515,22 @@ fn prepare_replacement(
     use super::attributes::AttributeKind;
     use std::os::unix::fs::MetadataExt;
 
-    let refuse = |_| Error::not_supported();
+    // What can't be done here is a refusal, which the caller can take as
+    // "write in place"; anything else, a full disk above all, is an error
+    // that leaves the file alone.
+    let refuse = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem => {
+            Error::not_supported()
+        }
+        _ => e.into(),
+    };
     let existing = match std::fs::symlink_metadata(path) {
         Ok(_) => {
-            let target = std::fs::canonicalize(path).map_err(refuse)?;
+            // A dangling link has no file to keep.
+            let target = std::fs::canonicalize(path).map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => Error::not_supported(),
+                _ => e.into(),
+            })?;
             Some((std::fs::metadata(&target)?, target))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,

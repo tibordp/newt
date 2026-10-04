@@ -99,7 +99,7 @@ pub fn dialog(
     let mut free_space_fetch: Option<Vec<(usize, VfsPath)>> = None;
     ctx.with_update(|gs| {
         // Dialogs that need the pane fail while the window has none.
-        let pane = || {
+        let require_pane = || {
             gs.panes
                 .require(pane_handle.expect("a pane dialog names its pane"))
         };
@@ -107,13 +107,13 @@ pub fn dialog(
         *modal_state = Some(ModalData {
             kind: match dialog {
                 DialogKind::Navigate => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let path = pane.path();
                     let display_path = ctx.format_vfs_path(&path);
                     ModalDataKind::Navigate { path, display_path }
                 }
                 DialogKind::CreateDirectory => ModalDataKind::CreateDirectory {
-                    path: pane()?.path(),
+                    path: require_pane()?.path(),
                 },
                 DialogKind::SelectByPattern | DialogKind::DeselectByPattern => {
                     ModalDataKind::SelectByPattern {
@@ -122,15 +122,15 @@ pub fn dialog(
                     }
                 }
                 DialogKind::CreateFile => ModalDataKind::CreateFile {
-                    path: pane()?.path(),
+                    path: require_pane()?.path(),
                     open_editor: false,
                 },
                 DialogKind::CreateAndEdit => ModalDataKind::CreateFile {
-                    path: pane()?.path(),
+                    path: require_pane()?.path(),
                     open_editor: true,
                 },
                 DialogKind::DirectoryProperties => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let pane_path = pane.path();
                     let file_list = pane.file_list();
                     let dir_entry = file_list.files().iter().find(|f| f.name == "..");
@@ -206,7 +206,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::RootProperties => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let pane_path = pane.path();
                     let fs_stats = pane.view_state().fs_stats.clone();
 
@@ -269,7 +269,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::Properties => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     // Display the real underlying paths in the properties
                     // dialog; for a SearchVfs entry the user expects to see
                     // where the file actually lives. The op execution path
@@ -448,7 +448,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::Rename => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     // Focused rather than the selection — F2 renames what's
                     // under the cursor. `actionable_focus` so that `..` opens
                     // no dialog at all.
@@ -463,7 +463,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::Copy | DialogKind::Move => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     // Op runner derefs at the registry layer too, but
                     // emitting deref'd paths here keeps the confirmation
                     // copy showing where the bytes actually come from.
@@ -518,7 +518,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::CreateArchive => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let sources = pane.get_effective_selection_dereferenced();
                     if sources.is_empty() {
                         return Ok(());
@@ -601,7 +601,7 @@ pub fn dialog(
                     connect_on_open: false,
                 },
                 DialogKind::Search => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let path = pane.path();
                     // cmd+f inside a search refines it: re-root the dialog
                     // at the original search root and prefill its params.
@@ -623,7 +623,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::Sort => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     ModalDataKind::SortMenu {
                         sorting: pane.view_state().sorting.clone(),
                         folders_first: ctx.preferences().load().appearance.folders_first,
@@ -679,7 +679,7 @@ pub fn dialog(
                     ModalDataKind::SelectVfs { targets }
                 }
                 DialogKind::HistoryBack | DialogKind::HistoryForward | DialogKind::History => {
-                    let pane = pane()?;
+                    let pane = require_pane()?;
                     let (entries, current_index) = pane.history_entries();
                     // The list is ordered forward-on-top, back-on-bottom (see
                     // Pane::history_entries). So alt+left (back) steps DOWN
@@ -703,7 +703,7 @@ pub fn dialog(
                 },
                 DialogKind::HotPaths => ModalDataKind::HotPaths,
                 DialogKind::QuickOpen => {
-                    let root = pane()?.path();
+                    let root = require_pane()?.path();
                     let quick_open = &ctx.preferences().load().quick_open;
                     let options = QuickOpenOptions {
                         show_hidden: gs.display_options.0.read().show_hidden,

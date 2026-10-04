@@ -384,7 +384,7 @@ async readFile(path: VfsPath, maxSize: number) : Promise<Result<unknown, string>
     else return { status: "error", error: e  as any };
 }
 },
-async writeFile() : Promise<Result<null, string>> {
+async writeFile() : Promise<Result<FileDetails, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_file") };
 } catch (e) {

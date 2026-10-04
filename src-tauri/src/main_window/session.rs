@@ -575,7 +575,11 @@ impl Filesystem for HairpinFs {
         }
     }
 
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), newt_common::Error> {
+    async fn write_file(
+        &self,
+        path: VfsPath,
+        data: Vec<u8>,
+    ) -> Result<newt_common::vfs::FileDetails, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .write_file(VfsPath::new(VfsId::ROOT, path.path), data)

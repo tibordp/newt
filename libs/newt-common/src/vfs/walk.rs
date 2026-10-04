@@ -1488,6 +1488,17 @@ mod tests {
     }
 
     #[test]
+    fn typed_names_stay_below() {
+        use super::super::path::stays_below;
+        for good in ["new folder", "a/b", "./a", "a/./b/"] {
+            assert!(stays_below(good), "{good:?}");
+        }
+        for bad in ["", ".", "/", "..", "../x", "a/../../b"] {
+            assert!(!stays_below(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn a_valid_name_is_one_entry() {
         use super::super::path::is_valid_name;
         assert!(is_valid_name("file.txt"));

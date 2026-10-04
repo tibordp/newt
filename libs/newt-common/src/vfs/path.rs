@@ -39,6 +39,14 @@ pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
 }
 
+/// Whether `rel`, typed by the user to be joined under a directory (`a/b`
+/// for both levels), stays below it: names, with `.` and empty segments
+/// ignored, and at least one of them. `..` would leave it.
+pub fn stays_below(rel: &str) -> bool {
+    let mut names = rel.split('/').filter(|s| !s.is_empty() && *s != ".");
+    names.clone().next().is_some() && names.all(is_valid_name)
+}
+
 // ---------------------------------------------------------------------------
 // Path (borrowed, unsized — mirrors std::path::Path)
 // ---------------------------------------------------------------------------
@@ -232,13 +240,13 @@ impl PathBuf {
         Self { inner }
     }
 
-    /// Append a single component in place. Panics if `segment` is empty
-    /// or contains `/`.
+    /// Append a single component in place. Panics on one that isn't a
+    /// name ([`is_valid_name`]): a path built from names never climbs out
+    /// of where it started.
     pub fn push(&mut self, segment: &str) {
-        assert!(!segment.is_empty(), "VFS path component must not be empty");
         assert!(
-            !segment.contains('/'),
-            "VFS path component must not contain '/': {segment:?}"
+            is_valid_name(segment),
+            "VFS path component must be a name: {segment:?}"
         );
         if self.inner == "/" {
             // "/" + "a" → "/a" (no extra separator needed at the root).

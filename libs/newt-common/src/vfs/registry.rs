@@ -310,7 +310,7 @@ impl Filesystem for VfsRegistryFs {
         Ok(data)
     }
 
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         // Whole or not at all where the VFS can promise it for this file;
@@ -328,7 +328,7 @@ impl Filesystem for VfsRegistryFs {
         };
         writer.write(&data).await?;
         writer.finish().await?;
-        Ok(())
+        vfs.file_details(&local_path).await
     }
 
     async fn find_in_file(

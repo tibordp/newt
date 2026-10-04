@@ -180,20 +180,25 @@ fn setup_template_env(
             Ok(minijinja::Value::from_safe_string(text))
         },
     );
-    // Items quoted one by one around a literal joiner, so a joined list
-    // is still one word per item.
+    // As in Jinja, plain values join into one string — text for a prompt,
+    // or one word on the command line — except that values already quoted
+    // (`map('shell_quote')`) stay separate words around a literal joiner.
     env.add_filter(
         "join",
         move |value: minijinja::Value,
               joiner: Option<String>|
               -> Result<minijinja::Value, minijinja::Error> {
-            let words = value
-                .try_iter()?
-                .map(|item| shell_render(flavor, &item))
+            let items: Vec<minijinja::Value> = value.try_iter()?.collect();
+            let joiner = joiner.unwrap_or_default();
+            if !items.iter().any(minijinja::Value::is_safe) {
+                let text: Vec<String> = items.iter().map(ToString::to_string).collect();
+                return Ok(minijinja::Value::from(text.join(&joiner)));
+            }
+            let words = items
+                .iter()
+                .map(|item| shell_render(flavor, item))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(minijinja::Value::from_safe_string(
-                words.join(joiner.as_deref().unwrap_or("")),
-            ))
+            Ok(minijinja::Value::from_safe_string(words.join(&joiner)))
         },
     );
     env.add_filter("basename", |value: String| -> String {
@@ -775,7 +780,7 @@ mod tests {
             posix("cat {{ file.stem }}.bak", &["my file.txt"]),
             "cat 'my file'.bak"
         );
-        // A list is one word per item, joined or not.
+        // A list is one word per item; joined plain, it's one string.
         let names = &["a b", "c"];
         let expected = "tar czf out.tgz 'a b' c";
         assert_eq!(
@@ -784,10 +789,17 @@ mod tests {
         );
         assert_eq!(
             posix(
-                "tar czf out.tgz {{ files | map(attribute='name') | join(' ') }}",
+                "echo {{ files | map(attribute='name') | join(', ') }}",
                 names
             ),
-            expected
+            "echo 'a b, c'"
+        );
+        assert_eq!(
+            posix(
+                "{% set s = files | map(attribute='name') | join(', ') %}{{ s | raw }}",
+                names
+            ),
+            "a b, c"
         );
         // Quoting explicitly doesn't quote twice; `safe` opts out.
         assert_eq!(

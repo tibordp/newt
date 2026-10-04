@@ -96,7 +96,11 @@ impl Filesystem for EndlessListing {
         Err(Error::not_supported())
     }
 
-    async fn write_file(&self, _path: VfsPath, _data: Vec<u8>) -> Result<(), Error> {
+    async fn write_file(
+        &self,
+        _path: VfsPath,
+        _data: Vec<u8>,
+    ) -> Result<crate::vfs::FileDetails, Error> {
         Err(Error::not_supported())
     }
 

@@ -196,7 +196,8 @@ impl ShellFlavor {
 }
 
 fn posix_quote(value: &str) -> String {
-    let inert = |c: char| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c);
+    // Not `=`: a first word like `A=b` is an assignment.
+    let inert = |c: char| c.is_ascii_alphanumeric() || "_@%+:,./-".contains(c);
     if !value.is_empty() && value.chars().all(inert) {
         return value.to_string();
     }
@@ -210,7 +211,8 @@ fn posix_quote(value: &str) -> String {
 /// set. Backslashes before a quote are doubled for the program's own
 /// argv parsing (`CommandLineToArgvW`).
 fn cmd_quote(value: &str) -> Result<String, String> {
-    let inert = |c: char| c.is_ascii_alphanumeric() || "_@+=:,./\\-".contains(c);
+    // Not `,` or `=`: cmd's builtins split arguments on them.
+    let inert = |c: char| c.is_ascii_alphanumeric() || "_@+:./\\-".contains(c);
     if !value.is_empty() && value.chars().all(inert) {
         return Ok(value.to_string());
     }
@@ -378,6 +380,7 @@ mod tests {
         let q = |v| ShellFlavor::Cmd.quote(v).unwrap();
         assert_eq!(q("C:\\dir\\file.txt"), "C:\\dir\\file.txt");
         assert_eq!(q("a&calc&.txt"), "\"a&calc&.txt\"");
+        assert_eq!(q("a,b.txt"), "\"a,b.txt\"");
         assert_eq!(q("50% off"), "\"50\"^%\" off\"");
         assert_eq!(q("say \"hi\""), "\"say \"\\^\"\"hi\"\\^\"\"\"");
         assert_eq!(q("C:\\my dir\\"), "\"C:\\my dir\\\\\"");

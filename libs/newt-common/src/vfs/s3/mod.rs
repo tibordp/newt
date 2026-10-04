@@ -788,6 +788,27 @@ mod tests;
 #[cfg(test)]
 mod writer_tests;
 
+/// Tags as `x-amz-tagging` takes them: URL query parameters, percent-
+/// encoded (a space is `%20`; S3 doesn't read `+` as one).
+fn tagging(tags: &std::collections::BTreeMap<String, String>) -> String {
+    use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+    const VALUE: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    tags.iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                utf8_percent_encode(key, VALUE),
+                utf8_percent_encode(value, VALUE)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 impl S3Vfs {
     /// For a `replace` write: what the object being replaced carries — its
     /// metadata and storage class into `options` (unless the caller set
@@ -822,11 +843,7 @@ impl S3Vfs {
             .await
             .map_err(refuse)?
         {
-            Some(Attribute::ObjectTags(tags)) if !tags.is_empty() => Some(
-                url::form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs(&tags)
-                    .finish(),
-            ),
+            Some(Attribute::ObjectTags(tags)) if !tags.is_empty() => Some(tagging(&tags)),
             _ => None,
         };
         let grants = match self

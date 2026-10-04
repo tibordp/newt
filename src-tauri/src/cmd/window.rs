@@ -532,9 +532,11 @@ pub async fn close_with_running_operations(ctx: MainWindowContext, now: bool) ->
             }
             Ok(())
         })?;
-        let client = ctx.operations_client()?;
-        for id in ctx.operations().running() {
-            client.cancel_operation(id).await?;
+        // Best-effort: a session already gone has nothing left to cancel.
+        if let Ok(client) = ctx.operations_client() {
+            for id in ctx.operations().running() {
+                let _ = client.cancel_operation(id).await;
+            }
         }
         ctx.operations().idle().await;
         // Dismissed while waiting: the window stays.

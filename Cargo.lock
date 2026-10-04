@@ -4169,6 +4169,7 @@ dependencies = [
  "openssh-sftp-client",
  "openssh-sftp-protocol-error",
  "parking_lot",
+ "percent-encoding",
  "plist",
  "pty-process",
  "quick-xml 0.42.0",

@@ -5,7 +5,12 @@ import { Event } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyPatches, Patch } from "immer";
 
-import { commands, type Result, type VfsPath } from "./bindings";
+import {
+  commands,
+  type FileDetails,
+  type Result,
+  type VfsPath,
+} from "./bindings";
 
 /// Settle a typed `commands.X(...)` promise into `{ ok: T } | { err: string }`.
 /// tauri-specta's generated commands return `Result<T, string>` on user
@@ -99,7 +104,7 @@ async function invokeRaw<T>(
 /// parameters.
 export const rawCommands = {
   writeFile: (path: VfsPath, data: Uint8Array) =>
-    invokeRaw<null>("write_file", { path }, data),
+    invokeRaw<FileDetails>("write_file", { path }, data),
   terminalWrite: (handle: number, data: Uint8Array) =>
     invokeRaw<null>("terminal_write", { handle }, data),
   dndDragOut: (image: Uint8Array) =>

@@ -210,15 +210,10 @@ function Editor() {
       const data = bomRef.current
         ? new Uint8Array([0xef, 0xbb, 0xbf, ...encoded])
         : encoded;
-      await unwrap(rawCommands.writeFile(filePath, data));
+      const saved = await unwrap(rawCommands.writeFile(filePath, data));
       setDirty(false);
-      setFileSize(data.length);
-      const saved = await unwrap(commands.fileDetails(filePath)).catch(
-        () => null,
-      );
-      onDiskRef.current = saved
-        ? { size: saved.size, modified: saved.modified }
-        : null;
+      setFileSize(saved.size);
+      onDiskRef.current = { size: saved.size, modified: saved.modified };
     } catch (e: unknown) {
       await message(String(e), { kind: "error", title: "Save Error" });
     } finally {

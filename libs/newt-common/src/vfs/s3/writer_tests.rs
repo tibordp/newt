@@ -476,7 +476,7 @@ async fn a_replacement_keeps_the_objects_metadata_storage_class_and_tags() {
     assert_eq!(put.header("cache-control"), Some("max-age=60"));
     assert_eq!(put.header("x-amz-meta-author"), Some("tibor"));
     assert_eq!(put.header("x-amz-storage-class"), Some("STANDARD_IA"));
-    assert_eq!(put.header("x-amz-tagging"), Some("team=web+site"));
+    assert_eq!(put.header("x-amz-tagging"), Some("team=web%20site"));
     // Owner-only grants are the default: nothing to put back.
     assert!(
         fake.seen

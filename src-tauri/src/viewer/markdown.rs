@@ -261,6 +261,15 @@ fn image_allowed(url: &str) -> bool {
 /// or one climbing past the drive, names a network share, and fetching it
 /// would hand the user's credentials to that server.
 pub fn resolve_images(nodes: &mut [MarkdownNode], doc: &Path, root_of: &impl Fn(&Path) -> PathBuf) {
+    resolve_images_on(nodes, doc, &root_of(doc), root_of);
+}
+
+fn resolve_images_on(
+    nodes: &mut [MarkdownNode],
+    doc: &Path,
+    volume: &Path,
+    root_of: &impl Fn(&Path) -> PathBuf,
+) {
     for node in nodes {
         let MarkdownNode::Element {
             tag,
@@ -275,7 +284,9 @@ pub fn resolve_images(nodes: &mut [MarkdownNode], doc: &Path, root_of: &impl Fn(
                 if name != "src" || value.to_ascii_lowercase().starts_with("data:image/") {
                     return true;
                 }
-                match resolve_image(doc, value).filter(|p| root_of(p) == root_of(doc)) {
+                match resolve_image(doc, value)
+                    .filter(|p| root_of(p).as_wire_str() == volume.as_wire_str())
+                {
                     Some(path) => {
                         *value = path.as_wire_str().to_string();
                         true
@@ -284,7 +295,7 @@ pub fn resolve_images(nodes: &mut [MarkdownNode], doc: &Path, root_of: &impl Fn(
                 }
             });
         }
-        resolve_images(children, doc, root_of);
+        resolve_images_on(children, doc, volume, root_of);
     }
 }
 
