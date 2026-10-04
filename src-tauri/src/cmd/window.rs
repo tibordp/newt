@@ -39,12 +39,14 @@ fn build_child_window(
         .to_tauri_theme()
         .or_else(crate::detect_theme);
 
-    let mut builder =
-        tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App(url.into()))
-            .title(title)
-            .inner_size(size.0, size.1)
-            .theme(theme)
-            .center();
+    let mut builder = crate::confine_webview(
+        tauri::WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::App(url.into())),
+        app_handle,
+    )
+    .title(title)
+    .inner_size(size.0, size.1)
+    .theme(theme)
+    .center();
 
     if visible {
         builder = builder.focused(true);

@@ -860,6 +860,7 @@ Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, 
 ### PDF Mode
 
 - Rendered via PDF.js with a custom toolbar (not a browser iframe).
+- Links in a document open in the default browser or mail client. No Newt window ever navigates away from Newt itself: a navigation to anywhere else (a link, a script) is cancelled, web and mail links are handed to the system, and requests for new windows are refused.
 - **Toolbar**: Previous/Next page buttons, page display ("1 / 42"), zoom in/out/fit buttons, zoom percentage.
 - **Keyboard**: `=` zoom in, `-` zoom out, `0` reset to fit (the shared, rebindable `viewer_zoom_*` commands — Mod+= and friends stay webview zoom).
 - **Escape**: Close viewer (via window-level menu accelerator).

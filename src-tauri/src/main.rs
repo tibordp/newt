@@ -670,6 +670,52 @@ pub fn detect_theme() -> Option<tauri::Theme> {
     None
 }
 
+/// Keep a window on the app. A navigation anywhere else — a link clicked
+/// in a PDF, a script — is cancelled, and a web or mail link opens in the
+/// default browser or mail client instead; requests for a new window are
+/// handled the same way.
+pub(crate) fn confine_webview<'a, M: Manager<tauri::Wry>>(
+    builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, M>,
+    app_handle: &tauri::AppHandle,
+) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, M> {
+    let dev_url = app_handle
+        .config()
+        .build
+        .dev_url
+        .clone()
+        .filter(|_| cfg!(debug_assertions));
+    let is_app = move |url: &tauri::Url| match url.scheme() {
+        // The bundled frontend: `tauri://localhost`, or
+        // `http(s)://tauri.localhost` on Windows.
+        "tauri" => true,
+        "http" | "https" if url.host_str() == Some("tauri.localhost") => true,
+        "about" => url.path() == "blank",
+        _ => dev_url
+            .as_ref()
+            .is_some_and(|dev| dev.origin() == url.origin()),
+    };
+    let leave = |url: &tauri::Url| {
+        if let Err(e) = cmd::open_external(url.as_str()) {
+            log::warn!("not following {url}: {e}");
+        }
+    };
+    let is_app_too = is_app.clone();
+    builder
+        .on_navigation(move |url| {
+            let allowed = is_app(url);
+            if !allowed {
+                leave(url);
+            }
+            allowed
+        })
+        .on_new_window(move |url, _features| {
+            if !is_app_too(&url) {
+                leave(&url);
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+}
+
 /// Turn off the browser-isms WebView2 (Edge Chromium) ships enabled:
 ///
 /// * Autofill — a "saved info" popover appears over text inputs (path

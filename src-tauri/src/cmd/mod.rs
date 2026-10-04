@@ -168,11 +168,17 @@ pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
 #[tauri::command]
 #[specta::specta]
 pub fn open_url(url: String) -> Result<(), Error> {
+    open_external(&url)
+}
+
+/// Open a web or mail link with the system's handler; anything else is
+/// refused.
+pub fn open_external(url: &str) -> Result<(), Error> {
     let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
     if !matches!(scheme.as_deref(), Some("http" | "https" | "mailto")) {
         return Err(Error::Custom(format!("not a web or mail link: {url}")));
     }
-    opener::open(&url)?;
+    opener::open(url)?;
     Ok(())
 }
 
@@ -414,9 +420,6 @@ pub fn create_specta_builder() -> Builder<Wry> {
             dialog::cmd_connection_log,
             dialog::cmd_about,
             // Keychain
-            crate::keychain::keychain_get,
-            crate::keychain::keychain_set,
-            crate::keychain::keychain_delete,
             // Connections
             crate::connections::cmd_list_connections,
             crate::connections::cmd_save_connection,
