@@ -964,7 +964,10 @@ The language comes from [file associations](#file-associations); the built-in on
 ### Saving
 
 - **Ctrl+S / Cmd+S**: Save the file.
-- Encodes content to UTF-8 and writes atomically.
+- Encodes content to UTF-8 and swaps the new contents in whole where the filesystem can promise it, so a full disk, a dropped connection or a crash mid-save leaves the old file intact:
+  - **Local** (macOS, Linux): written to a temporary file beside it — given the file's owner, extended attributes, mode and ACL — then renamed over it; a symlink is saved through to its target and stays a link. A file with other hard links, one owned by someone the new file couldn't be given to, one in a directory that won't take a new entry, and anything but a regular file are written in place instead, since renaming over them would change what they are. Windows writes in place for now.
+  - **SFTP**: the same through the server's posix-rename (OpenSSH has it); servers without it, and files whose new copy would have another owner, are written in place. SFTP reports no link count, so a hard-linked file on an SFTP server comes out of the save as a file of its own.
+  - **S3**: an upload replaces an object whole anyway; a save keeps its metadata (Content-Type, Cache-Control, user metadata…), storage class and tags, and puts its ACL grants back once it lands. If the tags or the ACL can't be read, the save is a plain upload.
 - Status bar briefly shows "Saving..." during the write.
 - After save, the dirty indicator clears and the file size updates.
 

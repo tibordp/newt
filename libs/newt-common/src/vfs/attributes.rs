@@ -114,6 +114,14 @@ pub struct WriteOptions {
     /// the open, a write or the finish; the destination is untouched
     /// whichever it is.
     pub create_new: bool,
+    /// Replace the file at the path whole: until `finish` returns, readers
+    /// see the old contents, and anything short of it (an error, a cancel,
+    /// a drop) leaves them untouched. The file stays what it was — mode,
+    /// owner, extended attributes, ACLs, its hard links, and a symlink at
+    /// the path stays a link to it. A VFS that can't promise all of that
+    /// for this file refuses. With nothing at the path, the file is
+    /// created the same way.
+    pub replace: bool,
     /// Expected length of what will be written. Advisory: a wrong hint may
     /// cost an optimization, never the contract.
     pub size_hint: Option<u64>,
@@ -127,5 +135,6 @@ impl WriteOptions {
             && self.object_storage_class.is_none()
             && self.object_canned_acl.is_none()
             && !self.create_new
+            && !self.replace
     }
 }

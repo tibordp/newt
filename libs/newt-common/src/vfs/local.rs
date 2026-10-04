@@ -869,6 +869,21 @@ impl Vfs for LocalVfs {
             return Err(Error::not_supported());
         }
         let native = path.to_native();
+        if options.replace {
+            if options.create_new {
+                return Err(Error::not_supported());
+            }
+            let (file, temp, target) =
+                tokio::task::spawn_blocking(move || prepare_replacement(&native)).await??;
+            return Ok(Box::new(LocalAsyncWriter {
+                file: tokio::fs::File::from_std(file),
+                sparse: options.sparse,
+                length: 0,
+                holes: Vec::new(),
+                replaces: Some(target),
+                exclusive: Exclusive(Some(temp)),
+            }));
+        }
         let file = if options.create_new {
             match tokio::fs::OpenOptions::new()
                 .write(true)
@@ -908,6 +923,7 @@ impl Vfs for LocalVfs {
             sparse: options.sparse,
             length: 0,
             holes: Vec::new(),
+            replaces: None,
             exclusive: Exclusive(options.create_new.then_some(native)),
         }))
     }
@@ -1397,6 +1413,9 @@ struct LocalAsyncWriter {
     sparse: bool,
     length: u64,
     holes: Vec<(u64, u64)>,
+    /// For a `replace` write, the file the temporary one (`exclusive`)
+    /// is renamed over on `finish`.
+    replaces: Option<std::path::PathBuf>,
     /// After `file`, so the file is closed first where the drop can see
     /// it.
     exclusive: Exclusive,
@@ -1443,24 +1462,122 @@ impl VfsAsyncWriter for LocalAsyncWriter {
         Ok(buf.len())
     }
 
-    async fn finish(mut self: Box<Self>) -> Result<(), Error> {
+    async fn finish(self: Box<Self>) -> Result<(), Error> {
         use tokio::io::AsyncWriteExt;
-        self.file.flush().await?;
-        if self.sparse {
-            self.file.set_len(self.length).await?;
-            #[cfg(unix)]
-            {
-                let file = self.file.into_std().await;
-                let holes = self.holes;
-                tokio::task::spawn_blocking(move || {
-                    super::local_attributes::punch_holes(&file, &holes)
-                })
-                .await??;
-            }
+        let LocalAsyncWriter {
+            mut file,
+            sparse,
+            length,
+            holes,
+            replaces,
+            mut exclusive,
+        } = *self;
+        file.flush().await?;
+        if sparse {
+            file.set_len(length).await?;
         }
-        self.exclusive.0 = None;
+        #[cfg(not(unix))]
+        let _ = holes;
+        let punch = cfg!(unix) && sparse;
+        if punch || replaces.is_some() {
+            let file = file.into_std().await;
+            let temp = exclusive.0.clone();
+            tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                #[cfg(unix)]
+                if sparse {
+                    super::local_attributes::punch_holes(&file, &holes)?;
+                }
+                if let Some(target) = replaces {
+                    file.sync_all()?;
+                    let temp = temp.expect("a replacement has its temporary file");
+                    std::fs::rename(temp, target)?;
+                }
+                Ok(())
+            })
+            .await??;
+        }
+        exclusive.0 = None;
         Ok(())
     }
+}
+
+/// A temporary file beside `path` that can take its place: the file
+/// it'll be renamed over (the target of a symlink at `path`), and the
+/// temporary carrying its owner, extended attributes, mode and ACL.
+/// Refused (`NotSupported`) where renaming over the file would change
+/// what it is: another hard link to it, an owner the new file can't be
+/// given, a directory that won't take a new entry, anything but a
+/// regular file.
+#[cfg(unix)]
+fn prepare_replacement(
+    path: &StdPath,
+) -> Result<(std::fs::File, std::path::PathBuf, std::path::PathBuf), Error> {
+    use super::attributes::AttributeKind;
+    use std::os::unix::fs::MetadataExt;
+
+    let refuse = |_| Error::not_supported();
+    let existing = match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            let target = std::fs::canonicalize(path).map_err(refuse)?;
+            Some((std::fs::metadata(&target)?, target))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let target = existing
+        .as_ref()
+        .map_or_else(|| path.to_owned(), |(_, target)| target.clone());
+    if let Some((meta, _)) = &existing {
+        let euid = nix::unistd::geteuid();
+        if !meta.is_file() || meta.nlink() > 1 || (meta.uid() != euid.as_raw() && !euid.is_root()) {
+            return Err(Error::not_supported());
+        }
+    }
+    let dir = target.parent().unwrap_or(StdPath::new("."));
+    let (file, temp) = tempfile::Builder::new()
+        .prefix(".newt-")
+        .tempfile_in(dir)
+        .map_err(refuse)?
+        .into_parts();
+    let temp = temp.keep().map_err(|e| Error::from(e.error))?;
+    let copied = (|| -> Result<(), Error> {
+        let Some((meta, target)) = &existing else {
+            return Ok(());
+        };
+        nix::unistd::fchown(
+            &file,
+            Some(nix::unistd::Uid::from_raw(meta.uid())),
+            Some(nix::unistd::Gid::from_raw(meta.gid())),
+        )
+        .map_err(std::io::Error::from)?;
+        for kind in [
+            AttributeKind::ExtendedAttributes,
+            AttributeKind::AccessControl,
+        ] {
+            match super::local_attributes::read(target, kind) {
+                Ok(Some(attribute)) => super::local_attributes::write(&temp, &attribute)?,
+                Ok(None) => {}
+                Err(e) if e.kind == crate::ErrorKind::NotSupported => {}
+                Err(e) => return Err(e),
+            }
+        }
+        file.set_permissions(meta.permissions())?;
+        Ok(())
+    })();
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return Err(Error::not_supported());
+    }
+    Ok((file, temp, target))
+}
+
+/// Not yet on Windows, where `ReplaceFileW` would keep attributes, ACLs
+/// and streams.
+#[cfg(not(unix))]
+fn prepare_replacement(
+    _path: &StdPath,
+) -> Result<(std::fs::File, std::path::PathBuf, std::path::PathBuf), Error> {
+    Err(Error::not_supported())
 }
 
 // ---------------------------------------------------------------------------
@@ -1880,6 +1997,86 @@ mod exclusive_write_tests {
         writer.write(b"partial").await.unwrap();
         drop_off_runtime(writer);
         assert!(native.exists());
+    }
+
+    fn replace() -> WriteOptions {
+        WriteOptions {
+            replace: true,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_replacement_lands_whole_on_finish_and_keeps_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let target = dir.path().join("notes.txt");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let xattrs = xattr::set(&target, "user.newt.test", b"kept").is_ok();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let mut writer = vfs
+            .overwrite_async(&PathBuf::from_native(&link), &replace())
+            .await
+            .unwrap();
+        writer.write(b"new contents").await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        writer.finish().await.unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new contents");
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+        if xattrs {
+            assert_eq!(
+                xattr::get(&target, "user.newt.test").unwrap().as_deref(),
+                Some(b"kept".as_slice())
+            );
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unfinished_replacement_leaves_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let target = dir.path().join("notes.txt");
+        std::fs::write(&target, b"old").unwrap();
+        let mut writer = vfs
+            .overwrite_async(&PathBuf::from_native(&target), &replace())
+            .await
+            .unwrap();
+        writer.write(b"partial").await.unwrap();
+        drop_off_runtime(writer);
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hard_linked_file_refuses_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = LocalVfs::new();
+        let target = dir.path().join("notes.txt");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::hard_link(&target, dir.path().join("snapshot.txt")).unwrap();
+        let refused = vfs
+            .overwrite_async(&PathBuf::from_native(&target), &replace())
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(refused.kind, crate::ErrorKind::NotSupported);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[tokio::test]

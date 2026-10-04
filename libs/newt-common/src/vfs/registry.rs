@@ -313,9 +313,19 @@ impl Filesystem for VfsRegistryFs {
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        let mut writer = vfs
-            .overwrite_async(&local_path, &Default::default())
-            .await?;
+        // Whole or not at all where the VFS can promise it for this file;
+        // otherwise in place, as any overwrite.
+        let replace = super::attributes::WriteOptions {
+            replace: true,
+            ..Default::default()
+        };
+        let mut writer = match vfs.overwrite_async(&local_path, &replace).await {
+            Err(e) if e.kind == crate::ErrorKind::NotSupported => {
+                vfs.overwrite_async(&local_path, &Default::default())
+                    .await?
+            }
+            writer => writer?,
+        };
         writer.write(&data).await?;
         writer.finish().await?;
         Ok(())

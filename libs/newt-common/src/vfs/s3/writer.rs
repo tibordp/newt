@@ -140,11 +140,21 @@ struct Upload {
     parts: Vec<CompletedPart>,
 }
 
+/// What a `replace` write carries over from the object it replaces,
+/// beyond the creation-time `WriteOptions`: its tags, sent with the
+/// upload, and its ACL grants, put back once it lands.
+#[derive(Default)]
+pub(super) struct Kept {
+    pub tagging: Option<String>,
+    pub grants: Option<Vec<crate::vfs::properties::PropertyGrant>>,
+}
+
 pub(super) struct S3AsyncWriter {
     client: aws_sdk_s3::Client,
     bucket: String,
     key: String,
     options: WriteOptions,
+    kept: Kept,
     part: Part,
     upload: Option<Upload>,
     /// Set once the upload was completed or aborted. The drop guard aborts
@@ -161,6 +171,7 @@ impl S3AsyncWriter {
         bucket: String,
         key: String,
         options: WriteOptions,
+        kept: Kept,
         notifier: VfsChangeNotifier,
         path: PathBuf,
     ) -> Self {
@@ -169,6 +180,7 @@ impl S3AsyncWriter {
             bucket,
             key,
             options,
+            kept,
             part: Part::empty(),
             upload: None,
             terminated: false,
@@ -193,7 +205,8 @@ impl S3AsyncWriter {
                 self.client
                     .create_multipart_upload()
                     .bucket(&self.bucket)
-                    .key(&self.key),
+                    .key(&self.key)
+                    .set_tagging(self.kept.tagging.clone()),
                 &self.options
             );
             let resp = request.send().await.map_err(sdk_err)?;
@@ -266,6 +279,7 @@ impl S3AsyncWriter {
                 .put_object()
                 .bucket(&self.bucket)
                 .key(&self.key)
+                .set_tagging(self.kept.tagging.clone())
                 .body(body),
             &self.options
         );
@@ -379,6 +393,16 @@ impl VfsAsyncWriter for S3AsyncWriter {
         }
         self.terminated = true;
         self.notifier.notify(&self.path);
+        if let Some(grants) = &self.kept.grants {
+            attributes::put_grants(&self.client, &self.bucket, &self.key, grants)
+                .await
+                .map_err(|e| {
+                    Error::custom(format!(
+                        "written, but its access grants could not be put back: {}",
+                        e.message
+                    ))
+                })?;
+        }
         Ok(())
     }
 }

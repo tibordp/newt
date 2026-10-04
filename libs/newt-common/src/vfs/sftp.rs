@@ -554,6 +554,79 @@ fn metadata_to_file(
 
 use crate::vfs::ToUnix;
 
+impl SftpVfs {
+    /// A `replace` write: a temporary file beside the target, given its
+    /// mode, renamed over it with posix-rename on `finish`. Refused
+    /// without posix-rename (a plain rename won't replace), for anything
+    /// but a regular file, and when the new file would have another owner.
+    /// SFTP reports no link count, so a hard-linked file is split off.
+    async fn replacement_writer(&self, path: &Path) -> Result<Box<dyn VfsAsyncWriter>, Error> {
+        if !self.sftp.support_posix_rename() {
+            return Err(Error::not_supported());
+        }
+        let mut fs = self.sftp.fs();
+        let existing = match fs.symlink_metadata(sftp_path(path)).await {
+            Ok(_) => {
+                let target = fs
+                    .canonicalize(sftp_path(path))
+                    .await
+                    .map_err(|_| Error::not_supported())?;
+                let meta = fs.metadata(&target).await?;
+                if !meta.file_type().is_some_and(|ft| ft.is_file()) {
+                    return Err(Error::not_supported());
+                }
+                Some((meta, target))
+            }
+            Err(e) => match Error::from(e) {
+                e if e.kind == ErrorKind::NotFound => None,
+                e => return Err(e),
+            },
+        };
+        let target = existing
+            .as_ref()
+            .map_or_else(|| sftp_path(path), |(_, target)| target.clone());
+        let dir = target
+            .parent()
+            .map(std::path::Path::to_owned)
+            .unwrap_or_default();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp = dir.join(format!(".newt-{}-{nanos}", std::process::id()));
+        let mut file = self
+            .sftp
+            .options()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .await
+            .map_err(|_| Error::not_supported())?;
+        let replacement = Replacement {
+            temp,
+            target,
+            fs,
+            finished: false,
+        };
+        if let Some((meta, _)) = &existing {
+            let created = file.metadata().await?;
+            if created.uid() != meta.uid() || created.gid() != meta.gid() {
+                drop(replacement);
+                return Err(Error::not_supported());
+            }
+            if let Some(permissions) = meta.permissions() {
+                file.set_permissions(permissions).await?;
+            }
+        }
+        Ok(Box::new(SftpAsyncWriter {
+            file,
+            notifier: self.notifier.clone(),
+            path: path.to_owned(),
+            replacement: Some(replacement),
+        }))
+    }
+}
+
 #[async_trait::async_trait]
 impl Vfs for SftpVfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
@@ -803,6 +876,15 @@ impl Vfs for SftpVfs {
         options: &super::attributes::WriteOptions,
     ) -> Result<Box<dyn VfsAsyncWriter>, Error> {
         debug!("sftp: overwrite_async {}", path);
+        let replace_only = {
+            let mut others = options.clone();
+            others.replace = false;
+            options.replace && others.is_default()
+        };
+        if replace_only {
+            self.check_alive()?;
+            return self.replacement_writer(path).await;
+        }
         if !options.is_default() {
             return Err(Error::not_supported());
         }
@@ -820,6 +902,7 @@ impl Vfs for SftpVfs {
             file,
             notifier: self.notifier.clone(),
             path: path.to_owned(),
+            replacement: None,
         }))
     }
 
@@ -1182,6 +1265,31 @@ struct SftpAsyncWriter {
     file: openssh_sftp_client::file::File,
     notifier: VfsChangeNotifier,
     path: PathBuf,
+    replacement: Option<Replacement>,
+}
+
+/// The temporary file a `replace` write goes to, renamed over `target` on
+/// `finish` and removed if the write ends any other way.
+struct Replacement {
+    temp: std::path::PathBuf,
+    target: std::path::PathBuf,
+    fs: openssh_sftp_client::fs::Fs,
+    finished: bool,
+}
+
+impl Drop for Replacement {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let mut fs = self.fs.clone();
+        let temp = std::mem::take(&mut self.temp);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = fs.remove_file(temp).await;
+            });
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -1192,8 +1300,21 @@ impl VfsAsyncWriter for SftpAsyncWriter {
     }
 
     async fn finish(self: Box<Self>) -> Result<(), Error> {
-        self.file.close().await?;
-        self.notifier.notify(&self.path);
+        let SftpAsyncWriter {
+            file,
+            notifier,
+            path,
+            replacement,
+        } = *self;
+        file.close().await?;
+        if let Some(mut replacement) = replacement {
+            replacement
+                .fs
+                .rename(&replacement.temp, &replacement.target)
+                .await?;
+            replacement.finished = true;
+        }
+        notifier.notify(&path);
         Ok(())
     }
 }

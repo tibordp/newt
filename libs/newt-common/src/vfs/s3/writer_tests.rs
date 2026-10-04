@@ -28,6 +28,16 @@ struct Seen {
     copy_source: bool,
     /// The payload's own length, under aws-chunked framing too.
     length: Option<u64>,
+    headers: Vec<(String, String)>,
+}
+
+impl Seen {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 impl Seen {
@@ -51,6 +61,8 @@ type Respond = dyn Fn(&Seen) -> (u16, &'static str) + Send + Sync;
 struct FakeS3 {
     seen: Arc<Mutex<Vec<Seen>>>,
     respond: Arc<Respond>,
+    /// Headers a HeadObject answers with.
+    head: Vec<(&'static str, &'static str)>,
 }
 
 impl std::fmt::Debug for FakeS3 {
@@ -70,6 +82,11 @@ impl HttpConnector for FakeS3 {
             length: header("x-amz-decoded-content-length")
                 .or_else(|| header("content-length"))
                 .and_then(|v| v.parse().ok()),
+            headers: request
+                .headers()
+                .iter()
+                .map(|(n, v)| (n.to_string(), v.to_string()))
+                .collect(),
         };
         self.seen.lock().push(seen.clone());
         let (status, body) = (self.respond)(&seen);
@@ -79,6 +96,11 @@ impl HttpConnector for FakeS3 {
         response
             .headers_mut()
             .insert("content-length", body.len().to_string());
+        if seen.action() == "HeadObject" {
+            for (name, value) in &self.head {
+                response.headers_mut().insert(*name, *value);
+            }
+        }
         HttpConnectorFuture::ready(Ok(response))
     }
 }
@@ -115,10 +137,19 @@ impl Fake {
         endpoint: Option<&str>,
         respond: impl Fn(&Seen) -> (u16, &'static str) + Send + Sync + 'static,
     ) -> Self {
+        Self::build(endpoint, Vec::new(), respond)
+    }
+
+    fn build(
+        endpoint: Option<&str>,
+        head: Vec<(&'static str, &'static str)>,
+        respond: impl Fn(&Seen) -> (u16, &'static str) + Send + Sync + 'static,
+    ) -> Self {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let connector = SharedHttpConnector::new(FakeS3 {
             seen: seen.clone(),
             respond: Arc::new(respond),
+            head,
         });
         let mut config = aws_config::SdkConfig::builder()
             .http_client(http_client_fn(move |_, _| connector.clone()))
@@ -411,4 +442,46 @@ async fn only_a_conditional_conflict_is_already_exists_among_409s() {
         let error = fake.write("key", &create_new(3), 3).await.unwrap_err();
         assert_eq!(error.kind, kind, "{body}");
     }
+}
+
+#[tokio::test]
+async fn a_replacement_keeps_the_objects_metadata_storage_class_and_tags() {
+    const TAGS: &str = "<Tagging><TagSet><Tag><Key>team</Key><Value>web site</Value></Tag>\
+        </TagSet></Tagging>";
+    const OWNER_ONLY: &str = "<AccessControlPolicy><Owner><ID>me</ID></Owner>\
+        <AccessControlList><Grant><Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
+        xsi:type=\"CanonicalUser\"><ID>me</ID></Grantee><Permission>FULL_CONTROL</Permission>\
+        </Grant></AccessControlList></AccessControlPolicy>";
+    let fake = Fake::build(
+        None,
+        vec![
+            ("content-type", "text/html"),
+            ("cache-control", "max-age=60"),
+            ("x-amz-meta-author", "tibor"),
+            ("x-amz-storage-class", "STANDARD_IA"),
+        ],
+        |seen| match (seen.method.as_str(), seen.uri.as_str()) {
+            ("GET", uri) if uri.contains("tagging") => (200, TAGS),
+            ("GET", uri) if uri.contains("acl") => (200, OWNER_ONLY),
+            _ => success(seen),
+        },
+    );
+    let replace = WriteOptions {
+        replace: true,
+        ..Default::default()
+    };
+    fake.write("index.html", &replace, 10).await.unwrap();
+    let put = &fake.seen("PutObject")[0];
+    assert_eq!(put.header("content-type"), Some("text/html"));
+    assert_eq!(put.header("cache-control"), Some("max-age=60"));
+    assert_eq!(put.header("x-amz-meta-author"), Some("tibor"));
+    assert_eq!(put.header("x-amz-storage-class"), Some("STANDARD_IA"));
+    assert_eq!(put.header("x-amz-tagging"), Some("team=web+site"));
+    // Owner-only grants are the default: nothing to put back.
+    assert!(
+        fake.seen
+            .lock()
+            .iter()
+            .all(|s| !(s.method == "PUT" && s.uri.contains("acl")))
+    );
 }

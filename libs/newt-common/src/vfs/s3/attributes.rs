@@ -32,20 +32,7 @@ impl S3Vfs {
                     .send()
                     .await
                     .map_err(sdk_err)?;
-                Attribute::ObjectMetadata(ObjectMetadata {
-                    metadata: head
-                        .metadata()
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect(),
-                    content_type: head.content_type().map(str::to_owned),
-                    content_encoding: head.content_encoding().map(str::to_owned),
-                    content_language: head.content_language().map(str::to_owned),
-                    content_disposition: head.content_disposition().map(str::to_owned),
-                    cache_control: head.cache_control().map(str::to_owned),
-                    expires: head.expires_string().map(str::to_owned),
-                })
+                Attribute::ObjectMetadata(object_metadata(&head))
             }
             AttributeKind::ObjectTags => {
                 let tags = client
@@ -123,36 +110,66 @@ impl S3Vfs {
                     .map_err(sdk_err)?;
             }
             Attribute::ObjectAccess(grants) => {
-                let owner = client
-                    .get_object_acl()
-                    .bucket(&bucket)
-                    .key(&key)
-                    .send()
-                    .await
-                    .map_err(sdk_err)?
-                    .owner()
-                    .cloned();
-                let grants = grants
-                    .iter()
-                    .map(super::properties::grant_to_s3)
-                    .collect::<Result<Vec<_>, _>>()?;
-                let policy = aws_sdk_s3::types::AccessControlPolicy::builder()
-                    .set_owner(owner)
-                    .set_grants(Some(grants))
-                    .build();
-                client
-                    .put_object_acl()
-                    .bucket(bucket)
-                    .key(key)
-                    .access_control_policy(policy)
-                    .send()
-                    .await
-                    .map_err(sdk_err)?;
+                put_grants(&client, &bucket, &key, grants).await?;
             }
             _ => return Err(Error::not_supported()),
         }
         Ok(())
     }
+}
+
+pub(super) fn object_metadata(
+    head: &aws_sdk_s3::operation::head_object::HeadObjectOutput,
+) -> ObjectMetadata {
+    ObjectMetadata {
+        metadata: head
+            .metadata()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        content_type: head.content_type().map(str::to_owned),
+        content_encoding: head.content_encoding().map(str::to_owned),
+        content_language: head.content_language().map(str::to_owned),
+        content_disposition: head.content_disposition().map(str::to_owned),
+        cache_control: head.cache_control().map(str::to_owned),
+        expires: head.expires_string().map(str::to_owned),
+    }
+}
+
+/// Replace an object's ACL with `grants`, keeping its owner.
+pub(super) async fn put_grants(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    grants: &[crate::vfs::properties::PropertyGrant],
+) -> Result<(), Error> {
+    let owner = client
+        .get_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(sdk_err)?
+        .owner()
+        .cloned();
+    let grants = grants
+        .iter()
+        .map(super::properties::grant_to_s3)
+        .collect::<Result<Vec<_>, _>>()?;
+    let policy = aws_sdk_s3::types::AccessControlPolicy::builder()
+        .set_owner(owner)
+        .set_grants(Some(grants))
+        .build();
+    client
+        .put_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .access_control_policy(policy)
+        .send()
+        .await
+        .map_err(sdk_err)?;
+    Ok(())
 }
 
 pub(super) fn expires(

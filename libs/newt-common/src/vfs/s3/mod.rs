@@ -788,6 +788,62 @@ mod tests;
 #[cfg(test)]
 mod writer_tests;
 
+impl S3Vfs {
+    /// For a `replace` write: what the object being replaced carries — its
+    /// metadata and storage class into `options` (unless the caller set
+    /// them), its tags and ACL grants into what the writer keeps. A PutObject
+    /// replaces an object whole by itself; this is the "stays what it was"
+    /// half. Refused when the tags or the ACL can't be read.
+    async fn keep(
+        &self,
+        path: &Path,
+        client: &aws_sdk_s3::Client,
+        bucket: &str,
+        key: &str,
+        options: &mut super::attributes::WriteOptions,
+    ) -> Result<writer::Kept, Error> {
+        use super::attributes::{Attribute, AttributeKind};
+        let head = match client.head_object().bucket(bucket).key(key).send().await {
+            Ok(head) => head,
+            Err(e) => match sdk_err(e) {
+                e if e.kind == ErrorKind::NotFound => return Ok(writer::Kept::default()),
+                e => return Err(e),
+            },
+        };
+        options
+            .object_metadata
+            .get_or_insert_with(|| attributes::object_metadata(&head));
+        if options.object_storage_class.is_none() {
+            options.object_storage_class = head.storage_class().map(|c| c.as_str().to_owned());
+        }
+        let refuse = |_| Error::not_supported();
+        let tags = match self
+            .read_object_attribute(path, AttributeKind::ObjectTags)
+            .await
+            .map_err(refuse)?
+        {
+            Some(Attribute::ObjectTags(tags)) if !tags.is_empty() => Some(
+                url::form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(&tags)
+                    .finish(),
+            ),
+            _ => None,
+        };
+        let grants = match self
+            .read_object_attribute(path, AttributeKind::ObjectAccess)
+            .await
+            .map_err(refuse)?
+        {
+            Some(Attribute::ObjectAccess(grants)) => Some(grants),
+            _ => None,
+        };
+        Ok(writer::Kept {
+            tagging: tags,
+            grants,
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl Vfs for S3Vfs {
     fn descriptor(&self) -> &'static dyn VfsDescriptor {
@@ -1045,15 +1101,26 @@ impl Vfs for S3Vfs {
         {
             return Err(Error::not_supported());
         }
+        if options.replace && options.create_new {
+            return Err(Error::not_supported());
+        }
         let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
         let client = self.client_for_bucket(&bucket).await?;
+        let mut options = options.clone();
+        let kept = if options.replace {
+            self.keep(path, &client, &bucket, &key, &mut options)
+                .await?
+        } else {
+            writer::Kept::default()
+        };
         Ok(Box::new(writer::S3AsyncWriter::new(
             client,
             bucket,
             key,
-            options.clone(),
+            options,
+            kept,
             self.notifier.clone(),
             path.to_owned(),
         )))

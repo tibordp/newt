@@ -89,6 +89,9 @@ pub trait Filesystem: Send + Sync {
     async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error>;
 
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error>;
+    /// The file's whole new contents, swapped in at once where the VFS can
+    /// promise that for it (`WriteOptions::replace`), written in place
+    /// otherwise.
     async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<(), Error>;
     async fn find_in_file(
         &self,
