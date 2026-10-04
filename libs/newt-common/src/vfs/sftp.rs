@@ -587,6 +587,10 @@ impl Vfs for SftpVfs {
                 if name == "." || name == ".." {
                     continue;
                 }
+                if !super::path::is_valid_name(&name) {
+                    log::warn!("sftp: skipping an entry of {path} named {name:?}");
+                    continue;
+                }
                 raw_entries.push((name, entry.metadata()));
             }
         }

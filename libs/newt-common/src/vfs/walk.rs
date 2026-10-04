@@ -331,7 +331,7 @@ impl<'a> Walker<'a> {
                 self.visitor.leave(&dir.path, &dir.file).await?;
                 continue;
             };
-            if file.name == ".." {
+            if !walkable(&frame.dir.path, &file.name) {
                 continue;
             }
             let depth = frame.dir.depth + 1;
@@ -350,7 +350,7 @@ impl<'a> Walker<'a> {
             let children = self.list_dir(&dir.path).await?;
             self.visitor.listed(&dir.path, &children).await?;
             for file in children {
-                if file.name == ".." {
+                if !walkable(&dir.path, &file.name) {
                     continue;
                 }
                 if self.visit(dir.child(file), dir.depth + 1).await? == Flow::Stop {
@@ -675,6 +675,12 @@ impl<'a> Walker<'a> {
         {
             return Ok(Flow::Continue);
         }
+        // Paths come from keys, which can spell `..`.
+        let below = path.strip_prefix(&state.root_path).unwrap_or_default();
+        if !below.split('/').all(super::path::is_valid_name) {
+            log::warn!("walk: skipping {path}, which leaves its directory");
+            return Ok(Flow::Continue);
+        }
         while !path.starts_with(&state.open.last().unwrap().0) {
             let (p, f) = state.open.pop().unwrap();
             self.leave(&p, &f).await?;
@@ -779,6 +785,19 @@ enum Opened {
     Entered,
     Passed,
     Stopped,
+}
+
+/// Whether a listed entry is one to walk: not the `..` row, and a name
+/// that stays inside its directory (see [`super::path::is_valid_name`]).
+fn walkable(dir: &Path, name: &str) -> bool {
+    if name == ".." {
+        return false;
+    }
+    if !super::path::is_valid_name(name) {
+        log::warn!("walk: skipping an entry of {dir} named {name:?}");
+        return false;
+    }
+    true
 }
 
 /// `rel` of a path below a root, given the root's own.
@@ -1441,6 +1460,42 @@ mod tests {
         .unwrap();
         depth_first.lines.retain(|l| !l.starts_with("leave"));
         assert_eq!(log.lines, depth_first.lines);
+    }
+
+    #[tokio::test]
+    async fn entries_that_would_leave_their_directory_are_not_walked() {
+        for flat in [false, true] {
+            let vfs = MockVfs::builder()
+                .config(MockVfsConfig {
+                    can_stat_directories: false,
+                    can_list_recursive: flat,
+                    ..Default::default()
+                })
+                .file("/top/ok.txt", b"ok")
+                .file("/top/x/../../evil", b"evil")
+                .build();
+            let mut log = Log::default();
+            walk(&*vfs, &roots(&["/top"]), &WalkOptions::default(), &mut log)
+                .await
+                .unwrap();
+            assert!(
+                log.lines.iter().all(|l| !l.contains("..")),
+                "flat={flat}: {:?}",
+                log.lines
+            );
+            assert!(log.lines.iter().any(|l| l.contains("ok.txt")));
+        }
+    }
+
+    #[test]
+    fn a_valid_name_is_one_entry() {
+        use super::super::path::is_valid_name;
+        assert!(is_valid_name("file.txt"));
+        assert!(is_valid_name(".hidden"));
+        assert!(is_valid_name("a\\b"));
+        for bad in ["", ".", "..", "../../.bashrc", "a/b", "nul\0"] {
+            assert!(!is_valid_name(bad), "{bad:?}");
+        }
     }
 
     #[tokio::test]

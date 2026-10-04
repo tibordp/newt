@@ -722,7 +722,7 @@ impl S3Vfs {
                 if let Some(p) = cp.prefix() {
                     let name = &p[prefix_len..];
                     let name = name.trim_end_matches('/');
-                    if !name.is_empty() {
+                    if crate::vfs::path::is_valid_name(name) {
                         batch.push(File {
                             attributes: None,
                             name: name.to_string(),
@@ -752,8 +752,9 @@ impl S3Vfs {
             for obj in resp.contents() {
                 if let Some(key) = obj.key() {
                     let name = &key[prefix_len..];
-                    // Skip the prefix itself if it appears as a key (e.g. "dir/" marker objects)
-                    if name.is_empty() || name == "/" {
+                    // Skip the prefix itself if it appears as a key (e.g.
+                    // "dir/" marker objects), and keys that spell `.`/`..`.
+                    if !crate::vfs::path::is_valid_name(name) {
                         continue;
                     }
                     batch.push(object_file(name, obj));

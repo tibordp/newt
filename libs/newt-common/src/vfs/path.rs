@@ -31,6 +31,14 @@ use serde::{Deserialize, Serialize};
 
 use super::VfsId;
 
+/// Whether `name` can be one entry of a directory: not empty, not `.` or
+/// `..`, without `/` or NUL. Listings from outside — an SFTP server, an
+/// S3 bucket, an archive — can hold anything, and a name like
+/// `../../.bashrc` joined under a destination would land outside it.
+pub fn is_valid_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
+}
+
 // ---------------------------------------------------------------------------
 // Path (borrowed, unsized — mirrors std::path::Path)
 // ---------------------------------------------------------------------------

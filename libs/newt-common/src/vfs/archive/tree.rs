@@ -237,6 +237,17 @@ pub(super) fn mtime_to_i64(mtime: u64) -> Option<i64> {
     i64::try_from(mtime).ok().map(|t| t.saturating_mul(1_000))
 }
 
+/// Whether an entry's path stays inside the archive. A member named
+/// `../../.bashrc` is left out of the tree, so nothing can copy it out
+/// above its destination.
+pub(super) fn stays_inside(path: &str) -> bool {
+    let inside = !path.split('/').any(|c| c == "..");
+    if !inside {
+        log::warn!("archive: leaving out {path:?}, which points outside the archive");
+    }
+    inside
+}
+
 pub(super) fn ensure_ancestors(
     dirs: &mut HashMap<StdPathBuf, Vec<File>>,
     seen_dirs: &mut std::collections::HashSet<StdPathBuf>,
@@ -303,7 +314,7 @@ pub(super) fn build_directory_tree_from_iluvatar(
             .trim_start_matches('/')
             .trim_start_matches("./")
             .trim_end_matches('/');
-        if path.is_empty() {
+        if path.is_empty() || !stays_inside(path) {
             continue;
         }
 

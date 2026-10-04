@@ -42,7 +42,7 @@ use super::super::{
     VfsPath, VfsRandomReader,
 };
 use super::stream::{PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed};
-use super::tree::{DirectoryTree, ensure_ancestors, normalized_to_string};
+use super::tree::{DirectoryTree, ensure_ancestors, normalized_to_string, stays_inside};
 
 /// Symlink targets are read eagerly at index time; anything larger than this
 /// is not a plausible link target.
@@ -685,6 +685,9 @@ fn build_tree(
     seen_dirs.insert(StdPathBuf::from(""));
 
     for (index, entry) in fs.entries.iter().enumerate() {
+        if !stays_inside(&entry.name) {
+            continue;
+        }
         let entry_path = StdPathBuf::from(&entry.name);
         let parent = entry_path
             .parent()
