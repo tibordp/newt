@@ -960,10 +960,12 @@ The language comes from [file associations](#file-associations); the built-in on
 - **Render whitespace**: Only in selection.
 - **Theme**: Follows system dark mode preference. Updates dynamically if the OS theme changes.
 - **File size limit**: 5 MB (enforced on load). Larger files show an error and the window closes.
+- **Encoding**: UTF-8, with a byte-order mark kept if the file has one. A file that isn't valid UTF-8 opens read-only ("Read-only: not UTF-8" in the status bar), since saving it would replace every byte that didn't decode.
 
 ### Saving
 
 - **Ctrl+S / Cmd+S**: Save the file.
+- **Changed on disk**: if the file's size or modification time differs from when it was opened or last saved — another program wrote to it meanwhile — the save asks before writing over that.
 - Encodes content to UTF-8 and swaps the new contents in whole where the filesystem can promise it, so a full disk, a dropped connection or a crash mid-save leaves the old file intact:
   - **Local** (macOS, Linux): written to a temporary file beside it — given the file's owner, extended attributes, mode and ACL — then renamed over it; a symlink is saved through to its target and stays a link. A file with other hard links, one owned by someone the new file couldn't be given to, one in a directory that won't take a new entry, and anything but a regular file are written in place instead, since renaming over them would change what they are. Windows writes in place for now.
   - **SFTP**: the same through the server's posix-rename (OpenSSH has it); servers without it, and files whose new copy would have another owner, are written in place. SFTP reports no link count, so a hard-linked file on an SFTP server comes out of the save as a file of its own.

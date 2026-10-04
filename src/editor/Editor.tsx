@@ -57,6 +57,15 @@ function Editor() {
       : null);
 
   const [content, setContent] = useState<string | null>(null);
+  // Why the file is open read-only, if it is.
+  const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
+  const readOnlyRef = useRef(false);
+  // The file as it was when loaded or last saved, to notice a change made
+  // to it meanwhile.
+  const onDiskRef = useRef<{ size: number; modified: number | null } | null>(
+    null,
+  );
+  const bomRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -107,7 +116,7 @@ function Editor() {
   // When content finishes loading, make editor writable and focus it
   useEffect(() => {
     if (content !== null && editorRef.current) {
-      editorRef.current.updateOptions({ readOnly: false });
+      editorRef.current.updateOptions({ readOnly: readOnlyRef.current });
       editorRef.current.focus();
     }
   }, [content]);
@@ -131,14 +140,29 @@ function Editor() {
       try {
         const inspected = await unwrap(commands.inspectFile(filePath));
         setFileSize(inspected.details.size);
+        onDiskRef.current = {
+          size: inspected.details.size,
+          modified: inspected.details.modified,
+        };
         safeSilent(commands.setEditorLanguage(inspected.language));
 
         // Read the entire file (with size limit enforced server-side)
         const data = await unwrapBytes(
           commands.readFile(filePath, MAX_FILE_SIZE),
         );
-        const decoder = new TextDecoder("utf-8", { fatal: false });
-        const text = decoder.decode(data);
+        bomRef.current =
+          data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf;
+        let text: string;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+          readOnlyRef.current = false;
+          setReadOnlyReason(null);
+        } catch {
+          // Saving would write U+FFFD over every byte that didn't decode.
+          text = new TextDecoder("utf-8").decode(data);
+          readOnlyRef.current = true;
+          setReadOnlyReason("Read-only: not UTF-8");
+        }
 
         // Set content in Monaco if already mounted, suppressing dirty flag
         if (editorRef.current) {
@@ -162,16 +186,39 @@ function Editor() {
   // Save handler
   const save = useCallback(async () => {
     const ed = editorRef.current;
-    if (!ed || !filePath) return;
+    if (!ed || !filePath || readOnlyRef.current) return;
 
     setSaving(true);
     try {
+      const now = await unwrap(commands.fileDetails(filePath)).catch(
+        () => null,
+      );
+      const was = onDiskRef.current;
+      if (
+        now &&
+        was &&
+        (now.size !== was.size || now.modified !== was.modified) &&
+        !(await confirm(
+          "The file has changed on disk since it was opened or last saved. Save over the changes?",
+          { title: "File Changed", kind: "warning" },
+        ))
+      ) {
+        return;
+      }
       const text = ed.getValue();
-      const encoder = new TextEncoder();
-      const data = encoder.encode(text);
+      const encoded = new TextEncoder().encode(text);
+      const data = bomRef.current
+        ? new Uint8Array([0xef, 0xbb, 0xbf, ...encoded])
+        : encoded;
       await unwrap(rawCommands.writeFile(filePath, data));
       setDirty(false);
       setFileSize(data.length);
+      const saved = await unwrap(commands.fileDetails(filePath)).catch(
+        () => null,
+      );
+      onDiskRef.current = saved
+        ? { size: saved.size, modified: saved.modified }
+        : null;
     } catch (e: unknown) {
       await message(String(e), { kind: "error", title: "Save Error" });
     } finally {
@@ -287,7 +334,7 @@ function Editor() {
       editor.setValue(pendingTextRef.current);
       suppressDirtyRef.current = false;
       pendingTextRef.current = null;
-      editor.updateOptions({ readOnly: false });
+      editor.updateOptions({ readOnly: readOnlyRef.current });
       editor.focus();
     }
 
@@ -347,7 +394,7 @@ function Editor() {
             automaticLayout: true,
             wordWrap,
             renderWhitespace: "selection",
-            readOnly: !ready,
+            readOnly: !ready || readOnlyReason !== null,
           }}
         />
       </div>
@@ -372,6 +419,16 @@ function Editor() {
               |
             </span>
             <span>{formatSize(fileSize)}</span>
+            {readOnlyReason && (
+              <>
+                <span className={styles.statusSeparator} aria-hidden>
+                  |
+                </span>
+                <span title="Newt edits UTF-8 text only; saving would replace the bytes it can't show">
+                  {readOnlyReason}
+                </span>
+              </>
+            )}
             {saving && (
               <>
                 <span className={styles.statusSeparator} aria-hidden>
