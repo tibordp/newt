@@ -1,6 +1,6 @@
 use newt_common::operation::{OperationRequest, StartOperationRequest};
+use newt_common::shell::ShellFlavor;
 use newt_common::vfs::VfsPath;
-use shell_quote::Quote;
 
 use crate::GlobalContext;
 use crate::common::Error;
@@ -122,16 +122,80 @@ struct CollectedInputs {
 // --- Template engine setup ---
 
 /// Set up the minijinja environment with all custom filters and functions.
+/// `value` as it goes into the command line: quoted as one word per item
+/// unless marked safe (`| raw`, or already quoted by `| shell_quote`).
+fn shell_render(flavor: ShellFlavor, value: &minijinja::Value) -> Result<String, minijinja::Error> {
+    if value.is_undefined() || value.is_none() {
+        return Ok(String::new());
+    }
+    if value.is_safe() {
+        return Ok(value.to_string());
+    }
+    if value.kind() == minijinja::value::ValueKind::Seq {
+        let words = value
+            .try_iter()?
+            .map(|item| shell_render(flavor, &item))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(words.join(" "));
+    }
+    flavor
+        .quote(&value.to_string())
+        .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))
+}
+
 fn setup_template_env(
     env: &mut minijinja::Environment<'_>,
+    flavor: ShellFlavor,
     prompt_responses: Option<Vec<String>>,
     confirm_responses: Option<Vec<bool>>,
     collected: Option<std::sync::Arc<parking_lot::Mutex<CollectedInputs>>>,
 ) {
-    // Filters
-    env.add_filter("shell_quote", |value: String| -> String {
-        shell_quote::Bash::quote(&value)
+    // Everything interpolated is quoted for the shell the command runs in
+    // (the agent's, in a remote session); `| raw` opts out.
+    env.set_auto_escape_callback(|_| minijinja::AutoEscape::Custom("shell"));
+    env.set_formatter(move |out, _state, value| {
+        let text = shell_render(flavor, value)?;
+        out.write_str(&text)
+            .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::WriteFailure, e.to_string()))
     });
+
+    // Filters
+    env.add_filter(
+        "shell_quote",
+        move |value: minijinja::Value| -> Result<minijinja::Value, minijinja::Error> {
+            shell_render(flavor, &value).map(minijinja::Value::from_safe_string)
+        },
+    );
+    env.add_filter(
+        "raw",
+        |value: minijinja::Value| -> Result<minijinja::Value, minijinja::Error> {
+            let text = if value.kind() == minijinja::value::ValueKind::Seq {
+                let words: Vec<String> = value.try_iter()?.map(|item| item.to_string()).collect();
+                words.join(" ")
+            } else if value.is_undefined() || value.is_none() {
+                String::new()
+            } else {
+                value.to_string()
+            };
+            Ok(minijinja::Value::from_safe_string(text))
+        },
+    );
+    // Items quoted one by one around a literal joiner, so a joined list
+    // is still one word per item.
+    env.add_filter(
+        "join",
+        move |value: minijinja::Value,
+              joiner: Option<String>|
+              -> Result<minijinja::Value, minijinja::Error> {
+            let words = value
+                .try_iter()?
+                .map(|item| shell_render(flavor, &item))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(minijinja::Value::from_safe_string(
+                words.join(joiner.as_deref().unwrap_or("")),
+            ))
+        },
+    );
     env.add_filter("basename", |value: String| -> String {
         std::path::Path::new(&value)
             .file_name()
@@ -274,6 +338,7 @@ fn build_template_context(
 
 /// Render a user command template with the given prompt/confirm responses.
 fn render_template(
+    flavor: ShellFlavor,
     template_str: &str,
     pane_path: &VfsPath,
     other_dir: &str,
@@ -290,6 +355,7 @@ fn render_template(
     let mut env = minijinja::Environment::new();
     setup_template_env(
         &mut env,
+        flavor,
         prompt_responses.map(|s| s.to_vec()),
         confirm_responses.map(|s| s.to_vec()),
         if is_scanning {
@@ -341,6 +407,17 @@ fn selection_keys(pane_path: &VfsPath, selection: &[VfsPath]) -> std::collection
 
 /// Collect pane context needed for user command template rendering.
 /// Returns owned data so nothing borrows across await points.
+/// The shell user commands run in: the session's own, on the agent in a
+/// remote session.
+fn shell_flavor(ctx: &MainWindowContext) -> Result<ShellFlavor, Error> {
+    let style = ctx
+        .vfs_info()?
+        .descriptor(newt_common::vfs::VfsId::ROOT)
+        .map(|(_, meta)| newt_common::vfs::PathStyle::from_mount_meta(&meta))
+        .unwrap_or(newt_common::vfs::PathStyle::Unix);
+    Ok(ShellFlavor::of(style))
+}
+
 fn collect_pane_context(
     ctx: &MainWindowContext,
     pane_handle: PaneHandle,
@@ -392,11 +469,9 @@ async fn execute_rendered(
 ) -> Result<(), Error> {
     if mode.terminal {
         let terminal_client = ctx.terminal_client()?;
-        let (shell, shell_args) = newt_common::shell::run_via_shell(&rendered);
         let options = newt_common::terminal::TerminalOptions {
             working_dir: Some(pane_path),
-            command: Some(shell),
-            args: Some(shell_args),
+            shell_command: Some(rendered),
             ..Default::default()
         };
 
@@ -481,8 +556,15 @@ pub async fn run_user_command(
     let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
 
     // Scanning pass: detect prompt() and confirm() calls
-    let (rendered, inputs) =
-        render_template(&uc.run, &pane_path, &other_dir, &file_refs, None, None)?;
+    let (rendered, inputs) = render_template(
+        shell_flavor(&ctx)?,
+        &uc.run,
+        &pane_path,
+        &other_dir,
+        &file_refs,
+        None,
+        None,
+    )?;
 
     if !inputs.prompts.is_empty() || !inputs.confirms.is_empty() {
         // Need user input — open the input dialog
@@ -542,6 +624,7 @@ pub async fn execute_user_command(
     let file_refs: Vec<&newt_common::vfs::File> = effective_files.iter().collect();
 
     let (rendered, _) = render_template(
+        shell_flavor(&ctx)?,
         &uc.run,
         &pane_path,
         &other_dir,
@@ -667,6 +750,74 @@ mod tests {
         let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
         let source = file_objects[0].get_attr("source").unwrap();
         assert!(source.is_none(), "expected None, got {:?}", source);
+    }
+
+    fn render(flavor: ShellFlavor, template: &str, names: &[&str]) -> Result<String, Error> {
+        let pane = VfsPath::from_wire_str(newt_common::vfs::VfsId::ROOT, "/home/user");
+        let files: Vec<File> = names.iter().map(|n| file_with(n, None, None)).collect();
+        let refs: Vec<&File> = files.iter().collect();
+        render_template(
+            flavor,
+            template,
+            &pane,
+            "/other",
+            &refs,
+            Some(&[]),
+            Some(&[]),
+        )
+        .map(|(rendered, _)| rendered)
+    }
+
+    #[test]
+    fn interpolations_are_quoted_for_sh() {
+        let posix = |t, n| render(ShellFlavor::Posix, t, n).unwrap();
+        assert_eq!(
+            posix("cat {{ file.name }}", &["x'; echo INJECTED #"]),
+            r"cat 'x'\''; echo INJECTED #'"
+        );
+        assert_eq!(
+            posix("cat {{ file.stem }}.bak", &["my file.txt"]),
+            "cat 'my file'.bak"
+        );
+        // A list is one word per item, joined or not.
+        let names = &["a b", "c"];
+        let expected = "tar czf out.tgz 'a b' c";
+        assert_eq!(
+            posix("tar czf out.tgz {{ files | map(attribute='name') }}", names),
+            expected
+        );
+        assert_eq!(
+            posix(
+                "tar czf out.tgz {{ files | map(attribute='name') | join(' ') }}",
+                names
+            ),
+            expected
+        );
+        // Quoting explicitly doesn't quote twice; `safe` opts out.
+        assert_eq!(
+            posix(
+                "tar czf out.tgz {{ files | map(attribute='name') | map('shell_quote') | join(' ') }}",
+                names
+            ),
+            expected
+        );
+        assert_eq!(posix("ls {{ '-la *.txt' | raw }}", &[]), "ls -la *.txt");
+        assert_eq!(posix("ls {{ ['-l', '-a'] | raw }}", &[]), "ls -l -a");
+        assert_eq!(posix("echo [{{ nothing }}]", &[]), "echo []");
+    }
+
+    #[test]
+    fn interpolations_are_quoted_for_cmd() {
+        let cmd = |t, n| render(ShellFlavor::Cmd, t, n);
+        assert_eq!(
+            cmd("type {{ file.name }}", &["a&calc&.txt"]).unwrap(),
+            r#"type "a&calc&.txt""#
+        );
+        assert_eq!(
+            cmd("type {{ file.name }}", &["100%.txt"]).unwrap(),
+            r#"type "100"^%".txt""#
+        );
+        assert!(cmd("echo {{ file.name }}", &["a\nb"]).is_err());
     }
 
     #[test]

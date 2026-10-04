@@ -71,6 +71,22 @@ pub struct TerminalOptions {
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub env: Option<Vec<(String, String)>>,
+    /// A command line for the platform shell, run instead of `command`:
+    /// the side that spawns the terminal picks the shell, since that's the
+    /// OS it runs on.
+    pub shell_command: Option<String>,
+}
+
+impl TerminalOptions {
+    /// `shell_command` as the program and arguments that run it here.
+    fn resolve_shell_command(mut self) -> Self {
+        if let Some(line) = self.shell_command.take() {
+            let (program, args) = crate::shell::run_via_shell(&line);
+            self.command = Some(program);
+            self.args = Some(args);
+        }
+        self
+    }
 }
 
 #[async_trait::async_trait]
@@ -165,6 +181,7 @@ impl Local {
 impl TerminalClient for Local {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
         info!("terminal::create called with options: {:?}", options);
+        let options = options.resolve_shell_command();
         let handle = TerminalHandle(
             self.0
                 .handle
@@ -257,6 +274,7 @@ impl TerminalClient for Local {
 impl TerminalClient for Local {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
         info!("terminal::create called with options: {:?}", options);
+        let options = options.resolve_shell_command();
         let inner = self.0.clone();
         let ret = tokio::task::spawn_blocking(move || {
             let handle = TerminalHandle(

@@ -1535,7 +1535,7 @@ Custom commands defined in `settings.toml` via `[[command]]` entries. Managed vi
 ```toml
 [[command]]
 title = "Archive Selection"
-run = "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') | map('shell_quote') | join(' ') }}"
+run = "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') }}"
 key = "alt+z"             # Optional keyboard shortcut
 terminal = true           # true = run in terminal tab, false = run as background operation
 keep_terminal_open = true # Terminal commands: hold the tab open past exit
@@ -1551,6 +1551,16 @@ Templates are rendered with Minijinja. A **two-pass execution** model handles in
 2. **Pass 2 (Execution)**: The template is re-rendered with actual user responses, and the resulting command string is executed.
 
 If the user declines a `confirm()`, the entire command is aborted.
+
+### Quoting
+
+Everything a template interpolates is quoted for the shell the command runs in, so a file name is always one argument, whatever characters it holds — a name like `x'; rm -rf ~ #` is just a name. The shell is the one of the machine the command runs on: `sh` (POSIX quoting; dash on Debian and Ubuntu has no `$'…'`) or, on Windows, `cmd.exe` (double quotes, with `%` and `"` written outside them; a value with a line break can't be expressed and fails the command). In a remote session that's the remote machine's shell.
+
+- A list interpolates as one word per item: `{{ files | map(attribute='name') }}` → `'a b.txt' c.txt`. `join` keeps that, quoting each item around a literal joiner.
+- Text in the template itself is not quoted: `{{ file.stem }}.tar.gz` → `'my file'.tar.gz`, which the shell reads as one word.
+- `| raw` inserts a value as-is, for a value meant as shell syntax — say `{{ prompt("Flags") | raw }}` for several flags at once (a list goes in space-separated). Jinja's `| safe` does the same for a single value.
+- `| shell_quote` quotes explicitly and marks the result quoted, so it's never quoted twice.
+- Quoting doesn't stop a name that starts with `-` from being read as an option; put `--` before file arguments where the program supports it.
 
 ### Template Variables
 
@@ -1575,7 +1585,8 @@ If the user declines a `confirm()`, the entire command is aborted.
 
 | Filter | Description | Example |
 |--------|-------------|---------|
-| `shell_quote` | Shell-escape a string | `{{ file.name \| shell_quote }}` → `'my file.txt'` |
+| `raw` | Insert as-is, unquoted (see Quoting) | `{{ prompt("Flags") \| raw }}` |
+| `shell_quote` | Quote explicitly (interpolations are already quoted; see Quoting) | `{{ file.name \| shell_quote }}` → `'my file.txt'` |
 | `basename` | Extract filename from path | `{{ file.path \| basename }}` |
 | `dirname` | Extract directory from path | `{{ file.path \| dirname }}` |
 | `stem` | Filename without extension | `{{ file.name \| stem }}` |
@@ -1583,7 +1594,7 @@ If the user declines a `confirm()`, the entire command is aborted.
 | `regex_replace(pattern, replacement)` | Regex substitution | `{{ file.name \| regex_replace("\.bak$", "") }}` |
 | `join_path` | Join path segments | `{{ [dir, "subdir"] \| join_path }}` |
 
-All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`, `lower`, `selectattr`, etc.).
+All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`, `lower`, `selectattr`, etc.); `join` quotes item by item (see Quoting).
 
 ### Custom Functions
 
@@ -1596,7 +1607,7 @@ All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`,
 
 **Terminal mode** (`terminal = true`):
 - Renders the template into a shell command.
-- Creates a new terminal tab and executes: `sh -c "rendered_command"`.
+- Creates a new terminal tab and executes `sh -c "rendered_command"` (`cmd.exe /V:OFF /C` on Windows), with the shell picked on the machine the terminal runs on.
 - Working directory: the active pane's current path.
 - Terminal becomes visible and focused. Output appears in real-time.
 - `keep_terminal_open = true` holds the tab open after the command exits (the "Press Enter to close" line) even when `behavior.keep_terminal_open` is off. One-way: the effective value is the global setting OR the per-command one, so a command cannot force a tab to close against the global preference.

@@ -9,6 +9,9 @@
 //!   operation, and custom connection commands all do the right thing per
 //!   OS.
 //!
+//! * [`ShellFlavor::quote`] — quote a value as one word for the
+//!   interpreter [`run_via_shell`] picks on a given OS.
+//!
 //! * [`resolve_program`] — resolve a bare program name to an absolute
 //!   path against the inherited `PATH` (and a user-configured fallback)
 //!   *without* mutating our own environment. Subprocesses the user expects
@@ -147,7 +150,12 @@ pub fn run_via_shell(command: &str) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
         let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
-        (shell, vec!["/C".to_string(), command.to_string()])
+        // Delayed expansion off whatever the registry says, so a quoted `!`
+        // stays literal (see `ShellFlavor::Cmd`).
+        (
+            shell,
+            vec!["/V:OFF".to_string(), "/C".to_string(), command.to_string()],
+        )
     }
     #[cfg(not(windows))]
     {
@@ -156,6 +164,87 @@ pub fn run_via_shell(command: &str) -> (String, Vec<String>) {
             vec!["-c".to_string(), command.to_string()],
         )
     }
+}
+
+/// The interpreter [`run_via_shell`] uses on a given OS, for quoting
+/// values into a command line that will run there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellFlavor {
+    /// POSIX `sh`, which is dash on Debian-likes: no `$'…'`.
+    Posix,
+    /// `cmd.exe /V:OFF /C`.
+    Cmd,
+}
+
+impl ShellFlavor {
+    pub fn of(style: crate::vfs::PathStyle) -> Self {
+        match style {
+            crate::vfs::PathStyle::Unix => ShellFlavor::Posix,
+            crate::vfs::PathStyle::Windows => ShellFlavor::Cmd,
+        }
+    }
+
+    /// `value` as a single word for this interpreter, its characters
+    /// taken literally. `Err` for what can't be expressed: a line break
+    /// for cmd.exe, which ends the command there.
+    pub fn quote(self, value: &str) -> Result<String, String> {
+        match self {
+            ShellFlavor::Posix => Ok(posix_quote(value)),
+            ShellFlavor::Cmd => cmd_quote(value),
+        }
+    }
+}
+
+fn posix_quote(value: &str) -> String {
+    let inert = |c: char| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c);
+    if !value.is_empty() && value.chars().all(inert) {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// cmd.exe has no escape that works inside double quotes, so `%` (which
+/// it expands there) and `"` (which ends them) are written between
+/// quoted runs with a caret: `"50"^%" off"`. A `%"…"^%` pair that could
+/// still look like a variable names one containing quotes, which can't be
+/// set. Backslashes before a quote are doubled for the program's own
+/// argv parsing (`CommandLineToArgvW`).
+fn cmd_quote(value: &str) -> Result<String, String> {
+    let inert = |c: char| c.is_ascii_alphanumeric() || "_@+=:,./\\-".contains(c);
+    if !value.is_empty() && value.chars().all(inert) {
+        return Ok(value.to_string());
+    }
+    if value.contains(['\r', '\n']) {
+        return Err(format!(
+            "{value:?} has a line break, which cmd.exe can't take"
+        ));
+    }
+    let mut out = String::from("\"");
+    let mut backslashes = 0;
+    for c in value.chars() {
+        match c {
+            '\\' => {
+                backslashes += 1;
+                out.push(c);
+                continue;
+            }
+            '%' => {
+                out.extend(std::iter::repeat_n('\\', backslashes));
+                out.push_str("\"^%\"");
+            }
+            '"' => {
+                // `\"` for argv, its quote caret-escaped so cmd doesn't
+                // toggle on it.
+                out.extend(std::iter::repeat_n('\\', backslashes));
+                out.push_str("\"\\^\"\"");
+            }
+            _ => out.push(c),
+        }
+        backslashes = 0;
+    }
+    out.extend(std::iter::repeat_n('\\', backslashes));
+    out.push('"');
+    Ok(out)
 }
 
 /// Look up `name` first in the inherited `PATH`, then in `extra_path` as a
@@ -262,13 +351,47 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn posix_quoting_survives_sh() {
+        for value in [
+            "plain.txt",
+            "my file.txt",
+            "x'; echo INJECTED #",
+            "$(id)`id`\\n\"q\"",
+            "",
+            "~home",
+            "line\nbreak",
+            "ünï cødé",
+        ] {
+            let quoted = ShellFlavor::Posix.quote(value).unwrap();
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("printf %s {quoted}")])
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), value, "{quoted}");
+        }
+    }
+
+    #[test]
+    fn cmd_quoting() {
+        let q = |v| ShellFlavor::Cmd.quote(v).unwrap();
+        assert_eq!(q("C:\\dir\\file.txt"), "C:\\dir\\file.txt");
+        assert_eq!(q("a&calc&.txt"), "\"a&calc&.txt\"");
+        assert_eq!(q("50% off"), "\"50\"^%\" off\"");
+        assert_eq!(q("say \"hi\""), "\"say \"\\^\"\"hi\"\\^\"\"\"");
+        assert_eq!(q("C:\\my dir\\"), "\"C:\\my dir\\\\\"");
+        assert_eq!(q(""), "\"\"");
+        assert!(ShellFlavor::Cmd.quote("a\nb").is_err());
+    }
+
     #[test]
     fn run_via_shell_shape() {
         let (prog, args) = run_via_shell("echo hi");
         #[cfg(windows)]
         {
             assert!(prog.to_ascii_lowercase().contains("cmd"));
-            assert_eq!(args, vec!["/C".to_string(), "echo hi".to_string()]);
+            assert_eq!(args, ["/V:OFF", "/C", "echo hi"]);
         }
         #[cfg(not(windows))]
         {

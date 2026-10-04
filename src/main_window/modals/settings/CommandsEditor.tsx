@@ -399,7 +399,10 @@ export function CommandsEditor({
               >
                 Jinja2
               </button>{" "}
-              templates.
+              templates. Everything inserted with <code>{"{{ … }}"}</code> is
+              quoted for the shell the command runs in, so a file name is always
+              one argument; a list becomes one argument per item. Use{" "}
+              <code>raw</code> to insert shell syntax as-is.
             </p>
 
             <h4>Variables</h4>
@@ -494,9 +497,15 @@ export function CommandsEditor({
               <tbody>
                 <tr>
                   <td>
+                    <code>{"raw"}</code>
+                  </td>
+                  <td>Insert as-is, without quoting</td>
+                </tr>
+                <tr>
+                  <td>
                     <code>{"shell_quote"}</code>
                   </td>
-                  <td>Shell-escape a string</td>
+                  <td>Quote explicitly (already done by default)</td>
                 </tr>
                 <tr>
                   <td>
@@ -558,17 +567,18 @@ export function CommandsEditor({
             <h4>Examples</h4>
             <pre className={styles.userCmdCode}>
               {
-                "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') | shell_quote | join(' ') }}"
+                "tar czf {{ file.stem }}.tar.gz {{ files | map(attribute='name') }}"
               }
             </pre>
             <pre className={styles.userCmdCode}>
-              {
-                'mv {{ file.name | shell_quote }} {{ prompt("New name", file.name) | shell_quote }}'
-              }
+              {'mv -- {{ file.name }} {{ prompt("New name", file.name) }}'}
+            </pre>
+            <pre className={styles.userCmdCode}>
+              {'ls {{ prompt("Flags", "-la") | raw }} {{ dir }}'}
             </pre>
             <pre className={styles.userCmdCode}>
               {
-                '{% do confirm("Play " ~ file.name ~ "?" ) %} paplay {{ file.path | shell_quote }}'
+                '{% do confirm("Play " ~ file.name ~ "?" ) %} paplay {{ file.path }}'
               }
             </pre>
           </div>
