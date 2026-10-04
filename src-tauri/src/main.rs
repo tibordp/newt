@@ -9,6 +9,7 @@ pub mod cmd;
 pub mod common;
 pub mod config_file;
 pub mod connections;
+pub mod crash_report;
 pub mod discovery;
 pub mod editor;
 pub mod file_server;
@@ -1144,6 +1145,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(global_ctx)
         .setup(move |app| {
+            if let Ok(dir) = app.path().app_log_dir() {
+                crash_report::install(dir);
+            }
             let global_ctx: State<GlobalContext> = app.state();
             global_ctx.init_agent_resolver(app.handle());
             global_ctx.init_preferences(app.handle(), config_dir_arg.clone());

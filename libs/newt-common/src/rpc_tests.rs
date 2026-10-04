@@ -347,3 +347,36 @@ async fn shutdown_closes_the_connection_for_the_peer() {
     communicator.shutdown();
     peer.closed().await;
 }
+
+/// Panics in every handler, the way a programming error would.
+struct Panicking;
+
+#[async_trait::async_trait]
+impl super::Dispatcher for Panicking {
+    async fn invoke(&self, _api: Api, _req: Bytes) -> Result<Option<Bytes>, crate::Error> {
+        panic!("invoke handler bug");
+    }
+    async fn notify(&self, _api: Api, _req: Bytes) -> Result<bool, crate::Error> {
+        panic!("notify handler bug");
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_invoke_handler_fails_the_call_instead_of_hanging() {
+    use super::Communicator;
+    let (ours, theirs) = tokio::io::duplex(1024);
+    let _peer = Communicator::with_dispatcher(Panicking, theirs);
+    let communicator = Communicator::new(ours);
+    let result: Result<(), crate::Error> = communicator.invoke(Api(1), &()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn a_panicking_notify_handler_closes_the_connection() {
+    use super::Communicator;
+    let (ours, theirs) = tokio::io::duplex(1024);
+    let _peer = Communicator::with_dispatcher(Panicking, theirs);
+    let communicator = Communicator::new(ours);
+    communicator.notify(Api(1), &()).await.unwrap();
+    communicator.closed().await;
+}

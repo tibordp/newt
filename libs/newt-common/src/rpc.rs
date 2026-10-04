@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    panic::AssertUnwindSafe,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
+use futures::FutureExt;
 use log::{error, info};
 use parking_lot::Mutex;
 use tokio::{
@@ -416,16 +418,21 @@ impl CommunicatorInner {
                         // handle would sit in the map forever.
                         let mut tasks = self.tasks.lock();
                         let handle = tokio::spawn(async move {
-                            match dispatcher.invoke(api, payload).await {
-                                Ok(Some(resp)) => {
+                            let invoked =
+                                AssertUnwindSafe(dispatcher.invoke(api, payload)).catch_unwind();
+                            match invoked.await {
+                                Ok(Ok(Some(resp))) => {
                                     let _ = outbox.send(Message::InvokeResponse(id, resp)).await;
                                 }
-                                Ok(None) => {
+                                Ok(Ok(None)) => {
                                     error!("unknown API invoked");
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     error!("error handling request: {}", e);
                                 }
+                                // The caller would wait forever for an answer;
+                                // end the connection instead, failing every call.
+                                Err(_) => inner.closing.cancel(),
                             }
                             inner.tasks.lock().remove(&id);
                         });
@@ -446,14 +453,19 @@ impl CommunicatorInner {
                         // notifications.  The Notify/Signal split exists
                         // purely to assign different outbox QoS lanes on the
                         // sender; the receiver treats them identically.
-                        match self.dispatcher.notify(api, payload).await {
-                            Ok(true) => {}
-                            Ok(false) => {
+                        let notified =
+                            AssertUnwindSafe(self.dispatcher.notify(api, payload)).catch_unwind();
+                        match notified.await {
+                            Ok(Ok(true)) => {}
+                            Ok(Ok(false)) => {
                                 error!("unknown API invoked");
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 error!("error handling notification: {}", e)
                             }
+                            // Unwinding out of here would skip the cleanup
+                            // below and leave the stream open; end it.
+                            Err(_) => break Err(Error::custom("a notification handler panicked")),
                         }
                     }
                     Message::InvokeCancel(id) => {

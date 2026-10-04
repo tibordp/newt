@@ -179,6 +179,15 @@ fn main() {
     // Linux one already has one from pam_env and this is a no-op.
     newt_common::locale::ensure_locale();
 
+    // A panic means this process can't be trusted any more: end it, so the
+    // host sees its connection close, rather than run on with a task dead
+    // behind a connection that still looks alive.
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        report(info);
+        std::process::abort();
+    }));
+
     let rt = tokio::runtime::Runtime::new().unwrap();
     if let Err(e) = rt.block_on(run_agent()) {
         eprintln!("agent error: {}", e);
