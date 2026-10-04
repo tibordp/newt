@@ -859,17 +859,41 @@ impl Vfs for SftpVfs {
         // SFTP exposes no inode, so identity comes from the server's own
         // `realpath`: it folds case the way that server's filesystem does
         // (an SFTP server on Windows or a case-insensitive macOS volume is
-        // exactly the case we're here for). It also resolves symlinks, so a
-        // link and its target read as the same file — unlike the local VFS,
-        // which identifies a link as itself. The consequence is confined to
-        // replacing a symlink that points at the source without prompting.
+        // exactly the case we're here for). `realpath` also sees through
+        // symlinks, which would make a link the same file as its target,
+        // so a link is only ever the same as itself: same directory, same
+        // name.
         let mut fs = self.sftp.fs();
+        let is_link = |m: openssh_sftp_client::metadata::MetaData| {
+            m.file_type().is_some_and(|ft| ft.is_symlink())
+        };
+        let (Ok(meta_a), Ok(meta_b)) = (
+            fs.symlink_metadata(sftp_path(a)).await,
+            fs.symlink_metadata(sftp_path(b)).await,
+        ) else {
+            // A path that can't be stat'ed doesn't exist (or the server
+            // won't say) — nothing's twin either way.
+            return Ok(false);
+        };
+        if is_link(meta_a) || is_link(meta_b) {
+            if a.file_name() != b.file_name() {
+                return Ok(false);
+            }
+            let (Some(dir_a), Some(dir_b)) = (a.parent(), b.parent()) else {
+                return Ok(false);
+            };
+            let (Ok(dir_a), Ok(dir_b)) = (
+                fs.canonicalize(sftp_path(dir_a)).await,
+                fs.canonicalize(sftp_path(dir_b)).await,
+            ) else {
+                return Ok(false);
+            };
+            return Ok(dir_a == dir_b);
+        }
         let (Ok(a), Ok(b)) = (
             fs.canonicalize(sftp_path(a)).await,
             fs.canonicalize(sftp_path(b)).await,
         ) else {
-            // A path that can't be resolved doesn't exist (or the server
-            // won't say) — nothing's twin either way.
             return Ok(false);
         };
         Ok(a == b)

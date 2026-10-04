@@ -739,6 +739,7 @@ pub trait Vfs: Send + Sync {
         Ok(VfsMetadata::from_listing(&self.file_info(path).await?))
     }
 
+    /// Applies to `path` itself, never to a symlink's target.
     async fn set_metadata(&self, path: &Path, meta: &VfsMetadata) -> Result<(), Error> {
         let _ = (path, meta);
         Err(Error::not_supported())

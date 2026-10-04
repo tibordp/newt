@@ -138,6 +138,9 @@ pub(super) async fn execute_set_metadata(
 
             let new_permissions = if has_mode_changes {
                 match vfs.file_info(local_path).await {
+                    // A link's own mode is fixed or meaningless; its
+                    // target is changed as itself, if it's selected.
+                    Ok(file_info) if file_info.is_symlink => None,
                     Ok(file_info) => {
                         let old_mode = file_info.mode.map(|m| m.0).unwrap_or(0);
                         Some((old_mode | mode_set) & !mode_clear)
@@ -173,6 +176,9 @@ pub(super) async fn execute_set_metadata(
                 gid,
                 ..Default::default()
             };
+            if meta.permissions.is_none() && uid.is_none() && gid.is_none() {
+                break;
+            }
 
             if let Err(e) = vfs.set_metadata(local_path, &meta).await {
                 match reporter

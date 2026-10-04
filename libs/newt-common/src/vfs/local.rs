@@ -332,6 +332,27 @@ fn remove_file_fallback(_path: &StdPath, err: std::io::Error) -> Result<(), Erro
 /// self-copy.
 type FileIdentity = (u64, u128);
 
+/// The mode of `path` itself: a symlink's own where the OS has one
+/// (macOS), left alone where it doesn't (Linux: a link's mode is fixed and
+/// never consulted) — never the target's.
+#[cfg(unix)]
+fn set_own_permissions(path: &std::path::Path, permissions: u32) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+    if !std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    nix::sys::stat::fchmodat(
+        nix::fcntl::AT_FDCWD,
+        path,
+        nix::sys::stat::Mode::from_bits_truncate(permissions as nix::libc::mode_t),
+        nix::sys::stat::FchmodatFlags::NoFollowSymlink,
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(())
+}
+
 /// Identity of `path`, or `None` if it doesn't exist. Symlinks are
 /// identified as themselves rather than as their target, matching
 /// `file_info`'s `symlink_metadata`.
@@ -980,8 +1001,7 @@ impl Vfs for LocalVfs {
             #[cfg(unix)]
             {
                 if let Some(permissions) = meta.permissions {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(permissions))?;
+                    set_own_permissions(&path, permissions)?;
                 }
 
                 let uid = meta.uid.map(nix::unistd::Uid::from_raw);

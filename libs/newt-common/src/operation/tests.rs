@@ -4108,6 +4108,43 @@ mod local_symlink {
             "recursive chmod reached through the symlink into the target"
         );
     }
+
+    /// A chmod of a tree with a link in it, or of a link itself, leaves
+    /// the link's target alone.
+    #[tokio::test]
+    async fn set_metadata_does_not_change_a_symlinks_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let secret = tmp.path().join("secret");
+        std::fs::write(&secret, b"x").expect("write");
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let tree = tmp.path().join("tree");
+        std::fs::create_dir(&tree).expect("create_dir");
+        std::os::unix::fs::symlink(&secret, tree.join("link")).expect("symlink");
+
+        for (path, recursive) in [(tree.clone(), true), (tree.join("link"), false)] {
+            run(OperationRequest::SetMetadata {
+                paths: vec![vfs_path(&path)],
+                mode_set: 0o077,
+                mode_clear: 0,
+                uid: None,
+                gid: None,
+                recursive,
+                cross_mount_points: false,
+            })
+            .await;
+            let mode = std::fs::metadata(&secret)
+                .expect("metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "chmod of {path:?} changed the link's target"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
