@@ -254,7 +254,7 @@ impl PreferencesManager {
     /// Preserves existing comments by using toml_edit.
     pub fn update_preference(&self, key: &str, value: serde_json::Value) -> Result<(), String> {
         let path = self.settings_file_path();
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -279,7 +279,7 @@ impl PreferencesManager {
         let toml_value = json_to_toml_edit_value(&value)?;
         table.insert(leaf[0], toml_edit::value(toml_value));
 
-        std::fs::write(&path, doc.to_string())
+        crate::config_file::write_atomic(&path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
         Ok(())
@@ -288,7 +288,7 @@ impl PreferencesManager {
     /// Remove a preference key from settings.toml so it falls back to the default.
     pub fn reset_preference(&self, key: &str) -> Result<(), String> {
         let path = self.settings_file_path();
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -309,7 +309,7 @@ impl PreferencesManager {
 
         table.remove(leaf[0]);
 
-        std::fs::write(&path, doc.to_string())
+        crate::config_file::write_atomic(&path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
         Ok(())
@@ -320,10 +320,10 @@ impl PreferencesManager {
     /// [`Self::restore_bookmarks`]) plus whether the path was already there.
     pub fn add_bookmark(&self, path: &str, name: Option<&str>) -> Result<BookmarkAdded, String> {
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let (new_content, was_bookmarked) = apply_add_bookmark(&content, path, name)?;
 
-        std::fs::write(&file_path, new_content)
+        crate::config_file::write_atomic(&file_path, new_content)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         self.reload();
 
@@ -336,9 +336,9 @@ impl PreferencesManager {
     /// Remove every bookmark entry with this path from settings.toml.
     pub fn remove_bookmark(&self, path: &str) -> Result<(), String> {
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
 
-        std::fs::write(&file_path, apply_remove_bookmark(&content, path)?)
+        crate::config_file::write_atomic(&file_path, apply_remove_bookmark(&content, path)?)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         self.reload();
 
@@ -350,9 +350,9 @@ impl PreferencesManager {
     /// unrelated settings edit made in the meantime survives).
     pub fn restore_bookmarks(&self, snapshot: &str) -> Result<(), String> {
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
 
-        std::fs::write(&file_path, apply_restore_bookmarks(&content, snapshot)?)
+        crate::config_file::write_atomic(&file_path, apply_restore_bookmarks(&content, snapshot)?)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         self.reload();
 
@@ -362,7 +362,7 @@ impl PreferencesManager {
     /// Add a user command entry to settings.toml.
     pub fn add_user_command(&self, entry: &UserCommandEntry) -> Result<(), String> {
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -400,7 +400,7 @@ impl PreferencesManager {
             return Err("'command' key exists but is not an array of tables".into());
         }
 
-        std::fs::write(&file_path, doc.to_string())
+        crate::config_file::write_atomic(&file_path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
         Ok(())
@@ -414,8 +414,8 @@ impl PreferencesManager {
         change: AssociationChange,
     ) -> Result<(), String> {
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
-        std::fs::write(
+        let content = crate::config_file::read_for_edit(&file_path)?;
+        crate::config_file::write_atomic(
             &file_path,
             apply_set_association(&content, pattern, kind, change)?,
         )
@@ -428,7 +428,7 @@ impl PreferencesManager {
     pub fn remove_user_command(&self, index: usize) -> Result<(), String> {
         let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -442,7 +442,7 @@ impl PreferencesManager {
             }
         }
 
-        std::fs::write(&file_path, doc.to_string())
+        crate::config_file::write_atomic(&file_path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
         Ok(())
@@ -456,7 +456,7 @@ impl PreferencesManager {
     ) -> Result<(), String> {
         let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -528,7 +528,7 @@ impl PreferencesManager {
             rename_association_command(&mut doc, &old_title, &entry.title);
         }
 
-        std::fs::write(&file_path, doc.to_string())
+        crate::config_file::write_atomic(&file_path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
 
         Ok(())
@@ -573,7 +573,7 @@ impl PreferencesManager {
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let new_content = apply_set_keybindings(
             &content,
             command_id,
@@ -582,7 +582,7 @@ impl PreferencesManager {
             &default_keys,
             default_when,
         )?;
-        std::fs::write(&file_path, new_content)
+        crate::config_file::write_atomic(&file_path, new_content)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         Ok(())
     }
@@ -605,10 +605,10 @@ impl PreferencesManager {
         let default_when = def.default_when.clone();
 
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let new_content =
             apply_reset_keybinding(&content, command_id, &default_keys, default_when)?;
-        std::fs::write(&file_path, new_content)
+        crate::config_file::write_atomic(&file_path, new_content)
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         Ok(())
     }
@@ -619,7 +619,7 @@ impl PreferencesManager {
     fn set_user_command_key(&self, index: usize, new_key: Option<String>) -> Result<(), String> {
         let index = self.command_slot(index)?;
         let file_path = self.settings_file_path();
-        let content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let content = crate::config_file::read_for_edit(&file_path)?;
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse settings.toml: {}", e))?;
@@ -641,7 +641,7 @@ impl PreferencesManager {
             }
         }
 
-        std::fs::write(&file_path, doc.to_string())
+        crate::config_file::write_atomic(&file_path, doc.to_string())
             .map_err(|e| format!("Failed to write settings.toml: {}", e))?;
         Ok(())
     }

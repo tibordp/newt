@@ -175,12 +175,10 @@ impl SessionMemory {
         let _guard = self.lock.lock();
         let mut file = self.load();
         f(&mut file);
-        let tmp = self.path.with_extension("json.tmp");
-        let written = std::fs::write(
-            &tmp,
+        let written = crate::config_file::write_atomic(
+            &self.path,
             serde_json::to_string_pretty(&file).expect("MemoryFile serializes"),
-        )
-        .and_then(|()| std::fs::rename(&tmp, &self.path));
+        );
         if let Err(e) = written {
             warn!("Failed to write {:?}: {}", self.path, e);
         }

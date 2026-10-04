@@ -7,6 +7,7 @@ extern crate objc; // v0.2.7
 pub mod associations;
 pub mod cmd;
 pub mod common;
+pub mod config_file;
 pub mod connections;
 pub mod discovery;
 pub mod editor;

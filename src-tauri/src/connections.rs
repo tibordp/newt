@@ -231,7 +231,8 @@ pub fn save_connection(
     }
 
     let serialized = toml::to_string_pretty(&file).map_err(|e| Error::Custom(e.to_string()))?;
-    std::fs::write(&path, serialized).map_err(|e| Error::Custom(e.to_string()))?;
+    crate::config_file::write_atomic(&path, serialized)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     Ok(())
 }
 
@@ -242,7 +243,8 @@ pub fn delete_connection(config_dir: &std::path::Path, id: &str) -> Result<(), E
     file.connections.retain(|c| c.id != id);
 
     let serialized = toml::to_string_pretty(&file).map_err(|e| Error::Custom(e.to_string()))?;
-    std::fs::write(&path, serialized).map_err(|e| Error::Custom(e.to_string()))?;
+    crate::config_file::write_atomic(&path, serialized)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     Ok(())
 }
 

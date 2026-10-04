@@ -206,7 +206,7 @@ impl RuntimeStateManager {
     }
 
     fn persist_and_broadcast(&self, new_state: &RuntimeState) -> Result<(), String> {
-        std::fs::write(
+        crate::config_file::write_atomic(
             &self.path,
             serde_json::to_string_pretty(new_state).expect("RuntimeState serializes"),
         )
