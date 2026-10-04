@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use dom_query::{Document, NodeRef};
+use newt_common::vfs::path::{Path, PathBuf};
 
 /// A node of a rendered document.
 #[derive(Debug, PartialEq, serde::Serialize, specta::Type)]
@@ -253,6 +254,74 @@ fn image_allowed(url: &str) -> bool {
     }
 }
 
+/// Point every image at what the page may load: a `data:image/` URL as it
+/// is, and a path resolved against the directory of the document at `doc`
+/// to a wire path — kept only while it stays on the document's own volume
+/// (`root_of` the same). On Windows a path off it, `/server/share/x.png`
+/// or one climbing past the drive, names a network share, and fetching it
+/// would hand the user's credentials to that server.
+pub fn resolve_images(nodes: &mut [MarkdownNode], doc: &Path, root_of: &impl Fn(&Path) -> PathBuf) {
+    for node in nodes {
+        let MarkdownNode::Element {
+            tag,
+            attrs,
+            children,
+        } = node
+        else {
+            continue;
+        };
+        if tag == "img" {
+            attrs.retain_mut(|(name, value)| {
+                if name != "src" || value.to_ascii_lowercase().starts_with("data:image/") {
+                    return true;
+                }
+                match resolve_image(doc, value).filter(|p| root_of(p) == root_of(doc)) {
+                    Some(path) => {
+                        *value = path.as_wire_str().to_string();
+                        true
+                    }
+                    None => false,
+                }
+            });
+        }
+        resolve_images(children, doc, root_of);
+    }
+}
+
+/// `src` resolved against `doc`'s directory, `.` and `..` folded (`..`
+/// stops at the root), percent-escapes decoded, `\` taken for `/`; a
+/// leading `/` is the filesystem root. `None` for anything with a scheme.
+fn resolve_image(doc: &Path, src: &str) -> Option<PathBuf> {
+    if parse_url(src).0.is_some() {
+        return None;
+    }
+    let bare = src.trim().split(['?', '#']).next().unwrap_or_default();
+    if bare.is_empty() || bare.starts_with("//") {
+        return None;
+    }
+    let decoded = percent_encoding::percent_decode_str(bare).decode_utf8_lossy();
+    let mut path = if decoded.starts_with('/') {
+        PathBuf::root()
+    } else {
+        doc.parent()
+            .map(Path::to_owned)
+            .unwrap_or_else(PathBuf::root)
+    };
+    for segment in decoded.split(['/', '\\']) {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                path = path
+                    .parent()
+                    .map(Path::to_owned)
+                    .unwrap_or_else(PathBuf::root)
+            }
+            name => path.push(name),
+        }
+    }
+    Some(path)
+}
+
 /// GitHub's heading anchors: lowercase, punctuation dropped, each space a
 /// hyphen, and a repeat numbered.
 #[derive(Default)]
@@ -279,6 +348,75 @@ impl Slugs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn images(doc: &str, srcs: &[&str], root_of: impl Fn(&Path) -> PathBuf) -> Vec<Option<String>> {
+        let mut nodes: Vec<MarkdownNode> = srcs
+            .iter()
+            .map(|src| el("img", &[("src", src), ("alt", "x")], vec![]))
+            .collect();
+        resolve_images(&mut nodes, &PathBuf::from_wire_str(doc), &root_of);
+        nodes
+            .iter()
+            .map(|node| match node {
+                MarkdownNode::Element { attrs, .. } => attrs
+                    .iter()
+                    .find(|(name, _)| name == "src")
+                    .map(|(_, value)| value.clone()),
+                MarkdownNode::Text(_) => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn images_stay_on_the_documents_volume() {
+        // Windows-style roots: a drive (`/?/C:`) or a share (`/server/share`).
+        let root_of = |p: &Path| PathBuf::from_components(p.components().take(2));
+        let resolved = images(
+            "/?/C:/docs/README.md",
+            &[
+                "img/a%20b.png",
+                "../shared/logo.png",
+                "%2E%2E/x.png",
+                "data:image/png;base64,AAAA",
+                "/evil.com/share/x.png",
+                "../../../evil.com/share/x.png",
+                "..\\..\\..\\evil.com\\share\\x.png",
+                "//evil.com/share/x.png",
+                "file:///C:/x.png",
+            ],
+            root_of,
+        );
+        assert_eq!(
+            resolved,
+            [
+                Some("/?/C:/docs/img/a b.png".into()),
+                Some("/?/C:/shared/logo.png".into()),
+                Some("/?/C:/x.png".into()),
+                Some("data:image/png;base64,AAAA".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_single_rooted_filesystem_resolves_anywhere() {
+        let resolved = images(
+            "/home/me/README.md",
+            &["/usr/share/pixmaps/x.png", "../x.png"],
+            |_| PathBuf::root(),
+        );
+        assert_eq!(
+            resolved,
+            [
+                Some("/usr/share/pixmaps/x.png".into()),
+                Some("/home/x.png".into())
+            ]
+        );
+    }
 
     fn el(tag: &str, attrs: &[(&str, &str)], children: Vec<MarkdownNode>) -> MarkdownNode {
         MarkdownNode::Element {

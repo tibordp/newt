@@ -19,12 +19,7 @@ import {
   type ViewerMode,
   type VfsPath,
 } from "./helpers";
-import {
-  ID_PREFIX,
-  buildMarkdown,
-  classifyLink,
-  resolveRelative,
-} from "./markdown";
+import { ID_PREFIX, buildMarkdown, classifyLink } from "./markdown";
 import { useViewerHost } from "./host";
 import { REFOCUS_EVENT } from "../main_window/types";
 
@@ -180,14 +175,14 @@ export function MarkdownViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, fileSize, encoding, bomLen]);
 
+  // `render_markdown` has resolved every image to a `data:image/` URL or
+  // a wire path on the document's volume, and dropped the rest.
   const imageUrl = useCallback(
     (src: string): string | null => {
       if (/^data:image\//i.test(src)) return src;
-      if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("//")) {
-        return null;
-      }
-      const path = resolveRelative(vfsPath.path, src);
-      return path ? buildFileUrl(fileServerBase, vfsPath.vfs_id, path) : null;
+      return src.startsWith("/")
+        ? buildFileUrl(fileServerBase, vfsPath.vfs_id, src)
+        : null;
     },
     [fileServerBase, vfsPath],
   );

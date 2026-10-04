@@ -879,11 +879,18 @@ pub async fn render_markdown(
     encoding: String,
     bom_len: u32,
 ) -> Result<Vec<markdown::MarkdownNode>, Error> {
-    let data = ctx.fs()?.read_file(path, max_size).await?;
+    let descriptor = ctx.vfs_info()?.descriptor(path.vfs_id);
+    let data = ctx.fs()?.read_file(path.clone(), max_size).await?;
     // Tens of milliseconds of parsing for a large document.
     tokio::task::spawn_blocking(move || {
         let body = data.get(bom_len as usize..).unwrap_or_default();
-        markdown::render(&encoding::decode(body, &encoding))
+        let mut nodes = markdown::render(&encoding::decode(body, &encoding));
+        let root_of = |p: &newt_common::vfs::path::Path| match &descriptor {
+            Some((descriptor, meta)) => descriptor.root_of(p, meta),
+            None => newt_common::vfs::path::PathBuf::root(),
+        };
+        markdown::resolve_images(&mut nodes, &path.path, &root_of);
+        nodes
     })
     .await
     .map_err(|e| Error::Custom(e.to_string()))
@@ -899,6 +906,17 @@ pub async fn open_in_viewer(
     path: VfsPath,
 ) -> Result<(), Error> {
     let display_path = ctx.format_vfs_path(&path);
+    // A link stays on the document's volume, as its images do: on Windows
+    // one off it names a network share (see `markdown::resolve_images`).
+    if let Some(document) = viewer.0.publisher.state().file_path()
+        && let Some((descriptor, meta)) = ctx.vfs_info()?.descriptor(path.vfs_id)
+        && (document.vfs_id != path.vfs_id
+            || descriptor.root_of(&document.path, &meta) != descriptor.root_of(&path.path, &meta))
+    {
+        return Err(Error::Custom(format!(
+            "{display_path} is on another volume than this document"
+        )));
+    }
     if ctx.fs()?.file_details(path.clone()).await?.is_dir {
         return Err(Error::Custom(format!("{display_path} is a directory")));
     }
