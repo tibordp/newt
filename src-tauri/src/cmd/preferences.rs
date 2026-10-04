@@ -211,7 +211,7 @@ pub fn cmd_add_bookmark(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<GlobalContext> = app_handle.state();
 
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let path = pane.path();
 
     let path_str = ctx.format_vfs_path(&path);

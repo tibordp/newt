@@ -15,7 +15,8 @@ export const executeCommandById = (
   if (!commandInfo) return null;
 
   const paneHandle = state.display_options.active_pane;
-  if (commandInfo.needs_pane && !paneHandle && paneHandle !== 0) {
+  // No panes until the session connects (or after a failed connect).
+  if (commandInfo.needs_pane && !state.panes[paneHandle]) {
     return null;
   }
 

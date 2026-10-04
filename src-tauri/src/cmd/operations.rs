@@ -28,7 +28,7 @@ pub async fn create_directory(
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
-            let pane = gs.panes.get(pane_handle).unwrap();
+            let pane = gs.panes.require(pane_handle)?;
             pane.refresh(None, true).await?;
             pane.view_state_mut().focus(name);
         }
@@ -54,7 +54,7 @@ pub async fn touch_file(
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
-            let pane = gs.panes.get(pane_handle).unwrap();
+            let pane = gs.panes.require(pane_handle)?;
             pane.refresh(None, true).await?;
             pane.view_state_mut().focus(name);
         }
@@ -93,7 +93,7 @@ async fn delete_selected_impl(
     pane_handle: PaneHandle,
     permanent: bool,
 ) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let paths = pane.get_effective_selection();
     if paths.is_empty() {
         return Ok(());
@@ -207,7 +207,7 @@ pub async fn rename(
             let _ = cb_ctx
                 .with_update_async(|gs| async move {
                     if let Some(pane_handle) = pane_handle {
-                        let pane = gs.panes.get(pane_handle).unwrap();
+                        let pane = gs.panes.require(pane_handle)?;
                         pane.refresh(None, true).await?;
                         pane.view_state_mut().focus(new_name);
                     }
@@ -252,7 +252,7 @@ pub async fn set_metadata(
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
-            let pane = gs.panes.get(pane_handle).unwrap();
+            let pane = gs.panes.require(pane_handle)?;
             pane.refresh(None, true).await?;
         }
         Ok(())
@@ -281,7 +281,7 @@ pub async fn apply_properties(
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
         if let Some(pane_handle) = pane_handle {
-            let pane = gs.panes.get(pane_handle).unwrap();
+            let pane = gs.panes.require(pane_handle)?;
             pane.refresh(None, true).await?;
         }
         Ok(())

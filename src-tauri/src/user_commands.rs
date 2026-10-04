@@ -422,9 +422,9 @@ fn collect_pane_context(
     ctx: &MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(VfsPath, String, Vec<newt_common::vfs::File>), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let pane_path = pane.path();
-    let other_pane = ctx.with_update(|gs| Ok(gs.other_pane(pane_handle)))?;
+    let other_pane = ctx.with_update(|gs| gs.other_pane(pane_handle))?;
     let other_dir = other_pane.path().path.as_wire_str().to_string();
 
     let selection = pane.get_effective_selection();

@@ -162,7 +162,7 @@ pub(crate) fn prewarm_editor(
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     if pane.is_focused_dir() {
         return Ok(());
     }
@@ -271,7 +271,7 @@ pub(crate) fn open_editor_window(
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     if pane.is_focused_dir() {
         return Ok(());
     }

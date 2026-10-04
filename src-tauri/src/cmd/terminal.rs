@@ -10,7 +10,7 @@ pub async fn cmd_send_to_terminal(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let terminal = if let Some(terminal) = ctx.active_terminal() {
         ctx.with_update(|c| {
             let mut opts = c.display_options.0.write();

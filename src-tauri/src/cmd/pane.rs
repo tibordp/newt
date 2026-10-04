@@ -110,7 +110,7 @@ pub fn focus(
     filename: Option<String>,
 ) -> Result<(), Error> {
     ctx.with_update(|gs| {
-        let state = gs.panes.get(pane_handle).unwrap();
+        let state = gs.panes.require(pane_handle)?;
         if let Some(filename) = filename {
             state.view_state_mut().focus(filename);
         }
@@ -222,7 +222,7 @@ pub fn count_pattern_matches(
     pane_handle: PaneHandle,
     pattern: String,
 ) -> Result<Option<u32>, Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let count = pane.view_state().count_matching(&pattern);
     Ok(count.map(|c| c as u32))
 }
@@ -239,7 +239,7 @@ pub fn cmd_deselect_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub fn end_drag_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     pane.view_state_mut().end_drag_selection();
     Ok(())
 }
@@ -298,7 +298,7 @@ pub fn set_viewport(
     visible_count: usize,
 ) -> Result<(), Error> {
     let changed = {
-        let pane = ctx.panes().get(pane_handle).unwrap();
+        let pane = ctx.panes().require(pane_handle)?;
         pane.view_state_mut()
             .set_viewport_hint(first_visible, visible_count)
     };
@@ -379,7 +379,7 @@ pub async fn cmd_open_in_other_pane(
         return Ok(());
     }
 
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let pane_path = pane.path();
     let file = match pane.get_focused_file_info() {
         Some(f) => f,
@@ -435,7 +435,7 @@ pub async fn cmd_open_in_right_pane(
 #[tauri::command]
 #[specta::specta]
 pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let Some(file) = pane.get_focused_file_info() else {
         return Ok(());
     };
@@ -465,7 +465,7 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
 
 /// Go into the focused directory.
 async fn enter_directory(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let Some(file) = pane.get_focused_file_info() else {
         return Ok(());
     };
@@ -646,7 +646,7 @@ async fn with_local_copy(
 
 /// The focused file (not a directory) and where it really is.
 fn focused_file(ctx: &MainWindowContext, pane_handle: PaneHandle) -> Option<(String, VfsPath)> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle).ok()?;
     let file = pane
         .get_focused_file_info()
         .filter(|f| f.name != ".." && !f.is_dir)?;
@@ -702,7 +702,7 @@ pub async fn cmd_open_with(ctx: MainWindowContext, pane_handle: PaneHandle) -> R
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let Some(file) = pane.get_focused_file_info().filter(|f| f.name != "..") else {
         return Ok(());
     };
@@ -719,7 +719,7 @@ pub async fn cmd_open(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_browse_into(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let Some(file) = pane.get_focused_file_info().filter(|f| f.name != "..") else {
         return Ok(());
     };
@@ -741,7 +741,7 @@ pub async fn cmd_follow_symlink(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
 
     // "Follow" prefers an alias source (synthetic VFS entries — search
     // results, …) over the entry's own symlink target, since the alias
@@ -774,7 +774,7 @@ pub async fn cmd_follow_symlink(
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let vfs_info = ctx.vfs_info()?;
     let focused = pane
         .get_focused_file_info()
@@ -878,7 +878,7 @@ pub fn delete_history_entry(
     target_index: usize,
 ) -> Result<(), Error> {
     ctx.with_update(|gs| {
-        let pane = gs.panes.get(pane_handle).unwrap();
+        let pane = gs.panes.require(pane_handle)?;
         pane.delete_history_entry(target_index);
 
         // Rebuild the modal data so the dialog re-renders without the
@@ -921,7 +921,7 @@ pub fn cmd_toggle_maximized(ctx: MainWindowContext, _pane_handle: PaneHandle) ->
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
 
     #[cfg(windows)]
     const LINE_ENDING: &str = "\r\n";
@@ -980,7 +980,7 @@ pub async fn cmd_paste_from_clipboard(
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_compute_size(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     let keys = pane.effective_selection_keys();
     if !keys.is_empty() {
         tauri::async_runtime::spawn(pane.run_manual_enrichment(
@@ -994,7 +994,7 @@ pub fn cmd_compute_size(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_compute_all_sizes(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     tauri::async_runtime::spawn(pane.run_manual_enrichment(
         vec!["du".to_string()],
         newt_common::enrich::EnrichScope::AllEntries,
@@ -1005,7 +1005,7 @@ pub fn cmd_compute_all_sizes(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 #[tauri::command]
 #[specta::specta]
 pub async fn cmd_refresh(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().get(pane_handle).unwrap();
+    let pane = ctx.panes().require(pane_handle)?;
     pane.refresh(None, true).await?;
     ctx.publish()?;
     Ok(())

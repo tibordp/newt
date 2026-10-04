@@ -148,6 +148,13 @@ impl Panes {
         self.0.read().get(handle.0).cloned()
     }
 
+    /// The pane, or an error while the window has none: before its
+    /// session connects, after a failed connect, and during a reconnect.
+    pub fn require(&self, handle: PaneHandle) -> Result<Arc<Pane>, Error> {
+        self.get(handle)
+            .ok_or_else(|| Error::Custom("This window isn't connected".into()))
+    }
+
     pub fn all(&self) -> Vec<Arc<Pane>> {
         self.0.read().clone()
     }
@@ -1088,8 +1095,8 @@ impl MainWindowState {
         }
     }
 
-    pub fn other_pane(&self, handle: PaneHandle) -> Arc<Pane> {
-        self.panes.get(handle.other()).unwrap()
+    pub fn other_pane(&self, handle: PaneHandle) -> Result<Arc<Pane>, Error> {
+        self.panes.require(handle.other())
     }
 
     pub async fn refresh(&self, force: bool) -> Result<(), Error> {
@@ -1110,8 +1117,8 @@ impl MainWindowState {
     }
 
     pub async fn as_other_pane(&self, handle: PaneHandle) -> Result<(), Error> {
-        let other_pane = self.other_pane(handle);
-        let pane = self.panes.get(handle).unwrap();
+        let other_pane = self.other_pane(handle)?;
+        let pane = self.panes.require(handle)?;
 
         pane.navigate_to(other_pane.path()).await?;
 
@@ -1556,7 +1563,7 @@ impl MainWindowContext {
         f: impl FnOnce(&MainWindowState, &Pane) -> Result<T, Error>,
     ) -> Result<T, Error> {
         self.with_update(|s| {
-            let pane = s.panes.get(pane_handle).unwrap();
+            let pane = s.panes.require(pane_handle)?;
             f(s, &pane)
         })
     }
@@ -1570,9 +1577,9 @@ impl MainWindowContext {
         Fut: Future<Output = Result<T, Error>>,
         F: FnOnce(MainWindowState, Arc<Pane>) -> Fut,
     {
-        self.with_update_async(|s| {
-            let pane = s.panes.get(pane_handle).unwrap();
-            async move { f(s, pane).await }
+        self.with_update_async(|s| async move {
+            let pane = s.panes.require(pane_handle)?;
+            f(s, pane).await
         })
         .await
     }
