@@ -335,3 +335,15 @@ fn send_high_panics_for_low_priority() {
     let (tx, _rx) = super::create_outbox();
     tx.send_high(Message::Notify(Api(0), Bytes::new())).unwrap();
 }
+
+#[tokio::test]
+async fn shutdown_closes_the_connection_for_the_peer() {
+    use super::Communicator;
+    let (ours, theirs) = tokio::io::duplex(1024);
+    let peer = Communicator::new(theirs);
+    let communicator = Communicator::new(ours);
+    // A clone kept alive must not keep the connection open.
+    let _kept = communicator.clone();
+    communicator.shutdown();
+    peer.closed().await;
+}

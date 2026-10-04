@@ -6,6 +6,7 @@ import {
 import { safe } from "../../lib/ipc";
 import About from "./About";
 import BookmarkAdded from "./BookmarkAdded";
+import ConfirmClose from "./ConfirmClose";
 import ConfirmDelete from "./ConfirmDelete";
 import ConfirmUnmapDrive from "./ConfirmUnmapDrive";
 import ConnectRemote from "./ConnectRemote";
@@ -80,6 +81,8 @@ export function ModalContent({
       return <ConfirmDelete {...state.data} {...commonProps} />;
     case "bookmark_added":
       return <BookmarkAdded {...state.data} {...commonProps} />;
+    case "confirm_close":
+      return <ConfirmClose {...state.data} {...commonProps} />;
     case "confirm_unmap_drive":
       return <ConfirmUnmapDrive {...state.data} {...commonProps} />;
     case "properties":

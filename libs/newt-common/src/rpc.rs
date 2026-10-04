@@ -359,6 +359,8 @@ struct CommunicatorInner {
     response: Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<bytes::Bytes>>>,
     dispatcher: Arc<dyn Dispatcher>,
     outbox: Outbox,
+    /// Ends the connection from this side (see [`Communicator::shutdown`]).
+    closing: tokio_util::sync::CancellationToken,
 }
 
 impl CommunicatorInner {
@@ -391,7 +393,11 @@ impl CommunicatorInner {
         };
 
         let result = loop {
-            match rx.next().await {
+            let next = tokio::select! {
+                next = rx.next() => next,
+                _ = self.closing.cancelled() => break Ok(()),
+            };
+            match next {
                 Some(Ok(msg)) => match msg {
                     Message::Ping(response) => {
                         if !response {
@@ -510,6 +516,7 @@ impl Communicator {
             response: Mutex::new(HashMap::new()),
             dispatcher: Arc::new(dispatcher),
             outbox: outbox.clone(),
+            closing: tokio_util::sync::CancellationToken::new(),
         });
 
         let inner = ret.clone();
@@ -599,6 +606,13 @@ impl Communicator {
 
     pub fn outbox(&self) -> Outbox {
         self.0.outbox.clone()
+    }
+
+    /// Close the connection: the stream is dropped, so the peer reads EOF,
+    /// and calls in flight fail. Clones and the connection's own tasks
+    /// otherwise keep it open for as long as the stream is.
+    pub fn shutdown(&self) {
+        self.0.closing.cancel();
     }
 
     pub async fn closed(&self) {

@@ -169,7 +169,9 @@ impl Panes {
     }
 
     pub fn clear(&self) {
-        self.0.write().clear();
+        for pane in self.0.write().drain(..) {
+            pane.close();
+        }
     }
 }
 
@@ -302,6 +304,8 @@ type OperationCallback = Box<dyn FnOnce() + Send>;
 pub struct Operations {
     pub state: Arc<RwLock<HashMap<OperationId, OperationState>>>,
     callbacks: Arc<Mutex<HashMap<OperationId, OperationCallback>>>,
+    /// Ticks on every progress report.
+    changed: Arc<tokio::sync::watch::Sender<()>>,
 }
 
 impl Default for Operations {
@@ -309,11 +313,48 @@ impl Default for Operations {
         Self {
             state: Arc::new(RwLock::new(HashMap::new())),
             callbacks: Arc::new(Mutex::new(HashMap::new())),
+            changed: Arc::new(tokio::sync::watch::channel(()).0),
         }
     }
 }
 
 impl Operations {
+    /// Operations that haven't finished, failed or been cancelled.
+    pub fn running(&self) -> Vec<OperationId> {
+        self.state
+            .read()
+            .values()
+            .filter(|op| {
+                matches!(
+                    op.status,
+                    OperationStatus::Scanning
+                        | OperationStatus::Running
+                        | OperationStatus::WaitingForInput
+                )
+            })
+            .map(|op| op.id)
+            .collect()
+    }
+
+    /// Mark an operation that couldn't be started as failed.
+    pub fn failed_to_start(&self, id: OperationId, error: String) {
+        if let Some(op) = self.state.write().get_mut(&id) {
+            op.status = OperationStatus::Failed;
+            op.error = Some(error);
+        }
+        self.changed.send_replace(());
+    }
+
+    /// Wait until no operation is running.
+    pub async fn idle(&self) {
+        let mut changed = self.changed.subscribe();
+        while !self.running().is_empty() {
+            if changed.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
     pub fn foreground_operation_id(&self) -> Option<OperationId> {
         self.state
             .read()
@@ -686,6 +727,12 @@ pub enum ModalDataKind {
     /// "Disconnect X:?" for the unmap-network-drive command. Constructed
     /// on Windows only; plain data, so no cfg (keeps bindings.ts
     /// host-independent without a gate).
+    /// Closing the window would cut short operations still running.
+    ConfirmClose {
+        running: u32,
+        /// Stopping them was chosen; waiting for them to wind down.
+        stopping: bool,
+    },
     ConfirmUnmapDrive {
         /// Drive letter (`X:`).
         drive: String,
@@ -1144,6 +1191,11 @@ pub(crate) fn apply_operation_progress(
     progress: OperationProgress,
     keep_finished: bool,
 ) {
+    apply_progress(operations, progress, keep_finished);
+    operations.changed.send_replace(());
+}
+
+fn apply_progress(operations: &Operations, progress: OperationProgress, keep_finished: bool) {
     let mut ops = operations.state.write();
     match progress {
         OperationProgress::Scanning {
@@ -1262,6 +1314,8 @@ struct MainWindowContextInner {
     /// Terminal output, framed as a little-endian `u32` handle and then
     /// the bytes. Output before the page attaches it is dropped.
     terminal_output: Mutex<Option<tauri::ipc::Channel<crate::common::RawBytes>>>,
+    /// The user chose to close despite running operations.
+    close_confirmed: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone)]
@@ -1333,12 +1387,42 @@ impl MainWindowContext {
                 ),
                 bookmark_undo: Mutex::new(None),
                 terminal_output: Mutex::new(None),
+                close_confirmed: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
 
     pub fn session_start(&self) -> SessionStart {
         self.inner.start.lock().clone()
+    }
+
+    /// Whether a close may go ahead. While operations are running it asks
+    /// instead, and returns false until the user confirms.
+    pub fn may_close(&self) -> bool {
+        if self.inner.close_confirmed.load(Ordering::SeqCst) {
+            return true;
+        }
+        let running = self.operations().running().len();
+        if running == 0 {
+            return true;
+        }
+        let _ = self.with_update(|gs| {
+            *gs.modal.0.write() = Some(ModalData {
+                kind: ModalDataKind::ConfirmClose {
+                    running: running as u32,
+                    stopping: false,
+                },
+                context: ModalContext { pane_handle: None },
+            });
+            Ok(())
+        });
+        let _ = self.window().set_focus();
+        false
+    }
+
+    /// Let the next close go ahead whatever is running.
+    pub fn confirm_close(&self) {
+        self.inner.close_confirmed.store(true, Ordering::SeqCst);
     }
 
     pub fn identity(&self) -> &SessionIdentity {
@@ -2007,23 +2091,35 @@ impl MainWindowContext {
     /// Tear down the current session and wipe connection-scoped UI state so this
     /// window can be reconnected from scratch. Safe to call if there's no
     /// session (e.g. the previous one already disconnected).
-    pub async fn disconnect_for_reconnect(&self) {
-        if let Some(locations) = self.current_locations() {
-            *self.inner.start.lock() = SessionStart::given(locations);
-        }
-
-        // Best-effort: kill open PTYs while we still have a live terminal
-        // client. If the session is already gone this is a no-op.
+    /// Tear the session down: kill its terminals, cancel its operations,
+    /// close its panes and drop it, which closes a remote or elevated
+    /// session's agent connection. Best-effort against a session that's
+    /// already gone.
+    pub async fn end_session(&self) {
         if let Ok(tc) = self.terminal_client() {
             for handle in self.inner.main_window_state.terminals.handles_sorted() {
                 let _ = tc.kill(handle).await;
             }
         }
-
+        if let Ok(client) = self.operations_client() {
+            for id in self.operations().running() {
+                let _ = client.cancel_operation(id).await;
+            }
+        }
         let state = &self.inner.main_window_state;
         state.panes.clear();
         state.terminals.clear();
         state.operations.clear();
+        self.inner.session.store(Arc::new(None));
+    }
+
+    pub async fn disconnect_for_reconnect(&self) {
+        if let Some(locations) = self.current_locations() {
+            *self.inner.start.lock() = SessionStart::given(locations);
+        }
+        self.end_session().await;
+
+        let state = &self.inner.main_window_state;
         {
             let mut opts = state.display_options.0.write();
             opts.active_terminal = None;
@@ -2035,10 +2131,6 @@ impl MainWindowContext {
             message: "Reconnecting...".into(),
             log: Vec::new(),
         };
-
-        // Drop the session — aborts file server / event loop handles and, for
-        // remote/elevated, causes the agent subprocess to exit.
-        self.inner.session.store(Arc::new(None));
 
         let _ = self.publish();
     }

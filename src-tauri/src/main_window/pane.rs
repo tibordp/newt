@@ -208,6 +208,9 @@ pub struct Pane {
     /// by time bucket. Reset to `now()` whenever a navigation lands.
     current_arrived_at: Mutex<std::time::SystemTime>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<super::MainWindowEvent>>,
+    /// Fired when the pane is torn down; ends its background loops, which
+    /// would otherwise keep it, and everything it reaches, alive.
+    closed: CancellationToken,
 }
 
 impl Pane {
@@ -270,7 +273,34 @@ impl Pane {
             manual_enrich: Mutex::new(None),
             history: Mutex::new(NavigationHistory::default()),
             current_arrived_at: Mutex::new(std::time::SystemTime::now()),
+            closed: CancellationToken::new(),
         }
+    }
+
+    /// Start watching for changes and running enrichers, until [`close`](Self::close).
+    pub fn spawn_loops(self: &Arc<Self>) {
+        let closed = self.closed.clone();
+        let pane = self.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::select! {
+                _ = pane.enrichment_loop() => {}
+                _ = closed.cancelled() => {}
+            }
+        });
+        let closed = self.closed.clone();
+        let pane = self.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::select! {
+                _ = pane.watch_changes() => {}
+                _ = closed.cancelled() => {}
+            }
+        });
+    }
+
+    /// Tear the pane down: stop what it's doing and its background loops.
+    pub fn close(&self) {
+        self.cancel();
+        self.closed.cancel();
     }
 
     pub async fn watch_changes(self: Arc<Self>) {

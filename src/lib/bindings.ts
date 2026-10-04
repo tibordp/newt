@@ -1607,6 +1607,19 @@ async cmdConnectWsl(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Close the window although operations are running: cancel them and wait
+ * for them to stop, or (`now`) close at once and leave them to be
+ * cancelled as the session ends.
+ */
+async closeWithRunningOperations(now: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("close_with_running_operations", { now }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Picked a distro in the WSL picker — open a session to it.
  */
 async connectWslDistro(distro: string) : Promise<Result<null, string>> {
@@ -2859,8 +2872,13 @@ recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targe
  * "Disconnect X:?" for the unmap-network-drive command. Constructed
  * on Windows only; plain data, so no cfg (keeps bindings.ts
  * host-independent without a gate).
+ * Closing the window would cut short operations still running.
  */
-{ type: "confirm_unmap_drive"; data: { 
+{ type: "confirm_close"; data: { running: number; 
+/**
+ * Stopping them was chosen; waiting for them to wind down.
+ */
+stopping: boolean } } | { type: "confirm_unmap_drive"; data: { 
 /**
  * Drive letter (`X:`).
  */
@@ -3065,8 +3083,13 @@ recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targe
  * "Disconnect X:?" for the unmap-network-drive command. Constructed
  * on Windows only; plain data, so no cfg (keeps bindings.ts
  * host-independent without a gate).
+ * Closing the window would cut short operations still running.
  */
-{ type: "confirm_unmap_drive"; data: { 
+{ type: "confirm_close"; data: { running: number; 
+/**
+ * Stopping them was chosen; waiting for them to wind down.
+ */
+stopping: boolean } } | { type: "confirm_unmap_drive"; data: { 
 /**
  * Drive letter (`X:`).
  */

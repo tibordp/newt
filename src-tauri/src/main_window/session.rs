@@ -240,6 +240,8 @@ pub struct Session {
     pub(super) next_operation_id: AtomicU64,
     pub(super) file_server_port: u16,
     pub(super) file_server_token: String,
+    /// The agent connection of a remote or elevated session.
+    connection: Option<Communicator>,
     _file_server_handle: tokio::task::JoinHandle<()>,
     _event_loop_handle: tokio::task::JoinHandle<()>,
 }
@@ -248,6 +250,11 @@ impl Drop for Session {
     fn drop(&mut self) {
         self._file_server_handle.abort();
         self._event_loop_handle.abort();
+        // The agent exits when its end of the connection closes, and with
+        // it ssh, pkexec or wsl.exe.
+        if let Some(connection) = &self.connection {
+            connection.shutdown();
+        }
     }
 }
 
@@ -799,6 +806,7 @@ struct Services {
     quick_open_client: Arc<dyn newt_common::quick_open::QuickOpenClient>,
     discovery_provider: Arc<dyn newt_common::discovery::DiscoveryProvider>,
     initial_dir: VfsPath,
+    connection: Option<Communicator>,
 }
 
 /// Build local (in-process) services.
@@ -895,6 +903,7 @@ fn create_local_services(
             VfsId::ROOT,
             newt_common::vfs::path::PathBuf::from_native(&std::env::current_dir().unwrap()),
         ),
+        connection: None,
     }
 }
 
@@ -923,8 +932,9 @@ fn create_remote_services(
             communicator.clone(),
             pending_quick_opens,
         )),
-        discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator)),
+        discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator.clone())),
         initial_dir: VfsPath::root(VfsId::ROOT),
+        connection: Some(communicator),
     }
 }
 
@@ -1532,10 +1542,7 @@ pub(super) async fn connect(
     }
 
     for pane in state.panes.all() {
-        tauri::async_runtime::spawn(pane.clone().enrichment_loop());
-        tauri::async_runtime::spawn(async move {
-            pane.watch_changes().await;
-        });
+        pane.spawn_loops();
     }
 
     let file_server_token = uuid::Uuid::new_v4().to_string();
@@ -1571,6 +1578,7 @@ pub(super) async fn connect(
         next_operation_id: AtomicU64::new(1),
         file_server_port,
         file_server_token,
+        connection: services.connection,
         _file_server_handle: file_server_handle,
         _event_loop_handle: event_loop_handle,
     };

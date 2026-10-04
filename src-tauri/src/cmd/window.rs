@@ -511,3 +511,44 @@ pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
         .map_err(|_| Error::Custom("zoom failed".into()))?;
     Ok(())
 }
+
+/// Close the window although operations are running: cancel them and wait
+/// for them to stop, or (`now`) close at once and leave them to be
+/// cancelled as the session ends.
+#[tauri::command]
+#[specta::specta]
+pub async fn close_with_running_operations(ctx: MainWindowContext, now: bool) -> Result<(), Error> {
+    use crate::main_window::{ModalData, ModalDataKind};
+    if !now {
+        ctx.with_update(|gs| {
+            if let Some(ModalData {
+                kind: ModalDataKind::ConfirmClose { stopping, .. },
+                ..
+            }) = gs.modal.0.write().as_mut()
+            {
+                *stopping = true;
+            }
+            Ok(())
+        })?;
+        let client = ctx.operations_client()?;
+        for id in ctx.operations().running() {
+            client.cancel_operation(id).await?;
+        }
+        ctx.operations().idle().await;
+        // Dismissed while waiting: the window stays.
+        let stopping = matches!(
+            ctx.modal().0.read().as_ref(),
+            Some(ModalData {
+                kind: ModalDataKind::ConfirmClose { stopping: true, .. },
+                ..
+            })
+        );
+        if !stopping {
+            return Ok(());
+        }
+    }
+    ctx.confirm_close();
+    ctx.window()
+        .close()
+        .map_err(|e| Error::Custom(e.to_string()))
+}

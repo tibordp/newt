@@ -413,12 +413,7 @@ pub async fn start_operation_with_callback(
     // Send to operations client
     let req = StartOperationRequest { id, request };
     if let Err(e) = ctx.operations_client()?.start_operation(req).await {
-        // Operation failed to start — mark as failed so it doesn't get stuck
-        let mut ops = ctx.operations().state.write();
-        if let Some(op) = ops.get_mut(&id) {
-            op.status = OperationStatus::Failed;
-            op.error = Some(e.to_string());
-        }
+        ctx.operations().failed_to_start(id, e.to_string());
         ctx.publish()?;
         return Err(e.into());
     }

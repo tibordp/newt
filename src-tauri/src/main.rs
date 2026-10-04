@@ -548,6 +548,12 @@ impl GlobalContext {
             .any(|ctx| ctx.0.is_dirty())
     }
 
+    pub fn any_running_operations(&self) -> bool {
+        self.main_windows_by_focus()
+            .iter()
+            .any(|ctx| !ctx.operations().running().is_empty())
+    }
+
     #[cfg(target_os = "macos")]
     pub fn set_window_menu(&self, label: &str, menu: tauri::menu::Menu<tauri::Wry>) {
         self.window_menus.lock().insert(label.to_string(), menu);
@@ -569,9 +575,9 @@ impl GlobalContext {
 /// <https://github.com/tauri-apps/tauri/issues/9198>.
 ///
 /// Until that lands, inject the method into the delegate class at runtime: a
-/// dirty editor cancels the termination and runs the graceful quit (editor
-/// sweep) instead, while a clean app lets the termination proceed so it never
-/// blocks logout. If a tao upgrade starts implementing the selector itself,
+/// dirty editor or a running operation cancels the termination and runs the
+/// graceful quit (editor sweep, close confirmations) instead, while an idle
+/// app lets the termination proceed so it never blocks logout. If a tao upgrade starts implementing the selector itself,
 /// `install` panics on `class_addMethod` — delete this module then; the
 /// `ExitRequested { code: None }` arm in the run callback picks up the
 /// mapped event.
@@ -599,7 +605,7 @@ mod terminate_guard {
     ) -> usize {
         let app_handle = APP_HANDLE.get().unwrap();
         let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
-        if global_ctx.any_dirty_editor() {
+        if global_ctx.any_dirty_editor() || global_ctx.any_running_operations() {
             global_ctx.quit(app_handle);
             NS_TERMINATE_CANCEL
         } else {
@@ -1190,6 +1196,10 @@ fn main() {
                             .is_some_and(|ctx| ctx.main_window_label() == label);
                         if is_real_main {
                             if let Some(ctx) = global_ctx.main_window_by_label(label) {
+                                if !ctx.may_close() {
+                                    api.prevent_close();
+                                    return;
+                                }
                                 global_ctx.remember_session(&ctx);
                             }
                             for viewer in global_ctx.active_viewer_children(label) {
@@ -1212,6 +1222,14 @@ fn main() {
                         }
                     }
                     tauri::WindowEvent::Destroyed => {
+                        // A main window's session ends with it: nothing else
+                        // drops it, and it holds the agent connection, the
+                        // terminals and whatever is still running.
+                        if let Some(ctx) = global_ctx.main_window_by_label(window.label())
+                            && ctx.main_window_label() == window.label()
+                        {
+                            tauri::async_runtime::spawn(async move { ctx.end_session().await });
+                        }
                         global_ctx.destroy_window(window.label()).unwrap();
                         // A pending quit resumes once its editor sweep is
                         // done (the last editor window is gone).

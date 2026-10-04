@@ -201,8 +201,11 @@ function App() {
     };
   }, []);
 
+  // Asking whether to close the window takes precedence over the progress
+  // of the operations it's asking about.
   const foregroundOp =
-    remoteState?.foreground_operation_id != null
+    remoteState?.foreground_operation_id != null &&
+    remoteState.modal?.type !== "confirm_close"
       ? remoteState.operations[remoteState.foreground_operation_id]
       : null;
 

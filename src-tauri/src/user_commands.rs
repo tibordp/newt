@@ -523,11 +523,7 @@ async fn execute_rendered(
             },
         };
         if let Err(e) = ctx.operations_client()?.start_operation(req).await {
-            let mut ops = ctx.operations().state.write();
-            if let Some(op) = ops.get_mut(&id) {
-                op.status = OperationStatus::Failed;
-                op.error = Some(e.to_string());
-            }
+            ctx.operations().failed_to_start(id, e.to_string());
         }
         ctx.publish()?;
     }
