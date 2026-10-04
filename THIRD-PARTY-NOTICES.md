@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-736 crates, the superset across every target platform and feature.
+751 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -446,6 +446,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   dlopen2_derive 0.4.3 — MIT
   dom_query 0.28.0 — MIT
       Copyright (c) 2023 Mykola Humanov
+  downcast-rs 1.2.1 — MIT/Apache-2.0
+      Copyright (c) 2020 Ashish Myles and contributors
   dpi 0.1.2 — Apache-2.0 AND MIT
   drag 2.1.1 — Apache-2.0 OR MIT
       Copyright (c) 2023 - Present CrabNebula Ltd.
@@ -490,10 +492,14 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2014 Alex Crichton
   finl_unicode 1.5.0 — (MIT OR Apache-2.0) AND Unicode-DFS-2016
       Copyright © 1991-2023 Unicode, Inc.
+  fixedbitset 0.5.7 — MIT OR Apache-2.0
+      Copyright (c) 2015-2017
   flate2 1.1.10 — MIT OR Apache-2.0
       Copyright (c) 2014-2026 Alex Crichton
   fnv 1.0.7 — Apache-2.0 / MIT
       Copyright (c) 2017 Contributors
+  foldhash 0.1.5 — Zlib
+      Copyright (c) 2024 Orson Peters
   foldhash 0.2.0 — Zlib
       Copyright (c) 2024 Orson Peters
   foreign-types 0.5.0 — MIT/Apache-2.0
@@ -578,6 +584,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2017 h2 authors
   half 2.7.1 — MIT OR Apache-2.0
   hashbrown 0.12.3 — MIT OR Apache-2.0
+      Copyright (c) 2016 Amanieu d'Antras
+  hashbrown 0.15.5 — MIT OR Apache-2.0
       Copyright (c) 2016 Amanieu d'Antras
   hashbrown 0.17.1 — MIT OR Apache-2.0
       Copyright (c) 2016 Amanieu d'Antras
@@ -810,6 +818,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2015 Jonathan Reem
   nix 0.31.3 — MIT
       Copyright (c) 2015 Carl Lerche + nix-rust Authors
+  nom 8.0.0 — MIT
+      Copyright (c) 2014-2019 Geoffroy Couprie
   normpath 1.5.2 — MIT OR Apache-2.0
       Copyright (c) 2020 dylni (https://github.com/dylni)
   notify 8.2.0 — CC0-1.0
@@ -899,6 +909,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2021 The RustCrypto Project Developers
   percent-encoding 2.3.2 — MIT OR Apache-2.0
       Copyright (c) 2013-2025 The rust-url developers
+  petgraph 0.8.3 — MIT OR Apache-2.0
+      Copyright (c) 2015
   phf 0.13.1 — MIT
       Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
   phf_generator 0.13.1 — MIT
@@ -947,6 +959,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) Radzivon Bartoshyk. All rights reserved.
   quick-error 2.0.1 — MIT/Apache-2.0
       Copyright (c) 2015 The quick-error Developers
+  quick-xml 0.41.0 — MIT
+      Copyright (c) 2016 Johann Tuffe
   quick-xml 0.42.0 — MIT
       Copyright (c) 2016 Johann Tuffe
   quote 1.0.47 — MIT OR Apache-2.0
@@ -1231,6 +1245,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright 2019 Artúr Barnabás Kovács
   tray-icon 0.25.1 — MIT OR Apache-2.0
       Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
+  tree_magic_mini 3.2.2 — MIT
+      Copyright (c) 2017 Aaron Hancock
   treediff 5.0.0 — MIT/Apache-2.0
       Copyright (c) 2016 Alex Crichton
   triomphe 0.1.16 — MIT OR Apache-2.0
@@ -1288,6 +1304,18 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   wasm-bindgen-shared 0.2.129 — MIT OR Apache-2.0
       Copyright (c) 2014 Alex Crichton
   wasm-streams 0.5.0 — MIT OR Apache-2.0
+  wayland-backend 0.3.17 — MIT
+      Copyright (c) 2015 Elinor Berger
+  wayland-client 0.31.15 — MIT
+      Copyright (c) 2015 Elinor Berger
+  wayland-protocols 0.32.13 — MIT
+      Copyright (c) 2015 Elinor Berger
+  wayland-protocols-wlr 0.3.12 — MIT
+      Copyright (c) 2015 Elinor Berger
+  wayland-scanner 0.31.11 — MIT
+      Copyright (c) 2015 Elinor Berger
+  wayland-sys 0.31.11 — MIT
+      Copyright (c) 2015 Elinor Berger
   web-sys 0.3.106 — MIT OR Apache-2.0
       Copyright (c) 2014 Alex Crichton
   web-time 1.1.0 — MIT OR Apache-2.0
@@ -1420,6 +1448,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   winnow 0.5.40 — MIT
   winnow 1.0.4 — MIT
   wit-bindgen 0.57.1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+  wl-clipboard-rs 0.9.4 — MIT OR Apache-2.0
+      Copyright (c) 2019 Ivan Molodetskikh
   writeable 0.6.4 — Unicode-3.0
       Copyright © 2020-2024 Unicode, Inc.
   wry 0.57.0 — Apache-2.0 OR MIT

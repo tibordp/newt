@@ -705,7 +705,7 @@ pub async fn copy_viewer_range(
         CopyFormat::Text { encoding } => encoding::decode(&buf, &encoding),
     };
 
-    ctx.clipboard().set_text(text)?;
+    ctx.with_clipboard(|c| c.set_text(text))?;
     Ok(())
 }
 

@@ -940,7 +940,7 @@ pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) ->
         text.push_str(&ctx.format_vfs_path(&line));
     }
 
-    ctx.clipboard().set_text(text)?;
+    ctx.with_clipboard(|c| c.set_text(text))?;
 
     Ok(())
 }
@@ -951,8 +951,7 @@ pub async fn cmd_paste_from_clipboard(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    let mut clipboard = arboard::Clipboard::new()?;
-    let text = clipboard.get_text()?;
+    let text = ctx.with_clipboard(|c| c.get_text())?;
     let text = text.trim();
 
     // Same resolution chain as the navigate command with exact: false

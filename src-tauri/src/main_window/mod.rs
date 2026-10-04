@@ -22,7 +22,7 @@ use newt_common::terminal::TerminalClient;
 use newt_common::terminal::TerminalHandle;
 use newt_common::vfs::UserGroup;
 use newt_common::vfs::{MountedVfsInfo, VfsId, VfsPath, all_descriptors, lookup_descriptor};
-use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock};
 use serde::ser::SerializeMap;
 use serde::ser::SerializeSeq;
 use std::cmp::PartialOrd;
@@ -1306,7 +1306,10 @@ struct MainWindowContextInner {
     focus_seq: std::sync::atomic::AtomicU64,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
-    clipboard: RwLock<arboard::Clipboard>,
+    /// Made on first use: there may be no clipboard to reach (a Wayland
+    /// compositor without data-control and no XWayland), and that's the
+    /// clipboard commands' error, not the window's.
+    clipboard: Mutex<Option<arboard::Clipboard>>,
     /// `settings.toml` body from just before the last Mod+B, backing the
     /// bookmark bubble's Undo. Kept here rather than in `ModalDataKind` so
     /// the user's settings file doesn't ride along in every state push.
@@ -1382,9 +1385,7 @@ impl MainWindowContext {
                 focus_seq: std::sync::atomic::AtomicU64::new(0),
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
                 askpass_response: Arc::new(parking_lot::Mutex::new(None)),
-                clipboard: RwLock::new(
-                    arboard::Clipboard::new().expect("failed to initialize clipboard"),
-                ),
+                clipboard: Mutex::new(None),
                 bookmark_undo: Mutex::new(None),
                 terminal_output: Mutex::new(None),
                 close_confirmed: std::sync::atomic::AtomicBool::new(false),
@@ -2084,8 +2085,18 @@ impl MainWindowContext {
         Ok(())
     }
 
-    pub fn clipboard(&self) -> RwLockWriteGuard<'_, arboard::Clipboard> {
-        self.inner.clipboard.write()
+    /// Use the window's clipboard. It's kept for the window's lifetime
+    /// because on X11 what was copied is only served while it lives.
+    pub fn with_clipboard<T>(
+        &self,
+        f: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
+    ) -> Result<T, Error> {
+        let mut clipboard = self.inner.clipboard.lock();
+        let clipboard = match &mut *clipboard {
+            Some(clipboard) => clipboard,
+            empty => empty.insert(arboard::Clipboard::new()?),
+        };
+        Ok(f(clipboard)?)
     }
 
     /// Tear down the current session and wipe connection-scoped UI state so this

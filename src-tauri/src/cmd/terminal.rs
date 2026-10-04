@@ -130,7 +130,7 @@ pub fn attach_terminal_output(
 #[tauri::command]
 #[specta::specta]
 pub fn read_clipboard_text(ctx: MainWindowContext) -> Result<String, Error> {
-    Ok(ctx.clipboard().get_text()?)
+    ctx.with_clipboard(|c| c.get_text())
 }
 
 #[tauri::command]

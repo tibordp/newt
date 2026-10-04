@@ -645,7 +645,7 @@ Today only S3 implements a sheet:
 
 ### Clipboard Operations
 
-- **Copy Path** (Mod+C, also Ctrl+Ins off macOS): Copies the paths of all selected files (or the focused file if none selected) to the system clipboard.
+- **Copy Path** (Mod+C, also Ctrl+Ins off macOS): Copies the paths of all selected files (or the focused file if none selected) to the system clipboard. On Linux the clipboard is reached through Wayland's data-control protocol where the compositor offers it (wlroots compositors, KDE), and otherwise through X11 — under XWayland on a Wayland desktop. With neither, the clipboard commands report that, and everything else works.
 - **Paste** (Mod+V, also Shift+Ins off macOS): Pastes file paths from the system clipboard into the current pane.
 
 ### Operation Progress and Issue Resolution
