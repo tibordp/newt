@@ -1330,6 +1330,7 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
   - S3: Mounts immediately on selection (uses ambient credentials).
   - SFTP: Opens hostname input dialog.
   - Remote: Opens the Connect dialog (`DialogKind::MountRemote`) with "Open as a new session" defaulted off, i.e. pre-scoped to a pane mount whatever the session mode. Always offered, even inside a remote session.
+- **Volumes** (`hot_paths.mounts_in_vfs_selector`, default on): the mounted volumes Hot Paths lists (`/Volumes` on macOS, removable and network mounts under `/media`, `/run/media` and `/mnt` on Linux) appear in a section for the filesystem they're mounted in, the way a split-root filesystem's drives do: a header with the filesystem's name, its root (`/`), then each volume with its path and free space. Selecting one navigates the pane there; it's an ordinary path, nothing is mounted or unmounted. They're listed for each filesystem that is a machine's own: the session's root, and in a remote session also this computer's filesystem when it's mounted there, so each machine's volumes sit under its own entry. The list is queried each time the dropdown opens and fills in after it has opened, so a stalled network mount can't hold it up. Volumes the selector already lists as drives (all of them, on Windows) aren't repeated. The ✓ marks the most specific entry holding the pane's path: a volume rather than the filesystem it's mounted in.
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
 - **Drive classification** (split-root FSes, i.e. Windows drives): each per-drive entry carries a `VolumeInfo` probed at mount time on the FS-owning side (so a remote Windows host's drives classify too) — a kind-specific icon (fixed / removable / optical / network / RAM disk / subst), the volume label after the drive letter, and a dimmed target for drives that point elsewhere (`\\server\share` for mapped network drives, the aliased directory for subst). Recorded in `mount_meta` alongside the roots.
@@ -1720,6 +1721,7 @@ standard_folders = true     # Show Home, Downloads, Documents, etc.
 system_bookmarks = true     # Show GTK bookmarks (Linux)
 mounts = true               # Show mounted volumes
 recent_folders = true       # Show recently visited directories
+mounts_in_vfs_selector = true  # Also list mounted volumes in the VFS selector
 
 [quick_open]                # Go to File (Mod+G)
 gitignore = true            # Leave out what .gitignore files and .git/info/exclude ignore

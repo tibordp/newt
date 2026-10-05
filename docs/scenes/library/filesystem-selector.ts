@@ -1,8 +1,34 @@
 import { behindDialog, docsColumns } from "../demo";
+import type { VfsTarget } from "../../../src/lib/bindings";
 import type { Scene } from "../types";
 
+const target = (fields: Partial<VfsTarget>): VfsTarget => ({
+  kind: "Mounted",
+  vfs_id: null,
+  type_name: "local",
+  display_name: "Local",
+  label: null,
+  detail: null,
+  mount_dialog: null,
+  path: null,
+  volume: null,
+  available_bytes: null,
+  ...fields,
+});
+
+const volume = (name: string, available_bytes: number): VfsTarget =>
+  target({
+    kind: "Volume",
+    vfs_id: 0,
+    label: name,
+    detail: `/Volumes/${name}`,
+    path: `/Volumes/${name}`,
+    available_bytes,
+  });
+
 const scene: Scene = {
-  description: "The filesystem selector with mounted and mountable locations",
+  description:
+    "The filesystem selector with mounted filesystems, volumes and mountable locations",
   size: { width: 1000, height: 560 },
   ...docsColumns(1000),
   window: "main",
@@ -11,66 +37,39 @@ const scene: Scene = {
     context: { pane_handle: 0 },
     data: {
       targets: [
-        {
-          vfs_id: 0,
-          type_name: "local",
-          display_name: "Local",
-          label: null,
-          mount_dialog: null,
-          root: null,
-          volume: null,
-          available_bytes: 297_710_000_000,
-        },
-        {
+        target({ vfs_id: 0, detail: "/", available_bytes: 297_710_000_000 }),
+        volume("Backup", 1_204_000_000_000),
+        volume("Untitled", 31_400_000_000),
+        target({
           vfs_id: 1,
           type_name: "s3",
           display_name: "S3",
           label: "demo.backup",
-          mount_dialog: null,
-          root: null,
-          volume: null,
-          available_bytes: null,
-        },
-        {
+        }),
+        target({
           vfs_id: 4,
           type_name: "sftp",
           display_name: "SFTP",
           label: "demo@nas.home.arpa",
-          mount_dialog: null,
-          root: null,
-          volume: null,
-          available_bytes: null,
-        },
-        {
-          vfs_id: null,
+        }),
+        target({
+          kind: "Connect",
           type_name: "s3",
           display_name: "S3",
-          label: null,
           mount_dialog: "mount_s3",
-          root: null,
-          volume: null,
-          available_bytes: null,
-        },
-        {
-          vfs_id: null,
+        }),
+        target({
+          kind: "Connect",
           type_name: "sftp",
           display_name: "SFTP",
-          label: null,
           mount_dialog: "mount_sftp",
-          root: null,
-          volume: null,
-          available_bytes: null,
-        },
-        {
-          vfs_id: null,
+        }),
+        target({
+          kind: "Connect",
           type_name: "remote",
           display_name: "Remote",
-          label: null,
           mount_dialog: "connect_remote",
-          root: null,
-          volume: null,
-          available_bytes: null,
-        },
+        }),
       ],
     },
   }),

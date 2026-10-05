@@ -387,6 +387,9 @@ pub struct HotPathsPreferences {
     /// Show recently visited folders
     #[schemars(title = "Recent Folders")]
     pub recent_folders: bool,
+    /// Also list mounted volumes in the VFS selector dropdown.
+    #[schemars(title = "Volumes in VFS Selector")]
+    pub mounts_in_vfs_selector: bool,
 }
 
 impl Default for HotPathsPreferences {
@@ -396,6 +399,7 @@ impl Default for HotPathsPreferences {
             system_bookmarks: true,
             mounts: true,
             recent_folders: true,
+            mounts_in_vfs_selector: true,
         }
     }
 }

@@ -179,13 +179,13 @@ pub async fn switch_vfs(
     pane_handle: PaneHandle,
     vfs_id: Option<VfsId>,
     type_name: String,
-    root: Option<newt_common::vfs::path::PathBuf>,
+    path: Option<newt_common::vfs::path::PathBuf>,
 ) -> Result<(), Error> {
     let vfs_path = if let Some(id) = vfs_id {
-        // A split-root entry carries the exact drive to land on;
+        // A drive or a volume carries the exact path to land on;
         // otherwise use the VFS's default landing path.
-        match root {
-            Some(r) => VfsPath::new(id, r),
+        match path {
+            Some(path) => VfsPath::new(id, path),
             None => ctx.vfs_initial_path(id),
         }
     } else {

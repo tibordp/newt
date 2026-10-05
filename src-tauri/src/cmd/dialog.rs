@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use newt_common::quick_open::QuickOpenOptions;
-use newt_common::vfs::{PathStyle, VfsPath};
+use newt_common::vfs::{PathStyle, VfsId, VfsPath};
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
@@ -8,6 +10,7 @@ use crate::main_window::pane::FilterMode;
 use crate::main_window::quick_open::QuickOpenRun;
 use crate::main_window::{
     MainWindowContext, ModalContext, ModalData, ModalDataKind, PaneHandle, PropertySheetState,
+    VfsTarget, VfsTargetKind,
 };
 
 /// Every dialog the host can open. Serialized as snake_case so the frontend
@@ -95,8 +98,11 @@ pub fn dialog(
     // guard, sheet paths — the file entries to actually fetch).
     let mut sheet_fetch: Option<(Vec<VfsPath>, Vec<VfsPath>)> = None;
     // Set when a SelectVfs modal wants per-target free space fetched
-    // after opening: (target index, volume path to stat).
-    let mut free_space_fetch: Option<Vec<(usize, VfsPath)>> = None;
+    // after opening: the volume path to stat for each target.
+    let mut free_space_fetch: Option<Vec<VfsPath>> = None;
+    // Set when a SelectVfs modal lists mounted volumes, fetched after
+    // opening.
+    let mut volume_fetch = false;
     ctx.with_update(|gs| {
         // Dialogs that need the pane fail while the window has none.
         let require_pane = || {
@@ -651,31 +657,8 @@ pub fn dialog(
                 }
                 DialogKind::SelectVfs => {
                     let targets = ctx.compute_vfs_targets()?;
-                    // Free space is filled in after opening — see
-                    // `spawn_free_space_fetch`.
-                    free_space_fetch = Some(
-                        targets
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, t)| {
-                                let vfs_id = t.vfs_id?;
-                                let path = match &t.root {
-                                    Some(root) => root.clone(),
-                                    None => {
-                                        // Unified-root mounts: only where
-                                        // the VFS reports stats at all
-                                        // (skips pointless RPCs on S3 & co).
-                                        let (d, _) = ctx.vfs_info().ok()?.descriptor(vfs_id)?;
-                                        if !d.can_fs_stats() {
-                                            return None;
-                                        }
-                                        newt_common::vfs::path::PathBuf::root()
-                                    }
-                                };
-                                Some((i, VfsPath::new(vfs_id, path)))
-                            })
-                            .collect(),
-                    );
+                    free_space_fetch = Some(free_space_queries(&ctx, &targets));
+                    volume_fetch = ctx.preferences().load().hot_paths.mounts_in_vfs_selector;
                     ModalDataKind::SelectVfs { targets }
                 }
                 DialogKind::HistoryBack | DialogKind::HistoryForward | DialogKind::History => {
@@ -753,29 +736,63 @@ pub fn dialog(
     if let Some(queries) = free_space_fetch {
         spawn_free_space_fetch(&ctx, queries);
     }
+    if volume_fetch {
+        spawn_volume_fetch(&ctx);
+    }
 
     Ok(())
 }
 
+/// The volume path to stat for each target that has free space to show:
+/// drives, volumes, and whole filesystems that report stats at all
+/// (skipping pointless RPCs on S3 & co).
+fn free_space_queries(ctx: &MainWindowContext, targets: &[VfsTarget]) -> Vec<VfsPath> {
+    targets
+        .iter()
+        .filter_map(|t| {
+            let vfs_id = t.vfs_id?;
+            let path = match &t.path {
+                Some(path) => path.clone(),
+                None => {
+                    let (d, _) = ctx.vfs_info().ok()?.descriptor(vfs_id)?;
+                    if !d.can_fs_stats() {
+                        return None;
+                    }
+                    newt_common::vfs::path::PathBuf::root()
+                }
+            };
+            Some(VfsPath::new(vfs_id, path))
+        })
+        .collect()
+}
+
+/// The target a free-space query was made for, if the open selector still
+/// has it.
+fn queried_target<'a>(targets: &'a mut [VfsTarget], query: &VfsPath) -> Option<&'a mut VfsTarget> {
+    let root = newt_common::vfs::path::PathBuf::root();
+    targets
+        .iter_mut()
+        .find(|t| t.vfs_id == Some(query.vfs_id) && *t.path.as_ref().unwrap_or(&root) == query.path)
+}
+
 /// Fill per-target free space in an open SelectVfs modal (open-then-fill,
 /// one patch per result as it lands — a dead network drive delays only its
-/// own entry, never the dropdown). Each write is guarded on the modal
-/// still being a SelectVfs whose target at that index matches the queried
-/// volume.
-fn spawn_free_space_fetch(ctx: &MainWindowContext, queries: Vec<(usize, VfsPath)>) {
+/// own entry, never the dropdown). Each result goes to the target it was
+/// queried for, if the selector still lists it.
+fn spawn_free_space_fetch(ctx: &MainWindowContext, queries: Vec<VfsPath>) {
     let ctx = ctx.clone();
     tauri::async_runtime::spawn(async move {
         let Ok(fs) = ctx.fs() else { return };
         let mut join_set = tokio::task::JoinSet::new();
-        for (idx, path) in queries {
+        for path in queries {
             let fs = fs.clone();
             join_set.spawn(async move {
                 let stats = fs.fs_stats(path.clone()).await;
-                (idx, path, stats)
+                (path, stats)
             });
         }
         while let Some(res) = join_set.join_next().await {
-            let Ok((idx, path, Ok(Some(stats)))) = res else {
+            let Ok((path, Ok(Some(stats)))) = res else {
                 continue;
             };
             let _ = ctx.with_update(|gs| {
@@ -784,18 +801,126 @@ fn spawn_free_space_fetch(ctx: &MainWindowContext, queries: Vec<(usize, VfsPath)
                     kind: ModalDataKind::SelectVfs { targets },
                     ..
                 }) = modal.as_mut()
-                    && let Some(target) = targets.get_mut(idx)
-                    && target.vfs_id == Some(path.vfs_id)
-                    && target.root.as_ref().map_or_else(
-                        || path.path == newt_common::vfs::path::PathBuf::root(),
-                        |r| *r == path.path,
-                    )
+                    && let Some(target) = queried_target(targets, &path)
                 {
                     target.available_bytes = Some(stats.available_bytes());
                 }
                 Ok(())
             });
         }
+    });
+}
+
+/// List the volumes of the filesystems that are a machine's own — the
+/// session's root, and this computer's, mounted into a remote session —
+/// into an open SelectVfs modal, each after its filesystem. Queried when
+/// the selector opens rather than kept current, and filled in after it
+/// has opened: listing them stats each mount, and a dead network mount
+/// must not stall the dropdown.
+fn spawn_volume_fetch(ctx: &MainWindowContext) {
+    if let Ok(provider) = ctx.hot_paths_provider() {
+        spawn_volume_fill(ctx, VfsId::ROOT, provider);
+    }
+    if let Some(id) = ctx
+        .vfs_info()
+        .ok()
+        .and_then(|info| info.host_local_vfs_id())
+        && id != VfsId::ROOT
+    {
+        spawn_volume_fill(ctx, id, Arc::new(newt_common::hot_paths::Local::new()));
+    }
+}
+
+/// Volumes `provider` lists, as volumes of filesystem `vfs_id` (both
+/// providers describe the machine's root filesystem).
+fn spawn_volume_fill(
+    ctx: &MainWindowContext,
+    vfs_id: VfsId,
+    provider: Arc<dyn newt_common::hot_paths::HotPathsProvider>,
+) {
+    use newt_common::hot_paths::HotPathCategory;
+
+    let ctx = ctx.clone();
+    tauri::async_runtime::spawn(async move {
+        let entries = match provider.system_hot_paths().await {
+            Ok(entries) => entries,
+            Err(e) => {
+                log::warn!("listing volumes for the VFS selector failed: {e}");
+                return;
+            }
+        };
+        let Some(display_name) = ctx
+            .vfs_info()
+            .ok()
+            .and_then(|info| info.display_name(vfs_id))
+        else {
+            return;
+        };
+        let volumes: Vec<VfsTarget> = entries
+            .into_iter()
+            .filter(|e| e.category == HotPathCategory::Mount)
+            .map(|e| {
+                let path = VfsPath::new(vfs_id, e.path.path);
+                VfsTarget {
+                    kind: VfsTargetKind::Volume,
+                    vfs_id: Some(vfs_id),
+                    type_name: String::new(),
+                    display_name: display_name.clone(),
+                    label: e.name,
+                    detail: Some(ctx.format_vfs_path(&path)),
+                    mount_dialog: None,
+                    path: Some(path.path),
+                    volume: None,
+                    available_bytes: None,
+                }
+            })
+            .collect();
+
+        let mut added = Vec::new();
+        let _ = ctx.with_update(|gs| {
+            let mut modal = gs.modal.0.write();
+            let Some(ModalData {
+                kind: ModalDataKind::SelectVfs { targets },
+                ..
+            }) = modal.as_mut()
+            else {
+                return Ok(());
+            };
+            // After the filesystem and any volumes already listed for it.
+            let Some(owner) = targets
+                .iter()
+                .position(|t| t.kind == VfsTargetKind::Mounted && t.vfs_id == Some(vfs_id))
+            else {
+                return Ok(());
+            };
+            let mut at = owner + 1;
+            while targets
+                .get(at)
+                .is_some_and(|t| t.kind == VfsTargetKind::Volume)
+            {
+                at += 1;
+            }
+            for mut volume in volumes {
+                // A drive the selector already lists isn't repeated.
+                let listed = targets
+                    .iter()
+                    .any(|t| t.vfs_id == volume.vfs_id && t.path == volume.path);
+                if listed {
+                    continue;
+                }
+                volume.type_name = targets[owner].type_name.clone();
+                added.extend(volume.path.clone().map(|p| VfsPath::new(vfs_id, p)));
+                targets.insert(at, volume);
+                at += 1;
+            }
+            // Listed with its volumes, the filesystem is its root.
+            if at > owner + 1 {
+                let root = VfsPath::new(vfs_id, newt_common::vfs::path::PathBuf::root());
+                targets[owner].detail = Some(ctx.format_vfs_path(&root));
+            }
+            Ok(())
+        });
+        spawn_free_space_fetch(&ctx, added);
     });
 }
 
