@@ -5,7 +5,6 @@
 
 use tokio::io::BufReader;
 
-use newt_common::api::{PendingVfsReadStreams, VfsReadChunkDispatcher};
 use newt_common::connect::make_stream;
 use newt_common::discovery::DiscoveryProvider;
 use newt_common::rpc::Communicator;
@@ -34,14 +33,7 @@ async fn full_session_agent_serves_discovery() {
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stream = make_stream(BufReader::new(stdout), stdin);
-    let pending: PendingVfsReadStreams = Default::default();
-    let (outbox, inbox) = Communicator::create_outbox();
-    let communicator = Communicator::with_dispatcher_and_outbox(
-        VfsReadChunkDispatcher::new(pending),
-        stream,
-        outbox,
-        inbox,
-    );
+    let communicator = Communicator::new(stream);
 
     let provider = newt_common::discovery::Remote::new(communicator);
 

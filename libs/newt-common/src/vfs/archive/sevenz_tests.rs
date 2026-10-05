@@ -2,7 +2,6 @@
 //! over the fixtures `newt-archive` generates (see its
 //! `sevenz/fixtures/regenerate.py` for the layouts).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -185,7 +184,6 @@ struct Harness {
     registry: Arc<VfsRegistry>,
     archive_origin: VfsPath,
     counter: Arc<CountingVfs>,
-    pending_read_streams: crate::api::PendingVfsReadStreams,
     host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
     progress_reporter: Arc<dyn crate::vfs::ProgressReporter>,
 }
@@ -205,7 +203,6 @@ impl Harness {
             registry: Arc::new(VfsRegistry::with_root(counter.clone())),
             archive_origin,
             counter,
-            pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             host_communicator: Arc::new(std::sync::OnceLock::new()),
             progress_reporter: Arc::new(crate::vfs::ScopedReporter::new(
                 Arc::new(crate::vfs::NoopProgressSink),
@@ -218,7 +215,6 @@ impl Harness {
         MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
-            pending_read_streams: &self.pending_read_streams,
             sftp_askpass: None,
             askpass_provider: askpass,
             agent_resolver: None,
@@ -649,8 +645,6 @@ async fn reads_through_local_vfs_with_timeout() {
     let local: Arc<dyn Vfs> = Arc::new(crate::vfs::local::LocalVfs::new());
     let registry = Arc::new(VfsRegistry::with_root(local));
     let origin = VfsPath::new(VfsId::ROOT, PathBuf::from_native(&path));
-    let pending: crate::api::PendingVfsReadStreams =
-        Arc::new(parking_lot::Mutex::new(HashMap::new()));
     let host = Arc::new(std::sync::OnceLock::new());
     let reporter: Arc<dyn crate::vfs::ProgressReporter> = Arc::new(
         crate::vfs::ScopedReporter::new(Arc::new(crate::vfs::NoopProgressSink), VfsId(0)),
@@ -658,7 +652,6 @@ async fn reads_through_local_vfs_with_timeout() {
     let ctx = MountContext {
         registry: &registry,
         host_communicator: &host,
-        pending_read_streams: &pending,
         sftp_askpass: None,
         askpass_provider: None,
         agent_resolver: None,

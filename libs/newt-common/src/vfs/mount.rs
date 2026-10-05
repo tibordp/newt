@@ -9,7 +9,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
-use crate::api::PendingVfsReadStreams;
 use crate::filesystem::Filesystem;
 use crate::rpc::Communicator;
 
@@ -158,7 +157,6 @@ impl VfsManager for VfsManagerRemote {
 pub struct MountContext<'a> {
     pub registry: &'a VfsRegistry,
     pub host_communicator: &'a std::sync::OnceLock<Communicator>,
-    pub pending_read_streams: &'a PendingVfsReadStreams,
     pub sftp_askpass: Option<&'a SftpAskpass>,
     pub askpass_provider: Option<&'a Arc<dyn crate::askpass::AskpassProvider>>,
     /// Resolves agent binaries for spawn-style agent mounts (`None` ⇒
@@ -188,8 +186,6 @@ pub struct VfsRegistryManager {
     /// When set, allows mounting a Remote VFS that proxies calls back to
     /// the host. Used by the agent in remote sessions.
     host_communicator: Arc<std::sync::OnceLock<Communicator>>,
-    /// Shared map for routing read-chunk notifications to the correct stream.
-    pending_read_streams: PendingVfsReadStreams,
     /// SFTP askpass configuration. When `None`, SFTP mounts inherit the
     /// process environment with no special password handling.
     sftp_askpass: Option<SftpAskpass>,
@@ -220,7 +216,6 @@ impl VfsRegistryManager {
         Self {
             registry,
             host_communicator: Arc::new(std::sync::OnceLock::new()),
-            pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             sftp_askpass: None,
             askpass_provider: None,
             progress_sink: Arc::new(NoopProgressSink),
@@ -233,12 +228,10 @@ impl VfsRegistryManager {
     pub fn new_with_host_communicator(
         registry: Arc<VfsRegistry>,
         host_communicator: Arc<std::sync::OnceLock<Communicator>>,
-        pending_read_streams: PendingVfsReadStreams,
     ) -> Self {
         Self {
             registry,
             host_communicator,
-            pending_read_streams,
             sftp_askpass: None,
             askpass_provider: None,
             progress_sink: Arc::new(NoopProgressSink),
@@ -297,7 +290,6 @@ impl VfsManager for VfsRegistryManager {
         let ctx = MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
-            pending_read_streams: &self.pending_read_streams,
             sftp_askpass: self.sftp_askpass.as_ref(),
             askpass_provider: self.askpass_provider.as_ref(),
             agent_resolver: self.agent_resolver.as_ref(),

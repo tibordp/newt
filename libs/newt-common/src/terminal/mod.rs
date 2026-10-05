@@ -1,11 +1,5 @@
 #[cfg(unix)]
-use std::{
-    collections::HashMap,
-    ffi::CStr,
-    mem::MaybeUninit,
-    os::unix::process::ExitStatusExt,
-    sync::{Arc, atomic::AtomicU32},
-};
+use std::{ffi::CStr, mem::MaybeUninit, os::unix::process::ExitStatusExt, sync::atomic::AtomicU32};
 
 #[cfg(unix)]
 use parking_lot::Mutex;
@@ -15,10 +9,7 @@ use pty_process::{OwnedReadPty, OwnedWritePty};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(windows)]
-use std::{
-    collections::HashMap,
-    sync::{Arc, atomic::AtomicU32},
-};
+use std::sync::atomic::AtomicU32;
 
 #[cfg(windows)]
 use parking_lot::Mutex;
@@ -26,7 +17,13 @@ use parking_lot::Mutex;
 #[cfg(any(unix, windows))]
 use log::{debug, error, info};
 
-use crate::{Error, rpc::Communicator};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::{
+    Error,
+    rpc::{Communicator, StreamId, StreamReceiver, StreamSender},
+};
 
 #[cfg(windows)]
 mod conpty;
@@ -439,59 +436,135 @@ impl TerminalClient for Local {
     }
 }
 
+/// What the client side of a remote terminal sends down its input stream.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum TerminalInput {
+    Data(serde_bytes::ByteBuf),
+    Resize { rows: u16, cols: u16 },
+}
+
+/// Serve a terminal created for the other side of the connection: the
+/// PTY's output into `output`, and `input`'s keystrokes and resizes into
+/// the PTY. Each half ends with its stream.
+pub(crate) fn serve(
+    terminal: Arc<dyn TerminalClient>,
+    handle: TerminalHandle,
+    mut output: StreamSender,
+    mut input: StreamReceiver,
+) {
+    let pty = terminal.clone();
+    tokio::spawn(async move {
+        loop {
+            let read = tokio::select! {
+                biased;
+                _ = output.cancelled() => return,
+                read = pty.read(handle) => read,
+            };
+            match read {
+                Ok(Some(data)) => {
+                    if output.send(data.into()).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {
+                    let _ = output.finish().await;
+                    return;
+                }
+                Err(e) => return output.reset(e),
+            }
+        }
+    });
+    tokio::spawn(async move {
+        while let Some(Ok(input)) = input.recv_item().await {
+            let result = match input {
+                TerminalInput::Data(data) => terminal.input(handle, data.into_vec()).await,
+                TerminalInput::Resize { rows, cols } => terminal.resize(handle, rows, cols).await,
+            };
+            if let Err(e) = result {
+                log::error!("terminal input failed: {}", e);
+            }
+        }
+    });
+}
+
+/// A terminal on the other side of the connection: its output and input
+/// each ride a stream opened when it's created.
 pub struct Remote {
     communicator: Communicator,
+    terminals: parking_lot::Mutex<HashMap<TerminalHandle, Arc<RemoteTerminal>>>,
+}
+
+struct RemoteTerminal {
+    output: tokio::sync::Mutex<StreamReceiver>,
+    input: tokio::sync::Mutex<StreamSender>,
 }
 
 impl Remote {
     pub fn new(communicator: Communicator) -> Self {
-        Self { communicator }
+        Self {
+            communicator,
+            terminals: Default::default(),
+        }
+    }
+
+    fn get(&self, handle: TerminalHandle) -> Result<Arc<RemoteTerminal>, Error> {
+        self.terminals
+            .lock()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| Error::custom("terminal not found"))
+    }
+
+    async fn send_input(&self, handle: TerminalHandle, input: TerminalInput) -> Result<(), Error> {
+        let terminal = self.get(handle)?;
+        let mut sender = terminal.input.lock().await;
+        sender.send_item(&input).await
     }
 }
 
 #[async_trait::async_trait]
 impl TerminalClient for Remote {
     async fn create(&self, options: TerminalOptions) -> Result<TerminalHandle, Error> {
-        let ret: Result<TerminalHandle, Error> = self
+        let (output_id, output) = self.communicator.open_stream();
+        let ret: Result<(TerminalHandle, StreamId), Error> = self
             .communicator
-            .invoke(crate::api::API_TERMINAL_CREATE, &options)
+            .invoke(crate::api::API_TERMINAL_CREATE, &(options, output_id))
             .await?;
+        let (handle, input_id) = ret?;
+        let terminal = RemoteTerminal {
+            output: tokio::sync::Mutex::new(output),
+            input: tokio::sync::Mutex::new(self.communicator.stream_sender(input_id)),
+        };
+        self.terminals.lock().insert(handle, Arc::new(terminal));
 
-        Ok(ret?)
+        Ok(handle)
     }
     async fn kill(&self, handle: TerminalHandle) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(crate::api::API_TERMINAL_KILL, &handle)
             .await?;
+        self.terminals.lock().remove(&handle);
 
         Ok(ret?)
     }
 
     async fn resize(&self, handle: TerminalHandle, rows: u16, cols: u16) -> Result<(), Error> {
-        // Fire-and-forget on the high-priority outbox lane, same as `input`.
-        // Resize ordering relative to keystrokes is preserved because both go
-        // through the FIFO high-priority queue.
-        self.communicator
-            .signal(crate::api::API_TERMINAL_RESIZE, &(handle, rows, cols))
+        self.send_input(handle, TerminalInput::Resize { rows, cols })
+            .await
     }
     async fn input(&self, handle: TerminalHandle, data: Vec<u8>) -> Result<(), Error> {
-        // Fire-and-forget on the high-priority outbox lane: keystrokes must
-        // not be queued behind bulk `notify` streams (e.g. VFS write chunks),
-        // and the frontend has no use for an ack — loss is observed via the
-        // absence of echoed output.
-        self.communicator.signal(
-            crate::api::API_TERMINAL_INPUT,
-            &(handle, serde_bytes::Bytes::new(&data)),
-        )
+        self.send_input(handle, TerminalInput::Data(data.into()))
+            .await
     }
     async fn read(&self, handle: TerminalHandle) -> Result<Option<Vec<u8>>, Error> {
-        let ret: Result<Option<serde_bytes::ByteBuf>, Error> = self
-            .communicator
-            .invoke(crate::api::API_TERMINAL_READ, &handle)
-            .await?;
-
-        Ok(ret?.map(serde_bytes::ByteBuf::into_vec))
+        let terminal = self.get(handle)?;
+        let mut output = terminal.output.lock().await;
+        output
+            .recv()
+            .await
+            .transpose()
+            .map(|data| data.map(Vec::from))
     }
     async fn wait(&self, handle: TerminalHandle) -> Result<ExitStatus, Error> {
         let ret: Result<ExitStatus, Error> = self

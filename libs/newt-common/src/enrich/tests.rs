@@ -200,20 +200,19 @@ fn enrichment_event_bincode_round_trip() {
         },
     ];
     for event in events {
-        let bytes = bincode::serialize(&(EnrichmentId(7), &event)).unwrap();
-        let (id, decoded): (EnrichmentId, EnrichmentEvent) = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(id, EnrichmentId(7));
+        let bytes = bincode::serialize(&event).unwrap();
+        let decoded: EnrichmentEvent = bincode::deserialize(&bytes).unwrap();
         assert_eq!(format!("{:?}", decoded), format!("{:?}", event));
     }
 
     let request = (
-        EnrichmentId(1),
+        crate::rpc::StreamId(1),
         VfsPath::root(VfsId::ROOT),
         EnrichScope::Entries(vec!["x".into()]),
         vec!["git".to_string()],
     );
     let bytes = bincode::serialize(&request).unwrap();
-    let _: (EnrichmentId, VfsPath, EnrichScope, Vec<String>) =
+    let _: (crate::rpc::StreamId, VfsPath, EnrichScope, Vec<String>) =
         bincode::deserialize(&bytes).unwrap();
 }
 

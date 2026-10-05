@@ -251,7 +251,7 @@ async fn a_new_query_reranks_what_was_walked() {
 
 #[tokio::test]
 async fn a_remote_run_streams_updates_and_takes_new_queries() {
-    use crate::api::{QuickOpenDispatcher, QuickOpenUpdateDispatcher};
+    use crate::api::QuickOpenDispatcher;
 
     let vfs = MockVfs::builder()
         .file("/r/alpha.txt", b"")
@@ -259,17 +259,10 @@ async fn a_remote_run_streams_updates_and_takes_new_queries() {
         .build();
     let quick_open = Arc::new(QuickOpen::new(Arc::new(VfsRegistry::with_root(vfs))));
     let (host_stream, agent_stream) = tokio::io::duplex(64 * 1024);
-    let (agent_outbox, agent_inbox) = Communicator::create_outbox();
-    let _agent = Communicator::with_dispatcher_and_outbox(
-        QuickOpenDispatcher::new(agent_outbox.clone(), quick_open),
-        agent_stream,
-        agent_outbox,
-        agent_inbox,
-    );
-    let pending = PendingQuickOpens::default();
-    let host =
-        Communicator::with_dispatcher(QuickOpenUpdateDispatcher::new(pending.clone()), host_stream);
-    let remote = Remote::new(host, pending.clone());
+    let _agent = Communicator::with_dispatcher(agent_stream, |outbox| {
+        QuickOpenDispatcher::new(outbox.clone(), quick_open)
+    });
+    let remote = Remote::new(Communicator::new(host_stream));
 
     let (query_tx, query_rx) = watch::channel(String::new());
     let (tx, mut rx) = mpsc::channel(16);
@@ -299,6 +292,4 @@ async fn a_remote_run_streams_updates_and_takes_new_queries() {
             }
         }
     }
-    drop(run);
-    assert!(pending.lock().is_empty());
 }

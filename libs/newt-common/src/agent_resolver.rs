@@ -1,8 +1,6 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use crate::Error;
-use crate::filesystem::StreamId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AgentEncoding {
@@ -198,25 +196,15 @@ fn agent_cache_dir() -> std::path::PathBuf {
 /// (pane-scoped agent mounts on a remote session).
 pub struct Remote {
     communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
-    /// Routing map for fetch-chunk notifications; shared with the
-    /// `API_HOST_FETCH_AGENT_CHUNK` dispatcher registered in the agent's
-    /// dispatcher chain.
-    pending_streams: crate::api::PendingVfsReadStreams,
-    next_stream_id: AtomicU64,
     cached_hash: tokio::sync::OnceCell<String>,
     cache_dir: Option<std::path::PathBuf>,
     local: CurrentExeAgentResolver,
 }
 
 impl Remote {
-    pub fn new(
-        communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
-        pending_streams: crate::api::PendingVfsReadStreams,
-    ) -> Self {
+    pub fn new(communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>) -> Self {
         Self {
             communicator,
-            pending_streams,
-            next_stream_id: AtomicU64::new(1),
             cached_hash: tokio::sync::OnceCell::new(),
             cache_dir: None,
             local: CurrentExeAgentResolver::new(),
@@ -234,82 +222,6 @@ impl Remote {
             .get()
             .cloned()
             .ok_or_else(|| Error::custom("host communicator not available"))
-    }
-}
-
-/// Removes the fetch stream from the routing map on drop, so an aborted
-/// download doesn't leak a map entry.
-struct FetchStreamGuard {
-    stream_id: StreamId,
-    pending: crate::api::PendingVfsReadStreams,
-    communicator: crate::rpc::Communicator,
-    active: bool,
-}
-
-impl FetchStreamGuard {
-    fn complete(&mut self) {
-        self.active = false;
-    }
-}
-
-impl Drop for FetchStreamGuard {
-    fn drop(&mut self) {
-        self.pending.lock().remove(&self.stream_id);
-        if self.active {
-            let _ = self
-                .communicator
-                .signal(crate::api::API_HOST_FETCH_AGENT_CANCEL, &self.stream_id);
-        }
-    }
-}
-
-/// Chunk-channel reader: sequenced `Vec<u8>` chunks in, `AsyncRead` out.
-/// An empty chunk is the EOF sentinel; consumers validate the byte count
-/// against the header's size.
-struct FetchChannelRead {
-    rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-    current: Vec<u8>,
-    offset: usize,
-    guard: FetchStreamGuard,
-}
-
-impl tokio::io::AsyncRead for FetchChannelRead {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        if self.offset < self.current.len() {
-            let remaining = &self.current[self.offset..];
-            let n = remaining.len().min(buf.remaining());
-            buf.put_slice(&remaining[..n]);
-            self.offset += n;
-            return std::task::Poll::Ready(Ok(()));
-        }
-        match self.rx.poll_recv(cx) {
-            std::task::Poll::Ready(Some(chunk)) => {
-                if chunk.is_empty() {
-                    // Empty sentinel — EOF.
-                    self.guard.complete();
-                    std::task::Poll::Ready(Ok(()))
-                } else {
-                    let n = chunk.len().min(buf.remaining());
-                    buf.put_slice(&chunk[..n]);
-                    if n < chunk.len() {
-                        self.current = chunk;
-                        self.offset = n;
-                    } else {
-                        self.current = Vec::new();
-                        self.offset = 0;
-                    }
-                    std::task::Poll::Ready(Ok(()))
-                }
-            }
-            // Channel closed (connection dropped) — reads as EOF; the
-            // consumer's size check catches the truncation.
-            std::task::Poll::Ready(None) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Pending => std::task::Poll::Pending,
-        }
     }
 }
 
@@ -348,42 +260,7 @@ impl AgentResolver for Remote {
         }
 
         let communicator = self.communicator()?;
-        let stream_id = StreamId(
-            self.next_stream_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        );
-        let (tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
-        self.pending_streams.lock().insert(
-            stream_id,
-            crate::api::ReadStream {
-                tx,
-                expected_seq: 0,
-            },
-        );
-        let guard = FetchStreamGuard {
-            stream_id,
-            pending: self.pending_streams.clone(),
-            communicator: communicator.clone(),
-            active: true,
-        };
-
-        // Chunks can outrun the FETCH invoke *response* (the host enqueues
-        // them from a separate task), and the RPC read loop delivers
-        // notifications inline — if the bounded channel filled while we're
-        // still awaiting the response below, the loop would wedge and the
-        // response behind the chunks would never arrive. Drain into an
-        // unbounded buffer; memory is bounded by the binary size, which the
-        // serving side holds in memory anyway.
-        let (buf_tx, buf_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        tokio::spawn(async move {
-            while let Some(chunk) = chunk_rx.recv().await {
-                let sentinel = chunk.is_empty();
-                if buf_tx.send(chunk).is_err() || sentinel {
-                    break;
-                }
-            }
-        });
-
+        let (stream_id, data) = communicator.open_stream();
         let header: Result<crate::api::AgentFetchHeader, Error> = communicator
             .invoke(
                 crate::api::API_HOST_FETCH_AGENT,
@@ -396,12 +273,7 @@ impl AgentResolver for Remote {
             size: header.size,
             raw_size: header.raw_size,
             encoding: header.encoding,
-            reader: Box::new(FetchChannelRead {
-                rx: buf_rx,
-                current: Vec::new(),
-                offset: 0,
-                guard,
-            }),
+            reader: Box::new(data.into_async_read()),
         })
     }
 

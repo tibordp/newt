@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::VfsId;
-use crate::rpc::{Message, Outbox};
+use crate::rpc::Outbox;
 
 // ---------------------------------------------------------------------------
 // Wire type
@@ -103,7 +103,7 @@ impl ProgressReporter for ScopedReporter {
 
 /// Agent-side sink. `report` enqueues onto an unbounded mpsc; a
 /// background forwarder task drains it and emits
-/// `Message::Notify(API_VFS_PROGRESS, ...)` via the supplied outbox.
+/// `API_VFS_PROGRESS` notifications via the supplied outbox.
 /// Decoupling the producer (sync `report`) from RPC throughput keeps
 /// `report` non-blocking; unbounded is fine because callers throttle
 /// themselves (e.g. ≤5×/sec).
@@ -116,19 +116,9 @@ impl RemoteProgressSink {
     pub fn new(outbox: Outbox) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<(VfsId, Option<VfsProgress>)>();
         tokio::spawn(async move {
-            while let Some((vfs_id, progress)) = rx.recv().await {
-                let payload = match bincode::serialize(&(vfs_id, progress)) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log::warn!("vfs progress: failed to encode report: {}", e);
-                        continue;
-                    }
-                };
+            while let Some(report) = rx.recv().await {
                 if outbox
-                    .send(Message::Notify(
-                        crate::api::API_VFS_PROGRESS,
-                        payload.into(),
-                    ))
+                    .notify(crate::api::API_VFS_PROGRESS, &report)
                     .await
                     .is_err()
                 {

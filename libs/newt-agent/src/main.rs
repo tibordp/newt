@@ -6,8 +6,7 @@ use newt_common::{
     agent_resolver::AgentResolver,
     api::{
         EnricherDispatcher, FilesystemDispatcher, HotPathsDispatcher, OperationDispatcher,
-        PendingVfsReadStreams, ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher,
-        VfsMountDispatcher, VfsReadChunkDispatcher,
+        ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher, VfsMountDispatcher,
     },
     askpass,
     enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
@@ -262,18 +261,16 @@ async fn run_agent() -> Result<(), Error> {
 
     let stream = Duplex::new(rx, tx);
 
-    // Outbox first so OperationDispatcher can use it.
-    let (outbox, inbox) = Communicator::create_outbox();
-
     // FS-only mode (pane-scoped agent mounts): serve the VFS API over the
     // local filesystem and nothing else. The mode is a soft trust boundary —
     // none of the full-session services below are ever constructed, so this
     // agent structurally cannot spawn terminals, run operations, or mount
     // further VFSes.
     if args.serve_vfs {
-        let dispatcher = VfsDispatcher::new(Arc::new(LocalVfs::new()), outbox.clone());
         info!("agent started (serve-vfs), entering RPC loop");
-        let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
+        let rpc = Communicator::with_dispatcher(stream, |outbox| {
+            VfsDispatcher::new(Arc::new(LocalVfs::new()), outbox.clone())
+        });
         rpc.closed().await;
         info!("RPC connection closed, agent exiting");
         return Ok(());
@@ -288,17 +285,11 @@ async fn run_agent() -> Result<(), Error> {
     let host_communicator: Arc<std::sync::OnceLock<Communicator>> =
         Arc::new(std::sync::OnceLock::new());
 
-    // Shared map for routing read-chunk notifications from the host to
-    // the correct RemoteVfs read stream.
-    let pending_read_streams: PendingVfsReadStreams = Default::default();
-
     // RPC-backed resolver: serves its own triple from the running
     // executable, fetches foreign triples (nested agent mounts) from the
     // host, and reports the host's agent hash.
-    let fetch_streams: PendingVfsReadStreams = Default::default();
     let resolver = Arc::new(newt_common::agent_resolver::Remote::new(
         host_communicator.clone(),
-        fetch_streams.clone(),
     ));
     let askpass_binary = resolver.find_local_agent_binary()?;
     // Shell-integration shim target: this very executable (invoked as `newt`).
@@ -306,26 +297,6 @@ async fn run_agent() -> Result<(), Error> {
 
     let askpass_provider: Arc<dyn askpass::AskpassProvider> =
         Arc::new(askpass::Remote::new(host_communicator.clone()));
-
-    // Progress reports from agent-side VFSes (SearchVfs, …) are
-    // forwarded over the RPC channel via API_VFS_PROGRESS; the host's
-    // LocalProgressSink applies them to MainWindowState. The agent's
-    // sink owns a fire-and-forget mpsc forwarder task spawned when
-    // constructed.
-    let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
-        Arc::new(newt_common::vfs::RemoteProgressSink::new(outbox.clone()));
-
-    let vfs_manager = VfsRegistryManager::new_with_host_communicator(
-        registry.clone(),
-        host_communicator.clone(),
-        pending_read_streams.clone(),
-    )
-    .with_sftp_askpass(SftpAskpass {
-        askpass_binary,
-        provider: askpass_provider,
-    })
-    .with_progress_sink(progress_sink)
-    .with_agent_resolver(resolver);
 
     let enrichers = Arc::new(
         Enrichers::new(registry.clone())
@@ -355,31 +326,45 @@ async fn run_agent() -> Result<(), Error> {
         spooler: newt_common::spool::Spooler::new(Default::default()),
     });
 
-    let dispatcher = FilesystemDispatcher::new(filesystem, outbox.clone())
-        .chain(ShellServiceDispatcher::new(LocalShellService))
-        .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
-        .chain(newt_common::api::QuickOpenDispatcher::new(
-            outbox.clone(),
-            Arc::new(newt_common::quick_open::QuickOpen::new(registry.clone())),
-        ))
-        .chain(TerminalDispatcher::new(
-            newt_common::terminal::Local::with_shell_integration(shell_integration),
-        ))
-        .chain(OperationDispatcher::new(outbox.clone(), op_context))
-        .chain(VfsMountDispatcher::new(vfs_manager))
-        .chain(VfsReadChunkDispatcher::new(pending_read_streams))
-        .chain(VfsReadChunkDispatcher::for_api(
-            newt_common::api::API_HOST_FETCH_AGENT_CHUNK,
-            fetch_streams,
-        ))
-        .chain(HotPathsDispatcher::new(hot_paths::Local::new()))
-        .chain(newt_common::api::DiscoveryDispatcher::new(
-            newt_common::discovery::Local::new(Vec::new()),
-        ));
-
     info!("agent started, entering RPC loop");
 
-    let rpc = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
+    let rpc = Communicator::with_dispatcher(stream, |outbox| {
+        // Progress reports from agent-side VFSes (SearchVfs, …) are
+        // forwarded over the RPC channel via API_VFS_PROGRESS; the host's
+        // LocalProgressSink applies them to MainWindowState. The agent's
+        // sink owns a fire-and-forget mpsc forwarder task spawned when
+        // constructed.
+        let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
+            Arc::new(newt_common::vfs::RemoteProgressSink::new(outbox.clone()));
+        let vfs_manager = VfsRegistryManager::new_with_host_communicator(
+            registry.clone(),
+            host_communicator.clone(),
+        )
+        .with_sftp_askpass(SftpAskpass {
+            askpass_binary,
+            provider: askpass_provider,
+        })
+        .with_progress_sink(progress_sink)
+        .with_agent_resolver(resolver);
+
+        FilesystemDispatcher::new(filesystem, outbox.clone())
+            .chain(ShellServiceDispatcher::new(LocalShellService))
+            .chain(EnricherDispatcher::new(outbox.clone(), enrichers))
+            .chain(newt_common::api::QuickOpenDispatcher::new(
+                outbox.clone(),
+                Arc::new(newt_common::quick_open::QuickOpen::new(registry.clone())),
+            ))
+            .chain(TerminalDispatcher::new(
+                newt_common::terminal::Local::with_shell_integration(shell_integration),
+                outbox.clone(),
+            ))
+            .chain(OperationDispatcher::new(outbox.clone(), op_context))
+            .chain(VfsMountDispatcher::new(vfs_manager))
+            .chain(HotPathsDispatcher::new(hot_paths::Local::new()))
+            .chain(newt_common::api::DiscoveryDispatcher::new(
+                newt_common::discovery::Local::new(Vec::new()),
+            ))
+    });
 
     // Now that the communicator exists, make it available for Remote VFS mounts
     let _ = host_communicator.set(rpc.clone());

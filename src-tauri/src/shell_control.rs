@@ -57,28 +57,16 @@ pub struct ShellControlDispatcher {
 
 #[async_trait::async_trait]
 impl Dispatcher for ShellControlDispatcher {
-    async fn invoke(
-        &self,
-        api: newt_common::rpc::Api,
-        req: bytes::Bytes,
-    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
+    async fn invoke(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
         if api != newt_common::api::API_HOST_SHELL_CONTROL {
-            return Ok(None);
+            return None;
         }
-        let request: ControlRequest = newt_common::api::decode(&req)?;
+        let request: ControlRequest = newt_common::api::decode(&req);
         let result: ControlResult = match context_for(&self.window) {
             Ok(ctx) => handle_control(&ctx, request).await,
             Err(e) => Err(e),
         };
-        Ok(Some(bytes::Bytes::from(newt_common::api::encode(&result)?)))
-    }
-
-    async fn notify(
-        &self,
-        _api: newt_common::rpc::Api,
-        _req: bytes::Bytes,
-    ) -> Result<bool, newt_common::Error> {
-        Ok(false)
+        Some(bytes::Bytes::from(newt_common::api::encode(&result)))
     }
 }
 

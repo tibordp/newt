@@ -8,9 +8,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{AgentEncoding, AgentResolver, AgentStream, Remote, local_agent_triple};
 use crate::Error;
-use crate::api::{
-    API_HOST_FETCH_AGENT_CHUNK, AgentFetchDispatcher, PendingVfsReadStreams, VfsReadChunkDispatcher,
-};
+use crate::api::AgentFetchDispatcher;
 use crate::rpc::Communicator;
 
 const FAKE_TRIPLE: &str = "x86_64-unknown-fake";
@@ -46,30 +44,15 @@ fn harness(
 ) -> (Remote, Communicator, Communicator) {
     let (host_stream, agent_stream) = tokio::io::duplex(64 * 1024);
 
-    let (host_outbox, host_inbox) = Communicator::create_outbox();
-    let host_dispatcher = AgentFetchDispatcher::new(
-        Arc::new(FileResolver { path: binary_path }),
-        host_outbox.clone(),
-    );
-    let host_comm = Communicator::with_dispatcher_and_outbox(
-        host_dispatcher,
-        host_stream,
-        host_outbox,
-        host_inbox,
-    );
+    let host_comm = Communicator::with_dispatcher(host_stream, |outbox| {
+        AgentFetchDispatcher::new(Arc::new(FileResolver { path: binary_path }), outbox.clone())
+    });
 
-    let pending: PendingVfsReadStreams = Default::default();
-    let (agent_outbox, agent_inbox) = Communicator::create_outbox();
-    let agent_comm = Communicator::with_dispatcher_and_outbox(
-        VfsReadChunkDispatcher::for_api(API_HOST_FETCH_AGENT_CHUNK, pending.clone()),
-        agent_stream,
-        agent_outbox,
-        agent_inbox,
-    );
+    let agent_comm = Communicator::new(agent_stream);
 
     let lock = Arc::new(std::sync::OnceLock::new());
     assert!(lock.set(agent_comm.clone()).is_ok());
-    let remote = Remote::new(lock, pending).with_cache_dir(cache_dir);
+    let remote = Remote::new(lock).with_cache_dir(cache_dir);
     (remote, host_comm, agent_comm)
 }
 
@@ -90,7 +73,7 @@ async fn fetches_foreign_triple_from_host() {
     // The remote resolver reports the host's hash.
     assert_eq!(remote.agent_hash().await.unwrap(), HOST_HASH);
 
-    // Gzip stream round-trips through the chunk notifications.
+    // Gzip stream round-trips through the byte stream.
     let mut stream = remote.open_agent_binary(FAKE_TRIPLE, true).await.unwrap();
     assert_eq!(stream.encoding, AgentEncoding::Gzip);
     assert_eq!(stream.raw_size, contents.len() as u64);
@@ -220,26 +203,13 @@ async fn dropping_fetch_reader_cancels_host_producer() {
     });
     let (host_stream, agent_stream) = tokio::io::duplex(64 * 1024);
 
-    let (host_outbox, host_inbox) = Communicator::create_outbox();
-    let host_dispatcher = AgentFetchDispatcher::new(resolver, host_outbox.clone());
-    let _host = Communicator::with_dispatcher_and_outbox(
-        host_dispatcher,
-        host_stream,
-        host_outbox,
-        host_inbox,
-    );
+    let _host = Communicator::with_dispatcher(host_stream, |outbox| {
+        AgentFetchDispatcher::new(resolver, outbox.clone())
+    });
 
-    let pending: PendingVfsReadStreams = Default::default();
-    let (agent_outbox, agent_inbox) = Communicator::create_outbox();
-    let agent = Communicator::with_dispatcher_and_outbox(
-        VfsReadChunkDispatcher::for_api(API_HOST_FETCH_AGENT_CHUNK, pending.clone()),
-        agent_stream,
-        agent_outbox,
-        agent_inbox,
-    );
     let lock = Arc::new(std::sync::OnceLock::new());
-    assert!(lock.set(agent).is_ok());
-    let remote = Remote::new(lock, pending);
+    assert!(lock.set(Communicator::new(agent_stream)).is_ok());
+    let remote = Remote::new(lock);
 
     let mut stream = remote.open_agent_binary(FAKE_TRIPLE, false).await.unwrap();
     let mut byte = [0u8; 1];

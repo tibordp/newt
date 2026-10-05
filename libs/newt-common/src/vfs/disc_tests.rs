@@ -3,7 +3,6 @@
 //! — like S3, reads at/past EOF error instead of returning empty chunks).
 //! Fixture images are shared with the `newt-disc` parser tests.
 
-use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -126,7 +125,6 @@ struct Harness {
     registry: Arc<VfsRegistry>,
     counter: Arc<CountingVfs>,
     origin: VfsPath,
-    pending_read_streams: crate::api::PendingVfsReadStreams,
     host_communicator: Arc<std::sync::OnceLock<crate::rpc::Communicator>>,
     progress_reporter: Arc<dyn crate::vfs::ProgressReporter>,
 }
@@ -147,7 +145,6 @@ impl Harness {
             registry: Arc::new(VfsRegistry::with_root(counter.clone())),
             counter,
             origin: VfsPath::from_wire_str(VfsId::ROOT, IMAGE_PATH),
-            pending_read_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             host_communicator: Arc::new(std::sync::OnceLock::new()),
             progress_reporter: Arc::new(crate::vfs::ScopedReporter::new(
                 Arc::new(crate::vfs::NoopProgressSink),
@@ -160,7 +157,6 @@ impl Harness {
         MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
-            pending_read_streams: &self.pending_read_streams,
             sftp_askpass: None,
             askpass_provider: None,
             agent_resolver: None,

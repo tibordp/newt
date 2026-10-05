@@ -56,8 +56,31 @@ impl Error {
     }
 }
 
+/// Carries the error whole, for an `io::Error` that converts back into it:
+/// a read through an `AsyncRead` adapter keeps its kind and message.
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> Self {
+        let kind = match e.kind {
+            ErrorKind::NotFound => std::io::ErrorKind::NotFound,
+            ErrorKind::PermissionDenied => std::io::ErrorKind::PermissionDenied,
+            ErrorKind::AlreadyExists => std::io::ErrorKind::AlreadyExists,
+            ErrorKind::NotADirectory => std::io::ErrorKind::NotADirectory,
+            ErrorKind::IsADirectory => std::io::ErrorKind::IsADirectory,
+            ErrorKind::DirectoryNotEmpty => std::io::ErrorKind::DirectoryNotEmpty,
+            ErrorKind::NotSupported => std::io::ErrorKind::Unsupported,
+            ErrorKind::Cancelled | ErrorKind::Connection | ErrorKind::Other => {
+                std::io::ErrorKind::Other
+            }
+        };
+        std::io::Error::new(kind, e)
+    }
+}
+
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
+        if let Some(inner) = e.get_ref().and_then(|inner| inner.downcast_ref::<Error>()) {
+            return inner.clone();
+        }
         let kind = match e.kind() {
             std::io::ErrorKind::NotFound => ErrorKind::NotFound,
             std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,

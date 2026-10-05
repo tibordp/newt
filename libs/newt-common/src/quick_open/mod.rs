@@ -75,10 +75,6 @@ pub struct QuickOpenUpdate {
     pub error: Option<String>,
 }
 
-/// Correlates a remote run's updates and query changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct QuickOpenId(pub u64);
-
 /// What the walk has found and not yet handed to the ranking.
 #[derive(Default)]
 struct Inbox {
@@ -396,25 +392,17 @@ impl QuickOpenClient for Local {
     }
 }
 
-pub type PendingQuickOpens = Arc<Mutex<HashMap<QuickOpenId, mpsc::Sender<QuickOpenUpdate>>>>;
-
-/// A run on the other side of the connection: one invoke streaming updates as
-/// `API_QUICK_OPEN_UPDATE` notifications, and a signal per query change.
-/// Query changes wait for the run's first update, which the agent sends
-/// only once it is listening for them.
+/// A run on the other side of the connection: one invoke streaming updates
+/// down a stream it opens, and a signal per query change naming that
+/// stream. Query changes wait for the run's first update, which the agent
+/// sends only once it is listening for them.
 pub struct Remote {
     communicator: Communicator,
-    pending: PendingQuickOpens,
-    next_id: std::sync::atomic::AtomicU64,
 }
 
 impl Remote {
-    pub fn new(communicator: Communicator, pending: PendingQuickOpens) -> Self {
-        Self {
-            communicator,
-            pending,
-            next_id: std::sync::atomic::AtomicU64::new(1),
-        }
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
     }
 }
 
@@ -427,39 +415,24 @@ impl QuickOpenClient for Remote {
         mut query: watch::Receiver<String>,
         updates: mpsc::Sender<QuickOpenUpdate>,
     ) -> Result<(), Error> {
-        let id = QuickOpenId(
-            self.next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        );
-        let (tx, mut rx) = mpsc::channel(4);
-        self.pending.lock().insert(id, tx);
-        struct Guard {
-            id: QuickOpenId,
-            pending: PendingQuickOpens,
-        }
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                self.pending.lock().remove(&self.id);
-            }
-        }
-        let _guard = Guard {
-            id,
-            pending: self.pending.clone(),
-        };
-
-        let request = (id, root, options, query.borrow_and_update().clone());
+        let (stream_id, mut rx) = self.communicator.open_stream();
+        let request = (stream_id, root, options, query.borrow_and_update().clone());
         let invoke = self
             .communicator
             .invoke::<_, Result<(), Error>>(crate::api::API_QUICK_OPEN, &request);
         tokio::pin!(invoke);
         let mut listening = false;
+        let mut streaming = true;
         loop {
             tokio::select! {
                 ret = &mut invoke => return ret?,
-                update = rx.recv() => {
-                    let update = update.expect("the sender stays in `pending` until this returns");
+                update = rx.recv_item(), if streaming => {
+                    let Some(update) = update else {
+                        streaming = false;
+                        continue;
+                    };
                     listening = true;
-                    if updates.send(update).await.is_err() {
+                    if updates.send(update?).await.is_err() {
                         return Ok(());
                     }
                 }
@@ -469,7 +442,7 @@ impl QuickOpenClient for Remote {
                     }
                     let text = query.borrow_and_update().clone();
                     self.communicator
-                        .signal(crate::api::API_QUICK_OPEN_QUERY, &(id, text))?;
+                        .signal(crate::api::API_QUICK_OPEN_QUERY, &(stream_id, text))?;
                 }
             }
         }

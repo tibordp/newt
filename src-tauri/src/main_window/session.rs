@@ -1,12 +1,9 @@
-use newt_common::api::{API_ENRICHMENT_EVENT, API_LIST_FILES_BATCH, API_OPERATION_PROGRESS};
-use newt_common::enrich::{
-    EnricherClient, Enrichers, PendingEnrichments, du::DuEnricher, git::GitEnricher,
-};
-use newt_common::filesystem::{Filesystem, PendingStreams, StreamId};
+use newt_common::api::API_OPERATION_PROGRESS;
+use newt_common::enrich::{EnricherClient, Enrichers, du::DuEnricher, git::GitEnricher};
+use newt_common::filesystem::Filesystem;
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
 #[cfg(target_os = "linux")]
 use newt_common::proc::NoConsoleWindow;
-use newt_common::quick_open::PendingQuickOpens;
 use newt_common::rpc::Communicator;
 use newt_common::shell::{LocalShellService, ShellRemote, ShellService};
 use newt_common::terminal::TerminalClient;
@@ -697,8 +694,6 @@ impl ConnectLog for ConnectionLog {
 struct HostDispatcher {
     operations: Operations,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
-    pending_streams: PendingStreams,
-    pending_enrichments: PendingEnrichments,
     preferences: crate::preferences::PreferencesHandle,
     /// Shared sink used to apply incoming VFS progress notifications
     /// from the agent into `MainWindowState.vfs_progress`. Same impl
@@ -716,81 +711,35 @@ struct HostAskpassDispatcher {
 
 #[async_trait::async_trait]
 impl newt_common::rpc::Dispatcher for HostAskpassDispatcher {
-    async fn invoke(
-        &self,
-        api: newt_common::rpc::Api,
-        req: bytes::Bytes,
-    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
+    async fn invoke(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> Option<bytes::Bytes> {
         if api == newt_common::api::API_HOST_ASKPASS {
-            let request: newt_common::askpass::AskpassRequest = bincode::deserialize(&req[..])
-                .map_err(|e| newt_common::Error::custom(e.to_string()))?;
+            let request: newt_common::askpass::AskpassRequest = newt_common::api::decode(&req);
             let response = self.provider.prompt(request).await;
-            let bytes = bincode::serialize(&response)
-                .map_err(|e| newt_common::Error::custom(e.to_string()))?;
-            Ok(Some(bytes::Bytes::from(bytes)))
+            Some(newt_common::api::encode(&response).into())
         } else {
-            Ok(None)
+            None
         }
-    }
-
-    async fn notify(
-        &self,
-        _api: newt_common::rpc::Api,
-        _req: bytes::Bytes,
-    ) -> Result<bool, newt_common::Error> {
-        Ok(false)
     }
 }
 
-#[async_trait::async_trait]
 impl newt_common::rpc::Dispatcher for HostDispatcher {
-    async fn invoke(
-        &self,
-        _api: newt_common::rpc::Api,
-        _req: bytes::Bytes,
-    ) -> Result<Option<bytes::Bytes>, newt_common::Error> {
-        Ok(None)
-    }
-
-    async fn notify(
-        &self,
-        api: newt_common::rpc::Api,
-        req: bytes::Bytes,
-    ) -> Result<bool, newt_common::Error> {
+    fn notify(&self, api: newt_common::rpc::Api, req: bytes::Bytes) -> bool {
         if api == API_OPERATION_PROGRESS {
-            let progress: OperationProgress = bincode::deserialize(&req[..]).unwrap();
+            let progress: OperationProgress = newt_common::api::decode(&req);
             let keep = self.preferences.load().behavior.keep_finished_operations;
             apply_operation_progress(&self.operations, progress, keep);
             let _ = self.publisher.publish();
-            Ok(true)
+            true
         } else if api == newt_common::api::API_VFS_PROGRESS {
             let (vfs_id, progress): (
                 newt_common::vfs::VfsId,
                 Option<newt_common::vfs::VfsProgress>,
-            ) = bincode::deserialize(&req[..]).unwrap();
+            ) = newt_common::api::decode(&req);
             // Sink does both the state update and the publish.
             self.progress_sink.report(vfs_id, progress);
-            Ok(true)
-        } else if api == API_LIST_FILES_BATCH {
-            let (stream_id, file_list): (StreamId, FileList) =
-                bincode::deserialize(&req[..]).unwrap();
-            let tx = self.pending_streams.lock().get(&stream_id).cloned();
-            if let Some(tx) = tx {
-                let _ = tx.send(file_list).await;
-            }
-            Ok(true)
-        } else if api == API_ENRICHMENT_EVENT {
-            let (id, event): (
-                newt_common::enrich::EnrichmentId,
-                newt_common::enrich::EnrichmentEvent,
-            ) = bincode::deserialize(&req[..]).unwrap();
-            let tx = self.pending_enrichments.lock().get(&id).cloned();
-            if let Some(tx) = tx {
-                let _ = tx.send(event).await;
-            }
-            Ok(true)
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 }
@@ -912,30 +861,16 @@ fn create_local_services(
 }
 
 /// Build remote proxy services from a communicator.
-fn create_remote_services(
-    communicator: Communicator,
-    pending_streams: PendingStreams,
-    pending_enrichments: PendingEnrichments,
-    pending_quick_opens: PendingQuickOpens,
-) -> Services {
+fn create_remote_services(communicator: Communicator) -> Services {
     Services {
-        fs: Arc::new(newt_common::filesystem::Remote::new_with_streams(
-            communicator.clone(),
-            pending_streams,
-        )),
+        fs: Arc::new(newt_common::filesystem::Remote::new(communicator.clone())),
         shell_service: Arc::new(ShellRemote::new(communicator.clone())),
         vfs_manager: Arc::new(VfsManagerRemote::new(communicator.clone())),
         terminal_client: Arc::new(newt_common::terminal::Remote::new(communicator.clone())),
         operations_client: Arc::new(newt_common::operation::Remote::new(communicator.clone())),
-        enricher_client: Arc::new(newt_common::enrich::Remote::new(
-            communicator.clone(),
-            pending_enrichments,
-        )),
+        enricher_client: Arc::new(newt_common::enrich::Remote::new(communicator.clone())),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Remote::new(communicator.clone())),
-        quick_open_client: Arc::new(newt_common::quick_open::Remote::new(
-            communicator.clone(),
-            pending_quick_opens,
-        )),
+        quick_open_client: Arc::new(newt_common::quick_open::Remote::new(communicator.clone())),
         discovery_provider: Arc::new(newt_common::discovery::Remote::new(communicator.clone())),
         initial_dir: VfsPath::root(VfsId::ROOT),
         connection: Some(communicator),
@@ -954,53 +889,36 @@ fn create_rpc_services(
     askpass_provider: Arc<dyn AskpassProvider>,
     progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
     agent_resolver: Arc<dyn AgentResolver>,
-) -> (Services, PendingStreams) {
+) -> Services {
     use newt_common::rpc::DispatcherExt;
-
-    let pending_streams: PendingStreams = Arc::new(parking_lot::Mutex::new(HashMap::new()));
-    let pending_enrichments: PendingEnrichments = Arc::new(parking_lot::Mutex::new(HashMap::new()));
-    let pending_quick_opens = PendingQuickOpens::default();
 
     let host_dispatcher = HostDispatcher {
         operations: operations.clone(),
         publisher: publisher.clone(),
-        pending_streams: pending_streams.clone(),
-        pending_enrichments: pending_enrichments.clone(),
         preferences: preferences.clone(),
         progress_sink,
     };
     let askpass_dispatcher = HostAskpassDispatcher {
         provider: askpass_provider,
     };
-    let (outbox, inbox) = Communicator::create_outbox();
-    let fetch_dispatcher =
-        newt_common::api::AgentFetchDispatcher::new(agent_resolver, outbox.clone());
     let shell_control_dispatcher = crate::shell_control::ShellControlDispatcher {
         window: publisher.window().clone(),
     };
-    let base = host_dispatcher
-        .chain(newt_common::api::QuickOpenUpdateDispatcher::new(
-            pending_quick_opens.clone(),
-        ))
-        .chain(askpass_dispatcher)
-        .chain(fetch_dispatcher)
-        .chain(shell_control_dispatcher);
-    let communicator = if expose_local_fs {
-        use newt_common::api::VfsDispatcher;
-        use newt_common::vfs::LocalVfs;
-        let host_vfs = Arc::new(LocalVfs::new());
-        let combined_dispatcher = base.chain(VfsDispatcher::new(host_vfs, outbox.clone()));
-        Communicator::with_dispatcher_and_outbox(combined_dispatcher, stream, outbox, inbox)
-    } else {
-        Communicator::with_dispatcher_and_outbox(base, stream, outbox, inbox)
-    };
-    let services = create_remote_services(
-        communicator,
-        pending_streams.clone(),
-        pending_enrichments,
-        pending_quick_opens,
-    );
-    (services, pending_streams)
+    let communicator = Communicator::with_dispatcher(stream, |outbox| {
+        let host_vfs = expose_local_fs.then(|| {
+            let local = Arc::new(newt_common::vfs::LocalVfs::new());
+            newt_common::api::VfsDispatcher::new(local, outbox.clone())
+        });
+        host_dispatcher
+            .chain(askpass_dispatcher)
+            .chain(newt_common::api::AgentFetchDispatcher::new(
+                agent_resolver,
+                outbox.clone(),
+            ))
+            .chain(shell_control_dispatcher)
+            .chain(host_vfs)
+    });
+    create_remote_services(communicator)
 }
 
 // ---------------------------------------------------------------------------
@@ -1272,7 +1190,7 @@ pub(super) async fn connect(
                     state.mount_log.clone(),
                     publisher.clone(),
                 ));
-            let (services, _) = create_rpc_services(
+            let services = create_rpc_services(
                 conn.stream,
                 &state.operations,
                 publisher,
@@ -1298,7 +1216,7 @@ pub(super) async fn connect(
                     state.mount_log.clone(),
                     publisher.clone(),
                 ));
-            let (services, _) = create_rpc_services(
+            let services = create_rpc_services(
                 conn.stream,
                 &state.operations,
                 publisher,
@@ -1336,7 +1254,7 @@ pub(super) async fn connect(
                     state.mount_log.clone(),
                     publisher.clone(),
                 ));
-            let (services, _) = create_rpc_services(
+            let services = create_rpc_services(
                 stream,
                 &state.operations,
                 publisher,

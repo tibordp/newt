@@ -11,8 +11,8 @@
 //! the operations template: an [`Enrichers`] registry lives next to the
 //! `VfsRegistry` (host-side in local sessions, agent-side in remote
 //! ones), fronted by an [`EnricherClient`] with [`Local`] and [`Remote`]
-//! impls. Remote streams events via `Notify(API_ENRICHMENT_EVENT)`
-//! correlated by [`EnrichmentId`], mirroring streaming `list_files`.
+//! impls. Remote streams events down an RPC stream, mirroring streaming
+//! `list_files`.
 //!
 //! Cancellation is by drop: dropping the `enrich` future (directly in
 //! local mode, via transport-level `InvokeCancel` in remote mode) must
@@ -38,11 +38,6 @@ use crate::vfs::{VfsPath, VfsRegistry};
 // ---------------------------------------------------------------------------
 // Wire types
 // ---------------------------------------------------------------------------
-
-/// Correlation id for a streaming enrichment request, allocated by the
-/// requesting side (mirrors `StreamId` for listings).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EnrichmentId(pub u64);
 
 /// Per-entry annotation payload. Open taxonomy — one variant per
 /// annotation kind. The pane treats these as opaque (a generic
@@ -392,21 +387,13 @@ impl EnricherClient for Local {
     }
 }
 
-pub type PendingEnrichments = Arc<Mutex<HashMap<EnrichmentId, mpsc::Sender<EnrichmentEvent>>>>;
-
 pub struct Remote {
     communicator: Communicator,
-    pending: PendingEnrichments,
-    next_id: std::sync::atomic::AtomicU64,
 }
 
 impl Remote {
-    pub fn new(communicator: Communicator, pending: PendingEnrichments) -> Self {
-        Self {
-            communicator,
-            pending,
-            next_id: std::sync::atomic::AtomicU64::new(1),
-        }
+    pub fn new(communicator: Communicator) -> Self {
+        Self { communicator }
     }
 }
 
@@ -419,34 +406,14 @@ impl EnricherClient for Remote {
         enrichers: Vec<String>,
         tx: mpsc::Sender<EnrichmentEvent>,
     ) -> Result<(), Error> {
-        let id = EnrichmentId(
-            self.next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        );
-        self.pending.lock().insert(id, tx);
-
-        struct Guard {
-            id: EnrichmentId,
-            pending: PendingEnrichments,
-        }
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                self.pending.lock().remove(&self.id);
-            }
-        }
-        let _guard = Guard {
-            id,
-            pending: self.pending.clone(),
-        };
-
-        let ret: Result<(), Error> = self
+        let (stream_id, events) = self.communicator.open_stream();
+        let request = (stream_id, path, scope, enrichers);
+        let enrichment = self
             .communicator
-            .invoke(
-                crate::api::API_START_ENRICHMENT,
-                &(id, path, scope, enrichers),
-            )
-            .await?;
-        ret
+            .invoke::<_, Result<(), Error>>(crate::api::API_START_ENRICHMENT, &request);
+        let (ret, forwarded) = tokio::join!(enrichment, events.forward_items(&tx));
+        forwarded?;
+        ret?
     }
 }
 

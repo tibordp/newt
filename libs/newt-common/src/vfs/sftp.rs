@@ -1245,9 +1245,7 @@ impl tokio::io::AsyncRead for SftpAsyncReader {
                 }
                 std::task::Poll::Ready(Ok(()))
             }
-            std::task::Poll::Ready(Some(Err(e))) => {
-                std::task::Poll::Ready(Err(std::io::Error::other(e.to_string())))
-            }
+            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Err(e.into())),
             std::task::Poll::Ready(None) => {
                 // Channel closed — EOF.
                 std::task::Poll::Ready(Ok(()))

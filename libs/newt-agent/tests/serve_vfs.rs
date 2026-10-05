@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, BufReader};
 
-use newt_common::api::{API_LIST_FILES, PendingVfsReadStreams, VfsReadChunkDispatcher};
+use newt_common::api::API_LIST_FILES;
 use newt_common::connect::{AgentMode, ConnectLog, SpawnSpec, make_stream};
 use newt_common::rpc::Communicator;
 use newt_common::vfs::agent::AgentConnectionGuard;
@@ -28,16 +28,12 @@ fn proxy_for(mut child: tokio::process::Child) -> (Arc<RemoteVfs>, Communicator)
     let stdout = child.stdout.take().unwrap();
     let stream = make_stream(BufReader::new(stdout), stdin);
 
-    let pending: PendingVfsReadStreams = Default::default();
-    let (outbox, inbox) = Communicator::create_outbox();
-    let dispatcher = VfsReadChunkDispatcher::new(pending.clone());
-    let communicator = Communicator::with_dispatcher_and_outbox(dispatcher, stream, outbox, inbox);
+    let communicator = Communicator::new(stream);
 
     let guard = AgentConnectionGuard::new(child, None);
     let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Docker"), Some("test"));
     let vfs = Arc::new(RemoteVfs::for_agent(
         communicator.clone(),
-        pending,
         mount_meta,
         guard,
     ));
@@ -109,30 +105,19 @@ async fn serve_vfs_does_not_expose_session_api() {
     vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
 
     // A full-session verb (FilesystemDispatcher's list_files) must not be
-    // served: an FS-only agent never constructs those dispatchers, and
-    // unknown APIs get no response. "No response within a generous window
-    // while the same connection answers VFS verbs" is the observable form
-    // of that.
+    // served: an FS-only agent never constructs those dispatchers, and an
+    // API nothing serves ends the connection.
     let args = (
         newt_common::vfs::VfsPath::root(newt_common::vfs::VfsId::ROOT),
         newt_common::filesystem::ListFilesOptions { strict: false },
     );
-    let session_api = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        communicator.invoke::<_, Result<newt_common::vfs::FileList, newt_common::Error>>(
-            API_LIST_FILES,
-            &args,
-        ),
-    )
-    .await;
-    assert!(
-        session_api.is_err(),
-        "serve-vfs agent answered a full-session API: {:?}",
-        session_api.map(|r| r.map(|_| ()))
+    let session_api = communicator
+        .invoke::<_, Result<newt_common::vfs::FileList, newt_common::Error>>(API_LIST_FILES, &args)
+        .await;
+    assert_eq!(
+        session_api.unwrap_err().kind,
+        newt_common::ErrorKind::Connection
     );
-
-    // The same connection still answers VFS verbs afterwards.
-    vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
 }
 
 struct TestResolver;
@@ -199,15 +184,10 @@ async fn bootstrap_spawns_serve_vfs_agent() {
     .await
     .unwrap();
 
-    let pending: PendingVfsReadStreams = Default::default();
-    let (outbox, inbox) = Communicator::create_outbox();
-    let dispatcher = VfsReadChunkDispatcher::new(pending.clone());
-    let communicator =
-        Communicator::with_dispatcher_and_outbox(dispatcher, spawned.stream, outbox, inbox);
+    let communicator = Communicator::new(spawned.stream);
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
     let vfs = RemoteVfs::for_agent(
         communicator,
-        pending,
         encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Custom"), Some("bootstrap-test")),
         guard,
     );
@@ -223,7 +203,6 @@ async fn bootstrap_spawns_serve_vfs_agent() {
 struct MountHarness {
     registry: Arc<newt_common::vfs::VfsRegistry>,
     host_communicator: Arc<std::sync::OnceLock<Communicator>>,
-    pending: PendingVfsReadStreams,
     resolver: Arc<dyn newt_common::agent_resolver::AgentResolver>,
     reporter: Arc<dyn newt_common::vfs::ProgressReporter>,
 }
@@ -235,7 +214,6 @@ impl MountHarness {
                 newt_common::vfs::LocalVfs::new(),
             ))),
             host_communicator: Arc::new(std::sync::OnceLock::new()),
-            pending: Default::default(),
             resolver: Arc::new(TestResolver),
             reporter: Arc::new(newt_common::vfs::ScopedReporter::new(
                 Arc::new(newt_common::vfs::NoopProgressSink),
@@ -248,7 +226,6 @@ impl MountHarness {
         newt_common::vfs::mount::MountContext {
             registry: &self.registry,
             host_communicator: &self.host_communicator,
-            pending_read_streams: &self.pending,
             sftp_askpass: None,
             askpass_provider: None,
             agent_resolver: Some(&self.resolver),

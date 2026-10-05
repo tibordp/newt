@@ -1,7 +1,7 @@
 use bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::{Api, Message, MessageCodec, RequestId};
+use super::{Api, Message, MessageCodec, RequestId, StreamId};
 
 fn codec() -> MessageCodec {
     MessageCodec {}
@@ -19,12 +19,16 @@ fn decode_handles_torn_reads_at_every_byte_boundary() {
     // Regression: the Notify/Signal arms sliced the length field past a
     // partial header, panicking when a read ended mid-header.
     let messages = [
-        Message::Ping(true),
         Message::InvokeRequest(Api(42), RequestId(1), Bytes::from_static(b"payload")),
         Message::InvokeResponse(RequestId(2), Bytes::from_static(b"payload")),
         Message::InvokeCancel(RequestId(3)),
         Message::Notify(Api(4), Bytes::from_static(b"payload")),
         Message::Signal(Api(5), Bytes::from_static(b"payload")),
+        Message::StreamData(StreamId(6), Bytes::from_static(b"payload")),
+        Message::StreamEnd(StreamId(7)),
+        Message::StreamReset(StreamId(8), crate::Error::custom("reset")),
+        Message::StreamCredit(StreamId(9), 16),
+        Message::StreamCancel(StreamId(10)),
     ];
     for msg in messages {
         let mut c = codec();
@@ -46,18 +50,6 @@ fn decode_handles_torn_reads_at_every_byte_boundary() {
         }
         assert_eq!(std::mem::discriminant(&decoded.unwrap()), expected);
     }
-}
-
-#[test]
-fn ping_false_round_trip() {
-    let decoded = round_trip(Message::Ping(false));
-    assert!(matches!(decoded, Message::Ping(false)));
-}
-
-#[test]
-fn ping_true_round_trip() {
-    let decoded = round_trip(Message::Ping(true));
-    assert!(matches!(decoded, Message::Ping(true)));
 }
 
 #[test]
@@ -200,7 +192,8 @@ fn partial_buffer_returns_none() {
     let mut buf = BytesMut::new();
 
     // Encode a full message
-    c.encode(Message::Ping(false), &mut buf).unwrap();
+    c.encode(Message::InvokeCancel(RequestId(1)), &mut buf)
+        .unwrap();
 
     // Feed only one byte at a time — should return None until complete
     let full = buf.split();
@@ -246,16 +239,17 @@ fn partial_invoke_request_returns_none() {
 fn multiple_messages_in_one_buffer() {
     let mut c = codec();
     let mut buf = BytesMut::new();
-    c.encode(Message::Ping(false), &mut buf).unwrap();
-    c.encode(Message::Ping(true), &mut buf).unwrap();
+    c.encode(Message::StreamEnd(StreamId(3)), &mut buf).unwrap();
+    c.encode(Message::StreamCancel(StreamId(4)), &mut buf)
+        .unwrap();
     c.encode(Message::InvokeCancel(RequestId(5)), &mut buf)
         .unwrap();
 
     let msg1 = c.decode(&mut buf).unwrap().unwrap();
-    assert!(matches!(msg1, Message::Ping(false)));
+    assert!(matches!(msg1, Message::StreamEnd(StreamId(3))));
 
     let msg2 = c.decode(&mut buf).unwrap().unwrap();
-    assert!(matches!(msg2, Message::Ping(true)));
+    assert!(matches!(msg2, Message::StreamCancel(StreamId(4))));
 
     let msg3 = c.decode(&mut buf).unwrap().unwrap();
     assert!(matches!(msg3, Message::InvokeCancel(RequestId(5))));
@@ -282,13 +276,45 @@ fn invalid_message_type_returns_error() {
 
 #[test]
 fn message_priority_classification() {
-    assert!(Message::Ping(false).is_high_priority());
-    assert!(Message::Ping(true).is_high_priority());
     assert!(Message::InvokeRequest(Api(0), RequestId(0), Bytes::new()).is_high_priority());
     assert!(Message::InvokeCancel(RequestId(0)).is_high_priority());
     assert!(!Message::InvokeResponse(RequestId(0), Bytes::new()).is_high_priority());
     assert!(!Message::Notify(Api(0), Bytes::new()).is_high_priority());
     assert!(Message::Signal(Api(0), Bytes::new()).is_high_priority());
+    assert!(!Message::StreamData(StreamId(0), Bytes::new()).is_high_priority());
+    assert!(!Message::StreamEnd(StreamId(0)).is_high_priority());
+    assert!(Message::StreamReset(StreamId(0), crate::Error::cancelled()).is_high_priority());
+    assert!(Message::StreamCredit(StreamId(0), 1).is_high_priority());
+    assert!(Message::StreamCancel(StreamId(0)).is_high_priority());
+}
+
+#[test]
+fn stream_frames_round_trip() {
+    match round_trip(Message::StreamData(
+        StreamId(u64::MAX),
+        Bytes::from_static(b"abc"),
+    )) {
+        Message::StreamData(id, data) => {
+            assert_eq!(id, StreamId(u64::MAX));
+            assert_eq!(&data[..], b"abc");
+        }
+        other => panic!("expected StreamData, got {:?}", other),
+    }
+    match round_trip(Message::StreamReset(
+        StreamId(3),
+        crate::Error::not_found("gone"),
+    )) {
+        Message::StreamReset(id, error) => {
+            assert_eq!(id, StreamId(3));
+            assert_eq!(error.kind, crate::ErrorKind::NotFound);
+            assert_eq!(error.message, "gone");
+        }
+        other => panic!("expected StreamReset, got {:?}", other),
+    }
+    assert!(matches!(
+        round_trip(Message::StreamCredit(StreamId(4), 7)),
+        Message::StreamCredit(StreamId(4), 7)
+    ));
 }
 
 // --- Outbox priority tests ---
@@ -301,11 +327,11 @@ async fn outbox_high_priority_preferred() {
     tx.send(Message::Notify(Api(1), Bytes::new()))
         .await
         .unwrap();
-    tx.send(Message::Ping(false)).await.unwrap();
+    tx.send(Message::InvokeCancel(RequestId(7))).await.unwrap();
 
     // High-priority should come first due to biased select
     let msg = rx.recv().await.unwrap();
-    assert!(matches!(msg, Message::Ping(false)));
+    assert!(matches!(msg, Message::InvokeCancel(RequestId(7))));
 
     let msg = rx.recv().await.unwrap();
     assert!(matches!(msg, Message::Notify(Api(1), _)));
@@ -316,14 +342,14 @@ async fn outbox_try_recv_prefers_high() {
     let (tx, mut rx) = super::create_outbox();
 
     // Queue both before receiving.
-    tx.send_high(Message::Ping(true)).unwrap();
+    tx.send_high(Message::InvokeCancel(RequestId(8))).unwrap();
     tx.send(Message::Notify(Api(2), Bytes::new()))
         .await
         .unwrap();
 
     // try_recv should return high first
     let msg = rx.try_recv().unwrap();
-    assert!(matches!(msg, Message::Ping(true)));
+    assert!(matches!(msg, Message::InvokeCancel(RequestId(8))));
 
     let msg = rx.try_recv().unwrap();
     assert!(matches!(msg, Message::Notify(Api(2), _)));
@@ -353,10 +379,10 @@ struct Panicking;
 
 #[async_trait::async_trait]
 impl super::Dispatcher for Panicking {
-    async fn invoke(&self, _api: Api, _req: Bytes) -> Result<Option<Bytes>, crate::Error> {
+    async fn invoke(&self, _api: Api, _req: Bytes) -> Option<Bytes> {
         panic!("invoke handler bug");
     }
-    async fn notify(&self, _api: Api, _req: Bytes) -> Result<bool, crate::Error> {
+    fn notify(&self, _api: Api, _req: Bytes) -> bool {
         panic!("notify handler bug");
     }
 }
@@ -365,18 +391,77 @@ impl super::Dispatcher for Panicking {
 async fn a_panicking_invoke_handler_fails_the_call_instead_of_hanging() {
     use super::Communicator;
     let (ours, theirs) = tokio::io::duplex(1024);
-    let _peer = Communicator::with_dispatcher(Panicking, theirs);
+    let _peer = Communicator::with_dispatcher(theirs, |_| Panicking);
     let communicator = Communicator::new(ours);
     let result: Result<(), crate::Error> = communicator.invoke(Api(1), &()).await;
-    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind, crate::ErrorKind::Connection);
 }
 
 #[tokio::test]
 async fn a_panicking_notify_handler_closes_the_connection() {
     use super::Communicator;
     let (ours, theirs) = tokio::io::duplex(1024);
-    let _peer = Communicator::with_dispatcher(Panicking, theirs);
+    let _peer = Communicator::with_dispatcher(theirs, |_| Panicking);
     let communicator = Communicator::new(ours);
-    communicator.notify(Api(1), &()).await.unwrap();
+    communicator.outbox().notify(Api(1), &()).await.unwrap();
+    communicator.closed().await;
+}
+
+#[tokio::test]
+async fn an_api_nothing_serves_fails_the_call_instead_of_hanging() {
+    use super::Communicator;
+    let (ours, theirs) = tokio::io::duplex(1024);
+    let _peer = Communicator::new(theirs);
+    let communicator = Communicator::new(ours);
+    let result: Result<(), crate::Error> = communicator.invoke(Api(1), &()).await;
+    assert_eq!(result.unwrap_err().kind, crate::ErrorKind::Connection);
+}
+
+/// Reads never complete; every write fails.
+struct BrokenWrites;
+
+impl tokio::io::AsyncRead for BrokenWrites {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Pending
+    }
+}
+
+impl tokio::io::AsyncWrite for BrokenWrites {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_write_fails_the_call_instead_of_waiting_on_the_read_side() {
+    use super::Communicator;
+    let communicator = Communicator::new(BrokenWrites);
+    let result: Result<(), crate::Error> = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        communicator.invoke(Api(1), &()),
+    )
+    .await
+    .expect("the call waited on a connection whose writes had failed");
+    assert_eq!(result.unwrap_err().kind, crate::ErrorKind::Connection);
     communicator.closed().await;
 }

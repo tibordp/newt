@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use crate::Error;
-use crate::api::{PendingVfsReadStreams, VfsReadChunkDispatcher};
 use crate::askpass::{AskpassProvider, CancelAskpass};
 use crate::connect::{AgentMode, ConnectLog, SpawnSpec};
 use crate::rpc::Communicator;
@@ -261,13 +260,8 @@ async fn mount_inner(
         crate::connect::spawn_stderr_reader(stderr, connect_log.clone());
     }
 
-    // Parent side of the sub-agent connection only routes read-chunk
-    // notifications; an FS-only agent never invokes anything else on us.
-    let pending_read_streams: PendingVfsReadStreams = Default::default();
-    let (outbox, inbox) = Communicator::create_outbox();
-    let dispatcher = VfsReadChunkDispatcher::new(pending_read_streams.clone());
-    let communicator =
-        Communicator::with_dispatcher_and_outbox(dispatcher, spawned.stream, outbox, inbox);
+    // An FS-only agent never invokes anything on us.
+    let communicator = Communicator::new(spawned.stream);
 
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
 
@@ -277,7 +271,6 @@ async fn mount_inner(
 
     let vfs = Arc::new(RemoteVfs::for_agent(
         communicator.clone(),
-        pending_read_streams,
         mount_meta,
         guard,
     ));

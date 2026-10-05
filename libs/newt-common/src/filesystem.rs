@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use bytes::Bytes;
 use futures::Stream;
@@ -15,11 +13,6 @@ use crate::vfs::{FileChunk, FileDetails, FileList, FsStats, VfsPath, VfsRandomRe
 
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
-)]
-pub struct StreamId(pub u64);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ListFilesOptions {
@@ -102,33 +95,13 @@ pub trait Filesystem: Send + Sync {
     ) -> Result<Option<SearchMatch>, Error>;
 }
 
-pub type PendingStreams = Arc<parking_lot::Mutex<HashMap<StreamId, mpsc::Sender<FileList>>>>;
-
 pub struct Remote {
     communicator: Communicator,
-    pending_streams: PendingStreams,
-    next_stream_id: AtomicU64,
 }
 
 impl Remote {
     pub fn new(communicator: Communicator) -> Self {
-        Self {
-            communicator,
-            pending_streams: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            next_stream_id: AtomicU64::new(1),
-        }
-    }
-
-    pub fn new_with_streams(communicator: Communicator, pending_streams: PendingStreams) -> Self {
-        Self {
-            communicator,
-            pending_streams,
-            next_stream_id: AtomicU64::new(1),
-        }
-    }
-
-    pub fn pending_streams(&self) -> &PendingStreams {
-        &self.pending_streams
+        Self { communicator }
     }
 }
 
@@ -149,38 +122,16 @@ impl Filesystem for Remote {
         batch_tx: Option<mpsc::Sender<FileList>>,
     ) -> Result<FileList, Error> {
         if let Some(batch_tx) = batch_tx {
-            let stream_id = StreamId(
-                self.next_stream_id
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            let (stream_id, batches) = self.communicator.open_stream();
+            let request = (path, options, stream_id);
+            let listing = self.communicator.invoke::<_, Result<FileList, Error>>(
+                crate::api::API_LIST_FILES_STREAMING,
+                &request,
             );
+            let (ret, forwarded) = tokio::join!(listing, batches.forward_items(&batch_tx));
+            forwarded?;
 
-            // Register the batch sender so notifications can be routed to it.
-            self.pending_streams.lock().insert(stream_id, batch_tx);
-
-            // RAII guard to ensure cleanup even on cancellation/error.
-            struct StreamGuard {
-                stream_id: StreamId,
-                pending_streams: PendingStreams,
-            }
-            impl Drop for StreamGuard {
-                fn drop(&mut self) {
-                    self.pending_streams.lock().remove(&self.stream_id);
-                }
-            }
-            let _guard = StreamGuard {
-                stream_id,
-                pending_streams: self.pending_streams.clone(),
-            };
-
-            let ret: Result<FileList, Error> = self
-                .communicator
-                .invoke(
-                    crate::api::API_LIST_FILES_STREAMING,
-                    &(path, options, stream_id),
-                )
-                .await?;
-
-            Ok(ret?)
+            Ok(ret??)
         } else {
             let ret: Result<FileList, Error> = self
                 .communicator
@@ -267,12 +218,12 @@ impl Filesystem for Remote {
     }
 
     async fn open_read_at(&self, path: VfsPath) -> Result<Box<dyn VfsRandomReader>, Error> {
-        let stream_id: Result<StreamId, Error> = self
+        let id: Result<crate::api::ReadAtId, Error> = self
             .communicator
             .invoke(crate::api::API_OPEN_READ_AT, &path)
             .await?;
         Ok(Box::new(crate::api::RemoteRandomReader {
-            stream_id: stream_id?,
+            id: id?,
             communicator: self.communicator.clone(),
             read_api: crate::api::API_READ_AT,
             close_api: crate::api::API_READ_AT_CLOSE,

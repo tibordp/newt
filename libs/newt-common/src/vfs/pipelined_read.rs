@@ -117,7 +117,7 @@ impl<D: ChunkDriver + Unpin> AsyncRead for PipelinedReader<D> {
                         match result {
                             Ok(data) => Some((offset, data)),
                             Err(e) => {
-                                return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                                return Poll::Ready(Err(e.into()));
                             }
                         }
                     }
@@ -150,7 +150,7 @@ impl<D: ChunkDriver + Unpin> AsyncRead for PipelinedReader<D> {
                     self.done = true;
                 }
                 Err(e) => {
-                    return Poll::Ready(Err(std::io::Error::other(e.to_string())));
+                    return Poll::Ready(Err(e.into()));
                 }
             }
         }
