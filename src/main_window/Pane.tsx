@@ -364,7 +364,7 @@ const VFS_ICONS: Record<string, string> = {
   agent: "\u{f048d}",
 };
 
-// Per-drive icons for split-root entries, keyed by VolumeKind.
+// Icons for drives and volumes, keyed by VolumeKind.
 const VOLUME_KIND_ICONS: Record<string, string> = {
   Fixed: "\u{f02ca}", // md-harddisk
   Removable: "\u{f129e}", // md-usb_flash_drive
@@ -372,7 +372,17 @@ const VOLUME_KIND_ICONS: Record<string, string> = {
   Network: "\u{f0870}", // md-folder_network
   RamDisk: "\u{f035b}", // md-memory
   Substituted: "\u{f0337}", // md-link
+  DiskImage: "\u{f03d7}", // md-package_variant_closed
+  Device: "\u{f011c}", // md-cellphone
 };
+
+// Whether `path` is `location` or lies under it.
+function within(location: string, path: string): boolean {
+  return (
+    path === location ||
+    path.startsWith(location.endsWith("/") ? location : location + "/")
+  );
+}
 
 function VfsSelector({
   vfsDisplayName,
@@ -393,6 +403,18 @@ function VfsSelector({
   const shortcuts = useCommandShortcuts();
   // Track when we're opening a mount dialog so we don't steal focus back
   const openingDialogRef = useRef(false);
+
+  // The ✓ goes to the most specific entry holding the pane's path: a
+  // volume over the filesystem it's mounted in.
+  let activeIndex = -1;
+  vfsTargets.forEach((target, i) => {
+    if (target.kind === "Connect" || target.vfs_id !== activeVfsId) return;
+    if (target.path != null && !within(target.path, activePath)) return;
+    const best = vfsTargets[activeIndex];
+    if (!best || (target.path?.length ?? 0) > (best.path?.length ?? 0)) {
+      activeIndex = i;
+    }
+  });
 
   return (
     <DropdownMenu.Root
@@ -435,40 +457,46 @@ function VfsSelector({
           }}
         >
           {vfsTargets.map((target, i) => {
-            const isActive =
-              target.vfs_id != null &&
-              target.vfs_id === activeVfsId &&
-              // For a split-root entry, only the drive containing the
-              // pane's path is the active one.
-              (target.root == null ||
-                activePath === target.root ||
-                activePath.startsWith(target.root + "/"));
-            const icon = VFS_ICONS[target.type_name];
-            // Split-root entries (one per drive) are grouped under a
-            // header for the VFS and closed off with a divider. They sort
-            // contiguously, so detect the run by its neighbours.
+            // A filesystem's locations are grouped under a header for it
+            // and closed off with a divider: a split-root filesystem's
+            // drives, or a filesystem followed by the volumes mounted in
+            // it. They sort contiguously, so detect the run by its
+            // neighbours.
             const prev = vfsTargets[i - 1];
             const next = vfsTargets[i + 1];
-            const isSplit = target.vfs_id != null && target.root != null;
-            const kindIcon =
-              (target.volume && VOLUME_KIND_ICONS[target.volume.kind]) || icon;
+            const sameFs = (other?: VfsTarget) =>
+              other != null && other.vfs_id === target.vfs_id;
+            const isLocation =
+              target.kind === "Drive" ||
+              target.kind === "Volume" ||
+              (target.kind === "Mounted" &&
+                next?.kind === "Volume" &&
+                sameFs(next));
             const groupStart =
-              isSplit &&
-              (!prev || prev.vfs_id !== target.vfs_id || prev.root == null);
+              (target.kind === "Drive" &&
+                !(prev?.kind === "Drive" && sameFs(prev))) ||
+              (target.kind === "Mounted" && isLocation);
             const groupEnd =
-              isSplit &&
-              (!next || next.vfs_id !== target.vfs_id || next.root == null);
-            // Mounted targets sort first; the connect entries (unmounted
-            // types) form a trailing section opened by a separator — unless
-            // a split-root group just closed with one.
+              (target.kind === "Drive" &&
+                !(next?.kind === "Drive" && sameFs(next))) ||
+              (target.kind === "Volume" &&
+                !(next?.kind === "Volume" && sameFs(next)));
+            // The connect entries form a trailing section opened by a
+            // separator, unless a group just closed with one.
             const connectStart =
-              target.vfs_id == null &&
+              target.kind === "Connect" &&
               prev != null &&
-              prev.vfs_id != null &&
-              prev.root == null;
+              prev.kind !== "Connect" &&
+              prev.kind !== "Drive" &&
+              prev.kind !== "Volume";
+            const icon =
+              (target.volume && VOLUME_KIND_ICONS[target.volume.kind]) ||
+              (target.kind === "Volume"
+                ? VOLUME_KIND_ICONS.Fixed
+                : VFS_ICONS[target.type_name]);
             return (
               <Fragment
-                key={`${target.type_name}-${target.vfs_id ?? `u${i}`}-${target.root ?? ""}`}
+                key={`${target.kind}-${target.type_name}-${target.vfs_id ?? `u${i}`}-${target.path ?? ""}`}
               >
                 {connectStart && (
                   <DropdownMenu.Separator className={menuStyles.separator} />
@@ -498,26 +526,28 @@ function VfsSelector({
                           paneHandle,
                           target.vfs_id,
                           target.type_name,
-                          target.root,
+                          target.path,
                         ),
                       );
                     }
                   }}
                 >
                   <span className={menuStyles.itemIcon} aria-hidden>
-                    {kindIcon}
+                    {icon}
                   </span>
                   <span className={menuStyles.itemLabel}>
-                    {isSplit ? (
-                      // Under the group header: the drive, its volume
-                      // label, and a dimmed target for the drives that
-                      // point elsewhere (mapped UNC path, subst alias).
+                    {isLocation ? (
+                      // Under the group header: the drive and its volume
+                      // label, the volume's name, or the root, then where
+                      // it points or lives, dimmed.
                       <>
-                        {target.label}
-                        {target.volume?.label && ` (${target.volume.label})`}
-                        {target.volume?.target && (
+                        {target.label ?? target.detail}
+                        {target.kind === "Drive" &&
+                          target.volume?.label &&
+                          ` (${target.volume.label})`}
+                        {target.label != null && target.detail != null && (
                           <span className={menuStyles.itemDetail}>
-                            {target.volume.target}
+                            {target.detail}
                           </span>
                         )}
                       </>
@@ -525,7 +555,7 @@ function VfsSelector({
                       <>
                         {target.display_name}
                         {target.label && ` (${target.label})`}
-                        {target.vfs_id == null && "…"}
+                        {target.kind === "Connect" && "…"}
                       </>
                     )}
                   </span>
@@ -534,27 +564,30 @@ function VfsSelector({
                       {formatBytes(target.available_bytes)} free
                     </span>
                   )}
-                  {isActive && (
-                    <span className={menuStyles.itemCheck}>{"\u2713"}</span>
+                  {i === activeIndex && (
+                    <span className={menuStyles.itemCheck}>{"✓"}</span>
                   )}
-                  {target.vfs_id != null && target.type_name !== "local" && (
-                    <button
-                      className={menuStyles.itemDismiss}
-                      title="Disconnect"
-                      // Mouse-only: focus never leaves the menu item, and
-                      // the keyboard route is the unmount_vfs command.
-                      aria-hidden
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (target.vfs_id !== null) {
-                          safe(commands.unmountVfs(paneHandle, target.vfs_id));
-                        }
-                      }}
-                      tabIndex={-1}
-                    >
-                      {"\u2715"}
-                    </button>
-                  )}
+                  {(target.kind === "Mounted" || target.kind === "Drive") &&
+                    target.type_name !== "local" && (
+                      <button
+                        className={menuStyles.itemDismiss}
+                        title="Disconnect"
+                        // Mouse-only: focus never leaves the menu item, and
+                        // the keyboard route is the unmount_vfs command.
+                        aria-hidden
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (target.vfs_id !== null) {
+                            safe(
+                              commands.unmountVfs(paneHandle, target.vfs_id),
+                            );
+                          }
+                        }}
+                        tabIndex={-1}
+                      >
+                        {"✕"}
+                      </button>
+                    )}
                 </DropdownMenu.Item>
                 {groupEnd && (
                   <DropdownMenu.Separator className={menuStyles.separator} />

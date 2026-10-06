@@ -20,12 +20,10 @@ Design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`, `design_docs/DESIGN_ENRICHERS_
 
 ## Platform locations (hot paths, promoted)
 
-Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. **Not yet decided — awaiting a go/no-go on the design**; doctrine (platform mounts → `LocalVfs`, discovery/enrichment only, no native SMB/NFS/FTP clients) is settled, surfaces and scope are the open questions.
+Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts → `LocalVfs`, discovery/enrichment only, no native SMB/NFS/FTP clients) is settled. Volumes are classified and listed in the VFS selector, queried when it opens (no change events).
 
-- Add `volume: Option<VolumeInfo>` to `HotPathEntry` (Windows collector already has it via `local_roots()` and discards it; Linux/macOS collectors gain the existing `volume.rs` probes).
-- Broaden the Linux Mount collector: include by fs type (cifs/nfs/fuse.sshfs/…) regardless of prefix; enumerate + name-parse `/run/user/$UID/gvfs/`; keep the pseudo-fs blocklist.
-- Classify macOS `/Volumes` entries via the statfs probe; dedupe the boot volume.
-- VFS selector "Locations" section (mounts slice, volume icon/label/target treatment, eject on ×) + mount-table change events on Unix (`mountinfo` is pollable; macOS focus-sweep or DiskArbitration) feeding the existing refresh path.
+- Eject/unmount a volume from the VFS selector (×), dispatched by what mounted it: `gio mount -u` (gvfs), `udisksctl unmount` (media), `diskutil unmount` (macOS).
+- Volumes of agent mounts (SSH, containers): the sub-agent has no Hot Paths provider.
 - Breadcrumb/header enrichment via a pushed location-prefix → label map (open question whether v1).
 
 ## Session memory (`sessions.json`)

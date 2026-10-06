@@ -46,4 +46,6 @@ export const VOLUME_KIND_LABELS: Record<string, string> = {
   Network: "Network drive",
   RamDisk: "RAM disk",
   Substituted: "Substituted drive",
+  DiskImage: "Disk image",
+  Device: "Device",
 };

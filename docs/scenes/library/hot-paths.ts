@@ -14,6 +14,7 @@ const entry = (
   name,
   category,
   bookmark_key: category === "UserBookmark" ? path : null,
+  volume: null,
 });
 
 const scene: Scene = {

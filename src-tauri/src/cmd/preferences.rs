@@ -166,6 +166,7 @@ pub async fn get_hot_paths(
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
             bookmark_key: Some(bm.path.clone()),
+            volume: None,
         });
     }
 

@@ -663,9 +663,9 @@ async discoverKubePods(openIn: OpenIn, context: string | null, namespace: string
     else return { status: "error", error: e  as any };
 }
 },
-async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string, root: string | null) : Promise<Result<null, string>> {
+async switchVfs(paneHandle: PaneHandle, vfsId: VfsId | null, typeName: string, path: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName, root }) };
+    return { status: "ok", data: await TAURI_INVOKE("switch_vfs", { paneHandle, vfsId, typeName, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2631,7 +2631,11 @@ export type GitEntryStatus = "ignored" | "untracked" | "added" | "renamed" | "mo
  */
 export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
-export type HotPathEntry = { path: VfsPath; display_path: string; name: string | null; category: HotPathCategory; bookmark_key: string | null }
+export type HotPathEntry = { path: VfsPath; display_path: string; name: string | null; category: HotPathCategory; bookmark_key: string | null; 
+/**
+ * What kind of storage a mount is, for its icon.
+ */
+volume: VolumeInfo | null }
 export type HotPathsPreferences = { 
 /**
  * Show standard folders (Home, Downloads, Documents, etc.)
@@ -2648,7 +2652,11 @@ mounts: boolean;
 /**
  * Show recently visited folders
  */
-recent_folders: boolean }
+recent_folders: boolean; 
+/**
+ * Also list mounted volumes in the VFS selector dropdown.
+ */
+mounts_in_vfs_selector: boolean }
 export type ImageBackground = "dark" | "checkerboard" | "light"
 /**
  * A file's details, with what its associations make of it.
@@ -3641,26 +3649,31 @@ processed: number | null; total: number | null;
  * in the pipeline parses them.
  */
 extra: Partial<{ [key in string]: string }> }
-export type VfsTarget = { vfs_id: VfsId | null; type_name: string; display_name: string; 
+export type VfsTarget = { kind: VfsTargetKind; vfs_id: VfsId | null; type_name: string; display_name: string; 
 /**
- * Human-readable label for a mounted instance (e.g. hostname for
- * SFTP, or the drive for a split-root entry).
+ * Human-readable label: a mount's (e.g. hostname for SFTP), a
+ * drive (`C:\`), or a volume's name.
  */
 label: string | null; 
+/**
+ * Dimmed text after the label: where a drive points (a mapped UNC
+ * path, a subst alias), a volume's path, or the root of a filesystem
+ * listed with its volumes.
+ */
+detail: string | null; 
 /**
  * Dialog to open when user selects this unmounted VFS type.
  * If None and vfs_id is None, the type supports auto-mount.
  */
 mount_dialog: string | null; 
 /**
- * Specific root to land on. `Some` only for split-root VFSes
- * (one target per drive); selecting it navigates straight there
- * instead of the VFS's default `initial_path`.
+ * Where selecting a drive or a volume lands. `None` lands on the
+ * filesystem's default `initial_path`.
  */
-root: string | null; 
+path: string | null; 
 /**
- * Volume classification for a split-root entry (drive kind, label,
- * UNC/subst target), recorded at mount time on the owning side.
+ * A drive's classification (kind, label, UNC/subst target),
+ * recorded at mount time on the owning side.
  */
 volume: VolumeInfo | null; 
 /**
@@ -3669,6 +3682,28 @@ volume: VolumeInfo | null;
  * (a dead network drive must not stall the dropdown).
  */
 available_bytes: number | null }
+/**
+ * What a VFS selector entry stands for.
+ */
+export type VfsTargetKind = 
+/**
+ * A mounted filesystem, as a whole.
+ */
+"Mounted" | 
+/**
+ * One drive of a split-root filesystem.
+ */
+"Drive" | 
+/**
+ * A volume mounted inside a filesystem, listed after it; the two are
+ * grouped like a split-root filesystem's drives. Not part of the
+ * filesystem's description: queried when the selector opens.
+ */
+"Volume" | 
+/**
+ * A filesystem type to connect to.
+ */
+"Connect"
 /**
  * Detection state for the viewer's current file.
  */
@@ -3741,7 +3776,15 @@ export type VolumeKind =
 /**
  * Windows `subst` drive — a letter aliasing a local directory.
  */
-"Substituted" | "Unknown"
+"Substituted" | 
+/**
+ * A disk image the OS mounted: a DMG, a loop-mounted ISO or image.
+ */
+"DiskImage" | 
+/**
+ * A phone or a camera, over MTP or PTP.
+ */
+"Device" | "Unknown"
 /**
  * One installed WSL distribution. Serialized into the picker modal payload.
  */

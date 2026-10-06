@@ -898,23 +898,42 @@ impl serde::Serialize for DndState {
     }
 }
 
+/// What a VFS selector entry stands for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, specta::Type)]
+pub enum VfsTargetKind {
+    /// A mounted filesystem, as a whole.
+    Mounted,
+    /// One drive of a split-root filesystem.
+    Drive,
+    /// A volume mounted inside a filesystem, listed after it; the two are
+    /// grouped like a split-root filesystem's drives. Not part of the
+    /// filesystem's description: queried when the selector opens.
+    Volume,
+    /// A filesystem type to connect to.
+    Connect,
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct VfsTarget {
+    pub kind: VfsTargetKind,
     pub vfs_id: Option<VfsId>,
     pub type_name: String,
     pub display_name: String,
-    /// Human-readable label for a mounted instance (e.g. hostname for
-    /// SFTP, or the drive for a split-root entry).
+    /// Human-readable label: a mount's (e.g. hostname for SFTP), a
+    /// drive (`C:\`), or a volume's name.
     pub label: Option<String>,
+    /// Dimmed text after the label: where a drive points (a mapped UNC
+    /// path, a subst alias), a volume's path, or the root of a filesystem
+    /// listed with its volumes.
+    pub detail: Option<String>,
     /// Dialog to open when user selects this unmounted VFS type.
     /// If None and vfs_id is None, the type supports auto-mount.
     pub mount_dialog: Option<String>,
-    /// Specific root to land on. `Some` only for split-root VFSes
-    /// (one target per drive); selecting it navigates straight there
-    /// instead of the VFS's default `initial_path`.
-    pub root: Option<newt_common::vfs::path::PathBuf>,
-    /// Volume classification for a split-root entry (drive kind, label,
-    /// UNC/subst target), recorded at mount time on the owning side.
+    /// Where selecting a drive or a volume lands. `None` lands on the
+    /// filesystem's default `initial_path`.
+    pub path: Option<newt_common::vfs::path::PathBuf>,
+    /// A drive's classification (kind, label, UNC/subst target),
+    /// recorded at mount time on the owning side.
     pub volume: Option<newt_common::vfs::VolumeInfo>,
     /// Free bytes on the target's volume. Always `None` at open — the
     /// selector opens instantly and a background fetch fills these in
@@ -1785,12 +1804,14 @@ impl MainWindowContext {
                 let display_name = s.vfs_info.display_name(*vfs_id).unwrap_or_default();
                 if info.descriptor.has_unified_root(&info.mount_meta) {
                     targets.push(VfsTarget {
+                        kind: VfsTargetKind::Mounted,
                         vfs_id: Some(*vfs_id),
                         type_name: info.descriptor.type_name().to_string(),
                         display_name,
                         label: info.descriptor.mount_label(&info.mount_meta),
+                        detail: None,
                         mount_dialog: None,
-                        root: None,
+                        path: None,
                         volume: None,
                         available_bytes: None,
                     });
@@ -1799,12 +1820,14 @@ impl MainWindowContext {
                     // labelled with the drive (`C:\`).
                     for root in info.descriptor.roots(&info.mount_meta) {
                         targets.push(VfsTarget {
+                            kind: VfsTargetKind::Drive,
                             vfs_id: Some(*vfs_id),
                             type_name: info.descriptor.type_name().to_string(),
                             display_name: display_name.clone(),
                             label: Some(info.descriptor.format_path(&root.path, &info.mount_meta)),
+                            detail: root.volume.as_ref().and_then(|v| v.target.clone()),
                             mount_dialog: None,
-                            root: Some(root.path),
+                            path: Some(root.path),
                             volume: root.volume,
                             available_bytes: None,
                         });
@@ -1820,12 +1843,14 @@ impl MainWindowContext {
             let mount_dialog = mount_dialog_for(desc.type_name()).map(|s| s.to_string());
             if desc.auto_mount_request().is_some() || mount_dialog.is_some() {
                 targets.push(VfsTarget {
+                    kind: VfsTargetKind::Connect,
                     vfs_id: None,
                     type_name: desc.type_name().to_string(),
                     display_name: desc.display_name().to_string(),
                     label: None,
+                    detail: None,
                     mount_dialog,
-                    root: None,
+                    path: None,
                     volume: None,
                     available_bytes: None,
                 });
@@ -1836,19 +1861,21 @@ impl MainWindowContext {
         // mount. Offered unconditionally — even inside a remote session the
         // user may want to peek at another host.
         targets.push(VfsTarget {
+            kind: VfsTargetKind::Connect,
             vfs_id: None,
             type_name: "remote".to_string(),
             display_name: "Remote".to_string(),
             label: None,
+            detail: None,
             mount_dialog: Some("mount_remote".to_string()),
-            root: None,
+            path: None,
             volume: None,
             available_bytes: None,
         });
 
         targets.sort_by(|a, b| match (a.vfs_id, b.vfs_id) {
             // Same VFS → keep split-root drives in a stable order.
-            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b).then_with(|| a.root.cmp(&b.root)),
+            (Some(id_a), Some(id_b)) => id_a.cmp(&id_b).then_with(|| a.path.cmp(&b.path)),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a.type_name.cmp(&b.type_name),

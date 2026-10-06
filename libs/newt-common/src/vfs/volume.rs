@@ -25,6 +25,10 @@ pub enum VolumeKind {
     RamDisk,
     /// Windows `subst` drive — a letter aliasing a local directory.
     Substituted,
+    /// A disk image the OS mounted: a DMG, a loop-mounted ISO or image.
+    DiskImage,
+    /// A phone or a camera, over MTP or PTP.
+    Device,
     Unknown,
 }
 
@@ -269,18 +273,35 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
             best = Some(entry);
         }
     }
-    let MountInfoEntry {
-        mount_point,
-        fs_type,
-        source,
-    } = best?;
+    let best = best?;
+    // Under the gvfs FUSE bridge, the mount is the per-location directory.
+    if best.fs_type == GVFS_FUSE {
+        let mount_point = std::path::Path::new(&best.mount_point);
+        let name = path.strip_prefix(mount_point).ok()?.components().next()?;
+        return Some(gvfs_volume(
+            &name.as_os_str().to_string_lossy(),
+            &mount_point.join(name),
+        ));
+    }
+    Some(classify(&best))
+}
 
+/// Filesystem type of the gvfs FUSE bridge, mounted at
+/// `/run/user/$UID/gvfs` with one directory per GNOME-mounted location.
+#[cfg(target_os = "linux")]
+pub(crate) const GVFS_FUSE: &str = "fuse.gvfsd-fuse";
+
+/// Whether a mount of this filesystem type reaches over the network.
+#[cfg(target_os = "linux")]
+pub(crate) fn is_network_fs(fs_type: &str) -> bool {
     const NETWORK_FS: &[&str] = &[
         "cifs",
         "smb3",
         "smbfs",
         "sshfs",
         "fuse.sshfs",
+        "fuse.rclone",
+        "fuse.kio-fuse",
         "ceph",
         "9p",
         "davfs",
@@ -288,15 +309,27 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         "glusterfs",
         "afs",
     ];
+    fs_type.starts_with("nfs") || NETWORK_FS.contains(&fs_type)
+}
 
-    let (kind, target) = if fs_type.starts_with("nfs") || NETWORK_FS.contains(&fs_type.as_str()) {
+/// Classify a mount-table entry.
+#[cfg(target_os = "linux")]
+pub(crate) fn classify(entry: &MountInfoEntry) -> VolumeInfo {
+    let MountInfoEntry {
+        mount_point,
+        fs_type,
+        source,
+    } = entry;
+    let (kind, target) = if is_network_fs(fs_type) {
         (VolumeKind::Network, Some(source.clone()))
     } else if fs_type == "tmpfs" || fs_type == "ramfs" {
         (VolumeKind::RamDisk, None)
+    } else if source.starts_with("/dev/loop") {
+        (VolumeKind::DiskImage, None)
     } else if fs_type == "iso9660" || fs_type == "udf" {
         (VolumeKind::Optical, None)
     } else if source.starts_with("/dev/") {
-        if linux_removable(&source) {
+        if linux_removable(source) {
             (VolumeKind::Removable, None)
         } else {
             (VolumeKind::Fixed, None)
@@ -305,17 +338,89 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         (VolumeKind::Unknown, None)
     };
 
-    Some(VolumeInfo {
+    VolumeInfo {
         kind,
-        fs_type: Some(fs_type),
-        label: linux_label(&source),
+        fs_type: Some(fs_type.clone()),
+        label: linux_label(source),
         target,
         mount_point: Some(
-            super::path::PathBuf::from_native(std::path::Path::new(&mount_point))
+            super::path::PathBuf::from_native(std::path::Path::new(mount_point))
                 .as_wire_str()
                 .to_string(),
         ),
-    })
+    }
+}
+
+/// A location the gvfs FUSE bridge exposes, from its directory name:
+/// `smb-share:server=nas,share=media`, `sftp:host=example.com,user=me`,
+/// `mtp:host=Google_Pixel_7_…`. Values are percent-escaped.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn gvfs_volume(name: &str, mount_point: &std::path::Path) -> VolumeInfo {
+    let (scheme, params) = name.split_once(':').unwrap_or((name, ""));
+    let param = |key: &str| {
+        params.split(',').find_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            (k == key).then(|| percent_decode(v))
+        })
+    };
+    let host = param("host").or_else(|| param("server"));
+    let (kind, label, target) = match scheme {
+        "mtp" | "gphoto2" | "afc" => (VolumeKind::Device, host.map(|h| h.replace('_', " ")), None),
+        "smb-share" => {
+            let share = param("share");
+            let label = match (&share, &host) {
+                (Some(share), Some(host)) => Some(format!("{share} on {host}")),
+                _ => share.clone().or_else(|| host.clone()),
+            };
+            let target = host.map(|h| format!("smb://{h}/{}", share.unwrap_or_default()));
+            (VolumeKind::Network, label, target)
+        }
+        "smb-server" | "sftp" | "ftp" | "ftps" | "dav" | "davs" | "afp-volume" | "nfs"
+        | "google-drive" | "onedrive" => {
+            let target = host.as_ref().map(|h| {
+                let user = param("user").map(|u| format!("{u}@")).unwrap_or_default();
+                let base = scheme
+                    .trim_end_matches("-server")
+                    .trim_end_matches("-volume");
+                format!("{base}://{user}{h}")
+            });
+            (VolumeKind::Network, host, target)
+        }
+        _ => (VolumeKind::Unknown, None, None),
+    };
+    VolumeInfo {
+        kind,
+        fs_type: Some("gvfs".to_string()),
+        label: Some(label.unwrap_or_else(|| name.to_string())),
+        target,
+        mount_point: Some(
+            super::path::PathBuf::from_native(mount_point)
+                .as_wire_str()
+                .to_string(),
+        ),
+    }
+}
+
+/// Undo `%XX` escaping; anything malformed is kept as it is.
+#[cfg(any(target_os = "linux", test))]
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(byte) = s
+                .get(i + 1..i + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Whether the block device backing `source` reports itself removable.
@@ -410,7 +515,38 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
     if unsafe { libc::statfs(c_path.as_ptr(), &mut st) } != 0 {
         return None;
     }
+    Some(classify(&st))
+}
 
+/// The volumes mounted under `/Volumes` that Finder would show, by mount
+/// point. From the kernel's mount table (`getmntinfo`, `MNT_NOWAIT`), so a
+/// stalled network share is listed without being contacted; `/Volumes`
+/// itself also holds a link to the boot volume, which isn't a mount.
+#[cfg(target_os = "macos")]
+pub(crate) fn mounted_volumes() -> Vec<(std::path::PathBuf, VolumeInfo)> {
+    let mut mounts: *mut libc::statfs = std::ptr::null_mut();
+    // SAFETY: on success `mounts` points at `count` entries in a buffer the
+    // C library owns and reuses on the next call; they are read before
+    // returning.
+    let count = unsafe { libc::getmntinfo(&mut mounts, libc::MNT_NOWAIT) };
+    if count <= 0 || mounts.is_null() {
+        return Vec::new();
+    }
+    let mounts = unsafe { std::slice::from_raw_parts(mounts, count as usize) };
+    mounts
+        .iter()
+        .filter(|st| st.f_flags & (libc::MNT_DONTBROWSE as u32) == 0)
+        .filter_map(|st| {
+            let on = cchar_field(&st.f_mntonname)?;
+            let name = on.strip_prefix("/Volumes/")?;
+            (!name.is_empty() && !name.contains('/'))
+                .then(|| (std::path::PathBuf::from(&on), classify(st)))
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn classify(st: &libc::statfs) -> VolumeInfo {
     let fs_type = cchar_field(&st.f_fstypename);
     let from = cchar_field(&st.f_mntfromname);
     let on = cchar_field(&st.f_mntonname);
@@ -422,7 +558,11 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         match fs_type.as_deref() {
             Some("cd9660") | Some("udf") => VolumeKind::Optical,
             Some("tmpfs") => VolumeKind::RamDisk,
-            _ => VolumeKind::Fixed,
+            _ => from
+                .as_deref()
+                .and_then(|from| from.strip_prefix("/dev/"))
+                .and_then(disk_arbitration::kind)
+                .unwrap_or(VolumeKind::Fixed),
         }
     };
 
@@ -433,12 +573,12 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
         .filter(|rest| !rest.is_empty() && !rest.contains('/'))
         .map(|rest| rest.to_string());
 
-    Some(VolumeInfo {
+    VolumeInfo {
         kind,
         fs_type,
         label,
         target: if kind == VolumeKind::Network {
-            from
+            from.as_deref().map(without_password)
         } else {
             None
         },
@@ -447,7 +587,105 @@ pub fn probe_native(path: &std::path::Path) -> Option<VolumeInfo> {
                 .as_wire_str()
                 .to_string()
         }),
-    })
+    }
+}
+
+/// What DiskArbitration knows about a local disk that `statfs` doesn't:
+/// whether it's a disk image, or external. Local IPC to `diskarbitrationd`;
+/// no disk is touched.
+#[cfg(target_os = "macos")]
+mod disk_arbitration {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::{CFString, CFStringRef};
+    use core_foundation_sys::base::{CFAllocatorRef, CFRelease, CFTypeRef, kCFAllocatorDefault};
+    use core_foundation_sys::dictionary::CFDictionaryRef;
+
+    use super::VolumeKind;
+
+    #[link(name = "DiskArbitration", kind = "framework")]
+    unsafe extern "C" {
+        fn DASessionCreate(allocator: CFAllocatorRef) -> CFTypeRef;
+        fn DADiskCreateFromBSDName(
+            allocator: CFAllocatorRef,
+            session: CFTypeRef,
+            name: *const std::ffi::c_char,
+        ) -> CFTypeRef;
+        fn DADiskCopyDescription(disk: CFTypeRef) -> CFDictionaryRef;
+        static kDADiskDescriptionDeviceProtocolKey: CFStringRef;
+        static kDADiskDescriptionDeviceModelKey: CFStringRef;
+        static kDADiskDescriptionDeviceInternalKey: CFStringRef;
+    }
+
+    /// `bsd_name` is the device without `/dev/` (`disk4s1`).
+    pub(super) fn kind(bsd_name: &str) -> Option<VolumeKind> {
+        let name = std::ffi::CString::new(bsd_name).ok()?;
+        // SAFETY: each Create/Copy result is released once, below, or
+        // handed to a wrapper that releases it; the key statics are
+        // constants the framework owns.
+        unsafe {
+            let session = DASessionCreate(kCFAllocatorDefault);
+            if session.is_null() {
+                return None;
+            }
+            let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, name.as_ptr());
+            let description = if disk.is_null() {
+                std::ptr::null()
+            } else {
+                DADiskCopyDescription(disk)
+            };
+            if !disk.is_null() {
+                CFRelease(disk);
+            }
+            CFRelease(session);
+            if description.is_null() {
+                return None;
+            }
+            let description: CFDictionary<CFString, CFType> =
+                CFDictionary::wrap_under_create_rule(description);
+            let string = |key: CFStringRef| {
+                description
+                    .find(CFString::wrap_under_get_rule(key))
+                    .and_then(|v| v.downcast::<CFString>())
+                    .map(|v| v.to_string().trim().to_string())
+            };
+            let internal = description
+                .find(CFString::wrap_under_get_rule(
+                    kDADiskDescriptionDeviceInternalKey,
+                ))
+                .and_then(|v| v.downcast::<CFBoolean>())
+                .map(bool::from);
+            // An image reports its model as "Disk Image" (its protocol is
+            // "Virtual Interface"); older releases put it in the protocol.
+            let image = [
+                kDADiskDescriptionDeviceModelKey,
+                kDADiskDescriptionDeviceProtocolKey,
+            ]
+            .into_iter()
+            .any(|key| string(key).as_deref() == Some("Disk Image"));
+            Some(if image {
+                VolumeKind::DiskImage
+            } else if internal == Some(false) {
+                VolumeKind::Removable
+            } else {
+                VolumeKind::Fixed
+            })
+        }
+    }
+}
+
+/// A mount source (`//user:secret@server/share`) with any password in
+/// its user part left out.
+#[cfg(any(target_os = "macos", test))]
+fn without_password(source: &str) -> String {
+    let Some((user_part, rest)) = source.split_once('@') else {
+        return source.to_string();
+    };
+    match user_part.split_once(':') {
+        Some((user, _)) => format!("{user}@{rest}"),
+        None => source.to_string(),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -467,6 +705,54 @@ fn cchar_field(buf: &[libc::c_char]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mount_source_shows_no_password() {
+        assert_eq!(
+            without_password("//GUEST:@ARIADNE._smb._tcp.local/share"),
+            "//GUEST@ARIADNE._smb._tcp.local/share"
+        );
+        assert_eq!(without_password("//me:secret@nas/share"), "//me@nas/share");
+        assert_eq!(without_password("//nas/share"), "//nas/share");
+    }
+
+    #[test]
+    fn gvfs_locations_are_labelled_by_scheme() {
+        let at = std::path::Path::new("/run/user/1000/gvfs/x");
+        let smb = gvfs_volume("smb-share:server=192.168.0.32,share=my%20share", at);
+        assert_eq!(smb.kind, VolumeKind::Network);
+        assert_eq!(smb.label.as_deref(), Some("my share on 192.168.0.32"));
+        assert_eq!(smb.target.as_deref(), Some("smb://192.168.0.32/my share"));
+
+        let sftp = gvfs_volume("sftp:host=nas.home.arpa,user=demo", at);
+        assert_eq!(sftp.kind, VolumeKind::Network);
+        assert_eq!(sftp.label.as_deref(), Some("nas.home.arpa"));
+        assert_eq!(sftp.target.as_deref(), Some("sftp://demo@nas.home.arpa"));
+
+        let phone = gvfs_volume("mtp:host=Google_Pixel_7", at);
+        assert_eq!(phone.kind, VolumeKind::Device);
+        assert_eq!(phone.label.as_deref(), Some("Google Pixel 7"));
+
+        let unknown = gvfs_volume("archive:host=file%3A%2F%2F%2Ftmp%2Fa.zip", at);
+        assert_eq!(unknown.kind, VolumeKind::Unknown);
+        assert_eq!(
+            unknown.label.as_deref(),
+            Some("archive:host=file%3A%2F%2F%2Ftmp%2Fa.zip")
+        );
+    }
+
+    /// Whatever is mounted on the machine running the tests: each volume
+    /// sits right under `/Volumes`, and the boot volume (only a link
+    /// there) isn't one of them.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mounted_volumes_are_under_volumes() {
+        for (path, info) in mounted_volumes() {
+            println!("{}: {info:?}", path.display());
+            assert_eq!(path.parent(), Some(std::path::Path::new("/Volumes")));
+            assert!(std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_symlink()));
+        }
+    }
 
     /// Machine-independent smoke: wherever the tests run from is a real
     /// volume, so it must classify to *something*.

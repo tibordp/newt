@@ -1330,6 +1330,7 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
   - S3: Mounts immediately on selection (uses ambient credentials).
   - SFTP: Opens hostname input dialog.
   - Remote: Opens the Connect dialog (`DialogKind::MountRemote`) with "Open as a new session" defaulted off, i.e. pre-scoped to a pane mount whatever the session mode. Always offered, even inside a remote session.
+- **Volumes** (`hot_paths.mounts_in_vfs_selector`, default on): the mounted volumes Hot Paths lists (see Hot Paths below) appear in a section for the filesystem they're mounted in, the way a split-root filesystem's drives do: a header with the filesystem's name, its root (`/`), then each volume with an icon for its kind (disk, USB drive, disc, disk image, network share, phone or camera), where it's mounted — or, for a network share, where it points (`//user@server/share`, with any password left out) — and its free space. Selecting one navigates the pane there; it's an ordinary path, nothing is mounted or unmounted. They're listed for each filesystem that is a machine's own: the session's root, and in a remote session also this computer's filesystem when it's mounted there, so each machine's volumes sit under its own entry. The list is queried each time the dropdown opens and fills in after it has opened, so a stalled network mount can't hold it up. Volumes the selector already lists as drives (all of them, on Windows) aren't repeated. The ✓ marks the most specific entry holding the pane's path: a volume rather than the filesystem it's mounted in.
 - **Unmount button** (×) on mounted VFSes (except Local).
 - Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
 - **Drive classification** (split-root FSes, i.e. Windows drives): each per-drive entry carries a `VolumeInfo` probed at mount time on the FS-owning side (so a remote Windows host's drives classify too) — a kind-specific icon (fixed / removable / optical / network / RAM disk / subst), the volume label after the drive letter, and a dimmed target for drives that point elsewhere (`\\server\share` for mapped network drives, the aliased directory for subst). Recorded in `mount_meta` alongside the roots.
@@ -1484,7 +1485,7 @@ A fuzzy-searchable palette for quick navigation to common locations.
 | User Bookmarks | User-added bookmarks from `settings.toml` `[[bookmark]]` entries |
 | Standard Folders | Home, Desktop, Downloads, Documents, Pictures, Music, Videos |
 | System Bookmarks | GTK bookmarks (`~/.config/gtk-3.0/bookmarks`) on Linux |
-| Mounted Volumes | Entries in `/proc/self/mountinfo` filtered to `/media/`, `/run/media/`, `/mnt/` on Linux; `/Volumes` on macOS; logical drives (`C:`, `D:`, …) on Windows |
+| Mounted Volumes | Linux: network mounts (cifs, nfs, sshfs, rclone, kio-fuse, …) wherever they're mounted, other mounts under `/media/`, `/run/media/` and `/mnt/`, and the locations GNOME has mounted (Nautilus' Other Locations, a phone over MTP) through the gvfs FUSE bridge at `/run/user/$UID/gvfs`, labelled like "media on nas". macOS: what's mounted under `/Volumes`, from the kernel's mount table, so the boot volume's link there isn't listed. Windows: logical drives (`C:`, `D:`, …). Mounts are never stat'ed while listing, so a stalled network share can't hold up the dialog. Each is classified (disk, removable drive, disc, disk image, network share, device; on macOS through DiskArbitration) |
 | Mounted VFS | Currently mounted S3, SFTP, and archive filesystems |
 | Recent Folders | `recently-used.xbel` on Linux (top 20 by modification time); Finder GoToFieldHistory on macOS |
 
@@ -1720,6 +1721,7 @@ standard_folders = true     # Show Home, Downloads, Documents, etc.
 system_bookmarks = true     # Show GTK bookmarks (Linux)
 mounts = true               # Show mounted volumes
 recent_folders = true       # Show recently visited directories
+mounts_in_vfs_selector = true  # Also list mounted volumes in the VFS selector
 
 [quick_open]                # Go to File (Mod+G)
 gitignore = true            # Leave out what .gitignore files and .git/info/exclude ignore

@@ -18,6 +18,8 @@ pub struct HotPathEntry {
     pub name: Option<String>,
     pub category: HotPathCategory,
     pub bookmark_key: Option<String>,
+    /// What kind of storage a mount is, for its icon.
+    pub volume: Option<crate::vfs::VolumeInfo>,
 }
 
 #[async_trait::async_trait]
@@ -66,6 +68,19 @@ fn make_entry(
         name,
         category,
         bookmark_key: None,
+        volume: None,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn mount_entry(path: &std::path::Path, volume: crate::vfs::VolumeInfo) -> HotPathEntry {
+    let name = volume
+        .label
+        .clone()
+        .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()));
+    HotPathEntry {
+        volume: Some(volume),
+        ..make_entry(path.to_path_buf(), name, HotPathCategory::Mount)
     }
 }
 
@@ -111,6 +126,7 @@ fn collect_windows_drives(out: &mut Vec<HotPathEntry>) {
             name,
             category: HotPathCategory::Mount,
             bookmark_key: None,
+            volume: root.volume,
         });
     }
 }
@@ -188,6 +204,8 @@ fn collect_gtk_bookmarks(out: &mut Vec<HotPathEntry>) {
 
 #[cfg(target_os = "linux")]
 fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
+    use crate::vfs::volume::{GVFS_FUSE, classify, gvfs_volume, is_network_fs};
+
     let pseudo_fs_types = [
         "sysfs",
         "proc",
@@ -215,26 +233,33 @@ fn collect_linux_mounts(out: &mut Vec<HotPathEntry>) {
         "nfsd",
     ];
 
+    // Nothing here is stat'ed: the mount table is authoritative, and a
+    // stalled network mount would hang the call.
     for mount in crate::vfs::volume::read_mountinfo() {
-        if pseudo_fs_types.contains(&mount.fs_type.as_str()) {
+        if mount.fs_type == GVFS_FUSE {
+            // One directory per location GNOME has mounted (Nautilus'
+            // "Other Locations", a phone over MTP). Listing it asks the
+            // gvfs daemon, not the servers behind it.
+            let Ok(dir) = std::fs::read_dir(&mount.mount_point) else {
+                continue;
+            };
+            for entry in dir.flatten() {
+                let path = entry.path();
+                let volume = gvfs_volume(&entry.file_name().to_string_lossy(), &path);
+                out.push(mount_entry(&path, volume));
+            }
             continue;
         }
-
-        // Only include mounts under /media, /run/media, or /mnt
-        let dominated = mount.mount_point.starts_with("/media/")
-            || mount.mount_point.starts_with("/run/media/")
-            || mount.mount_point.starts_with("/mnt/");
-
-        if !dominated {
-            continue;
-        }
-
-        let mount_path = std::path::PathBuf::from(&mount.mount_point);
-        if mount_path.exists() {
-            let name = mount_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string());
-            out.push(make_entry(mount_path, name, HotPathCategory::Mount));
+        // Network mounts wherever they are; local media where udisks and
+        // admins put it.
+        let listed = is_network_fs(&mount.fs_type)
+            || (!pseudo_fs_types.contains(&mount.fs_type.as_str())
+                && (mount.mount_point.starts_with("/media/")
+                    || mount.mount_point.starts_with("/run/media/")
+                    || mount.mount_point.starts_with("/mnt/")));
+        if listed {
+            let path = std::path::PathBuf::from(&mount.mount_point);
+            out.push(mount_entry(&path, classify(&mount)));
         }
     }
 }
@@ -341,17 +366,8 @@ fn collect_recent_xbel(out: &mut Vec<HotPathEntry>) {
 
 #[cfg(target_os = "macos")]
 fn collect_macos_volumes(out: &mut Vec<HotPathEntry>) {
-    use std::fs;
-
-    let volumes = match fs::read_dir("/Volumes") {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-
-    for entry in volumes.flatten() {
-        let path = entry.path();
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string());
-        out.push(make_entry(path, name, HotPathCategory::Mount));
+    for (path, volume) in crate::vfs::volume::mounted_volumes() {
+        out.push(mount_entry(&path, volume));
     }
 }
 
