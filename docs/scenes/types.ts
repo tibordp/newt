@@ -3,6 +3,7 @@ import type {
   MainWindowState,
   ResolvedPreferences,
   RuntimeState,
+  ViewerMode,
   ViewerState,
 } from "../../src/lib/bindings";
 
@@ -17,7 +18,13 @@ export type Step =
 /// Content served for a path the window reads (`file_details`,
 /// `read_file`, the viewer's file server). `url` is a Vite asset URL,
 /// typically `import x from "../fixtures/foo.rs?url"`.
-export type Fixture = { url: string; mime: string | null };
+export type Fixture = {
+  url: string;
+  mime: string | null;
+  /// The mode the viewer detects, where the MIME type alone doesn't tell
+  /// (Structure for a binary the dissector recognises).
+  viewerMode?: ViewerMode;
+};
 
 type SceneCommon = {
   /// One line on what the shot shows; listed on the scene index page.

@@ -272,6 +272,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::viewer::dissect::dissect_source,
             crate::viewer::dissect::dissect_read,
             crate::viewer::dissect::dissect_copy,
+            crate::viewer::dissect::dissect_save,
             crate::viewer::dissect::dissect_answer_secret,
             crate::viewer::cmd_toggle_quick_view,
             crate::viewer::preview_focused,

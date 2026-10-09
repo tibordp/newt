@@ -41,12 +41,17 @@ const PAGE: u64 = 200;
 /// How many children `locate` looks through under one node before giving up
 /// on it.
 const LOCATE_SCAN: usize = 20_000;
+/// How many nodes `locate` looks through below one whose children don't
+/// hold the byte, before it gives up there.
+const LOCATE_SEARCH: usize = 4_096;
 /// How many of a node's children `content_of` looks through for the file it
 /// holds.
 const CONTENT_SCAN: usize = 16;
 const LOCATE_DEPTH: usize = 64;
 /// Largest byte range the hex pane or a copy may ask for at once.
 const MAX_READ: u64 = 16 * 1024 * 1024;
+/// Bytes read at a time when saving a span to a file.
+const SAVE_CHUNK: u64 = 1024 * 1024;
 /// How often a running expansion reports how far it has got, and how long
 /// it runs before it starts to: a quick one never does.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
@@ -355,66 +360,165 @@ impl Dissection {
         })
     }
 
-    /// The path from the root to the innermost node whose bytes include
-    /// `offset` of `source`, expanding along the way; as far as it got
-    /// when stopped.
+    /// The path from the root to the innermost node holding byte `offset`
+    /// of `source`, expanding along the way; as far as it got when stopped.
+    ///
+    /// A node can hold the byte itself or, for a decoded stream, the bytes
+    /// the stream was decoded from: a "Content" node spans the compressed
+    /// data, its fields the stream. Where no child holds either, the nodes
+    /// below are searched, since some formats list a part away from its
+    /// bytes (a ZIP's members under its Central Directory).
     async fn locate(
         &self,
         source: SourceId,
         offset: u64,
         stop: &CancellationToken,
     ) -> Result<Vec<NodeId>, Error> {
-        let at = Span::new(source, offset, 1);
+        let lineage = self.lineage(Span::new(source, offset, 1)).await;
         let mut path = vec![self.root];
         let mut current = self.root;
         while path.len() < LOCATE_DEPTH && !stop.is_cancelled() {
+            let found = match self.holding_child(current, &lineage, stop).await? {
+                Some(child) => vec![child],
+                None => match self.search(current, &lineage, stop).await? {
+                    Some(way) => way,
+                    None => break,
+                },
+            };
+            current = found[found.len() - 1];
+            path.extend(found);
+        }
+        Ok(path)
+    }
+
+    /// `at`, then the bytes each stream it lies in was decoded from, down to
+    /// the file.
+    async fn lineage(&self, at: Span) -> Vec<Span> {
+        let state = self.state.lock().await;
+        let mut lineage = vec![at];
+        while let Some(origin) = state.session.origin(lineage[lineage.len() - 1].source) {
+            lineage.push(origin.parent);
+        }
+        lineage
+    }
+
+    /// How close `id` comes to the byte: 0 if it holds the byte, n if it
+    /// holds the bytes the n-th stream down was decoded from; `None` if
+    /// neither. Also whether it has children, and whether they can lead to
+    /// the byte at all: only through the streams on its lineage.
+    fn reach(state: &DissectionState, id: NodeId, lineage: &[Span]) -> (Option<usize>, bool, bool) {
+        let Some(node) = state.session.node(id) else {
+            return (None, false, false);
+        };
+        let span = node.span.filter(|s| !s.is_empty());
+        let rank = span.and_then(|s| lineage.iter().position(|l| s.contains(l)));
+        let leads = span.is_none_or(|s| lineage.iter().any(|l| l.source == s.source));
+        (rank, node.has_children(), leads)
+    }
+
+    /// The child of `id` that comes closest to the byte, a container before
+    /// a plain field at the same distance; paging through its children.
+    async fn holding_child(
+        &self,
+        id: NodeId,
+        lineage: &[Span],
+        stop: &CancellationToken,
+    ) -> Result<Option<NodeId>, Error> {
+        let mut scanned = 0;
+        loop {
+            let unexpanded = matches!(
+                self.state
+                    .lock()
+                    .await
+                    .session
+                    .children(id)
+                    .map(|c| c.state),
+                Some(ChildState::NotRequested)
+            );
+            if unexpanded {
+                self.expand(id, PAGE, stop).await?;
+            }
+            let (best, more) = {
+                let state = self.state.lock().await;
+                let Some(children) = state.session.children(id) else {
+                    return Ok(None);
+                };
+                let best = children.ids[scanned.min(children.ids.len())..]
+                    .iter()
+                    .filter_map(|&child| {
+                        let (rank, parent, _) = Self::reach(&state, child, lineage);
+                        rank.map(|rank| ((rank, !parent), child))
+                    })
+                    .min_by_key(|(order, _)| *order)
+                    .map(|(_, child)| child);
+                scanned = children.ids.len();
+                (best, children.state == ChildState::More)
+            };
+            if best.is_some() || !more || scanned > LOCATE_SCAN || stop.is_cancelled() {
+                return Ok(best);
+            }
+            self.state.lock().await.session.expand_more(id, PAGE);
+            self.drive(id, stop).await?;
+        }
+    }
+
+    /// The way down from `id` to the nearest node below it that comes close
+    /// to the byte, searched breadth first through the nodes that can lead
+    /// to it, up to `LOCATE_SEARCH` of them.
+    async fn search(
+        &self,
+        id: NodeId,
+        lineage: &[Span],
+        stop: &CancellationToken,
+    ) -> Result<Option<Vec<NodeId>>, Error> {
+        let mut queue = std::collections::VecDeque::from([(id, Vec::new())]);
+        let mut budget = LOCATE_SEARCH;
+        while let Some((parent, way)) = queue.pop_front() {
             let mut scanned = 0;
-            let found = loop {
+            loop {
+                if stop.is_cancelled() || budget == 0 {
+                    return Ok(None);
+                }
                 let unexpanded = matches!(
                     self.state
                         .lock()
                         .await
                         .session
-                        .children(current)
+                        .children(parent)
                         .map(|c| c.state),
                     Some(ChildState::NotRequested)
                 );
                 if unexpanded {
-                    self.expand(current, PAGE, stop).await?;
+                    self.expand(parent, PAGE, stop).await?;
                 }
-                let (hit, more) = {
+                let more = {
                     let state = self.state.lock().await;
-                    let Some(children) = state.session.children(current) else {
-                        break None;
+                    let Some(children) = state.session.children(parent) else {
+                        break;
                     };
-                    let hit = children.ids[scanned.min(children.ids.len())..]
-                        .iter()
-                        .copied()
-                        .find(|&child| {
-                            state
-                                .session
-                                .node(child)
-                                .and_then(|n| n.span)
-                                .is_some_and(|s| !s.is_empty() && s.contains(&at))
-                        });
+                    for &child in &children.ids[scanned.min(children.ids.len())..] {
+                        budget = budget.saturating_sub(1);
+                        let (rank, has_children, leads) = Self::reach(&state, child, lineage);
+                        let mut down = way.clone();
+                        down.push(child);
+                        if rank.is_some() {
+                            return Ok(Some(down));
+                        }
+                        if has_children && leads {
+                            queue.push_back((child, down));
+                        }
+                    }
                     scanned = children.ids.len();
-                    (hit, children.state == ChildState::More)
+                    children.state == ChildState::More && scanned <= LOCATE_SCAN
                 };
-                if hit.is_some() || !more || scanned > LOCATE_SCAN || stop.is_cancelled() {
-                    break hit;
+                if !more {
+                    break;
                 }
-                self.state.lock().await.session.expand_more(current, PAGE);
-                self.drive(current, stop).await?;
-            };
-            match found {
-                Some(child) => {
-                    path.push(child);
-                    current = child;
-                }
-                None => break,
+                self.state.lock().await.session.expand_more(parent, PAGE);
+                self.drive(parent, stop).await?;
             }
         }
-        Ok(path)
+        Ok(None)
     }
 }
 
@@ -1204,6 +1308,54 @@ pub async fn dissect_copy(
     Ok(())
 }
 
+/// Write the bytes of a span to `path`, a file on this machine (chosen in
+/// the save dialog, so a remote session's span lands here too). A save that
+/// is stopped or fails leaves no partial file.
+#[tauri::command]
+#[specta::specta]
+pub async fn dissect_save(
+    global_ctx: State<'_, GlobalContext>,
+    id: u64,
+    source: u32,
+    offset: u64,
+    len: u64,
+    path: String,
+) -> Result<(), Error> {
+    let dissection = global_ctx.dissections.get(id)?;
+    let stop = dissection.token(None);
+    let source = dissection.state.lock().await.source(source)?;
+    let saved = save_span(&dissection, Span::new(source, offset, len), &path, &stop).await;
+    if saved.is_err() {
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+    saved
+}
+
+async fn save_span(
+    dissection: &Dissection,
+    span: Span,
+    path: &str,
+    stop: &CancellationToken,
+) -> Result<(), Error> {
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(path).await?;
+    let mut at = span.offset;
+    while at < span.end() {
+        let len = (span.end() - at).min(SAVE_CHUNK);
+        let bytes = dissection
+            .read(Span::new(span.source, at, len), stop)
+            .await?;
+        // Short at the end of a stream whose length was only a bound.
+        if bytes.is_empty() {
+            break;
+        }
+        file.write_all(&bytes).await?;
+        at += bytes.len() as u64;
+    }
+    file.flush().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1359,6 +1511,141 @@ mod tests {
         (children.state.into(), children.ids.len())
     }
 
+    /// Records the dissection the Structure scene shows
+    /// (`docs/scenes/library/structure-viewer.ts`): a pcap inside a ZIP,
+    /// expanded down to the first TCP header. Run with
+    /// `cargo test -p newt -- --ignored record_structure_scene`.
+    #[tokio::test]
+    #[ignore]
+    async fn record_structure_scene() {
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/scenes/fixtures");
+        let data = std::fs::read(fixtures.join("captures.zip")).unwrap();
+        let dissection = Dissection::open(
+            0,
+            None,
+            Box::new(Bytes(data.clone())),
+            "edge-2026-10-08.zip".into(),
+            data.len() as u64,
+            &[],
+        );
+        let mut path = vec![dissection.root];
+        let way = [
+            "Central Directory",
+            "edge-01/handshake.pcap",
+            "Content",
+            "Packet 0",
+            "TCP",
+        ];
+        for name in way {
+            let parent = path[path.len() - 1];
+            dissection.expand(parent, PAGE, &go()).await.unwrap();
+            let state = dissection.state.lock().await;
+            let child = state
+                .session
+                .children(parent)
+                .unwrap()
+                .ids
+                .iter()
+                .copied()
+                .find(|&id| state.session.node(id).is_some_and(|n| n.name == name))
+                .unwrap_or_else(|| panic!("no {name}"));
+            path.push(child);
+        }
+        let tcp = path[path.len() - 1];
+        dissection.expand(tcp, PAGE, &go()).await.unwrap();
+        let mut state = dissection.state.lock().await;
+        let pages: Vec<_> = path.iter().map(|&id| state.page(id)).collect();
+        let keys: Vec<u32> = path.iter().map(|&id| state.key(id)).collect();
+        let offset = state.session.node(tcp).unwrap().span.unwrap().offset;
+        let recording = serde_json::json!({ "offset": offset, "path": keys, "pages": pages });
+        std::fs::write(
+            fixtures.join("captures.dissection.json"),
+            serde_json::to_string_pretty(&recording).unwrap() + "\n",
+        )
+        .unwrap();
+    }
+
+    async fn names(dissection: &Dissection, path: &[NodeId]) -> Vec<String> {
+        let state = dissection.state.lock().await;
+        path.iter()
+            .map(|&id| state.session.node(id).unwrap().name.to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn locating_a_byte_of_a_member_reaches_past_the_central_directory() {
+        let data = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../docs/scenes/fixtures/captures.zip"),
+        )
+        .unwrap();
+        // The first segment's source port, 51820.
+        let at = data
+            .windows(4)
+            .position(|w| w == [0xca, 0x6c, 0x01, 0xbb])
+            .unwrap() as u64;
+        let dissection = open(data, None).await;
+        let path = dissection.locate(dissection.file, at, &go()).await.unwrap();
+        assert_eq!(
+            names(&dissection, &path).await[1..],
+            [
+                "Central Directory",
+                "edge-01/handshake.pcap",
+                "Content",
+                "Packet 0",
+                "TCP",
+                "Source port"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn locating_a_byte_of_a_decoded_stream_stays_in_it() {
+        let text = "café au lait\n".repeat(500).into_bytes();
+        let dissection = open(zip("notes.txt", &text, true), None).await;
+        let member = find(&dissection, dissection.root, "notes.txt")
+            .await
+            .unwrap();
+        let content = dissection.content_of(member, &go()).await.unwrap().unwrap();
+        dissection.expand(content, PAGE, &go()).await.unwrap();
+        let (stream, packed) = {
+            let state = dissection.state.lock().await;
+            let stream = state
+                .session
+                .children(content)
+                .unwrap()
+                .ids
+                .iter()
+                .find_map(|&id| state.session.node(id).unwrap().span)
+                .unwrap()
+                .source;
+            let packed = state.session.node(content).unwrap().span.unwrap();
+            (stream, packed)
+        };
+        assert_ne!(stream, dissection.file);
+
+        // A byte of the stream: a field of the stream holds it.
+        let path = dissection.locate(stream, 1000, &go()).await.unwrap();
+        assert!(path.contains(&content));
+        let state = dissection.state.lock().await;
+        let last = state
+            .session
+            .node(path[path.len() - 1])
+            .unwrap()
+            .span
+            .unwrap();
+        assert!(last.source == stream && last.contains(&Span::new(stream, 1000, 1)));
+        drop(state);
+
+        // A byte of the compressed data: nothing below Content holds it.
+        let path = dissection
+            .locate(dissection.file, packed.offset + 10, &go())
+            .await
+            .unwrap();
+        assert_eq!(path[path.len() - 1], content);
+    }
+
     #[tokio::test]
     async fn lazily_decompressed_bytes_can_be_read() {
         // Past fillyfoal's threshold for decoding on demand.
@@ -1395,6 +1682,13 @@ mod tests {
             dissection.read(whole, &stopped).await,
             Err(Error::Cancelled)
         ));
+
+        // Saved in steps, larger than one.
+        let path = std::env::temp_dir().join(format!("newt-save-{}.xml", std::process::id()));
+        let path = path.to_str().unwrap();
+        save_span(&dissection, whole, path, &go()).await.unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), text);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]

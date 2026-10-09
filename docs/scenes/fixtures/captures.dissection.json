@@ -1,0 +1,785 @@
+{
+  "offset": 246,
+  "pages": [
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": {
+              "at_least": false,
+              "n": 2
+            },
+            "error": null,
+            "loaded": 2,
+            "state": "complete"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 1,
+          "name": "Central Directory",
+          "span": {
+            "len": 124,
+            "offset": 498,
+            "source": 0
+          },
+          "summary": "2 entries",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 6,
+          "name": "End of Central Directory",
+          "span": {
+            "len": 22,
+            "offset": 622,
+            "source": 0
+          },
+          "summary": "at 0x26e",
+          "target": null,
+          "value": null
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 2
+          },
+          "error": null,
+          "loaded": 2,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": {
+          "forced": false,
+          "format": {
+            "name": "zip",
+            "title": "ZIP archive"
+          }
+        },
+        "key": 0,
+        "name": "edge-2026-10-08.zip",
+        "span": {
+          "len": 644,
+          "offset": 0,
+          "source": 0
+        },
+        "summary": "ZIP archive, 2 entries",
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    },
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 7,
+          "name": "README.txt",
+          "span": {
+            "len": 56,
+            "offset": 498,
+            "source": 0
+          },
+          "summary": "stored, 60 → 60 bytes",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": {
+              "at_least": false,
+              "n": 4
+            },
+            "error": null,
+            "loaded": 4,
+            "state": "complete"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 2,
+          "name": "edge-01/handshake.pcap",
+          "span": {
+            "len": 68,
+            "offset": 554,
+            "source": 0
+          },
+          "summary": "stored, 346 → 346 bytes",
+          "target": null,
+          "value": null
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 2
+          },
+          "error": null,
+          "loaded": 2,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": null,
+        "key": 1,
+        "name": "Central Directory",
+        "span": {
+          "len": 124,
+          "offset": 498,
+          "source": 0
+        },
+        "summary": "2 entries",
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    },
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 8,
+          "name": "Central Directory Header",
+          "span": {
+            "len": 46,
+            "offset": 554,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 9,
+          "name": "File name",
+          "span": {
+            "len": 22,
+            "offset": 600,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "text",
+            "raw": null,
+            "text": "edge-01/handshake.pcap"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 10,
+          "name": "Local File Header",
+          "span": {
+            "len": 30,
+            "offset": 100,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": {
+              "at_least": false,
+              "n": 4
+            },
+            "error": null,
+            "loaded": 4,
+            "state": "complete"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": {
+            "forced": false,
+            "format": {
+              "name": "pcap",
+              "title": "libpcap packet capture"
+            }
+          },
+          "key": 3,
+          "name": "Content",
+          "span": {
+            "len": 346,
+            "offset": 152,
+            "source": 0
+          },
+          "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144",
+          "target": null,
+          "value": null
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 4
+          },
+          "error": null,
+          "loaded": 4,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": null,
+        "key": 2,
+        "name": "edge-01/handshake.pcap",
+        "span": {
+          "len": 68,
+          "offset": 554,
+          "source": 0
+        },
+        "summary": "stored, 346 → 346 bytes",
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    },
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 11,
+          "name": "Global Header",
+          "span": {
+            "len": 24,
+            "offset": 152,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": {
+              "at_least": false,
+              "n": 4
+            },
+            "error": null,
+            "loaded": 4,
+            "state": "complete"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 4,
+          "name": "Packet 0",
+          "span": {
+            "len": 110,
+            "offset": 176,
+            "source": 0
+          },
+          "summary": "94 bytes, 2026-10-08 14:21:07.418203 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [SYN]",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 12,
+          "name": "Packet 1",
+          "span": {
+            "len": 110,
+            "offset": 286,
+            "source": 0
+          },
+          "summary": "94 bytes, 2026-10-08 14:21:07.439044 UTC, IPv6 2001:db8:443::1 → 2001:db8:10::2a, TCP 443 (https) → 51820 [SYN, ACK]",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 13,
+          "name": "Packet 2",
+          "span": {
+            "len": 102,
+            "offset": 396,
+            "source": 0
+          },
+          "summary": "86 bytes, 2026-10-08 14:21:07.459885 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [ACK]",
+          "target": null,
+          "value": null
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 4
+          },
+          "error": null,
+          "loaded": 4,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": {
+          "forced": false,
+          "format": {
+            "name": "pcap",
+            "title": "libpcap packet capture"
+          }
+        },
+        "key": 3,
+        "name": "Content",
+        "span": {
+          "len": 346,
+          "offset": 152,
+          "source": 0
+        },
+        "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144",
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    },
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 14,
+          "name": "Record Header",
+          "span": {
+            "len": 16,
+            "offset": 176,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 15,
+          "name": "Ethernet II",
+          "span": {
+            "len": 14,
+            "offset": 192,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 16,
+          "name": "IPv6",
+          "span": {
+            "len": 40,
+            "offset": 206,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": {
+              "at_least": false,
+              "n": 9
+            },
+            "error": null,
+            "loaded": 9,
+            "state": "complete"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 5,
+          "name": "TCP",
+          "span": {
+            "len": 40,
+            "offset": 246,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": null
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 4
+          },
+          "error": null,
+          "loaded": 4,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": null,
+        "key": 4,
+        "name": "Packet 0",
+        "span": {
+          "len": 110,
+          "offset": 176,
+          "source": 0
+        },
+        "summary": "94 bytes, 2026-10-08 14:21:07.418203 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [SYN]",
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    },
+    {
+      "nodes": [
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 17,
+          "name": "Source port",
+          "span": {
+            "len": 2,
+            "offset": 246,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0xca6c",
+            "text": "51820"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 18,
+          "name": "Destination port",
+          "span": {
+            "len": 2,
+            "offset": 248,
+            "source": 0
+          },
+          "summary": "https",
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0x1bb",
+            "text": "443"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 19,
+          "name": "Sequence number",
+          "span": {
+            "len": 4,
+            "offset": 250,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0x3a1f9c02",
+            "text": "975150082"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 20,
+          "name": "Acknowledgment number",
+          "span": {
+            "len": 4,
+            "offset": 254,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0x0",
+            "text": "0"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 21,
+          "name": "Data offset / flags",
+          "span": {
+            "len": 2,
+            "offset": 258,
+            "source": 0
+          },
+          "summary": "header 40 bytes",
+          "target": null,
+          "value": {
+            "kind": "flags",
+            "raw": "0xa002",
+            "text": "SYN | DOFF=10"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 22,
+          "name": "Window",
+          "span": {
+            "len": 2,
+            "offset": 260,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0xfd20",
+            "text": "64800"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 23,
+          "name": "Checksum",
+          "span": {
+            "len": 2,
+            "offset": 262,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "47938",
+            "text": "0xbb42"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 24,
+          "name": "Urgent pointer",
+          "span": {
+            "len": 2,
+            "offset": 264,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "number",
+            "raw": "0x0",
+            "text": "0"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 25,
+          "name": "Options",
+          "span": {
+            "len": 20,
+            "offset": 266,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "kind": "bytes",
+            "raw": "20 bytes",
+            "text": "02 04 05 a0 04 02 08 0a ad bc df ba 00 00 00 00 …  |................|"
+          }
+        }
+      ],
+      "parent": {
+        "children": {
+          "count": {
+            "at_least": false,
+            "n": 9
+          },
+          "error": null,
+          "loaded": 9,
+          "state": "complete"
+        },
+        "description": null,
+        "diagnostics": [],
+        "interpretation": null,
+        "key": 5,
+        "name": "TCP",
+        "span": {
+          "len": 40,
+          "offset": 246,
+          "source": 0
+        },
+        "summary": null,
+        "target": null,
+        "value": null
+      },
+      "secret": null
+    }
+  ],
+  "path": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}

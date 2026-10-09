@@ -189,7 +189,8 @@ const handlers: Record<string, (args: any) => unknown> = {
     const details = await detailsOf(path);
     return {
       details,
-      viewer_mode: viewerModeOf(details.mime_type ?? ""),
+      viewer_mode:
+        fixture(path).viewerMode ?? viewerModeOf(details.mime_type ?? ""),
       language: scene.window === "editor" ? scene.state.language : "plaintext",
     };
   },

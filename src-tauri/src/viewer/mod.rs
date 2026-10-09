@@ -680,6 +680,9 @@ pub enum CopyFormat {
     Hex,
     /// Printable ASCII (0x20–0x7e); other bytes become `.`.
     Ascii,
+    /// Standard Base64 with padding.
+    #[serde(rename = "base64")]
+    Base64,
 }
 
 /// Copy a byte range from a file to the system clipboard.
@@ -744,6 +747,10 @@ fn format_bytes(buf: &[u8], format: CopyFormat) -> String {
             })
             .collect(),
         CopyFormat::Text { encoding } => encoding::decode(buf, &encoding),
+        CopyFormat::Base64 => {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(buf)
+        }
     }
 }
 

@@ -625,6 +625,19 @@ async dissectCopy(id: number, source: number, offset: number, len: number, forma
 }
 },
 /**
+ * Write the bytes of a span to `path`, a file on this machine (chosen in
+ * the save dialog, so a remote session's span lands here too). A save that
+ * is stopped or fails leaves no partial file.
+ */
+async dissectSave(id: number, source: number, offset: number, len: number, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_save", { id, source, offset, len, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Answer a password request (`None` declines it). The expansion waiting for
  * it resumes when its node is asked for again.
  */
@@ -2466,7 +2479,11 @@ export type CopyFormat =
 /**
  * Printable ASCII (0x20–0x7e); other bytes become `.`.
  */
-"ascii"
+"ascii" | 
+/**
+ * Standard Base64 with padding.
+ */
+"base64"
 /**
  * Last-used Copy/Move toggles, re-seeded into the dialog on open. Only
  * "preserve what the source has" toggles belong here: anything that

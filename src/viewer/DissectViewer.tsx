@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { message, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import {
   commands,
@@ -136,8 +137,10 @@ export function DissectViewer({
   const [children, setChildren] = useState<Map<number, number[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<number | null>(null);
-  // Nodes whose children are being produced, and how far each has got.
-  const [loading, setLoading] = useState<Set<number>>(new Set());
+  // Nodes whose children are being produced, with how many requests are
+  // producing them, and how far each has got.
+  const [loading, setLoading] = useState<Map<number, number>>(new Map());
+  const loadCounts = useRef(new Map<number, number>());
   const [progress, setProgress] = useState<Map<number, DissectProgress>>(
     new Map(),
   );
@@ -190,7 +193,8 @@ export function DissectViewer({
     setError(null);
     setSecret(null);
     setAsTarget(null);
-    setLoading(new Set());
+    loadCounts.current = new Map();
+    setLoading(new Map());
     setProgress(new Map());
     let cancelled = false;
     let opened: number | null = null;
@@ -304,19 +308,25 @@ export function DissectViewer({
   );
   const startLoading = useCallback(
     (key: number) => {
-      setLoading((prev) => new Set(prev).add(key));
-      forgetProgress(key);
+      const counts = loadCounts.current;
+      const running = counts.get(key) ?? 0;
+      if (running === 0) forgetProgress(key);
+      counts.set(key, running + 1);
+      setLoading(new Map(counts));
     },
     [forgetProgress],
   );
   const endLoading = useCallback(
     (key: number) => {
-      setLoading((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      forgetProgress(key);
+      const counts = loadCounts.current;
+      const left = (counts.get(key) ?? 1) - 1;
+      if (left > 0) {
+        counts.set(key, left);
+      } else {
+        counts.delete(key);
+        forgetProgress(key);
+      }
+      setLoading(new Map(counts));
     },
     [forgetProgress],
   );
@@ -372,7 +382,7 @@ export function DissectViewer({
   // furthest along, if several are), else what else is.
   const busyText = (() => {
     if (loading.size > 0) {
-      const keys = [...loading];
+      const keys = [...loading.keys()];
       const measured = keys.filter((k) => progress.has(k));
       const key = measured.length
         ? measured.reduce((a, b) =>
@@ -711,6 +721,13 @@ export function DissectViewer({
       setWorking((n) => n + 1);
       try {
         const r = await unwrap(commands.dissectLocate(session, src, offset));
+        const target = r.path[r.path.length - 1];
+        const found = r.pages
+          .flatMap((p) => [p.parent, ...p.nodes])
+          .find((n) => n.key === target);
+        // A byte clicked that no field of its stream holds leaves the
+        // selection, and with it the stream, where it is.
+        if (fromHex && found?.span?.source !== src) return;
         // The field found may be one the filter hides.
         setFilter(null);
         for (const page of r.pages) merge(page);
@@ -719,7 +736,6 @@ export function DissectViewer({
           for (const k of r.path.slice(0, -1)) next.add(k);
           return next;
         });
-        const target = r.path[r.path.length - 1];
         if (fromHex && target !== selected) followSelection.current = false;
         setSelected(target);
         if (r.secret) {
@@ -799,6 +815,90 @@ export function DissectViewer({
     copyText(node.value?.text ?? node.summary ?? node.name);
   };
 
+  /// The selected line and what's shown below it, as the tree shows them:
+  /// collapsed nodes collapsed, each line's bytes after it, problems below.
+  const treeText = (): string | null => {
+    if (selectedIndex < 0) return null;
+    const base = rows[selectedIndex].depth;
+    const lines: string[] = [];
+    for (let i = selectedIndex; i < rows.length; i++) {
+      const row = rows[i];
+      if (i > selectedIndex && row.depth <= base) break;
+      const indent = "  ".repeat(row.depth - base);
+      if (row.kind === "more") {
+        const shown = children.get(row.parent)?.length ?? 0;
+        const total = nodes.get(row.parent)?.children.count;
+        const of = total
+          ? ` of ${total.at_least ? "at least " : ""}${total.n}`
+          : "";
+        lines.push(`${indent}  … (${shown} shown${of})`);
+        continue;
+      }
+      const n = nodes.get(row.key);
+      if (!n) continue;
+      const marker =
+        n.children.state === "leaf"
+          ? "  "
+          : expanded.has(row.key)
+            ? "▾ "
+            : "▸ ";
+      const bytes = n.span
+        ? `  [0x${n.span.offset.toString(16)}+0x${n.span.len.toString(16)}]`
+        : "";
+      lines.push(`${indent}${marker}${nodeLine(n)}${bytes}`);
+      for (const d of n.diagnostics) lines.push(`${indent}    ! ${d.message}`);
+    }
+    return lines.join("\n") + "\n";
+  };
+  const copyTree = () => {
+    const text = treeText();
+    if (text === null) return false;
+    copyText(text);
+  };
+
+  /// A name to save the bytes of `n` under: the file it holds, else its
+  /// own name.
+  const saveName = (n: DissectNode): string => {
+    let cursor: number | undefined = n.key;
+    while (n.interpretation && cursor !== undefined) {
+      const name = nodes.get(cursor)?.name ?? "";
+      if (name.includes(".")) return name.split(/[/\\]/).pop() ?? name;
+      cursor = parentOf.get(cursor);
+    }
+    return `${n.name.replace(/[/\\:*?"<>|]/g, "_")}.bin`;
+  };
+
+  /// Save the bytes of `s` to a file chosen in the save dialog.
+  const saveBytes = async (s: DissectSpan | null, name: string) => {
+    if (!s || session === null || s.len === 0) return false;
+    const path = await saveDialog({ defaultPath: name });
+    focusZone(zone);
+    if (!path) return;
+    setWorking((n) => n + 1);
+    try {
+      await unwrap(
+        commands.dissectSave(session, s.source, s.offset, s.len, path),
+      );
+    } catch (e) {
+      if (!wasStopped(e)) {
+        await message(String(e), { kind: "error", title: "Error" });
+      }
+    } finally {
+      setWorking((n) => n - 1);
+    }
+  };
+  /// The hex pane's selection, else the selected field's bytes.
+  const saveSelected = () => {
+    if (zone === "hex" && range) {
+      const base = node ? saveName(node).replace(/\.[^.]*$/, "") : "bytes";
+      void saveBytes(hexSelection(), `${base}-${selStart.toString(16)}.bin`);
+    } else if (node) {
+      void saveBytes(span, saveName(node));
+    } else {
+      return false;
+    }
+  };
+
   useEmbeddedCopy(() => {
     if (!node) return false;
     copyText(nodeLine(node));
@@ -807,7 +907,6 @@ export function DissectViewer({
 
   const [goToOpen, setGoToOpen] = useState(false);
 
-  /// Choose the format of the content the selected field is part of.
   /// What Dissect As would choose the format of for the selected line;
   /// null when it holds no file, undefined when that couldn't be found out.
   const selectedContent = async () => {
@@ -824,6 +923,7 @@ export function DissectViewer({
     }
   };
 
+  /// Choose the format of the file the selected field stands for.
   const openDissectAs = async () => {
     const content = await selectedContent();
     if (content === null) {
@@ -900,6 +1000,8 @@ export function DissectViewer({
     viewer_copy: copy,
     viewer_copy_value: copyValue,
     viewer_copy_bytes: () => copyBytes(span, "hex"),
+    viewer_copy_tree: copyTree,
+    viewer_save_bytes: saveSelected,
     viewer_follow_target: followTarget,
     viewer_goto: () => setGoToOpen(true),
     viewer_toggle_bytes: toggleBytes,
@@ -1070,15 +1172,52 @@ export function DissectViewer({
   // --- Mouse in the hex pane ---
 
   const dragging = useRef(false);
+  /// The byte under the pointer, or between lines, columns or past a
+  /// line's end (and outside the pane, while dragging) the nearest one:
+  /// on the nearest line drawn, the nearest byte along it.
   const byteFromEvent = (e: React.MouseEvent | MouseEvent) => {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (el instanceof HTMLElement && el.dataset.offset !== undefined) {
       return parseInt(el.dataset.offset, 10);
     }
-    return undefined;
+    const lines = hexRef.current?.querySelectorAll<HTMLElement>(
+      `.${styles.hexLine}`,
+    );
+    const nearest = (
+      els: Iterable<HTMLElement>,
+      gap: (r: DOMRect) => number,
+    ) => {
+      let best: HTMLElement | undefined;
+      let bestGap = Infinity;
+      for (const candidate of els) {
+        const d = gap(candidate.getBoundingClientRect());
+        if (d < bestGap) [best, bestGap] = [candidate, d];
+      }
+      return best;
+    };
+    const outside = (at: number, from: number, to: number) =>
+      at < from ? from - at : at > to ? at - to : 0;
+    const line = nearest(lines ?? [], (r) =>
+      outside(e.clientY, r.top, r.bottom),
+    );
+    const byte = line
+      ? nearest(line.querySelectorAll<HTMLElement>("[data-offset]"), (r) =>
+          outside(e.clientX, r.left, r.right),
+        )
+      : undefined;
+    return byte ? parseInt(byte.dataset.offset!, 10) : undefined;
   };
-  const onHexMouseDown = (e: React.MouseEvent) => {
+  const onHexMouseDown = (e: React.MouseEvent<HTMLElement>) => {
     if (e.button !== 0) return;
+    // A press on the scrollbar is the scrollbar's.
+    const pane = e.currentTarget;
+    const box = pane.getBoundingClientRect();
+    if (
+      e.clientX >= box.left + pane.clientLeft + pane.clientWidth ||
+      e.clientY >= box.top + pane.clientTop + pane.clientHeight
+    ) {
+      return;
+    }
     const offset = byteFromEvent(e);
     if (offset === undefined) return;
     e.preventDefault();
@@ -1404,18 +1543,54 @@ export function DissectViewer({
                 </CM.Item>
                 <CM.Item
                   className={menuStyles.item}
-                  disabled={!span || span.len === 0}
-                  onSelect={() => copyBytes(span, "hex")}
+                  disabled={!node}
+                  onSelect={copyTree}
                 >
-                  Copy Bytes as Hex {shortcut("viewer_copy_bytes")}
+                  Copy Tree {shortcut("viewer_copy_tree")}
                 </CM.Item>
-                <CM.Item
-                  className={menuStyles.item}
-                  disabled={!span || span.len === 0}
-                  onSelect={() => copyBytes(span, "ascii")}
-                >
-                  Copy Bytes as Text
-                </CM.Item>
+                <CM.Separator className={menuStyles.separator} />
+                <CM.Sub>
+                  <CM.SubTrigger
+                    className={menuStyles.item}
+                    disabled={!span || span.len === 0}
+                  >
+                    Copy Bytes
+                    <span className={menuStyles.shortcut}>›</span>
+                  </CM.SubTrigger>
+                  <CM.Portal>
+                    <CM.SubContent className={menuStyles.content} loop>
+                      <CM.Item
+                        className={menuStyles.item}
+                        onSelect={() => copyBytes(span, "hex")}
+                      >
+                        As Hex {shortcut("viewer_copy_bytes")}
+                      </CM.Item>
+                      <CM.Item
+                        className={menuStyles.item}
+                        onSelect={() => copyBytes(span, "ascii")}
+                      >
+                        As Text
+                      </CM.Item>
+                      <CM.Item
+                        className={menuStyles.item}
+                        onSelect={() => copyBytes(span, "base64")}
+                      >
+                        As Base64
+                      </CM.Item>
+                    </CM.SubContent>
+                  </CM.Portal>
+                </CM.Sub>
+                {!host.embedded && (
+                  <CM.Item
+                    className={menuStyles.item}
+                    disabled={!span || span.len === 0}
+                    onSelect={() =>
+                      node && void saveBytes(span, saveName(node))
+                    }
+                  >
+                    Save Bytes As… {shortcut("viewer_save_bytes")}
+                  </CM.Item>
+                )}
                 <CM.Separator className={menuStyles.separator} />
                 <CM.Item
                   className={menuStyles.item}
@@ -1447,6 +1622,7 @@ export function DissectViewer({
                     {shortcut("viewer_dissect_as")}
                   </CM.Item>
                 )}
+                <CM.Separator className={menuStyles.separator} />
                 <CM.CheckboxItem
                   className={menuStyles.item}
                   checked={bytesOpen}
