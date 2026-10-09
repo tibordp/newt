@@ -154,7 +154,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-751 crates, the superset across every target platform and feature.
+752 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -490,6 +490,19 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2016-2021 Diggory Blake, and other contributors.
   filetime 0.2.29 — MIT/Apache-2.0
       Copyright (c) 2014 Alex Crichton
+  fillyfoal 0.1.0 — GPL-3.0-or-later, incorporating MIT, Zlib, BSD-3-Clause, ISC, BSD-2-Clause
+      Copyright (C) 2026 Tibor Djurica Potpara
+      Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+      Copyright (C) 2002-2013 Mark Adler, all rights reserved
+      Copyright (C) 2003, 2012, 2013 Mark Adler
+      Copyright (c) 2015-2016, Apple Inc. All rights reserved.
+      Copyright (c) 2013 Ted Unangst <tedu@openbsd.org>
+      Copyright 1997 Niels Provos <provos@physnet.uni-hamburg.de>
+      Copyright (c) 2017-2026, Daniel Roethlisberger and contributors.
+      Copyright (c) 2003-2007 Tim Kientzle
+      Copyright (c) 2011 Andres Mejia
+      Copyright (c) 2018 Grzegorz Antoniak (http://antoniak.org)
+      Copyright (c) 2025 Scott Mudge
   finl_unicode 1.5.0 — (MIT OR Apache-2.0) AND Unicode-DFS-2016
       Copyright © 1991-2023 Unicode, Inc.
   fixedbitset 0.5.7 — MIT OR Apache-2.0
@@ -2103,6 +2116,10 @@ express Statement of Purpose.
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
 ```
+
+### GPL-3.0-or-later
+
+Newt's own licence; see `LICENSE`.
 
 ### ISC
 

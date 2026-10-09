@@ -400,6 +400,18 @@ async setViewerMode(mode: ViewerMode) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Remember the formats chosen in Structure mode (see
+ * `dissect_reinterpret`), for when the file is dissected again.
+ */
+async setViewerDissectFormats(choices: DissectChoice[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_viewer_dissect_formats", { choices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async pingViewer() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("ping_viewer") };
@@ -485,6 +497,140 @@ async findInViewer(path: VfsPath, offset: number, pattern: ViewerSearchPattern, 
 async imageExif(path: VfsPath) : Promise<Result<ExifRow[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("image_exif", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start dissecting `path`, with the formats chosen for it or for files
+ * within it. Nothing is read yet: the root's children come from
+ * `dissect_children`.
+ */
+async dissectOpen(path: VfsPath, choices: DissectChoice[]) : Promise<Result<DissectOpened, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_open", { path, choices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every format, those that list the extension of the file `name` first.
+ */
+async dissectFormats(name: string) : Promise<DissectFormat[]> {
+    return await TAURI_INVOKE("dissect_formats", { name });
+},
+/**
+ * The node whose format Dissect As chooses when `node` is selected (see
+ * `Dissection::content_of`); `None` when it doesn't hold a file.
+ */
+async dissectContentOf(id: number, node: number) : Promise<Result<DissectContent | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_content_of", { id, node }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dissect `node`'s content as `format` (`None` identifies it again), with
+ * the children on the way down to it and its own first ones. What was
+ * below it is gone, choices included.
+ */
+async dissectReinterpret(id: number, node: number, format: string | null) : Promise<Result<DissectReinterpreted, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_reinterpret", { id, node, format }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * End a dissection, stopping what it's doing.
+ */
+async dissectClose(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_close", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop what the requests about `node` are doing, or with `None`, every
+ * request so far. A stopped expansion keeps what it produced; its request
+ * returns that.
+ */
+async dissectStop(id: number, node: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_stop", { id, node }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The children of `node`, at least `at_least` of them when there are that
+ * many (fewer if stopped).
+ */
+async dissectChildren(id: number, node: number, atLeast: number) : Promise<Result<DissectPage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_children", { id, node, atLeast }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The innermost node holding byte `offset` of `source`, with the children
+ * on the way down to it; as far as it got if stopped.
+ */
+async dissectLocate(id: number, source: number, offset: number) : Promise<Result<DissectLocated, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_locate", { id, source, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dissectSource(id: number, source: number) : Promise<Result<DissectSource, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_source", { id, source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bytes of any source of the dissection, for the hex pane.
+ */
+async dissectRead(id: number, source: number, offset: number, len: number) : Promise<Result<unknown, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_read", { id, source, offset, len }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copy the bytes of a span to the clipboard.
+ */
+async dissectCopy(id: number, source: number, offset: number, len: number, format: CopyFormat) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_copy", { id, source, offset, len, format }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Answer a password request (`None` declines it). The expansion waiting for
+ * it resumes when its node is asked for again.
+ */
+async dissectAnswerSecret(id: number, index: number, password: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dissect_answer_secret", { id, index, password }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1924,6 +2070,7 @@ async connectRecent(paneHandle: PaneHandle, recent: RecentConnection) : Promise<
 
 /** user-defined types **/
 
+export type AlternateMode = "dissect" | "hex"
 /**
  * Per-entry annotation payload. Open taxonomy — one variant per
  * annotation kind. The pane treats these as opaque (a generic
@@ -2399,6 +2546,151 @@ maximized: boolean;
  * Quick View: the right slot previews the active pane's focused file.
  */
 quick_view: boolean }
+export type DissectChildState = "leaf" | 
+/**
+ * Not expanded yet.
+ */
+"unloaded" | 
+/**
+ * The expansion waits for a password.
+ */
+"locked" | 
+/**
+ * More children follow those loaded.
+ */
+"more" | 
+/**
+ * Its expansion was stopped part-way; asking for its children again
+ * continues it.
+ */
+"stopped" | "complete" | 
+/**
+ * The expansion failed; children produced before it remain.
+ */
+"failed"
+export type DissectChildren = { state: DissectChildState; loaded: number; count: DissectCount | null; error: DissectDiagnostic | null }
+/**
+ * A format chosen for the file (an empty path) or for a file within it,
+ * by the child indices down to it.
+ */
+export type DissectChoice = { path: number[]; format: string }
+export type DissectContent = { node: DissectNode; 
+/**
+ * The file's name, for suggesting formats by its extension.
+ */
+name: string }
+export type DissectCount = { n: number; at_least: boolean }
+export type DissectDiagnostic = { kind: DissectDiagnosticKind; message: string; span: DissectSpan | null }
+export type DissectDiagnosticKind = "truncated" | "malformed" | "unsupported" | "limit" | "warning" | "note"
+/**
+ * A format the file can be dissected as, chosen instead of identified.
+ */
+export type DissectFormat = { name: string; title: string; extensions: string[]; 
+/**
+ * It lists the file's extension.
+ */
+suggested: boolean }
+export type DissectFormatName = { name: string; title: string }
+export type DissectInterpretation = { 
+/**
+ * `None` when the content wasn't recognised.
+ */
+format: DissectFormatName | null; 
+/**
+ * The format was chosen with Dissect As.
+ */
+forced: boolean }
+export type DissectLocated = { 
+/**
+ * Keys from the root down to the node found.
+ */
+path: number[]; 
+/**
+ * The children of each node on the path: all but the last when
+ * locating a byte, all of them after a reinterpretation.
+ */
+pages: DissectPage[]; 
+/**
+ * A password that stopped the way down; see `DissectPage::secret`.
+ */
+secret: DissectSecret | null }
+export type DissectNode = { key: number; name: string; value: DissectValue | null; summary: string | null; description: string | null; span: DissectSpan | null; 
+/**
+ * What the field points to (an offset field's target).
+ */
+target: DissectSpan | null; diagnostics: DissectDiagnostic[]; 
+/**
+ * What dissects the node's content, for one holding a file within the
+ * file; known once it has been expanded.
+ */
+interpretation: DissectInterpretation | null; children: DissectChildren }
+export type DissectOpened = { id: number; page: DissectPage }
+export type DissectOrigin = { parent: DissectSpan; transform: string }
+export type DissectPage = { parent: DissectNode; 
+/**
+ * Every child loaded so far.
+ */
+nodes: DissectNode[]; 
+/**
+ * A password the dissection waits for, to answer with
+ * `dissect_answer_secret` and then ask again.
+ */
+secret: DissectSecret | null }
+/**
+ * How far a node's expansion has got, sent to the window as
+ * `dissect-progress` while it runs.
+ */
+export type DissectProgress = { 
+/**
+ * The dissection.
+ */
+id: number; node: number; done: number; total: number }
+/**
+ * After a reinterpretation: the way down to the node and its children, and
+ * every choice now in effect, for the viewer to keep.
+ */
+export type DissectReinterpreted = { located: DissectLocated; choices: DissectChoice[] }
+export type DissectSecret = { index: number; 
+/**
+ * What it unlocks, e.g. "Password for the encrypted ZIP entries".
+ */
+prompt: string; 
+/**
+ * 0 at first; more after a wrong password.
+ */
+attempt: number }
+export type DissectSource = { 
+/**
+ * An upper bound until `len_known`.
+ */
+len: number; 
+/**
+ * Whether `len` is the real length: not for a stream decoded on demand
+ * whose size nothing records, until it has been decoded to its end.
+ */
+len_known: boolean; 
+/**
+ * Where a decoded or reassembled stream came from (`None` for the
+ * file itself).
+ */
+origin: DissectOrigin | null }
+export type DissectSpan = { 
+/**
+ * The byte space: the file, or a stream decoded or reassembled from it.
+ */
+source: number; offset: number; len: number }
+export type DissectValue = { kind: DissectValueKind; 
+/**
+ * The value as read: a name for an enum, the set flags, the number in
+ * the radix the format gives it.
+ */
+text: string; 
+/**
+ * The number underneath, in the other radix (or the raw integer of an
+ * enum, flags or timestamp).
+ */
+raw: string | null }
+export type DissectValueKind = "bool" | "number" | "enum" | "flags" | "float" | "time" | "text" | "bytes" | "guid"
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
 /**
@@ -3720,12 +4012,22 @@ selected: string | null }
  * Display mode for the file viewer. Wire format is snake_case to match
  * the strings the frontend uses.
  */
-export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf" | "table" | "markdown"
+export type ViewerMode = "text" | "hex" | "image" | "audio" | "video" | "pdf" | "table" | "markdown" | 
+/**
+ * The file's structure, dissected into a tree of fields.
+ */
+"dissect"
 export type ViewerPreferences = { 
 /**
  * Backdrop behind images in the viewer's image mode.
  */
-image_background: ImageBackground }
+image_background: ImageBackground; 
+/**
+ * The mode F3 switches to from the one a file opens in, and back. Hex
+ * switches to Text, and Table and Markdown to their source text,
+ * whatever this says.
+ */
+alternate_mode: AlternateMode }
 /**
  * Search pattern as the viewer's search bar states it. `Text` is encoded
  * here into the file's byte encoding; the filesystem search only knows
@@ -3741,7 +4043,12 @@ export type ViewerSearchPattern = { Text: { text: string; encoding: string } } |
  * The `update:viewer` payload, and the main window's Quick View; see
  * `MainWindowStateWire`.
  */
-export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding; table: TableOptions }
+export type ViewerState = { mode: ViewerMode; file_path: VfsPath | null; display_path: string | null; file_server_base: string | null; encoding: ViewerEncoding; table: TableOptions; 
+/**
+ * Formats chosen in Structure mode for the file or for files within
+ * it, replayed when it's dissected again.
+ */
+dissect_formats: DissectChoice[] }
 export type VolumeInfo = { kind: VolumeKind; 
 /**
  * Filesystem name (NTFS, ext4, apfs, …).

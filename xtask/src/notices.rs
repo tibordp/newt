@@ -10,6 +10,11 @@
 //! The licence bodies are deduplicated per SPDX id: MIT texts differ only in
 //! their copyright line, so the notices carry every dependency's own
 //! copyright plus one canonical copy of each permission notice.
+//!
+//! A package that incorporates other works and ships their notices in a
+//! `THIRD-PARTY*` file (fenced blocks, one notice each) is credited the same
+//! way: their copyright lines under its entry, their licences named beside
+//! its own and included once below.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,10 +28,13 @@ struct Dep {
     version: String,
     /// SPDX expression as declared by the package.
     license: String,
-    /// Copyright lines harvested from the package's own licence files.
+    /// Copyright lines harvested from the package's own licence files, and
+    /// from the notices of the works it incorporates.
     copyrights: Vec<String>,
     /// Licence texts the package ships, for the canonical-body vote.
     texts: Vec<String>,
+    /// Licences of the works it incorporates, besides its own.
+    incorporated: Vec<&'static str>,
 }
 
 impl Dep {
@@ -75,11 +83,18 @@ pub fn notices(root: &Path, check: bool) -> Result<(), String> {
     let named: BTreeSet<&str> = rust
         .iter()
         .chain(npm.iter())
-        .flat_map(|d| spdx_ids(&d.license))
+        .flat_map(|d| {
+            spdx_ids(&d.license)
+                .into_iter()
+                .chain(d.incorporated.iter().copied())
+        })
         .collect();
     for id in &named {
         out.push_str(&format!("\n### {id}\n\n"));
         match bodies.get(*id) {
+            _ if id.starts_with("GPL-3.0") => {
+                out.push_str("Newt's own licence; see `LICENSE`.\n");
+            }
             Some(text) => {
                 out.push_str("```\n");
                 out.push_str(text.trim_end());
@@ -127,7 +142,11 @@ own licence. Every licence here is compatible with the GPL.
 ";
 
 fn push_dep(out: &mut String, d: &Dep) {
-    out.push_str(&format!("  {} {} — {}\n", d.name, d.version, d.license));
+    out.push_str(&format!("  {} {} — {}", d.name, d.version, d.license));
+    if !d.incorporated.is_empty() {
+        out.push_str(&format!(", incorporating {}", d.incorporated.join(", ")));
+    }
+    out.push('\n');
     for c in &d.copyrights {
         out.push_str(&format!("      {c}\n"));
     }
@@ -187,10 +206,15 @@ const PREAMBLE_LINES: usize = 15;
 /// A copyright notice, as opposed to licence prose that merely opens with
 /// the word — BSD's "copyright notice, this list of conditions…" wraps onto
 /// its own line. A real notice carries a holder, so demand a year or a `(c)`
-/// and reject Apache-2.0's `[yyyy]` appendix placeholder.
+/// and reject Apache-2.0's `[yyyy]` appendix placeholder. The GNU licences
+/// open with the FSF's notice on their own text, which credits no package.
 fn is_copyright(line: &str) -> bool {
     let l = line.trim().to_lowercase();
-    if !(l.starts_with("copyright") || l.starts_with('©')) || l.contains('[') || l.len() <= 12 {
+    if !(l.starts_with("copyright") || l.starts_with('©'))
+        || l.contains('[')
+        || l.len() <= 12
+        || l.contains("free software foundation")
+    {
         return false;
     }
     let has_year = l
@@ -259,7 +283,13 @@ fn classify(text: &str) -> Option<&'static str> {
         return Some("MIT");
     }
     // ISC and 0BSD share this opening; ISC keeps the copyright-retention
-    // clause that 0BSD drops.
+    // clause that 0BSD drops. OpenBSD's older ISC reads "and distribute".
+    if has(
+        "permission to use, copy, modify, and distribute this software for any purpose with or without fee",
+    ) && has("copyright notice and this permission notice appear in all copies")
+    {
+        return Some("ISC");
+    }
     if has("permission to use, copy, modify, and/or distribute this software") {
         return if has("copyright notice and this permission notice appear in all copies") {
             Some("ISC")
@@ -268,7 +298,11 @@ fn classify(text: &str) -> Option<&'static str> {
         };
     }
     if has("redistribution and use in source and binary forms") {
-        if has("neither the name") {
+        if has("all advertising materials mentioning features") {
+            return Some("BSD-4-Clause");
+        }
+        // The third clause is phrased either way.
+        if has("neither the name") || has("may not be used to endorse or promote") {
             return Some("BSD-3-Clause");
         }
         return Some("BSD-2-Clause");
@@ -294,9 +328,16 @@ fn license_files(dir: &Path) -> Vec<String> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_uppercase();
-            ["LICENSE", "LICENCE", "COPYING", "UNLICENSE", "NOTICE"]
-                .iter()
-                .any(|pre| n.starts_with(pre))
+            [
+                "LICENSE",
+                "LICENCE",
+                "COPYING",
+                "COPYRIGHT",
+                "UNLICENSE",
+                "NOTICE",
+            ]
+            .iter()
+            .any(|pre| n.starts_with(pre))
         })
         .collect();
     names.sort();
@@ -306,15 +347,60 @@ fn license_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-fn harvest(dir: &Path) -> (Vec<String>, Vec<String>) {
-    let texts = license_files(dir);
+/// The notices of works a package incorporates: the fenced blocks of the
+/// `THIRD-PARTY*` files it ships, one notice each.
+fn incorporated_notices(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let n = n.to_uppercase().replace('_', "-");
+            n.starts_with("THIRD-PARTY")
+        })
+        .collect();
+    files.sort();
+    let mut notices = Vec::new();
+    for text in files.iter().filter_map(|p| std::fs::read_to_string(p).ok()) {
+        let mut block: Option<Vec<&str>> = None;
+        for line in text.lines() {
+            if line.trim_start().starts_with("```") {
+                match block.take() {
+                    Some(lines) => notices.push(lines.join("\n")),
+                    None => block = Some(Vec::new()),
+                }
+            } else if let Some(lines) = &mut block {
+                lines.push(line);
+            }
+        }
+    }
+    notices
+}
+
+/// What a package ships: its copyright lines, its licence texts, and the
+/// licences of the works it incorporates.
+fn harvest(dir: &Path) -> (Vec<String>, Vec<String>, Vec<&'static str>) {
+    let mut texts = license_files(dir);
+    let mut incorporated: Vec<&'static str> = Vec::new();
+    for notice in incorporated_notices(dir) {
+        if let Some(id) = classify(&notice)
+            && !incorporated.contains(&id)
+        {
+            incorporated.push(id);
+        }
+        texts.push(notice);
+    }
     let mut copyrights: Vec<String> = Vec::new();
     for c in texts.iter().flat_map(|t| preamble_copyrights(t)) {
         if !copyrights.contains(&c) {
             copyrights.push(c);
         }
     }
-    (copyrights, texts)
+    (copyrights, texts, incorporated)
 }
 
 /// Every crate reachable from the shipped binaries over normal (non-dev,
@@ -425,13 +511,14 @@ fn rust_deps(root: &Path) -> Result<Vec<Dep>, String> {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        let (copyrights, texts) = harvest(&dir);
+        let (copyrights, texts, incorporated) = harvest(&dir);
         deps.push(Dep {
             name,
             version,
             license,
             copyrights,
             texts,
+            incorporated,
         });
     }
     Ok(deps)
@@ -481,10 +568,10 @@ fn npm_deps(root: &Path) -> Result<Vec<Dep>, String> {
 
         let gated = !p["os"].is_null() || !p["cpu"].is_null() || !p["libc"].is_null();
         let dir = root.join(key);
-        let (copyrights, texts) = if dir.is_dir() {
+        let (copyrights, texts, incorporated) = if dir.is_dir() {
             harvest(&dir)
         } else if gated {
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         } else {
             return Err(format!(
                 "{} is in package-lock.json but not installed — run `npm install`",
@@ -497,6 +584,7 @@ fn npm_deps(root: &Path) -> Result<Vec<Dep>, String> {
             license,
             copyrights,
             texts,
+            incorporated,
         });
     }
     // Hoisting lists the same package under several paths.

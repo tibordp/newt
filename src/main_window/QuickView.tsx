@@ -80,6 +80,7 @@ function forwardKey(e: React.KeyboardEvent, root: HTMLElement) {
 const MODES: [ViewerMode, string][] = [
   ["text", "Text"],
   ["hex", "Hex"],
+  ["dissect", "Structure"],
   ["table", "Table"],
   ["markdown", "Markdown"],
   ["image", "Image"],

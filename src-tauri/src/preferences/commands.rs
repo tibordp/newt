@@ -898,11 +898,17 @@ pub fn default_commands() -> Vec<CommandDef> {
         // panning and scrolling) are intentionally not commands and cannot
         // be rebound. A command listed here fires only in the modes whose
         // component registers a handler for it.
-        viewer_command("viewer_toggle_hex", "Viewer: Toggle Hex View", &["f3"]),
+        viewer_command("viewer_toggle_hex", "Viewer: Toggle Alternate Mode", &["f3"]),
         viewer_command("viewer_copy", "Viewer: Copy", &["mod+c"]),
         viewer_command("viewer_select_all", "Viewer: Select All", &["mod+a"]),
         viewer_command("viewer_find", "Viewer: Find", &["mod+f"]),
         viewer_command("viewer_goto", "Viewer: Go to Line/Offset", &["mod+g"]),
+        viewer_command("viewer_copy_value", "Viewer: Copy Value", &["mod+shift+c"]),
+        viewer_command("viewer_copy_bytes", "Viewer: Copy Bytes as Hex", &["mod+alt+c"]),
+        viewer_command("viewer_follow_target", "Viewer: Go to Target", &["mod+enter"]),
+        viewer_command("viewer_toggle_bytes", "Viewer: Toggle Bytes Panel", &["mod+b"]),
+        viewer_command("viewer_dissect_as", "Viewer: Dissect As...", &["mod+d"]),
+        viewer_command("viewer_filter", "Viewer: Filter", &["/", "numpad_divide"]),
         // "+" is shift+= on US-like layouts and a bare "+" on numpads;
         // shift+- yields "_".
         viewer_command("viewer_zoom_in", "Viewer: Zoom In", &["=", "shift+=", "+"]),

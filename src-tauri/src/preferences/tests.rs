@@ -611,6 +611,7 @@ word_wrap = true
 
 [viewer]
 image_background = "checkerboard"
+alternate_mode = "hex"
 "#,
     )
     .unwrap();
@@ -628,6 +629,7 @@ image_background = "checkerboard"
         merged.viewer.image_background,
         ImageBackground::Checkerboard
     );
+    assert_eq!(merged.viewer.alternate_mode, AlternateMode::Hex);
 
     // Unset keys keep their defaults.
     assert_eq!(merged.behavior.history_retention, 200);

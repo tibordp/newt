@@ -1,3 +1,4 @@
+pub mod dissect;
 pub mod encoding;
 mod markdown;
 mod table;
@@ -30,6 +31,8 @@ pub enum ViewerMode {
     Pdf,
     Table,
     Markdown,
+    /// The file's structure, dissected into a tree of fields.
+    Dissect,
 }
 
 impl ViewerMode {
@@ -44,6 +47,7 @@ impl ViewerMode {
             ViewerMode::Pdf => "pdf",
             ViewerMode::Table => "table",
             ViewerMode::Markdown => "markdown",
+            ViewerMode::Dissect => "dissect",
         }
     }
 
@@ -57,6 +61,7 @@ impl ViewerMode {
             ViewerMode::Pdf => "PDF",
             ViewerMode::Table => "Table",
             ViewerMode::Markdown => "Markdown",
+            ViewerMode::Dissect => "Structure",
         }
     }
 
@@ -70,13 +75,15 @@ impl ViewerMode {
             "pdf" => ViewerMode::Pdf,
             "table" => ViewerMode::Table,
             "markdown" => ViewerMode::Markdown,
+            "dissect" => ViewerMode::Dissect,
             _ => return None,
         })
     }
 
-    const ALL: [ViewerMode; 8] = [
+    const ALL: [ViewerMode; 9] = [
         ViewerMode::Text,
         ViewerMode::Hex,
+        ViewerMode::Dissect,
         ViewerMode::Table,
         ViewerMode::Markdown,
         ViewerMode::Image,
@@ -101,6 +108,7 @@ pub struct ViewerState {
     file_server_base: RwLock<Option<String>>,
     encoding: RwLock<ViewerEncoding>,
     table: RwLock<TableOptions>,
+    dissect_formats: RwLock<Vec<dissect::DissectChoice>>,
 }
 
 impl Default for ViewerState {
@@ -112,6 +120,7 @@ impl Default for ViewerState {
             file_server_base: RwLock::new(None),
             encoding: RwLock::new(ViewerEncoding::default()),
             table: RwLock::new(TableOptions::default()),
+            dissect_formats: RwLock::new(Vec::new()),
         }
     }
 }
@@ -129,6 +138,7 @@ impl ViewerState {
         *self.mode.write() = ViewerMode::Text;
         *self.encoding.write() = ViewerEncoding::default();
         *self.table.write() = TableOptions::default();
+        self.dissect_formats.write().clear();
     }
 
     /// Show nothing.
@@ -137,6 +147,7 @@ impl ViewerState {
         *self.display_path.write() = None;
         *self.encoding.write() = ViewerEncoding::default();
         *self.table.write() = TableOptions::default();
+        self.dissect_formats.write().clear();
     }
 
     pub fn set_mode(&self, mode: ViewerMode) {
@@ -173,6 +184,9 @@ pub struct ViewerStateWire {
     file_server_base: Option<String>,
     encoding: ViewerEncoding,
     table: TableOptions,
+    /// Formats chosen in Structure mode for the file or for files within
+    /// it, replayed when it's dissected again.
+    dissect_formats: Vec<dissect::DissectChoice>,
 }
 
 crate::common::specta_as!(ViewerState => ViewerStateWire);
@@ -186,6 +200,7 @@ impl Serialize for ViewerState {
             file_server_base: self.file_server_base.read().clone(),
             encoding: self.encoding.read().clone(),
             table: self.table.read().clone(),
+            dissect_formats: self.dissect_formats.read().clone(),
         }
         .serialize(serializer)
     }
@@ -224,6 +239,11 @@ impl ViewerWindow {
     pub fn set_encoding(&self, selected: Option<String>) {
         self.publisher.state().set_selected_encoding(selected);
         self.rebuild_menu();
+        let _ = self.publisher.publish_full();
+    }
+
+    fn set_dissect_formats(&self, choices: Vec<dissect::DissectChoice>) {
+        *self.publisher.state().dissect_formats.write() = choices;
         let _ = self.publisher.publish_full();
     }
 
@@ -402,7 +422,10 @@ pub fn activate_viewer_window(
 }
 
 fn has_edit_menu(mode: ViewerMode) -> bool {
-    matches!(mode, ViewerMode::Text | ViewerMode::Hex | ViewerMode::Table)
+    matches!(
+        mode,
+        ViewerMode::Text | ViewerMode::Hex | ViewerMode::Table | ViewerMode::Dissect
+    )
 }
 
 /// Edit submenu for modes without a custom one. macOS needs predefined items
@@ -628,6 +651,18 @@ pub fn set_viewer_mode(ctx: ViewerWindowContext, mode: ViewerMode) -> Result<(),
     Ok(())
 }
 
+/// Remember the formats chosen in Structure mode (see
+/// `dissect_reinterpret`), for when the file is dissected again.
+#[tauri::command]
+#[specta::specta]
+pub fn set_viewer_dissect_formats(
+    ctx: ViewerWindowContext,
+    choices: Vec<dissect::DissectChoice>,
+) -> Result<(), Error> {
+    ctx.0.set_dissect_formats(choices);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn ping_viewer(ctx: ViewerWindowContext) -> Result<(), Error> {
@@ -686,7 +721,13 @@ pub async fn copy_viewer_range(
         buf
     };
 
-    let text = match format {
+    let text = format_bytes(&buf, format);
+    ctx.with_clipboard(|c| c.set_text(text))?;
+    Ok(())
+}
+
+fn format_bytes(buf: &[u8], format: CopyFormat) -> String {
+    match format {
         CopyFormat::Hex => buf
             .iter()
             .map(|b| format!("{:02X}", b))
@@ -702,11 +743,8 @@ pub async fn copy_viewer_range(
                 }
             })
             .collect(),
-        CopyFormat::Text { encoding } => encoding::decode(&buf, &encoding),
-    };
-
-    ctx.with_clipboard(|c| c.set_text(text))?;
-    Ok(())
+        CopyFormat::Text { encoding } => encoding::decode(buf, &encoding),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]

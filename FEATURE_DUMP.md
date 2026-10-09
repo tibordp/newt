@@ -292,7 +292,7 @@ format = "zip"                  # "zip", "7z", "tar" (tar, cpio or ar), "compres
 
 [[association]]
 match = "*.log"
-viewer = "text"                 # text, hex, table, markdown, image, audio, video, pdf
+viewer = "text"                 # text, hex, dissect, table, markdown, image, audio, video, pdf
 language = "plaintext"          # a Monaco language id, as in the editor's Language menu
 
 [[association]]
@@ -698,7 +698,7 @@ Pre-warms are created only from the `init` command — i.e. after the main windo
 
 ### Mode Selection
 
-The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Table, Markdown, Image, Audio, Video, PDF. The initial mode is chosen automatically:
+The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Structure, Table, Markdown, Image, Audio, Video, PDF. The initial mode is chosen automatically:
 
 | Detected Type | Mode |
 |---------------|------|
@@ -709,13 +709,14 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | `audio/*` | Audio |
 | `video/*` | Video |
 | `application/pdf` | PDF |
+| Anything else the [Structure](#structure-mode) dissector recognises | Structure |
 | Everything else | Hex |
 
 A [file association](#file-associations) with a `viewer` mode comes before the table — the built-ins open `.ts` as text, not as an MPEG transport stream video.
 
 ### Mode Toggle
 
-The status bar includes mode toggle buttons on the right side: the auto-detected mode and its counterpart. Pressing **F3** toggles between the two. The counterpart is Hex for most modes (auto=Image, current=Image → F3 → Hex → F3 → Image), Text for Hex, and Text — the source — for Table and Markdown.
+The status bar includes mode toggle buttons on the right side: the auto-detected mode and its counterpart. Pressing **F3** toggles between the two. The counterpart is Text for Hex, Text — the source — for Table and Markdown, and the `viewer.alternate_mode` preference for every other mode: Structure by default (auto=Image, current=Image → F3 → Structure → F3 → Image), or Hex. A file that opened in that mode itself pairs with Hex.
 
 ### Text Mode
 
@@ -820,6 +821,23 @@ Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, 
 
 **Status bar**: `path/to/file.bin | Hex | Offset 00000A20 / 000FFFFF | Sel: 00000A20–00000A2F (16) | 1.0 MB`
 
+### Structure Mode
+
+The file dissected into a tree of its fields, Wireshark-style: an executable's headers, sections and imports, an archive's members, an image's chunks, a database's pages — about 1,500 formats, from executables, archives, disk images and filesystems to media, documents, databases, game assets, ROMs, scientific data and forensic artifacts. Embedded content is dissected in turn (a PNG inside a ZIP inside an installer), and compressed or fragmented data is decoded or reassembled into a stream of its own.
+
+- **Lazy**: only what is expanded is read. Opening an executable reads a few kilobytes; a section's contents, a member's data or a resource is read when its node is expanded. On S3, in an archive or in a remote session, only those bytes cross the connection. Long lists (an archive's members, a table's rows) come 200 at a time, with a **Show 200 more** line under them.
+- **Progress and stopping**: work runs in small steps, and requests take turns between them. A long expansion (the members of a big `.tar.gz`) never holds up expanding something else, the hex pane, or the details panel. A field whose children are being read shows a spinner in place of its chevron; the status bar names what's loading and, where the dissector can say, how far it has got ("Loading “Central Directory” 42% and 1 more · Esc to stop"), with a **Stop** button. Like a pane's loading indicators, none of these appear until the work has taken 200 ms, so quick expansions don't flicker. **Escape** stops everything in flight before it does anything else (clear the filter, close the viewer); collapsing a field that's loading stops just that one; leaving the viewer stops it all. Stopping keeps what was produced: the tree shows the children found so far with a **Stopped — continue** line under them, which carries on from where it stopped rather than starting over. Reading a decompressed stream far from what's been decoded (the hex pane, copying bytes) is stepped and stoppable the same way, with "Decoding…" in the status bar. A compressed stream whose size nothing records (a `.tar.bz2`, or a `.tar.zst` written through a pipe) is decoded on demand too, so its first entries show without decoding the rest. Its size reads "Size unknown" (in the byte-space bar, and for a field running to its end) until decoding reaches the end, e.g. when the hex pane reads its last bytes.
+- **Layout**: the tree on the left — each field's name, its value (numbers, text and enum or flag names, the raw number dimmed beside a name), a dimmed summary, a badge for problems, and its offset. On the right, the bytes the selected field lives in, its span highlighted (and, for a pointer field, what it points to, in another tint); above them the byte space they're in — the file, or e.g. "inflate of 0x2A0 + 0x1F4" for a decompressed stream. Below, the field's details: value and raw number, summary, the dissector's description of the field, its bytes, what it points to, how many children it has, and its diagnostics (truncated, malformed, unsupported, limit, warning, note) with where they occur. In a window narrower than 900px (typically Quick View) the bytes and details go under the tree instead. **Mod+B**, the **Bytes** button in the status bar, or the context menu's **Bytes Panel** hides and shows them, leaving the tree the whole window. A file that's cut short or malformed keeps whatever was dissected, with the problem attached where it occurred.
+- **Keyboard**: in the tree, Up/Down, PgUp/PgDn and Home/End move the selection; Right expands a field, or moves into it when expanded; Left collapses it, or moves to its parent; Enter or Space toggles it, or loads more on a **Show more** line. **Tab** moves between the tree and the bytes (when shown). In the bytes, the arrow keys, PgUp/PgDn and Home/End (Mod+Home/End: the start/end of the stream) move a byte cursor, Shift extends a selection, and **Enter** selects the innermost field holding the byte under the cursor — expanding the tree down to it. Clicking a byte does the same.
+- **Copying**: **Mod+C** copies the selected field as `Name: value — summary` (or, in the bytes, the selected bytes as hex); **Mod+Shift+C** copies just its value; **Mod+Alt+C** its bytes as hex. The tree's context menu (also from the keyboard's menu key) adds Copy Bytes as Text, **Go to Target** (Mod+Enter) for a field that points somewhere, and **Go to Offset** (Mod+G), which takes a hex offset and selects the field there. Mod+A selects the selected field's bytes.
+- **Encrypted content** (an encrypted archive's entries, a password-protected document or key file): a bar at the bottom asks for the password, naming what it unlocks. **Enter** unlocks (an empty password counts, since some formats default to one), **Escape** skips, leaving the encrypted content as an unsupported field. A wrong password asks again, up to three times. A field waiting for one carries a lock; Enter on it asks again. One answer serves everything it unlocks, e.g. every entry of an archive. Answers last only as long as the dissection and are never stored. Quick View doesn't ask: a locked field stays locked until the file is opened in the viewer window.
+- **Filter** (**/**, numpad **/** too): a box floats in the tree's corner, as in a pane, and narrows the tree to the lines matching a case-insensitive regex (an invalid one hides nothing) — name, value and summary alike — together with the way down to each; non-matching lines are hidden, not flattened away. Only what's expanded is searched: a collapsed node is matched by its own line, never opened to look inside, and a **Show more** line stays under a shown parent since what it hasn't loaded wasn't searched. While lines are hidden the tree carries the filtered tint (`--color-bg-filtered`) and the status bar counts the matches. A selection the pattern no longer matches moves to the first match. Up/Down and PgUp/PgDn in the box move the selection; Enter or Tab hands the keys to the tree with the filter kept (**/** returns to the box); Escape, in the box or the tree, clears it. Locating a field (clicking a byte, Enter in the bytes, Go to Offset or Target) clears it too, since the field found may be hidden.
+- **Dissect As** (**Mod+D**, or the tree's context menu): a palette of every format, those that list the file's extension first, filtered by title, name or extension as you type. The chosen format replaces identification, for content the dissector doesn't recognise or recognises as the wrong thing (a Guitar Pro `.gpx` is not a GPS track); on data that doesn't match it, the tree shows what could be parsed and where it stopped. **Identify automatically** goes back.
+  - **What it applies to**: the file, or a file within it — an archive member's data, decompressed data, an embedded resource: the selected node if it holds one, or its one child that does (an archive member holds its data beside its headers, so selecting the member is enough). Any other node does nothing but say so in the status bar; there is no reaching up to an enclosing file. The context menu works the target out as it opens: the item names it ("Dissect “song.gpx” As…") and is disabled on a node without one. Whether a node holds a file is known once it has been expanded (Mod+D on an unexpanded one finds out). The palette names it ("Dissect “song.gpx” as…"), and its suggestions follow that name's extension.
+  - **Where it shows**: once expanded, a node holding a file carries its format's short name as a quiet tag ("png", "zip", "?" when not recognised; the full name on hover), and one dissected as a chosen format carries an accent "as …" tag instead. The field details list its **Format** (identified, chosen, or not recognised). For the file itself the status bar reads e.g. "Structure as Guitar Pro 6 score".
+  - **How long it lasts**: every choice, the file's own and those inside it, lasts for the viewer window's file: kept by the position of its node in the tree, and replayed when the file is dissected again, e.g. after switching to another mode and back. Choosing a format for content drops the choices made inside it. Quick View always identifies.
+- **Detection**: a file whose association or MIME type would leave it in Hex mode opens in Structure mode when the dissector recognises it from its first 66 KiB and last 1 KiB. A [file association](#file-associations) can pick it explicitly with `viewer = "dissect"`.
+
 ### Image Mode
 
 - Displays the image centered, initially fit to the window (aspect ratio preserved). Zoom percentages are HiDPI-aware: 100% means one image pixel per physical display pixel (`devicePixelRatio` is tracked live, so moving the window between monitors keeps the indicator and limits correct). Nearest-neighbor (`image-rendering: pixelated`) kicks in only above 100%; at or below, the image is smoothly resampled.
@@ -879,7 +897,7 @@ The preview is for the mouse; the keyboard stays with the file list. It doesn't 
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Close (Escape)
-- **Edit** (Text/Hex modes only): Copy, Select All, separator, Go to Line / Go to Offset
+- **Edit** (Text, Hex, Table and Structure modes): Copy, Select All, separator, Go to Line / Go to Offset
 - **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
 - **Encoding** (Text mode only): Auto-detect (detected name), separator, then the encoding catalogue as per-script submenus (radio buttons, same one-checked convention as View).
 
@@ -1734,6 +1752,7 @@ word_wrap = false           # Default word wrap in the text editor (per-file tog
 
 [viewer]
 image_background = "checkerboard" # Backdrop behind images: "checkerboard", "dark", "light"
+alternate_mode = "dissect"  # What F3 switches to (except from Hex, Table, Markdown): "dissect" (Structure), "hex"
 
 [[bookmark]]
 path = "/home/user/projects"
@@ -2163,10 +2182,16 @@ Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding
 | Command | Default | Modes |
 |---------|---------|-------|
 | `viewer_toggle_hex` | F3 | All |
-| `viewer_copy` | Mod+C | Text, Hex, Image |
-| `viewer_select_all` | Mod+A | Text, Hex, Image |
+| `viewer_copy` | Mod+C | Text, Hex, Structure, Image |
+| `viewer_copy_value` | Mod+Shift+C | Structure |
+| `viewer_copy_bytes` | Mod+Alt+C | Structure |
+| `viewer_follow_target` | Mod+Enter | Structure |
+| `viewer_toggle_bytes` | Mod+B | Structure |
+| `viewer_dissect_as` | Mod+D | Structure |
+| `viewer_filter` | / (also numpad /) | Structure |
+| `viewer_select_all` | Mod+A | Text, Hex, Structure, Image |
 | `viewer_find` | Mod+F | Text, Hex |
-| `viewer_goto` | Mod+G | Text, Hex |
+| `viewer_goto` | Mod+G | Text, Hex, Structure |
 | `viewer_zoom_in` | = (also + / Shift+=) | Image, PDF |
 | `viewer_zoom_out` | - (also Shift+-) | Image, PDF |
 | `viewer_zoom_fit` | 0 | Image, PDF |

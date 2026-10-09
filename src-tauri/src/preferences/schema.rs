@@ -44,6 +44,23 @@ pub struct ViewerPreferences {
     /// Backdrop behind images in the viewer's image mode.
     #[schemars(title = "Image Background")]
     pub image_background: ImageBackground,
+    /// The mode F3 switches to from the one a file opens in, and back. Hex
+    /// switches to Text, and Table and Markdown to their source text,
+    /// whatever this says.
+    #[schemars(title = "F3 Switches To")]
+    pub alternate_mode: AlternateMode,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AlternateMode {
+    #[default]
+    #[schemars(title = "Structure")]
+    Dissect,
+    #[schemars(title = "Hex")]
+    Hex,
 }
 
 #[derive(

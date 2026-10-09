@@ -232,6 +232,14 @@ impl Associations {
             .map_or_else(|| viewer_for_mime(mime), |(v, _)| v)
     }
 
+    /// Whether an entry, rather than the MIME type, picks the viewer mode
+    /// for a file.
+    pub fn sets_viewer(&self, name: &str) -> bool {
+        self.trace(name, AssociationKind::File, None)
+            .viewer
+            .is_some()
+    }
+
     /// The editor language for a file, falling back to its MIME type.
     pub fn language(&self, name: &str, mime: Option<&str>) -> String {
         self.trace(name, AssociationKind::File, None)

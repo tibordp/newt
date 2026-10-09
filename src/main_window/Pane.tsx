@@ -12,6 +12,7 @@ import {
 import { DropdownMenu } from "../lib/menus";
 import { ContextMenu } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
+import { useAfterGrace } from "../lib/useAfterGrace";
 import iconMapping from "../assets/mapping.json";
 import { fileIconGlyph } from "../lib/fileIcons";
 import { commands, type Result, type RowActions } from "../lib/bindings";
@@ -921,36 +922,14 @@ function PaneInner(
     [preferences?.settings?.appearance?.columns, metadata_traits],
   );
 
-  const [showSpinner, setShowSpinner] = useState(false);
+  // The full spinner, only while navigation has no partial results yet.
+  const showSpinner = useAfterGrace(!!pending_path && !loading);
 
-  useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    // Show full spinner only when pending_path is set and no partial results yet
-    if (pending_path && !loading) {
-      // 200 ms of grace period before showing the loading screen to
-      // appear smoother.
-      timeout = setTimeout(() => setShowSpinner(true), 200);
-    } else {
-      setShowSpinner(false);
-    }
-    return () => {
-      if (timeout) clearTimeout(timeout);
-    };
-  }, [pending_path, loading]);
-
-  // Enrichment activity line, shown with a grace delay so sub-200ms runs
-  // (a typical git status) don't flash the status bar on every navigation.
+  // Enrichment activity line, held back so a quick run (a typical git
+  // status) doesn't flash the status bar on every navigation.
   const activityLabels = Object.values(enrichment_activity ?? {});
   const hasActivity = activityLabels.length > 0;
-  const [showActivity, setShowActivity] = useState(false);
-  useEffect(() => {
-    if (!hasActivity) {
-      setShowActivity(false);
-      return;
-    }
-    const timeout = setTimeout(() => setShowActivity(true), 200);
-    return () => clearTimeout(timeout);
-  }, [hasActivity]);
+  const showActivity = useAfterGrace(hasActivity);
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.

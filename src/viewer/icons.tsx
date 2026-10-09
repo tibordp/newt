@@ -29,6 +29,15 @@ export function IconMinus() {
   );
 }
 
+/// Disclosure chevron, pointing at the content it reveals.
+export function IconChevronRight() {
+  return (
+    <Icon>
+      <polyline points="6.25 4 10.25 8 6.25 12" />
+    </Icon>
+  );
+}
+
 export function IconPlus() {
   return (
     <Icon>

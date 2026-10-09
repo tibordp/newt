@@ -162,8 +162,8 @@ export default function HistoryNavigator({
     el?.scrollIntoView({ block: "nearest" });
   }, [previewIndex, open]);
 
-  // Ignore hover until the user actually moves the mouse — prevents
-  // whichever entry happens to sit under the cursor at open time from
+  // Ignore hover until the user actually moves the mouse (at open, and
+  // after each key) — prevents whichever entry sits under the cursor from
   // hijacking the keyboard's preview selection.
   const pointerActive = useSuppressInitialPointer(open);
 

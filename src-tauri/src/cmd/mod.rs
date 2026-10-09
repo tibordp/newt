@@ -252,6 +252,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             operations::write_file,
             // Viewer / Editor
             crate::viewer::set_viewer_mode,
+            crate::viewer::set_viewer_dissect_formats,
             crate::viewer::ping_viewer,
             crate::viewer::copy_viewer_range,
             crate::viewer::sniff_viewer_encoding,
@@ -260,6 +261,18 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::viewer::open_in_viewer,
             crate::viewer::find_in_viewer,
             crate::viewer::image_exif,
+            crate::viewer::dissect::dissect_open,
+            crate::viewer::dissect::dissect_formats,
+            crate::viewer::dissect::dissect_content_of,
+            crate::viewer::dissect::dissect_reinterpret,
+            crate::viewer::dissect::dissect_close,
+            crate::viewer::dissect::dissect_stop,
+            crate::viewer::dissect::dissect_children,
+            crate::viewer::dissect::dissect_locate,
+            crate::viewer::dissect::dissect_source,
+            crate::viewer::dissect::dissect_read,
+            crate::viewer::dissect::dissect_copy,
+            crate::viewer::dissect::dissect_answer_secret,
             crate::viewer::cmd_toggle_quick_view,
             crate::viewer::preview_focused,
             crate::viewer::set_preview_mode,
@@ -434,6 +447,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
         // than command return values.
         .typ::<crate::main_window::MainWindowStateWire<'static>>()
         .typ::<crate::viewer::ViewerStateWire>()
+        .typ::<crate::viewer::dissect::DissectProgress>()
         .typ::<crate::editor::EditorStateWire>()
         .typ::<newt_common::vfs::File>()
         .typ::<newt_common::vfs::FileList>()

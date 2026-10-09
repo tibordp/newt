@@ -695,11 +695,41 @@ pub async fn inspect_file(ctx: MainWindowContext, path: VfsPath) -> Result<Inspe
     let name = path.file_name().unwrap_or_default();
     let mime = details.mime_type.as_deref();
     let associations = ctx.preferences().associations();
+    let mut viewer_mode = associations.viewer_mode(name, mime);
+    // A binary nothing says how to show is shown as hex, unless the
+    // dissector recognises it.
+    if viewer_mode == crate::viewer::ViewerMode::Hex
+        && !associations.sets_viewer(name)
+        && recognised(&ctx, &path, details.size).await
+    {
+        viewer_mode = crate::viewer::ViewerMode::Dissect;
+    }
     Ok(InspectedFile {
-        viewer_mode: associations.viewer_mode(name, mime),
+        viewer_mode,
         language: associations.language(name, mime),
         details,
     })
+}
+
+/// Whether the Structure viewer's dissector recognises the file at `path`.
+async fn recognised(ctx: &MainWindowContext, path: &VfsPath, size: u64) -> bool {
+    use crate::viewer::dissect::{PROBE_HEAD, PROBE_TAIL, recognises};
+    let Ok(fs) = ctx.fs() else {
+        return false;
+    };
+    let Ok(head) = fs.read_range(path.clone(), 0, PROBE_HEAD).await else {
+        return false;
+    };
+    let tail = if size > PROBE_HEAD {
+        let start = size.saturating_sub(PROBE_TAIL);
+        match fs.read_range(path.clone(), start, PROBE_TAIL).await {
+            Ok(tail) => tail.data,
+            Err(_) => return false,
+        }
+    } else {
+        head.data.clone()
+    };
+    recognises(&head.data, &tail, size)
 }
 
 #[tauri::command]

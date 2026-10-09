@@ -17,7 +17,7 @@ import {
   type FileInfo,
   type ViewerMode,
 } from "./helpers";
-import { getAlternateMode } from "./ModeToggle";
+import { getAlternateMode, useCounterpart } from "./ModeToggle";
 import { TextViewer } from "./TextViewer";
 import { HexViewer } from "./HexViewer";
 import { ImageViewer } from "./ImageViewer";
@@ -25,6 +25,7 @@ import { MediaViewer } from "./MediaViewer";
 import { PdfViewer } from "./PdfViewer";
 import { TableViewer } from "./TableViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
+import { DissectViewer } from "./DissectViewer";
 
 type ViewerBodyProps = {
   displayPath: string;
@@ -165,11 +166,14 @@ export function ViewerBody({
     [fileKey],
   );
 
+  const resolvedAuto = autoMode ?? currentMode ?? "text";
+  const other = useCounterpart(resolvedAuto);
   useScopedBindings(viewerHost.embedded ? null : "viewer", {
     viewer_toggle_hex: () => {
       if (!currentMode) return false;
-      const resolved = autoMode ?? currentMode;
-      safe(viewerHost.setMode(getAlternateMode(currentMode, resolved)));
+      safe(
+        viewerHost.setMode(getAlternateMode(currentMode, resolvedAuto, other)),
+      );
     },
   });
 
@@ -261,6 +265,16 @@ export function ViewerBody({
         tag={currentMode}
         filePath={displayPath}
         fileUrl={fileUrl}
+        fileSize={info.size}
+        autoMode={autoMode ?? currentMode}
+      />
+    );
+  } else if (currentMode === "dissect") {
+    content = (
+      <DissectViewer
+        filePath={displayPath}
+        vfsPath={filePath}
+        choices={viewerState?.dissect_formats ?? []}
         fileSize={info.size}
         autoMode={autoMode ?? currentMode}
       />

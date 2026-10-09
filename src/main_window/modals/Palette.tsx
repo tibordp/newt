@@ -87,10 +87,9 @@ export function Palette({
   );
 
   // Suppress pointer-driven selection until the user actually moves the
-  // mouse — without this, opening the palette over an existing cursor
-  // position immediately hover-focuses whichever item lands under it,
-  // which fights keyboard navigation. The window-level `mousemove`
-  // listener flips this to active on the first real movement.
+  // mouse, and again after each key — without this, whichever item opens
+  // or scrolls under a resting cursor gets hover-focused, which fights
+  // keyboard navigation.
   const pointerActive = useSuppressInitialPointer();
 
   return (

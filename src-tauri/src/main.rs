@@ -177,6 +177,8 @@ pub struct GlobalContext {
     pending_close: Mutex<HashSet<String>>,
     #[cfg(target_os = "macos")]
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
+    /// The Structure viewer's dissections, in every window.
+    dissections: viewer::dissect::Dissections,
 }
 
 impl Default for GlobalContext {
@@ -195,6 +197,7 @@ impl Default for GlobalContext {
             pending_close: Mutex::new(HashSet::new()),
             #[cfg(target_os = "macos")]
             window_menus: Mutex::new(HashMap::new()),
+            dissections: Default::default(),
         }
     }
 }
@@ -371,6 +374,7 @@ impl GlobalContext {
         self.viewer_windows.lock().remove(label);
         self.editor_windows.lock().remove(label);
         self.pending_close.lock().remove(label);
+        self.dissections.forget_window(label);
         #[cfg(target_os = "macos")]
         self.window_menus.lock().remove(label);
 

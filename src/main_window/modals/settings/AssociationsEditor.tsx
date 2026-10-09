@@ -35,6 +35,7 @@ const FORMATS = Object.keys(FORMAT_LABELS) as BrowseFormat[];
 const VIEWER_LABELS: Record<ViewerMode, string> = {
   text: "Text",
   hex: "Hex",
+  dissect: "Structure",
   table: "Table",
   markdown: "Markdown",
   image: "Image",

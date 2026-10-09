@@ -1,0 +1,516 @@
+@use "../styles/forced-colors" as fc;
+
+.root {
+  container-type: inline-size;
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+// --- The tree ---
+
+.treePane {
+  flex: 1;
+  min-width: 260px;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  border-right: 1px solid var(--color-separator);
+}
+
+.tree {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  outline: none;
+  position: relative;
+  font-size: var(--font-size-md);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+// Some lines are hidden by the filter.
+.treeFiltered {
+  background: var(--color-bg-filtered);
+}
+
+// Floats over the tree's corner, as a pane's filter does.
+.filterBar {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  z-index: 10;
+  padding: var(--space-3);
+  width: 250px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.filterInput[type="text"] {
+  width: 100%;
+  height: 2em;
+}
+
+.treeRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px;
+  // Text of every face and size on one baseline (centring the boxes puts
+  // the smaller monospace numbers high); what isn't text is centred.
+  line-height: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-right: var(--space-4);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: default;
+}
+
+.treeRowSelected {
+  background: var(--color-selected-bg);
+  @include fc.selected;
+}
+
+.treeRowSelectedInactive {
+  background: rgba(128, 128, 128, 0.2);
+  @include fc.selected;
+}
+
+.chevron {
+  flex-shrink: 0;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-fg-muted);
+
+  svg {
+    display: block;
+  }
+
+  &[data-open] svg {
+    transform: rotate(90deg);
+  }
+}
+
+.spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--color-accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+.moreLoading {
+  flex-shrink: 0;
+  color: var(--color-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.name {
+  flex-shrink: 0;
+}
+
+// The format identified for a file within the file.
+.format {
+  flex-shrink: 0;
+  line-height: normal;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-muted);
+}
+
+// A format chosen with Dissect As.
+.forced {
+  flex-shrink: 0;
+  line-height: normal;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.colon {
+  flex-shrink: 0;
+  margin-left: calc(-1 * var(--space-2));
+  color: var(--color-fg-muted);
+}
+
+// Values tinted by kind; numbers and raw bytes in the monospace face.
+.value {
+  flex-shrink: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+
+  &[data-kind="number"],
+  &[data-kind="float"],
+  &[data-kind="bytes"],
+  &[data-kind="guid"] {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  &[data-kind="number"],
+  &[data-kind="float"],
+  &[data-kind="bool"] {
+    color: var(--color-accent);
+  }
+
+  &[data-kind="text"] {
+    color: var(--color-success);
+  }
+
+  &[data-kind="enum"],
+  &[data-kind="flags"] {
+    font-weight: 600;
+  }
+}
+
+.raw {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-muted);
+}
+
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-fg-muted);
+}
+
+.offset {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-muted);
+}
+
+.diagBadge {
+  flex-shrink: 0;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  color: var(--color-accent-fg);
+  background: var(--color-fg-muted);
+
+  &[data-kind="malformed"],
+  &[data-kind="truncated"] {
+    background: var(--color-error);
+  }
+
+  &[data-kind="warning"],
+  &[data-kind="limit"],
+  &[data-kind="unsupported"] {
+    background: var(--color-warning);
+  }
+}
+
+.lock {
+  flex-shrink: 0;
+  align-self: center;
+  font-family: "nerd-symbols";
+  color: var(--color-warning);
+}
+
+.moreRow {
+  color: var(--color-fg-muted);
+}
+
+.moreButton {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-accent);
+  cursor: default;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.placeholder,
+.error {
+  padding: var(--space-5);
+  color: var(--color-fg-muted);
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-lg);
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.error {
+  color: var(--color-error);
+}
+
+// --- The bytes and the field details ---
+
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-bg);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.sourceBar {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  background: var(--color-chrome-light);
+  border-bottom: 1px solid var(--color-separator);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.busy {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.statusEnd {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.sourceLen {
+  font-variant-numeric: tabular-nums;
+}
+
+.hex {
+  flex: 1;
+  scrollbar-gutter: stable;
+  overflow-y: auto;
+  overflow-x: hidden;
+  outline: none;
+  position: relative;
+  padding: 0 var(--space-4);
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 18px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: text;
+}
+
+// Offset, sixteen bytes and their characters; the column fits around it.
+.hexContent {
+  position: relative;
+  width: 77ch;
+}
+
+.hexLine {
+  position: absolute;
+  height: 18px;
+  display: flex;
+  white-space: pre;
+}
+
+.hexOffset {
+  color: var(--color-fg-muted);
+  margin-right: 2ch;
+  pointer-events: none;
+}
+
+.hexBytes span {
+  padding-right: 1ch;
+
+  &[data-gap="wide"] {
+    padding-right: 2ch;
+  }
+}
+
+.hexChars {
+  margin-left: 1ch;
+  color: var(--color-fg-muted);
+}
+
+.byteSpan {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: var(--color-fg);
+  @include fc.selected;
+}
+
+.byteTarget {
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--color-fg);
+}
+
+.byteSelected {
+  background-color: Highlight;
+  color: HighlightText;
+}
+
+.byteSelectedInactive {
+  background: rgba(128, 128, 128, 0.3);
+  @include fc.selected;
+}
+
+.byteCursor {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+  @include fc.cursor;
+}
+
+.details {
+  // Sized by the hex pane above it, never widening the column.
+  width: 0;
+  min-width: 100%;
+  box-sizing: border-box;
+  max-height: 40%;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-separator);
+  font-size: var(--font-size-md);
+}
+
+.detailsTitle {
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+
+.detailsList {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-5);
+  margin: 0;
+
+  dt {
+    color: var(--color-fg-muted);
+  }
+
+  dd {
+    margin: 0;
+    max-width: none;
+    overflow-wrap: anywhere;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+.description {
+  white-space: pre-wrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--color-fg-muted);
+}
+
+.link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-accent);
+  cursor: default;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.diagnostics {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+
+  li {
+    padding: var(--space-1) 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.diagKind {
+  font-weight: 600;
+  margin-right: var(--space-3);
+
+  [data-kind="malformed"] &,
+  [data-kind="truncated"] & {
+    color: var(--color-error);
+  }
+
+  [data-kind="warning"] &,
+  [data-kind="limit"] &,
+  [data-kind="unsupported"] & {
+    color: var(--color-warning);
+  }
+}
+
+// Too narrow for the tree beside the bytes: the bytes go under it.
+@container (max-width: 900px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .treePane {
+    min-width: 0;
+    min-height: 120px;
+    border-right: none;
+  }
+
+  .side {
+    flex: 0 0 45%;
+    border-top: 1px solid var(--color-separator);
+  }
+
+  .hex {
+    overflow-x: auto;
+  }
+}

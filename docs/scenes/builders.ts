@@ -308,6 +308,7 @@ const emptyViewer: ViewerState = {
     header: null,
     detected_header: null,
   },
+  dissect_formats: [],
 };
 
 export function viewer(
@@ -329,6 +330,7 @@ export function viewer(
       header: null,
       detected_header: null,
     },
+    dissect_formats: [],
   };
 }
 

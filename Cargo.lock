@@ -2287,6 +2287,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "fillyfoal"
+version = "0.1.0"
+source = "git+https://github.com/tibordp/fillyfoal#d9acb292fe9d5ada57ec1b40a76bc9df3fd0051c"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4035,6 +4040,7 @@ dependencies = [
  "dom_query",
  "drag",
  "encoding_rs",
+ "fillyfoal",
  "gio",
  "globset",
  "kamadak-exif",

@@ -1,6 +1,7 @@
 import styles from "./Viewer.module.scss";
 import { safe } from "../lib/ipc";
 import type { ViewerMode } from "./helpers";
+import { usePreferences } from "../lib/preferences";
 import { useCommandShortcuts } from "../lib/scopedBindings";
 import { useViewerHost } from "./host";
 
@@ -9,20 +10,29 @@ interface ModeToggleProps {
   autoMode: ViewerMode;
 }
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+const LABELS: Partial<Record<ViewerMode, string>> = {
+  dissect: "Structure",
+  pdf: "PDF",
+};
+
+function modeLabel(mode: ViewerMode): string {
+  return LABELS[mode] ?? mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
 /** The mode the auto-detected one pairs with: the source text for the
- * rendered modes, hex for everything else, text for hex itself. */
-function counterpart(autoMode: ViewerMode): ViewerMode {
+ * rendered modes and for hex, the `viewer.alternate_mode` preference for
+ * everything else (hex when that's the detected mode itself). */
+export function useCounterpart(autoMode: ViewerMode): ViewerMode {
+  const preferred = usePreferences()?.settings.viewer?.alternate_mode;
   switch (autoMode) {
     case "hex":
     case "table":
     case "markdown":
       return "text";
-    default:
-      return "hex";
+    default: {
+      const other = preferred ?? "dissect";
+      return autoMode === other ? "hex" : other;
+    }
   }
 }
 
@@ -30,21 +40,21 @@ function counterpart(autoMode: ViewerMode): ViewerMode {
 export function getAlternateMode(
   currentMode: ViewerMode,
   autoMode: ViewerMode,
+  other: ViewerMode,
 ): ViewerMode {
-  const other = counterpart(autoMode);
   return currentMode === other ? autoMode : other;
 }
 
 export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
   const shortcuts = useCommandShortcuts();
   const viewerHost = useViewerHost();
+  const other = useCounterpart(autoMode);
   // Quick View picks the mode from its bar instead.
   if (viewerHost.embedded) return null;
-  const other = counterpart(autoMode);
-  const alternate = getAlternateMode(currentMode, autoMode);
+  const alternate = getAlternateMode(currentMode, autoMode, other);
   const modes: [ViewerMode, string][] = [
-    [autoMode, capitalize(autoMode)],
-    [other, capitalize(other)],
+    [autoMode, modeLabel(autoMode)],
+    [other, modeLabel(other)],
   ];
 
   return (
@@ -68,10 +78,10 @@ export function ModeToggle({ currentMode, autoMode }: ModeToggleProps) {
                 ? undefined
                 : mode === alternate
                   ? shortcuts.label(
-                      `Switch to ${mode} view`,
+                      `Switch to ${modeLabel(mode).toLowerCase()} view`,
                       "viewer_toggle_hex",
                     )
-                  : `Switch to ${mode} view`
+                  : `Switch to ${modeLabel(mode).toLowerCase()} view`
             }
           >
             {label}
