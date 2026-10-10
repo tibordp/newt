@@ -1838,17 +1838,13 @@ async mountSftp(paneHandle: PaneHandle, host: string) : Promise<Result<null, str
 }
 },
 /**
- * Submit handler for the search dialog. Builds a `SearchVfs` rooted at
- * `root` with the supplied parameters and navigates the pane to its
- * mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
- * `content_*` together optionally specify a content match (one of
- * literal substring or regex). Empty strings are treated as "not set".
+ * Mount a search over `root` and navigate the pane to its results.
  * Pattern compilation and validation happen mount-side (`search::mount`),
- * so this just forwards the raw dialog values.
+ * so this just forwards the dialog's values.
  */
-async mountSearch(paneHandle: PaneHandle, root: VfsPath, namePattern: string | null, contentPattern: string | null, contentIsRegex: boolean, caseSensitive: boolean, followSymlinks: boolean) : Promise<Result<null, string>> {
+async mountSearch(paneHandle: PaneHandle, root: VfsPath, params: SearchParams) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("mount_search", { paneHandle, root, namePattern, contentPattern, contentIsRegex, caseSensitive, followSymlinks }) };
+    return { status: "ok", data: await TAURI_INVOKE("mount_search", { paneHandle, root, params }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2346,6 +2342,12 @@ open_packages: boolean }
  * A single `[[bookmark]]` entry in the TOML file.
  */
 export type BookmarkEntry = { path: string; name?: string | null }
+export type BreadcrumbDetail = { label: string; value: string }
+/**
+ * A short suffix to a breadcrumb's label, with details shown on hover: a
+ * search's name patterns, and everything else it was asked for.
+ */
+export type BreadcrumbNote = { text: string; details: BreadcrumbDetail[] }
 export type BrowseFormat = "zip" | "7z" | 
 /**
  * tar, cpio or ar, plain or compressed.
@@ -2740,6 +2742,12 @@ git_status: boolean }
  * command it runs.
  */
 export type EnterChoice = { action: "open" } | { action: "browse" } | { action: "view" } | { action: "edit" } | { action: "command"; command: string }
+export type EntryKind = "any" | "file" | "directory" | 
+/**
+ * Only seen as such when symlinks aren't followed; followed, a link
+ * is what it points to.
+ */
+"symlink"
 export type EnvironmentPreferences = { 
 /**
  * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
@@ -3146,7 +3154,12 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | 
+defaults: SearchDefaults; 
+/**
+ * Which metadata the root's entries have, so filters on what they
+ * lack can be disabled.
+ */
+metadata_traits: MetadataTraits } } | 
 /**
  * Quick sort menu (keyboard-launched, anchored to the pane header).
  */
@@ -3357,7 +3370,12 @@ prefill: SearchParams | null;
  * Sticky last-used toggles for a fresh search, seeded from runtime
  * state. Ignored when `prefill` is present (refine restores instead).
  */
-defaults: SearchDefaults } } | 
+defaults: SearchDefaults; 
+/**
+ * Which metadata the root's entries have, so filters on what they
+ * lack can be disabled.
+ */
+metadata_traits: MetadataTraits } } | 
 /**
  * Quick sort menu (keyboard-launched, anchored to the pane header).
  */
@@ -3438,6 +3456,15 @@ association: AssociationFocus | null } } | { type: "confirm_delete"; data: { mes
  */
 { type: "third_party_notices" }
 export type Mode = number
+export type ModeFilter = { how: ModeMatch; 
+/**
+ * Permission bits (`0o7777` at most).
+ */
+bits: number }
+/**
+ * `find -perm`'s three ways of comparing.
+ */
+export type ModeMatch = "exactly" | "all_of" | "any_of"
 /**
  * Session-level facts about the mounted VFS set that the frontend needs
  * outside the selector modal. Refreshed on mount/unmount and at session
@@ -3561,7 +3588,7 @@ export type Origin =
 /**
  * A segment of the pane's path bar, and where clicking it goes.
  */
-export type PaneBreadcrumb = { label: string; path: VfsPath }
+export type PaneBreadcrumb = { label: string; path: VfsPath; note: BreadcrumbNote | null }
 export type PaneHandle = number
 export type PaneStats = { file_count: number; dir_count: number; bytes: number; selected_file_count: number; selected_dir_count: number; selected_bytes: number; total_count: number | null; 
 /**
@@ -3830,45 +3857,95 @@ role_arn: string | null;
  */
 external_id: string | null }
 /**
- * Last-used Search toggles, re-seeded into fresh searches (the refine flow
- * still restores from the live search VFS instead).
+ * Last-used Search toggles — how to search, never what to find — re-seeded
+ * into fresh searches (the refine flow still restores from the live search
+ * VFS instead).
  */
-export type SearchDefaults = { case_sensitive: boolean; content_is_regex: boolean; follow_symlinks: boolean }
+export type SearchDefaults = { case_sensitive: boolean; content_is_regex: boolean; whole_word: boolean; follow_symlinks: boolean; skip_hidden: boolean; gitignore: boolean; one_file_system: boolean }
+/**
+ * What a result must be beyond its name and content. An entry missing
+ * the metadata a filter looks at (an S3 object has no owner) passes it.
+ */
+export type SearchFilters = { kind: EntryKind; 
+/**
+ * Size bounds, inclusive, in bytes. Directories never match a
+ * search with either.
+ */
+min_size: number | null; max_size: number | null; modified: TimeRange; accessed: TimeRange; created: TimeRange; 
+/**
+ * Owner and group, by name or numeric id.
+ */
+user: string | null; group: string | null; mode: ModeFilter | null; 
+/**
+ * Windows `FILE_ATTRIBUTE_*` bits a result must all have; 0 for any.
+ */
+attributes: number; 
+/**
+ * Levels below the root searched; 1 is the root's own entries.
+ */
+max_depth: number | null; 
+/**
+ * The search stops once it has this many results.
+ */
+limit: number | null }
 export type SearchMatch = { offset: number; length: number }
 /**
  * Parameters for a search. Captured at mount time and immutable for
  * the lifetime of the `SearchVfs` — refinement mounts a fresh search
  * (cmd+f inside a search reopens the dialog pre-filled from these).
- * Kept in the raw dialog form (not compiled matchers) so they can
- * round-trip through `mount_meta` back into the dialog.
+ * Patterns stay in their raw dialog form (not compiled matchers) so they
+ * can round-trip through `mount_meta` back into the dialog.
  */
 export type SearchParams = { 
 /**
- * Glob pattern for the basename (e.g. `*.rs`, `Cargo.*`). When
- * `None`, matches any name.
+ * `;`-separated name patterns, any of which matches. A fragment
+ * matches anywhere in the name; one with `*`, `?` or `[` is a glob
+ * over the whole name; one with `/` is a glob over the path below
+ * the search root. `None` matches every name.
  */
 name_pattern: string | null; 
 /**
- * Optional content pattern — runs `Filesystem::find_in_file` on
- * every entry whose name matched. When `None`, name-match alone is
- * sufficient. A substring unless `content_is_regex` is set.
+ * `;`-separated patterns of what is neither a result nor searched
+ * into: names, globs, or paths below the root as in `name_pattern`,
+ * but never fragments.
  */
-content_pattern: string | null; 
+exclude_pattern: string | null; 
 /**
- * Whether `content_pattern` is a regular expression rather than a
- * literal substring.
+ * Only files whose content matches are results. A substring unless
+ * `content_is_regex` is set.
  */
-content_is_regex: boolean; 
+content_pattern: string | null; content_is_regex: boolean; 
 /**
- * Whether name and content matching are case-sensitive.
+ * Whether name, exclude and content matching are case-sensitive.
  */
 case_sensitive: boolean; 
+/**
+ * The content match must start and end at word boundaries.
+ */
+whole_word: boolean; 
+/**
+ * Files whose content does *not* match are the results instead.
+ */
+not_containing: boolean; 
 /**
  * Whether the walker follows symlinks during traversal. Off by
  * default — symlink loops and double-counting cause more pain than
  * they save.
  */
 follow_symlinks: boolean; 
+/**
+ * Hidden entries are neither results nor searched into.
+ */
+skip_hidden: boolean; 
+/**
+ * What `.gitignore` files ignore is neither a result nor searched
+ * into, and neither is `.git`.
+ */
+gitignore: boolean; 
+/**
+ * Mount points below the root are not searched into.
+ */
+one_file_system: boolean; filters: SearchFilters; 
 /**
  * Per-file size cap for content search. Files larger than this are
  * skipped (matched-by-name still surfaces). 0 means unlimited.
@@ -3904,6 +3981,18 @@ header: boolean | null; detected_header: boolean | null }
 export type TerminalHandle = number
 export type TerminalView = { handle: TerminalHandle; defunct: boolean }
 export type ThemeMode = "system" | "light" | "dark"
+export type TimeBound = 
+/**
+ * That long before the search started.
+ */
+{ ago: { seconds: number } } | 
+/**
+ * A calendar day as typed, and its start in the user's time zone
+ * in Unix milliseconds — resolved by the dialog, since the walk may
+ * run on a host in another zone.
+ */
+{ date: { date: string; at: number } }
+export type TimeRange = { newer_than: TimeBound | null; older_than: TimeBound | null }
 /**
  * A single `[[command]]` entry in the TOML file.
  */

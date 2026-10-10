@@ -5,6 +5,7 @@ pub mod background_job;
 pub mod change_notifier;
 pub mod disc;
 pub mod file;
+pub mod gitignore;
 pub mod local;
 pub(crate) mod local_attributes;
 pub mod mount;
@@ -132,6 +133,21 @@ pub struct Breadcrumb {
     /// the VFS's origin (an archive's crumbs lead back up the directories
     /// holding it). Not a display path.
     pub nav_path: String,
+    pub note: Option<BreadcrumbNote>,
+}
+
+/// A short suffix to a breadcrumb's label, with details shown on hover: a
+/// search's name patterns, and everything else it was asked for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct BreadcrumbNote {
+    pub text: String,
+    pub details: Vec<BreadcrumbDetail>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct BreadcrumbDetail {
+    pub label: String,
+    pub value: String,
 }
 
 // ---------------------------------------------------------------------------

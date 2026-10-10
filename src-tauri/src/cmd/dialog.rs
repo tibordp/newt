@@ -621,11 +621,18 @@ pub fn dialog(
                         None => (path, None),
                     };
                     let display_path = ctx.format_vfs_path(&path);
+                    let metadata_traits = ctx
+                        .vfs_info()
+                        .ok()
+                        .and_then(|vi| vi.descriptor(path.vfs_id))
+                        .map(|(desc, meta)| desc.metadata_traits(&meta))
+                        .unwrap_or_default();
                     ModalDataKind::Search {
                         path,
                         display_path,
                         prefill,
                         defaults: rt_state.search.clone(),
+                        metadata_traits,
                     }
                 }
                 DialogKind::Sort => {

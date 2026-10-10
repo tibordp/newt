@@ -193,6 +193,7 @@ pub fn unix_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
     crumbs.push(Breadcrumb {
         label: "/".to_string(),
         nav_path: "/".to_string(),
+        note: None,
     });
     let mut accumulated = String::new();
     for (i, seg) in comps.iter().enumerate() {
@@ -206,6 +207,7 @@ pub fn unix_breadcrumbs(path: &Path) -> Vec<Breadcrumb> {
                 format!("{}/", seg)
             },
             nav_path: accumulated.clone(),
+            note: None,
         });
     }
     crumbs
@@ -292,6 +294,7 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
         crumbs.push(Breadcrumb {
             label: comps_display(&comps, style),
             nav_path: comps_wire(&comps),
+            note: None,
         });
         return crumbs;
     }
@@ -309,6 +312,7 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
     crumbs.push(Breadcrumb {
         label: root_label,
         nav_path: comps_wire(&comps[..root_depth]),
+        note: None,
     });
     for i in root_depth..comps.len() {
         let is_last = i + 1 == comps.len();
@@ -320,6 +324,7 @@ pub fn local_breadcrumbs(path: &Path, style: PathStyle) -> Vec<Breadcrumb> {
         crumbs.push(Breadcrumb {
             label,
             nav_path: comps_wire(&comps[..i + 1]),
+            note: None,
         });
     }
     crumbs

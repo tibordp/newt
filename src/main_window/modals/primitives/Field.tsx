@@ -11,16 +11,19 @@ export function Field({
   label,
   htmlFor,
   hint,
+  title,
   children,
 }: {
   label: React.ReactNode;
   htmlFor?: string;
   hint?: React.ReactNode;
+  // Hover explainer on the label; give the control the same `title`.
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={styles.field}>
-      <label className={styles.fieldLabel} htmlFor={htmlFor}>
+      <label className={styles.fieldLabel} htmlFor={htmlFor} title={title}>
         {label}
       </label>
       {children}

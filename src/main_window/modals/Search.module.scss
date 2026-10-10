@@ -1,0 +1,53 @@
+// The content toggles, two by two.
+.toggles {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: var(--space-2) var(--space-6);
+}
+
+.traversal {
+  margin-top: var(--space-4);
+}
+
+.foldBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+// Filter rows: a label, then one or two controls sharing the width.
+.filters {
+  display: grid;
+  grid-template-columns: max-content 1fr 1fr;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+
+  input[type="text"],
+  select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+.wide {
+  grid-column: span 2;
+}
+
+// An inline caption ahead of its input inside one grid cell.
+.captioned {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  > span {
+    flex-shrink: 0;
+    color: var(--color-fg-muted);
+  }
+}
+
+.attributes {
+  grid-column: span 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}

@@ -91,10 +91,10 @@ pub struct PaneStats {
 struct HistoryEntry {
     path: VfsPath,
     focused: Option<String>,
-    /// Pre-formatted human-readable path (e.g. "s3://bucket/foo"), captured
-    /// at push time so we can still display the entry meaningfully if the
-    /// VFS is later unmounted (the descriptor needed to format `path` would
-    /// be gone by then).
+    /// Pre-formatted human-readable path (e.g. "s3://bucket/foo", or a
+    /// search's root with its patterns), captured at push time so we can
+    /// still display the entry meaningfully if the VFS is later unmounted
+    /// (the descriptor needed to format `path` would be gone by then).
     display_path: String,
     /// Pre-resolved VFS display name, captured at push time for the same
     /// reason as `display_path`.
@@ -984,6 +984,7 @@ impl Pane {
                         &crumb.nav_path,
                     ),
                     label: crumb.label,
+                    note: crumb.note,
                 })
                 .collect();
         }
@@ -1025,10 +1026,19 @@ impl Pane {
 
     fn snapshot(&self) -> HistoryEntry {
         let view_state = self.view_state.read();
+        // The breadcrumbs follow `pending_path`; the note must be the
+        // current path's own.
+        let note = self
+            .vfs_info
+            .descriptor(view_state.path.vfs_id)
+            .and_then(|(desc, meta)| desc.breadcrumbs(&view_state.path.path, &meta).pop()?.note);
         HistoryEntry {
             path: view_state.path.clone(),
             focused: view_state.focused.clone(),
-            display_path: view_state.display_path.clone(),
+            display_path: match note {
+                Some(note) => format!("{} {}", view_state.display_path, note.text),
+                None => view_state.display_path.clone(),
+            },
             vfs_display_name: view_state.vfs_display_name.clone(),
             arrived_at: *self.current_arrived_at.lock(),
             // Filled at the sites that actually push into history
@@ -1680,6 +1690,7 @@ pub struct FileWindow {
 pub struct PaneBreadcrumb {
     pub label: String,
     pub path: VfsPath,
+    pub note: Option<newt_common::vfs::BreadcrumbNote>,
 }
 
 /// View model for a pane.

@@ -2,13 +2,12 @@ import { at, file, kb, mainWindow, pane, type VfsInfo } from "../builders";
 import { PROJECT, projectEntries, docsColumns } from "../demo";
 import type { Scene } from "../types";
 
-const label = `${PROJECT} [*.rs · "TODO"]`;
 const SEARCH: VfsInfo = {
   id: 3,
   name: "Search",
   hostLocal: false,
-  display: () => label,
-  rootLabel: label,
+  display: () => PROJECT,
+  rootLabel: PROJECT,
 };
 
 const hits: [string, number, string][] = [
@@ -40,7 +39,19 @@ for (const item of view.file_window.items) {
     item.source_display = item.source.path.replace(/\/[^/]*$/, "");
   }
 }
-view.breadcrumbs = [{ label, path: { ...view.path, path: "/" } }];
+view.breadcrumbs = [
+  {
+    label: PROJECT,
+    path: { ...view.path, path: "/" },
+    note: {
+      text: "[*.rs]†",
+      details: [
+        { label: "Name", value: "*.rs" },
+        { label: "Content", value: '"TODO"' },
+      ],
+    },
+  },
+];
 
 const scene: Scene = {
   description: "Find in Folder results as a flat result filesystem",

@@ -707,6 +707,9 @@ pub enum ModalDataKind {
         /// Sticky last-used toggles for a fresh search, seeded from runtime
         /// state. Ignored when `prefill` is present (refine restores instead).
         defaults: crate::runtime_state::SearchDefaults,
+        /// Which metadata the root's entries have, so filters on what they
+        /// lack can be disabled.
+        metadata_traits: newt_common::vfs::MetadataTraits,
     },
     /// Quick sort menu (keyboard-launched, anchored to the pane header).
     SortMenu {

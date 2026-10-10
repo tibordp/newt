@@ -124,14 +124,19 @@ impl CopyMoveDefaults {
     }
 }
 
-/// Last-used Search toggles, re-seeded into fresh searches (the refine flow
-/// still restores from the live search VFS instead).
+/// Last-used Search toggles — how to search, never what to find — re-seeded
+/// into fresh searches (the refine flow still restores from the live search
+/// VFS instead).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(default, deny_unknown_fields)]
 pub struct SearchDefaults {
     pub case_sensitive: bool,
     pub content_is_regex: bool,
+    pub whole_word: bool,
     pub follow_symlinks: bool,
+    pub skip_hidden: bool,
+    pub gitignore: bool,
+    pub one_file_system: bool,
 }
 
 pub struct RuntimeStateManager {

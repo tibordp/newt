@@ -126,7 +126,7 @@ Correctness and UX:
 - Natural, locale-aware name sort (`IMG_10` sorts before `IMG_2`).
 - Toggle-selection key is `Help` on macOS (absent on current keyboards) and hardcoded in `Pane.tsx`; make it a rebindable command.
 - Quick search: Shift/AltGr letters can't start it (AZERTY digits, uppercase names), and nothing guards IME composition (`isComposing`), so committing a CJK candidate with Enter opens the focused file.
-- FIFOs and device files are opened as regular files: content search, copy and view hang (or copy `/dev/zero` forever).
+- FIFOs and device files are opened as regular files: copy and view hang (or copy `/dev/zero` forever).
 - S3 `CopySource` isn't URL-encoded (`s3/mod.rs`, `s3/properties.rs`): keys with `%`, `+` or non-ASCII copy the wrong object, and a rename then deletes the source.
 - Case-insensitive destinations: `Makefile` and `makefile` from a case-sensitive source collide mid-operation (likewise NFC/NFD and Windows trailing dots); detect before writing.
 - Pack to Archive can target one of its own sources (`foo.zip` packed as zip in place) and, after Overwrite, truncates it to an empty archive; a failed destination stat is treated as absent; a symlinked destination is written through.

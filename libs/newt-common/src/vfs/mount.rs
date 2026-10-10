@@ -42,7 +42,7 @@ pub enum MountRequest {
     },
     Search {
         root: VfsPath,
-        params: search::SearchParams,
+        params: Box<search::SearchParams>,
     },
     /// Expose the requesting side's own filesystem (the client-local FS
     /// in a remote session). `mount_meta` is supplied by the requester —
@@ -322,7 +322,7 @@ impl VfsManager for VfsRegistryManager {
                 // source follow registry redirects.
                 let file_reader: Arc<dyn Filesystem> =
                     Arc::new(super::VfsRegistryFs::new(self.registry.clone()));
-                search::mount(root, params, file_reader, &ctx).await?
+                search::mount(root, *params, file_reader, &ctx).await?
             }
         };
 

@@ -120,35 +120,17 @@ pub async fn mount_sftp(
     Ok(())
 }
 
-/// Submit handler for the search dialog. Builds a `SearchVfs` rooted at
-/// `root` with the supplied parameters and navigates the pane to its
-/// mount root. `name_pattern` is a glob (`*.rs`, `Cargo.*`, …);
-/// `content_*` together optionally specify a content match (one of
-/// literal substring or regex). Empty strings are treated as "not set".
+/// Mount a search over `root` and navigate the pane to its results.
 /// Pattern compilation and validation happen mount-side (`search::mount`),
-/// so this just forwards the raw dialog values.
+/// so this just forwards the dialog's values.
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn mount_search(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
     root: VfsPath,
-    name_pattern: Option<String>,
-    content_pattern: Option<String>,
-    content_is_regex: bool,
-    case_sensitive: bool,
-    follow_symlinks: bool,
+    params: SearchParams,
 ) -> Result<(), Error> {
-    let params = SearchParams {
-        name_pattern: name_pattern.filter(|s| !s.is_empty()),
-        content_pattern: content_pattern.filter(|s| !s.is_empty()),
-        content_is_regex,
-        case_sensitive,
-        follow_symlinks,
-        ..SearchParams::default()
-    };
-
     // If the pane is already inside a search, this mount is a refinement
     // of it — the new results take over the current history entry rather
     // than stacking on top (and the superseded mount gets auto-unmounted
@@ -166,7 +148,10 @@ pub async fn mount_search(
     mount_and_navigate(
         ctx,
         pane_handle,
-        MountRequest::Search { root, params },
+        MountRequest::Search {
+            root,
+            params: Box::new(params),
+        },
         replace,
     )
     .await

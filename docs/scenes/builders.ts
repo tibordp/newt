@@ -203,12 +203,13 @@ function breadcrumbs(vfsId: number, path: string, rootLabel: string) {
   const segs = path.split("/").filter(Boolean);
   let acc = "";
   return [
-    { label: rootLabel, path: { vfs_id: vfsId, path: "/" } },
+    { label: rootLabel, path: { vfs_id: vfsId, path: "/" }, note: null },
     ...segs.map((seg, i) => {
       acc += `/${seg}`;
       return {
         label: i === segs.length - 1 ? seg : `${seg}/`,
         path: { vfs_id: vfsId, path: acc },
+        note: null,
       };
     }),
   ];

@@ -11,12 +11,10 @@
 
 mod index;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc, watch};
@@ -24,6 +22,7 @@ use tokio::time::Instant;
 
 use crate::Error;
 use crate::rpc::Communicator;
+use crate::vfs::gitignore::GitIgnores;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::walk::{self, Control, Entry, Failed, Resume, Visitor, WalkOptions};
 use crate::vfs::{File, Vfs, VfsPath, VfsRegistry};
@@ -34,9 +33,6 @@ pub const TOP: usize = 100;
 /// Updates while the walk goes on are at most this frequent; a new query
 /// is answered at once.
 const THROTTLE: Duration = Duration::from_millis(100);
-
-/// Larger ignore files are not read.
-const MAX_IGNORE_FILE: u64 = 1 << 20;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QuickOpenOptions {
@@ -197,13 +193,13 @@ async fn collect(
         options,
         exclude: exclude.build().unwrap_or_else(|_| GlobSet::empty()),
         root_rel: root.file_name().unwrap_or_default().to_string(),
-        ignores: HashMap::new(),
+        ignores: GitIgnores::default(),
         walked: 0,
         inbox,
         arrived,
     };
     if options.gitignore {
-        collector.ignores = ignores_above(vfs, &root).await;
+        collector.ignores = GitIgnores::above(vfs, &root).await;
     }
     let walk_options = WalkOptions {
         follow_symlinks: options.follow_symlinks,
@@ -219,33 +215,10 @@ struct Collector<'a> {
     options: &'a QuickOpenOptions,
     exclude: GlobSet,
     root_rel: String,
-    /// Ignore rules by the directory they're in, by wire path.
-    ignores: HashMap<String, Gitignore>,
+    ignores: GitIgnores,
     walked: u32,
     inbox: &'a Mutex<Inbox>,
     arrived: &'a Notify,
-}
-
-impl Collector<'_> {
-    /// Whether the nearest rule about `path` among its directories' says
-    /// to ignore it.
-    fn ignored(&self, path: &Path, is_dir: bool) -> bool {
-        let mut dir = path.parent();
-        while let Some(d) = dir {
-            if let Some(rules) = self.ignores.get(d.as_wire_str()) {
-                let below = path.strip_prefix(d).unwrap_or_default();
-                let found = rules.matched(below, is_dir);
-                if found.is_ignore() {
-                    return true;
-                }
-                if found.is_whitelist() {
-                    return false;
-                }
-            }
-            dir = d.parent();
-        }
-        false
-    }
 }
 
 #[async_trait::async_trait]
@@ -258,7 +231,7 @@ impl Visitor for Collector<'_> {
         if name == ".git"
             || (!self.options.show_hidden && entry.file.is_hidden)
             || self.exclude.is_match(name)
-            || (self.options.gitignore && self.ignored(entry.path, entry.file.is_dir))
+            || (self.options.gitignore && self.ignores.ignored(entry.path, entry.file.is_dir))
         {
             return Ok(Control::Skip);
         }
@@ -280,19 +253,8 @@ impl Visitor for Collector<'_> {
     }
 
     async fn listed(&mut self, path: &Path, children: &[File]) -> Result<(), Error> {
-        if !self.options.gitignore {
-            return Ok(());
-        }
-        let has = |name: &str| children.iter().any(|f| f.name == name);
-        let mut files = Vec::new();
-        if has(".gitignore") {
-            files.push(path.join(".gitignore"));
-        }
-        if has(".git") {
-            files.push(path.join(".git/info/exclude"));
-        }
-        if let Some(rules) = read_ignores(self.vfs, &files).await {
-            self.ignores.insert(path.as_wire_str().to_string(), rules);
+        if self.options.gitignore {
+            self.ignores.learn(self.vfs, path, children).await;
         }
         Ok(())
     }
@@ -303,53 +265,6 @@ impl Visitor for Collector<'_> {
         }
         Ok(Resume::Skip)
     }
-}
-
-/// The rules in `files`, which are all relative to the same directory;
-/// `None` when there are none.
-async fn read_ignores(vfs: &dyn Vfs, files: &[PathBuf]) -> Option<Gitignore> {
-    if files.is_empty() {
-        return None;
-    }
-    let mut builder = GitignoreBuilder::new("");
-    let mut any = false;
-    for file in files {
-        let Ok(chunk) = vfs.read_range(file, 0, MAX_IGNORE_FILE).await else {
-            continue;
-        };
-        for line in String::from_utf8_lossy(&chunk.data).lines() {
-            if builder.add_line(None, line).is_ok() {
-                any = true;
-            }
-        }
-    }
-    any.then(|| builder.build().ok()).flatten()
-}
-
-/// The rules of the directories above `root` up to the top of the
-/// repository it's in, if it's in one.
-async fn ignores_above(vfs: &dyn Vfs, root: &Path) -> HashMap<String, Gitignore> {
-    let ancestors: Vec<&Path> = std::iter::successors(root.parent(), |p| p.parent()).collect();
-    let tops = futures::future::join_all(
-        ancestors
-            .iter()
-            .map(|dir| async move { vfs.file_info(&dir.join(".git")).await.is_ok() }),
-    )
-    .await;
-    let Some(top) = tops.iter().position(|&is_top| is_top) else {
-        return HashMap::new();
-    };
-    let mut ignores = HashMap::new();
-    for (i, dir) in ancestors[..=top].iter().enumerate() {
-        let mut files = vec![dir.join(".gitignore")];
-        if i == top {
-            files.push(dir.join(".git/info/exclude"));
-        }
-        if let Some(rules) = read_ignores(vfs, &files).await {
-            ignores.insert(dir.as_wire_str().to_string(), rules);
-        }
-    }
-    ignores
 }
 
 // ---------------------------------------------------------------------------

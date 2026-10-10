@@ -310,6 +310,13 @@
   font-weight: 600;
 }
 
+// A search's patterns after its root; the details are its tooltip.
+.pathBreadcrumbNote {
+  font-weight: normal;
+  color: var(--color-fg-muted);
+  white-space: pre;
+}
+
 .partial {
   color: var(--_red-500);
 }

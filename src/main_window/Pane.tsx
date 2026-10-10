@@ -83,34 +83,48 @@ function PathBreadcrumbs(props: {
       {breadcrumbs.map((crumb, i) => {
         const isLast = i === breadcrumbs.length - 1;
         return (
-          <ContextMenu.Root key={i}>
-            <ContextMenu.Trigger asChild>
-              <a
-                className={`${styles.pathBreadcrumb} ${isLast ? styles.pathBreadcrumbCurrent : ""}`}
-                href="#"
-                tabIndex={-1}
-                aria-current={isLast ? "location" : undefined}
-                title={
-                  isLast ? shortcuts.label("Go to path", "navigate") : undefined
-                }
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (isLast) {
-                    commands.dialog("navigate", paneHandle);
-                  } else {
-                    safe(commands.navigateToPath(paneHandle, crumb.path));
+          <Fragment key={i}>
+            <ContextMenu.Root>
+              <ContextMenu.Trigger asChild>
+                <a
+                  className={`${styles.pathBreadcrumb} ${isLast ? styles.pathBreadcrumbCurrent : ""}`}
+                  href="#"
+                  tabIndex={-1}
+                  aria-current={isLast ? "location" : undefined}
+                  title={
+                    isLast
+                      ? shortcuts.label("Go to path", "navigate")
+                      : undefined
                   }
-                }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (isLast) {
+                      commands.dialog("navigate", paneHandle);
+                    } else {
+                      safe(commands.navigateToPath(paneHandle, crumb.path));
+                    }
+                  }}
+                >
+                  {crumb.label}
+                </a>
+              </ContextMenu.Trigger>
+              <LocationContextMenuContent
+                paneHandle={paneHandle}
+                displayPath={pathUpTo(i)}
+                onCloseAutoFocus={onMenuCloseAutoFocus}
+              />
+            </ContextMenu.Root>
+            {crumb.note && (
+              <span
+                className={styles.pathBreadcrumbNote}
+                title={crumb.note.details
+                  .map((d) => `${d.label}: ${d.value}`)
+                  .join("\n")}
               >
-                {crumb.label}
-              </a>
-            </ContextMenu.Trigger>
-            <LocationContextMenuContent
-              paneHandle={paneHandle}
-              displayPath={pathUpTo(i)}
-              onCloseAutoFocus={onMenuCloseAutoFocus}
-            />
-          </ContextMenu.Root>
+                {` ${crumb.note.text}`}
+              </span>
+            )}
+          </Fragment>
         );
       })}
     </>

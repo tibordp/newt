@@ -147,6 +147,7 @@ pub(super) fn origin_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcru
         crumbs.push(Breadcrumb {
             label: crumb_label,
             nav_path,
+            note: None,
         });
     }
 
@@ -162,6 +163,7 @@ pub(super) fn origin_breadcrumbs(path: &Path, mount_meta: &[u8]) -> Vec<Breadcru
                 format!("{}{sep}", seg)
             },
             nav_path: accumulated.clone(),
+            note: None,
         });
     }
 

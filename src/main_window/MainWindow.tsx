@@ -236,8 +236,10 @@ function App() {
   // The title leads with where the active pane is, ahead of the session's
   // own title ("Newt", "Newt [host]").
   const baseTitle = remoteState?.window_title;
+  const crumb =
+    remoteState?.panes[display?.active_pane ?? 0]?.breadcrumbs.at(-1);
   const here =
-    remoteState?.panes[display?.active_pane ?? 0]?.breadcrumbs.at(-1)?.label;
+    crumb && [crumb.label, crumb.note?.text].filter(Boolean).join(" ");
   useEffect(() => {
     if (baseTitle === undefined) return;
     safeSilent(
