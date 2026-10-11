@@ -288,6 +288,7 @@ function App() {
           remoteState.display_options.panes_focused &&
           remoteState.display_options.active_pane === i
         }
+        current={remoteState.display_options.active_pane === i}
         windowsDrives={remoteState.mount_summary?.has_split_root_vfs ?? false}
         maximized={panesMaximized}
         swappable={quickView || panesMaximized}

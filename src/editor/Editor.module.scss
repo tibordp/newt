@@ -25,8 +25,11 @@
 .editorStatus {
   display: flex;
   align-items: center;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-chrome);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-chrome-light);
+  border-top: 1px solid var(--color-separator);
+  font-size: var(--font-size-sm);
+  color: var(--color-chrome-fg);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;

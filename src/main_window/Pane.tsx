@@ -821,6 +821,9 @@ function PaneInner(
   props: PaneState & {
     paneHandle: number;
     active: boolean;
+    /// The session's active pane, focused or not (the terminal may have
+    /// the focus).
+    current: boolean;
     modalOpen: boolean;
     modal: ModalData | null;
     vfsProgress?: VfsProgress;
@@ -835,6 +838,7 @@ function PaneInner(
   const {
     paneHandle,
     active,
+    current,
     modalOpen,
     windowsDrives,
     maximized,
@@ -1959,7 +1963,7 @@ function PaneInner(
           <ContextMenu.Root>
             <ContextMenu.Trigger asChild>
               <div
-                className={`${styles.header} ${active ? styles.headerActive : ""}`}
+                className={`${styles.header} ${active ? styles.headerActive : current ? styles.headerCurrent : ""}`}
               >
                 <span className={styles.focusDot} aria-hidden />
                 {swappable && (
@@ -2276,13 +2280,13 @@ function PaneInner(
               </span>
             )}
             {showActivity && hasActivity && (
-              <span className={styles.statusbarProgress}>
+              <span>
                 {" · "}
                 {activityLabels.join(" · ")}… (Esc cancels)
               </span>
             )}
             {vfsProgress && (
-              <span className={styles.statusbarProgress}>
+              <span>
                 {" · "}
                 <VfsProgressLine progress={vfsProgress} locale={locale} />
               </span>

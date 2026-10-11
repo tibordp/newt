@@ -45,21 +45,35 @@
   max-width: 100%;
 }
 
-// Marks the pane that has focus. Every pane reserves the space, so the
-// two panes' paths start at the same offset.
+// Marks the panes: filled in the accent for the one with the focus, in
+// grey for the active one while the focus is elsewhere (the terminal,
+// another window), outlined for the other. Every pane has one, so the two
+// panes' paths start at the same offset.
 .focusDot {
   align-self: center;
   flex-shrink: 0;
+  box-sizing: border-box;
   width: 6px;
   height: 6px;
+  border: 1px solid var(--color-fg-muted);
   border-radius: 50%;
 
+  .headerCurrent & {
+    background: var(--color-fg-muted);
+
+    @media (forced-colors: active) {
+      background: CanvasText;
+    }
+  }
+
   .headerActive & {
+    border-color: var(--color-accent);
     background: var(--color-accent);
     @include fc.fill;
   }
 
   :global(:root[data-window-inactive]) .headerActive & {
+    border-color: var(--color-fg-muted);
     background: var(--color-fg-muted);
   }
 }
@@ -264,7 +278,7 @@
   background: var(--color-chrome-light);
   border-top: 1px solid var(--color-separator);
   font-size: var(--font-size-sm);
-  color: var(--color-fg-muted);
+  color: var(--color-chrome-fg);
 }
 
 // Inner clipping wrapper. Keeping `overflow: hidden` off the flex
@@ -275,10 +289,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.statusbarProgress {
-  color: var(--color-fg-muted);
 }
 
 .gitBadge {
