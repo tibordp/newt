@@ -503,6 +503,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2011 Andres Mejia
       Copyright (c) 2018 Grzegorz Antoniak (http://antoniak.org)
       Copyright (c) 2025 Scott Mudge
+      Copyright (c) 2019-2026 Benedikt Reinartz
   finl_unicode 1.5.0 — (MIT OR Apache-2.0) AND Unicode-DFS-2016
       Copyright © 1991-2023 Unicode, Inc.
   fixedbitset 0.5.7 — MIT OR Apache-2.0

@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { safe } from "../../lib/ipc";
 import { MainWindowState } from "../types";
 import { PreferencesState } from "../../lib/preferences";
+import BatchRenameContent from "./BatchRename";
 import CommandPaletteContent from "./CommandPalette";
 import ConnectionLogContent from "./ConnectionLogDialog";
 import HotPathsContent from "./HotPaths";
@@ -51,6 +52,10 @@ export default function ModalRouter({
         );
       case "hot_paths":
         return <HotPathsContent state={state} />;
+      case "batch_rename":
+        return state?.modal?.type === "batch_rename" ? (
+          <BatchRenameContent data={state.modal.data} />
+        ) : null;
       case "quick_open":
         return (
           <QuickOpenContent

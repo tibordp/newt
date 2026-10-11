@@ -202,6 +202,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "batch_rename".into(),
+            name: "Batch Rename...".into(),
+            short_name: Some("Batch Rename".into()),
+            category: "File".into(),
+            default_keys: vec!["shift+f2".into()],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "properties".into(),
             name: "File Properties...".into(),
             short_name: Some("Props".into()),

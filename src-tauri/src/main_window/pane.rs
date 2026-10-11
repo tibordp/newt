@@ -1567,6 +1567,34 @@ impl Pane {
             .collect()
     }
 
+    /// The effective selection's entries, and the names of the listing's
+    /// other entries. See [`Self::effective_keys`].
+    pub fn effective_selection_files(
+        &self,
+    ) -> (
+        Vec<newt_common::vfs::File>,
+        std::collections::HashSet<String>,
+    ) {
+        let view_state = self.view_state.read();
+        let keys = Self::effective_keys(&view_state);
+        let files = keys
+            .iter()
+            .filter_map(|key| {
+                let index = *view_state.file_lookup.get(key)?;
+                view_state.files.get(index).cloned()
+            })
+            .collect();
+        let selected: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
+        let others = view_state
+            .all_files
+            .iter()
+            .map(|f| f.key())
+            .filter(|key| *key != PARENT_KEY && !selected.contains(key))
+            .map(str::to_string)
+            .collect();
+        (files, others)
+    }
+
     pub fn get_focused_file_info(&self) -> Option<newt_common::vfs::File> {
         let view_state = self.view_state.read();
         let focused = view_state.focused.as_ref()?;

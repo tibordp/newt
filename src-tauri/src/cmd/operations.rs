@@ -354,6 +354,13 @@ pub async fn start_operation_with_callback(
                 new_name,
             ),
         ),
+        OperationRequest::BatchRename { folders } => (
+            "rename".to_string(),
+            format!(
+                "Renaming {} item(s)",
+                folders.iter().map(|f| f.renames.len()).sum::<usize>()
+            ),
+        ),
         OperationRequest::Delete {
             paths, to_trash, ..
         } => (

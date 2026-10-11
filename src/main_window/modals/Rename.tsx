@@ -58,7 +58,22 @@ export default function Rename({
           />
         </Field>
       </DialogBody>
-      <DialogFooter onCancel={cancel}>
+      <DialogFooter
+        onCancel={cancel}
+        start={
+          <button
+            type="button"
+            title="Rename the selection with a find & replace rule"
+            onClick={() =>
+              safe(
+                commands.dialog("batch_rename", context?.pane_handle ?? null),
+              )
+            }
+          >
+            Batch Rename…
+          </button>
+        }
+      >
         <DialogSubmitButton disabled={!newName}>Rename</DialogSubmitButton>
       </DialogFooter>
     </DialogShell>

@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use newt_common::batch_rename::rule::Rule;
+use newt_common::operation::OperationRequest;
 use newt_common::quick_open::QuickOpenOptions;
 use newt_common::vfs::{PathStyle, VfsId, VfsPath};
 use tauri::Manager;
 
 use super::{MODE_MASK, usergroup_id};
 use crate::common::Error;
+use crate::main_window::batch_rename::{BatchRenameFilter, BatchRenameSession};
 use crate::main_window::pane::FilterMode;
 use crate::main_window::quick_open::QuickOpenRun;
 use crate::main_window::{
@@ -32,6 +35,7 @@ pub enum DialogKind {
     RootProperties,
     Properties,
     Rename,
+    BatchRename,
     Copy,
     Move,
     CreateArchive,
@@ -466,6 +470,18 @@ pub fn dialog(
                         base_path: pane.path(),
                         name,
                         is_dir: pane.is_focused_dir(),
+                    }
+                }
+                DialogKind::BatchRename => {
+                    let pane = require_pane()?;
+                    let Some((session, title)) = BatchRenameSession::open(&ctx, &pane) else {
+                        return Ok(());
+                    };
+                    ModalDataKind::BatchRename {
+                        title,
+                        defaults: rt_state.batch_rename.clone(),
+                        preview: session.preview(),
+                        session,
                     }
                 }
                 DialogKind::Copy | DialogKind::Move => {
@@ -1020,6 +1036,7 @@ macro_rules! cmd_dialog {
 }
 
 cmd_dialog!(cmd_rename, DialogKind::Rename);
+cmd_dialog!(cmd_batch_rename, DialogKind::BatchRename);
 cmd_dialog!(cmd_properties, DialogKind::Properties);
 cmd_dialog!(cmd_directory_properties, DialogKind::DirectoryProperties);
 cmd_dialog!(cmd_create_directory, DialogKind::CreateDirectory);
@@ -1071,6 +1088,107 @@ cmd_dialog!(cmd_command_palette, DialogKind::CommandPalette);
 cmd_dialog!(cmd_user_commands, DialogKind::UserCommands);
 cmd_dialog!(cmd_hot_paths, DialogKind::HotPaths);
 cmd_dialog!(cmd_quick_open, DialogKind::QuickOpen);
+
+/// The Batch Rename dialog's session, if it's open.
+fn batch_rename_session(ctx: &MainWindowContext) -> Option<BatchRenameSession> {
+    match &*ctx.modal().0.read() {
+        Some(ModalData {
+            kind: ModalDataKind::BatchRename { session, .. },
+            ..
+        }) => Some(session.clone()),
+        _ => None,
+    }
+}
+
+/// The Batch Rename dialog's rule changed.
+#[tauri::command]
+#[specta::specta]
+pub fn batch_rename_set_rule(ctx: MainWindowContext, rule: Rule) {
+    if let Some(session) = batch_rename_session(&ctx) {
+        session.set_rule(&ctx, rule);
+    }
+}
+
+/// The rows the Batch Rename list shows moved.
+#[tauri::command]
+#[specta::specta]
+pub fn batch_rename_set_viewport(ctx: MainWindowContext, first: u32, count: u32) {
+    if let Some(session) = batch_rename_session(&ctx) {
+        session.set_viewport(&ctx, first as usize, count as usize);
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn batch_rename_set_filter(ctx: MainWindowContext, filter: BatchRenameFilter) {
+    if let Some(session) = batch_rename_session(&ctx) {
+        session.set_filter(&ctx, filter);
+    }
+}
+
+/// The position of the next (or previous) row with a problem after
+/// `from` among the rows shown.
+#[tauri::command]
+#[specta::specta]
+pub fn batch_rename_find_problem(
+    ctx: MainWindowContext,
+    from: Option<u32>,
+    forward: bool,
+) -> Option<u32> {
+    batch_rename_session(&ctx)?.find_problem(from, forward)
+}
+
+/// Rename as the preview shows, and close the dialog. Once done, the pane
+/// selects the renamed entries under their new names.
+#[tauri::command]
+#[specta::specta]
+pub async fn batch_rename_start(ctx: MainWindowContext, rule: Rule) -> Result<(), Error> {
+    let (session, pane_handle) = match &*ctx.modal().0.read() {
+        Some(ModalData {
+            kind: ModalDataKind::BatchRename { session, .. },
+            context,
+        }) => (session.clone(), context.pane_handle),
+        _ => return Ok(()),
+    };
+    let (folders, in_pane) = session
+        .request(&ctx, rule)
+        .await
+        .ok_or_else(|| Error::Custom("Nothing to rename".into()))?;
+    let cb_ctx = ctx.clone();
+    let on_completed = Box::new(move || {
+        tauri::async_runtime::spawn(async move {
+            let _ = cb_ctx
+                .with_update_async(|gs| async move {
+                    let Some(pane_handle) = pane_handle else {
+                        return Ok(());
+                    };
+                    let pane = gs.panes.require(pane_handle)?;
+                    let focused = pane.view_state().focused.clone();
+                    pane.refresh(None, true).await?;
+                    let focus = focused.and_then(|f| {
+                        in_pane
+                            .iter()
+                            .find(|(old, _)| *old == f)
+                            .map(|(_, new)| new.clone())
+                    });
+                    let selected = in_pane.into_iter().map(|(_, new)| new).collect();
+                    pane.view_state_mut().set_selection(selected, focus);
+                    Ok(())
+                })
+                .await;
+        });
+    });
+    super::operations::start_operation_with_callback(
+        ctx.clone(),
+        OperationRequest::BatchRename { folders },
+        Some(on_completed),
+    )
+    .await?;
+    ctx.with_update(|gs| {
+        gs.close_modal();
+        Ok(())
+    })
+}
 
 /// The Go to File palette's query changed.
 #[tauri::command]

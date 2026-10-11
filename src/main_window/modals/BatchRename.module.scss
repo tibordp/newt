@@ -1,0 +1,218 @@
+@use "../../styles/dialog-mixins" as dlg;
+
+.content {
+  @include dlg.dialog-surface;
+  @include dlg.dialog-centered;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: 820px;
+  max-width: 92%;
+  height: 620px;
+  max-height: 88%;
+}
+
+// The list takes what the fields leave, rather than the body scrolling.
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  gap: var(--space-4);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+// An input with its toggle inside its right edge, Monaco's.
+.field {
+  position: relative;
+  display: flex;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    padding-right: 36px;
+    font-family: var(--font-mono);
+  }
+}
+
+.toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  cursor: pointer;
+}
+
+.toggleOn {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+.filter {
+  flex-shrink: 0;
+}
+
+.error {
+  color: var(--color-error);
+}
+
+.warning {
+  color: var(--color-warning);
+}
+
+.muted {
+  color: var(--color-fg-muted);
+}
+
+// The rows, looking like a pane.
+.table {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.header,
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.header {
+  flex-shrink: 0;
+  height: var(--header-height);
+  align-items: center;
+  border-bottom: 1px solid var(--color-separator);
+
+  > span {
+    padding: 0 var(--space-4);
+  }
+
+  > span + span {
+    border-left: 1px solid var(--color-separator);
+  }
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  cursor: default;
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  isolation: isolate;
+  height: var(--row-height);
+  line-height: var(--row-height);
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 var(--space-1);
+    z-index: -1;
+    border-radius: var(--radius-md);
+  }
+
+  &.cursor::before {
+    background: var(--color-cursor-inactive);
+  }
+
+  .list:focus &.cursor {
+    color: var(--color-accent-fg);
+
+    &::before {
+      background: var(--color-accent);
+    }
+
+    :global(.file-icon),
+    .problem,
+    .folder {
+      color: var(--color-accent-fg);
+    }
+  }
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4) 0 var(--space-3);
+  white-space: nowrap;
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unchanged .text {
+  color: var(--color-fg-muted);
+}
+
+.mark {
+  background: none;
+  color: inherit;
+  font-weight: 600;
+}
+
+.folder {
+  color: var(--color-fg-muted);
+}
+
+.problem {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+}
+
+.rowError .problem {
+  color: var(--color-error);
+}
+
+.rowWarning .problem {
+  color: var(--color-warning);
+}
+
+.empty {
+  padding: var(--space-4);
+  color: var(--color-fg-muted);
+  font-style: italic;
+}

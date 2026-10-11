@@ -4333,3 +4333,277 @@ async fn test_recursive_metadata_stays_out_of_mount_points_unless_told_to_cross(
 
 #[path = "preserve_tests.rs"]
 mod preserve_tests;
+
+// ===========================================================================
+// Batch rename tests
+// ===========================================================================
+
+fn batch(dir: &str, renames: &[(&str, &str)]) -> OperationRequest {
+    OperationRequest::BatchRename {
+        folders: vec![BatchRenameFolder {
+            dir: vfs_path(dir),
+            renames: renames
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
+        }],
+    }
+}
+
+/// The files under `dir`, by name, with their contents.
+fn contents(vfs: &MockVfs, dir: &str) -> Vec<(String, String)> {
+    let dir = PathBuf::from_wire_str(dir);
+    let mut out: Vec<(String, String)> = vfs
+        .snapshot()
+        .into_iter()
+        .filter(|(p, kind)| {
+            *kind == "file"
+                && p.parent()
+                    .is_some_and(|d| d.as_wire_str() == dir.as_wire_str())
+        })
+        .map(|(p, _)| {
+            let name = p.file_name().unwrap().to_string();
+            let content = String::from_utf8(vfs.read_content(p.as_wire_str())).unwrap();
+            (name, content)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+    items
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect()
+}
+
+fn with_exchange(exchange: bool) -> MockVfsConfig {
+    MockVfsConfig {
+        exchange,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn test_batch_rename_follows_a_chain() {
+    let vfs = MockVfs::builder()
+        .file("/d/1", b"one")
+        .file("/d/2", b"two")
+        .file("/d/3", b"three")
+        .build();
+    let result = run_operation(
+        vfs,
+        batch("/d", &[("1", "2"), ("2", "3"), ("3", "4")]),
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert!(!raised_an_issue(&result.events));
+    assert_eq!(
+        contents(&result.vfs, "/d"),
+        pairs(&[("2", "one"), ("3", "two"), ("4", "three")])
+    );
+}
+
+#[tokio::test]
+async fn test_batch_rename_swaps_and_rotates_with_or_without_exchange() {
+    for exchange in [false, true] {
+        let vfs = MockVfs::builder()
+            .config(with_exchange(exchange))
+            .file("/d/a", b"A")
+            .file("/d/b", b"B")
+            .file("/d/x", b"X")
+            .file("/d/y", b"Y")
+            .file("/d/z", b"Z")
+            .build();
+        let result = run_operation(
+            vfs,
+            batch(
+                "/d",
+                &[("a", "b"), ("b", "a"), ("x", "y"), ("y", "z"), ("z", "x")],
+            ),
+            skip_all,
+        )
+        .await;
+        assert!(has_completed(&result.events), "exchange: {exchange}");
+        assert!(!raised_an_issue(&result.events));
+        assert_eq!(
+            contents(&result.vfs, "/d"),
+            pairs(&[("a", "B"), ("b", "A"), ("x", "Z"), ("y", "X"), ("z", "Y")]),
+            "exchange: {exchange}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_batch_rename_swaps_by_case_on_an_insensitive_volume() {
+    // `a → B`, `b → A` is a swap where case is ignored.
+    for exchange in [false, true] {
+        let vfs = MockVfs::builder()
+            .config(with_exchange(exchange))
+            .case_insensitive()
+            .file("/d/a", b"from a")
+            .file("/d/b", b"from b")
+            .build();
+        let result = run_operation(vfs, batch("/d", &[("a", "B"), ("b", "A")]), skip_all).await;
+        assert!(has_completed(&result.events), "exchange: {exchange}");
+        assert!(
+            !raised_an_issue(&result.events),
+            "{:?}",
+            issue_messages(&result.events)
+        );
+        assert_eq!(
+            contents(&result.vfs, "/d"),
+            pairs(&[("A", "from b"), ("B", "from a")]),
+            "exchange: {exchange}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_batch_rename_respells_by_case() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/d/readme", b"r")
+        .build();
+    let result = run_operation(vfs, batch("/d", &[("readme", "README")]), skip_all).await;
+    assert!(!raised_an_issue(&result.events));
+    assert_eq!(contents(&result.vfs, "/d"), pairs(&[("README", "r")]));
+}
+
+#[tokio::test]
+async fn test_batch_rename_offers_to_overwrite_only_outside_the_batch() {
+    let vfs = MockVfs::builder()
+        .file("/d/a", b"A")
+        .file("/d/taken", b"old")
+        .build();
+    let result = run_operation(vfs, batch("/d", &[("a", "taken")]), overwrite_all).await;
+    let offered = result.events.iter().find_map(|e| match e {
+        OperationProgress::Issue { issue, .. } => Some(issue.actions.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        offered,
+        Some(vec![IssueAction::Skip, IssueAction::Overwrite])
+    );
+    assert_eq!(contents(&result.vfs, "/d"), pairs(&[("taken", "A")]));
+}
+
+#[tokio::test]
+async fn test_batch_rename_never_overwrites_a_member() {
+    // Two new names that are one where case is ignored: the second finds
+    // the first, a member, and may only skip.
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .file("/d/x", b"X")
+        .file("/d/y", b"Y")
+        .build();
+    let overwrite_if_offered = |issue: &OperationIssue| IssueResponse {
+        action: if issue.actions.contains(&IssueAction::Overwrite) {
+            IssueAction::Overwrite
+        } else {
+            IssueAction::Skip
+        },
+        apply_to_all: false,
+    };
+    let result = run_operation(
+        vfs,
+        batch("/d", &[("x", "Same"), ("y", "same")]),
+        overwrite_if_offered,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    let offered: Vec<Vec<IssueAction>> = result
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            OperationProgress::Issue { issue, .. } => Some(issue.actions.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offered, [vec![IssueAction::Skip]]);
+    assert_eq!(
+        contents(&result.vfs, "/d"),
+        pairs(&[("Same", "X"), ("y", "Y")])
+    );
+}
+
+#[tokio::test]
+async fn test_batch_rename_skips_what_is_gone_and_leaves_no_temporary() {
+    let vfs = MockVfs::builder()
+        .file("/d/a", b"A")
+        .file("/d/b", b"B")
+        .build();
+    let result = run_operation(
+        vfs,
+        batch("/d", &[("a", "b"), ("b", "a"), ("gone", "here")]),
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert!(
+        issue_messages(&result.events)
+            .iter()
+            .any(|m| m.contains("no longer exists"))
+    );
+    assert_eq!(
+        contents(&result.vfs, "/d"),
+        pairs(&[("a", "B"), ("b", "A")])
+    );
+}
+
+#[tokio::test]
+async fn test_batch_rename_renames_folder_contents_before_the_folder() {
+    let vfs = MockVfs::builder().file("/d/sub/inner", b"I").build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::BatchRename {
+            folders: vec![
+                BatchRenameFolder {
+                    dir: vfs_path("/d"),
+                    renames: pairs(&[("sub", "renamed")]),
+                },
+                BatchRenameFolder {
+                    dir: vfs_path("/d/sub"),
+                    renames: pairs(&[("inner", "moved")]),
+                },
+            ],
+        },
+        skip_all,
+    )
+    .await;
+    assert!(
+        !raised_an_issue(&result.events),
+        "{:?}",
+        issue_messages(&result.events)
+    );
+    assert_eq!(
+        contents(&result.vfs, "/d/renamed"),
+        pairs(&[("moved", "I")])
+    );
+}
+
+#[tokio::test]
+async fn test_batch_rename_without_native_rename_copies() {
+    let vfs = MockVfs::builder()
+        .config(MockVfsConfig {
+            can_rename: false,
+            rename_no_replace: false,
+            ..Default::default()
+        })
+        .file("/d/a", b"A")
+        .file("/d/b", b"B")
+        .build();
+    let result = run_operation(vfs, batch("/d", &[("a", "b"), ("b", "a")]), skip_all).await;
+    assert!(has_completed(&result.events));
+    assert!(
+        !raised_an_issue(&result.events),
+        "{:?}",
+        issue_messages(&result.events)
+    );
+    assert_eq!(
+        contents(&result.vfs, "/d"),
+        pairs(&[("a", "B"), ("b", "A")])
+    );
+}

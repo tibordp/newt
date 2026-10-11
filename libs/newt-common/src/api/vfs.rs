@@ -268,6 +268,11 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.vfs.rename_no_replace(&from, &to).await;
                 encode(&ret)
             }
+            super::API_VFS_EXCHANGE => {
+                let (a, b): (PathBuf, PathBuf) = decode(&req[..]);
+                let ret = self.vfs.exchange(&a, &b).await;
+                encode(&ret)
+            }
             API_VFS_COPY_WITHIN => {
                 let (from, to, options): (PathBuf, PathBuf, crate::vfs::attributes::WriteOptions) =
                     decode(&req[..]);

@@ -1,3 +1,4 @@
+pub mod batch_rename;
 #[cfg(windows)]
 pub mod drives;
 #[cfg(windows)]
@@ -778,6 +779,14 @@ pub enum ModalDataKind {
         moved: bool,
     },
     HotPaths,
+    BatchRename {
+        /// What is renamed: "12 items in /photos".
+        title: String,
+        defaults: crate::runtime_state::BatchRenameDefaults,
+        preview: batch_rename::BatchRenamePreview,
+        #[serde(skip)]
+        session: batch_rename::BatchRenameSession,
+    },
     QuickOpen {
         root: VfsPath,
         root_display: String,

@@ -1101,6 +1101,12 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || rename_no_replace(&from, &to)).await?
     }
 
+    async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {
+        let a = a.to_native();
+        let b = b.to_native();
+        tokio::task::spawn_blocking(move || exchange(&a, &b)).await?
+    }
+
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
@@ -1401,6 +1407,55 @@ fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
+    Err(Error::not_supported())
+}
+
+#[cfg(target_os = "linux")]
+fn exchange(a: &StdPath, b: &StdPath) -> Result<(), Error> {
+    use std::os::unix::ffi::OsStrExt;
+    let a = std::ffi::CString::new(a.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    let b = std::ffi::CString::new(b.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    // The raw syscall, as for RENAME_NOREPLACE.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            a.as_ptr(),
+            libc::AT_FDCWD,
+            b.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    };
+    if ret == 0 {
+        return Ok(());
+    }
+    match nix::Error::last() {
+        // A filesystem without RENAME_EXCHANGE (NFS), or a kernel before 3.15.
+        nix::Error::EINVAL | nix::Error::ENOSYS => Err(Error::not_supported()),
+        e => Err(e.into()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn exchange(a: &StdPath, b: &StdPath) -> Result<(), Error> {
+    use std::os::unix::ffi::OsStrExt;
+    let a = std::ffi::CString::new(a.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    let b = std::ffi::CString::new(b.as_os_str().as_bytes())
+        .map_err(|_| Error::custom("path contains a NUL byte"))?;
+    if unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) } == 0 {
+        return Ok(());
+    }
+    match nix::Error::last() {
+        nix::Error::ENOTSUP | nix::Error::EINVAL => Err(Error::not_supported()),
+        e => Err(e.into()),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn exchange(_a: &StdPath, _b: &StdPath) -> Result<(), Error> {
     Err(Error::not_supported())
 }
 
@@ -2173,6 +2228,25 @@ mod exclusive_write_tests {
         super::copy_into_reserved(&src, &to, reserved).unwrap();
 
         assert!(!dir.path().join("elsewhere").exists());
+    }
+
+    #[tokio::test]
+    async fn exchange_swaps_two_names_or_is_not_supported() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a"), b"A").unwrap();
+        std::fs::create_dir(dir.path().join("b")).unwrap();
+        let vfs = LocalVfs::new();
+        let (a, b) = (
+            PathBuf::from_native(&dir.path().join("a")),
+            PathBuf::from_native(&dir.path().join("b")),
+        );
+        match vfs.exchange(&a, &b).await {
+            Ok(()) => {
+                assert!(dir.path().join("a").is_dir());
+                assert_eq!(std::fs::read(dir.path().join("b")).unwrap(), b"A");
+            }
+            Err(e) => assert_eq!(e.kind, crate::ErrorKind::NotSupported, "{e}"),
+        }
     }
 
     #[tokio::test]

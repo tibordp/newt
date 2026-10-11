@@ -159,6 +159,5 @@ Correctness and UX:
 
 ## Major new features (groom/write design docs first)
 
-- Batch rename (probably with enrichers preview)
 - Compare & synchronize directories
 - Custom styling / theming

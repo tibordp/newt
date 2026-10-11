@@ -120,6 +120,8 @@ pub struct MockVfsConfig {
     pub create_new_max_size: Option<u64>,
     /// Offer `rename_no_replace`; off, it answers `NotSupported`.
     pub rename_no_replace: bool,
+    /// Offer `exchange`; off, it answers `NotSupported`.
+    pub exchange: bool,
 }
 
 impl Default for MockVfsConfig {
@@ -144,6 +146,7 @@ impl Default for MockVfsConfig {
             create_new: Some(MockRefusal::AtOpen),
             create_new_max_size: None,
             rename_no_replace: true,
+            exchange: false,
         }
     }
 }
@@ -265,6 +268,7 @@ pub struct MockVfs {
     create_new: Option<MockRefusal>,
     create_new_max_size: Option<u64>,
     rename_no_replace: bool,
+    exchange: bool,
     /// Roots of other filesystems; empty means no entry reports a device.
     mounts: Vec<String>,
     list_latency: Option<std::time::Duration>,
@@ -1168,6 +1172,61 @@ impl Vfs for MockVfs {
         self.rename(from, to).await
     }
 
+    async fn exchange(&self, a: &Path, b: &Path) -> Result<(), crate::Error> {
+        if !self.exchange {
+            return Err(crate::Error::not_supported());
+        }
+        if let Some(e) = self.check_failure(a, "exchange") {
+            return Err(e);
+        }
+        let (a, b) = (
+            PathBuf::from_wire_str(&self.lookup_key(a)),
+            PathBuf::from_wire_str(&self.lookup_key(b)),
+        );
+        let mut entries = self.entries.lock();
+        // Each subtree, by its path below its root.
+        let take = |entries: &mut BTreeMap<String, MockEntry>, root: &PathBuf| {
+            let keys: Vec<String> = entries
+                .keys()
+                .filter(|k| PathBuf::from_wire_str(k).starts_with(root))
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .map(|k| {
+                    let entry = entries.remove(&k).expect("listed");
+                    let suffix = PathBuf::from_wire_str(&k)
+                        .strip_prefix(root)
+                        .expect("below the root")
+                        .to_string();
+                    (suffix, entry)
+                })
+                .collect::<Vec<_>>()
+        };
+        let under_a = take(&mut entries, &a);
+        let under_b = take(&mut entries, &b);
+        if under_a.is_empty() || under_b.is_empty() {
+            for (root, items) in [(&a, under_a), (&b, under_b)] {
+                for (suffix, entry) in items {
+                    entries.insert(root.join(&suffix).as_wire_str().to_string(), entry);
+                }
+            }
+            return Err(crate::Error {
+                kind: crate::ErrorKind::NotFound,
+                message: format!("not found: {} or {}", a, b),
+            });
+        }
+        for (root, items) in [(&b, under_a), (&a, under_b)] {
+            for (suffix, entry) in items {
+                let mut path = root.clone();
+                for seg in PathBuf::from_wire_str(&suffix).components() {
+                    path.push(seg);
+                }
+                entries.insert(path.as_wire_str().to_string(), entry);
+            }
+        }
+        Ok(())
+    }
+
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
         if let Some(e) = self.check_failure(from, "rename") {
             return Err(e);
@@ -1578,6 +1637,7 @@ impl MockVfsBuilder {
         let create_new = self.config.create_new;
         let create_new_max_size = self.config.create_new_max_size;
         let rename_no_replace = self.config.rename_no_replace;
+        let exchange = self.config.exchange;
         let list_latency = self.config.list_latency;
         let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
             config: self.config,
@@ -1597,6 +1657,7 @@ impl MockVfsBuilder {
             create_new,
             create_new_max_size,
             rename_no_replace,
+            exchange,
             mounts: self.mounts,
             list_latency,
             listings_in_flight: std::sync::atomic::AtomicUsize::new(0),

@@ -130,6 +130,9 @@ impl VfsDescriptor for SevenZArchiveVfsDescriptor {
     fn can_rename(&self) -> bool {
         false
     }
+    fn exact_names(&self) -> bool {
+        true
+    }
     fn can_copy_within(&self) -> bool {
         false
     }

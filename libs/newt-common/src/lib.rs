@@ -1,6 +1,7 @@
 pub mod agent_resolver;
 pub mod api;
 pub mod askpass;
+pub mod batch_rename;
 pub mod connect;
 pub mod discovery;
 pub mod enrich;

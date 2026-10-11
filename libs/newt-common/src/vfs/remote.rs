@@ -501,6 +501,14 @@ impl Vfs for RemoteVfs {
         ret
     }
 
+    async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {
+        let ret: Result<(), Error> = self
+            .communicator
+            .invoke(crate::api::API_VFS_EXCHANGE, &(a.to_owned(), b.to_owned()))
+            .await?;
+        ret
+    }
+
     async fn copy_within(
         &self,
         from: &Path,

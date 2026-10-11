@@ -32,6 +32,8 @@ pub struct RuntimeState {
     pub copy_move: CopyMoveDefaults,
     /// Sticky last-used Search option toggles.
     pub search: SearchDefaults,
+    /// Sticky last-used Batch Rename toggles.
+    pub batch_rename: BatchRenameDefaults,
     /// Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
     /// never stored here (they live in connections.toml); the Quick Connect
     /// palette filters any recent that matches a saved profile.
@@ -46,6 +48,7 @@ impl Default for RuntimeState {
             layout: LayoutState::default(),
             copy_move: CopyMoveDefaults::default(),
             search: SearchDefaults::default(),
+            batch_rename: BatchRenameDefaults::default(),
             recent_connections: Vec::new(),
         }
     }
@@ -122,6 +125,14 @@ impl CopyMoveDefaults {
             ..base
         }
     }
+}
+
+/// Last-used Batch Rename toggles; the find and replace text are not kept.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(default, deny_unknown_fields)]
+pub struct BatchRenameDefaults {
+    pub case_sensitive: bool,
+    pub keep_case: bool,
 }
 
 /// Last-used Search toggles — how to search, never what to find — re-seeded

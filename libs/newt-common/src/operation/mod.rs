@@ -16,6 +16,7 @@ use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsPath, VfsRegistry};
 
 mod archive;
+mod batch_rename;
 mod copy;
 mod delete;
 mod metadata;
@@ -26,6 +27,8 @@ mod run_command;
 mod walk;
 
 use archive::*;
+pub use batch_rename::BatchRenameFolder;
+use batch_rename::*;
 use copy::*;
 use delete::*;
 use metadata::*;
@@ -218,6 +221,10 @@ pub enum OperationRequest {
     /// `Vfs::rename` when available, else copy+delete (so S3 objects and
     /// prefixes can be "renamed" via server-side CopyObject).
     Rename { source: VfsPath, new_name: String },
+    /// Rename entries in their folders, each to its own new name, in an
+    /// order that vacates every name before it's taken. Never replaces an
+    /// entry of the batch.
+    BatchRename { folders: Vec<BatchRenameFolder> },
     Delete {
         paths: Vec<VfsPath>,
         /// Move to the OS trash (`Vfs::trash_item`) instead of deleting.
@@ -624,6 +631,9 @@ pub async fn execute_operation(
         }
         OperationRequest::Rename { source, new_name } => {
             execute_rename(&mut reporter, &context, source, new_name, cancel.clone()).await
+        }
+        OperationRequest::BatchRename { folders } => {
+            execute_batch_rename(&mut reporter, &context, folders, cancel.clone()).await
         }
         OperationRequest::CreateArchive {
             sources,

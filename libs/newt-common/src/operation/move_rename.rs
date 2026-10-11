@@ -323,9 +323,70 @@ pub(super) async fn execute_rename(
         reporter.send_prepared(0, 0);
         return Ok(());
     }
+    match rename_entry(reporter, context, &source, &new_path, &cancel, &mut NoBatch).await? {
+        Moved::Renamed => {
+            reporter.send_prepared(0, 1);
+            reporter.maybe_send_progress(0, 1, &new_name);
+        }
+        Moved::Skipped => reporter.send_prepared(0, 0),
+        Moved::Copied => {}
+        Moved::Blocked => unreachable!("nothing outside a batch blocks"),
+    }
+    Ok(())
+}
 
-    let (vfs, _) = context.registry.resolve(&source)?;
+/// What became of one rename.
+pub(super) enum Moved {
+    Renamed,
+    /// By copy and delete: no native rename, or a folder merged into one.
+    Copied,
+    Skipped,
+    /// A batch member that hasn't moved yet has the name.
+    Blocked,
+}
+
+/// Whose a name is that a rename found taken by another file.
+pub(super) enum Occupant {
+    Outside,
+    /// A batch member that hasn't been renamed yet.
+    Pending,
+    /// A batch member that keeps the name: renamed to it, or skipped.
+    Settled,
+}
+
+#[async_trait::async_trait]
+pub(super) trait Occupants: Send {
+    async fn occupant(&mut self, vfs: &dyn Vfs, path: &Path) -> Occupant;
+}
+
+/// A single rename: whatever is in the way is outside it.
+struct NoBatch;
+
+#[async_trait::async_trait]
+impl Occupants for NoBatch {
+    async fn occupant(&mut self, _vfs: &dyn Vfs, _path: &Path) -> Occupant {
+        Occupant::Outside
+    }
+}
+
+/// Rename `source` to `new_path` beside it. Natively without replacing
+/// where the backend can; what is in the way is then a re-spelling of the
+/// source itself, a batch member (`occupants`), or a conflict for the user.
+/// No native rename falls back to copy and delete.
+pub(super) async fn rename_entry(
+    reporter: &mut ProgressReporter,
+    context: &OperationContext,
+    source: &VfsPath,
+    new_path: &VfsPath,
+    cancel: &CancellationToken,
+    occupants: &mut dyn Occupants,
+) -> Result<Moved, crate::Error> {
+    let (vfs, _) = context.registry.resolve(source)?;
     let descriptor = vfs.descriptor();
+    let new_name = new_path
+        .file_name()
+        .ok_or_else(|| crate::Error::custom("no name to rename to"))?
+        .to_string();
 
     if descriptor.can_rename() {
         // Check for destination conflicts before renaming (rename silently
@@ -343,40 +404,47 @@ pub(super) async fn execute_rename(
         let mut overwrite_approved = false;
         match vfs.rename_no_replace(&source.path, &new_path.path).await {
             Ok(()) => {
-                debug!("execute_rename: renamed {} -> {}", source, new_path);
-                reporter.send_prepared(0, 1);
-                reporter.maybe_send_progress(0, 1, &new_name);
-                return Ok(());
+                debug!("rename_entry: renamed {} -> {}", source, new_path);
+                return Ok(Moved::Renamed);
             }
             Err(e) => debug!(
-                "execute_rename: no-replace rename of {} did not go through: {}",
+                "rename_entry: no-replace rename of {} did not go through: {}",
                 source, e
             ),
         }
-        let dest_file = match find_destination(&*vfs, &new_path.path, reporter, &cancel).await? {
-            Found::Skipped => {
-                reporter.send_prepared(0, 0);
-                return Ok(());
-            }
+        let dest_file = match find_destination(&*vfs, &new_path.path, reporter, cancel).await? {
+            Found::Skipped => return Ok(Moved::Skipped),
             Found::Nothing => None,
             Found::File(file) => Some(*file),
         };
         let conflict = match dest_file {
             None => None,
             Some(dest_file) => {
-                match same_file_or_skip(&*vfs, &source.path, &new_path.path, reporter, &cancel)
+                match same_file_or_skip(&*vfs, &source.path, &new_path.path, reporter, cancel)
                     .await?
                 {
-                    None => {
-                        reporter.send_prepared(0, 0);
-                        return Ok(());
-                    }
+                    None => return Ok(Moved::Skipped),
                     Some(true) => None,
                     Some(false) => Some(dest_file),
                 }
             }
         };
         if let Some(dest_file) = conflict {
+            match occupants.occupant(&*vfs, &new_path.path).await {
+                Occupant::Outside => {}
+                Occupant::Pending => return Ok(Moved::Blocked),
+                Occupant::Settled => {
+                    let msg = format!("Another renamed entry has the name {}", new_path.path);
+                    return match reporter
+                        .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
+                        .await
+                    {
+                        Ok(IssueAction::Skip) => Ok(Moved::Skipped),
+                        Err(e) => Err(e),
+                        _ => unreachable!("not offered"),
+                    };
+                }
+            }
             let source_file = vfs.file_info(&source.path).await?;
             let (source_dir, dest_dir) = directories(&source_file, &dest_file);
             if dest_dir != source_dir {
@@ -389,10 +457,7 @@ pub(super) async fn execute_rename(
                     .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
                     .await
                 {
-                    Ok(IssueAction::Skip) => {
-                        reporter.send_prepared(0, 0);
-                        return Ok(());
-                    }
+                    Ok(IssueAction::Skip) => return Ok(Moved::Skipped),
                     Err(e) => return Err(e),
                     _ => unreachable!("not offered"),
                 }
@@ -406,10 +471,7 @@ pub(super) async fn execute_rename(
                     )
                     .await
                 {
-                    Ok(IssueAction::Skip) => {
-                        reporter.send_prepared(0, 0);
-                        return Ok(());
-                    }
+                    Ok(IssueAction::Skip) => return Ok(Moved::Skipped),
                     Ok(IssueAction::Overwrite) => {
                         // Proceed with rename — an atomic replace on
                         // backends that support it (POSIX rename,
@@ -432,17 +494,15 @@ pub(super) async fn execute_rename(
             retry = false;
             match vfs.rename(&source.path, &new_path.path).await {
                 Ok(()) => {
-                    debug!("execute_rename: renamed {} -> {}", source, new_path);
-                    reporter.send_prepared(0, 1);
-                    reporter.maybe_send_progress(0, 1, &new_name);
-                    return Ok(());
+                    debug!("rename_entry: renamed {} -> {}", source, new_path);
+                    return Ok(Moved::Renamed);
                 }
                 // "Not supported" — for the backend or this particular pair
                 // — falls back to copy+delete below; real failures surface
                 // as issues.
                 Err(e) if e.kind == crate::ErrorKind::NotSupported => {
                     debug!(
-                        "execute_rename: rename unsupported for {}, falling back to copy+delete",
+                        "rename_entry: rename unsupported for {}, falling back to copy+delete",
                         source
                     );
                 }
@@ -460,15 +520,12 @@ pub(super) async fn execute_rename(
                                     e,
                                     &format!("Error replacing {}", new_path.path),
                                     None,
-                                    &cancel,
+                                    cancel,
                                     false,
                                 )
                                 .await?
                             {
-                                IssueOutcome::Skip => {
-                                    reporter.send_prepared(0, 0);
-                                    return Ok(());
-                                }
+                                IssueOutcome::Skip => return Ok(Moved::Skipped),
                                 IssueOutcome::Retry => unreachable!("not offered"),
                             }
                         }
@@ -480,15 +537,12 @@ pub(super) async fn execute_rename(
                             e,
                             &format!("Error renaming {}", source),
                             Some(format!("{} -> {}", source, new_path)),
-                            &cancel,
+                            cancel,
                             true,
                         )
                         .await?
                     {
-                        IssueOutcome::Skip => {
-                            reporter.send_prepared(0, 0);
-                            return Ok(());
-                        }
+                        IssueOutcome::Skip => return Ok(Moved::Skipped),
                         IssueOutcome::Retry => retry = true,
                     }
                 }
@@ -501,6 +555,9 @@ pub(super) async fn execute_rename(
     // (server-side CopyObject on S3), so no data flows through the app.
     // Timestamps are preserved where the VFS allows it — a rename should
     // not look like a fresh file.
+    let parent = source
+        .parent()
+        .ok_or_else(|| crate::Error::custom("cannot rename the VFS root"))?;
     let options = CopyOptions {
         preserve_timestamps: true,
         ..CopyOptions::default()
@@ -508,13 +565,14 @@ pub(super) async fn execute_rename(
     execute_copy(
         reporter,
         context,
-        vec![source],
+        vec![source.clone()],
         parent,
         options,
-        cancel,
+        cancel.clone(),
         true,
         0,
         Some(&new_name),
     )
-    .await
+    .await?;
+    Ok(Moved::Copied)
 }

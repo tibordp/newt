@@ -490,6 +490,34 @@ Creates a new file (same dialog as Create File) and immediately opens it in the 
 
 Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Operates on the **focused** entry, ignoring the selection — and does nothing at all when that is `..` (see the `..` note under File List). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it (tried as `rename_no_replace` first, as Move does), else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the byte-identical name is a no-op, and renaming to a *different spelling of the same name* — `Foo` → `foo` on a case-insensitive volume, NFC → NFD on HFS+ — is a rename rather than a conflict: the destination stats successfully as the source, so `Vfs::same_file` is consulted before the conflict probe and suppresses it. Renaming one **hard link** onto another takes the same exemption and is then a no-op — POSIX has `rename` succeed without acting when both names are links to one file, so both survive and nothing is reported. That is BSD `mv`'s behaviour (GNU `mv` refuses instead); it's rare, and inaction is the safe end of the trade. Copying one hard link onto another counts as already copied (see Copy's conflict detection), since writing over it would destroy the file. The pane refreshes and re-focuses the new name when the operation completes.
 
+### Batch Rename (Shift+F2)
+
+Renames every entry of the effective selection (the selection, else the focused entry; never `..`) with one regex find & replace, previewed live. Also reachable from the Rename dialog: its **Batch Rename…** button (bottom left) switches to this dialog on the same selection. No recursion — a selected folder is renamed itself, its contents untouched — and only names: a new name containing a separator is an error, not a move.
+
+**The rule**:
+- **Find** is a regular expression (Rust `regex` syntax: no lookaround or backreferences), matched anywhere in the whole name, extension included; **every** match is replaced, and a name with no match stays as it is. `^` with a replacement adds a prefix. An empty Find renames nothing. An invalid pattern shows its error in place of the counts.
+- **Replace** follows Monaco's (VS Code's) syntax rather than Rust's: `$1`…`$99` a group, `$<name>` a named group, `$&` or `$0` the whole match, `$$` a dollar; `\u` `\l` before a group upper/lowercase its first character, `\U` `\L` all of it. A reference past the pattern's groups is literal text, as in Monaco (`$12` with one group is group 1 then `2`).
+- **Case-sensitive** (`Aa`, Alt+C / ⌥⌘C) — off by default.
+- **Keep case** (`AB`, Alt+P / ⌥⌘P) — VS Code's Preserve Case: each replacement takes the case shape of the text it replaces (all upper, all lower, capitalized, or part by part across `-` and `_`).
+- The two toggles are remembered in `state.json` (`batch_rename.*`); Find and Replace start empty every time.
+
+**Preview**: a list styled like a pane — file icons, Name and New Name columns, the matched text and its replacement in bold, unchanged names greyed. Above it, `13 renamed · 1 unchanged · 2 errors · 1 warning` and a filter (All / Renamed / Problems). Arrow keys, Page Up/Down and Home/End move a cursor in the list; **F8 / Shift+F8** jump to the next / previous row with a problem. The problem is written beside the new name and is the row's tooltip.
+- **Errors** (Rename stays disabled): an empty name, `.` or `..`, a separator or NUL, a name Windows refuses on a Windows-style filesystem (`<>:"|?*`, control characters, a trailing dot or space, reserved names like `CON` or `nul.txt`), or two entries of the selection ending up with byte-identical names in one folder (including onto a selected entry the rule leaves alone).
+- **Warnings** (shown, not blocking): the new name replaces an entry outside the selection; or — where the filesystem might ignore case — it matches another new name or an existing entry give or take case or Unicode normalization ("may replace", "where case is ignored"). Names on S3 and in archives are compared byte for byte, so these never appear there. On a filesystem with no rename of its own (S3) the status line says renames there copy and delete.
+- Name length is not checked: the limit is the filesystem's, and a name it refuses fails that entry during the rename.
+- Hidden entries the pane isn't showing aren't known to the preview; the rename itself still finds them.
+
+The preview is computed in the Rust host, not in the webview: the selection is snapshotted when the dialog opens, every new name is recomputed (off the async runtime, ~100 ms for 100,000 names) a moment after typing pauses, and the dialog is sent the counts and the rows in view only, so selections in the hundreds of thousands stay responsive.
+
+**Running it** (`OperationRequest::BatchRename`, in the operations panel, cancellable, agent-side in remote sessions):
+- **Order.** Each entry's new name is vacated before it's taken: a chain (`1→2`, `2→3`) runs from its end, and a cycle (`a↔b`, `x→y→z→x`) is performed as one unit. Dependencies are judged conservatively — by Unicode case folding and normalization wherever names might fold — so a swap like `a→B`, `b→A` on a case-insensitive volume is recognized; on a case-sensitive one such a phantom cycle costs one unnecessary swap.
+- **Cycles** use an atomic exchange where the filesystem has one (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`): a cycle of *k* entries is *k*−1 exchanges, and no file is ever under a temporary name. Elsewhere (Windows, SFTP, S3) the first entry steps aside to a hidden `.newt-rename-…` name in the same folder, the rest follow, and it takes its new name last. A cycle is never interrupted by Cancel, and one that can't complete is undone — every entry back under its old name.
+- **The filesystem decides.** Every rename is a no-replace rename first, as single Rename does; a re-spelling of the entry itself (`readme` → `README` where case is ignored) goes through. When something else has the name, it's either an entry of the batch that hasn't moved yet — the rename waits for it, and entries still waiting after a full round step aside to a temporary name to break the cycle the names didn't show — or one that has its name for good, which is **never overwritten** (the prompt offers Skip only), or an entry outside the batch, which gets the normal Skip / Overwrite prompt with apply-to-all. Telling a batch entry from an outsider is exact where the listing has file identities (local filesystems: device and inode) and on byte-compared names (S3, archives); over SFTP it asks the server about entries whose names fold together.
+- Before starting, each folder is listed again: an entry that has disappeared is reported and skipped, and the checks run again on what is there now.
+- In a search pane each hit is renamed in its own folder, and a folder's selected contents are renamed before the folder itself.
+- On S3 each rename is a server-side copy and delete, as single Rename; a folder copies everything under its prefix.
+- When it completes, the pane refreshes and selects the renamed entries under their new names (ready for another pass), with the cursor following the focused entry to its new name.
+
 ### Delete (F8 / Del / Cmd+Backspace) and Delete Permanently (Shift+Delete / Opt+Cmd+Backspace)
 
 Deletes all selected files and directories (recursive for directories).
@@ -2089,6 +2117,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 | Shortcut | Action | Context |
 |----------|--------|---------|
 | F2 | Rename | Pane focused |
+| Shift+F2 | Batch Rename | Pane focused |
 | F3 | View file | Pane focused |
 | Shift+F3 | Reveal the focused entry in the system file manager | Pane focused |
 | F4 | Edit file | Pane focused |

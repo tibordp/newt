@@ -275,6 +275,13 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
     fn can_copy_within(&self) -> bool;
     fn can_hard_link(&self) -> bool;
 
+    /// Whether two names are one entry exactly when their bytes are equal:
+    /// object stores and archives. Never true for a real filesystem, local
+    /// or remote, whose rules only `Vfs::same_file` knows.
+    fn exact_names(&self) -> bool {
+        false
+    }
+
     // --- Origin ---
     /// How this VFS type relates to its `Vfs::origin`, if it has one.
     /// Must agree with `Vfs::origin()`: return [`OriginKind::None`] iff
@@ -909,6 +916,13 @@ pub trait Vfs: Send + Sync {
     /// refuse, which includes every case plain `rename` does not support.
     async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let _ = (from, to);
+        Err(Error::not_supported())
+    }
+
+    /// Swap the names of two entries in one directory, atomically.
+    /// `NotSupported` where the backend has no such primitive.
+    async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {
+        let _ = (a, b);
         Err(Error::not_supported())
     }
 

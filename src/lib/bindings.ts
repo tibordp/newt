@@ -1200,6 +1200,48 @@ async cmdRename(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cmdBatchRename(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_batch_rename", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The Batch Rename dialog's rule changed.
+ */
+async batchRenameSetRule(rule: Rule) : Promise<void> {
+    await TAURI_INVOKE("batch_rename_set_rule", { rule });
+},
+/**
+ * The rows the Batch Rename list shows moved.
+ */
+async batchRenameSetViewport(first: number, count: number) : Promise<void> {
+    await TAURI_INVOKE("batch_rename_set_viewport", { first, count });
+},
+async batchRenameSetFilter(filter: BatchRenameFilter) : Promise<void> {
+    await TAURI_INVOKE("batch_rename_set_filter", { filter });
+},
+/**
+ * The position of the next (or previous) row with a problem after
+ * `from` among the rows shown.
+ */
+async batchRenameFindProblem(from: number | null, forward: boolean) : Promise<number | null> {
+    return await TAURI_INVOKE("batch_rename_find_problem", { from, forward });
+},
+/**
+ * Rename as the preview shows, and close the dialog. Once done, the pane
+ * selects the renamed entries under their new names.
+ */
+async batchRenameStart(rule: Rule) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("batch_rename_start", { rule }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdProperties(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_properties", { paneHandle }) };
@@ -2267,6 +2309,55 @@ name: NamePreview | null;
  * When no row matches: the pattern the query would add.
  */
 candidate: string | null }
+/**
+ * Last-used Batch Rename toggles; the find and replace text are not kept.
+ */
+export type BatchRenameDefaults = { case_sensitive: boolean; keep_case: boolean }
+export type BatchRenameFilter = "all" | "changed" | "problems"
+/**
+ * One folder of a batch rename.
+ */
+export type BatchRenameFolder = { dir: VfsPath; 
+/**
+ * (current name, new name).
+ */
+renames: ([string, string])[] }
+/**
+ * What the dialog shows.
+ */
+export type BatchRenamePreview = { total: number; renamed: number; errors: number; warnings: number; 
+/**
+ * Why the find pattern doesn't compile.
+ */
+rule_error: string | null; 
+/**
+ * The filesystem without a native rename, by name, when the batch is
+ * on one: each rename there copies and deletes.
+ */
+copies: string | null; filter: BatchRenameFilter; 
+/**
+ * Rows passing the filter.
+ */
+shown: number; 
+/**
+ * Position of `window`'s first row among those.
+ */
+offset: number; window: BatchRenameRow[] }
+export type BatchRenameProblem = { error: boolean; message: string }
+export type BatchRenameRow = { name: string; is_dir: boolean; 
+/**
+ * `None` when the rule leaves the name alone.
+ */
+new_name: string | null; 
+/**
+ * UTF-16 ranges of the matches in `name` and of their replacements in
+ * `new_name`, for highlighting.
+ */
+matched: ([number, number])[]; replaced: ([number, number])[]; problem: BatchRenameProblem | null; 
+/**
+ * The folder, when the selection spans several (search results).
+ */
+folder: string | null }
 export type BehaviorPreferences = { 
 /**
  * Ask for confirmation before deleting files.
@@ -2540,7 +2631,7 @@ export type DialogKind = "navigate" | "create_directory" | "select_by_pattern" |
  * Properties of the volume root containing the pane's current path
  * (opened by clicking the free-space label in the pane header).
  */
-"root_properties" | "properties" | "rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | 
+"root_properties" | "properties" | "rename" | "batch_rename" | "copy" | "move" | "create_archive" | "connect_remote" | "mount_sftp" | "mount_s3" | "search" | 
 /**
  * Keyboard-launched quick sort menu, anchored to the pane header.
  */
@@ -3220,7 +3311,11 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
+moved: boolean } } | { type: "hot_paths" } | { type: "batch_rename"; data: { 
+/**
+ * What is renamed: "12 items in /photos".
+ */
+title: string; defaults: BatchRenameDefaults; preview: BatchRenamePreview } } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
 /**
  * The latest ranking; `None` until the first arrives.
  */
@@ -3436,7 +3531,11 @@ name: string | null; display_path: string;
 /**
  * The path was already bookmarked and got moved to the top.
  */
-moved: boolean } } | { type: "hot_paths" } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
+moved: boolean } } | { type: "hot_paths" } | { type: "batch_rename"; data: { 
+/**
+ * What is renamed: "12 items in /photos".
+ */
+title: string; defaults: BatchRenameDefaults; preview: BatchRenamePreview } } | { type: "quick_open"; data: { root: VfsPath; root_display: string; 
 /**
  * The latest ranking; `None` until the first arrives.
  */
@@ -3512,7 +3611,13 @@ rename_to?: string | null } } |
  * `Vfs::rename` when available, else copy+delete (so S3 objects and
  * prefixes can be "renamed" via server-side CopyObject).
  */
-{ Rename: { source: VfsPath; new_name: string } } | { Delete: { paths: VfsPath[]; 
+{ Rename: { source: VfsPath; new_name: string } } | 
+/**
+ * Rename entries in their folders, each to its own new name, in an
+ * order that vacates every name before it's taken. Never replaces an
+ * entry of the batch.
+ */
+{ BatchRename: { folders: BatchRenameFolder[] } } | { Delete: { paths: VfsPath[]; 
 /**
  * Move to the OS trash (`Vfs::trash_item`) instead of deleting.
  */
@@ -3791,6 +3896,11 @@ open_default: boolean;
  * Browse Into does something Enter doesn't.
  */
 browse_into: boolean }
+export type Rule = { find: string; replace: string; case_sensitive: boolean; 
+/**
+ * Give each replacement the case shape of the text it replaces.
+ */
+keep_case: boolean }
 /**
  * App-wide runtime state persisted to `state.json` in the config dir.
  * Every field must default so old files keep deserializing as the
@@ -3819,6 +3929,10 @@ copy_move: CopyMoveDefaults;
  * Sticky last-used Search option toggles.
  */
 search: SearchDefaults; 
+/**
+ * Sticky last-used Batch Rename toggles.
+ */
+batch_rename: BatchRenameDefaults; 
 /**
  * Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
  * never stored here (they live in connections.toml); the Quick Connect
