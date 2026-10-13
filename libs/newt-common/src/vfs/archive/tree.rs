@@ -45,6 +45,9 @@ impl DirectoryTree {
     pub(super) fn file_info(&self, path: &StdPath) -> Result<File, Error> {
         let normalized = normalize_dir_path(path);
         let resolved = self.resolve_path(&normalized, false)?;
+        if resolved.as_os_str().is_empty() {
+            return Ok(File::bare_dir(""));
+        }
         let mut file = self
             .lookup_entry(&resolved)
             .ok_or_else(|| Error::not_found(format!("file not found: {}", path.display())))?;

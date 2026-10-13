@@ -297,6 +297,14 @@ async fn lists_root_with_implicit_dirs() {
 }
 
 #[tokio::test]
+async fn root_stats_as_a_directory() {
+    let h = Harness::new(VARIED_ZIP);
+    let vfs = mount_with(&h, None).await;
+
+    assert!(vfs.file_info(&vp("/")).await.expect("file_info").is_dir);
+}
+
+#[tokio::test]
 async fn symlink_lists_with_target_and_reads_through() {
     let h = Harness::new(VARIED_ZIP);
     let vfs = mount_with(&h, None).await;

@@ -299,6 +299,13 @@ async fn lists_root_dirs_and_symlink() {
 }
 
 #[tokio::test]
+async fn root_stats_as_a_directory() {
+    let h = Harness::new(BASIC);
+    let vfs = mount(&h).await;
+    assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir);
+}
+
+#[tokio::test]
 async fn reads_every_entry_streaming_and_by_range() {
     let h = Harness::new(BASIC);
     let vfs = mount(&h).await;

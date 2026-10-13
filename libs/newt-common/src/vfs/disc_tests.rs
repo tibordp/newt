@@ -232,6 +232,15 @@ async fn joliet_listing_and_reads() {
 }
 
 #[tokio::test]
+async fn root_stats_as_a_directory() {
+    for name in ["joliet", "udf250"] {
+        let harness = Harness::new(&fixture(name));
+        let vfs = harness.mount().await;
+        assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir, "{name}");
+    }
+}
+
+#[tokio::test]
 async fn streaming_read() {
     let harness = Harness::new(&fixture("joliet"));
     let vfs = harness.mount().await;

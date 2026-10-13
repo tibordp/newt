@@ -75,6 +75,12 @@ async fn lists_one_entry_named_without_the_suffix() {
 }
 
 #[tokio::test]
+async fn root_stats_as_a_directory() {
+    let vfs = mount(SIMPLE_TAR_GZ, "/dir/simple.tar.gz");
+    assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir);
+}
+
+#[tokio::test]
 async fn reads_streaming_and_by_range() {
     for (bytes, path) in [
         (SIMPLE_TAR_GZ, "/simple.tar.gz"),

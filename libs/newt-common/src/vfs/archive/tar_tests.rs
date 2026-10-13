@@ -86,6 +86,12 @@ async fn lists_top_level_entries() {
 }
 
 #[tokio::test]
+async fn root_stats_as_a_directory() {
+    let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
+    assert!(vfs.file_info(&vp("/")).await.expect("file_info").is_dir);
+}
+
+#[tokio::test]
 async fn lists_nested_dir() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
     let mut names: Vec<String> = vfs
