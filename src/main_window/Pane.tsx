@@ -1795,6 +1795,26 @@ function PaneInner(
     }
   }, [path, paneHandle, rowHeight]);
 
+  // The window is sized to the viewport, and a pane that grows without
+  // scrolling would otherwise never ask for the rows it now shows.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const visibleCount = Math.ceil(container.clientHeight / rowHeight);
+      if (visibleCount === lastViewportReportRef.current[1]) return;
+      const firstVisible = Math.floor(container.scrollTop / rowHeight);
+      lastViewportReportRef.current = [
+        firstVisible,
+        visibleCount,
+        fileWindowRef.current.offset,
+      ];
+      safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [paneHandle, rowHeight]);
+
   const isEmpty = !showSpinner && !loading && file_window.total_count === 0;
 
   const topSpacerStyle = useMemo(
