@@ -228,6 +228,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             pane::set_selection_by_indices,
             pane::end_drag_selection,
             pane::relative_jump,
+            pane::wheel_select,
             pane::set_viewport,
             pane::set_filter,
             // File operations (called from dialog submissions)

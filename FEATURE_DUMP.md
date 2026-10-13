@@ -330,6 +330,8 @@ A file that isn't on this computer (S3, SFTP, an archive, a remote session) is d
 | Right-click | If clicked file is NOT selected: focus it (clears selection), show context menu. If clicked file IS selected: keep selection, show context menu. |
 | Drag outside the Name column | Rectangle (marquee) selection — see below |
 | Drag on file icon/name | Initiate drag-and-drop to other pane — see below |
+| Alt+Wheel (⌥ on macOS) | Move the cursor instead of scrolling, one row per wheel notch however fast the wheel turns (scroll acceleration is ignored). A very fast spin can move a little less than a row per notch: the webview merges some notches into one event |
+| Shift+Alt+Wheel | Move the cursor and select from the row it started on, over the selection as it was: wheeling back unselects, as a marquee does. Lasts until Shift or Alt is released |
 
 **Rectangle (marquee) selection**:
 - Must drag at least 5px before the rectangle appears (prevents accidental activation on click).

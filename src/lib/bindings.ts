@@ -228,6 +228,18 @@ async relativeJump(paneHandle: PaneHandle, offset: number, withSelection: boolea
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Shift+Alt+wheel: move the cursor by `offset`, selecting from where the
+ * session started. `end_drag_selection` ends the session.
+ */
+async wheelSelect(paneHandle: PaneHandle, offset: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("wheel_select", { paneHandle, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setViewport(paneHandle: PaneHandle, firstVisible: number, visibleCount: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_viewport", { paneHandle, firstVisible, visibleCount }) };

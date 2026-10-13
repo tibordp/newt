@@ -1868,9 +1868,49 @@ function PaneInner(
   };
   const onScroll: React.UIEventHandler<HTMLElement> = (e) =>
     syncScroll(e.currentTarget);
+  // Alt+wheel moves the cursor a row per wheel event, whatever its delta:
+  // scroll acceleration makes a slow notch a fraction of a row and a fast
+  // one a dozen, while each notch is still one event.
+  const cursorWheel = (e: WheelEvent) => {
+    if (!e.altKey) return false;
+    // macOS turns Shift+wheel on a mouse into horizontal deltas.
+    const jump = Math.sign(
+      e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0,
+    );
+    const selecting = e.shiftKey;
+    if (wheelSelectingRef.current && !selecting) endWheelSelect();
+    if (jump !== 0) {
+      if (selecting) {
+        wheelSelectingRef.current = true;
+        guarded(() => commands.wheelSelect(paneHandle, jump));
+      } else {
+        relativeJump(jump);
+      }
+    }
+    return true;
+  };
+  // A Shift+Alt+wheel selection lasts while both are held.
+  const wheelSelectingRef = useRef(false);
+  const endWheelSelect = useCallback(() => {
+    if (!wheelSelectingRef.current) return;
+    wheelSelectingRef.current = false;
+    safeSilent(commands.endDragSelection(paneHandle));
+  }, [paneHandle]);
+  useEffect(() => {
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift" || e.key === "Alt") endWheelSelect();
+    };
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", endWheelSelect);
+    return () => {
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", endWheelSelect);
+    };
+  }, [endWheelSelect]);
   // The wheel stops at the edge of the rows Rust has sent, and goes on
-  // once the window slides.
+  // once the window slides. Alt+wheel moves the cursor instead.
   useWheelScroll(containerRef, {
+    claim: cursorWheel,
     sync: syncScroll,
     bounds: (el) => {
       const fw = fileWindowRef.current;

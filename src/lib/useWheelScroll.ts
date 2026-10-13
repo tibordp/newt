@@ -14,6 +14,17 @@ function rest(delta: number, moved: number): number {
   return Math.abs(left) < 1 ? left : 0;
 }
 
+/** A wheel event's deltas in pixels, whatever unit it reports them in. */
+function wheelDelta(e: WheelEvent, el: HTMLElement): [number, number] {
+  const unit =
+    e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+      ? el.clientHeight
+      : e.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? LINE_PX
+        : 1;
+  return [e.deltaX * unit, e.deltaY * unit];
+}
+
 export interface WheelScrollOptions {
   /**
    * Re-derive what the view renders from the container's scroll position —
@@ -27,6 +38,8 @@ export interface WheelScrollOptions {
    * edge; the wheel goes on from there once more rows arrive.
    */
   bounds?: (el: HTMLElement) => [number, number];
+  /** Takes a wheel event before it scrolls; `true` consumes it. */
+  claim?: (e: WheelEvent) => boolean;
 }
 
 /**
@@ -78,16 +91,10 @@ export function useWheelScroll(
     const onWheel = (e: WheelEvent) => {
       // Ctrl+wheel and pinches zoom.
       if (e.ctrlKey || e.defaultPrevented) return;
-      const unit =
-        e.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? el.clientHeight
-          : e.deltaMode === WheelEvent.DOM_DELTA_LINE
-            ? LINE_PX
-            : 1;
-      let dx = e.deltaX * unit;
-      let dy = e.deltaY * unit;
-      if (e.shiftKey && dx === 0) [dx, dy] = [dy, 0];
       e.preventDefault();
+      if (optionsRef.current.claim?.(e)) return;
+      let [dx, dy] = wheelDelta(e, el);
+      if (e.shiftKey && dx === 0) [dx, dy] = [dy, 0];
       s.dx += dx;
       s.dy += dy;
       if (!s.frame) s.frame = requestAnimationFrame(apply);

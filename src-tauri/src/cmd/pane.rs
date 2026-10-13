@@ -289,6 +289,21 @@ pub fn relative_jump(
     })
 }
 
+/// Shift+Alt+wheel: move the cursor by `offset`, selecting from where the
+/// session started. `end_drag_selection` ends the session.
+#[tauri::command]
+#[specta::specta]
+pub fn wheel_select(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+    offset: i32,
+) -> Result<(), Error> {
+    ctx.with_pane_update(pane_handle, |_, pane| {
+        pane.view_state_mut().wheel_select(offset);
+        Ok(())
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_viewport(

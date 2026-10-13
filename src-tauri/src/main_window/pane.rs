@@ -1726,6 +1726,15 @@ pub struct PaneBreadcrumb {
     pub note: Option<newt_common::vfs::BreadcrumbNote>,
 }
 
+/// A marquee or Shift+Alt+wheel selection in progress.
+#[derive(Clone)]
+struct SelectionSession {
+    /// The selection it started from, which its range is added to.
+    base: HashSet<String>,
+    /// The row a wheel session started on; a marquee has none.
+    anchor: Option<String>,
+}
+
 /// View model for a pane.
 #[derive(Default, Clone, serde::Serialize, specta::Type)]
 pub struct PaneViewState {
@@ -1743,7 +1752,7 @@ pub struct PaneViewState {
     #[serde(skip)]
     all_selected: HashSet<String>,
     #[serde(skip)]
-    drag_base: Option<HashSet<String>>,
+    drag_base: Option<SelectionSession>,
     pub filter: Option<String>,
     pub filter_mode: FilterMode,
     pub fs_stats: Option<FsStats>,
@@ -2574,7 +2583,11 @@ impl PaneViewState {
         // then union base + range.
         let mut selected: HashSet<String> = if additive {
             self.drag_base
-                .get_or_insert_with(|| self.all_selected.clone())
+                .get_or_insert_with(|| SelectionSession {
+                    base: self.all_selected.clone(),
+                    anchor: None,
+                })
+                .base
                 .clone()
         } else {
             self.drag_base = None;
@@ -2587,6 +2600,39 @@ impl PaneViewState {
             for i in lo..=hi {
                 if self.files[i].name != PARENT_KEY {
                     selected.insert(self.files[i].key().to_string());
+                }
+            }
+        }
+        self.all_selected = selected;
+        self.recompute_stats();
+    }
+
+    /// Shift+Alt+wheel: move the cursor by `offset` and select the rows
+    /// from the one the session started on to the cursor, over the
+    /// selection it started with — wheeling back unselects, as a marquee
+    /// does. [`end_drag_selection`](Self::end_drag_selection) ends it.
+    pub fn wheel_select(&mut self, offset: i32) {
+        let Some(first) = self.files.first() else {
+            return;
+        };
+        let focused = self
+            .focused
+            .clone()
+            .unwrap_or_else(|| first.key().to_string());
+        let session = self.drag_base.get_or_insert_with(|| SelectionSession {
+            base: self.all_selected.clone(),
+            anchor: None,
+        });
+        let anchor = session.anchor.get_or_insert(focused).clone();
+        let mut selected = session.base.clone();
+        self.relative_jump(offset, false);
+        let cursor = self.focused.as_ref().and_then(|f| self.file_lookup.get(f));
+        if let (Some(&a), Some(&c)) = (self.file_lookup.get(&anchor), cursor)
+            && a != c
+        {
+            for f in &self.files[a.min(c)..=a.max(c)] {
+                if f.name != PARENT_KEY {
+                    selected.insert(f.key().to_string());
                 }
             }
         }
@@ -2990,6 +3036,42 @@ mod tests {
         assert_eq!(vs.focused.as_deref(), Some(".."));
         assert_eq!(vs.all_selected.len(), 4);
         assert!(!vs.all_selected.contains(".."));
+    }
+
+    fn selected(vs: &PaneViewState) -> Vec<&str> {
+        let mut names: Vec<&str> = vs.all_selected.iter().map(String::as_str).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn wheel_select_spans_from_its_start_and_unselects_on_the_way_back() {
+        let mut vs = listed(&[
+            ("..", true),
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("d", false),
+            ("e", false),
+        ]);
+        vs.all_selected = ["e".to_string()].into();
+        vs.focused = Some("c".into());
+
+        vs.wheel_select(2);
+        assert_eq!(vs.focused.as_deref(), Some("e"));
+        assert_eq!(selected(&vs), ["c", "d", "e"]);
+        vs.wheel_select(-1);
+        assert_eq!(selected(&vs), ["c", "d", "e"]);
+        vs.wheel_select(-1);
+        assert_eq!(selected(&vs), ["e"]);
+        vs.wheel_select(-3);
+        assert_eq!(vs.focused.as_deref(), Some(".."));
+        assert_eq!(selected(&vs), ["a", "b", "c", "e"]);
+
+        vs.end_drag_selection();
+        vs.wheel_select(1);
+        assert_eq!(vs.focused.as_deref(), Some("a"));
+        assert_eq!(selected(&vs), ["a", "b", "c", "e"]);
     }
 
     #[test]
