@@ -70,6 +70,12 @@ export function gitStatus(
   return a && "git" in a ? a.git : undefined;
 }
 
+/// Whether a row is a package (an app or another folder macOS presents
+/// as a file), as its filesystem says.
+export function isPackage(row: FileView): boolean {
+  return row.annotations?.some((a) => "package" in a) ?? false;
+}
+
 /// The du annotation's payload for a row, if any.
 export function recursiveSize(row: FileView): RecursiveSize | undefined {
   const a = row.annotations?.find((a) => "recursive_size" in a);

@@ -271,6 +271,8 @@ pub struct MockVfs {
     exchange: bool,
     /// Roots of other filesystems; empty means no entry reports a device.
     mounts: Vec<String>,
+    /// Directories `is_package` answers yes for, by wire path.
+    packages: Vec<String>,
     list_latency: Option<std::time::Duration>,
     listings_in_flight: std::sync::atomic::AtomicUsize,
     max_concurrent_listings: std::sync::atomic::AtomicUsize,
@@ -1172,6 +1174,11 @@ impl Vfs for MockVfs {
         self.rename(from, to).await
     }
 
+    async fn is_package(&self, path: &Path) -> Result<bool, crate::Error> {
+        let key = self.lookup_key(path);
+        Ok(self.packages.contains(&key))
+    }
+
     async fn exchange(&self, a: &Path, b: &Path) -> Result<(), crate::Error> {
         if !self.exchange {
             return Err(crate::Error::not_supported());
@@ -1442,6 +1449,7 @@ pub struct MockVfsBuilder {
     read_order: HashMap<String, u64>,
     modified: HashMap<String, i64>,
     mounts: Vec<String>,
+    packages: Vec<String>,
 }
 
 impl MockVfsBuilder {
@@ -1463,12 +1471,20 @@ impl MockVfsBuilder {
             read_order: HashMap::new(),
             modified: HashMap::new(),
             mounts: Vec::new(),
+            packages: Vec::new(),
         }
     }
 
     /// Make the directory the root of another filesystem: it and
     /// everything under it report a device of their own, and every other
     /// entry reports the root's.
+    /// Have `is_package` answer yes for the directory at `path`.
+    pub fn package(mut self, path: &str) -> Self {
+        self.packages
+            .push(PathBuf::from_wire_str(path).as_wire_str().to_string());
+        self
+    }
+
     pub fn mount_point(mut self, path: &str) -> Self {
         self = self.dir(path);
         self.mounts
@@ -1659,6 +1675,7 @@ impl MockVfsBuilder {
             rename_no_replace,
             exchange,
             mounts: self.mounts,
+            packages: self.packages,
             list_latency,
             listings_in_flight: std::sync::atomic::AtomicUsize::new(0),
             max_concurrent_listings: std::sync::atomic::AtomicUsize::new(0),

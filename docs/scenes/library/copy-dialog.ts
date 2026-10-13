@@ -1,5 +1,6 @@
 import { mainWindow, pane } from "../builders";
 import { HOME, LOCAL_STATS, docsColumns, photoEntries } from "../demo";
+import type { CopyOptions } from "../../../src/lib/bindings";
 import type { Scene } from "../types";
 
 const source = `${HOME}/Pictures/2026-07 Lisbon`;
@@ -10,6 +11,31 @@ const selected = [
   "IMG_4118.HEIC",
   "IMG_4126.HEIC",
 ];
+
+/// What a Mac sets up until a toggle is changed.
+const options: CopyOptions = {
+  preserve_timestamps: true,
+  preserve_permissions: true,
+  ownership_by_name: false,
+  preserve_owner: false,
+  preserve_group: false,
+  preserve_xattrs: true,
+  preserve_acl: false,
+  preserve_streams: true,
+  preserve_hard_links: false,
+  preserve_sparse: false,
+  preserve_object_metadata: false,
+  preserve_object_tags: false,
+  preserve_object_access: false,
+  object_storage_class: null,
+  object_canned_acl: null,
+  follow_symlinks: false,
+  preserve_merged_directories: false,
+  create_symlink: false,
+  one_file_system: false,
+  conflict_resolution: null,
+  folder_conflicts: "merge",
+};
 
 const scene: Scene = {
   description: "The Copy dialog for four selected photos",
@@ -44,28 +70,8 @@ const scene: Scene = {
         default_name: null,
         default_name_is_dir: false,
         name_separators: "/",
-        defaults: {
-          preserve_timestamps: true,
-          preserve_permissions: true,
-          ownership_by_name: false,
-          preserve_owner: false,
-          preserve_group: false,
-          preserve_xattrs: false,
-          preserve_acl: false,
-          preserve_streams: false,
-          preserve_hard_links: false,
-          preserve_sparse: false,
-          preserve_object_metadata: false,
-          preserve_object_tags: false,
-          preserve_object_access: false,
-          object_storage_class: null,
-          object_canned_acl: null,
-          follow_symlinks: false,
-          preserve_merged_directories: false,
-          create_symlink: false,
-          one_file_system: false,
-          conflict_resolution: null,
-        },
+        defaults: options,
+        stock: options,
       },
     },
   }),

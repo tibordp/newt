@@ -39,6 +39,10 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts �
 
 - A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
 
+## File icons
+
+- Review the file-list icons as a whole. Today a name maps through the seti theme's `mapping.json` (`src/lib/fileIcons.ts`), and anything unmapped gets the plain text-lines glyph — executables, installers and app bundles included. Known gaps: `.exe`/`.msi`/`.com`/`.cmd` are unmapped though seti's `windows` glyph (used for `.bat`) fits; the font's `apple` glyph (U+E002) is unused and suits app bundles; a package (`Annotation::Package`) shows its name's file glyph, which reads oddly for `.app`; an extensionless Unix executable has no icon of its own — seti has none, nerd-symbols has `cod-file_binary` / `cod-terminal` but in an outline style next to seti's filled ones; installers and images (`.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`) are unmapped. Decide one consistent source (seti only, or seti plus a matching subset of nerd-symbols), whether the lookup takes the mode (execute bits) and package-ness besides the name, and what a non-`.app` package (`.rtfd`, a photo library) shows. The drag ghost (`getFileIconChar` in `Pane.tsx`) should follow whatever the list does.
+
 ## Drag and drop
 
 - Drag-out for non-host-local sources (S3/SFTP/remote sessions) needs materialization: either download-to-tempdir before the native drag starts (reuse the `download_and_open` pattern), or per-platform file-promise APIs (NSFilePromiseProvider / CFSTR_FILEDESCRIPTOR / XDS) — no cross-platform crate wraps those today.
@@ -159,5 +163,6 @@ Correctness and UX:
 
 ## Major new features (groom/write design docs first)
 
+- Reveal in Newt / New Newt Window Here from Finder, Explorer, Nautilus, Dolphin; single instance (`design_docs/DESIGN_FILE_MANAGER_INTEGRATION.md`)
 - Compare & synchronize directories
 - Custom styling / theming

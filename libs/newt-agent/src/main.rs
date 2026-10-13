@@ -9,7 +9,7 @@ use newt_common::{
         ShellServiceDispatcher, TerminalDispatcher, VfsDispatcher, VfsMountDispatcher,
     },
     askpass,
-    enrich::{Enrichers, du::DuEnricher, git::GitEnricher},
+    enrich::{Enrichers, du::DuEnricher, git::GitEnricher, package::PackageEnricher},
     hot_paths,
     operation::OperationContext,
     rpc::{Communicator, DispatcherExt},
@@ -301,7 +301,8 @@ async fn run_agent() -> Result<(), Error> {
     let enrichers = Arc::new(
         Enrichers::new(registry.clone())
             .with(Arc::new(GitEnricher::new(Vec::new())))
-            .with(Arc::new(DuEnricher)),
+            .with(Arc::new(DuEnricher))
+            .with(Arc::new(PackageEnricher)),
     );
 
     // Shell integration: the control server the `newt` CLI talks to.

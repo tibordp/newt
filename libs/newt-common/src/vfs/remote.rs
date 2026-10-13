@@ -501,6 +501,14 @@ impl Vfs for RemoteVfs {
         ret
     }
 
+    async fn is_package(&self, path: &Path) -> Result<bool, Error> {
+        let ret: Result<bool, Error> = self
+            .communicator
+            .invoke(crate::api::API_VFS_IS_PACKAGE, &path.to_owned())
+            .await?;
+        ret
+    }
+
     async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator

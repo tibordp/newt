@@ -558,8 +558,10 @@ pub(super) async fn rename_entry(
     let parent = source
         .parent()
         .ok_or_else(|| crate::Error::custom("cannot rename the VFS root"))?;
+    // A folder renamed onto a folder asks: a rename merging is a surprise.
     let options = CopyOptions {
         preserve_timestamps: true,
+        folder_conflicts: FolderConflict::Ask,
         ..CopyOptions::default()
     };
     execute_copy(

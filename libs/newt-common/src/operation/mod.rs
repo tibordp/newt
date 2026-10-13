@@ -19,6 +19,7 @@ mod archive;
 mod batch_rename;
 mod copy;
 mod delete;
+mod folders;
 mod metadata;
 mod move_rename;
 mod preserve;
@@ -31,6 +32,7 @@ pub use batch_rename::BatchRenameFolder;
 use batch_rename::*;
 use copy::*;
 use delete::*;
+use folders::*;
 use metadata::*;
 use move_rename::*;
 use progress::*;
@@ -45,6 +47,9 @@ pub type IssueId = u64;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, specta::Type)]
 pub enum IssueKind {
     AlreadyExists,
+    /// A folder landing on an existing folder: Merge, Replace or Skip. Its
+    /// own kind, so "apply to all" here never answers a file conflict.
+    FolderExists,
     PermissionDenied,
     IoError,
     PreservationFailed(AttributeKind),
@@ -56,6 +61,8 @@ pub enum IssueKind {
 pub enum IssueAction {
     Skip,
     Overwrite,
+    /// Copy into an existing folder, keeping what only it has.
+    Merge,
     /// Overwrite when the source was modified later than the destination.
     OverwriteIfNewer,
     OverwriteIfSizeDiffers,
@@ -114,6 +121,21 @@ pub struct CopyOptions {
     /// The answer to every "already exists" prompt that offers it, as if
     /// given with "apply to all"; `None` asks.
     pub conflict_resolution: Option<IssueAction>,
+    /// What a folder landing on an existing folder does.
+    pub folder_conflicts: FolderConflict,
+}
+
+/// What a folder landing on an existing folder does — unless the existing
+/// folder is a package to its filesystem, which is then a file's conflict.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderConflict {
+    /// Copy into it, keeping what only the destination has.
+    #[default]
+    Merge,
+    /// Remove it and put the source in its place.
+    Replace,
+    Ask,
 }
 
 impl Default for CopyOptions {
@@ -139,6 +161,7 @@ impl Default for CopyOptions {
             create_symlink: false,
             one_file_system: false,
             conflict_resolution: None,
+            folder_conflicts: FolderConflict::Merge,
         }
     }
 }

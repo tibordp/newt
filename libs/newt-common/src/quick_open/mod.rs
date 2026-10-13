@@ -44,6 +44,9 @@ pub struct QuickOpenOptions {
     pub exclude: Vec<String>,
     /// Entries walked before stopping.
     pub limit: u32,
+    /// Don't walk into packages (apps and other folders macOS presents as
+    /// files, as their filesystem says); they are still results.
+    pub skip_packages: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -249,6 +252,12 @@ impl Visitor for Collector<'_> {
             .entries
             .push((rel.to_string(), entry.file.is_dir));
         self.arrived.notify_one();
+        if self.options.skip_packages
+            && entry.file.is_dir
+            && self.vfs.is_package(entry.path).await.unwrap_or(false)
+        {
+            return Ok(Control::Skip);
+        }
         Ok(Control::Descend)
     }
 

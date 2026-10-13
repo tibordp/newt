@@ -537,6 +537,7 @@ pub fn dialog(
                         display_destination,
                         summary,
                         defaults: rt_state.copy_move.seed(),
+                        stock: crate::runtime_state::CopyMoveDefaults::default().seed(),
                     }
                 }
                 DialogKind::CreateArchive => {
@@ -717,6 +718,7 @@ pub fn dialog(
                         gitignore: quick_open.gitignore,
                         exclude: quick_open.exclude.clone(),
                         limit: quick_open.limit,
+                        skip_packages: quick_open.skip_packages,
                     };
                     ModalDataKind::QuickOpen {
                         root_display: ctx.format_vfs_path(&root),

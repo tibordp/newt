@@ -1107,6 +1107,12 @@ impl Vfs for LocalVfs {
         tokio::task::spawn_blocking(move || exchange(&a, &b)).await?
     }
 
+    #[cfg(target_os = "macos")]
+    async fn is_package(&self, path: &Path) -> Result<bool, Error> {
+        let path = path.to_native();
+        Ok(tokio::task::spawn_blocking(move || launch_services::is_package(&path)).await?)
+    }
+
     async fn truncate(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
@@ -1408,6 +1414,54 @@ fn rename_no_replace(from: &StdPath, to: &StdPath) -> Result<(), Error> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn rename_no_replace(_from: &StdPath, _to: &StdPath) -> Result<(), Error> {
     Err(Error::not_supported())
+}
+
+/// What Launch Services says about a path, as Finder sees it.
+#[cfg(target_os = "macos")]
+mod launch_services {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::url::CFURL;
+    use core_foundation_sys::base::{Boolean, CFTypeRef};
+    use core_foundation_sys::error::CFErrorRef;
+    use core_foundation_sys::string::CFStringRef;
+    use core_foundation_sys::url::{CFURLRef, kCFURLIsPackageKey};
+
+    // Not bound by core-foundation-sys.
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFURLCopyResourcePropertyForKey(
+            url: CFURLRef,
+            key: CFStringRef,
+            value: *mut CFTypeRef,
+            error: *mut CFErrorRef,
+        ) -> Boolean;
+    }
+
+    /// A package: a directory whose type conforms to `com.apple.package`
+    /// (declared by the system and installed apps), or one with the bundle
+    /// bit set. Anything that can't be asked about is not one.
+    pub(super) fn is_package(path: &std::path::Path) -> bool {
+        let Some(url) = CFURL::from_path(path, true) else {
+            return false;
+        };
+        let mut value: CFTypeRef = std::ptr::null();
+        // SAFETY: `url` outlives the call; the key is a framework constant;
+        // a non-null value is a +1 reference, released by its wrapper.
+        let ok = unsafe {
+            CFURLCopyResourcePropertyForKey(
+                url.as_concrete_TypeRef(),
+                kCFURLIsPackageKey,
+                &mut value,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 || value.is_null() {
+            return false;
+        }
+        let value = unsafe { CFType::wrap_under_create_rule(value) };
+        value.downcast::<CFBoolean>().is_some_and(bool::from)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2228,6 +2282,24 @@ mod exclusive_write_tests {
         super::copy_into_reserved(&src, &to, reserved).unwrap();
 
         assert!(!dir.path().join("elsewhere").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn launch_services_says_which_folders_are_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["Tool.app", "Notes.rtfd", "plain"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let vfs = LocalVfs::new();
+        let is_package = |name: &str| {
+            let path = PathBuf::from_native(&dir.path().join(name));
+            let vfs = &vfs;
+            async move { vfs.is_package(&path).await.unwrap() }
+        };
+        assert!(is_package("Tool.app").await);
+        assert!(is_package("Notes.rtfd").await);
+        assert!(!is_package("plain").await);
     }
 
     #[tokio::test]

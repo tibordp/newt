@@ -176,32 +176,30 @@ impl ProgressReporter {
         existing: &File,
     ) -> Result<bool, crate::Error> {
         let action = self
-            .raise_issue(
-                IssueKind::AlreadyExists,
-                format!("File already exists: {}", dest),
-                None,
-                vec![
-                    IssueAction::Skip,
-                    IssueAction::Overwrite,
-                    IssueAction::OverwriteIfNewer,
-                    IssueAction::OverwriteIfSizeDiffers,
-                    IssueAction::OverwriteIfSizeOrDateDiffers,
-                ],
-            )
+            .ask_replace(format!("File already exists: {}", dest))
             .await?;
-        Ok(match action {
-            IssueAction::Skip => false,
-            IssueAction::Overwrite => true,
-            IssueAction::OverwriteIfNewer => matches!(
-                (source.modified, existing.modified),
-                (Some(s), Some(e)) if s > e
-            ),
-            IssueAction::OverwriteIfSizeDiffers => !same(source.size, existing.size),
-            IssueAction::OverwriteIfSizeOrDateDiffers => {
-                !same(source.size, existing.size) || !same(source.modified, existing.modified)
-            }
-            IssueAction::Retry => unreachable!("not offered"),
-        })
+        Ok(replaces(action, source, existing))
+    }
+
+    /// Asks about something in the way that is replaced like a file: Skip,
+    /// Overwrite, or one of the conditional overwrites.
+    pub(super) async fn ask_replace(
+        &mut self,
+        message: String,
+    ) -> Result<IssueAction, crate::Error> {
+        self.raise_issue(
+            IssueKind::AlreadyExists,
+            message,
+            None,
+            vec![
+                IssueAction::Skip,
+                IssueAction::Overwrite,
+                IssueAction::OverwriteIfNewer,
+                IssueAction::OverwriteIfSizeDiffers,
+                IssueAction::OverwriteIfSizeOrDateDiffers,
+            ],
+        )
+        .await
     }
 
     pub(super) async fn handle_io_error(
@@ -235,6 +233,24 @@ impl ProgressReporter {
             IssueAction::Retry => Ok(IssueOutcome::Retry),
             _ => unreachable!("not offered"),
         }
+    }
+}
+
+/// Whether `action`, an answer to [`ProgressReporter::ask_replace`],
+/// replaces `existing` with `source`.
+pub(super) fn replaces(action: IssueAction, source: &File, existing: &File) -> bool {
+    match action {
+        IssueAction::Skip => false,
+        IssueAction::Overwrite => true,
+        IssueAction::OverwriteIfNewer => matches!(
+            (source.modified, existing.modified),
+            (Some(s), Some(e)) if s > e
+        ),
+        IssueAction::OverwriteIfSizeDiffers => !same(source.size, existing.size),
+        IssueAction::OverwriteIfSizeOrDateDiffers => {
+            !same(source.size, existing.size) || !same(source.modified, existing.modified)
+        }
+        IssueAction::Merge | IssueAction::Retry => unreachable!("not offered"),
     }
 }
 

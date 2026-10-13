@@ -438,6 +438,10 @@ pub struct QuickOpenPreferences {
     /// Entries looked at before the search stops.
     #[schemars(title = "Limit", range(min = 1))]
     pub limit: u32,
+    /// Don't look inside apps and other packages (macOS); the packages
+    /// themselves are still found.
+    #[schemars(title = "Skip Package Contents")]
+    pub skip_packages: bool,
 }
 
 impl Default for QuickOpenPreferences {
@@ -447,6 +451,7 @@ impl Default for QuickOpenPreferences {
             follow_symlinks: false,
             exclude: Vec::new(),
             limit: 200_000,
+            skip_packages: false,
         }
     }
 }

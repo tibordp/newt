@@ -271,6 +271,7 @@ pub enum OperationStatus {
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct OperationIssueInfo {
     pub issue_id: u64,
+    pub kind: newt_common::operation::IssueKind,
     pub message: String,
     pub detail: Option<String>,
     pub actions: Vec<newt_common::operation::IssueAction>,
@@ -649,6 +650,9 @@ pub enum ModalDataKind {
         name_separators: String,
         /// The operation defaults with the sticky toggles laid over them.
         defaults: newt_common::operation::CopyOptions,
+        /// The same with nothing remembered: what the toggles are until
+        /// changed.
+        stock: newt_common::operation::CopyOptions,
     },
     CreateArchive {
         sources: Vec<VfsPath>,
@@ -1301,6 +1305,7 @@ fn apply_progress(operations: &Operations, progress: OperationProgress, keep_fin
                 op.status = OperationStatus::WaitingForInput;
                 op.issue = Some(OperationIssueInfo {
                     issue_id: issue.issue_id,
+                    kind: issue.kind,
                     message: issue.message,
                     detail: issue.detail,
                     actions: issue.actions,

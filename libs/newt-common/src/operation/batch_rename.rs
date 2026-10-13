@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::hash::{BuildHasher, Hasher};
 
 use super::*;
 use crate::batch_rename::{fold, plan};
@@ -319,7 +318,7 @@ impl<'a> FolderRun<'a> {
     /// skipped it.
     async fn park(&mut self, i: usize) -> Result<bool, crate::Error> {
         loop {
-            let temp = temp_name();
+            let temp = hidden_name("rename");
             let from = self.dir.path.join(&self.members[i].at);
             match self
                 .vfs
@@ -615,15 +614,4 @@ fn describe(problem: &plan::Problem, entries: &[(String, String)]) -> String {
             unreachable!("warnings")
         }
     }
-}
-
-/// A hidden name nothing else has.
-fn temp_name() -> String {
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos()),
-    );
-    format!(".newt-rename-{:016x}", hasher.finish())
 }

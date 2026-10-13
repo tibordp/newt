@@ -21,6 +21,7 @@
 
 pub mod du;
 pub mod git;
+pub mod package;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,6 +62,9 @@ pub enum Annotation {
         complete: bool,
         unreadable: u32,
     },
+    /// A directory macOS presents as a file. A struct variant, so its JSON
+    /// is an object like the others' (`{"package": {}}`).
+    Package {},
 }
 
 /// Git working-tree status of a listed entry. For directories this is a

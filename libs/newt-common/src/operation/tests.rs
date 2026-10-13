@@ -4607,3 +4607,328 @@ async fn test_batch_rename_without_native_rename_copies() {
         pairs(&[("a", "B"), ("b", "A")])
     );
 }
+
+// ===========================================================================
+// Folder conflict and package tests
+// ===========================================================================
+
+fn copy_into(sources: &[&str], destination: &str, options: CopyOptions) -> OperationRequest {
+    OperationRequest::Copy {
+        sources: sources.iter().map(|s| vfs_path(s)).collect(),
+        destination: vfs_path(destination),
+        options,
+        rename_to: None,
+    }
+}
+
+fn folders(folder_conflicts: FolderConflict) -> CopyOptions {
+    CopyOptions {
+        folder_conflicts,
+        ..Default::default()
+    }
+}
+
+/// Every path under `root`, relative, sorted — staging names included.
+fn tree(vfs: &MockVfs, root: &str) -> Vec<String> {
+    let root = PathBuf::from_wire_str(root);
+    let mut out: Vec<String> = vfs
+        .snapshot()
+        .into_iter()
+        .filter_map(|(p, _)| {
+            p.strip_prefix(&root)
+                .filter(|r| !r.is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn offered(events: &[OperationProgress]) -> Vec<(IssueKind, Vec<IssueAction>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            OperationProgress::Issue { issue, .. } => {
+                Some((issue.kind.clone(), issue.actions.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn answer(
+    folder: IssueAction,
+    file: IssueAction,
+    apply_to_all: bool,
+) -> impl FnMut(&OperationIssue) -> IssueResponse {
+    move |issue| IssueResponse {
+        action: if issue.kind == IssueKind::FolderExists {
+            folder
+        } else {
+            file
+        },
+        apply_to_all,
+    }
+}
+
+fn app_trees(config: MockVfsConfig) -> Arc<MockVfs> {
+    MockVfs::builder()
+        .config(config)
+        .file("/src/App/new.txt", b"new")
+        .file("/src/App/shared.txt", b"new")
+        .file("/dst/App/shared.txt", b"old")
+        .file("/dst/App/stale.txt", b"old")
+        .build()
+}
+
+#[tokio::test]
+async fn test_folder_onto_folder_merges_by_default() {
+    let result = run_operation(
+        app_trees(Default::default()),
+        copy_into(&["/src/App"], "/dst", Default::default()),
+        overwrite_all,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert_eq!(
+        tree(&result.vfs, "/dst"),
+        ["App", "App/new.txt", "App/shared.txt", "App/stale.txt"]
+    );
+}
+
+#[tokio::test]
+async fn test_folder_replace_leaves_only_the_source_with_or_without_exchange() {
+    for exchange in [false, true] {
+        let result = run_operation(
+            app_trees(MockVfsConfig {
+                exchange,
+                ..Default::default()
+            }),
+            copy_into(&["/src/App"], "/dst", folders(FolderConflict::Replace)),
+            skip_all,
+        )
+        .await;
+        assert!(has_completed(&result.events), "exchange: {exchange}");
+        assert!(
+            !raised_an_issue(&result.events),
+            "{:?}",
+            issue_messages(&result.events)
+        );
+        assert_eq!(
+            tree(&result.vfs, "/dst"),
+            ["App", "App/new.txt", "App/shared.txt"],
+            "exchange: {exchange}"
+        );
+        assert_eq!(result.vfs.read_content("/dst/App/shared.txt"), b"new");
+    }
+}
+
+#[tokio::test]
+async fn test_folder_ask_offers_merge_replace_skip() {
+    let result = run_operation(
+        app_trees(Default::default()),
+        copy_into(&["/src/App"], "/dst", folders(FolderConflict::Ask)),
+        answer(IssueAction::Skip, IssueAction::Skip, false),
+    )
+    .await;
+    assert_eq!(
+        offered(&result.events),
+        [(
+            IssueKind::FolderExists,
+            vec![
+                IssueAction::Merge,
+                IssueAction::Overwrite,
+                IssueAction::Skip
+            ]
+        )]
+    );
+    assert_eq!(
+        tree(&result.vfs, "/dst"),
+        ["App", "App/shared.txt", "App/stale.txt"]
+    );
+}
+
+#[tokio::test]
+async fn test_replacing_all_folders_does_not_answer_files() {
+    let vfs = MockVfs::builder()
+        .file("/src/A/x", b"new")
+        .file("/src/B/y", b"new")
+        .file("/src/f", b"new")
+        .file("/dst/A/old", b"old")
+        .file("/dst/B/old", b"old")
+        .file("/dst/f", b"old")
+        .build();
+    let result = run_operation(
+        vfs,
+        copy_into(
+            &["/src/A", "/src/B", "/src/f"],
+            "/dst",
+            folders(FolderConflict::Ask),
+        ),
+        answer(IssueAction::Overwrite, IssueAction::Skip, true),
+    )
+    .await;
+    let kinds: Vec<IssueKind> = offered(&result.events)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    // One folder prompt answers both folders; the file is still asked about.
+    assert_eq!(kinds, [IssueKind::FolderExists, IssueKind::AlreadyExists]);
+    assert_eq!(tree(&result.vfs, "/dst"), ["A", "A/x", "B", "B/y", "f"]);
+    assert_eq!(result.vfs.read_content("/dst/f"), b"old");
+}
+
+#[tokio::test]
+async fn test_moving_a_folder_onto_a_folder_on_one_volume_swaps_it_in() {
+    let result = run_operation(
+        app_trees(MockVfsConfig {
+            exchange: true,
+            ..Default::default()
+        }),
+        OperationRequest::Move {
+            sources: vec![vfs_path("/src/App")],
+            destination: vfs_path("/dst"),
+            options: folders(FolderConflict::Replace),
+            rename_to: None,
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert!(
+        !raised_an_issue(&result.events),
+        "{:?}",
+        issue_messages(&result.events)
+    );
+    assert_eq!(tree(&result.vfs, "/src"), Vec::<String>::new());
+    assert_eq!(
+        tree(&result.vfs, "/dst"),
+        ["App", "App/new.txt", "App/shared.txt"]
+    );
+}
+
+#[tokio::test]
+async fn test_renaming_a_folder_onto_a_folder_asks() {
+    let vfs = MockVfs::builder()
+        .file("/d/a/x", b"x")
+        .file("/d/b/y", b"y")
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::Rename {
+            source: vfs_path("/d/a"),
+            new_name: "b".into(),
+        },
+        answer(IssueAction::Skip, IssueAction::Skip, false),
+    )
+    .await;
+    let kinds: Vec<IssueKind> = offered(&result.events)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(kinds, [IssueKind::FolderExists]);
+    assert_eq!(tree(&result.vfs, "/d"), ["a", "a/x", "b", "b/y"]);
+}
+
+#[tokio::test]
+async fn test_a_package_at_the_destination_is_replaced_like_a_file() {
+    let vfs = || {
+        MockVfs::builder()
+            .file("/src/App/new.txt", b"new")
+            .file("/dst/App/stale.txt", b"old")
+            .package("/dst/App")
+            .build()
+    };
+    // Merging is the folders' default, but a package is asked about as a
+    // file is.
+    let result = run_operation(
+        vfs(),
+        copy_into(&["/src/App"], "/dst", Default::default()),
+        skip_all,
+    )
+    .await;
+    let (kind, actions) = offered(&result.events).remove(0);
+    assert_eq!(kind, IssueKind::AlreadyExists);
+    assert!(actions.contains(&IssueAction::OverwriteIfNewer));
+    assert!(issue_messages(&result.events)[0].starts_with("Package already exists"));
+    assert_eq!(tree(&result.vfs, "/dst"), ["App", "App/stale.txt"]);
+
+    let result = run_operation(
+        vfs(),
+        copy_into(&["/src/App"], "/dst", Default::default()),
+        overwrite_all,
+    )
+    .await;
+    assert_eq!(tree(&result.vfs, "/dst"), ["App", "App/new.txt"]);
+}
+
+#[tokio::test]
+async fn test_a_package_deep_in_a_merge_is_replaced_whole() {
+    let vfs = MockVfs::builder()
+        .file("/src/Apps/Tool.app/new", b"new")
+        .file("/src/Apps/readme", b"new")
+        .file("/dst/Apps/Tool.app/stale", b"old")
+        .file("/dst/Apps/mine", b"mine")
+        .package("/dst/Apps/Tool.app")
+        .build();
+    let result = run_operation(
+        vfs,
+        copy_into(&["/src/Apps"], "/dst", Default::default()),
+        overwrite_all,
+    )
+    .await;
+    assert!(has_completed(&result.events));
+    assert_eq!(
+        tree(&result.vfs, "/dst"),
+        [
+            "Apps",
+            "Apps/Tool.app",
+            "Apps/Tool.app/new",
+            "Apps/mine",
+            "Apps/readme"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_a_package_only_at_the_source_merges() {
+    let vfs = MockVfs::builder()
+        .file("/src/App/new.txt", b"new")
+        .file("/dst/App/stale.txt", b"old")
+        .package("/src/App")
+        .build();
+    let result = run_operation(
+        vfs,
+        copy_into(&["/src/App"], "/dst", Default::default()),
+        skip_all,
+    )
+    .await;
+    assert!(!raised_an_issue(&result.events));
+    assert_eq!(
+        tree(&result.vfs, "/dst"),
+        ["App", "App/new.txt", "App/stale.txt"]
+    );
+}
+
+#[tokio::test]
+async fn test_replacing_a_package_if_its_size_differs_walks_both() {
+    let vfs = || {
+        MockVfs::builder()
+            .file("/src/App/a", b"12345")
+            .file("/dst/App/b", b"54321")
+            .package("/dst/App")
+            .build()
+    };
+    let size_differs = |_: &OperationIssue| IssueResponse {
+        action: IssueAction::OverwriteIfSizeDiffers,
+        apply_to_all: false,
+    };
+    let result = run_operation(
+        vfs(),
+        copy_into(&["/src/App"], "/dst", Default::default()),
+        size_differs,
+    )
+    .await;
+    // Same total: left alone.
+    assert_eq!(tree(&result.vfs, "/dst"), ["App", "App/b"]);
+}

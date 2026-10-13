@@ -6,7 +6,7 @@ import { commands } from "../lib/bindings";
 import type { IssueAction, OperationState } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { formatBytes, useFormatBytes } from "../lib/size";
-import { ACTION_LABELS, OVERWRITE_VARIANTS } from "./issueActions";
+import { ACTION_LABELS, OVERWRITE_VARIANTS, actionLabel } from "./issueActions";
 import styles from "./OperationsPanel.module.scss";
 import modalStyles from "./OperationProgressModal.module.scss";
 import menuStyles from "./Menu.module.scss";
@@ -179,7 +179,7 @@ function IssueResolution({
         resolve(action);
       }}
     >
-      {ACTION_LABELS[action] || action}
+      {actionLabel(action, issue.kind)}
     </button>
   );
 

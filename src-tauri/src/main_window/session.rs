@@ -1,5 +1,7 @@
 use newt_common::api::API_OPERATION_PROGRESS;
-use newt_common::enrich::{EnricherClient, Enrichers, du::DuEnricher, git::GitEnricher};
+use newt_common::enrich::{
+    EnricherClient, Enrichers, du::DuEnricher, git::GitEnricher, package::PackageEnricher,
+};
 use newt_common::filesystem::Filesystem;
 use newt_common::operation::{OperationContext, OperationProgress, OperationsClient};
 #[cfg(target_os = "linux")]
@@ -843,7 +845,8 @@ fn create_local_services(
                 .with(Arc::new(GitEnricher::new(
                     preferences.load().environment.extra_path.clone(),
                 )))
-                .with(Arc::new(DuEnricher)),
+                .with(Arc::new(DuEnricher))
+                .with(Arc::new(PackageEnricher)),
         ))),
         hot_paths_provider: Arc::new(newt_common::hot_paths::Local::new()),
         quick_open_client: Arc::new(newt_common::quick_open::Local::new(Arc::new(

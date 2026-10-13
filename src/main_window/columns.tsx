@@ -4,6 +4,7 @@ import {
   ColumnDef,
   Sorting,
   gitStatus,
+  isPackage,
   recursiveSize,
 } from "./types";
 import { modeString } from "./utils";
@@ -52,6 +53,8 @@ function FileName({
 }) {
   const { name, is_dir, is_symlink, is_hidden } = info;
   const git = gitStatus(info);
+  // A package looks like the file macOS presents it as.
+  const folder = is_dir && !isPackage(info);
 
   const { ch, color } = fileIconGlyph(name);
 
@@ -89,7 +92,7 @@ function FileName({
     });
   }, [quickSearch, filter, displayName]);
 
-  const iconElement = is_dir ? (
+  const iconElement = folder ? (
     <div className="file-icon folder" aria-hidden />
   ) : (
     <div

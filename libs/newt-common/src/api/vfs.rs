@@ -268,6 +268,11 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.vfs.rename_no_replace(&from, &to).await;
                 encode(&ret)
             }
+            super::API_VFS_IS_PACKAGE => {
+                let path: PathBuf = decode(&req[..]);
+                let ret = self.vfs.is_package(&path).await;
+                encode(&ret)
+            }
             super::API_VFS_EXCHANGE => {
                 let (a, b): (PathBuf, PathBuf) = decode(&req[..]);
                 let ret = self.vfs.exchange(&a, &b).await;

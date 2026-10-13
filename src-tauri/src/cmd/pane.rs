@@ -399,6 +399,7 @@ pub async fn cmd_open_in_other_pane(
             &file.name,
             false,
             ctx.vfs_info()?.is_host_local(target_path.vfs_id),
+            false,
         )
     {
         let request = browse_request(&ctx, &file.name, target_path, format).await?;
@@ -446,13 +447,14 @@ pub async fn enter(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<()
     let Some(source) = pane.get_focused_source() else {
         return Ok(());
     };
+    let package = pane.view_state().is_package(file.key());
     drop(pane);
 
     let host_local = ctx.vfs_info()?.is_host_local(source.vfs_id);
-    let action = ctx
-        .preferences()
-        .associations()
-        .action(&file.name, file.is_dir, host_local);
+    let action =
+        ctx.preferences()
+            .associations()
+            .action(&file.name, file.is_dir, host_local, package);
     match action {
         Action::Navigate => enter_directory(ctx, pane_handle).await,
         Action::Open => open_default(&ctx, source, &file.name, file.is_dir).await,

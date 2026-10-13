@@ -1,8 +1,9 @@
-import type { IssueAction } from "../lib/bindings";
+import type { IssueAction, IssueKind } from "../lib/bindings";
 
 export const ACTION_LABELS: Record<IssueAction, string> = {
   skip: "Skip",
   overwrite: "Overwrite",
+  merge: "Merge",
   overwrite_if_newer: "Overwrite if newer",
   overwrite_if_size_differs: "Overwrite if size differs",
   overwrite_if_size_or_date_differs: "Overwrite if size or date differs",
@@ -22,3 +23,9 @@ export const CONFLICT_RESOLUTIONS: IssueAction[] = [
   "overwrite",
   ...OVERWRITE_VARIANTS,
 ];
+
+/// How an answer reads for an issue: a folder is replaced, not overwritten.
+export function actionLabel(action: IssueAction, kind: IssueKind): string {
+  if (action === "overwrite" && kind === "FolderExists") return "Replace";
+  return ACTION_LABELS[action] ?? action;
+}

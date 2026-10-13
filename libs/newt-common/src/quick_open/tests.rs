@@ -210,6 +210,25 @@ async fn excluded_names_and_the_limit_cut_the_walk_short() {
 }
 
 #[tokio::test]
+async fn packages_are_found_but_not_walked_into_when_asked() {
+    let build = || {
+        MockVfs::builder()
+            .file("/r/Tool.app/Contents/Info.plist", b"")
+            .file("/r/notes.txt", b"")
+            .package("/r/Tool.app")
+            .build()
+    };
+    let update = run(build(), "/r", options(), "").await;
+    assert_eq!(update.walked, 4);
+    let skipping = QuickOpenOptions {
+        skip_packages: true,
+        ..options()
+    };
+    let update = run(build(), "/r", skipping, "").await;
+    assert_eq!(rels(&update), ["Tool.app", "notes.txt"]);
+}
+
+#[tokio::test]
 async fn a_new_query_reranks_what_was_walked() {
     let vfs = MockVfs::builder()
         .file("/r/alpha.txt", b"")

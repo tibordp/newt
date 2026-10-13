@@ -96,6 +96,13 @@ pub struct CopyMoveDefaults {
     pub preserve_object_access: Option<bool>,
 }
 
+/// Whether the platform's own copy keeps extended attributes and streams
+/// (Finder and `cp` on macOS, Explorer on Windows) — so that a copy doesn't
+/// lose Finder tags, quarantine, signatures of scripts, or the Mark of the
+/// Web. Linux's `cp` keeps them only when asked, and there they are mostly
+/// security labels not to copy blindly.
+const PLATFORM_KEEPS_METADATA: bool = cfg!(any(target_os = "macos", windows));
+
 impl CopyMoveDefaults {
     /// The remembered toggles laid over the operation's own defaults.
     pub fn seed(&self) -> newt_common::operation::CopyOptions {
@@ -108,9 +115,9 @@ impl CopyMoveDefaults {
             ownership_by_name: self.ownership_by_name.unwrap_or(base.ownership_by_name),
             preserve_owner: self.preserve_owner.unwrap_or(base.preserve_owner),
             preserve_group: self.preserve_group.unwrap_or(base.preserve_group),
-            preserve_xattrs: self.preserve_xattrs.unwrap_or(base.preserve_xattrs),
+            preserve_xattrs: self.preserve_xattrs.unwrap_or(PLATFORM_KEEPS_METADATA),
             preserve_acl: self.preserve_acl.unwrap_or(base.preserve_acl),
-            preserve_streams: self.preserve_streams.unwrap_or(base.preserve_streams),
+            preserve_streams: self.preserve_streams.unwrap_or(PLATFORM_KEEPS_METADATA),
             preserve_hard_links: self.preserve_hard_links.unwrap_or(base.preserve_hard_links),
             preserve_sparse: self.preserve_sparse.unwrap_or(base.preserve_sparse),
             preserve_object_metadata: self
@@ -148,6 +155,7 @@ pub struct SearchDefaults {
     pub skip_hidden: bool,
     pub gitignore: bool,
     pub one_file_system: bool,
+    pub skip_packages: bool,
 }
 
 pub struct RuntimeStateManager {

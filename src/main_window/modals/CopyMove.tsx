@@ -3,6 +3,7 @@ import {
   commands,
   type CopyMoveDefaults,
   type CopyOptions,
+  type FolderConflict,
   type IssueAction,
 } from "../../lib/bindings";
 import { ACTION_LABELS, CONFLICT_RESOLUTIONS } from "../issueActions";
@@ -46,14 +47,36 @@ function stickyOf(options: CopyOptions): CopyMoveDefaults {
   };
 }
 
-/** Whether a remembered toggle that lives behind the fold is on. */
-function advancedStickyOn(defaults: CopyOptions): boolean {
+/** What to remember: the toggles that differ from what they are until
+ *  changed. One left at its default is not remembered, so it follows the
+ *  default if that changes (as it does by platform). */
+function rememberedOf(
+  options: CopyOptions,
+  stock: CopyOptions,
+): CopyMoveDefaults {
+  const chosen = stickyOf(options);
+  const untouched = stickyOf(stock);
+  return Object.fromEntries(
+    (Object.keys(chosen) as (keyof CopyMoveDefaults)[]).map((key) => [
+      key,
+      chosen[key] === untouched[key] ? null : chosen[key],
+    ]),
+  ) as CopyMoveDefaults;
+}
+
+/** Whether a remembered toggle that lives behind the fold differs from
+ *  what it is until changed. */
+function advancedStickyChanged(
+  defaults: CopyOptions,
+  stock: CopyOptions,
+): boolean {
   const sticky = stickyOf(defaults);
+  const untouched = stickyOf(stock);
   return (Object.keys(sticky) as (keyof CopyMoveDefaults)[])
     .filter(
       (key) => key !== "preserve_timestamps" && key !== "preserve_permissions",
     )
-    .some((key) => sticky[key]);
+    .some((key) => sticky[key] !== untouched[key]);
 }
 
 export default function CopyMove({
@@ -68,6 +91,7 @@ export default function CopyMove({
   default_name_is_dir,
   name_separators,
   defaults,
+  stock,
   cancel,
   context,
 }: CopyMoveProps) {
@@ -85,7 +109,9 @@ export default function CopyMove({
     setOptions((current) => ({ ...current, [key]: checked }));
   }
   // A remembered advanced toggle must not hide behind the fold.
-  const [advancedOpen, setAdvancedOpen] = useState(advancedStickyOn(defaults));
+  const [advancedOpen, setAdvancedOpen] = useState(
+    advancedStickyChanged(defaults, stock),
+  );
   const [name, setName] = useState(default_name ?? "");
   const nameId = useId();
 
@@ -113,7 +139,9 @@ export default function CopyMove({
 
     const renameTo =
       default_name != null && name !== default_name ? name : null;
-    safe(commands.updateRuntimeState("copy_move", stickyOf(options)));
+    safe(
+      commands.updateRuntimeState("copy_move", rememberedOf(options, stock)),
+    );
     safe(commands.startCopyMove(kind, sources, destination, options, renameTo));
   }
 
@@ -202,6 +230,23 @@ export default function CopyMove({
                     {ACTION_LABELS[action]}
                   </option>
                 ))}
+              </select>
+            </FieldRow>
+            <FieldRow label="Existing folders">
+              <select
+                disabled={createSymlink}
+                value={options.folder_conflicts}
+                title="A package (an app on a Mac) is replaced like a file instead, by the Existing files answer."
+                onChange={(e) =>
+                  setOptions((current) => ({
+                    ...current,
+                    folder_conflicts: e.target.value as FolderConflict,
+                  }))
+                }
+              >
+                <option value="merge">Merge</option>
+                <option value="replace">Replace</option>
+                <option value="ask">Ask</option>
               </select>
             </FieldRow>
             {checkbox("preserve_owner", "Preserve owner")}

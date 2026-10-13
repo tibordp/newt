@@ -919,6 +919,15 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
+    /// Whether an existing directory is one item to its filesystem — a
+    /// package that macOS presents as a file — so that something landing
+    /// on it replaces it rather than merging into it. `false` where the
+    /// filesystem has no such notion, which is everywhere but macOS.
+    async fn is_package(&self, path: &Path) -> Result<bool, Error> {
+        let _ = path;
+        Ok(false)
+    }
+
     /// Swap the names of two entries in one directory, atomically.
     /// `NotSupported` where the backend has no such primitive.
     async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {

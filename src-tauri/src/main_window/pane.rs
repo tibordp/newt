@@ -1952,6 +1952,14 @@ impl PaneViewState {
     /// label matches the rest of the app's path formatting (e.g. an
     /// archive entry shows `/path/to/foo.zip/inner/dir`, not the raw
     /// archive-internal path).
+    /// Whether the entry is a package, as the package enricher found from
+    /// its filesystem.
+    pub fn is_package(&self, key: &str) -> bool {
+        self.enrichments
+            .get("package")
+            .is_some_and(|entries| entries.contains_key(key))
+    }
+
     fn project_file(&self, f: &File) -> FileView {
         let source_display = f.source.as_ref().and_then(|src| {
             let parent = src.parent()?;
@@ -1971,6 +1979,7 @@ impl PaneViewState {
                     &f.name,
                     f.is_dir,
                     info.is_host_local(vfs_id),
+                    self.is_package(f.key()),
                 )
             }
             _ => Default::default(),

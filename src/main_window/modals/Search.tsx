@@ -108,6 +108,9 @@ const MODE_HELP =
 
 const fieldId = (field: string) => `search-${field}`;
 
+/// Packages exist where macOS answers for the files: on a Mac.
+const PACKAGES = navigator.platform.startsWith("Mac");
+
 const boundText = (bound: TimeBound | null) =>
   bound ? formatTimeBound(bound) : "";
 
@@ -134,6 +137,7 @@ export default function SearchDialog({
     skip_hidden: defaults.skip_hidden,
     gitignore: defaults.gitignore,
     one_file_system: defaults.one_file_system,
+    skip_packages: defaults.skip_packages,
     filters: NO_FILTERS,
     content_size_cap: 10 * 1024 * 1024,
   };
@@ -155,6 +159,7 @@ export default function SearchDialog({
     skip_hidden: initial.skip_hidden,
     gitignore: initial.gitignore,
     one_file_system: initial.one_file_system,
+    skip_packages: initial.skip_packages,
   });
   const [kind, setKind] = useState<EntryKind>(f.kind);
   const [minSize, setMinSize] = useState(
@@ -194,7 +199,9 @@ export default function SearchDialog({
       initial.not_containing,
   );
   const [moreOpen, setMoreOpen] = useState(
-    initial.one_file_system || JSON.stringify(f) !== JSON.stringify(NO_FILTERS),
+    initial.one_file_system ||
+      initial.skip_packages ||
+      JSON.stringify(f) !== JSON.stringify(NO_FILTERS),
   );
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -264,6 +271,7 @@ export default function SearchDialog({
         skip_hidden: toggles.skip_hidden,
         gitignore: toggles.gitignore,
         one_file_system: toggles.one_file_system,
+        skip_packages: toggles.skip_packages,
       }),
     );
     return tryRun(
@@ -574,6 +582,15 @@ export default function SearchDialog({
               onChange={toggle("one_file_system")}
               disabled={pending}
             />
+            {(PACKAGES || toggles.skip_packages) && (
+              <CheckboxField
+                label="Skip package contents"
+                title="Apps and other packages can be found, but aren't searched inside."
+                checked={toggles.skip_packages}
+                onChange={toggle("skip_packages")}
+                disabled={pending}
+              />
+            )}
           </div>
         </FieldFold>
         <DialogError error={error} />

@@ -2140,7 +2140,12 @@ export type Annotation = { git: GitEntryStatus } |
  * counts directories the walk could not list, which makes a
  * finished value a lower bound, rendered with the `+` as well.
  */
-{ recursive_size: { bytes: number; complete: boolean; unreadable: number } }
+{ recursive_size: { bytes: number; complete: boolean; unreadable: number } } | 
+/**
+ * A directory macOS presents as a file. A struct variant, so its JSON
+ * is an object like the others' (`{"package": {}}`).
+ */
+{ package: Record<string, never> }
 /**
  * User-facing preferences that can be set in settings.toml.
  * 
@@ -2309,6 +2314,16 @@ name: NamePreview | null;
  * When no row matches: the pattern the query would add.
  */
 candidate: string | null }
+/**
+ * Everything a copy may preserve. Timestamps, permissions and numeric
+ * ownership travel through `get_metadata`/`set_metadata` in one stat;
+ * `read_attribute` answers `None` for those and serves the rest.
+ */
+export type AttributeKind = 
+/**
+ * The stat itself, when reading it fails.
+ */
+"Metadata" | "Timestamps" | "Permissions" | { Owner: { by_name: boolean } } | { Group: { by_name: boolean } } | "HardLinks" | "Sparse" | "ExtendedAttributes" | "AccessControl" | "Streams" | "ObjectMetadata" | "ObjectTags" | "ObjectAccess"
 /**
  * Last-used Batch Rename toggles; the find and replace text are not kept.
  */
@@ -2594,7 +2609,11 @@ one_file_system: boolean;
  * The answer to every "already exists" prompt that offers it, as if
  * given with "apply to all"; `None` asks.
  */
-conflict_resolution: IssueAction | null }
+conflict_resolution: IssueAction | null; 
+/**
+ * What a folder landing on an existing folder does.
+ */
+folder_conflicts: FolderConflict }
 export type DefaultSort = { key: DefaultSortKey; ascending: boolean }
 export type DefaultSortKey = "name" | "extension" | "size" | "modified" | "accessed" | "created"
 /**
@@ -3015,6 +3034,19 @@ offset: number;
  */
 total_count: number }
 export type FilterMode = "quick_search" | "filter"
+/**
+ * What a folder landing on an existing folder does — unless the existing
+ * folder is a package to its filesystem, which is then a file's conflict.
+ */
+export type FolderConflict = 
+/**
+ * Copy into it, keeping what only the destination has.
+ */
+"merge" | 
+/**
+ * Remove it and put the source in its place.
+ */
+"replace" | "ask"
 export type FsStats = { free_bytes: number; available_bytes: number; total_bytes: number; 
 /**
  * Classification of the volume containing the listed directory,
@@ -3072,9 +3104,19 @@ export type ImageBackground = "dark" | "checkerboard" | "light"
 export type InspectedFile = { details: FileDetails; viewer_mode: ViewerMode; language: string }
 export type IssueAction = "skip" | "overwrite" | 
 /**
+ * Copy into an existing folder, keeping what only it has.
+ */
+"merge" | 
+/**
  * Overwrite when the source was modified later than the destination.
  */
 "overwrite_if_newer" | "overwrite_if_size_differs" | "overwrite_if_size_or_date_differs" | "retry"
+export type IssueKind = "AlreadyExists" | 
+/**
+ * A folder landing on an existing folder: Merge, Replace or Skip. Its
+ * own kind, so "apply to all" here never answers a file conflict.
+ */
+"FolderExists" | "PermissionDenied" | "IoError" | { PreservationFailed: AttributeKind } | { Other: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KubePodEntry = { namespace: string; name: string; containers: string[] }
 /**
@@ -3178,7 +3220,12 @@ name_separators: string;
 /**
  * The operation defaults with the sticky toggles laid over them.
  */
-defaults: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+defaults: CopyOptions; 
+/**
+ * The same with nothing remembered: what the toggles are until
+ * changed.
+ */
+stock: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -3398,7 +3445,12 @@ name_separators: string;
 /**
  * The operation defaults with the sticky toggles laid over them.
  */
-defaults: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
+defaults: CopyOptions; 
+/**
+ * The same with nothing remembered: what the toggles are until
+ * changed.
+ */
+stock: CopyOptions } } | { type: "create_archive"; data: { sources: VfsPath[]; 
 /**
  * Directory the archive lands in (the other pane); the dialog
  * composes the final file path from this and the name field.
@@ -3594,7 +3646,7 @@ export type OpenWithApp = {
  * the handler's executable on Windows, the desktop file id on Linux.
  */
 id: string; name: string; is_default: boolean }
-export type OperationIssueInfo = { issue_id: number; message: string; detail: string | null; actions: IssueAction[] }
+export type OperationIssueInfo = { issue_id: number; kind: IssueKind; message: string; detail: string | null; actions: IssueAction[] }
 export type OperationRequest = { Copy: { sources: VfsPath[]; destination: VfsPath; options?: CopyOptions; 
 /**
  * Copy a single source under a different leaf name in
@@ -3824,7 +3876,12 @@ exclude: string[];
 /**
  * Entries looked at before the search stops.
  */
-limit: number }
+limit: number; 
+/**
+ * Don't look inside apps and other packages (macOS); the packages
+ * themselves are still found.
+ */
+skip_packages: boolean }
 export type QuickOpenUpdate = { 
 /**
  * The query the results are ranked against.
@@ -3975,7 +4032,7 @@ external_id: string | null }
  * into fresh searches (the refine flow still restores from the live search
  * VFS instead).
  */
-export type SearchDefaults = { case_sensitive: boolean; content_is_regex: boolean; whole_word: boolean; follow_symlinks: boolean; skip_hidden: boolean; gitignore: boolean; one_file_system: boolean }
+export type SearchDefaults = { case_sensitive: boolean; content_is_regex: boolean; whole_word: boolean; follow_symlinks: boolean; skip_hidden: boolean; gitignore: boolean; one_file_system: boolean; skip_packages: boolean }
 /**
  * What a result must be beyond its name and content. An entry missing
  * the metadata a filter looks at (an S3 object has no owner) passes it.
@@ -4059,7 +4116,12 @@ gitignore: boolean;
 /**
  * Mount points below the root are not searched into.
  */
-one_file_system: boolean; filters: SearchFilters; 
+one_file_system: boolean; 
+/**
+ * Packages (apps and other folders macOS presents as files, as their
+ * filesystem says) can be results, but aren't searched into.
+ */
+skip_packages: boolean; filters: SearchFilters; 
 /**
  * Per-file size cap for content search. Files larger than this are
  * skipped (matched-by-name still surfaces). 0 means unlimited.

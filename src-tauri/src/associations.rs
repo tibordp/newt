@@ -24,6 +24,8 @@ pub struct Associations {
     owners: Vec<(usize, usize)>,
     /// Each of `globs`' patterns as written.
     glob_patterns: Vec<String>,
+    /// Enter opens packages rather than browsing into them.
+    open_packages: bool,
 }
 
 /// What Enter does, as an entry sets it: an action, and for `command` the
@@ -65,7 +67,8 @@ pub struct Traced {
     pub format: Option<(BrowseFormat, usize)>,
     pub viewer: Option<(ViewerMode, usize)>,
     pub language: Option<(String, usize)>,
-    /// Some entry matched — for a directory, that it is a package.
+    /// Some entry matched — for a directory, that the user declares it a
+    /// package.
     pub matched: bool,
 }
 
@@ -98,7 +101,7 @@ pub struct RowActions {
 impl Associations {
     pub fn new(user: Vec<AssociationEntry>, open_packages: bool) -> Self {
         let user_len = user.len();
-        let entries: Vec<_> = user.into_iter().chain(defaults(open_packages)).collect();
+        let entries: Vec<_> = user.into_iter().chain(defaults()).collect();
         let mut builder = GlobSetBuilder::new();
         let mut owners = Vec::new();
         let mut glob_patterns = Vec::new();
@@ -128,6 +131,7 @@ impl Associations {
             globs,
             owners,
             glob_patterns,
+            open_packages,
         }
     }
 
@@ -177,13 +181,16 @@ impl Associations {
     }
 
     /// What Enter does with `name`. Opening a directory hands its path to
-    /// the system, so only one on a host-local filesystem opens.
-    pub fn action(&self, name: &str, is_dir: bool, host_local: bool) -> Action {
+    /// the system, so only one on a host-local filesystem opens. `package`
+    /// is what the directory's filesystem says it is; an entry's `enter`
+    /// overrides what that implies.
+    pub fn action(&self, name: &str, is_dir: bool, host_local: bool, package: bool) -> Action {
         if is_dir {
             let traced = self.trace(name, AssociationKind::Directory, None);
             return match traced.enter.map(|(e, _)| e) {
                 Some(EnterChoice::Open) if host_local => Action::Open,
                 Some(EnterChoice::Command { command }) => Action::Command(command),
+                None if package && host_local && self.open_packages => Action::Open,
                 _ => Action::Navigate,
             };
         }
@@ -204,17 +211,23 @@ impl Associations {
             .map(|(f, _)| f)
     }
 
-    pub fn row_actions(&self, name: &str, is_dir: bool, host_local: bool) -> RowActions {
+    pub fn row_actions(
+        &self,
+        name: &str,
+        is_dir: bool,
+        host_local: bool,
+        package: bool,
+    ) -> RowActions {
         if name == ".." {
             return RowActions::default();
         }
-        let action = self.action(name, is_dir, host_local);
+        let action = self.action(name, is_dir, host_local, package);
         if is_dir {
             RowActions {
                 // A package; any other directory opens in the file manager.
                 open_default: host_local
                     && action != Action::Open
-                    && self.trace(name, AssociationKind::Directory, None).matched,
+                    && (package || self.trace(name, AssociationKind::Directory, None).matched),
                 browse_into: action != Action::Navigate,
             }
         } else {
@@ -686,8 +699,8 @@ fn language(patterns: &[&str], language: &str) -> AssociationEntry {
 
 /// The shipped associations, in resolution order. A name more specific
 /// than another's goes first: `*.tar.gz` before `*.gz`.
-fn defaults(open_packages: bool) -> Vec<AssociationEntry> {
-    let mut entries = vec![
+fn defaults() -> Vec<AssociationEntry> {
+    vec![
         // Everything iluvatar indexes: tar, cpio and ar (static libraries,
         // Debian packages). Windows `.lib` is ar too, but the extension is
         // shared with plain-text library formats (KiCad, SPICE).
@@ -773,35 +786,7 @@ fn defaults(open_packages: bool) -> Vec<AssociationEntry> {
         language(&["*.sql"], "sql"),
         language(&["*.graphql", "*.gql"], "graphql"),
         language(&["*.tf"], "hcl"),
-    ];
-    if cfg!(target_os = "macos") {
-        entries.push(AssociationEntry {
-            kind: AssociationKind::Directory,
-            enter: Some(if open_packages {
-                EnterAction::Open
-            } else {
-                EnterAction::Browse
-            }),
-            ..entry(&[
-                "*.app",
-                "*.appex",
-                "*.bundle",
-                "*.framework",
-                "*.plugin",
-                "*.kext",
-                "*.prefPane",
-                "*.xcodeproj",
-                "*.xcworkspace",
-                "*.playground",
-                "*.rtfd",
-                "*.photoslibrary",
-                "*.pages",
-                "*.numbers",
-                "*.key",
-            ])
-        });
-    }
-    entries
+    ]
 }
 
 /// Every language the editor offers, as `(Monaco id, label)`.
@@ -847,12 +832,16 @@ mod tests {
     use super::*;
 
     fn user(toml: &str) -> Associations {
+        user_opening_packages(toml, false)
+    }
+
+    fn user_opening_packages(toml: &str, open_packages: bool) -> Associations {
         #[derive(serde::Deserialize)]
         struct File {
             association: Vec<AssociationEntry>,
         }
         let file: File = toml::from_str(toml).unwrap();
-        Associations::new(file.association, false)
+        Associations::new(file.association, open_packages)
     }
 
     fn defaults_only() -> Associations {
@@ -862,7 +851,7 @@ mod tests {
     #[test]
     fn archives_browse_by_their_most_specific_name() {
         let a = defaults_only();
-        let browse = |name| a.action(name, false, true);
+        let browse = |name| a.action(name, false, true, false);
         assert_eq!(browse("x.tar.gz"), Action::Browse(Some(BrowseFormat::Tar)));
         assert_eq!(browse("X.TGZ"), Action::Browse(Some(BrowseFormat::Tar)));
         assert_eq!(
@@ -894,7 +883,7 @@ mod tests {
             "#,
         );
         assert_eq!(
-            a.action("x.zip", false, true),
+            a.action("x.zip", false, true, false),
             Action::Browse(Some(BrowseFormat::Zip))
         );
         assert_eq!(
@@ -903,7 +892,7 @@ mod tests {
         );
         // The format still comes from the defaults.
         assert_eq!(
-            a.action("pkg.vsix", false, true),
+            a.action("pkg.vsix", false, true, false),
             Action::Browse(Some(BrowseFormat::Zip))
         );
     }
@@ -920,10 +909,10 @@ mod tests {
             "#,
         );
         assert_eq!(
-            a.action("build", true, true),
+            a.action("build", true, true, false),
             Action::Command("Build".into())
         );
-        assert_eq!(a.action("build", false, true), Action::Open);
+        assert_eq!(a.action("build", false, true, false), Action::Open);
     }
 
     #[test]
@@ -936,32 +925,80 @@ mod tests {
             enter = "open"
             "#,
         );
-        assert_eq!(a.action("Safari.app", true, true), Action::Open);
-        assert_eq!(a.action("Safari.app", true, false), Action::Navigate);
-        assert_eq!(a.action("src", true, true), Action::Navigate);
+        assert_eq!(a.action("Safari.app", true, true, false), Action::Open);
+        assert_eq!(a.action("Safari.app", true, false, false), Action::Navigate);
+        assert_eq!(a.action("src", true, true, false), Action::Navigate);
     }
 
     #[test]
-    fn row_actions_offer_what_enter_does_not() {
-        let a = defaults_only();
-        let none = RowActions::default();
-        assert_eq!(a.row_actions("..", true, true), none);
-        assert_eq!(a.row_actions("src", true, true), none);
+    fn packages_open_when_asked_to_and_on_the_host() {
+        let browse = defaults_only();
+        let open = Associations::new(Vec::new(), true);
         assert_eq!(
-            a.row_actions("x.zip", false, true),
+            browse.action("Safari.app", true, true, true),
+            Action::Navigate
+        );
+        assert_eq!(open.action("Safari.app", true, true, true), Action::Open);
+        assert_eq!(
+            open.action("Safari.app", true, false, true),
+            Action::Navigate
+        );
+        // A name proves nothing: only the filesystem says it's a package.
+        assert_eq!(
+            open.action("Safari.app", true, true, false),
+            Action::Navigate
+        );
+        assert_eq!(
+            browse.row_actions("Safari.app", true, true, true),
             RowActions {
                 open_default: true,
                 browse_into: false
             }
         );
         assert_eq!(
-            a.row_actions("report.docx", false, true),
+            open.row_actions("Safari.app", true, true, true),
             RowActions {
                 open_default: false,
                 browse_into: true
             }
         );
-        assert_eq!(a.row_actions("notes.txt", false, true), none);
+        // An entry's own `enter` wins.
+        let user_browse = user_opening_packages(
+            r#"
+            [[association]]
+            match = "*.app"
+            kind = "directory"
+            enter = "browse"
+            "#,
+            true,
+        );
+        assert_eq!(
+            user_browse.action("Safari.app", true, true, true),
+            Action::Navigate
+        );
+    }
+
+    #[test]
+    fn row_actions_offer_what_enter_does_not() {
+        let a = defaults_only();
+        let none = RowActions::default();
+        assert_eq!(a.row_actions("..", true, true, false), none);
+        assert_eq!(a.row_actions("src", true, true, false), none);
+        assert_eq!(
+            a.row_actions("x.zip", false, true, false),
+            RowActions {
+                open_default: true,
+                browse_into: false
+            }
+        );
+        assert_eq!(
+            a.row_actions("report.docx", false, true, false),
+            RowActions {
+                open_default: false,
+                browse_into: true
+            }
+        );
+        assert_eq!(a.row_actions("notes.txt", false, true, false), none);
         let packages = user(
             r#"
             [[association]]
@@ -970,13 +1007,13 @@ mod tests {
             "#,
         );
         assert_eq!(
-            packages.row_actions("Safari.app", true, true),
+            packages.row_actions("Safari.app", true, true, false),
             RowActions {
                 open_default: true,
                 browse_into: false
             }
         );
-        assert_eq!(packages.row_actions("Safari.app", true, false), none);
+        assert_eq!(packages.row_actions("Safari.app", true, false, false), none);
     }
 
     #[test]
@@ -1008,7 +1045,7 @@ mod tests {
 
     #[test]
     fn default_languages_are_offered_by_the_editor() {
-        for entry in defaults(false) {
+        for entry in defaults() {
             if let Some(language) = entry.language {
                 assert!(
                     LANGUAGES.iter().any(|(id, _)| *id == language),
@@ -1028,10 +1065,10 @@ mod tests {
             "#,
         );
         assert_eq!(
-            a.action("x.tar.gz", false, true),
+            a.action("x.tar.gz", false, true, false),
             Action::Browse(Some(BrowseFormat::Tar))
         );
-        assert_eq!(a.action("notes.txt.gz", false, true), Action::Open);
+        assert_eq!(a.action("notes.txt.gz", false, true, false), Action::Open);
         // As specific as a built-in: the user's goes first.
         let a = user(
             r#"
@@ -1040,7 +1077,7 @@ mod tests {
             enter = "view"
             "#,
         );
-        assert_eq!(a.action("x.tar.gz", false, true), Action::View);
+        assert_eq!(a.action("x.tar.gz", false, true, false), Action::View);
     }
 
     #[test]
@@ -1058,7 +1095,10 @@ mod tests {
             "#,
         );
         // The first entry has no command, so its Enter doesn't count.
-        assert_eq!(a.action("x.py", false, true), Action::Command("Run".into()));
+        assert_eq!(
+            a.action("x.py", false, true, false),
+            Action::Command("Run".into())
+        );
     }
 
     #[test]

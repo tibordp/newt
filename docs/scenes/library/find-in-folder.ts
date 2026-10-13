@@ -25,6 +25,7 @@ const scene: Scene = {
         skip_hidden: false,
         gitignore: true,
         one_file_system: false,
+        skip_packages: false,
         filters: {
           kind: "any",
           min_size: null,
@@ -52,6 +53,7 @@ const scene: Scene = {
         skip_hidden: false,
         gitignore: true,
         one_file_system: false,
+        skip_packages: false,
       },
       metadata_traits: { unix_owner: true, windows_attributes: false },
     },

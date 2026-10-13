@@ -101,6 +101,9 @@ pub struct SearchParams {
     pub gitignore: bool,
     /// Mount points below the root are not searched into.
     pub one_file_system: bool,
+    /// Packages (apps and other folders macOS presents as files, as their
+    /// filesystem says) can be results, but aren't searched into.
+    pub skip_packages: bool,
     pub filters: SearchFilters,
     /// Per-file size cap for content search. Files larger than this are
     /// skipped (matched-by-name still surfaces). 0 means unlimited.
@@ -121,6 +124,7 @@ impl Default for SearchParams {
             skip_hidden: false,
             gitignore: false,
             one_file_system: false,
+            skip_packages: false,
             filters: SearchFilters::default(),
             content_size_cap: 10 * 1024 * 1024, // 10 MiB
         }
@@ -373,6 +377,7 @@ fn more_details(params: &SearchParams) -> Vec<BreadcrumbDetail> {
         (params.skip_hidden, "skips hidden"),
         (params.gitignore, "honours .gitignore"),
         (params.one_file_system, "one file system"),
+        (params.skip_packages, "skips package contents"),
     ]
     .into_iter()
     .filter_map(|(on, label)| on.then_some(label))
@@ -1029,6 +1034,16 @@ impl walk::Visitor for Matcher<'_> {
         }
         let below = match self.criteria.filters.max_depth {
             Some(max) if entry.depth >= max as usize => walk::Control::Skip,
+            _ if walker.params.skip_packages
+                && entry.file.is_dir
+                && walker
+                    .source_vfs
+                    .is_package(entry.path)
+                    .await
+                    .unwrap_or(false) =>
+            {
+                walk::Control::Skip
+            }
             _ => walk::Control::Descend,
         };
 
@@ -1676,6 +1691,25 @@ mod criteria_tests {
             ..names(".*")
         };
         assert_eq!(hits(builder(), params).await, [".env"]);
+    }
+
+    #[tokio::test]
+    async fn package_contents_are_skipped_when_asked() {
+        let builder = || {
+            MockVfs::builder()
+                .file("/root/Tool.app/Contents/tool.rs", b"")
+                .file("/root/main.rs", b"")
+                .package("/root/Tool.app")
+        };
+        assert_eq!(
+            hits(builder(), names("*.rs")).await,
+            ["Tool.app/Contents/tool.rs", "main.rs"]
+        );
+        let params = SearchParams {
+            skip_packages: true,
+            ..names("*.rs; *.app")
+        };
+        assert_eq!(hits(builder(), params).await, ["Tool.app", "main.rs"]);
     }
 
     #[tokio::test]

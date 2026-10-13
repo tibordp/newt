@@ -910,13 +910,19 @@ impl PreferencesManager {
 
         let schema = schemars::schema_for!(AppPreferences);
         let mut schema_json = serde_json::to_value(schema).unwrap_or_default();
-        // Packages are a macOS thing; the setting does nothing elsewhere.
-        if !cfg!(target_os = "macos")
-            && let Some(behavior) =
-                schema_json.pointer_mut("/definitions/BehaviorPreferences/properties")
-            && let Some(properties) = behavior.as_object_mut()
-        {
-            properties.remove("open_packages");
+        // Packages are a macOS thing; their settings do nothing elsewhere.
+        if !cfg!(target_os = "macos") {
+            for (section, setting) in [
+                ("BehaviorPreferences", "open_packages"),
+                ("QuickOpenPreferences", "skip_packages"),
+            ] {
+                if let Some(properties) = schema_json
+                    .pointer_mut(&format!("/definitions/{section}/properties"))
+                    .and_then(|p| p.as_object_mut())
+                {
+                    properties.remove(setting);
+                }
+            }
         }
 
         let locale = Some(settings.appearance.locale.clone())

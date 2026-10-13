@@ -309,6 +309,9 @@ enum Destination {
     /// Something the user chose to write over, cleared of what a write
     /// cannot replace.
     Replace,
+    /// A directory onto a directory the user chose to replace: written
+    /// beside it, then swapped in.
+    ReplaceFolder,
     Skip,
     /// The source itself, by another name (a hard link) or another path (a
     /// symlinked directory above it): already copied. Writing over it would
@@ -317,10 +320,13 @@ enum Destination {
 }
 
 /// Look at an entry's destination and ask about whatever is there.
+#[allow(clippy::too_many_arguments)]
 async fn check_destination(
+    src_vfs: &dyn Vfs,
     dst_vfs: &dyn Vfs,
     same_vfs: bool,
     entry: &CopyEntry,
+    folders: FolderConflict,
     reporter: &mut ProgressReporter,
     cancel: &CancellationToken,
 ) -> Result<Destination, crate::Error> {
@@ -359,7 +365,27 @@ async fn check_destination(
     let merging = matches!(entry.kind, CopyEntryKind::Directory);
     let directory = existing.is_dir && (merging || !existing.is_symlink);
     let mismatch = match (&entry.kind, directory) {
-        (CopyEntryKind::Directory, true) => return Ok(Destination::Merge),
+        // Through a link, as `cp -R` goes: into whatever it points at.
+        (CopyEntryKind::Directory, true) if existing.is_symlink => return Ok(Destination::Merge),
+        (CopyEntryKind::Directory, true) => {
+            let answer = folder_conflict(
+                reporter,
+                folders,
+                src_vfs,
+                &entry.source,
+                &entry.file,
+                dst_vfs,
+                &entry.dest,
+                &existing,
+                cancel,
+            )
+            .await?;
+            return Ok(match answer {
+                FolderAnswer::Merge => Destination::Merge,
+                FolderAnswer::Replace => Destination::ReplaceFolder,
+                FolderAnswer::Skip => Destination::Skip,
+            });
+        }
         (CopyEntryKind::Directory, false) => Some(format!(
             "Cannot replace file with directory: {}",
             entry.dest
@@ -579,288 +605,441 @@ pub(super) async fn execute_copy(
     let total_items = plan.entries.len() as u64 + items_done_offset;
     reporter.send_prepared(plan.total_bytes, total_items);
 
-    let mut directories = Vec::new();
-    let mut hard_links = HashMap::<Vec<u8>, PathBuf>::new();
-    let mut bytes_done = 0u64;
-    let mut items_done = items_done_offset;
+    // Shown as where each entry ends up, even while it's written to a
+    // staging copy.
+    let displays: Vec<String> = plan
+        .entries
+        .iter()
+        .map(|entry| {
+            entry
+                .dest
+                .strip_prefix(&dst_path)
+                .map(str::to_string)
+                .unwrap_or_else(|| entry.dest.as_wire_str().to_string())
+        })
+        .collect();
+    let mut entries = plan.entries;
+    // Folders being replaced: (staging copy, the folder it replaces).
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // Source folders a move swapped into place whole.
+    let mut moved: Vec<PathBuf> = Vec::new();
+    // Source folders whose contents aren't copied: skipped, or moved whole.
+    let mut left_out: Vec<PathBuf> = Vec::new();
+    let outcome = async {
+        let mut directories = Vec::new();
+        let mut hard_links = HashMap::<Vec<u8>, PathBuf>::new();
+        let mut bytes_done = 0u64;
+        let mut items_done = items_done_offset;
 
-    for entry in &plan.entries {
-        if cancel.is_cancelled() {
-            return Err(crate::Error::cancelled());
-        }
+        for i in 0..entries.len() {
+            if cancel.is_cancelled() {
+                return Err(crate::Error::cancelled());
+            }
 
-        let display = entry
-            .dest
-            .strip_prefix(&dst_path)
-            .map(str::to_string)
-            .unwrap_or_else(|| entry.dest.as_wire_str().to_string());
-        reporter.maybe_send_progress(bytes_done, items_done, &display);
+            let entry = &entries[i];
+            if left_out.iter().any(|m| entry.source.starts_with(m)) {
+                bytes_done += entry.size_bytes;
+                items_done += 1;
+                continue;
+            }
+            let display = displays[i].as_str();
+            reporter.maybe_send_progress(bytes_done, items_done, display);
 
-        // A file is written with `create_new` and hears about a conflict
-        // from the refusal; everything else looks first. A directory on a
-        // VFS whose directories are key prefixes (S3) has nothing to find.
-        let is_file = matches!(entry.kind, CopyEntryKind::File);
-        let mut merged_directory = false;
-        if !is_file {
-            let destination = if matches!(entry.kind, CopyEntryKind::Directory)
-                && !dst_descriptor.can_stat_directories()
-            {
-                Destination::Absent
-            } else {
-                check_destination(&*dst_vfs, same_vfs, entry, reporter, &cancel).await?
-            };
-            match destination {
-                Destination::Skip | Destination::Same => {
-                    bytes_done += entry.size_bytes;
-                    items_done += 1;
-                    continue;
-                }
-                Destination::Merge => {
-                    merged_directory = true;
-                    if !options.preserve_merged_directories {
+            // A file is written with `create_new` and hears about a conflict
+            // from the refusal; everything else looks first. A directory on a
+            // VFS whose directories are key prefixes (S3) has nothing to find.
+            let is_file = matches!(entry.kind, CopyEntryKind::File);
+            let mut merged_directory = false;
+            if !is_file {
+                let destination = if matches!(entry.kind, CopyEntryKind::Directory)
+                    && !dst_descriptor.can_stat_directories()
+                {
+                    Destination::Absent
+                } else {
+                    check_destination(
+                        &*src_vfs,
+                        &*dst_vfs,
+                        same_vfs,
+                        entry,
+                        options.folder_conflicts,
+                        reporter,
+                        &cancel,
+                    )
+                    .await?
+                };
+                match destination {
+                    Destination::Skip | Destination::Same => {
+                        if matches!(entry.kind, CopyEntryKind::Directory) {
+                            left_out.push(entry.source.clone());
+                        }
+                        bytes_done += entry.size_bytes;
                         items_done += 1;
                         continue;
                     }
-                }
-                Destination::Absent | Destination::Replace => {}
-            }
-        }
-
-        let mut attributes = SourceAttributes::read(
-            &*src_vfs,
-            &*dst_vfs,
-            &entry.source,
-            &entry.file,
-            entry.metadata.clone(),
-            &options,
-            reporter,
-            &cancel,
-        )
-        .await?;
-        let identity = attributes.identity.clone();
-        hard_links.retain(|_, target| target != &entry.dest);
-        // A file goes only where nothing is until its destination has been
-        // looked at.
-        let mut create_new = is_file;
-        let mut linked = false;
-        if let Some(target) = identity.as_ref().and_then(|id| hard_links.get(id)).cloned() {
-            match check_destination(&*dst_vfs, same_vfs, entry, reporter, &cancel).await? {
-                Destination::Skip | Destination::Same => {
-                    bytes_done += entry.size_bytes;
-                    items_done += 1;
-                    continue;
-                }
-                Destination::Absent | Destination::Merge | Destination::Replace => {}
-            }
-            create_new = false;
-            loop {
-                // link(2) refuses an existing name; the user already chose
-                // to replace it.
-                let result = async {
-                    match dst_vfs.hard_link(&entry.dest, &target).await {
-                        Err(e) if e.kind == crate::ErrorKind::AlreadyExists => {
-                            dst_vfs.remove_file(&entry.dest).await?;
-                            dst_vfs.hard_link(&entry.dest, &target).await
-                        }
-                        result => result,
-                    }
-                };
-                match cancellable(&cancel, result).await {
-                    Ok(()) => {
-                        linked = true;
-                        break;
-                    }
-                    Err(e) => {
-                        if !resolve_preservation(reporter, AttributeKind::HardLinks, &entry.dest, e)
-                            .await?
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Perform the operation
-        let bytes_before = bytes_done;
-        let mut succeeded = false;
-        // A refusal the destination's own stat then contradicts gets one
-        // more attempt before it is an issue.
-        let mut contradicted = false;
-        loop {
-            bytes_done = bytes_before; // Reset progress on retry to avoid double-counting
-
-            let result = match &entry.kind {
-                CopyEntryKind::Directory if merged_directory => Ok(Written::Done),
-                CopyEntryKind::Directory => {
-                    cancellable(&cancel, dst_vfs.create_directory(&entry.dest))
-                        .await
-                        .map(|()| Written::Done)
-                }
-                CopyEntryKind::Symlink { target } => {
-                    if dst_descriptor.can_create_symlink() {
-                        cancellable(
-                            &cancel,
-                            dst_vfs.create_symlink(&entry.dest, target.as_str()),
-                        )
-                        .await
-                        .map(|()| Written::Done)
-                    } else {
-                        Err(crate::Error::custom(format!(
-                            "Cannot create symlink on {}: not supported",
-                            dst_descriptor.type_name()
-                        )))
-                    }
-                }
-                CopyEntryKind::File if linked => {
-                    bytes_done += entry.size_bytes;
-                    Ok(Written::Done)
-                }
-                CopyEntryKind::File => {
-                    copy_single_file(
-                        &*src_vfs,
-                        &*dst_vfs,
-                        entry,
-                        same_vfs,
-                        &cancel,
-                        reporter,
-                        &mut bytes_done,
-                        items_done,
-                        &mut attributes.write,
-                        &display,
-                        create_new,
-                    )
-                    .await
-                }
-            };
-
-            let error = match result {
-                Ok(Written::Done) => {
-                    succeeded = true;
-                    break;
-                }
-                Ok(written) => {
-                    let refused = matches!(written, Written::Refused);
-                    // Every prompt a file in the way can raise offers Skip.
-                    let destination = if refused
-                        && reporter.answers(&IssueKind::AlreadyExists, IssueAction::Skip)
-                    {
-                        Destination::Skip
-                    } else {
-                        check_destination(&*dst_vfs, same_vfs, entry, reporter, &cancel).await?
-                    };
-                    match destination {
-                        // A move leaves the source too, as a rename of one
-                        // hard link onto another does.
-                        Destination::Skip | Destination::Same => {
-                            bytes_done = bytes_before + entry.size_bytes;
-                            break;
-                        }
-                        // Gone since the refusal, or a conflict the
-                        // destination could not confirm (S3's 409).
-                        Destination::Absent if refused && !contradicted => {
-                            contradicted = true;
-                            continue;
-                        }
-                        Destination::Absent if refused => crate::Error::custom(format!(
-                            "{} was refused as existing, but is not there",
-                            entry.dest
-                        )),
-                        Destination::Absent | Destination::Merge | Destination::Replace => {
-                            create_new = false;
+                    Destination::Merge => {
+                        merged_directory = true;
+                        if !options.preserve_merged_directories {
+                            items_done += 1;
                             continue;
                         }
                     }
-                }
-                Err(e) => e,
-            };
-            match reporter
-                .handle_io_error(
-                    error,
-                    "Error",
-                    Some(format!("{} -> {}", entry.source, entry.dest)),
-                    &cancel,
-                    true,
-                )
-                .await?
-            {
-                IssueOutcome::Skip => {
-                    // Advance bytes so progress reaches 100% even with skips
-                    bytes_done = bytes_before + entry.size_bytes;
-                    break;
-                }
-                IssueOutcome::Retry => contradicted = false,
-            }
-        }
-
-        if succeeded {
-            if matches!(entry.kind, CopyEntryKind::Directory) {
-                directories.push((entry, attributes));
-            } else {
-                attributes
-                    .apply(
-                        &*src_vfs,
-                        &*dst_vfs,
-                        &entry.dest,
-                        &options,
-                        reporter,
-                        &cancel,
-                    )
-                    .await?;
-                if let Some(id) = identity {
-                    hard_links.entry(id).or_insert_with(|| entry.dest.clone());
-                }
-            }
-        }
-
-        // For move: delete source file/symlink immediately after successful copy.
-        // Directories are cleaned up in a separate reverse pass below.
-        if is_move
-            && succeeded
-            && matches!(
-                &entry.kind,
-                CopyEntryKind::File | CopyEntryKind::Symlink { .. }
-            )
-        {
-            let mut src_retry = true;
-            while src_retry {
-                src_retry = false;
-                if let Err(e) = src_vfs.remove_file(&entry.source).await {
-                    match reporter
-                        .handle_io_error(
-                            e,
-                            &format!("Error removing source {}", entry.source),
-                            None,
-                            &cancel,
-                            true,
-                        )
-                        .await?
+                    // A move on one filesystem swaps the folder in whole.
+                    Destination::ReplaceFolder
+                        if is_move && same_vfs && dst_descriptor.can_rename() =>
                     {
-                        IssueOutcome::Skip => {}
-                        IssueOutcome::Retry => {
-                            src_retry = true;
+                        let (source, dest) = (entry.source.clone(), entry.dest.clone());
+                        let swapped = loop {
+                            match swap_in(&*dst_vfs, &source, &dest).await {
+                                Ok(old) => break Some(old),
+                                Err(e) => {
+                                    match reporter
+                                        .handle_io_error(
+                                            e,
+                                            &format!("Cannot replace {dest}"),
+                                            None,
+                                            &cancel,
+                                            true,
+                                        )
+                                        .await?
+                                    {
+                                        IssueOutcome::Skip => break None,
+                                        IssueOutcome::Retry => {}
+                                    }
+                                }
+                            }
+                        };
+                        if let Some(old) = swapped {
+                            remove_whole(&*dst_vfs, &old, reporter, &cancel).await?;
+                            left_out.push(source.clone());
+                            moved.push(source);
                         }
+                        bytes_done += entry.size_bytes;
+                        items_done += 1;
+                        continue;
                     }
+                    // Everything bound for the folder goes to a staging copy
+                    // beside it instead, swapped in once written.
+                    Destination::ReplaceFolder => {
+                        let dest = entries[i].dest.clone();
+                        let staging = sibling(&dest, "replace");
+                        for later in &mut entries[i..] {
+                            if let Some(below) = later.dest.strip_prefix(&dest) {
+                                later.dest = if below.is_empty() {
+                                    staging.clone()
+                                } else {
+                                    staging.join(below)
+                                };
+                            }
+                        }
+                        staged.push((staging, dest));
+                    }
+                    Destination::Absent | Destination::Replace => {}
                 }
             }
-        }
+            let entry = &entries[i];
 
-        items_done += 1;
-    }
-
-    reporter.maybe_send_progress(bytes_done, items_done, "");
-
-    for (entry, attributes) in directories.into_iter().rev() {
-        attributes
-            .apply(
+            let mut attributes = SourceAttributes::read(
                 &*src_vfs,
                 &*dst_vfs,
-                &entry.dest,
+                &entry.source,
+                &entry.file,
+                entry.metadata.clone(),
                 &options,
                 reporter,
                 &cancel,
             )
             .await?;
+            let identity = attributes.identity.clone();
+            hard_links.retain(|_, target| target != &entry.dest);
+            // A file goes only where nothing is until its destination has been
+            // looked at.
+            let mut create_new = is_file;
+            let mut linked = false;
+            if let Some(target) = identity.as_ref().and_then(|id| hard_links.get(id)).cloned() {
+                match check_destination(
+                    &*src_vfs,
+                    &*dst_vfs,
+                    same_vfs,
+                    entry,
+                    options.folder_conflicts,
+                    reporter,
+                    &cancel,
+                )
+                .await?
+                {
+                    Destination::Skip | Destination::Same => {
+                        bytes_done += entry.size_bytes;
+                        items_done += 1;
+                        continue;
+                    }
+                    Destination::Absent
+                    | Destination::Merge
+                    | Destination::Replace
+                    | Destination::ReplaceFolder => {}
+                }
+                create_new = false;
+                loop {
+                    // link(2) refuses an existing name; the user already chose
+                    // to replace it.
+                    let result = async {
+                        match dst_vfs.hard_link(&entry.dest, &target).await {
+                            Err(e) if e.kind == crate::ErrorKind::AlreadyExists => {
+                                dst_vfs.remove_file(&entry.dest).await?;
+                                dst_vfs.hard_link(&entry.dest, &target).await
+                            }
+                            result => result,
+                        }
+                    };
+                    match cancellable(&cancel, result).await {
+                        Ok(()) => {
+                            linked = true;
+                            break;
+                        }
+                        Err(e) => {
+                            if !resolve_preservation(
+                                reporter,
+                                AttributeKind::HardLinks,
+                                &entry.dest,
+                                e,
+                            )
+                            .await?
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Perform the operation
+            let bytes_before = bytes_done;
+            let mut succeeded = false;
+            // A refusal the destination's own stat then contradicts gets one
+            // more attempt before it is an issue.
+            let mut contradicted = false;
+            loop {
+                bytes_done = bytes_before; // Reset progress on retry to avoid double-counting
+
+                let result = match &entry.kind {
+                    CopyEntryKind::Directory if merged_directory => Ok(Written::Done),
+                    CopyEntryKind::Directory => {
+                        cancellable(&cancel, dst_vfs.create_directory(&entry.dest))
+                            .await
+                            .map(|()| Written::Done)
+                    }
+                    CopyEntryKind::Symlink { target } => {
+                        if dst_descriptor.can_create_symlink() {
+                            cancellable(
+                                &cancel,
+                                dst_vfs.create_symlink(&entry.dest, target.as_str()),
+                            )
+                            .await
+                            .map(|()| Written::Done)
+                        } else {
+                            Err(crate::Error::custom(format!(
+                                "Cannot create symlink on {}: not supported",
+                                dst_descriptor.type_name()
+                            )))
+                        }
+                    }
+                    CopyEntryKind::File if linked => {
+                        bytes_done += entry.size_bytes;
+                        Ok(Written::Done)
+                    }
+                    CopyEntryKind::File => {
+                        copy_single_file(
+                            &*src_vfs,
+                            &*dst_vfs,
+                            entry,
+                            same_vfs,
+                            &cancel,
+                            reporter,
+                            &mut bytes_done,
+                            items_done,
+                            &mut attributes.write,
+                            display,
+                            create_new,
+                        )
+                        .await
+                    }
+                };
+
+                let error = match result {
+                    Ok(Written::Done) => {
+                        succeeded = true;
+                        break;
+                    }
+                    Ok(written) => {
+                        let refused = matches!(written, Written::Refused);
+                        // Every prompt a file in the way can raise offers Skip.
+                        let destination = if refused
+                            && reporter.answers(&IssueKind::AlreadyExists, IssueAction::Skip)
+                        {
+                            Destination::Skip
+                        } else {
+                            check_destination(
+                                &*src_vfs,
+                                &*dst_vfs,
+                                same_vfs,
+                                entry,
+                                options.folder_conflicts,
+                                reporter,
+                                &cancel,
+                            )
+                            .await?
+                        };
+                        match destination {
+                            // A move leaves the source too, as a rename of one
+                            // hard link onto another does.
+                            Destination::Skip | Destination::Same => {
+                                bytes_done = bytes_before + entry.size_bytes;
+                                break;
+                            }
+                            // Gone since the refusal, or a conflict the
+                            // destination could not confirm (S3's 409).
+                            Destination::Absent if refused && !contradicted => {
+                                contradicted = true;
+                                continue;
+                            }
+                            Destination::Absent if refused => crate::Error::custom(format!(
+                                "{} was refused as existing, but is not there",
+                                entry.dest
+                            )),
+                            Destination::Absent
+                            | Destination::Merge
+                            | Destination::Replace
+                            | Destination::ReplaceFolder => {
+                                create_new = false;
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) => e,
+                };
+                match reporter
+                    .handle_io_error(
+                        error,
+                        "Error",
+                        Some(format!("{} -> {}", entry.source, entry.dest)),
+                        &cancel,
+                        true,
+                    )
+                    .await?
+                {
+                    IssueOutcome::Skip => {
+                        // Advance bytes so progress reaches 100% even with skips
+                        bytes_done = bytes_before + entry.size_bytes;
+                        break;
+                    }
+                    IssueOutcome::Retry => contradicted = false,
+                }
+            }
+
+            if succeeded {
+                if matches!(entry.kind, CopyEntryKind::Directory) {
+                    directories.push((i, attributes));
+                } else {
+                    attributes
+                        .apply(
+                            &*src_vfs,
+                            &*dst_vfs,
+                            &entry.dest,
+                            &options,
+                            reporter,
+                            &cancel,
+                        )
+                        .await?;
+                    if let Some(id) = identity {
+                        hard_links.entry(id).or_insert_with(|| entry.dest.clone());
+                    }
+                }
+            }
+
+            // For move: delete source file/symlink immediately after successful copy.
+            // Directories are cleaned up in a separate reverse pass below.
+            if is_move
+                && succeeded
+                && matches!(
+                    &entry.kind,
+                    CopyEntryKind::File | CopyEntryKind::Symlink { .. }
+                )
+            {
+                let mut src_retry = true;
+                while src_retry {
+                    src_retry = false;
+                    if let Err(e) = src_vfs.remove_file(&entry.source).await {
+                        match reporter
+                            .handle_io_error(
+                                e,
+                                &format!("Error removing source {}", entry.source),
+                                None,
+                                &cancel,
+                                true,
+                            )
+                            .await?
+                        {
+                            IssueOutcome::Skip => {}
+                            IssueOutcome::Retry => {
+                                src_retry = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            items_done += 1;
+        }
+
+        reporter.maybe_send_progress(bytes_done, items_done, "");
+
+        for (i, attributes) in directories.into_iter().rev() {
+            attributes
+                .apply(
+                    &*src_vfs,
+                    &*dst_vfs,
+                    &entries[i].dest,
+                    &options,
+                    reporter,
+                    &cancel,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        // A replacement never half-happens: the folder stays as it was.
+        for (staging, _) in &staged {
+            remove_quietly(&*dst_vfs, staging).await;
+        }
+        return Err(e);
+    }
+
+    for (staging, dest) in staged {
+        loop {
+            match swap_in(&*dst_vfs, &staging, &dest).await {
+                Ok(old) => {
+                    remove_whole(&*dst_vfs, &old, reporter, &cancel).await?;
+                    break;
+                }
+                Err(e) => {
+                    match reporter
+                        .handle_io_error(e, &format!("Cannot replace {dest}"), None, &cancel, true)
+                        .await
+                    {
+                        Ok(IssueOutcome::Retry) => {}
+                        Ok(IssueOutcome::Skip) => {
+                            remove_quietly(&*dst_vfs, &staging).await;
+                            break;
+                        }
+                        Err(e) => {
+                            remove_quietly(&*dst_vfs, &staging).await;
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // For move: reverse pass to clean up empty source directories (deepest first).
@@ -869,11 +1048,11 @@ pub(super) async fn execute_copy(
     // A mount point stays: it cannot be removed while mounted, and its
     // parent then fails as not empty.
     if is_move {
-        for entry in plan.entries.iter().rev() {
+        for entry in entries.iter().rev() {
             if cancel.is_cancelled() {
                 return Err(crate::Error::cancelled());
             }
-            if entry.mount_point {
+            if entry.mount_point || moved.iter().any(|m| entry.source.starts_with(m)) {
                 continue;
             }
             if let CopyEntryKind::Directory = &entry.kind {
