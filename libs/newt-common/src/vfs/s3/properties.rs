@@ -337,7 +337,7 @@ impl S3Vfs {
                 .copy_object()
                 .bucket(&bucket)
                 .key(&key)
-                .copy_source(format!("{}/{}", bucket, key))
+                .copy_source(super::copy_source(&bucket, &key))
                 .metadata_directive(MetadataDirective::Replace)
                 .set_metadata(Some(metadata))
                 .set_content_type(content_type.or_else(|| head.content_type().map(str::to_string)))

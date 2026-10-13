@@ -4932,3 +4932,62 @@ async fn test_replacing_a_package_if_its_size_differs_walks_both() {
     // Same total: left alone.
     assert_eq!(tree(&result.vfs, "/dst"), ["App", "App/b"]);
 }
+
+#[tokio::test]
+async fn test_create_archive_into_one_of_its_sources_fails_without_touching_it() {
+    let vfs = MockVfs::builder()
+        .case_insensitive()
+        .dir("/data")
+        .file("/data/a.zip", b"precious")
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data/a.zip")],
+            destination: vfs_path("/data/A.zip"),
+            options: archive_options(ArchiveFormat::Zip),
+        },
+        overwrite_all,
+    )
+    .await;
+    assert!(
+        failure_message(&result.events).is_some_and(|m| m.contains("into itself")),
+        "{:?}",
+        result.events
+    );
+    assert!(!raised_an_issue(&result.events));
+    assert_eq!(result.vfs.read_content("/data/a.zip"), b"precious");
+}
+
+#[tokio::test]
+async fn test_create_archive_fails_when_the_destination_cannot_be_looked_at() {
+    let vfs = MockVfs::builder()
+        .dir("/data")
+        .file("/data/a.txt", b"hello")
+        .failure(FailureSpec {
+            path: PathBuf::from_wire_str("/out.zip"),
+            operation: "file_info",
+            error: crate::Error {
+                kind: crate::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            },
+            remaining: None,
+        })
+        .build();
+    let result = run_operation(
+        vfs,
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/data/a.txt")],
+            destination: vfs_path("/out.zip"),
+            options: archive_options(ArchiveFormat::Zip),
+        },
+        overwrite_all,
+    )
+    .await;
+    assert!(
+        failure_message(&result.events).is_some_and(|m| m.contains("permission denied")),
+        "{:?}",
+        result.events
+    );
+    assert!(!result.vfs.exists("/out.zip"));
+}

@@ -153,3 +153,13 @@ fn s3_breadcrumbs_unscoped_root() {
 // ---------------------------------------------------------------------------
 // Archive — breadcrumbs and display path
 // ---------------------------------------------------------------------------
+
+#[test]
+fn copy_source_percent_encodes_the_key_but_not_its_slashes() {
+    use super::copy_source;
+    assert_eq!(copy_source("b", "dir/plain.txt"), "b/dir/plain.txt");
+    assert_eq!(copy_source("b", "100%.txt"), "b/100%25.txt");
+    assert_eq!(copy_source("b", "a+b c.txt"), "b/a%2Bb%20c.txt");
+    assert_eq!(copy_source("b", "q?versionId=x"), "b/q%3FversionId%3Dx");
+    assert_eq!(copy_source("b", "π/ü.txt"), "b/%CF%80/%C3%BC.txt");
+}

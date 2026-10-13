@@ -54,12 +54,30 @@ pub(super) async fn execute_create_archive(
     );
 
     // Destination conflict before any work. The archive is a single artifact,
-    // so declining to overwrite simply cancels the operation.
-    if let Ok(existing) = dst_vfs.file_info(&dst_path).await {
+    // so declining to overwrite simply cancels the operation. A failed look
+    // leaves the destination unknown, not absent.
+    let existing = match cancellable(&cancel, dst_vfs.file_info(&dst_path)).await {
+        Ok(file) => Some(file),
+        Err(e) if e.kind == crate::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    if let Some(existing) = existing {
         if existing.is_dir {
             return Err(crate::Error::custom(format!(
                 "destination is a directory: {}",
                 dst_path
+            )));
+        }
+        // The walk leaves the destination out, so a stale archive among the
+        // sources is replaced rather than packed into its successor. When
+        // it is all there is to pack, Overwrite would only empty it. A
+        // symlink is replaced, not written through, so it can't lead to one.
+        if !existing.is_symlink
+            && only_the_destination(&*dst_vfs, &sources, destination.vfs_id, &dst_path).await?
+        {
+            return Err(crate::Error::custom(format!(
+                "Cannot pack \"{}\" into itself",
+                dst_path.file_name().unwrap_or_default()
             )));
         }
         match reporter
@@ -71,6 +89,11 @@ pub(super) async fn execute_create_archive(
             )
             .await?
         {
+            // A write goes through a symlink to its target: replace the
+            // link instead.
+            IssueAction::Overwrite if existing.is_symlink => {
+                cancellable(&cancel, dst_vfs.remove_file(&dst_path)).await?;
+            }
             IssueAction::Overwrite => {}
             _ => {
                 // Skipping the only artifact means nothing to do — surface
@@ -134,6 +157,23 @@ pub(super) async fn execute_create_archive(
         return Err(e);
     }
     Ok(())
+}
+
+/// Whether every source is the destination itself, asked of the
+/// filesystem: `foo.zip` and `FOO.zip` are one file on a case-insensitive
+/// volume.
+async fn only_the_destination(
+    dst_vfs: &dyn Vfs,
+    sources: &[VfsPath],
+    dst_vfs_id: crate::vfs::VfsId,
+    dst_path: &Path,
+) -> Result<bool, crate::Error> {
+    for source in sources {
+        if source.vfs_id != dst_vfs_id || !dst_vfs.same_file(&source.path, dst_path).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Returns the writer's start patch, if its format needs one.

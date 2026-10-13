@@ -791,25 +791,38 @@ mod tests;
 #[cfg(test)]
 mod writer_tests;
 
+/// Everything but RFC 3986's unreserved characters.
+const UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 /// Tags as `x-amz-tagging` takes them: URL query parameters, percent-
 /// encoded (a space is `%20`; S3 doesn't read `+` as one).
 fn tagging(tags: &std::collections::BTreeMap<String, String>) -> String {
-    use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-    const VALUE: &AsciiSet = &NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
+    use percent_encoding::utf8_percent_encode;
     tags.iter()
         .map(|(key, value)| {
             format!(
                 "{}={}",
-                utf8_percent_encode(key, VALUE),
-                utf8_percent_encode(value, VALUE)
+                utf8_percent_encode(key, UNRESERVED),
+                utf8_percent_encode(value, UNRESERVED)
             )
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// `x-amz-copy-source` for an object. S3 percent-decodes the header, and
+/// the SDK sends it as given, so a raw key with `%`, `+` or non-ASCII in
+/// it names some other object or none.
+fn copy_source(bucket: &str, key: &str) -> String {
+    const PATH: &percent_encoding::AsciiSet = &UNRESERVED.remove(b'/');
+    format!(
+        "{bucket}/{}",
+        percent_encoding::utf8_percent_encode(key, PATH)
+    )
 }
 
 impl S3Vfs {
@@ -1222,7 +1235,7 @@ impl Vfs for S3Vfs {
 
         let client = self.client_for_bucket(&dst_bucket).await?;
         let src_client = self.client_for_bucket(&src_bucket).await?;
-        let copy_source = format!("{}/{}", src_bucket, src_key);
+        let copy_source = copy_source(&src_bucket, &src_key);
 
         // The head supplies the size limit and the native storage-class default.
         let head = src_client
