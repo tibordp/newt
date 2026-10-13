@@ -1931,12 +1931,13 @@ async quickOpenQuery(query: string) : Promise<void> {
     await TAURI_INVOKE("quick_open_query", { query });
 },
 /**
- * Close the Go to File palette and focus `rel`, a path below its root, in
- * the pane it was opened from.
+ * Close the Go to File palette and focus `rel`, a path below its root
+ * whose entry's key starts at byte `key_start`, in the pane it was opened
+ * from.
  */
-async quickOpenAccept(rel: string) : Promise<Result<null, string>> {
+async quickOpenAccept(rel: string, keyStart: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("quick_open_accept", { rel }) };
+    return { status: "ok", data: await TAURI_INVOKE("quick_open_accept", { rel, keyStart }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3853,7 +3854,12 @@ export type QuickOpenHit = {
 /**
  * `/`-separated, relative to the root.
  */
-rel: string; is_dir: boolean; 
+rel: string; 
+/**
+ * Byte offset in `rel` where the entry's key starts; what comes
+ * before it is the folder that lists the entry.
+ */
+key_start: number; is_dir: boolean; 
 /**
  * Character indices into `rel` that matched, ascending.
  */

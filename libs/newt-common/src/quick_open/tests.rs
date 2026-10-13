@@ -17,7 +17,8 @@ fn ranked(index: &mut Index, query: &str) -> Vec<String> {
 fn index(rels: &[&str]) -> Index {
     let mut index = Index::new();
     for rel in rels {
-        index.push(rel.to_string(), false);
+        let key_start = rel.rfind('/').map_or(0, |i| i + 1) as u32;
+        index.push(rel.to_string(), key_start, false);
     }
     index
 }
@@ -71,7 +72,7 @@ fn narrowing_the_query_ranks_as_a_fresh_one_would() {
 fn entries_added_later_are_ranked_too() {
     let mut index = index(&["a.txt"]);
     ranked(&mut index, "b");
-    index.push("b.txt".into(), false);
+    index.push("b.txt".into(), 0, false);
     assert_eq!(ranked(&mut index, "b"), ["b.txt"]);
 }
 
@@ -85,7 +86,7 @@ fn highlights_index_characters_of_the_whole_path() {
 }
 
 async fn run(
-    vfs: Arc<MockVfs>,
+    vfs: Arc<dyn crate::vfs::Vfs>,
     root: &str,
     options: QuickOpenOptions,
     query: &str,
@@ -133,6 +134,7 @@ async fn walks_below_the_root_nearest_first() {
         .build();
     let update = run(vfs, "/repo", options(), "").await;
     assert_eq!(rels(&update), ["a", "z.txt", "a/b", "a/b/c.txt"]);
+    assert_eq!(update.results[3].key_start, 4);
     assert_eq!(update.walked, 4);
     assert!(!update.truncated);
 }
@@ -311,4 +313,44 @@ async fn a_remote_run_streams_updates_and_takes_new_queries() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn search_hits_are_told_apart_by_key_and_not_walked_into() {
+    use crate::vfs::search::{SearchParams, SearchVfs};
+
+    let source = MockVfs::builder()
+        .file("/root/a/api.md", b"")
+        .file("/root/b/api.md", b"")
+        .file("/root/api/notes.txt", b"")
+        .build();
+    let registry = Arc::new(VfsRegistry::with_root(source.clone()));
+    let search = Arc::new(SearchVfs::new(
+        source,
+        Arc::new(crate::vfs::VfsRegistryFs::new(registry)),
+        VfsPath::new(VfsId::ROOT, PathBuf::from_wire_str("/root")),
+        SearchParams {
+            name_pattern: Some("api".into()),
+            ..Default::default()
+        },
+        Vec::new(),
+        Arc::new(crate::vfs::ScopedReporter::new(
+            Arc::new(crate::vfs::NoopProgressSink),
+            VfsId(1),
+        )),
+    ));
+    let (tx, mut rx) = mpsc::channel(64);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    search.list_files(&PathBuf::root(), Some(tx)).await.unwrap();
+    drain.await.unwrap();
+
+    let update = run(search, "/", options(), "").await;
+    let mut hits: Vec<_> = update
+        .results
+        .iter()
+        .map(|h| (h.rel.as_str(), h.key_start))
+        .collect();
+    hits.sort();
+    assert_eq!(hits, [("a/api.md", 0), ("api", 0), ("b/api.md", 0)]);
+    assert_eq!(update.unreadable, 0);
 }

@@ -53,6 +53,9 @@ pub struct QuickOpenOptions {
 pub struct QuickOpenHit {
     /// `/`-separated, relative to the root.
     pub rel: String,
+    /// Byte offset in `rel` where the entry's key starts; what comes
+    /// before it is the folder that lists the entry.
+    pub key_start: u32,
     pub is_dir: bool,
     /// Character indices into `rel` that matched, ascending.
     pub highlights: Vec<u32>,
@@ -77,7 +80,7 @@ pub struct QuickOpenUpdate {
 /// What the walk has found and not yet handed to the ranking.
 #[derive(Default)]
 struct Inbox {
-    entries: Vec<(String, bool)>,
+    entries: Vec<(String, u32, bool)>,
     unreadable: u32,
     truncated: bool,
 }
@@ -122,8 +125,8 @@ impl QuickOpen {
                 counts.truncated |= taken.truncated;
                 let text = query.borrow_and_update().clone();
                 let (returned, results) = tokio::task::spawn_blocking(move || {
-                    for (rel, is_dir) in taken.entries {
-                        index.push(rel, is_dir);
+                    for (rel, key_start, is_dir) in taken.entries {
+                        index.push(rel, key_start, is_dir);
                     }
                     index.set_query(&text);
                     index.catch_up();
@@ -247,10 +250,11 @@ impl Visitor for Collector<'_> {
             Some(below) if !self.root_rel.is_empty() => below.trim_start_matches('/'),
             _ => entry.rel,
         };
-        self.inbox
-            .lock()
-            .entries
-            .push((rel.to_string(), entry.file.is_dir));
+        self.inbox.lock().entries.push((
+            rel.to_string(),
+            (rel.len() - entry.key.len()) as u32,
+            entry.file.is_dir,
+        ));
         self.arrived.notify_one();
         if self.options.skip_packages
             && entry.file.is_dir

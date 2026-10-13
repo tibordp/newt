@@ -291,7 +291,7 @@ pub fn dialog(
                     // We still need to look up the entries' display info
                     // (size, mode, ...) by their *in-pane* identity — not
                     // the dereferenced paths.
-                    let display_paths = pane.get_effective_selection();
+                    let keys = pane.effective_selection_keys();
 
                     let can_set_metadata = ctx
                         .vfs_info()
@@ -311,12 +311,9 @@ pub fn dialog(
                     // than basename — flat search results may share names.
                     let view_state = pane.view_state();
                     let view_files = view_state.files();
-                    let files: Vec<&newt_common::vfs::File> = display_paths
+                    let files: Vec<&newt_common::vfs::File> = keys
                         .iter()
-                        .filter_map(|p| {
-                            let key = p.file_name()?;
-                            view_files.iter().find(|f| f.key() == key)
-                        })
+                        .filter_map(|key| view_files.iter().find(|f| f.key() == key))
                         .collect();
 
                     if files.is_empty() {
@@ -411,11 +408,9 @@ pub fn dialog(
                             let sheet_paths: Vec<VfsPath> = if d.can_stat_directories() {
                                 paths.clone()
                             } else {
-                                display_paths
-                                    .iter()
+                                keys.iter()
                                     .zip(paths.iter())
-                                    .filter_map(|(dp, p)| {
-                                        let key = dp.file_name()?;
+                                    .filter_map(|(key, p)| {
                                         let f = view_files.iter().find(|f| f.key() == key)?;
                                         (!f.is_dir).then(|| p.clone())
                                     })
@@ -1205,11 +1200,16 @@ pub fn quick_open_query(ctx: MainWindowContext, query: String) {
     }
 }
 
-/// Close the Go to File palette and focus `rel`, a path below its root, in
-/// the pane it was opened from.
+/// Close the Go to File palette and focus `rel`, a path below its root
+/// whose entry's key starts at byte `key_start`, in the pane it was opened
+/// from.
 #[tauri::command]
 #[specta::specta]
-pub async fn quick_open_accept(ctx: MainWindowContext, rel: String) -> Result<(), Error> {
+pub async fn quick_open_accept(
+    ctx: MainWindowContext,
+    rel: String,
+    key_start: u32,
+) -> Result<(), Error> {
     ctx.with_update_async(|gs| async move {
         let Some(ModalData {
             kind: ModalDataKind::QuickOpen { root, .. },
@@ -1220,7 +1220,8 @@ pub async fn quick_open_accept(ctx: MainWindowContext, rel: String) -> Result<()
         };
         gs.close_modal();
         let pane = gs.panes.require(context.pane_handle.unwrap())?;
-        pane.reveal(root.join(&rel)).await
+        pane.reveal(root.join(&rel), Some(&rel[key_start as usize..]))
+            .await
     })
     .await
 }

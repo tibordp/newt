@@ -62,9 +62,13 @@ pub struct WalkOptions {
 /// One entry of the walk, as the visitor sees it.
 pub struct Entry<'a> {
     pub path: &'a Path,
-    /// The root's file name, then dirent names down the tree,
+    /// The root's file name, then dirent keys down the tree,
     /// `/`-joined: what a copy places under its destination.
     pub rel: &'a str,
+    /// The entry's own part of `rel`: its [`File::key`], which spans
+    /// several segments where a VFS keys entries apart from their names
+    /// (a search's flat hits).
+    pub key: &'a str,
     /// 0 for a root.
     pub depth: usize,
     /// In follow mode a link's *target*; the link's own name is in `rel`.
@@ -240,13 +244,19 @@ struct Dir {
 
 impl Dir {
     fn child(&self, file: File) -> Child {
+        let key_start = if self.rel.is_empty() {
+            0
+        } else {
+            self.rel.len() + 1
+        };
         Child {
-            path: self.path.join(&file.name),
+            path: self.path.join(file.key()),
             rel: if self.rel.is_empty() {
-                file.name.clone()
+                file.key().to_string()
             } else {
-                format!("{}/{}", self.rel, file.name)
+                format!("{}/{}", self.rel, file.key())
             },
+            key_start,
             parent_device: self.file.device_id,
             ancestry: self.ancestry.clone(),
             file,
@@ -265,6 +275,8 @@ struct Frame {
 struct Child {
     path: PathBuf,
     rel: String,
+    /// Where the entry's own key starts in `rel`.
+    key_start: usize,
     file: File,
     parent_device: Option<u64>,
     ancestry: Arc<Vec<PathBuf>>,
@@ -304,6 +316,7 @@ impl<'a> Walker<'a> {
             let child = Child {
                 path: root.clone(),
                 rel: root.file_name().unwrap_or_default().to_string(),
+                key_start: 0,
                 file,
                 parent_device,
                 ancestry: Arc::new(Vec::new()),
@@ -331,7 +344,7 @@ impl<'a> Walker<'a> {
                 self.visitor.leave(&dir.path, &dir.file).await?;
                 continue;
             };
-            if !walkable(&frame.dir.path, &file.name) {
+            if !walkable(&frame.dir.path, &file) {
                 continue;
             }
             let depth = frame.dir.depth + 1;
@@ -350,7 +363,7 @@ impl<'a> Walker<'a> {
             let children = self.list_dir(&dir.path).await?;
             self.visitor.listed(&dir.path, &children).await?;
             for file in children {
-                if !walkable(&dir.path, &file.name) {
+                if !walkable(&dir.path, &file) {
                     continue;
                 }
                 if self.visit(dir.child(file), dir.depth + 1).await? == Flow::Stop {
@@ -424,6 +437,7 @@ impl<'a> Walker<'a> {
             .entry(Entry {
                 path: &child.path,
                 rel: &child.rel,
+                key: &child.rel[child.key_start..],
                 depth,
                 file: &child.file,
                 mount_point,
@@ -433,8 +447,11 @@ impl<'a> Walker<'a> {
             Control::Stop => return Ok(Flow::Stop),
             Control::Skip => false,
             Control::Descend => {
+                // What a `source` refers to lives in another VFS, which
+                // this one can't list.
                 child.file.is_dir
                     && !child.file.is_symlink
+                    && child.file.source.is_none()
                     && (child.root || !(mount_point && self.options.one_file_system))
             }
         };
@@ -518,12 +535,13 @@ impl<'a> Walker<'a> {
                 if file.name == ".."
                     || !file.is_dir
                     || file.is_symlink
+                    || file.source.is_some()
                     || (self.options.one_file_system
                         && is_mount_point(frame.dir.file.device_id, file))
                 {
                     continue;
                 }
-                let path = frame.dir.path.join(&file.name);
+                let path = frame.dir.path.join(file.key());
                 if self.options.excludes.iter().any(|e| path.starts_with(e))
                     || self.listed_ahead(&path)
                 {
@@ -723,6 +741,7 @@ impl<'a> Walker<'a> {
             .entry(Entry {
                 path: &path,
                 rel: &rel,
+                key: rel.rsplit('/').next().unwrap_or_default(),
                 depth: state.depth + path.depth() - state.root_path.depth(),
                 file: &file,
                 mount_point: false,
@@ -752,6 +771,7 @@ impl<'a> Walker<'a> {
             .entry(Entry {
                 path,
                 rel: &rel,
+                key: rel.rsplit('/').next().unwrap_or_default(),
                 depth: state.depth + path.depth() - state.root_path.depth(),
                 file: &file,
                 mount_point: false,
@@ -788,13 +808,18 @@ enum Opened {
 }
 
 /// Whether a listed entry is one to walk: not the `..` row, and a name
-/// that stays inside its directory (see [`super::path::is_valid_name`]).
-fn walkable(dir: &Path, name: &str) -> bool {
-    if name == ".." {
+/// and key that stay inside its directory (see
+/// [`super::path::is_valid_name`]).
+fn walkable(dir: &Path, file: &File) -> bool {
+    if file.name == ".." {
         return false;
     }
-    if !super::path::is_valid_name(name) {
-        log::warn!("walk: skipping an entry of {dir} named {name:?}");
+    let key = file.key.as_deref();
+    if !super::path::is_valid_name(&file.name) || !key.is_none_or(super::path::stays_below) {
+        log::warn!(
+            "walk: skipping an entry of {dir} named {:?}, keyed {key:?}",
+            file.name
+        );
         return false;
     }
     true

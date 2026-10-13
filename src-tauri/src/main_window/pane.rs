@@ -1185,13 +1185,18 @@ impl Pane {
         Ok(())
     }
 
-    /// Navigate to `target`'s directory and focus `target` in it.
-    pub async fn reveal(&self, target: VfsPath) -> Result<(), Error> {
-        let parent = target.parent().unwrap_or_else(|| target.clone());
-        let name = target.file_name().map(str::to_string);
-        self.navigate_to(parent).await?;
-        if let Some(name) = name {
-            self.view_state_mut().focus(name);
+    /// Navigate to `target`'s directory and focus `target` in it. `key` is
+    /// the entry's key where that isn't `target`'s last segment (a search's
+    /// hits span several): the directory is what precedes it.
+    pub async fn reveal(&self, target: VfsPath, key: Option<&str>) -> Result<(), Error> {
+        let key = key.or(target.file_name()).map(str::to_string);
+        let segments = key
+            .as_deref()
+            .map_or(0, |k| k.split('/').filter(|s| !s.is_empty()).count());
+        let dir = (0..segments).fold(target, |dir, _| dir.parent().unwrap_or(dir));
+        self.navigate_to(dir).await?;
+        if let Some(key) = key {
+            self.view_state_mut().focus(key);
         }
         Ok(())
     }

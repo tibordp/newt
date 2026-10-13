@@ -122,7 +122,7 @@ pub async fn reveal_config_file(
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
-        pane.reveal(target).await
+        pane.reveal(target, None).await
     })
     .await
 }

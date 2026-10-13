@@ -766,10 +766,9 @@ pub async fn cmd_follow_symlink(
         ctx.fs()?.resolve_link(link).await?
     };
 
-    ctx.with_pane_update_async(
-        pane_handle,
-        |_, pane| async move { pane.reveal(resolved).await },
-    )
+    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
+        pane.reveal(resolved, None).await
+    })
     .await
 }
 

@@ -9,6 +9,7 @@ const hit = (
   is_dir = false,
 ): QuickOpenHit => ({
   rel,
+  key_start: rel.lastIndexOf("/") + 1,
   is_dir,
   highlights,
 });

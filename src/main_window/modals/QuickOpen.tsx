@@ -158,7 +158,9 @@ export default function QuickOpen({
             <Command.Item
               key={hit.rel}
               value={hit.rel}
-              onSelect={() => safe(commands.quickOpenAccept(hit.rel))}
+              onSelect={() =>
+                safe(commands.quickOpenAccept(hit.rel, hit.key_start))
+              }
             >
               <Hit hit={hit} />
             </Command.Item>

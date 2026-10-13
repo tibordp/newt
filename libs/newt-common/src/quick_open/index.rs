@@ -7,6 +7,7 @@ use super::QuickOpenHit;
 
 struct Entry {
     rel: String,
+    key_start: u32,
     haystack: Utf32String,
     /// Character index in `rel` where the name starts.
     name_start: u32,
@@ -56,14 +57,16 @@ impl Index {
         &self.query
     }
 
-    /// Add an entry; `rel` is `/`-separated, relative to the root.
-    pub fn push(&mut self, rel: String, is_dir: bool) {
+    /// Add an entry; `rel` is `/`-separated, relative to the root, and
+    /// the entry's key starts at byte `key_start` of it.
+    pub fn push(&mut self, rel: String, key_start: u32, is_dir: bool) {
         let chars = rel.chars().count() as u32;
         let name_chars = rel.rsplit('/').next().unwrap_or("").chars().count() as u32;
         let depth = rel.matches('/').count() as u32;
         self.entries.push(Entry {
             haystack: Utf32String::from(rel.as_str()),
             rel,
+            key_start,
             name_start: chars - name_chars,
             depth,
             is_dir,
@@ -171,6 +174,7 @@ impl Index {
                 let entry = &entries[i as usize];
                 QuickOpenHit {
                     rel: entry.rel.clone(),
+                    key_start: entry.key_start,
                     is_dir: entry.is_dir,
                     highlights: highlights(atoms, matcher, entry, score),
                 }
