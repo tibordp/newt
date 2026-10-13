@@ -3778,7 +3778,14 @@ partial: string | null; sorting: Sorting; file_window: FileWindow; focused: stri
 /**
  * Selected filenames intersected with the current window (for frontend rendering).
  */
-selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: FsStats | null; stats: PaneStats; focused_index: number | null; display_path: string; vfs_display_name: string; is_host_local: boolean; 
+selected: string[]; filter: string | null; filter_mode: FilterMode; fs_stats: FsStats | null; stats: PaneStats; focused_index: number | null; 
+/**
+ * Rows the view has moved to keep an on-screen cursor on its row as
+ * the listing changed around it (entries sorted in above it, a
+ * re-sort). Cumulative: the frontend scrolls by each change, in the
+ * same render as the window that follows the move.
+ */
+scroll_shift: number; display_path: string; vfs_display_name: string; is_host_local: boolean; 
 /**
  * Which metadata families the pane's VFS populates — the frontend
  * filters the configured column set by these (no mode/user/group

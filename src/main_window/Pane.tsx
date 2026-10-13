@@ -974,23 +974,101 @@ function PaneInner(
   const dndRef = useRef<LocalDndState | null>(null);
   const dndGhostRef = useRef<HTMLDivElement>(null);
 
+  // Rust moved the viewport with the cursor as the list changed around it;
+  // follow by the same number of rows, before the frame is painted.
+  const scrollShift = props.scroll_shift;
+  const lastScrollShiftRef = useRef(scrollShift);
+  useLayoutEffect(() => {
+    const rows = scrollShift - lastScrollShiftRef.current;
+    lastScrollShiftRef.current = scrollShift;
+    const container = containerRef.current;
+    if (rows !== 0 && container) container.scrollTop += rows * rowHeight;
+  }, [scrollShift, rowHeight]);
+  // The cursor's entry and index as last rendered, to tell the cursor
+  // moving from the list changing around it.
+  const prevCursorRef = useRef<{
+    path: string;
+    key: string | null;
+    index: number;
+  }>({ path: "", key: null, index: -1 });
+  // A scroll to the cursor that lands outside the rows Rust has sent waits
+  // for them, keeping the old rows on screen meanwhile: the cursor can be
+  // put far from the window, e.g. by a focus restored after a refresh.
+  const pendingCursorScrollRef = useRef<number | null>(null);
+  const windowCovers = (top: number, height: number) => {
+    const fw = fileWindowRef.current;
+    const first = Math.floor(top / rowHeight);
+    const end = Math.min(Math.ceil((top + height) / rowHeight), fw.total_count);
+    return first >= fw.offset && end <= fw.offset + fw.items.length;
+  };
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!active || focusedIndex < 0 || !container) return;
+    const prev = prevCursorRef.current;
+    const pathKey = `${path.vfs_id}:${path.path}`;
+    prevCursorRef.current = {
+      path: pathKey,
+      key: focused,
+      index: focusedIndex,
+    };
+    // A scroll still waiting for its rows is where the view is headed.
+    const pending = pendingCursorScrollRef.current;
+    pendingCursorScrollRef.current = null;
+    if (focusedIndex < 0 || !container) return;
 
     const containerHeight = container.clientHeight;
-    const scrollTop = container.scrollTop;
-    const itemTop = focusedIndex * rowHeight;
-    const itemBottom = itemTop + rowHeight;
-
-    if (itemTop < scrollTop) {
-      container.scrollTop = itemTop;
-    } else if (itemBottom > scrollTop + containerHeight) {
-      container.scrollTop = itemBottom - containerHeight;
+    const scrollTop = pending ?? container.scrollTop;
+    let target: number;
+    if (
+      pathKey === prev.path &&
+      focused === prev.key &&
+      prev.index >= 0 &&
+      focusedIndex !== prev.index
+    ) {
+      // The list changed around the cursor (entries sorted in above it, a
+      // refresh, a re-sort). Rust has moved the view with a cursor that was
+      // in it (`scroll_shift`); one out of view is no reason to move it.
+      target = scrollTop;
+    } else {
+      if (!active) return;
+      const itemTop = focusedIndex * rowHeight;
+      const itemBottom = itemTop + rowHeight;
+      if (itemTop < scrollTop) {
+        target = itemTop;
+      } else if (itemBottom > scrollTop + containerHeight) {
+        target = itemBottom - containerHeight;
+      } else {
+        target = scrollTop;
+      }
     }
+    target = Math.max(0, target);
+    if (target === container.scrollTop) return;
+    if (windowCovers(target, containerHeight)) {
+      container.scrollTop = target;
+      return;
+    }
+    pendingCursorScrollRef.current = target;
+    const firstVisible = Math.floor(target / rowHeight);
+    const visibleCount = Math.ceil(containerHeight / rowHeight);
+    lastViewportReportRef.current = [
+      firstVisible,
+      visibleCount,
+      fileWindowRef.current.offset,
+    ];
+    safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
     // Intentionally excluding file_window — this should only fire when the
     // focused item changes position, not when the window slides on scroll.
-  }, [active, focusedIndex, rowHeight]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, path, focused, focusedIndex, rowHeight]);
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const target = pendingCursorScrollRef.current;
+    if (target === null || !container) return;
+    if (windowCovers(target, container.clientHeight)) {
+      pendingCursorScrollRef.current = null;
+      container.scrollTop = target;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file_window]);
 
   useEffect(() => {
     if (active && !modalOpen) {

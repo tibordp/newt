@@ -1758,6 +1758,11 @@ pub struct PaneViewState {
     pub fs_stats: Option<FsStats>,
     pub stats: PaneStats,
     pub focused_index: Option<usize>,
+    /// Rows the view has moved to keep an on-screen cursor on its row as
+    /// the listing changed around it (entries sorted in above it, a
+    /// re-sort). Cumulative: the frontend scrolls by each change, in the
+    /// same render as the window that follows the move.
+    pub scroll_shift: i32,
     pub display_path: String,
     pub vfs_display_name: String,
     pub is_host_local: bool,
@@ -2101,7 +2106,9 @@ impl PaneViewState {
             // Computed sizes feed both sort-by-size and the selection
             // totals — keep them live while a walk streams.
             if matches!(self.sorting.key, SortingKey::Size) {
+                let anchor = self.cursor_in_view();
                 self.sort(self.folders_first);
+                self.keep_cursor_row(anchor);
             } else {
                 self.file_generation += 1;
             }
@@ -2365,6 +2372,11 @@ impl PaneViewState {
         if self.filter.is_none() {
             self.filter_mode = self.default_filter_mode;
         }
+        let anchor = if self.path == *file_list.path() {
+            self.cursor_in_view()
+        } else {
+            None
+        };
         if self.path != *file_list.path() {
             // Path changed: drop the retained focus position (it's only
             // meaningful for an in-place refresh of the same directory).
@@ -2392,7 +2404,39 @@ impl PaneViewState {
         self.all_files = self.files.clone();
         self.apply_visual_filter();
         self.update_focus();
+        self.keep_cursor_row(anchor);
         self.recompute_stats();
+    }
+
+    /// The cursor and its index, when it is in the reported viewport —
+    /// taken before the listing is reordered, for
+    /// [`keep_cursor_row`](Self::keep_cursor_row).
+    fn cursor_in_view(&self) -> Option<(String, usize)> {
+        let index = self.focused_index?;
+        let (first, count) = self.viewport_hint;
+        let count = if count == 0 { 50 } else { count };
+        (first..first + count)
+            .contains(&index)
+            .then(|| Some((self.focused.clone()?, index)))
+            .flatten()
+    }
+
+    /// Move the viewport with a cursor that was in view before a reorder,
+    /// so it stays on its screen row while the rows around it change.
+    fn keep_cursor_row(&mut self, before: Option<(String, usize)>) {
+        let Some((key, old)) = before else {
+            return;
+        };
+        if self.focused.as_deref() != Some(key.as_str()) {
+            return;
+        }
+        let Some(&new) = self.file_lookup.get(&key) else {
+            return;
+        };
+        let first = self.viewport_hint.0 as i64;
+        let moved = (first + new as i64 - old as i64).max(0);
+        self.viewport_hint.0 = moved as usize;
+        self.scroll_shift += (moved - first) as i32;
     }
 
     pub fn focus(&mut self, filename: String) {
@@ -2415,8 +2459,10 @@ impl PaneViewState {
     }
 
     pub fn set_sorting(&mut self, sorting: Sorting, folders_first: bool) {
+        let anchor = self.cursor_in_view();
         self.sorting = sorting;
         self.sort(folders_first);
+        self.keep_cursor_row(anchor);
         self.recompute_stats();
     }
 
@@ -3072,6 +3118,39 @@ mod tests {
         vs.wheel_select(1);
         assert_eq!(vs.focused.as_deref(), Some("a"));
         assert_eq!(selected(&vs), ["a", "b", "c", "e"]);
+    }
+
+    #[test]
+    fn a_reorder_moves_the_viewport_with_a_cursor_in_view_only() {
+        let names = [
+            ("..", true),
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("d", false),
+            ("e", false),
+        ];
+        let descending = Sorting {
+            key: SortingKey::Name,
+            asc: false,
+        };
+
+        let mut vs = listed(&names);
+        vs.focused = Some("b".into());
+        vs.focused_index = Some(2);
+        vs.viewport_hint = (1, 3);
+        vs.set_sorting(descending.clone(), false);
+        assert_eq!(vs.focused_index, Some(4));
+        assert_eq!(vs.viewport_hint.0, 3);
+        assert_eq!(vs.scroll_shift, 2);
+
+        let mut vs = listed(&names);
+        vs.focused = Some("b".into());
+        vs.focused_index = Some(2);
+        vs.viewport_hint = (3, 3);
+        vs.set_sorting(descending, false);
+        assert_eq!(vs.viewport_hint.0, 3);
+        assert_eq!(vs.scroll_shift, 0);
     }
 
     #[test]
