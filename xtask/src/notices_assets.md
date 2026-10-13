@@ -47,11 +47,6 @@ re-exported and recoloured.
 From [Seti-folder](https://github.com/L-IGH-T/Seti-folder), Copyright (c) 2021
 L-IGH-T, MIT licensed.
 
-### SVG Spinners — `src/assets/spinner.svg`
-
-From [svg-spinners](https://github.com/n3r4zzurr0/svg-spinners), Copyright (c)
-Utkarsh Verma, MIT licensed.
-
 ### SIL Open Font License 1.1
 
 Covers the Weather Icons and Pomicons glyphs in Symbols Nerd Font, and must

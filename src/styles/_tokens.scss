@@ -8,6 +8,8 @@
   // Text
   --color-fg: var(--_gray-900);
   --color-fg-muted: var(--_gray-600);
+  // The terminal's text; its background is --color-bg.
+  --color-terminal-fg: var(--_gray-800);
 
   // Accent
   --color-accent: var(--_blue-500);

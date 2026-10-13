@@ -60,6 +60,7 @@ import {
 import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
+import Spinner from "./Spinner";
 
 function PathBreadcrumbs(props: {
   breadcrumbs: PaneBreadcrumb[];
@@ -953,6 +954,10 @@ function PaneInner(
   const activityLabels = Object.values(enrichment_activity ?? {});
   const hasActivity = activityLabels.length > 0;
   const showActivity = useAfterGrace(hasActivity);
+  // Whatever the status bar reports as under way.
+  const busy = useAfterGrace(
+    (!!pending_path && !loading) || loading || hasActivity || !!vfsProgress,
+  );
 
   // Without this lookup, rendering suddenly becomes O(n^2), which is very slow
   // when someone Ctrl+A's a directory with 1000+ files.
@@ -2080,7 +2085,7 @@ function PaneInner(
   return (
     <div
       ref={paneRef}
-      className={`${styles.pane} ${showSpinner ? styles.paneBusy : ""}`}
+      className={styles.pane}
       role="region"
       aria-label={paneHandle === 0 ? "Left pane" : "Right pane"}
       data-pane-handle={paneHandle}
@@ -2312,7 +2317,7 @@ function PaneInner(
             <ul
               className={`${styles.files} ${
                 filter && filter_mode === "filter" ? styles.filesFiltered : ""
-              }`}
+              } ${showSpinner ? styles.filesStale : ""}`}
               id={listId}
               role="listbox"
               aria-multiselectable
@@ -2405,6 +2410,11 @@ function PaneInner(
       {preferences?.settings.appearance?.show_pane_status !== false && (
         <div className={styles.statusbar}>
           <div className={styles.statusbarInner}>
+            {busy && (
+              <>
+                <Spinner />{" "}
+              </>
+            )}
             {showSpinner && "Loading file list..."}
             {!showSpinner && loading && (
               <>

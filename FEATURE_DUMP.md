@@ -218,7 +218,7 @@ Click a column header to sort ascending by that key; click the same header again
 | State | Display |
 |-------|---------|
 | Loading (first 200ms) | (nothing — grace period to avoid flicker) |
-| Loading (after 200ms) | "Loading... (X items so far)" |
+| Loading (after 200ms) | spinner, "Loading... (X items so far)" |
 | Loaded, no selection | "X files, Y directories", plus ", N hidden" when hidden files exist but Show Hidden is off |
 | Loaded, with selection | "X files, Y directories selected, Z bytes total" — Z includes computed recursive sizes of selected directories, so ⌘A after Calculate All Sizes totals the whole directory |
 | Filter active | "(showing X of Y)" appended |
@@ -230,7 +230,8 @@ Large directories are loaded incrementally via streaming:
 - First batch clears old state (filter, selection, focus).
 - Intermediate batches update the visible file list and statistics in real time — the user can browse and interact while loading continues.
 - Navigation to a new directory auto-cancels any in-progress load for the same pane.
-- A 200ms grace period suppresses the loading spinner to avoid flicker on fast directories.
+- Until the new directory's first rows arrive, the pane keeps showing the old ones, muted (the list at reduced opacity, no overlay): the breadcrumbs already name the new location, and the status bar says "Loading file list…". Input waits for the listing.
+- **Busy indicator**: whenever the status bar reports work under way — a listing loading or streaming, an enricher running (git status, Calculate Size), a search walking — a small spinner leads it. A 200ms grace period keeps it (and the text) away on fast work, so it doesn't flicker.
 
 ### Enrichers
 
@@ -1521,11 +1522,10 @@ No bootstrap or upload: the bundled Linux-musl agent already lives on the Window
 
 ### Connection Status
 
-Displayed as an overlay on the main window during connection:
-- **Connecting**: Shows progress message and log.
-- **Connected**: Overlay disappears, normal operation.
-- **Disconnected**: Shows error message and a "Reconnect" button.
-- **Failed**: Shows error details and connection log.
+Until the session is connected, the main window shows the connection's transcript — the spawn command, ssh's own output, the agent upload — styled like the terminal panel and selectable for copying, above a status bar like a pane's:
+- **Connecting**: a block cursor blinks after the last line of the transcript, as in a terminal waiting for output, and the status bar shows a spinner, what is happening ("Connecting via SSH (user@host)…") and how long it has taken so far — the status bar once that has passed 200 ms, so a quick connection doesn't flash it.
+- **Connected**: the panes take the window's place.
+- **Disconnected / Failed**: the status bar shows the error in red with a **Reconnect** button, which takes the focus, so Enter reconnects.
 
 ### Askpass Integration
 
@@ -1542,7 +1542,7 @@ When SSH needs interactive input (password, passphrase, host key verification), 
 
 ### Reconnect
 
-After disconnection, a "Reconnect" button appears. Clicking it reconnects in-place on the same window using the same transport parameters (SSH host, elevated mode, etc.): the old session is torn down (agent subprocess terminated, PTYs killed), panes / terminals / operations are cleared, and a fresh session is established.
+After disconnection, a "Reconnect" button appears in the status bar (focused, so Enter works too). It reconnects in-place on the same window using the same transport parameters (SSH host, elevated mode, etc.): the old session is torn down (agent subprocess terminated, PTYs killed), panes / terminals / operations are cleared, and a fresh session is established.
 
 ---
 

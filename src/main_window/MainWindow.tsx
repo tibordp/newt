@@ -10,7 +10,7 @@ import {
 import * as Dialog from "@radix-ui/react-dialog";
 import { Allotment, LayoutPriority } from "allotment";
 import "allotment/dist/style.css";
-import ConnectionLog from "./ConnectionLog";
+import ConnectionScreen from "./ConnectionScreen";
 import { ConfigProblemsToast } from "./ConfigProblemsToast";
 import dialogStyles from "./modals/Dialog.module.scss";
 import styles from "./MainWindow.module.scss";
@@ -31,7 +31,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { commands } from "../lib/bindings";
 import {
   TerminalData,
-  safe,
   safeSilent,
   useRemoteState,
   useTerminalData,
@@ -620,31 +619,8 @@ function App() {
           />
         )}
         {remoteState &&
-          remoteState.connection_status.status !== "connected" &&
-          remoteState.connection_status.log.length > 0 && (
-            <ConnectionLog log={remoteState.connection_status.log} />
-          )}
-        {remoteState &&
-          remoteState.connection_status.status === "connecting" && (
-            <div className="connection-status">
-              {remoteState.connection_status.message}
-            </div>
-          )}
-        {remoteState &&
-          (remoteState.connection_status.status === "failed" ||
-            remoteState.connection_status.status === "disconnected") && (
-            <div className="connection-status connection-error" role="alert">
-              {remoteState.connection_status.error}{" "}
-              {/* The session is gone: reconnecting is the one thing left
-                  to do, so Enter does it. */}
-              <button
-                className="connection-retry"
-                autoFocus
-                onClick={() => safe(commands.reconnect())}
-              >
-                Reconnect
-              </button>
-            </div>
+          remoteState.connection_status.status !== "connected" && (
+            <ConnectionScreen status={remoteState.connection_status} />
           )}
       </div>
     </TerminalData.Provider>

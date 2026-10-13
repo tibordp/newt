@@ -84,24 +84,3 @@ body {
 .split-view {
   position: static !important;
 }
-
-.connection-status {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 4px 8px;
-  font-size: 13px;
-  color: var(--color-fg);
-  background: var(--color-chrome);
-}
-
-.connection-error {
-  color: var(--color-error);
-}
-
-.connection-retry {
-  margin-left: var(--space-4);
-  padding: 0 var(--space-4);
-  font-size: inherit;
-}

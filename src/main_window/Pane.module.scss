@@ -14,24 +14,6 @@
   }
 }
 
-.paneBusy {
-  opacity: 0.7;
-
-  &::after {
-    content: "";
-    position: absolute;
-    z-index: 50;
-    left: 0;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    background: url("../assets/spinner.svg") no-repeat center;
-    background-size: 40px;
-    animation: spin 1s linear infinite;
-    pointer-events: none;
-  }
-}
-
 .header {
   display: flex;
   align-items: baseline;
@@ -134,6 +116,11 @@
 
 .filesFiltered {
   background: var(--color-bg-filtered);
+}
+
+// The previous directory's rows, while the next one's first arrive.
+.filesStale {
+  opacity: 0.6;
 }
 
 .fileItem {
