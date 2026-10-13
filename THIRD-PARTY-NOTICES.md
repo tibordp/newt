@@ -490,7 +490,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2016-2021 Diggory Blake, and other contributors.
   filetime 0.2.29 — MIT/Apache-2.0
       Copyright (c) 2014 Alex Crichton
-  fillyfoal 0.1.0 — GPL-3.0-or-later, incorporating MIT, Zlib, BSD-3-Clause, ISC, BSD-2-Clause
+  fillyfoal 0.1.0 — GPL-3.0-or-later, incorporating MIT, Zlib, BSD-3-Clause, ISC, BSD-2-Clause, Apache-2.0
       Copyright (C) 2026 Tibor Djurica Potpara
       Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
       Copyright (C) 2002-2013 Mark Adler, all rights reserved
@@ -502,8 +502,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2003-2007 Tim Kientzle
       Copyright (c) 2011 Andres Mejia
       Copyright (c) 2018 Grzegorz Antoniak (http://antoniak.org)
+      Copyright (C) 2013-2016 Eric Biggers
+      Copyright 2022 Eric Biggers
       Copyright (c) 2025 Scott Mudge
+      Copyright (c) Microsoft Corporation.
       Copyright (c) 2019-2026 Benedikt Reinartz
+      Copyright 2002, 2003, 2005, 2008, 2009, 2010, 2012 GNU Freefont contributors.
   fillyfoal-archive 0.1.0 — GPL-3.0-or-later
   fillyfoal-av 0.1.0 — GPL-3.0-or-later
   fillyfoal-codec 0.1.0 — GPL-3.0-or-later
