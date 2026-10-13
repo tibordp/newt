@@ -260,7 +260,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Enter | Open file or enter directory (see "Enter behavior" below) |
 | Backspace | Navigate to parent directory (`..`) |
 | Tab | Switch active pane |
-| Insert | Toggle selection on current file and advance focus to next |
+| Insert | Toggle selection on current file and advance focus to next (the rebindable `toggle_selection` command; macOS reports a PC keyboard's Insert as Help, which matches it too. Apple keyboards have no Insert: rebind it, or select with Shift+arrows or Mod+Click) |
 | Mod+A | Select all files (except `..`) |
 | Mod+D | Deselect all |
 | Num * | Invert Selection — toggles every visible entry; filtered-out selections are left alone |
@@ -439,7 +439,8 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 
 ### Quick Search Mode
 
-- **Activation**: Start typing any printable character (not modified with Ctrl/Shift/Alt) while the pane is focused. Requires `quick_search = true` (default).
+- **Activation**: Start typing any printable character while the pane is focused — Shift included (capitals, digits on AZERTY), unless that Shift chord is bound to a command; not with Ctrl, Alt/Option or Cmd. On a pane listing Windows drives, Shift+letter goes to that drive instead. Requires `quick_search = true` (default).
+- **Input methods**: keys an IME is composing with stay with the IME, so Enter committing a candidate doesn't open the focused file.
 - **Matching**: Case-insensitive **prefix** matching on filenames. Wraps around the file list (searches downward from cursor, then wraps to top).
 - **Live updates**: Results update as you type. The cursor moves to the first match.
 - **Arrow Left/Right**: Adjusts the search string based on the focused file's name. Right extends the search to include more of the focused filename; Left trims it.
@@ -936,7 +937,7 @@ The preview is for the mouse; the keyboard stays with the file list. It doesn't 
 ### Viewer Menu Bar
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
-- **File**: Close (Escape)
+- **File**: Close (Escape, or Mod+W — the rebindable `viewer_close` command)
 - **Edit** (Text, Hex, Table and Structure modes): Copy, Select All, separator, Go to Line / Go to Offset
 - **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
 - **Encoding** (Text mode only): Auto-detect (detected name), separator, then the encoding catalogue as per-script submenus (radio buttons, same one-checked convention as View).
@@ -1041,7 +1042,7 @@ The language comes from [file associations](#file-associations); the built-in on
 ### Editor Menu Bar
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
-- **File**: Save, Close (Ctrl+W). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
+- **File**: Save, Close (Mod+W). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
 - **View**: Word Wrap (checkbox toggle). Each newly opened file starts from the `editor.word_wrap` preference (default off); toggling wrap on an open file overrides it for that file only.
 - **Language**: Radio buttons for all supported languages (Plain Text, C, C++, C#, CSS, Dockerfile, Go, HTML, INI/TOML, Java, JavaScript, JSON, Kotlin, Lua, Markdown, Perl, PHP, Python, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
 
@@ -2173,7 +2174,7 @@ Toggle visibility of files starting with `.` (dot files). The `..` parent direct
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| Insert | Toggle select + advance focus | Pane focused |
+| Insert | Toggle select + advance focus (`toggle_selection`) | Pane focused |
 | Mod+A | Select all | Pane focused |
 | Mod+D | Deselect all | Pane focused |
 | Num * | Invert selection | Pane focused |

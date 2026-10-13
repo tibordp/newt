@@ -153,6 +153,9 @@ pub fn ssh_transport_cmd(host: &str, forward_agent: bool) -> Vec<String> {
     if forward_agent {
         v.push("-A".to_string());
     }
+    // A host from a shared profile must not be read as an option
+    // (`-oProxyCommand=…`).
+    v.push("--".to_string());
     v.push(host.to_string());
     v
 }
@@ -818,7 +821,14 @@ async fn spawn_custom_shell(
 
 #[cfg(test)]
 mod tests {
-    use super::BOOTSTRAP_SCRIPT;
+    use super::{BOOTSTRAP_SCRIPT, ssh_transport_cmd};
+
+    #[test]
+    fn ssh_host_is_never_read_as_an_option() {
+        let cmd = ssh_transport_cmd("-oProxyCommand=touch /tmp/pwned", false);
+        assert_eq!(cmd[cmd.len() - 2], "--");
+        assert_eq!(cmd[cmd.len() - 1], "-oProxyCommand=touch /tmp/pwned");
+    }
 
     /// `bootstrap.sh` is embedded verbatim via `include_str!` and run by a
     /// remote POSIX `sh`, which fails on `\r`. `.gitattributes` pins it to

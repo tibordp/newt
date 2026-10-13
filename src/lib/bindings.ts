@@ -1663,6 +1663,17 @@ async cmdInvertSelection(paneHandle: PaneHandle) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Toggle the focused entry's selection and move to the next one.
+ */
+async cmdToggleSelection(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_toggle_selection", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdSelectSameExtension(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_select_same_extension", { paneHandle }) };

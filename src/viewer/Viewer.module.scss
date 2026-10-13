@@ -180,7 +180,7 @@
 
   &:hover {
     color: var(--color-fg);
-    background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+    background: var(--color-control-hover-bg);
   }
 
   &:disabled {
@@ -190,7 +190,7 @@
 }
 
 .searchToggleActive {
-  background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+  background: var(--color-control-hover-bg);
   color: var(--color-fg);
   border-color: var(--color-border, #555);
   @include fc.selected;
@@ -403,7 +403,7 @@
   line-height: 1;
 
   &:hover:not(:disabled) {
-    background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+    background: var(--color-control-hover-bg);
     border-color: var(--color-border, #555);
   }
 
@@ -429,7 +429,7 @@
 }
 
 .viewerToolbarBtnActive {
-  background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+  background: var(--color-control-hover-bg);
   border-color: var(--color-border, #555);
   @include fc.selected;
 }
@@ -491,7 +491,7 @@
 }
 
 .modeToggleBtnActive {
-  background: var(--color-bg-hover, rgba(255, 255, 255, 0.1));
+  background: var(--color-control-hover-bg);
   color: var(--color-fg);
   border-color: var(--color-border, #555);
   @include fc.selected;

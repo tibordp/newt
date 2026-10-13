@@ -19,10 +19,6 @@
   min-height: 24px;
   cursor: pointer;
 
-  &:hover {
-    background: var(--color-hover);
-  }
-
   & + & {
     border-top: 1px solid var(--color-border);
   }

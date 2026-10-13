@@ -33,7 +33,7 @@ treediff = { version = "5", features = ["with-serde-json"] }
 newt-common = { path = "../libs/newt-common" }
 fillyfoal = { git = "https://github.com/tibordp/fillyfoal" }
 tokio = { version = "1", features = ["full"] }
-libc = "*"
+libc = "0.2"
 shell-quote = "0.8"
 tokio-stream = "0.1"
 tokio-util = "0.7"

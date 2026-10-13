@@ -31,6 +31,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { commands } from "../lib/bindings";
 import {
   TerminalData,
+  safe,
   safeSilent,
   useRemoteState,
   useTerminalData,
@@ -634,9 +635,12 @@ function App() {
             remoteState.connection_status.status === "disconnected") && (
             <div className="connection-status connection-error" role="alert">
               {remoteState.connection_status.error}{" "}
+              {/* The session is gone: reconnecting is the one thing left
+                  to do, so Enter does it. */}
               <button
                 className="connection-retry"
-                onClick={() => safeSilent(commands.reconnect())}
+                autoFocus
+                onClick={() => safe(commands.reconnect())}
               >
                 Reconnect
               </button>

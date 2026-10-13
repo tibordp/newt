@@ -97,22 +97,29 @@ fn chunk_stream(fs: Arc<dyn Filesystem>, vfs_path: VfsPath, start: u64, end: u64
     Body::from_stream(ReceiverStream::new(rx))
 }
 
-pub fn start(fs: Arc<dyn Filesystem>, token: String) -> (u16, JoinHandle<()>) {
+pub fn start(
+    fs: Arc<dyn Filesystem>,
+    token: String,
+) -> Result<(u16, JoinHandle<()>), crate::common::Error> {
     let state = Arc::new(FileServerState { token, fs });
     let app = Router::new()
         .route("/{token}/{vfs_id}", get(serve_file))
         .with_state(state);
 
-    let listener = std::net::TcpListener::bind("localhost:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+    let listen = || -> std::io::Result<(u16, tokio::net::TcpListener)> {
+        let listener = std::net::TcpListener::bind("localhost:0")?;
+        let port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+        Ok((port, tokio::net::TcpListener::from_std(listener)?))
+    };
+    let (port, listener) = listen()
+        .map_err(|e| crate::common::Error::Custom(format!("cannot start the file server: {e}")))?;
 
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.ok();
     });
 
-    (port, handle)
+    Ok((port, handle))
 }
 
 async fn serve_file(
@@ -173,6 +180,7 @@ async fn serve_file(
             )
             .header(header::ACCEPT_RANGES, "bytes")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(header::CACHE_CONTROL, "no-store")
             .body(body)
             .unwrap()
     } else {
@@ -191,6 +199,7 @@ async fn serve_file(
             .header(header::CONTENT_LENGTH, file_size.to_string())
             .header(header::ACCEPT_RANGES, "bytes")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(header::CACHE_CONTROL, "no-store")
             .body(body)
             .unwrap()
     }

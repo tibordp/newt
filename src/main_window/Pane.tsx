@@ -912,6 +912,10 @@ function PaneInner(
 
   const preferences = usePreferences();
   const shortcuts = useCommandShortcuts();
+  const boundKeys = useMemo(
+    () => new Set(preferences?.bindings.map((b) => b.key)),
+    [preferences],
+  );
   // Passed explicitly to every Intl call rather than letting the runtime
   // pick — see `ResolvedPreferences.locale`.
   const locale = useLocale();
@@ -1542,7 +1546,7 @@ function PaneInner(
   };
 
   const onKeyDownCommon = (e: React.KeyboardEvent<Element>) => {
-    const { noModifiers, insertKey } = modifiers(e);
+    const { noModifiers } = modifiers(e);
 
     if (e.key == "ArrowDown" && (noModifiers || e.shiftKey)) {
       relativeJump(1, e.shiftKey);
@@ -1570,8 +1574,6 @@ function PaneInner(
     } else if (e.key == "Escape" && noModifiers) {
       guarded(() => commands.cancel(paneHandle), true);
       guarded(() => commands.setFilter(paneHandle, null, null));
-    } else if (e.key == insertKey && noModifiers) {
-      guarded(() => commands.toggleSelected(paneHandle, null, true));
     } else {
       return false;
     }
@@ -1648,14 +1650,14 @@ function PaneInner(
     } else if (
       e.key.length == 1 &&
       !e.ctrlKey &&
-      !e.shiftKey &&
       !e.metaKey &&
       !e.altKey &&
+      (!e.shiftKey || !boundKeys.has(normalizeKeyEvent(e.nativeEvent))) &&
       !numpadOperator(e.nativeEvent.code)
     ) {
-      // Printable-character heuristic: routes typing into quick-search.
-      // Reliable for en-US; international IME coverage is unverified.
-      // Modifier chords (⌘H, Alt+…) are app shortcuts handled by the
+      // Printable-character heuristic: routes typing into quick-search,
+      // Shift included (capitals, digits on AZERTY) unless the chord is
+      // bound. Modifier chords (⌘H, Alt+…) are app shortcuts handled by the
       // window-level binding dispatcher, which runs *after* this handler
       // — stealing focus into the filter input here would strand them.
       inputRef.current?.focus();
@@ -1666,6 +1668,10 @@ function PaneInner(
   };
 
   const onkeydownFilter: React.KeyboardEventHandler = (e) => {
+    // A key an IME is composing with is the IME's: Enter committing a
+    // candidate must not open the focused file. WebKit sends that Enter
+    // after `compositionend`, flagged only by keyCode 229.
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     const { noModifiers } = modifiers(e);
 
     // Unmodified Backspace always edits the filter text, and Delete does

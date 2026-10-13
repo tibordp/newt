@@ -92,12 +92,12 @@ body {
   right: 0;
   padding: 4px 8px;
   font-size: 13px;
-  color: var(--foreground, #1e1e1e);
-  background: var(--background, #ebebeb);
+  color: var(--color-fg);
+  background: var(--color-chrome);
 }
 
 .connection-error {
-  color: var(--error-foreground, #cd3131);
+  color: var(--color-error);
 }
 
 .connection-retry {

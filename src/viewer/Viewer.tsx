@@ -175,6 +175,9 @@ export function ViewerBody({
         viewerHost.setMode(getAlternateMode(currentMode, resolvedAuto, other)),
       );
     },
+    viewer_close: () => {
+      safe(commands.closeWindow());
+    },
   });
 
   let content: React.ReactNode;

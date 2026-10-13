@@ -106,6 +106,8 @@ export function normalizeKeyEvent(e: KeyboardEvent): string {
     tab: "tab",
     delete: "delete",
     insert: "insert",
+    // macOS reports a PC keyboard's Insert key as Help.
+    help: "insert",
     home: "home",
     end: "end",
     pageup: "pageup",
@@ -147,15 +149,7 @@ export function getCurrentContext(
 export const modifiers = (e: React.KeyboardEvent<Element>) => {
   const isMac = navigator.platform.indexOf("Mac") === 0;
   const noModifiers = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-  let ctrlOrMeta;
-  let insertKey;
-  if (isMac) {
-    ctrlOrMeta = e.metaKey;
-    insertKey = "Help";
-  } else {
-    ctrlOrMeta = e.ctrlKey;
-    insertKey = "Insert";
-  }
+  const ctrlOrMeta = isMac ? e.metaKey : e.ctrlKey;
 
-  return { isMac, noModifiers, ctrlOrMeta, insertKey };
+  return { isMac, noModifiers, ctrlOrMeta };
 };

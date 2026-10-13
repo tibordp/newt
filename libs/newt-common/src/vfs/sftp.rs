@@ -248,8 +248,12 @@ impl SftpVfs {
             .arg("ServerAliveInterval=30")
             .arg("-o")
             .arg("ServerAliveCountMax=3")
-            .arg(host)
+            // `-s` is a flag: the subsystem name goes where the remote
+            // command does, after the host. `--` keeps the host from being
+            // read as an option (`-oProxyCommand=…`).
             .arg("-s")
+            .arg("--")
+            .arg(host)
             .arg("sftp")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

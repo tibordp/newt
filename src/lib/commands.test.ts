@@ -125,6 +125,7 @@ describe("normalizeKeyEvent", () => {
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Tab" }))).toBe("tab");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Delete" }))).toBe("delete");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Insert" }))).toBe("insert");
+    expect(normalizeKeyEvent(fakeKeyEvent({ key: "Help" }))).toBe("insert");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "Home" }))).toBe("home");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "End" }))).toBe("end");
     expect(normalizeKeyEvent(fakeKeyEvent({ key: "PageUp" }))).toBe("pageup");

@@ -169,6 +169,13 @@ pub fn cmd_select_all(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
     })
 }
 
+/// Toggle the focused entry's selection and move to the next one.
+#[tauri::command]
+#[specta::specta]
+pub fn cmd_toggle_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+    toggle_selected(ctx, pane_handle, None, true)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_invert_selection(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {

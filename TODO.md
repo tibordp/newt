@@ -39,9 +39,10 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts �
 
 - A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
 
-## File icons
+## UI reviews
 
 - Review the file-list icons as a whole. Today a name maps through the seti theme's `mapping.json` (`src/lib/fileIcons.ts`), and anything unmapped gets the plain text-lines glyph — executables, installers and app bundles included. Known gaps: `.exe`/`.msi`/`.com`/`.cmd` are unmapped though seti's `windows` glyph (used for `.bat`) fits; the font's `apple` glyph (U+E002) is unused and suits app bundles; a package (`Annotation::Package`) shows its name's file glyph, which reads oddly for `.app`; an extensionless Unix executable has no icon of its own — seti has none, nerd-symbols has `cod-file_binary` / `cod-terminal` but in an outline style next to seti's filled ones; installers and images (`.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`) are unmapped. Decide one consistent source (seti only, or seti plus a matching subset of nerd-symbols), whether the lookup takes the mode (execute bits) and package-ness besides the name, and what a non-`.app` package (`.rtfd`, a photo library) shows. The drag ghost (`getFileIconChar` in `Pane.tsx`) should follow whatever the list does.
+- Rethink how background operations are presented. The panel at the bottom of the main window was the quickest way to get them working, not a considered design: where running, finished and failed operations live, how a prompt waiting on the user gets noticed, and what stays on screen once they're done.
 
 ## Drag and drop
 
@@ -114,7 +115,7 @@ Release engineering:
 - Sign Windows builds (MSI, `newt.exe`, and `newt-agent.exe`, which UAC shows as "Unknown publisher" for elevated sessions).
 - An update check against the `downloads/latest.json` CI already publishes.
 - `publish` rewrites `latest.json` from the current run alone, so a lean run drops the Intel Mac, ARM Windows and ARM Linux downloads a full run published. Merge instead.
-- CI on `macos-latest` and `windows-latest` (clippy + tests); today only Linux builds on push. Pin the toolchain (`rust-toolchain.toml`), and `libc = "*"` in `src-tauri/Cargo.toml`.
+- CI on `macos-latest` and `windows-latest` (clippy + tests); today only Linux builds on push. Pin the toolchain (`rust-toolchain.toml`).
 - macOS: fail the release when signing secrets are missing, verify with `codesign --verify --deep` / `spctl` / `stapler validate`, set `minimumSystemVersion` (the frontend uses `color-mix()`, Safari 16.2, while Vite targets `safari13`). Trash goes through Finder AppleScript (trash-rs `DeleteMethod::Finder`) under the hardened runtime without `NSAppleEventsUsageDescription`; consider `NsFileManager`. Guide users to Full Disk Access on TCC-denied paths.
 - The remote agent cache (`scripts/bootstrap.sh`, `newt-agent-${NEWT_HASH}`) isn't keyed by triple, so a home shared between architectures execs the wrong agent forever. The cleanup loop also deletes other versions' agents, and the `/tmp/newt-$(id -u)` fallback (and `/tmp/newt` in `agent_cache_dir()`) accepts a directory another user created first. A raw-upload `head -c` short read leaves a truncated agent that is reused.
 - Elevated sessions from the AppImage: root can't exec the agent from the FUSE mount. `NEWT_AGENT_DIR` also leaks into terminal shells.
@@ -129,8 +130,7 @@ Correctness and UX:
 
 - File clipboard: Mod+C/Mod+V are path-text only, and paste after copying in Explorer/Finder errors or navigates to a bare name.
 - Files opened externally from remote/archive VFSes are temp copies never uploaded back (edits lost silently) and never deleted; a failed launch only logs.
-- Toggle-selection key is `Help` on macOS (absent on current keyboards) and hardcoded in `Pane.tsx`; make it a rebindable command.
-- Quick search: Shift/AltGr letters can't start it (AZERTY digits, uppercase names), and nothing guards IME composition (`isComposing`), so committing a CJK candidate with Enter opens the focused file.
+- Quick search: characters typed with AltGr (Windows, arriving as Ctrl+Alt) or Option (macOS) can't start it; those modifiers are also how user chords are typed, so it needs a rule (e.g. start it only when the chord is unbound).
 - FIFOs and device files are opened as regular files: copy and view hang (or copy `/dev/zero` forever).
 - Case-insensitive destinations: `Makefile` and `makefile` from a case-sensitive source collide mid-operation (likewise NFC/NFD and Windows trailing dots); detect before writing.
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
@@ -140,24 +140,21 @@ Correctness and UX:
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - The remote connection log (stderr of an agent run at `RUST_LOG=info`, including full operation-request Debug dumps) grows without bound and is re-serialised on every publish.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.
-- `std::env::current_dir().unwrap()` in `create_local_services` (deleted launch directory), `bind("localhost:0").unwrap()` in the file server.
-- Two instances clobber `state.json` and race on a fixed `sessions.json.tmp`; `UpdatePublisher::publish` can emit out of order.
+- Two instances clobber each other's `state.json`; `UpdatePublisher::publish` can emit out of order (the frontend sees a version gap and re-requests full state).
 - Properties: owner/group by name silently does nothing; Windows has no attribute editor.
-- Reconnect is mouse-only, `safeSilent`, and its bar uses undefined colour tokens (`--foreground`, `--error-foreground`).
 - Terminal: the keys that escape xterm are hardcoded, so rebinding `focus_panes`/`toggle_terminal_panel` strands focus; Close/Clear/Select All are menu-only; font, size and scrollback aren't settings.
 - Window close/quit kills busy terminals without asking; `Mod+Q` is Ctrl+Q off macOS.
 - Copy/Move can't take a relative destination (`../backup/`) and Create Directory doesn't create `a/b/c`; errors there are native popups over the dialog.
 - Errors carry no path ("Permission denied (os error 13)"); file names aren't bidi-isolated (RLO spoofing).
-- Light theme `--color-fg-muted` (#929292) is below WCAG AA; undefined tokens `--color-hover`, `--color-bg-hover`.
+- Light theme `--color-fg-muted` (#929292, 3.1:1 on white) is below WCAG AA; about #6a6a6a would clear 4.5:1 on both the background and the chrome.
 - No undo for file operations; no OS notification when a background operation finishes or stops on a prompt; no minimum window size.
 - Bookmarks have no Settings tab (the dialog-is-the-file rule); Mod+H doesn't persist.
-- Cmd/Ctrl+W doesn't close viewer and editor windows; Alt+F5 is taken by GNOME; F11 is Show Desktop on macOS.
-- `connections.toml` reads as empty on any parse error and is written non-atomically.
-- Files materialised from downloads/archives get no Mark-of-the-Web or quarantine; the file server sends no `Cache-Control: no-store` and `Access-Control-Allow-Origin: *`.
+- Alt+F5 is taken by GNOME; F11 is Show Desktop on macOS.
+- The Connect dialog lists no profiles when `connections.toml` doesn't parse, with only a log line; show the parse error there instead.
+- Files materialised from downloads/archives get no Mark-of-the-Web or quarantine; the file server sends `Access-Control-Allow-Origin: *` (it needs the webview's origin, which is `tauri://localhost`, `http://tauri.localhost` on Windows, or the dev server).
 - Archive containing a symlink `d -> ~/.ssh` and `d/authorized_keys`: check copy-out can't write through the link.
 - Windows named pipes (elevation, shell control, askpass) use the default DACL, readable by Everyone; `/tmp` socket names are predictable.
 - Host-side RPC dispatch trusts a compromised remote: clipboard read/write via shell control, askpass prompts with arbitrary text, `API_HOST_FETCH_AGENT` triple path joins, a 4 GiB frame reservation.
-- SSH/SFTP hosts aren't preceded by `--` (`-oProxyCommand=` from a shared `connections.toml`).
 - FEATURE_DUMP drift: Open Config File (says built-in editor), Escape (says clears selection), Rename (says full name), terminal paste, Settings categories, `[environment]`, hidden files, ownership.
 
 ## Major new features (groom/write design docs first)

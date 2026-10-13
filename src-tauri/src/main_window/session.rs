@@ -855,9 +855,16 @@ fn create_local_services(
         discovery_provider: Arc::new(newt_common::discovery::Local::new(
             preferences.load().environment.extra_path.clone(),
         )),
+        // A launch directory deleted from under the process leaves no
+        // current directory.
         initial_dir: VfsPath::new(
             VfsId::ROOT,
-            newt_common::vfs::path::PathBuf::from_native(&std::env::current_dir().unwrap()),
+            std::env::current_dir()
+                .ok()
+                .or_else(std::env::home_dir)
+                .map_or_else(newt_common::vfs::path::PathBuf::root, |dir| {
+                    newt_common::vfs::path::PathBuf::from_native(&dir)
+                }),
         ),
         connection: None,
     }
@@ -1472,7 +1479,7 @@ pub(super) async fn connect(
 
     let file_server_token = uuid::Uuid::new_v4().to_string();
     let (file_server_port, file_server_handle) =
-        crate::file_server::start(services.fs.clone(), file_server_token.clone());
+        crate::file_server::start(services.fs.clone(), file_server_token.clone())?;
 
     let event_loop_handle = tokio::spawn({
         let ctx = main_window_ctx;

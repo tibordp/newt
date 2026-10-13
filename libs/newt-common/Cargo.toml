@@ -66,7 +66,7 @@ zip = "8"
 [target.'cfg(unix)'.dependencies]
 xattr = "1.6.1"
 expanduser = "*"
-libc = "*"
+libc = "0.2"
 nix = { version = "0.31", features = ["fs", "user"] }
 pty-process = { path = "../pty-process" }
 

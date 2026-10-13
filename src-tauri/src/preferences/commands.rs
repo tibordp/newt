@@ -130,6 +130,16 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "toggle_selection".into(),
+            name: "Toggle Selection".into(),
+            short_name: None,
+            category: "Selection".into(),
+            default_keys: vec!["insert".into()],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "invert_selection".into(),
             name: "Invert Selection".into(),
             short_name: None,
@@ -909,6 +919,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         // be rebound. A command listed here fires only in the modes whose
         // component registers a handler for it.
         viewer_command("viewer_toggle_hex", "Viewer: Toggle Alternate Mode", &["f3"]),
+        viewer_command("viewer_close", "Viewer: Close", &["mod+w"]),
         viewer_command("viewer_copy", "Viewer: Copy", &["mod+c"]),
         viewer_command("viewer_select_all", "Viewer: Select All", &["mod+a"]),
         viewer_command("viewer_find", "Viewer: Find", &["mod+f"]),
