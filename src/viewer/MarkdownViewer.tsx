@@ -52,16 +52,6 @@ th { background: var(--color-chrome); }
 img { max-width: 100%; }
 hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5em 0; }
 li > input[type=checkbox] { margin-right: 0.4em; }
-/* Blocks off screen skip style, layout and paint until they scroll into
-   view; until then they count as a few lines tall. */
-article > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
-/* Containment keeps a block's edge margins inside it instead of letting
-   them merge with its own, so drop the ones that would otherwise escape. */
-blockquote > :first-child,
-article > :is(ul, ol) > li:first-child > :first-child { margin-top: 0; }
-blockquote > :last-child,
-article > details > :last-child,
-article > :is(ul, ol) > li:last-child > :last-child { margin-bottom: 0; }
 /* Bullets and numbers are generated content, not list markers: WebKit
    paints a selection set from script over ::marker but not one made by
    dragging, and leaves it painted once the selection is gone. Generated

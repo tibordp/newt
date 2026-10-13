@@ -36,6 +36,7 @@ import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 import { useEmbeddedCopy, useViewerHost } from "./host";
+import { useWheelScroll } from "../lib/useWheelScroll";
 
 interface TextPosition {
   line: number;
@@ -92,6 +93,12 @@ function getColAtPoint(
 function compareTextPos(a: TextPosition, b: TextPosition): number {
   return a.line !== b.line ? a.line - b.line : a.col - b.col;
 }
+
+/**
+ * A selection end past every line, scanned or not — Select All's, so that
+ * selecting the whole file doesn't scan it.
+ */
+const END: TextPosition = { line: Number.POSITIVE_INFINITY, col: 0 };
 
 function orderedTextSel(sel: TextSelection): [TextPosition, TextPosition] {
   return compareTextPos(sel.anchor, sel.head) <= 0
@@ -412,6 +419,8 @@ export function TextViewer({
   const colToByteOffset = useCallback(
     (line: number, col: number): number => {
       const ls = lineStartsRef.current;
+      if (line === END.line && !eofFoundRef.current && fileSize > 0)
+        return fileSize;
       if (line >= ls.length) return scannedToRef.current;
       const lineStart = ls[line];
       if (col === 0) return lineStart;
@@ -423,7 +432,7 @@ export function TextViewer({
       const lineBytes = collectBytes(chunkCache.current, lineStart, lineEnd);
       return lineStart + colToByteLength(lineBytes, encoding, col);
     },
-    [chunkCache, encoding, scan],
+    [chunkCache, encoding, scan, fileSize],
   );
 
   // Compute the byte range [start, end) for the current selection
@@ -456,13 +465,8 @@ export function TextViewer({
   });
 
   const selectAll = useCallback(() => {
-    const lastLine = lineCountRef.current - 1;
-    const lastLineText = getLineText(lastLine);
-    setSelection({
-      anchor: { line: 0, col: 0 },
-      head: { line: lastLine, col: lastLineText.length },
-    });
-  }, [getLineText]);
+    setSelection({ anchor: { line: 0, col: 0 }, head: END });
+  }, []);
 
   const [goToOpen, setGoToOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -694,12 +698,17 @@ export function TextViewer({
     };
   }, [getPositionFromMouse, lineHeight]);
 
-  const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      setTopRow(Math.floor((e.currentTarget.scrollTop * scale) / lineHeight));
+  const syncScroll = useCallback(
+    (el: HTMLElement) => {
+      setTopRow(Math.floor((el.scrollTop * scale) / lineHeight));
     },
     [lineHeight, scale],
   );
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => syncScroll(e.currentTarget),
+    [syncScroll],
+  );
+  useWheelScroll(containerRef, { sync: syncScroll });
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -933,9 +942,13 @@ export function TextViewer({
               const endByte = colToByteOffset(end.line, end.col);
               const byteCount = endByte - startByte;
               const isSameLine = start.line === end.line;
+              const endText =
+                end.line === END.line
+                  ? "end"
+                  : `L${end.line + 1} C${end.col + 1}`;
               const posText = isSameLine
                 ? `L${start.line + 1} C${start.col + 1}\u2013C${end.col + 1}`
-                : `L${start.line + 1} C${start.col + 1} \u2013 L${end.line + 1} C${end.col + 1}`;
+                : `L${start.line + 1} C${start.col + 1} \u2013 ${endText}`;
               return (
                 <>
                   <span className={styles.statusSeparator} aria-hidden>

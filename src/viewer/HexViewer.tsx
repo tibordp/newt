@@ -32,6 +32,7 @@ import { useScopedBindings } from "../lib/scopedBindings";
 import { ModeToggle } from "./ModeToggle";
 import { commands } from "../lib/bindings";
 import { useEmbeddedCopy, useViewerHost } from "./host";
+import { useWheelScroll } from "../lib/useWheelScroll";
 
 export interface HexViewerProps {
   filePath: string;
@@ -477,9 +478,9 @@ export function HexViewer({
 
   // Simple scroll-driven positioning: derive topRow from scrollTop,
   // render visible rows at their natural positions using a top spacer.
-  const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const scrollTop = e.currentTarget.scrollTop;
+  const syncScroll = useCallback(
+    (el: HTMLElement) => {
+      const scrollTop = el.scrollTop;
       setTopRow(
         Math.max(
           0,
@@ -489,6 +490,11 @@ export function HexViewer({
     },
     [maxRow, rowHeight, scale],
   );
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => syncScroll(e.currentTarget),
+    [syncScroll],
+  );
+  useWheelScroll(containerRef, { sync: syncScroll });
 
   // Sync scrollbar to topRow for keyboard-driven changes. For mouse-driven
   // scrolling, topRow was derived from scrollTop so they already match and

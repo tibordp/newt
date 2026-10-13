@@ -49,6 +49,7 @@ import { useCommandShortcuts } from "../lib/scopedBindings";
 import { IconMaximize, IconPaneSide, IconRestore } from "./modals/primitives";
 import { useLocale } from "../lib/locale";
 import { useRuntimeState } from "../lib/runtimeState";
+import { useWheelScroll } from "../lib/useWheelScroll";
 import {
   FileContextMenuContent,
   PaneContextMenuContent,
@@ -1817,8 +1818,7 @@ function PaneInner(
     ],
   );
 
-  const onScroll: React.UIEventHandler<HTMLElement> = (e) => {
-    const el = e.currentTarget;
+  const syncScroll = (el: HTMLElement) => {
     tableHeaderRef.current!.scrollLeft = el.scrollLeft;
 
     // Report viewport position to Rust for window sliding.
@@ -1846,6 +1846,23 @@ function PaneInner(
     lastViewportReportRef.current = [firstVisible, visibleCount, fw.offset];
     safeSilent(commands.setViewport(paneHandle, firstVisible, visibleCount));
   };
+  const onScroll: React.UIEventHandler<HTMLElement> = (e) =>
+    syncScroll(e.currentTarget);
+  // The wheel stops at the edge of the rows Rust has sent, and goes on
+  // once the window slides.
+  useWheelScroll(containerRef, {
+    sync: syncScroll,
+    bounds: (el) => {
+      const fw = fileWindowRef.current;
+      const end = fw.offset + fw.items.length;
+      return [
+        fw.offset > 0 ? fw.offset * rowHeight : 0,
+        end < fw.total_count
+          ? end * rowHeight - el.clientHeight
+          : Number.POSITIVE_INFINITY,
+      ];
+    },
+  });
 
   const widthPrefix = `pane-${paneHandle}-column-`;
   const paneRef = useRef<HTMLDivElement>(null);

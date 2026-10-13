@@ -150,7 +150,7 @@ Bottom strip on each pane showing loading state, the current file's full display
 
 ### File List
 
-Server-side windowed list with a fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files.
+Server-side windowed list with a fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files. The mouse wheel and trackpad scroll from script and stop at the edge of the rows Rust has sent, going on as the window slides, so a fast flick never shows blank rows, and the list stops when the wheel does; dragging the scrollbar can still outrun the window.
 
 Each pane keeps its cursor on screen: a solid accent bar in the pane that has focus, and neutral grey in the other one — and in both while the terminal has focus — so the cursor a Tab or a click on the other pane would land on is always visible. Marked files get a light accent tint, joined into one block across a run of them, with the name in the accent colour. While the window itself is in the background (another app, another Newt window, or a native dialog has the keyboard), the focus marks all turn grey — the cursor like the other pane's, the header's focus dot, and the active terminal tab's line — and come back when the window does.
 
@@ -759,7 +759,7 @@ The status bar includes mode toggle buttons on the right side: the auto-detected
   - **Detection** is sniffed from the data the viewer already has: once the first chunk lands, the text viewer hands its leading 64 KiB to `sniff_viewer_encoding`, which records the result in the viewer's Rust state (menu and status bar follow via the usual state push). Order: BOM (UTF-8, UTF-16 LE/BE), then BOM-less UTF-16 by null-byte parity, then UTF-8 validity (a sequence cut off by the prefix boundary is not held against it), then `chardetng` (Firefox's detector) for legacy codepages. The view renders as UTF-8 until the result lands and then switches once; the line index is rebuilt only when the newline scan changes (UTF-16 needs an aligned code-unit scan; every other catalogue encoding never places 0x0A inside a multibyte sequence) or when a BOM moves the start of line 0.
   - **Columns ↔ bytes**: selection columns are UTF-16 code units of the decoded line. Mapping back to bytes is 1:1 for single-byte encodings, 2:1 for UTF-16, a lead-byte count for UTF-8, and a byte-at-a-time streaming decode for the legacy multibyte encodings (the browser has no encoder for them). ISO-2022-JP is decoded per line, so a line that ends inside a JIS run shows the next line wrong until an escape resets it.
   - **Copy and search** transcode on the host with `encoding_rs`: copy decodes the selected bytes in the effective encoding, literal search encodes the query into it (UTF-16 spelled out by hand, since encoding_rs encodes UTF-16 as UTF-8 per WHATWG). Regex search stays a byte regex over the raw file, so non-ASCII regex literals only match in UTF-8 files. The hex viewer's text search is always UTF-8.
-- **Virtual scrolling**: Only renders visible lines plus 5-line overscan for smooth scrolling. Scroll scaling for files exceeding browser's max element height (16M px).
+- **Virtual scrolling**: Only renders visible lines plus 5-line overscan. The mouse wheel and trackpad move the view from script rather than natively, so the lines a scroll exposes are drawn in the same frame and never flash blank (the scrollbar stays native). Scroll scaling for files exceeding browser's max element height (16M px).
 - **Incremental line index**: Line positions are built by scanning for `0x0A` in chunks as they load. The `+` after the line count in the status bar indicates more lines may exist in unscanned chunks.
 
 **Selection**:
@@ -770,7 +770,9 @@ The status bar includes mode toggle buttons on the right side: the auto-detected
 - **Auto-scroll**: Dragging near top/bottom edges (20px margin) auto-scrolls.
 - **Escape**: Clears the selection. If there is no selection, closes the viewer.
 
-**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`, decoded in the effective encoding). 10 MB copy size limit.
+**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`, decoded in the effective encoding). 10 MB copy size limit: a larger selection fails with an error rather than copying part of it.
+
+**Select All** (Ctrl+A) selects to the end of the file, including the part not yet scanned for lines; nothing is read until it is copied. The status bar shows the selection's end as "end". For a file whose size isn't known up front (a `/proc` file, a pipe), it ends where the scan has reached.
 
 **Search** (Ctrl+F): Opens a search bar at the bottom of the viewer.
 - **Literal text search** (default) or **regex** (toggle with `.*` button).
@@ -817,7 +819,7 @@ A spreadsheet-style grid over delimited text. It streams like Text mode — the 
 
 ### Markdown Mode
 
-Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, footnotes) with `comrak`, styled after GitHub's and following the app's light/dark theme. Parsing runs off the UI thread, and a long document fills in from the top a few blocks per frame, so the window — and the file list beside Quick View — stays responsive while it does; blocks scrolled out of view skip layout until they come into view. Files over 4 MB open in Text mode instead.
+Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, footnotes) with `comrak`, styled after GitHub's and following the app's light/dark theme. Parsing runs off the UI thread, and a long document fills in from the top a few blocks per frame, so the window — and the file list beside Quick View — stays responsive while it does. Files over 4 MB open in Text mode instead.
 
 - **Safety**: the rendered HTML, raw HTML in the document included, is parsed in Rust and kept only as far as an allowlist goes: ordinary text, list, table and heading elements, `<details>`, footnote sections and read-only task-list checkboxes, each with a few attributes (links, image sources and sizes, table spans and alignment, `id`, `title`). An element that isn't listed gives way to its text; scripts, styles, frames, embedded objects, form controls, SVG and MathML are dropped with their content, and no `style`, `class` or event-handler attribute survives. Links keep only `http(s):`, `mailto:` and relative targets, and images only `data:image/` and relative ones — nothing remote. The page receives the result as a tree of elements and text that it builds with the DOM API — never as markup to parse — inside a shadow root, which keeps the document's styles and ids from touching the viewer's own; the viewer's CSP forbids inline scripts and inline event handlers besides. The CSP also keeps remote content out: images load only from the file itself (relative paths, served through the viewer's file server — so they work in remote sessions and archives too) or `data:` URIs, so README badges and tracking pixels don't load. A relative image is resolved (in Rust, against the document's folder) and kept only while it stays on the document's own volume; so is a relative link followed into the viewer. On Windows a path off the volume — root-relative like `/server/share/x.png`, or climbing past the drive with `..` — would name a network share, and merely loading it would hand the user's Windows credentials to that server. On macOS, Linux and every network filesystem there is one root, so nothing changes there.
 - **Links**: `http(s):` and `mailto:` links open in the system browser; a relative link opens that file in the same viewer window (in whatever mode suits it); `#anchor` links scroll to the heading with GitHub's anchor for it, to a footnote, or to an element the document's raw HTML gives an `id` (prefixed `user-content-`, as on GitHub). Links with any other scheme do nothing — the app's URL opener refuses anything but web and mail links, since it would otherwise launch local files and programs.
@@ -829,7 +831,7 @@ Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, 
 - Non-printable bytes shown as `.` in the ASCII column. Printable range: 0x20–0x7E.
 - **Virtual scrolling** with max scroll height clamping (prevents browser rendering issues with very tall elements).
 - **On-demand chunk loading**: 128 KB chunks with LRU cache (32 chunks). Preloads chunks for the visible viewport and overscan area.
-- **Mouse wheel**: Handles both pixel-mode and line-mode scroll deltas. Accumulates sub-row pixel deltas across events to snap to row boundaries.
+- **Mouse wheel**: moves the view from script, as in Text mode, so rows a scroll exposes are drawn in the same frame. Handles both pixel-mode and line-mode scroll deltas.
 
 **Selection**:
 - **Byte-granular**: Click in the hex or ASCII column to select a byte. The clicked column becomes the "active" column (blue highlight); the other column shows the same selection in grey.
