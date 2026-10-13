@@ -2177,6 +2177,12 @@ show_hidden: boolean;
  */
 folders_first: boolean; 
 /**
+ * Sort numbers in names by value, as Finder and Explorer do: `IMG_2`
+ * before `IMG_10`. Off, names sort character by character, as `ls`
+ * does.
+ */
+natural_sort: boolean; 
+/**
  * Show the F-key command bar at the bottom of the window.
  */
 show_command_bar: boolean; 

@@ -203,6 +203,7 @@ Click a column header to sort ascending by that key; click the same header again
 - When "Folders first" is enabled (preference), directories sort before files (but after `..`).
 - Extension sort treats directories as having no extension.
 - Name and extension sorting is **case-insensitive** (Unicode `to_lowercase`), with a stable byte-order tiebreaker for entries differing only by case.
+- **Natural sort** (`appearance.natural_sort`, off by default): Name sorting compares runs of digits by their value, so `IMG_2` comes before `IMG_10` and `v1.9` before `v1.10`, as Finder and Explorer order them. Off, names sort character by character, as `ls` does (`IMG_10` before `IMG_2`). Names that differ only in leading zeros or case keep the character order between them.
 
 **Visual indicators**:
 - Selected files: distinct background highlight.
@@ -1751,6 +1752,7 @@ A remote or elevated session's agent ends itself on a panic, which the window se
 [appearance]
 show_hidden = false         # Show files starting with "."
 folders_first = true        # Directories before files in sort order
+natural_sort = false        # Numbers in names sort by value (IMG_2 before IMG_10)
 show_command_bar = true     # Show F-key bar at bottom of window
 show_pane_header = true     # Show breadcrumb / VFS selector / free-space header per pane
 show_pane_status = true     # Show file count / selection size status bar per pane

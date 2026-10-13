@@ -92,6 +92,11 @@ pub struct AppearancePreferences {
     /// Always show folders before files regardless of sort order.
     #[schemars(title = "Folders First")]
     pub folders_first: bool,
+    /// Sort numbers in names by value, as Finder and Explorer do: `IMG_2`
+    /// before `IMG_10`. Off, names sort character by character, as `ls`
+    /// does.
+    #[schemars(title = "Natural Sort")]
+    pub natural_sort: bool,
     /// Show the F-key command bar at the bottom of the window.
     #[schemars(title = "Show Command Bar")]
     pub show_command_bar: bool,
@@ -177,6 +182,7 @@ impl Default for AppearancePreferences {
         Self {
             show_hidden: false,
             folders_first: true,
+            natural_sort: false,
             show_command_bar: true,
             show_pane_header: true,
             show_pane_status: true,

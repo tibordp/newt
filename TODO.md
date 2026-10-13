@@ -129,7 +129,6 @@ Correctness and UX:
 
 - File clipboard: Mod+C/Mod+V are path-text only, and paste after copying in Explorer/Finder errors or navigates to a bare name.
 - Files opened externally from remote/archive VFSes are temp copies never uploaded back (edits lost silently) and never deleted; a failed launch only logs.
-- Natural, locale-aware name sort (`IMG_10` sorts before `IMG_2`).
 - Toggle-selection key is `Help` on macOS (absent on current keyboards) and hardcoded in `Pane.tsx`; make it a rebindable command.
 - Quick search: Shift/AltGr letters can't start it (AZERTY digits, uppercase names), and nothing guards IME composition (`isComposing`), so committing a CJK candidate with Enter opens the focused file.
 - FIFOs and device files are opened as regular files: copy and view hang (or copy `/dev/zero` forever).

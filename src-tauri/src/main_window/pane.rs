@@ -1657,6 +1657,33 @@ impl serde::Serialize for Pane {
     }
 }
 
+/// Names compared with runs of digits by their value (`IMG_2` before
+/// `IMG_10`) and the rest case-insensitively. Names that differ only in
+/// leading zeros or case compare equal; the caller breaks the tie.
+fn natural_cmp(mut a: &str, mut b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn digits(s: &str) -> (&str, &str) {
+        s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()))
+    }
+    loop {
+        let (Some(x), Some(y)) = (a.chars().next(), b.chars().next()) else {
+            return b.is_empty().cmp(&a.is_empty());
+        };
+        let order = if x.is_ascii_digit() && y.is_ascii_digit() {
+            let ((da, ra), (db, rb)) = (digits(a), digits(b));
+            (a, b) = (ra, rb);
+            let (da, db) = (da.trim_start_matches('0'), db.trim_start_matches('0'));
+            da.len().cmp(&db.len()).then_with(|| da.cmp(db))
+        } else {
+            (a, b) = (&a[x.len_utf8()..], &b[y.len_utf8()..]);
+            x.to_lowercase().cmp(y.to_lowercase())
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+}
+
 fn compare_extension(a: &File, b: &File) -> std::cmp::Ordering {
     if a.is_dir && b.is_dir {
         return std::cmp::Ordering::Equal;
@@ -1804,6 +1831,9 @@ pub struct PaneViewState {
     /// re-sort in place (they arrive without preference access).
     #[serde(skip)]
     folders_first: bool,
+    /// `appearance.natural_sort`, cached for the same reason.
+    #[serde(skip)]
+    natural_sort: bool,
     /// Last viewport hint from the frontend: (first_visible_index, visible_count).
     #[serde(skip)]
     viewport_hint: (usize, usize),
@@ -2200,11 +2230,19 @@ impl PaneViewState {
 
             let (a, b) = if self.sorting.asc { (a, b) } else { (b, a) };
             match self.sorting.key {
-                SortingKey::Name => a
-                    .name
-                    .to_lowercase()
-                    .cmp(&b.name.to_lowercase())
-                    .then_with(|| a.name.cmp(&b.name)),
+                SortingKey::Name => {
+                    let by_character = || {
+                        a.name
+                            .to_lowercase()
+                            .cmp(&b.name.to_lowercase())
+                            .then_with(|| a.name.cmp(&b.name))
+                    };
+                    if self.natural_sort {
+                        natural_cmp(&a.name, &b.name).then_with(by_character)
+                    } else {
+                        by_character()
+                    }
+                }
                 SortingKey::Extension => compare_extension(a, b),
                 SortingKey::Size => {
                     Self::effective_size(enrichments, a).cmp(&Self::effective_size(enrichments, b))
@@ -2400,6 +2438,7 @@ impl PaneViewState {
             .cloned()
             .collect();
 
+        self.natural_sort = preferences.appearance.natural_sort;
         self.sort(preferences.appearance.folders_first);
         self.all_files = self.files.clone();
         self.apply_visual_filter();
@@ -3151,6 +3190,64 @@ mod tests {
         vs.set_sorting(descending, false);
         assert_eq!(vs.viewport_hint.0, 3);
         assert_eq!(vs.scroll_shift, 0);
+    }
+
+    #[test]
+    fn natural_cmp_orders_digit_runs_by_value() {
+        let mut names = vec![
+            "IMG_10.jpg",
+            "img_2.jpg",
+            "IMG_1.jpg",
+            "IMG_02.jpg",
+            "v1.10",
+            "v1.9",
+            "a",
+            "a1",
+            "Ünïcode 3",
+            "ünïcode 20",
+            "x007",
+            "x7b",
+        ];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(
+            names,
+            [
+                "a",
+                "a1",
+                "IMG_1.jpg",
+                "img_2.jpg",
+                "IMG_02.jpg",
+                "IMG_10.jpg",
+                "v1.9",
+                "v1.10",
+                "x007",
+                "x7b",
+                "Ünïcode 3",
+                "ünïcode 20",
+            ]
+        );
+        assert_eq!(natural_cmp("a01", "a1"), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn name_sort_is_by_character_unless_natural() {
+        let names = [("..", true), ("f10", false), ("f9", false), ("F1", false)];
+        let by_name = Sorting {
+            key: SortingKey::Name,
+            asc: true,
+        };
+        let order = |vs: &PaneViewState| -> Vec<String> {
+            vs.files.iter().map(|f| f.name.clone()).collect()
+        };
+
+        let mut vs = listed(&names);
+        vs.set_sorting(by_name.clone(), false);
+        assert_eq!(order(&vs), ["..", "F1", "f10", "f9"]);
+
+        let mut vs = listed(&names);
+        vs.natural_sort = true;
+        vs.set_sorting(by_name, false);
+        assert_eq!(order(&vs), ["..", "F1", "f9", "f10"]);
     }
 
     #[test]
