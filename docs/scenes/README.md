@@ -12,7 +12,8 @@ npm run screenshots -- terminal editor --scheme dark
 PNGs land in `docs/screenshots/` (`<scene>.png`, `<scene>-dark.png`; `--out`
 to change) at 2×, in macOS window chrome with its shadow on a transparent
 background. Run it on a Mac: default preferences, and with them the rendered
-shortcuts, are exported from Rust for the host platform.
+shortcuts, are exported from Rust for the host platform. Captures run in parallel,
+half as many at once as the machine has cores; `--jobs N` sets it.
 
 ## Scenes
 

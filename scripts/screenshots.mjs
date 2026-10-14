@@ -2,12 +2,13 @@
 // Capture the scenes in docs/scenes/library as PNGs in macOS window chrome.
 // See docs/scenes/README.md.
 //
-//   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark]
+//   npm run screenshots -- [scene...] [--out DIR] [--scheme light|dark] [--jobs N]
 //
 // Needs Playwright's WebKit once: `npx playwright install webkit`.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -22,6 +23,7 @@ const { values: opts, positionals: only } = parseArgs({
   options: {
     out: { type: "string", default: join(root, "docs", "screenshots") },
     scheme: { type: "string" },
+    jobs: { type: "string" },
   },
 });
 
@@ -50,6 +52,11 @@ const server = await createServer({
   root,
   logLevel: "warn",
   server: { port: 1430, strictPort: false },
+  // Scan the scene pages for dependencies up front too: one found only
+  // while a scene loads makes Vite re-optimize and reload modules under it.
+  optimizeDeps: {
+    entries: ["index.html", "docs/scenes/frame.html", "docs/scenes/scene.html"],
+  },
 });
 await server.listen();
 const base = server.resolvedUrls.local[0];
@@ -64,22 +71,42 @@ try {
   await index.close();
 
   const unknown = only.filter((n) => !(n in scenes));
-  if (unknown.length) throw new Error(`unknown scene(s): ${unknown.join(", ")}`);
+  if (unknown.length)
+    throw new Error(`unknown scene(s): ${unknown.join(", ")}`);
 
+  const jobs = [];
   for (const [name, { schemes }] of Object.entries(scenes)) {
     if (only.length && !only.includes(name)) continue;
     for (const scheme of schemes) {
       if (opts.scheme && scheme !== opts.scheme) continue;
-      const out = join(opts.out, `${name}${scheme === "dark" ? "-dark" : ""}.png`);
-      try {
-        await capture(name, scheme, out);
-        console.log(`✓ ${out}`);
-      } catch (e) {
-        failed = true;
-        console.error(`✗ ${name} (${scheme}): ${e.message}`);
-      }
+      const out = join(
+        opts.out,
+        `${name}${scheme === "dark" ? "-dark" : ""}.png`,
+      );
+      jobs.push({ name, scheme, out });
     }
   }
+
+  // Each capture has a browser context of its own, so several run at once.
+  const workers = Math.min(
+    jobs.length,
+    Number(opts.jobs) || Math.max(1, Math.floor(availableParallelism() / 2)),
+  );
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (next < jobs.length) {
+        const { name, scheme, out } = jobs[next++];
+        try {
+          await capture(name, scheme, out);
+          console.log(`✓ ${out}`);
+        } catch (e) {
+          failed = true;
+          console.error(`✗ ${name} (${scheme}): ${e.message}`);
+        }
+      }
+    }),
+  );
 } finally {
   await browser.close();
   await server.close();
@@ -119,10 +146,13 @@ async function capture(name, scheme, out) {
     if (steps.length) await settle(app);
 
     const { errors, unmocked } = await app.evaluate(() => window.__scene);
-    if (unmocked.length) console.warn(`  ${name}: unmocked ${unmocked.join(", ")}`);
+    if (unmocked.length)
+      console.warn(`  ${name}: unmocked ${unmocked.join(", ")}`);
     if (errors.length) throw new Error(errors.join("; "));
 
-    await (await page.$(".backdrop")).screenshot({ path: out, omitBackground: true });
+    await (
+      await page.$(".backdrop")
+    ).screenshot({ path: out, omitBackground: true });
   } finally {
     await context.close();
   }

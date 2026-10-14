@@ -48,11 +48,16 @@ const IGNORED = new Set([
   "cancel_dnd",
 ]);
 
+// Published at once, so a scene that fails to set up still reports its
+// errors; `settled` waits for the rest of this module, whose top-level
+// awaits would otherwise let it run before what it uses is defined.
+let initialised!: () => void;
+const initialisation = new Promise<void>((resolve) => (initialised = resolve));
 const status: SceneStatus = {
   steps: [],
   errors: [],
   unmocked: [],
-  settled: () => settled(),
+  settled: () => initialisation.then(settled),
 };
 (window as unknown as { __scene: SceneStatus }).__scene = status;
 
@@ -373,4 +378,5 @@ history.replaceState(
   "",
   { main: "/", viewer: "/viewer", editor: "/editor" }[scene.window],
 );
+initialised();
 await import("../../src/main");
