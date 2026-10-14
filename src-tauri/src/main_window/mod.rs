@@ -1215,11 +1215,8 @@ impl MainWindowState {
         Ok(())
     }
 
-    pub fn toggle_hidden(&self) {
-        {
-            let mut display_options = self.display_options.0.write();
-            display_options.show_hidden = !display_options.show_hidden;
-        }
+    pub fn set_show_hidden(&self, show: bool) {
+        self.display_options.0.write().show_hidden = show;
 
         for pane in self.panes.all() {
             pane.update_view_state();
@@ -1410,8 +1407,12 @@ impl MainWindowContext {
         } = launch;
         let mut global_state = MainWindowState::new();
         global_state.window_title = window_title.clone();
-        global_state.display_options.0.write().show_hidden =
-            preferences.load().appearance.show_hidden;
+        global_state.display_options.0.write().show_hidden = window
+            .app_handle()
+            .state::<crate::GlobalContext>()
+            .runtime_state()
+            .state()
+            .show_hidden;
         let publisher = Arc::new(UpdatePublisher::new(
             window.clone(),
             "main_window",

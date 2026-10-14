@@ -133,14 +133,11 @@ Correctness and UX:
 - Non-UTF-8 file names can't be operated on (lossy wire paths).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.
-- `UpdatePublisher::publish` can emit out of order (the frontend sees a version gap and re-requests full state).
 - Properties: owner and group take numeric IDs only (no account names); Windows has no attribute editor.
 - Terminal: the keys that escape xterm are hardcoded, so rebinding `focus_panes`/`toggle_terminal_panel` strands focus; Close/Clear/Select All are menu-only; font, size and scrollback aren't settings.
 - Copy/Move can't take a relative destination (`../backup/`) and Create Directory doesn't create `a/b/c`; errors there are native popups over the dialog.
 - Command errors other than a failed navigation (Create Directory, Rename, …) don't name their path. Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.
 - No undo for file operations; no OS notification when a background operation finishes or stops on a prompt.
-- Mod+H doesn't persist.
-- Alt+F5 is taken by GNOME; F11 is Show Desktop on macOS.
 
 ## Major new features (groom/write design docs first)
 

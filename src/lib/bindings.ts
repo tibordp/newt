@@ -2199,10 +2199,6 @@ export type Annotation = { git: GitEntryStatus } |
 export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; quick_open?: QuickOpenPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
 export type AppearancePreferences = { 
 /**
- * Show hidden files by default when opening a new window.
- */
-show_hidden: boolean; 
-/**
  * Always show folders before files regardless of sort order.
  */
 folders_first: boolean; 
@@ -4126,7 +4122,11 @@ connect: ConnectDefaults;
  * never stored here (they live in connections.toml); the Quick Connect
  * palette filters any recent that matches a saved profile.
  */
-recent_connections: RecentConnection[] }
+recent_connections: RecentConnection[]; 
+/**
+ * Hidden entries shown, in every window (Mod+H).
+ */
+show_hidden: boolean }
 export type S3Credentials = { 
 /**
  * AWS access key ID (IAM user or assumed role).

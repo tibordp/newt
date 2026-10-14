@@ -926,10 +926,20 @@ pub fn delete_history_entry(
 #[tauri::command]
 #[specta::specta]
 pub fn cmd_toggle_hidden(ctx: MainWindowContext, _pane_handle: PaneHandle) -> Result<(), Error> {
-    ctx.with_update(|c| {
-        c.toggle_hidden();
-        Ok(())
-    })
+    let app_handle = ctx.window().app_handle().clone();
+    let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+    let show = !global_ctx.runtime_state().state().show_hidden;
+    global_ctx
+        .runtime_state()
+        .update_key("show_hidden", show.into())
+        .map_err(Error::Custom)?;
+    for window in global_ctx.main_windows_by_focus() {
+        window.with_update(|gs| {
+            gs.set_show_hidden(show);
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

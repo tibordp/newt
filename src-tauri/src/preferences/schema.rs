@@ -86,9 +86,6 @@ pub struct EditorPreferences {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct AppearancePreferences {
-    /// Show hidden files by default when opening a new window.
-    #[schemars(title = "Show Hidden Files")]
-    pub show_hidden: bool,
     /// Always show folders before files regardless of sort order.
     #[schemars(title = "Folders First")]
     pub folders_first: bool,
@@ -180,7 +177,6 @@ impl ThemeMode {
 impl Default for AppearancePreferences {
     fn default() -> Self {
         Self {
-            show_hidden: false,
             folders_first: true,
             natural_sort: false,
             show_command_bar: true,

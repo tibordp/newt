@@ -40,6 +40,8 @@ pub struct RuntimeState {
     /// never stored here (they live in connections.toml); the Quick Connect
     /// palette filters any recent that matches a saved profile.
     pub recent_connections: Vec<RecentConnection>,
+    /// Hidden entries shown, in every window (Mod+H).
+    pub show_hidden: bool,
 }
 
 impl Default for RuntimeState {
@@ -53,6 +55,7 @@ impl Default for RuntimeState {
             batch_rename: BatchRenameDefaults::default(),
             connect: ConnectDefaults::default(),
             recent_connections: Vec::new(),
+            show_hidden: false,
         }
     }
 }

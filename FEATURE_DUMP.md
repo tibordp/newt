@@ -1773,7 +1773,6 @@ A remote or elevated session's agent ends itself on a panic, which the window se
 
 ```toml
 [appearance]
-show_hidden = false         # New windows start with hidden files shown (Mod+H toggles per window)
 folders_first = true        # Directories before files in sort order
 natural_sort = false        # Numbers in names sort by value (IMG_2 before IMG_10)
 show_command_bar = true     # Show F-key bar at bottom of window
@@ -2146,7 +2145,7 @@ Opens the directory under the cursor in the left or right pane respectively, reg
 
 ### Hidden Files (Mod+H)
 
-Toggles whether hidden entries are shown, in both panes of the window. What counts as hidden is the filesystem's call: a leading `.` on Unix hosts, over SFTP and inside archives and disc images; on a Windows host the Hidden or System attribute instead (a dot file is an ordinary file there); ZIP and 7z entries also by their DOS hidden attribute, disc-image entries by their own hidden flag. S3 objects are never hidden. The `..` parent directory is *always* visible. The toggle lasts as long as the window and isn't saved; `appearance.show_hidden` sets how each new window starts.
+Toggles whether hidden entries are shown, in every pane of every window at once. What counts as hidden is the filesystem's call: a leading `.` on Unix hosts, over SFTP and inside archives and disc images; on a Windows host the Hidden or System attribute instead (a dot file is an ordinary file there); ZIP and 7z entries also by their DOS hidden attribute, disc-image entries by their own hidden flag. S3 objects are never hidden. The `..` parent directory is *always* visible. The choice is remembered across restarts (`show_hidden` in `state.json`), and a new window starts with it; there is no setting for it in `settings.toml`.
 
 ---
 

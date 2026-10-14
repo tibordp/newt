@@ -798,12 +798,12 @@ name = "custom name for b"
 
 #[test]
 fn apply_restore_bookmarks_of_an_add_clears_the_key() {
-    let (out, _) = apply_add_bookmark("[appearance]\nshow_hidden = true\n", "/x", None).unwrap();
-    let restored = apply_restore_bookmarks(&out, "[appearance]\nshow_hidden = true\n").unwrap();
+    let (out, _) = apply_add_bookmark("[appearance]\nnatural_sort = true\n", "/x", None).unwrap();
+    let restored = apply_restore_bookmarks(&out, "[appearance]\nnatural_sort = true\n").unwrap();
 
     let doc: toml_edit::DocumentMut = restored.parse().unwrap();
     assert!(!doc.contains_key("bookmark"));
-    assert_eq!(doc["appearance"]["show_hidden"].as_bool(), Some(true));
+    assert_eq!(doc["appearance"]["natural_sort"].as_bool(), Some(true));
 }
 
 #[test]
@@ -812,14 +812,14 @@ fn apply_restore_bookmarks_keeps_unrelated_edits_made_since_the_snapshot() {
     let (added, _) = apply_add_bookmark(snapshot, "/b", None).unwrap();
     // Settings edited (and a keybinding added) while the bubble was up.
     let edited = format!(
-        "{added}\n[appearance]\nshow_hidden = true\n\n[[bind]]\nkey = \"ctrl+g\"\ncommand = \"refresh\"\n"
+        "{added}\n[appearance]\nnatural_sort = true\n\n[[bind]]\nkey = \"ctrl+g\"\ncommand = \"refresh\"\n"
     );
 
     let restored = apply_restore_bookmarks(&edited, snapshot).unwrap();
     assert_eq!(parse_bookmarks(&restored), vec![("/a".to_string(), None)]);
 
     let doc: toml_edit::DocumentMut = restored.parse().unwrap();
-    assert_eq!(doc["appearance"]["show_hidden"].as_bool(), Some(true));
+    assert_eq!(doc["appearance"]["natural_sort"].as_bool(), Some(true));
     assert_eq!(
         doc["bind"].as_array_of_tables().map(|a| a.len()),
         Some(1),
@@ -965,10 +965,10 @@ fn an_empty_file_is_the_defaults() {
 #[test]
 fn settings_apply_one_by_one() {
     let loaded = loaded(
-        "[appearance]\nshow_hidden = true\nfolders_first = \"no\"\n\n\
+        "[appearance]\nnatural_sort = true\nfolders_first = \"no\"\n\n\
          [behavior]\nconfirm_delete = false\nhistory_retention = -3\n",
     );
-    assert!(loaded.settings.appearance.show_hidden);
+    assert!(loaded.settings.appearance.natural_sort);
     assert!(!loaded.settings.behavior.confirm_delete);
     // The ones that don't read keep their defaults, and say where they are.
     assert!(loaded.settings.appearance.folders_first);
@@ -1001,7 +1001,7 @@ fn unknown_keys_are_reported() {
 
 #[test]
 fn a_file_that_is_not_toml_reads_as_nothing() {
-    let problem = load::parse("[appearance]\nshow_hidden = \n").unwrap_err();
+    let problem = load::parse("[appearance]\nnatural_sort = \n").unwrap_err();
     assert_eq!(problem.location, "settings.toml");
     assert_eq!(problem.line, Some(2));
 }
@@ -1058,14 +1058,14 @@ fn settings_that_cannot_work_are_reported() {
 fn a_reload_that_is_not_toml_keeps_what_was_in_force() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
-    std::fs::write(&path, "[appearance]\nshow_hidden = true\n").unwrap();
+    std::fs::write(&path, "[appearance]\nnatural_sort = true\n").unwrap();
     let mut good = PreferencesManager::load_and_resolve(dir.path(), None);
-    assert!(good.settings.appearance.show_hidden);
+    assert!(good.settings.appearance.natural_sort);
     assert!(good.problems.is_empty());
 
     std::fs::write(&path, "[appearance\n").unwrap();
     let broken = PreferencesManager::load_and_resolve(dir.path(), Some(&good));
-    assert!(broken.settings.appearance.show_hidden);
+    assert!(broken.settings.appearance.natural_sort);
     assert_eq!(broken.problems.len(), 1);
     assert!(!broken.problems_dismissed);
 
@@ -1074,7 +1074,7 @@ fn a_reload_that_is_not_toml_keeps_what_was_in_force() {
     dismissed.problems_dismissed = true;
     let again = PreferencesManager::load_and_resolve(dir.path(), Some(&dismissed));
     assert!(again.problems_dismissed);
-    std::fs::write(&path, "[appearance]\nshow_hidden = 1\n").unwrap();
+    std::fs::write(&path, "[appearance]\nnatural_sort = 1\n").unwrap();
     let different = PreferencesManager::load_and_resolve(dir.path(), Some(&dismissed));
     assert!(!different.problems_dismissed);
 
