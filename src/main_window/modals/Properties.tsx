@@ -178,7 +178,7 @@ function PermissionEditor({
   );
 }
 
-// Owner/group editor: "leave unchanged" | enter name or numeric ID
+// Owner/group editor: "leave unchanged" | enter a numeric ID
 type OwnerEditState = {
   enabled: boolean;
   value: string;
@@ -208,9 +208,13 @@ function OwnerEditor({
       {state.enabled && (
         <input
           type="text"
+          inputMode="numeric"
           className={styles.ownerInput}
-          placeholder="name or numeric ID"
+          placeholder="numeric ID"
           aria-label={inputLabel}
+          aria-invalid={
+            state.value.trim() !== "" && parseOwnerId(state.value) === null
+          }
           value={state.value}
           autoComplete="off"
           autoCorrect="off"
@@ -224,11 +228,9 @@ function OwnerEditor({
 function parseOwnerId(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return null;
   const num = Number(trimmed);
-  if (Number.isInteger(num) && num >= 0) return num;
-  // For now, only numeric IDs are supported for setting.
-  // Name resolution would require a Rust-side lookup.
-  return null;
+  return num <= 0xffffffff ? num : null;
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -347,6 +349,10 @@ export default function Properties({
     modeSet !== initialModeSet || modeClear !== initialModeClear;
   const ownerChanged = ownerEdit.enabled && ownerEdit.value.trim() !== "";
   const groupChanged = groupEdit.enabled && groupEdit.value.trim() !== "";
+  // An ID that isn't one would change nothing; Apply waits for a number.
+  const ownershipInvalid =
+    (ownerChanged && parseOwnerId(ownerEdit.value) === null) ||
+    (groupChanged && parseOwnerId(groupEdit.value) === null);
   const metaDirty = modeChanged || ownerChanged || groupChanged;
   const isDirty = metaDirty || sheetOps.length > 0;
 
@@ -561,7 +567,7 @@ export default function Properties({
             type="button"
             className="suggested"
             onClick={onApply}
-            disabled={!isDirty && !(recursive && canEdit)}
+            disabled={ownershipInvalid || (!isDirty && !(recursive && canEdit))}
             autoFocus
           >
             Apply
