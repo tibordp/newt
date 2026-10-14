@@ -1248,7 +1248,7 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 
 Mount and browse archive files as virtual read-only filesystems.
 
-Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" trick) are left out of the listing, so copying a tree out can't write above its destination.
+Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" trick) are left out of the listing, so copying a tree out can't write above its destination. A name the archive mentions more than once — repeated, or once as a member and once as the folder later members imply (`d` a symlink, then `d/x`) — is listed once, as its last mention makes it: a mention by a child makes it a folder. So `d` (a link), `d/x` lists a folder `d` holding `x`; `d/x`, `d` (a link) lists the link, with `x` out of reach and left out; `d/a`, `d` (a link), `d/b` lists a folder holding both. Copying out therefore never writes through a link an archive planted where a folder is (a symlink `d -> ~/.ssh` followed by `d/authorized_keys`). The same rule applies to tar, zip and 7z. Every member is still there in the archive's [Structure mode](#structure-mode) (F3 on the archive file), shadowed ones included, and its bytes can be saved from there.
 
 **Supported formats**:
 

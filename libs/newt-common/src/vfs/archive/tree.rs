@@ -240,137 +240,139 @@ pub(super) fn mtime_to_i64(mtime: u64) -> Option<i64> {
     i64::try_from(mtime).ok().map(|t| t.saturating_mul(1_000))
 }
 
-/// Whether an entry's path stays inside the archive. A member named
-/// `../../.bashrc` is left out of the tree, so nothing can copy it out
-/// above its destination.
-pub(super) fn stays_inside(path: &str) -> bool {
-    let inside = !path.split('/').any(|c| c == "..");
-    if !inside {
+/// A member's path as the tree keys it: `/`-separated, without leading
+/// `/` or `./`, trailing `/`, or empty and `.` segments. `None` for a path
+/// naming nothing, or leaving the archive (`../../.bashrc`), so nothing
+/// can copy it out above its destination.
+pub(super) fn member_path(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
+    if segments.contains(&"..") {
         log::warn!("archive: leaving out {path:?}, which points outside the archive");
+        return None;
     }
-    inside
+    (!segments.is_empty()).then(|| segments.join("/"))
 }
 
-pub(super) fn ensure_ancestors(
-    dirs: &mut HashMap<StdPathBuf, Vec<File>>,
-    seen_dirs: &mut std::collections::HashSet<StdPathBuf>,
-    path: &StdPath,
-) {
-    if seen_dirs.contains(path) {
-        return;
+/// The tree of an archive's members, given in archive order, each with
+/// its path inside the archive. The tree names each entry from its path
+/// (and hides a dot-name), so callers leave `name` empty.
+///
+/// A name can be mentioned more than once: repeated, or once as a member
+/// and once as the folder later members imply (`d` a symlink, then
+/// `d/x`). Its last mention decides what it is — a mention by a child
+/// makes it a folder — so no listing holds two entries of one name, and
+/// each member stays its own entry. A member under a name that ends up as
+/// anything but a folder can't be reached and is left out, so copying out
+/// never writes through a link an archive planted where a folder is.
+pub(super) fn build_tree<'a>(members: impl IntoIterator<Item = (&'a str, File)>) -> DirectoryTree {
+    enum Mention {
+        Member(usize),
+        Implied,
     }
-    if let Some(parent) = path.parent() {
-        ensure_ancestors(dirs, seen_dirs, parent);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        if !name.is_empty() {
-            dirs.entry(parent.to_path_buf())
-                .or_default()
-                .push(File::bare_dir(name));
+    let mut kept: Vec<File> = Vec::new();
+    let mut last: HashMap<String, Mention> = HashMap::new();
+    // A folder's last own entry, for its metadata when a child's mention
+    // came after it.
+    let mut folder_entry: HashMap<String, usize> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut mention = |last: &mut HashMap<String, Mention>, path: &str, m: Mention| {
+        if last.insert(path.to_string(), m).is_none() {
+            order.push(path.to_string());
         }
+    };
+
+    for (raw, mut file) in members {
+        let Some(path) = member_path(raw) else {
+            continue;
+        };
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        file.is_hidden |= name.starts_with('.');
+        file.name = name.to_string();
+        for (slash, _) in path.match_indices('/') {
+            mention(&mut last, &path[..slash], Mention::Implied);
+        }
+        let index = kept.len();
+        if file.is_dir {
+            folder_entry.insert(path.clone(), index);
+        }
+        mention(&mut last, &path, Mention::Member(index));
+        kept.push(file);
     }
-    seen_dirs.insert(path.to_path_buf());
-    dirs.entry(path.to_path_buf()).or_default();
+
+    let is_folder = |path: &str| match last[path] {
+        Mention::Implied => true,
+        Mention::Member(i) => kept[i].is_dir,
+    };
+    let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
+    dirs.insert(StdPathBuf::from(""), Vec::new());
+    for path in &order {
+        if !path
+            .match_indices('/')
+            .all(|(slash, _)| is_folder(&path[..slash]))
+        {
+            continue;
+        }
+        let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let file = if is_folder(path) {
+            dirs.entry(StdPathBuf::from(path.as_str())).or_default();
+            match folder_entry.get(path) {
+                Some(&i) => kept[i].clone(),
+                None => File::bare_dir(name),
+            }
+        } else {
+            match last[path] {
+                Mention::Member(i) => kept[i].clone(),
+                Mention::Implied => unreachable!("an implied mention is a folder"),
+            }
+        };
+        dirs.entry(StdPathBuf::from(parent)).or_default().push(file);
+    }
+    DirectoryTree { dirs }
 }
 
 /// Minimum time between partial tree snapshots during indexing.
 pub(super) const SNAPSHOT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// `entries` in archive order. Of several members sharing a path, the last
-/// one is listed — the one `ArchiveIndex::get`, and so every read, resolves
-/// to — since a directory listing is keyed by name.
+/// `entries` in archive order, as [`build_tree`] lists them: of several
+/// members sharing a path, the last — the one `ArchiveIndex::get`, and so
+/// every read, resolves to.
 pub(super) fn build_directory_tree_from_iluvatar(
     entries: &[iluvatar::IndexEntry],
 ) -> DirectoryTree {
-    let mut seen = std::collections::HashSet::new();
-    let mut entries: Vec<&iluvatar::IndexEntry> = entries
-        .iter()
-        .rev()
-        .filter(|e| seen.insert(e.path.as_str()))
-        .collect();
-    entries.reverse();
-
-    // Build a quick lookup for hard link target sizes
-    let entry_by_path: HashMap<&str, &iluvatar::IndexEntry> = entries
-        .iter()
-        .map(|e| {
-            let p = e
-                .path
-                .trim_start_matches('/')
-                .trim_start_matches("./")
-                .trim_end_matches('/');
-            (p, *e)
-        })
-        .collect();
-
-    let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
-    let mut seen_dirs: std::collections::HashSet<StdPathBuf> = std::collections::HashSet::new();
-
-    dirs.insert(StdPathBuf::from(""), Vec::new());
-    seen_dirs.insert(StdPathBuf::from(""));
-
-    for entry in &entries {
-        let path = entry
-            .path
-            .trim_start_matches('/')
+    fn trimmed(path: &str) -> &str {
+        path.trim_start_matches('/')
             .trim_start_matches("./")
-            .trim_end_matches('/');
-        if path.is_empty() || !stays_inside(path) {
-            continue;
-        }
+            .trim_end_matches('/')
+    }
+    // Hard link entries typically have size=0 — they take the target's,
+    // the target's last member like everything else.
+    let by_path: HashMap<&str, &iluvatar::IndexEntry> =
+        entries.iter().map(|e| (trimmed(&e.path), e)).collect();
 
-        let entry_path = StdPathBuf::from(path);
-        let parent = entry_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let name = entry_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        if name.is_empty() {
-            continue;
-        }
-
-        ensure_ancestors(&mut dirs, &mut seen_dirs, &parent);
-
+    build_tree(entries.iter().map(|entry| {
         let is_dir = entry.entry_type.is_directory();
         let is_symlink = matches!(entry.entry_type, iluvatar::EntryType::SymLink);
-        let is_hardlink = matches!(entry.entry_type, iluvatar::EntryType::HardLink);
-
-        // Hard link entries typically have size=0 — use the target's size instead.
-        let size = if is_dir {
-            None
-        } else if is_hardlink {
-            if let Some(ref target) = entry.link_target {
-                let target_norm = target
-                    .trim_start_matches('/')
-                    .trim_start_matches("./")
-                    .trim_end_matches('/');
-                entry_by_path
-                    .get(target_norm)
-                    .map(|t| t.size)
-                    .or(Some(entry.size))
-            } else {
-                Some(entry.size)
-            }
-        } else {
-            Some(entry.size)
+        let size = match (&entry.entry_type, &entry.link_target) {
+            _ if is_dir => None,
+            (iluvatar::EntryType::HardLink, Some(target)) => by_path
+                .get(trimmed(target))
+                .map(|t| t.size)
+                .or(Some(entry.size)),
+            _ => Some(entry.size),
         };
-
         let file = File {
             attributes: None,
-            name: name.clone(),
+            name: String::new(),
             size,
             allocated_size: None,
             device_id: None,
             inode: None,
             hard_links: None,
             is_dir,
-            is_hidden: name.starts_with('.'),
+            is_hidden: false,
             is_symlink,
             symlink_target: if is_symlink {
                 entry.link_target.clone()
@@ -386,25 +388,73 @@ pub(super) fn build_directory_tree_from_iluvatar(
             key: None,
             source: None,
         };
+        (entry.path.as_str(), file)
+    }))
+}
 
-        if is_dir && seen_dirs.contains(&entry_path) {
-            // Already added as an implicit ancestor — replace synthetic entry
-            // with real metadata.
-            if let Some(children) = dirs.get_mut(&parent)
-                && let Some(existing) = children.iter_mut().find(|f| f.name == name)
-            {
-                *existing = file;
-            }
-            continue;
-        }
+#[cfg(test)]
+mod build_tree_tests {
+    use super::{DirectoryTree, build_tree};
+    use crate::vfs::{File, Mode};
+    use std::path::Path as StdPath;
 
-        dirs.entry(parent).or_default().push(file);
-
-        if is_dir {
-            seen_dirs.insert(entry_path.clone());
-            dirs.entry(entry_path).or_default();
+    fn file() -> File {
+        File {
+            is_dir: false,
+            ..File::bare_dir("")
         }
     }
 
-    DirectoryTree { dirs }
+    fn dir(mode: u32) -> File {
+        File {
+            mode: Some(Mode(mode)),
+            ..File::bare_dir("")
+        }
+    }
+
+    fn names(tree: &DirectoryTree, path: &str) -> Vec<(String, bool)> {
+        let mut names: Vec<(String, bool)> = tree.dirs[StdPath::new(path)]
+            .iter()
+            .map(|f| (f.name.clone(), f.is_dir))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_file_and_a_folder_of_one_name_take_the_last_mention() {
+        let tree = build_tree([("d", file()), ("d/x", file())]);
+        assert_eq!(names(&tree, ""), [("d".to_string(), true)]);
+        assert_eq!(names(&tree, "d"), [("x".to_string(), false)]);
+
+        let tree = build_tree([("d/x", file()), ("d", file())]);
+        assert_eq!(names(&tree, ""), [("d".to_string(), false)]);
+        assert!(!tree.dirs.contains_key(StdPath::new("d")));
+    }
+
+    #[test]
+    fn a_folder_keeps_its_own_entry_when_a_child_mentions_it_later() {
+        let tree = build_tree([
+            ("./d/", dir(0o700)),
+            ("d/x", file()),
+            ("/e/.hidden", file()),
+        ]);
+        let d = &tree.dirs[StdPath::new("")]
+            .iter()
+            .find(|f| f.name == "d")
+            .cloned()
+            .unwrap();
+        assert_eq!(d.mode.as_ref().map(|m| m.0), Some(0o700));
+        assert!(tree.dirs[StdPath::new("e")][0].is_hidden);
+    }
+
+    #[test]
+    fn members_leaving_the_archive_are_left_out() {
+        let tree = build_tree([
+            ("../evil", file()),
+            ("a/../../evil", file()),
+            ("ok", file()),
+        ]);
+        assert_eq!(names(&tree, ""), [("ok".to_string(), false)]);
+    }
 }

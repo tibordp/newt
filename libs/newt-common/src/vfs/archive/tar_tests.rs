@@ -29,6 +29,7 @@ fn vp(s: &str) -> PathBuf {
 const SIMPLE_TAR: &[u8] = include_bytes!("fixtures/simple.tar");
 const SIMPLE_TAR_GZ: &[u8] = include_bytes!("fixtures/simple.tar.gz");
 const SIMPLE_TAR_ZST: &[u8] = include_bytes!("fixtures/simple.tar.zst");
+const SHADOWING_TAR: &[u8] = include_bytes!("fixtures/shadowing.tar");
 
 const ARCHIVE_PATH: &str = "/archive";
 
@@ -494,4 +495,46 @@ async fn indexing_resumes_after_the_last_consumer_leaves() {
         .await
         .expect("read finishes");
     assert_eq!(hello, HELLO);
+}
+
+// ---------------------------------------------------------------------------
+// Names mentioned more than once
+// ---------------------------------------------------------------------------
+
+async fn listing(vfs: &TarArchiveVfs, path: &str) -> Vec<(String, bool, bool)> {
+    let mut entries: Vec<(String, bool, bool)> = vfs
+        .list_files(&vp(path), None)
+        .await
+        .expect("list_files")
+        .files
+        .into_iter()
+        .filter(|f| f.name != "..")
+        .map(|f| (f.name, f.is_dir, f.is_symlink))
+        .collect();
+    entries.sort();
+    entries
+}
+
+#[tokio::test]
+async fn the_last_mention_of_a_name_decides_it_and_names_stay_unique() {
+    let vfs = mount(SHADOWING_TAR, ARCHIVE_PATH, MockVfsConfig::default());
+    let s = |n: &str| n.to_string();
+    assert_eq!(
+        listing(&vfs, "/").await,
+        [
+            (s("dup.txt"), false, false),
+            (s("file-first"), false, true),
+            (s("link-first"), true, false),
+            (s("mixed"), true, false),
+        ]
+    );
+    assert_eq!(
+        listing(&vfs, "/link-first").await,
+        [(s("payload.txt"), false, false)]
+    );
+    assert_eq!(
+        listing(&vfs, "/mixed").await,
+        [(s("a"), false, false), (s("b"), false, false)]
+    );
+    assert_eq!(read_to_vec(&vfs, "/dup.txt").await, b"two\n");
 }

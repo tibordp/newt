@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 // The directory tree is keyed by Unix-style relative path strings built on
 // std paths; the `Vfs` surface speaks our `vfs::path::Path`.
-use std::path::{Path as StdPath, PathBuf as StdPathBuf};
+use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -42,7 +42,7 @@ use super::super::{
     VfsPath, VfsRandomReader,
 };
 use super::stream::{PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed};
-use super::tree::{DirectoryTree, ensure_ancestors, normalized_to_string, stays_inside};
+use super::tree::{DirectoryTree, normalized_to_string};
 
 /// Symlink targets are read eagerly at index time; anything larger than this
 /// is not a plausible link target.
@@ -680,43 +680,22 @@ fn build_tree(
     fs: &sz::SevenZFs,
     symlink_targets: &HashMap<String, String>,
 ) -> (DirectoryTree, HashMap<String, usize>) {
-    let mut dirs: HashMap<StdPathBuf, Vec<File>> = HashMap::new();
-    let mut seen_dirs: std::collections::HashSet<StdPathBuf> = std::collections::HashSet::new();
     let mut by_name = HashMap::new();
-
-    dirs.insert(StdPathBuf::from(""), Vec::new());
-    seen_dirs.insert(StdPathBuf::from(""));
-
-    for (index, entry) in fs.entries.iter().enumerate() {
-        if !stays_inside(&entry.name) {
-            continue;
+    let tree = super::tree::build_tree(fs.entries.iter().enumerate().map(|(index, entry)| {
+        if super::tree::member_path(&entry.name).is_some() {
+            by_name.insert(entry.name.clone(), index);
         }
-        let entry_path = StdPathBuf::from(&entry.name);
-        let parent = entry_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let Some(name) = entry_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-        else {
-            continue;
-        };
-        by_name.insert(entry.name.clone(), index);
-
-        ensure_ancestors(&mut dirs, &mut seen_dirs, &parent);
-
         let is_dir = entry.kind == sz::EntryKind::Dir;
         let file = File {
             attributes: None,
-            name: name.clone(),
+            name: String::new(),
             size: (!is_dir).then_some(entry.size),
             allocated_size: None,
             device_id: None,
             inode: None,
             hard_links: None,
             is_dir,
-            is_hidden: name.starts_with('.') || entry.hidden,
+            is_hidden: entry.hidden,
             is_symlink: entry.kind == sz::EntryKind::Symlink,
             symlink_target: symlink_targets.get(&entry.name).cloned(),
             user: None,
@@ -728,24 +707,9 @@ fn build_tree(
             key: None,
             source: None,
         };
-
-        if is_dir && seen_dirs.contains(&entry_path) {
-            if let Some(children) = dirs.get_mut(&parent)
-                && let Some(existing) = children.iter_mut().find(|f| f.name == name)
-            {
-                *existing = file;
-            }
-            continue;
-        }
-
-        dirs.entry(parent).or_default().push(file);
-        if is_dir {
-            seen_dirs.insert(entry_path.clone());
-            dirs.entry(entry_path).or_default();
-        }
-    }
-
-    (DirectoryTree { dirs }, by_name)
+        (entry.name.as_str(), file)
+    }));
+    (tree, by_name)
 }
 
 #[async_trait::async_trait]

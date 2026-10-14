@@ -2,7 +2,7 @@
 """Regenerate archive test fixtures used by TarArchiveVfs / ZipArchiveVfs tests.
 
 Produces deterministic `simple.tar`, `simple.tar.gz`, `simple.tar.zst`,
-`encrypted.zip` and `varied.zip`
+`shadowing.tar`, `encrypted.zip` and `varied.zip`
 so the bytes committed to the repo are reproducible. Run from this
 directory:
 
@@ -170,7 +170,42 @@ def build_varied_zip(out: Path) -> None:
         zf.writestr(info("π — unicode.txt", 0o644), b"unicode name\n", zipfile.ZIP_DEFLATED)
 
 
+def build_shadowing() -> bytes:
+    """Names an archive mentions more than once, as a member and as the
+    folder later members imply; the last mention decides what each is.
+
+        link-first          -> symlink, then link-first/payload.txt: a folder
+        file-first          -> file-first/payload.txt, then a symlink
+        mixed               -> mixed/a, a symlink, then mixed/b: a folder of both
+        dup.txt             -> twice, b"one\\n" then b"two\\n"
+
+    The links point at a path that doesn't exist, so nothing written
+    through one could land anywhere real.
+    """
+    outside = "/nonexistent/newt-shadowing-fixture"
+    payload = b"must never be written through a link\n"
+    members = [
+        (_info("link-first", type_=tarfile.SYMTYPE, mode=0o777, linkname=outside), b""),
+        (_info("link-first/payload.txt"), payload),
+        (_info("file-first/payload.txt"), payload),
+        (_info("file-first", type_=tarfile.SYMTYPE, mode=0o777, linkname=outside), b""),
+        (_info("mixed/a"), b"a\n"),
+        (_info("mixed", type_=tarfile.SYMTYPE, mode=0o777, linkname=outside), b""),
+        (_info("mixed/b"), b"b\n"),
+        (_info("dup.txt"), b"one\n"),
+        (_info("dup.txt"), b"two\n"),
+    ]
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tar:
+        for info, data in members:
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data) if data else None)
+    return buf.getvalue()
+
+
 def main() -> None:
+    (OUT_DIR / "shadowing.tar").write_bytes(build_shadowing())
+
     data = build()
     (OUT_DIR / "simple.tar").write_bytes(data)
 
