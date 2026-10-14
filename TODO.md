@@ -128,7 +128,6 @@ Release engineering:
 Correctness and UX:
 
 - File clipboard: Mod+C/Mod+V are path-text only, and paste after copying in Explorer/Finder errors or navigates to a bare name.
-- Case-insensitive destinations: `Makefile` and `makefile` from a case-sensitive source collide mid-operation (likewise NFC/NFD and Windows trailing dots); detect before writing.
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
 - Non-UTF-8 file names can't be operated on (lossy wire paths).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.

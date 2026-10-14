@@ -881,7 +881,7 @@ impl Vfs for LocalVfs {
         {
             return Err(Error::not_supported());
         }
-        let native = path.to_native();
+        let native = creation_path(path, true)?;
         if options.replace {
             if options.create_new {
                 return Err(Error::not_supported());
@@ -942,13 +942,13 @@ impl Vfs for LocalVfs {
     }
 
     async fn create_directory(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_native();
+        let path = creation_path(path, false)?;
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(&path).map_err(Error::from))
             .await?
     }
 
     async fn create_symlink(&self, link: &Path, target: &str) -> Result<(), Error> {
-        let link = link.to_native();
+        let link = creation_path(link, false)?;
         let target = target.to_string();
         tokio::task::spawn_blocking(move || {
             #[cfg(unix)]
@@ -966,7 +966,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn touch(&self, path: &Path) -> Result<(), Error> {
-        let path = path.to_native();
+        let path = creation_path(path, false)?;
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -1103,14 +1103,14 @@ impl Vfs for LocalVfs {
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_native();
-        let to = to.to_native();
+        let to = creation_path(to, false)?;
         tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from))
             .await?
     }
 
     async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
         let from = from.to_native();
-        let to = to.to_native();
+        let to = creation_path(to, false)?;
         tokio::task::spawn_blocking(move || rename_no_replace(&from, &to)).await?
     }
 
@@ -1182,7 +1182,7 @@ impl Vfs for LocalVfs {
             return Err(Error::not_supported());
         }
         let from = from.to_native();
-        let to = to.to_native();
+        let to = creation_path(to, false)?;
         tokio::task::spawn_blocking(move || {
             if !create_new {
                 return kernel_copy(&from, &to);
@@ -1212,7 +1212,7 @@ impl Vfs for LocalVfs {
     }
 
     async fn hard_link(&self, link: &Path, target: &Path) -> Result<(), Error> {
-        let link = link.to_native();
+        let link = creation_path(link, false)?;
         let target = target.to_native();
         tokio::task::spawn_blocking(move || std::fs::hard_link(&target, &link).map_err(Error::from))
             .await?
@@ -1220,8 +1220,37 @@ impl Vfs for LocalVfs {
 }
 
 // ---------------------------------------------------------------------------
-// Exclusive creation
+// Creation
 // ---------------------------------------------------------------------------
+
+/// `path` in native form, for creating an entry there. Windows reads a `:`
+/// in a name as the start of a stream name, so `a:b` would become stream
+/// `b` of a file `a`: such a name is refused, except, where `stream`
+/// allows it, in the `file:stream:$DATA` form `stream_path` hands out.
+fn creation_path(path: &Path, stream: bool) -> Result<std::path::PathBuf, Error> {
+    #[cfg(windows)]
+    if let Some(name) = path.file_name()
+        && names_a_stream(name, stream)
+    {
+        return Err(Error::custom(format!(
+            "\"{name}\" can't be created here: Windows reads \":\" in a name as the start of a stream name"
+        )));
+    }
+    let _ = stream;
+    Ok(path.to_native())
+}
+
+#[cfg(any(windows, test))]
+fn names_a_stream(name: &str, stream: bool) -> bool {
+    if !name.contains(':') {
+        return false;
+    }
+    let deliberate = name
+        .strip_suffix(":$DATA")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(file, part)| !file.is_empty() && !part.is_empty() && !part.contains(':'));
+    !(stream && deliberate)
+}
 
 /// A `create_new` open's error, with a refusal as `AlreadyExists`. Windows
 /// answers a directory in the way with access denied: the open checks
@@ -2423,5 +2452,23 @@ mod watch_tests {
         })
         .await;
         woke.expect("no change was reported").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::names_a_stream;
+
+    #[test]
+    fn a_colon_names_a_stream_unless_it_is_one_on_purpose() {
+        assert!(!names_a_stream("plain.txt", false));
+        assert!(names_a_stream("a:b", false));
+        assert!(names_a_stream("a:b", true));
+        assert!(names_a_stream("2026-10-14T12:00:00.json", true));
+        assert!(names_a_stream("a:s:$DATA", false));
+        assert!(!names_a_stream("a:s:$DATA", true));
+        assert!(names_a_stream(":s:$DATA", true));
+        assert!(names_a_stream("a::$DATA", true));
+        assert!(names_a_stream("a:s:t:$DATA", true));
     }
 }
