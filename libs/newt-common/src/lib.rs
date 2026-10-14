@@ -11,6 +11,8 @@ pub mod find;
 pub mod hot_paths;
 pub mod locale;
 pub mod operation;
+#[cfg(windows)]
+pub mod pipe;
 pub mod proc;
 pub mod quick_open;
 pub mod rpc;

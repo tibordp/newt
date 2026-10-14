@@ -2,7 +2,6 @@
 //! socket), accept loop, HTTP routing, env injection.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -18,8 +17,6 @@ use super::{
     ControlRequest, ControlResponse, ENV_SOCK, ENV_TERMINAL, PaneSelector, SelectMode,
     ShellControlHandler,
 };
-
-static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Render `path` for the `newt.cmd` shim, undoing the `\\?\` verbatim
 /// prefix. cmd.exe's parser rejects verbatim paths outright, but the agent
@@ -66,19 +63,13 @@ impl ShellIntegration {
         cli_binary: &std::path::Path,
         handler: Arc<dyn ShellControlHandler>,
     ) -> Result<Arc<Self>, std::io::Error> {
-        let tag = format!(
-            "newt-shell-{}-{}",
-            std::process::id(),
-            INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        let dir = std::env::temp_dir().join(&tag);
-        std::fs::create_dir_all(&dir)?;
+        // Private (0700 on unix) and randomly named.
+        let dir = tempfile::Builder::new()
+            .prefix("newt-shell-")
+            .tempdir()?
+            .keep();
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-            std::os::unix::fs::symlink(cli_binary, dir.join("newt"))?;
-        }
+        std::os::unix::fs::symlink(cli_binary, dir.join("newt"))?;
         #[cfg(windows)]
         {
             // argv[0] through a .cmd shim is the exe path, not `newt`, so the
@@ -99,7 +90,7 @@ impl ShellIntegration {
         };
         #[cfg(windows)]
         let (sock, server) = {
-            let name = format!(r"\\.\pipe\{}", tag);
+            let name = crate::pipe::unique_name("newt-shell");
             let server = tokio::spawn(accept_loop_pipe(name.clone(), handler));
             (name, server)
         };
@@ -165,16 +156,14 @@ async fn accept_loop_pipe(name: String, handler: Arc<dyn ShellControlHandler>) {
     use tokio::net::windows::named_pipe::ServerOptions;
     let mut first = true;
     loop {
-        let server = match ServerOptions::new()
-            .first_pipe_instance(first)
-            .create(&name)
-        {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("shell control pipe create failed: {e}");
-                break;
-            }
-        };
+        let server =
+            match crate::pipe::create(ServerOptions::new().first_pipe_instance(first), &name) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("shell control pipe create failed: {e}");
+                    break;
+                }
+            };
         first = false;
         if let Err(e) = server.connect().await {
             warn!("shell control pipe connect failed: {e}");

@@ -4336,6 +4336,7 @@ dependencies = [
  "trash",
  "unicode-normalization",
  "url",
+ "uuid",
  "windows-sys 0.61.2",
  "xattr",
  "zip",

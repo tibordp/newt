@@ -21,7 +21,7 @@
 use std::ffi::c_void;
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -36,18 +36,15 @@ use windows_sys::Win32::System::Console::{
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION,
-    RegisterWaitForSingleObject, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
-    UnregisterWaitEx, UpdateProcThreadAttribute, WT_EXECUTEONLYONCE,
+    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, InitializeProcThreadAttributeList,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, RegisterWaitForSingleObject,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UnregisterWaitEx,
+    UpdateProcThreadAttribute, WT_EXECUTEONLYONCE,
 };
 
 /// Process still running (ConPTY child exit codes are `u32`; this is the
 /// `STILL_ACTIVE` sentinel, also `STATUS_PENDING`).
 const STILL_ACTIVE: u32 = 259;
-
-/// Per-process unique suffix source for pipe names.
-static PIPE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// UTF-16, NUL-terminated.
 fn wide(s: &str) -> Vec<u16> {
@@ -234,21 +231,23 @@ impl Conpty {
         rows: u16,
         cols: u16,
     ) -> io::Result<Self> {
-        let pid = unsafe { GetCurrentProcessId() };
-        let seq = PIPE_SEQ.fetch_add(1, Ordering::Relaxed);
-        let in_name = format!(r"\\.\pipe\newt-conpty-{pid}-{seq}-in");
-        let out_name = format!(r"\\.\pipe\newt-conpty-{pid}-{seq}-out");
+        let in_name = crate::pipe::unique_name("newt-conpty-in");
+        let out_name = crate::pipe::unique_name("newt-conpty-out");
 
         // Server ends are ours (overlapped, reactor-backed). We write the
         // child's input via `in_*`, read its output via `out_*`.
-        let in_server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .max_instances(1)
-            .create(&in_name)?;
-        let out_server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .max_instances(1)
-            .create(&out_name)?;
+        let in_server = crate::pipe::create(
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .max_instances(1),
+            &in_name,
+        )?;
+        let out_server = crate::pipe::create(
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .max_instances(1),
+            &out_name,
+        )?;
 
         // ConPTY reads child stdin from `conpty_in` and writes child output
         // to `conpty_out` (synchronous client handles). The whole

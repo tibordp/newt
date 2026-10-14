@@ -128,14 +128,13 @@ Release engineering:
 Correctness and UX:
 
 - File clipboard: Mod+C/Mod+V are path-text only, and paste after copying in Explorer/Finder errors or navigates to a bare name.
-- Files opened externally from remote/archive VFSes are temp copies never uploaded back (edits lost silently) and never deleted; a failed launch only logs.
 - Case-insensitive destinations: `Makefile` and `makefile` from a case-sensitive source collide mid-operation (likewise NFC/NFD and Windows trailing dots); detect before writing.
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
 - Non-UTF-8 file names can't be operated on (lossy wire paths).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - The remote connection log (stderr of an agent run at `RUST_LOG=info`, including full operation-request Debug dumps) grows without bound and is re-serialised on every publish.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.
-- Two instances clobber each other's `state.json`; `UpdatePublisher::publish` can emit out of order (the frontend sees a version gap and re-requests full state).
+- `UpdatePublisher::publish` can emit out of order (the frontend sees a version gap and re-requests full state).
 - Properties: owner/group by name silently does nothing; Windows has no attribute editor.
 - Terminal: the keys that escape xterm are hardcoded, so rebinding `focus_panes`/`toggle_terminal_panel` strands focus; Close/Clear/Select All are menu-only; font, size and scrollback aren't settings.
 - Window close/quit kills busy terminals without asking; `Mod+Q` is Ctrl+Q off macOS.
@@ -147,7 +146,6 @@ Correctness and UX:
 - Alt+F5 is taken by GNOME; F11 is Show Desktop on macOS.
 - The Connect dialog lists no profiles when `connections.toml` doesn't parse, with only a log line; show the parse error there instead.
 - Files materialised from downloads/archives get no Mark-of-the-Web or quarantine; the file server sends `Access-Control-Allow-Origin: *` (it needs the webview's origin, which is `tauri://localhost`, `http://tauri.localhost` on Windows, or the dev server).
-- Windows named pipes (elevation, shell control, askpass) use the default DACL, readable by Everyone; `/tmp` socket names are predictable.
 - FEATURE_DUMP drift: Open Config File (says built-in editor), Escape (says clears selection), Rename (says full name), terminal paste, Settings categories, `[environment]`, hidden files, ownership.
 
 ## Major new features (groom/write design docs first)

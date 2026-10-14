@@ -164,16 +164,13 @@ where
 mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use tokio::sync::oneshot;
 
     use super::AskpassProvider;
 
-    static SOCKET_NONCE: AtomicU64 = AtomicU64::new(0);
-
     /// Handle for a running askpass listener. Drop to close the listener
-    /// and remove the socket file.
+    /// and remove the socket.
     pub struct AskpassListener {
         pub socket_path: PathBuf,
         shutdown_tx: Option<oneshot::Sender<()>>,
@@ -191,21 +188,16 @@ mod listener {
         /// Spawn a Unix domain socket askpass listener that forwards each
         /// `AskpassRequest` to `provider.prompt()` and writes the response back.
         pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
-            let nonce = SOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
-            let sock_path = std::env::temp_dir().join(format!(
-                "newt-askpass-{}-{}.sock",
-                std::process::id(),
-                nonce
-            ));
-
-            let _ = std::fs::remove_file(&sock_path);
+            // Private (0700) and randomly named, so another user can
+            // neither connect nor take the name first.
+            let dir = tempfile::Builder::new().prefix("newt-askpass-").tempdir()?;
+            let sock_path = dir.path().join("askpass.sock");
 
             let listener = std::os::unix::net::UnixListener::bind(&sock_path)?;
             listener.set_nonblocking(true)?;
             let listener = tokio::net::UnixListener::from_std(listener)?;
 
             let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-            let cleanup_path = sock_path.clone();
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -220,7 +212,7 @@ mod listener {
                     }
                 }
 
-                let _ = std::fs::remove_file(&cleanup_path);
+                drop(dir);
             });
 
             Ok(AskpassListener {
@@ -235,14 +227,11 @@ mod listener {
 mod listener {
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use tokio::net::windows::named_pipe::ServerOptions;
     use tokio::sync::oneshot;
 
     use super::AskpassProvider;
-
-    static PIPE_NONCE: AtomicU64 = AtomicU64::new(0);
 
     /// Handle for a running askpass listener. Drop to stop accepting; the
     /// pipe name is reclaimed by the OS once all instances close.
@@ -264,16 +253,14 @@ mod listener {
         /// each accepted connection is handed one `AskpassRequest` and replies
         /// with the `AskpassResponse`.
         pub fn spawn(provider: Arc<dyn AskpassProvider>) -> std::io::Result<AskpassListener> {
-            let nonce = PIPE_NONCE.fetch_add(1, Ordering::Relaxed);
-            let pipe_name = format!(r"\\.\pipe\newt-askpass-{}-{}", std::process::id(), nonce);
+            let pipe_name = crate::pipe::unique_name("newt-askpass");
 
             // Create the first instance synchronously so the name exists before
             // `spawn` returns — the caller sets it as NEWT_ASKPASS_SOCK and
             // launches the child immediately, which would otherwise race the
             // listener task and hit ERROR_FILE_NOT_FOUND.
-            let mut server = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&pipe_name)?;
+            let mut server =
+                crate::pipe::create(ServerOptions::new().first_pipe_instance(true), &pipe_name)?;
 
             let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
             let pipe_name_loop = pipe_name.clone();
@@ -289,7 +276,7 @@ mod listener {
                             // stream; stand up the next instance before serving
                             // so a concurrent client isn't refused.
                             let connected = server;
-                            server = match ServerOptions::new().create(&pipe_name_loop) {
+                            server = match crate::pipe::create(&ServerOptions::new(), &pipe_name_loop) {
                                 Ok(s) => s,
                                 Err(_) => break,
                             };

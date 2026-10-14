@@ -52,14 +52,16 @@ pub async fn spawn_elevated_windows(
         .ok_or_else(|| Error::Custom("agent path is not valid UTF-8".into()))?
         .to_string();
 
-    let pipe_name = format!(r"\\.\pipe\newt-elevated-{}", uuid::Uuid::new_v4());
+    let pipe_name = newt_common::pipe::unique_name("newt-elevated");
 
     // Create the server before launching so the agent can connect immediately.
-    let server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .max_instances(1)
-        .create(&pipe_name)
-        .map_err(|e| Error::Custom(format!("failed to create elevated pipe: {}", e)))?;
+    let server = newt_common::pipe::create(
+        ServerOptions::new()
+            .first_pipe_instance(true)
+            .max_instances(1),
+        &pipe_name,
+    )
+    .map_err(|e| Error::Custom(format!("failed to create elevated pipe: {}", e)))?;
 
     // ShellExecuteEx "runas" → UAC consent prompt; the agent reaches us via
     // `--pipe`. Scoped to a sync block so the raw-pointer-bearing
