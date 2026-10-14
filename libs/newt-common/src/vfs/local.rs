@@ -619,22 +619,33 @@ impl Vfs for LocalVfs {
 
     async fn poll_changes(&self, path: &Path) -> Result<(), Error> {
         let path = path.to_native();
+        // FSEvents reports paths with symlinks resolved — `/private/tmp/x`
+        // for a change under `/tmp` — so events are matched against both
+        // spellings of the watched directory.
+        let canonical = tokio::fs::canonicalize(&path)
+            .await
+            .unwrap_or_else(|_| path.clone());
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx = Arc::new(Mutex::new(Some(tx)));
 
         let mut watcher = {
             let path = path.clone();
+            let watched = [path.clone(), canonical];
             RecommendedWatcher::new(
                 move |res: Result<Event, notify::Error>| {
                     match res {
                         Ok(event) => {
                             let should_notify = match event.kind {
-                                EventKind::Remove(RemoveKind::Folder) => event
+                                EventKind::Remove(RemoveKind::Folder) => {
+                                    event.paths.iter().any(|p| {
+                                        watched.iter().any(|w| w.starts_with(p) || p.starts_with(w))
+                                    })
+                                }
+                                EventKind::Access(_) => false,
+                                _ => event
                                     .paths
                                     .iter()
-                                    .any(|p| path.starts_with(p) || p.starts_with(&path)),
-                                EventKind::Access(_) => false,
-                                _ => event.paths.iter().any(|p| p.starts_with(&path)),
+                                    .any(|p| watched.iter().any(|w| p.starts_with(w))),
                             };
 
                             if should_notify && let Some(s) = tx.lock().take() {
@@ -687,8 +698,10 @@ impl Vfs for LocalVfs {
             let size = meta.len();
             let (mode_field, user_field, group_field) = cache.owner_bits(&meta);
 
-            // Try extension first, then content sniffing.
-            let mime_type = if is_dir {
+            // Try extension first, then content sniffing — never of a FIFO
+            // or device, whose read can block.
+            let special = mode_field.as_ref().is_some_and(Mode::is_special);
+            let mime_type = if is_dir || special {
                 None
             } else {
                 let from_extension = crate::vfs::file::guess_mime_type(&path);
@@ -2348,5 +2361,67 @@ mod exclusive_write_tests {
             .unwrap();
         assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
         assert!(!dir.path().join("src").exists());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod special_file_tests {
+    use std::time::Duration;
+
+    use crate::vfs::Vfs;
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::path::PathBuf;
+
+    /// A FIFO nobody writes to: sniffing its contents would block forever.
+    #[tokio::test]
+    async fn details_of_a_fifo_do_not_read_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let native = dir.path().join("pipe");
+        let c_path = std::ffi::CString::new(native.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) }, 0);
+
+        let vfs = LocalVfs::new();
+        let path = PathBuf::from_native(&native);
+        assert!(vfs.file_info(&path).await.unwrap().is_special());
+        let details = tokio::time::timeout(Duration::from_secs(5), vfs.file_details(&path))
+            .await
+            .expect("file_details blocked on the FIFO")
+            .unwrap();
+        assert_eq!(details.mime_type, None);
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use std::time::Duration;
+
+    use crate::vfs::Vfs;
+    use crate::vfs::local::LocalVfs;
+    use crate::vfs::path::PathBuf;
+
+    /// On macOS a temporary directory sits behind a symlink (`/var` →
+    /// `/private/var`), where FSEvents reports the resolved path.
+    #[tokio::test]
+    async fn a_change_wakes_a_watch_through_a_symlinked_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vfs = LocalVfs::new();
+        let path = PathBuf::from_native(dir.path());
+        let watch = vfs.poll_changes(&path);
+        tokio::pin!(watch);
+        // The watch registers somewhere inside the future, with no signal
+        // for when it has: keep changing the directory until it wakes.
+        let woke = tokio::time::timeout(Duration::from_secs(10), async {
+            for i in 0.. {
+                tokio::select! {
+                    result = &mut watch => return result,
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                        std::fs::write(dir.path().join(format!("f{i}")), b"x").unwrap();
+                    }
+                }
+            }
+            unreachable!()
+        })
+        .await;
+        woke.expect("no change was reported").unwrap();
     }
 }

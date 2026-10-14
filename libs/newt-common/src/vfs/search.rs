@@ -975,7 +975,7 @@ impl Matcher<'_> {
         let walker = self.walker;
         // Directories have no bytes to scan, and FIFOs and devices would
         // never stop giving them.
-        if entry.file.is_dir || !is_regular(entry.file) {
+        if entry.file.is_dir || entry.file.is_special() {
             return false;
         }
         let cap = walker.params.content_size_cap;
@@ -1123,15 +1123,6 @@ impl walk::Visitor for Matcher<'_> {
         *walker.incomplete.lock() = Some(reason);
         Ok(walk::Resume::Skip)
     }
-}
-
-/// Not a FIFO, socket or device, as far as the mode tells.
-fn is_regular(file: &File) -> bool {
-    const S_IFMT: u32 = 0o170000;
-    const SPECIAL: [u32; 4] = [0o010000, 0o020000, 0o060000, 0o140000];
-    file.mode
-        .as_ref()
-        .is_none_or(|mode| !SPECIAL.contains(&(mode.0 & S_IFMT)))
 }
 
 /// Segments under `root` rendered as a forward-slash key. For files at

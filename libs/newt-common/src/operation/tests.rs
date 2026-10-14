@@ -4991,3 +4991,111 @@ async fn test_create_archive_fails_when_the_destination_cannot_be_looked_at() {
     );
     assert!(!result.vfs.exists("/out.zip"));
 }
+
+fn directory_onto_a_file() -> Arc<MockVfs> {
+    MockVfs::builder()
+        .dir("/src/d")
+        .file("/src/d/one.txt", b"1")
+        .dir("/src/d/sub")
+        .file("/src/d/sub/two.txt", b"2")
+        .dir("/dst")
+        .file("/dst/d", b"in the way")
+        .build()
+}
+
+#[tokio::test]
+async fn test_copy_skipping_a_directory_onto_a_file_skips_its_contents() {
+    let result = run_operation(
+        directory_onto_a_file(),
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/d")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+    assert_eq!(
+        issue_messages(&result.events),
+        ["Cannot replace file with directory: /dst/d"]
+    );
+    assert_eq!(result.vfs.read_content("/dst/d"), b"in the way");
+    assert!(!result.vfs.exists("/dst/d/one.txt"));
+}
+
+#[tokio::test]
+async fn test_move_skipping_a_directory_onto_a_file_leaves_both() {
+    let result = run_operation(
+        directory_onto_a_file(),
+        OperationRequest::Move {
+            rename_to: None,
+            sources: vec![vfs_path("/src/d")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+    assert_eq!(issue_messages(&result.events).len(), 1);
+    assert_eq!(result.vfs.read_content("/dst/d"), b"in the way");
+    assert_eq!(result.vfs.read_content("/src/d/sub/two.txt"), b"2");
+}
+
+/// `0o010644`: a FIFO, as the mode reports one.
+fn tree_with_a_fifo() -> Arc<MockVfs> {
+    MockVfs::builder()
+        .dir("/src/d")
+        .file("/src/d/plain.txt", b"plain")
+        .file_with_mode("/src/d/pipe", b"", 0o010644)
+        .dir("/dst")
+        .build()
+}
+
+#[tokio::test]
+async fn test_copy_skips_special_files_instead_of_reading_them() {
+    let result = run_operation(
+        tree_with_a_fifo(),
+        OperationRequest::Copy {
+            rename_to: None,
+            sources: vec![vfs_path("/src/d")],
+            destination: vfs_path("/dst"),
+            options: Default::default(),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+    assert_eq!(
+        issue_messages(&result.events),
+        ["Skipped /src/d/pipe: not a regular file"]
+    );
+    assert_eq!(result.vfs.read_content("/dst/d/plain.txt"), b"plain");
+    assert!(!result.vfs.exists("/dst/d/pipe"));
+    assert!(
+        !result
+            .vfs
+            .opened_reads()
+            .contains(&PathBuf::from_wire_str("/src/d/pipe"))
+    );
+}
+
+#[tokio::test]
+async fn test_create_archive_skips_special_files() {
+    let result = run_operation(
+        tree_with_a_fifo(),
+        OperationRequest::CreateArchive {
+            sources: vec![vfs_path("/src/d")],
+            destination: vfs_path("/out.tar"),
+            options: archive_options(ArchiveFormat::Tar),
+        },
+        skip_all,
+    )
+    .await;
+    assert!(has_completed(&result.events), "{:?}", result.events);
+    let entries = read_back_tar(&result.vfs.read_content("/out.tar"), "check.tar").await;
+    assert!(entries.contains_key("d/plain.txt"));
+    assert!(!entries.contains_key("d/pipe"));
+}

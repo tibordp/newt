@@ -60,6 +60,24 @@ pub(super) async fn skip_mount_point(
     Ok(())
 }
 
+/// Report a FIFO, socket or device a walk left out: reading one blocks
+/// until something writes to it, or never ends (`/dev/zero`). Skip is the
+/// only action.
+async fn skip_special_file(
+    reporter: &mut ProgressReporter,
+    path: &Path,
+) -> Result<(), crate::Error> {
+    reporter
+        .raise_issue(
+            IssueKind::Other("SpecialFile".into()),
+            format!("Skipped {path}: not a regular file"),
+            Some("FIFOs, sockets and devices have no contents to copy.".into()),
+            vec![IssueAction::Skip],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Route a walk failure through the operation's issue prompt.
 pub(super) async fn resume_after(
     reporter: &mut ProgressReporter,
@@ -150,6 +168,10 @@ impl Visitor for Collector<'_> {
                     }
                 }
             }
+        }
+        if !file.is_symlink && !file.is_dir && file.is_special() {
+            skip_special_file(self.reporter, entry.path).await?;
+            return Ok(Control::Skip);
         }
         let kind = if file.is_symlink {
             WalkedKind::Symlink {

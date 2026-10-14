@@ -130,13 +130,10 @@ Correctness and UX:
 
 - File clipboard: Mod+C/Mod+V are path-text only, and paste after copying in Explorer/Finder errors or navigates to a bare name.
 - Files opened externally from remote/archive VFSes are temp copies never uploaded back (edits lost silently) and never deleted; a failed launch only logs.
-- Quick search: characters typed with AltGr (Windows, arriving as Ctrl+Alt) or Option (macOS) can't start it; those modifiers are also how user chords are typed, so it needs a rule (e.g. start it only when the chord is unbound).
-- FIFOs and device files are opened as regular files: copy and view hang (or copy `/dev/zero` forever).
 - Case-insensitive destinations: `Makefile` and `makefile` from a case-sensitive source collide mid-operation (likewise NFC/NFD and Windows trailing dots); detect before writing.
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
 - Delete removes by path after the scan, so a directory swapped for a symlink in between redirects it (CVE-2022-21658 class; matters for elevated sessions).
 - Non-UTF-8 file names can't be operated on (lossy wire paths).
-- Skipping a file-vs-directory conflict doesn't skip the directory's contents (each child then errors).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - The remote connection log (stderr of an agent run at `RUST_LOG=info`, including full operation-request Debug dumps) grows without bound and is re-serialised on every publish.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.

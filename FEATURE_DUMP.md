@@ -440,13 +440,13 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 
 ### Quick Search Mode
 
-- **Activation**: Start typing any printable character while the pane is focused — Shift included (capitals, digits on AZERTY), unless that Shift chord is bound to a command; not with Ctrl, Alt/Option or Cmd. On a pane listing Windows drives, Shift+letter goes to that drive instead. Requires `quick_search = true` (default).
+- **Activation**: Start typing any printable character while the pane is focused — Shift included (capitals, digits on AZERTY), unless that Shift chord is bound to a command; not with Ctrl, Alt/Option or Cmd. Characters typed with AltGr or Option don't start it, since those modifiers are also how chords are typed; Filter mode (`/`) takes any character. On a pane listing Windows drives, Shift+letter goes to that drive instead. Requires `quick_search = true` (default).
 - **Input methods**: keys an IME is composing with stay with the IME, so Enter committing a candidate doesn't open the focused file.
 - **Matching**: Case-insensitive **prefix** matching on filenames. Wraps around the file list (searches downward from cursor, then wraps to top).
 - **Live updates**: Results update as you type. The cursor moves to the first match.
 - **Arrow Left/Right**: Adjusts the search string based on the focused file's name. Right extends the search to include more of the focused filename; Left trims it.
 - **Press the filter key** (`/` by default): Switches to full Filter mode, keeping the current search text.
-- **Cleared by**: Escape, any selection action, or navigating to a different directory.
+- **Cleared by**: Escape, any selection action, navigating to a different directory, or the entry it landed on disappearing (deleted, renamed, moved away). The cursor then goes to the nearest remaining entry, which needn't match the prefix. A Filter-mode filter is kept, being a view rather than a jump.
 
 ### Filter Mode (Visual Regex)
 
@@ -591,6 +591,8 @@ Opens a modal dialog with:
 4. **Attribute preservation**: After each file lands (and after a directory's contents, deepest first), the requested attributes are applied in an order that keeps them from undoing each other: ownership (chown can clear set-id bits), then xattrs and streams (writing them touches times), then permissions, then ACLs (chmod rewrites the POSIX ACL mask), then timestamps. Timestamps, permissions and numeric ownership come from one `Vfs::get_metadata` stat; everything else through `Vfs::read_attribute`/`write_attribute`, which keep values in their native encoding across the RPC boundary. Attributes that must exist at creation (sparse, S3 metadata/storage class/canned ACL) travel as `WriteOptions` on `overwrite_async`/`copy_within`; a VFS that cannot honour them returns not-supported and the copy retries without them after a prompt. **Any attribute that cannot be read or applied raises "Cannot preserve <kind>" with Retry/Skip**; "Apply to all" Skip is scoped to that attribute kind. A destination that declares no metadata support (S3) gets no stat-derived attributes and no prompts about them.
 5. **Progress**: Reports every 100ms with bytes done, items done, and current filename.
 
+**Special files**: FIFOs, sockets and devices (by the file-type bits of their mode) are never read — a FIFO would block until something wrote to it, `/dev/zero` would never end. Copy, a move between filesystems and Pack to Archive leave each one out, saying so with a Skip-only prompt ("Skipped …: not a regular file"); a move within one filesystem renames them like anything else, and Delete removes them.
+
 **Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for single files.
 
 **Positioned reads everywhere**: `vfs::open_read_at` hands out a backend's own positioned-read handle, or one over `read_range` for a VFS without them (archive and disc mounts, whose entries never change under a reader). Everything that reads through handles — the viewer's file server, so media plays from inside archives; nested mounts, so a tar inside a zip indexes; the agent-side `OPEN_READ_AT` dispatch — goes through it.
@@ -726,7 +728,7 @@ When an operation encounters a conflict:
 
 ## 5. File Viewer (F3)
 
-Opens in a separate window (1100×800 pixels). Automatically detects the file's MIME type and selects the appropriate viewing mode.
+Opens in a separate window (1100×800 pixels). Automatically detects the file's MIME type and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
 
 ### Pre-warmed Windows
 

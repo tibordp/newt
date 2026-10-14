@@ -174,6 +174,9 @@ pub async fn cmd_view(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         Some(s) => s,
         None => return Ok(()),
     };
+    if pane.is_focused_special() {
+        return Err(not_regular(&ctx, &full_path));
+    }
 
     open_viewer_window(&ctx, &full_path)
 }
@@ -281,8 +284,20 @@ pub async fn cmd_edit(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result
         Some(s) => s,
         None => return Ok(()),
     };
+    if pane.is_focused_special() {
+        return Err(not_regular(&ctx, &full_path));
+    }
 
     open_editor_window(&ctx, &full_path)
+}
+
+/// The viewer and editor read their file, and reading a FIFO, socket or
+/// device blocks or never ends.
+pub(crate) fn not_regular(ctx: &MainWindowContext, path: &VfsPath) -> Error {
+    Error::Custom(format!(
+        "{} is not a regular file (a FIFO, socket or device)",
+        ctx.format_vfs_path(path)
+    ))
 }
 
 #[tauri::command]

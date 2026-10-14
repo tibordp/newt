@@ -626,7 +626,6 @@ function FilterInput({
   inputRef,
   onKeyDown,
   onChange,
-  onFocus,
 }: {
   value: string | null;
   filterMode: string;
@@ -635,7 +634,6 @@ function FilterInput({
   inputRef: React.RefObject<HTMLInputElement | null>;
   onKeyDown: React.KeyboardEventHandler;
   onChange: (value: string) => void;
-  onFocus: () => void;
 }) {
   const [localValue, setLocalValue] = useState(value ?? "");
   // filter=null means no active session → always hidden.
@@ -668,7 +666,6 @@ function FilterInput({
       }}
       ref={inputRef}
       onKeyDown={onKeyDown}
-      onFocus={onFocus}
       tabIndex={-1}
       autoComplete="off"
       autoCorrect="off"
@@ -2118,11 +2115,6 @@ function PaneInner(
         onChange={(value) =>
           guarded(() => commands.setFilter(paneHandle, value, null))
         }
-        onFocus={() => {
-          if (filter != null) {
-            guarded(() => commands.setFilter(paneHandle, filter, null));
-          }
-        }}
       />
       <div className={styles.headerArea}>
         {preferences?.settings.appearance?.show_pane_header !== false ? (

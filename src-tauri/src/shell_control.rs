@@ -241,6 +241,14 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             let _ = cwd;
             let handle = select_pane(ctx, pane);
             let resolved = resolve_arg(ctx, handle, &path, ArgBase::Pane).await?;
+            let details = ctx.fs().map_err(err)?.file_details(resolved.clone()).await;
+            if details.is_ok_and(|d| {
+                d.mode
+                    .as_ref()
+                    .is_some_and(newt_common::vfs::Mode::is_special)
+            }) {
+                return Err(err(crate::cmd::window::not_regular(ctx, &resolved)));
+            }
             if edit {
                 crate::cmd::window::open_editor_window(ctx, &resolved).map_err(err)?;
             } else {

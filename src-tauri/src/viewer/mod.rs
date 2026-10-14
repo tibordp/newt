@@ -4,7 +4,7 @@ mod markdown;
 mod table;
 
 use newt_common::find::{SearchMatch, SearchPattern};
-use newt_common::vfs::VfsPath;
+use newt_common::vfs::{Mode, VfsPath};
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::sync::Arc;
@@ -962,8 +962,12 @@ pub async fn open_in_viewer(
             "{display_path} is on another volume than this document"
         )));
     }
-    if ctx.fs()?.file_details(path.clone()).await?.is_dir {
+    let details = ctx.fs()?.file_details(path.clone()).await?;
+    if details.is_dir {
         return Err(Error::Custom(format!("{display_path} is a directory")));
+    }
+    if details.mode.as_ref().is_some_and(Mode::is_special) {
+        return Err(crate::cmd::window::not_regular(&ctx, &path));
     }
     viewer
         .0
@@ -1037,7 +1041,7 @@ pub async fn find_in_viewer(
 fn preview_active_focus(ctx: &MainWindowContext) -> Result<(), Error> {
     let target = ctx
         .active_pane()
-        .filter(|pane| !pane.is_focused_dir())
+        .filter(|pane| !pane.is_focused_dir() && !pane.is_focused_special())
         .and_then(|pane| pane.get_focused_source());
     let target = match target {
         Some(path) => Some((
@@ -1145,9 +1149,13 @@ pub fn report_preview_table_detection(
 #[tauri::command]
 #[specta::specta]
 pub async fn open_viewer(ctx: MainWindowContext, path: VfsPath) -> Result<(), Error> {
-    if ctx.fs()?.file_details(path.clone()).await?.is_dir {
+    let details = ctx.fs()?.file_details(path.clone()).await?;
+    if details.is_dir {
         let display_path = ctx.format_vfs_path(&path);
         return Err(Error::Custom(format!("{display_path} is a directory")));
+    }
+    if details.mode.as_ref().is_some_and(Mode::is_special) {
+        return Err(crate::cmd::window::not_regular(&ctx, &path));
     }
     crate::cmd::window::open_viewer_window(&ctx, &path)
 }

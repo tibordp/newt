@@ -47,6 +47,16 @@ impl PartialOrd for UserGroup {
 )]
 pub struct Mode(pub u32);
 
+impl Mode {
+    /// A FIFO, socket or device: reading one can block forever, or never
+    /// end (`/dev/zero`).
+    pub fn is_special(&self) -> bool {
+        const S_IFMT: u32 = 0o170000;
+        const SPECIAL: [u32; 4] = [0o010000, 0o020000, 0o060000, 0o140000];
+        SPECIAL.contains(&(self.0 & S_IFMT))
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct File {
     pub name: String,
@@ -141,6 +151,12 @@ impl File {
     /// `name`, which need not be unique.
     pub fn key(&self) -> &str {
         self.key.as_deref().unwrap_or(&self.name)
+    }
+
+    /// A FIFO, socket or device, as far as the mode tells. See
+    /// [`Mode::is_special`].
+    pub fn is_special(&self) -> bool {
+        self.mode.as_ref().is_some_and(Mode::is_special)
     }
 }
 

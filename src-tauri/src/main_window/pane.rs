@@ -1634,6 +1634,12 @@ impl Pane {
             .any(|f| f.key() == key && f.is_dir)
     }
 
+    /// Whether the focused entry is a FIFO, socket or device, which the
+    /// viewer and editor must not read.
+    pub fn is_focused_special(&self) -> bool {
+        self.get_focused_file_info().is_some_and(|f| f.is_special())
+    }
+
     pub fn is_focused_dir(&self) -> bool {
         let view_state = self.view_state.read();
         let focused = match view_state.focused.as_ref() {
@@ -2289,6 +2295,11 @@ impl PaneViewState {
             .as_ref()
             .is_none_or(|name| !self.file_lookup.contains_key(name))
         {
+            // A quick search led to the entry that's gone; the one landed on
+            // next needn't match it.
+            if self.focused.is_some() {
+                self.clear_quick_search();
+            }
             // focused_index has not been updated yet, so we still have the chance to use it to find a nearby file to focus.
             // This makes the UI feel more stable when files are added/removed above the focused file.
             let index = self
@@ -3248,6 +3259,20 @@ mod tests {
         vs.natural_sort = true;
         vs.set_sorting(by_name, false);
         assert_eq!(order(&vs), ["..", "F1", "f9", "f10"]);
+    }
+
+    #[test]
+    fn a_vanished_focus_ends_a_quick_search_but_not_a_filter() {
+        for (mode, cleared) in [(FilterMode::QuickSearch, true), (FilterMode::Filter, false)] {
+            let mut vs = listed(&[("..", true), ("abd", false), ("x", false)]);
+            vs.filter = Some("ab".into());
+            vs.filter_mode = mode;
+            vs.focused = Some("abc".into());
+            vs.focused_index = Some(1);
+            vs.update_focus();
+            assert_eq!(vs.filter.is_none(), cleared);
+            assert_eq!(vs.focused.as_deref(), Some("abd"));
+        }
     }
 
     #[test]
