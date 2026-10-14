@@ -95,14 +95,3 @@ export const KEYBOARD_MENU_EVENT = "newt:keyboard-context-menu";
 /// or the active terminal — to take DOM focus back, sent when a menu closes
 /// on a pane that doesn't hold it.
 export const REFOCUS_EVENT = "newt:refocus";
-
-/// Whether a `contextmenu` event came from the keyboard rather than a
-/// pointer. The Menu key produces no keydown the panes can bind, only this
-/// event, and the webview aims it by hit-testing a point of its own
-/// choosing — an unrelated row, in whichever pane the point fell in — so it
-/// must be recognised and re-routed rather than acted on where it landed.
-/// A pointer carries button 2; macOS ctrl+click reports no button either,
-/// but carries `ctrlKey`.
-export function isKeyboardContextMenu(e: MouseEvent): boolean {
-  return e.button !== 2 && !e.ctrlKey;
-}

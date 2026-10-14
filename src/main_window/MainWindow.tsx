@@ -43,18 +43,14 @@ import {
 } from "../lib/commands";
 import ModalRouter from "./modals/ModalRouter";
 import OperationsPanel, { OperationProgressModal } from "./OperationsPanel";
-import {
-  KEYBOARD_MENU_EVENT,
-  MainWindowState,
-  OperationState,
-  isKeyboardContextMenu,
-} from "./types";
+import { KEYBOARD_MENU_EVENT, MainWindowState, OperationState } from "./types";
 import Pane from "./Pane";
 import TerminalPanel from "./TerminalPanel";
 import { usePreferences } from "../lib/preferences";
 import { useRuntimeState } from "../lib/runtimeState";
 import CommandBar from "./CommandBar";
 import { useFocusWatchdog } from "./focusWatchdog";
+import { isKeyboardContextMenu } from "../lib/menus";
 
 enablePatches();
 

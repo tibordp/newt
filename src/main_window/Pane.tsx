@@ -10,7 +10,7 @@ import {
   Fragment,
 } from "react";
 import { DropdownMenu } from "../lib/menus";
-import { ContextMenu } from "../lib/menus";
+import { ContextMenu, isKeyboardContextMenu, openMenuAt } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
 import { useAfterGrace } from "../lib/useAfterGrace";
 import iconMapping from "../assets/mapping.json";
@@ -32,7 +32,6 @@ import {
   FileRowContext,
   KEYBOARD_MENU_EVENT,
   REFOCUS_EVENT,
-  isKeyboardContextMenu,
 } from "./types";
 import type { VfsProgress } from "../lib/bindings";
 import { useFormatBytes, useSizeUnits } from "../lib/size";
@@ -1591,19 +1590,8 @@ function PaneInner(
       `li[data-name="${CSS.escape(focused)}"]`,
     );
     if (!li) return;
-    const rect = li.getBoundingClientRect();
     setContextMenuIsParentDir(focused === "..");
-    // `button: 2` marks the event as carrying a real position — see the
-    // keyboard branch in `onContextMenu`.
-    li.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        button: 2,
-        buttons: 2,
-        clientX: rect.left,
-        clientY: rect.bottom,
-      }),
-    );
+    openMenuAt(li);
   }, [focused]);
 
   // Serve keyboard-requested menus while this is the active pane, wherever
@@ -2305,99 +2293,117 @@ function PaneInner(
         />
       </ContextMenu.Root>
       {file_window && (
-        <ContextMenu.Root>
-          <ContextMenu.Trigger asChild>
-            <ul
-              className={`${styles.files} ${
-                filter && filter_mode === "filter" ? styles.filesFiltered : ""
-              } ${showSpinner ? styles.filesStale : ""}`}
-              id={listId}
-              role="listbox"
-              aria-multiselectable
-              aria-label={props.display_path}
-              aria-activedescendant={activeDescendant}
-              aria-busy={isBusy || loading}
-              aria-describedby={isEmpty ? emptyId : undefined}
-              ref={containerRef}
-              onKeyDown={onkeydown}
-              onMouseDown={onMouseDown}
-              onClick={(e) => e.stopPropagation()}
-              onContextMenu={onContextMenu}
-              tabIndex={-1}
-              onScroll={onScroll}
-            >
-              <div style={topSpacerStyle} aria-hidden />
-              {isEmpty && (
-                <li
-                  id={emptyId}
-                  className={styles.emptyPlaceholder}
+        <div className={styles.filesFrame}>
+          <ContextMenu.Root>
+            <ContextMenu.Trigger asChild>
+              <ul
+                className={`${styles.files} ${
+                  filter && filter_mode === "filter" ? styles.filesFiltered : ""
+                } ${showSpinner ? styles.filesStale : ""}`}
+                id={listId}
+                role="listbox"
+                aria-multiselectable
+                aria-label={props.display_path}
+                aria-activedescendant={activeDescendant}
+                aria-busy={isBusy || loading}
+                aria-describedby={isEmpty ? emptyId : undefined}
+                ref={containerRef}
+                onKeyDown={onkeydown}
+                onMouseDown={onMouseDown}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={onContextMenu}
+                tabIndex={-1}
+                onScroll={onScroll}
+              >
+                <div style={topSpacerStyle} aria-hidden />
+                {isEmpty && (
+                  <li
+                    id={emptyId}
+                    className={styles.emptyPlaceholder}
+                    aria-hidden
+                  >
+                    Nothing to see here
+                  </li>
+                )}
+                {file_window.items.map((row, i) => {
+                  const rowKey = row.key ?? row.name;
+                  const isCursor = rowKey === focused;
+                  const isFocused = active && isCursor;
+                  return (
+                    <FileRow
+                      key={rowKey}
+                      row={row}
+                      id={rowId(file_window.offset + i)}
+                      posInSet={file_window.offset + i + 1}
+                      // Unknown (-1) while streaming: the total moves with
+                      // every batch, and would re-render each row with it.
+                      setSize={loading ? -1 : file_window.total_count}
+                      columns={columns}
+                      isCursor={isCursor}
+                      isFocused={isFocused}
+                      isSelected={selectedLookup.has(rowKey)}
+                      filter={isFocused ? filter : null}
+                      filterMode={filter_mode}
+                      widthPrefix={widthPrefix}
+                      dateFormat={
+                        preferences?.settings?.appearance?.date_format
+                      }
+                      timeFormat={
+                        preferences?.settings?.appearance?.time_format
+                      }
+                      locale={locale}
+                      siSizePrefixes={
+                        preferences?.settings?.appearance?.si_size_prefixes
+                      }
+                      sizeUnits={sizeUnits}
+                      onClick={onClick}
+                      onMouseDown={onDndMouseDown}
+                      onOpen={onOpen}
+                    />
+                  );
+                })}
+                <div style={bottomSpacerStyle} aria-hidden />
+                <div
+                  className={styles.dragRect}
+                  ref={dragRectRef}
                   aria-hidden
-                >
-                  Nothing to see here
-                </li>
-              )}
-              {file_window.items.map((row, i) => {
-                const rowKey = row.key ?? row.name;
-                const isCursor = rowKey === focused;
-                const isFocused = active && isCursor;
-                return (
-                  <FileRow
-                    key={rowKey}
-                    row={row}
-                    id={rowId(file_window.offset + i)}
-                    posInSet={file_window.offset + i + 1}
-                    // Unknown (-1) while streaming: the total moves with
-                    // every batch, and would re-render each row with it.
-                    setSize={loading ? -1 : file_window.total_count}
-                    columns={columns}
-                    isCursor={isCursor}
-                    isFocused={isFocused}
-                    isSelected={selectedLookup.has(rowKey)}
-                    filter={isFocused ? filter : null}
-                    filterMode={filter_mode}
-                    widthPrefix={widthPrefix}
-                    dateFormat={preferences?.settings?.appearance?.date_format}
-                    timeFormat={preferences?.settings?.appearance?.time_format}
-                    locale={locale}
-                    siSizePrefixes={
-                      preferences?.settings?.appearance?.si_size_prefixes
-                    }
-                    sizeUnits={sizeUnits}
-                    onClick={onClick}
-                    onMouseDown={onDndMouseDown}
-                    onOpen={onOpen}
-                  />
-                );
-              })}
-              <div style={bottomSpacerStyle} aria-hidden />
-              <div className={styles.dragRect} ref={dragRectRef} aria-hidden />
-            </ul>
-          </ContextMenu.Trigger>
-          {contextMenuOnFile ? (
-            <FileContextMenuContent
-              paneHandle={paneHandle}
-              isParentDir={contextMenuIsParentDir}
-              follow={contextMenuFollow}
-              actions={contextMenuActions}
-              isFile={contextMenuIsFile}
-              onCloseAutoFocus={refocusPane}
-              onShellMenu={
-                shellMenuAvailable
-                  ? () => void openShellMenu(contextMenuFileRef.current)
-                  : undefined
-              }
-            />
-          ) : (
-            <PaneContextMenuContent
-              paneHandle={paneHandle}
-              isHostLocal={props.is_host_local}
-              onCloseAutoFocus={refocusPane}
-              onShellMenu={
-                shellMenuAvailable ? () => void openShellMenu(null) : undefined
-              }
-            />
-          )}
-        </ContextMenu.Root>
+                />
+              </ul>
+            </ContextMenu.Trigger>
+            {contextMenuOnFile ? (
+              <FileContextMenuContent
+                paneHandle={paneHandle}
+                isParentDir={contextMenuIsParentDir}
+                follow={contextMenuFollow}
+                actions={contextMenuActions}
+                isFile={contextMenuIsFile}
+                onCloseAutoFocus={refocusPane}
+                onShellMenu={
+                  shellMenuAvailable
+                    ? () => void openShellMenu(contextMenuFileRef.current)
+                    : undefined
+                }
+              />
+            ) : (
+              <PaneContextMenuContent
+                paneHandle={paneHandle}
+                isHostLocal={props.is_host_local}
+                onCloseAutoFocus={refocusPane}
+                onShellMenu={
+                  shellMenuAvailable
+                    ? () => void openShellMenu(null)
+                    : undefined
+                }
+              />
+            )}
+          </ContextMenu.Root>
+          {/* WebKit aims the keyboard's menu key at the focused element's
+            bottom-left pixel and sends nothing when a scrollbar is there
+            (EventHandler::sendContextMenuEventForKey) — here, the list's
+            own horizontal scrollbar. This pixel takes the event instead,
+            and the window hands it to the active pane. */}
+          <div className={styles.menuKeyTarget} aria-hidden />
+        </div>
       )}
       <div className="dnd-ghost" ref={dndGhostRef} aria-hidden />
       {preferences?.settings.appearance?.show_pane_status !== false && (

@@ -9,7 +9,7 @@ import React, {
 
 import { useFormatBytes } from "../lib/size";
 
-import { ContextMenu as CM } from "../lib/menus";
+import { ContextMenu as CM, keyboardMenuHandlers } from "../lib/menus";
 
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -810,6 +810,11 @@ export function TextViewer({
       ref={viewerRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      {...keyboardMenuHandlers(
+        () =>
+          textPreRef.current?.querySelector(`.${styles.selActive}`) ??
+          textPreRef.current?.querySelector(`.${styles.viewerLine}`),
+      )}
     >
       <div
         className={styles.viewerContent}

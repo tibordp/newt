@@ -24,7 +24,7 @@ import {
   type DissectSpan,
 } from "../lib/bindings";
 import { safe, safeSilent, unwrap, unwrapBytes } from "../lib/ipc";
-import { ContextMenu as CM } from "../lib/menus";
+import { ContextMenu as CM, keyboardMenuHandlers } from "../lib/menus";
 import { useCommandShortcuts, useScopedBindings } from "../lib/scopedBindings";
 import { useFormatBytes } from "../lib/size";
 import menuStyles from "../main_window/Menu.module.scss";
@@ -1481,7 +1481,14 @@ export function DissectViewer({
   return (
     <div className={`${viewerStyles.viewer} ${styles.root}`}>
       <div className={styles.body}>
-        <div className={styles.treePane}>
+        <div
+          className={styles.treePane}
+          {...keyboardMenuHandlers(
+            () =>
+              treeRef.current?.querySelector('[aria-selected="true"]') ??
+              treeRef.current?.querySelector('[role="treeitem"]'),
+          )}
+        >
           <CM.Root
             onOpenChange={(open) => {
               if (!open || host.embedded) return;
@@ -1692,31 +1699,77 @@ export function DissectViewer({
               {lenKnown ? formatSize(sourceLen) : "Size unknown"}
             </span>
           </div>
-          <div
-            className={styles.hex}
-            ref={hexRef}
-            tabIndex={-1}
-            role="grid"
-            aria-label="Bytes"
-            onKeyDown={onHexKey}
-            onFocus={() => setZone("hex")}
-            onMouseDown={onHexMouseDown}
-            onScroll={(e) =>
-              setHexTop(
-                Math.min(
-                  Math.max(0, hexRows - hexVisible),
-                  Math.floor((e.currentTarget.scrollTop * hexScale) / HEX_ROW),
-                ),
-              )
-            }
-          >
-            <div
-              className={styles.hexContent}
-              style={{ height: Math.min(hexNatural, MAX_SCROLL_HEIGHT) }}
-            >
-              {hexLines}
-            </div>
-          </div>
+          <CM.Root>
+            <CM.Trigger asChild>
+              <div
+                className={styles.hex}
+                ref={hexRef}
+                tabIndex={-1}
+                role="grid"
+                aria-label="Bytes"
+                onKeyDown={onHexKey}
+                onFocus={() => setZone("hex")}
+                onMouseDown={onHexMouseDown}
+                onContextMenuCapture={
+                  keyboardMenuHandlers(
+                    () =>
+                      hexRef.current?.querySelector(
+                        `[data-offset="${cursor}"]`,
+                      ) ?? hexRef.current?.querySelector("[data-offset]"),
+                  ).onContextMenuCapture
+                }
+                onScroll={(e) =>
+                  setHexTop(
+                    Math.min(
+                      Math.max(0, hexRows - hexVisible),
+                      Math.floor(
+                        (e.currentTarget.scrollTop * hexScale) / HEX_ROW,
+                      ),
+                    ),
+                  )
+                }
+              >
+                <div
+                  className={styles.hexContent}
+                  style={{ height: Math.min(hexNatural, MAX_SCROLL_HEIGHT) }}
+                >
+                  {hexLines}
+                </div>
+              </div>
+            </CM.Trigger>
+            <CM.Portal>
+              <CM.Content
+                className={menuStyles.content}
+                loop
+                onCloseAutoFocus={(e) => {
+                  e.preventDefault();
+                  hexRef.current?.focus();
+                }}
+              >
+                <CM.Item
+                  className={menuStyles.item}
+                  disabled={!(hexSelection() ?? span)?.len}
+                  onSelect={() => copyBytes(hexSelection() ?? span, "hex")}
+                >
+                  Copy as Hex
+                </CM.Item>
+                <CM.Item
+                  className={menuStyles.item}
+                  disabled={!(hexSelection() ?? span)?.len}
+                  onSelect={() => copyBytes(hexSelection() ?? span, "ascii")}
+                >
+                  Copy as Text
+                </CM.Item>
+                <CM.Separator className={menuStyles.separator} />
+                <CM.Item
+                  className={menuStyles.item}
+                  onSelect={() => setGoToOpen(true)}
+                >
+                  Go to Offset… {shortcut("viewer_goto")}
+                </CM.Item>
+              </CM.Content>
+            </CM.Portal>
+          </CM.Root>
           <Details
             node={node}
             source={sourceLabel}

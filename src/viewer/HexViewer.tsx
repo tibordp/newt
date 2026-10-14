@@ -8,7 +8,7 @@ import React, {
 
 import { useFormatBytes } from "../lib/size";
 
-import { ContextMenu as CM } from "../lib/menus";
+import { ContextMenu as CM, keyboardMenuHandlers } from "../lib/menus";
 
 import { safe } from "../lib/ipc";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -571,6 +571,16 @@ export function HexViewer({
       ref={viewerRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      {...keyboardMenuHandlers(() => {
+        const column =
+          activeColumn === "ascii" ? asciiColRef.current : hexColRef.current;
+        const head = hexSelectionRef.current?.head;
+        return (
+          (head != null &&
+            column?.querySelector(`[data-byte-offset="${head}"]`)) ||
+          column?.querySelector("[data-byte-offset]")
+        );
+      })}
     >
       <div
         className={styles.viewerContent}
