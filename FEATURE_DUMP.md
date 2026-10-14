@@ -1674,15 +1674,15 @@ Everything a template interpolates is quoted for the shell the command runs in, 
 |----------|------|-------------|
 | `file` | Object | Currently focused file |
 | `file.name` | String | Filename with extension |
-| `file.path` | String | Full absolute path |
-| `file.source` | String | Underlying real path for virtual entries (e.g. search hits); undefined for ordinary files |
+| `file.path` | String | Full absolute path, as Copy Path gives it (`C:\Users\…` on Windows) |
+| `file.source` | String | Underlying real path for virtual entries (e.g. search hits), likewise; undefined for ordinary files |
 | `file.stem` | String | Filename without extension |
 | `file.ext` | String | Extension (without dot) |
 | `file.is_dir` | Bool | Is it a directory? |
 | `file.size` | Number | Size in bytes (may be undefined) |
 | `file.modified` | Number | Unix timestamp in seconds (may be undefined) |
 | `files` | Array | Selected files, or `[file]` if nothing selected |
-| `dir` | String | Active pane's current directory (absolute path) |
+| `dir` | String | Active pane's current directory (absolute path, as Copy Path gives it) |
 | `other_dir` | String | Other pane's current directory |
 | `hostname` | String | Machine hostname |
 | `env.NAME` | String | Environment variable (e.g., `env.HOME`, `env.PATH`) |

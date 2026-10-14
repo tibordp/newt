@@ -290,9 +290,11 @@ fn setup_template_env(
 // --- Template context and rendering ---
 
 /// Build the template context (file objects, dir, env, hostname) for a user command.
+/// Paths are rendered by `format`, which is what Copy Path gives.
 fn build_template_context(
     pane_path: &VfsPath,
     effective_files: &[&newt_common::vfs::File],
+    format: &dyn Fn(&VfsPath) -> String,
 ) -> (
     minijinja::Value,
     Vec<minijinja::Value>,
@@ -300,7 +302,7 @@ fn build_template_context(
     String,
     minijinja::Value,
 ) {
-    let dir = pane_path.path.as_wire_str().to_string();
+    let dir = format(pane_path);
 
     let file_objects: Vec<minijinja::Value> = effective_files
         .iter()
@@ -308,8 +310,8 @@ fn build_template_context(
             // Use `key()` for the in-VFS path component: for ordinary
             // entries it equals `name`, for virtual entries (e.g. nested
             // search hits) it's the unique identifier under the pane root.
-            let path = pane_path.join(f.key()).path.as_wire_str().to_string();
-            let source = f.source.as_ref().map(|p| p.path.as_wire_str().to_string());
+            let path = format(&pane_path.join(f.key()));
+            let source = f.source.as_ref().map(format);
             minijinja::Value::from_object(FileTemplateObject {
                 name: f.name.clone(),
                 path,
@@ -342,17 +344,19 @@ fn build_template_context(
 }
 
 /// Render a user command template with the given prompt/confirm responses.
+#[allow(clippy::too_many_arguments)]
 fn render_template(
     flavor: ShellFlavor,
     template_str: &str,
     pane_path: &VfsPath,
     other_dir: &str,
     effective_files: &[&newt_common::vfs::File],
+    format: &dyn Fn(&VfsPath) -> String,
     prompt_responses: Option<&[String]>,
     confirm_responses: Option<&[bool]>,
 ) -> Result<(String, CollectedInputs), Error> {
     let (file_value, file_objects, dir, hostname, env_obj) =
-        build_template_context(pane_path, effective_files);
+        build_template_context(pane_path, effective_files, format);
 
     let collected = std::sync::Arc::new(parking_lot::Mutex::new(CollectedInputs::default()));
     let is_scanning = prompt_responses.is_none();
@@ -430,7 +434,7 @@ fn collect_pane_context(
     let pane = ctx.panes().require(pane_handle)?;
     let pane_path = pane.path();
     let other_pane = ctx.with_update(|gs| gs.other_pane(pane_handle))?;
-    let other_dir = other_pane.path().path.as_wire_str().to_string();
+    let other_dir = ctx.format_vfs_path(&other_pane.path());
 
     let selection = pane.get_effective_selection();
     let selection_keys = selection_keys(&pane_path, &selection);
@@ -563,6 +567,7 @@ pub async fn run_user_command(
         &pane_path,
         &other_dir,
         &file_refs,
+        &|p| ctx.format_vfs_path(p),
         None,
         None,
     )?;
@@ -630,6 +635,7 @@ pub async fn execute_user_command(
         &pane_path,
         &other_dir,
         &file_refs,
+        &|p| ctx.format_vfs_path(p),
         Some(&prompt_responses),
         Some(&confirm_responses),
     )?;
@@ -693,6 +699,10 @@ mod tests {
         }
     }
 
+    fn wire(path: &VfsPath) -> String {
+        path.path.as_wire_str().to_string()
+    }
+
     #[test]
     fn template_path_uses_key_for_nested_synthetic_entries() {
         // Two search hits that share a basename but live in different
@@ -716,7 +726,7 @@ mod tests {
         );
         let files = [&a, &b];
 
-        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files, &wire);
         let paths: Vec<String> = file_objects
             .iter()
             .map(|v| v.get_attr("path").unwrap().as_str().unwrap().to_string())
@@ -737,7 +747,7 @@ mod tests {
         );
         let files = [&f];
 
-        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files, &wire);
         let source = file_objects[0].get_attr("source").unwrap();
         assert_eq!(source.as_str(), Some("/src/a/foo.txt"));
     }
@@ -748,7 +758,7 @@ mod tests {
         let f = file_with("foo.txt", None, None);
         let files = [&f];
 
-        let (_, file_objects, _, _, _) = build_template_context(&pane, &files);
+        let (_, file_objects, _, _, _) = build_template_context(&pane, &files, &wire);
         let source = file_objects[0].get_attr("source").unwrap();
         assert!(source.is_none(), "expected None, got {:?}", source);
     }
@@ -763,6 +773,7 @@ mod tests {
             &pane,
             "/other",
             &refs,
+            &wire,
             Some(&[]),
             Some(&[]),
         )
