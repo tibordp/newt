@@ -314,9 +314,12 @@ pub fn spawn_stderr_reader<R: AsyncRead + Unpin + Send + 'static>(
 
 /// Spawn an agent according to `spec`. Single entry point over the three
 /// transport styles; returns a connection whose `stream` is ready for RPC.
+/// `fresh_agent` uploads the agent even where the target has one cached,
+/// replacing a cached binary that is there but broken.
 pub async fn spawn(
     spec: &SpawnSpec,
     mode: AgentMode,
+    fresh_agent: bool,
     extra_path: &[String],
     agent_resolver: &dyn AgentResolver,
     askpass_provider: Arc<dyn AskpassProvider>,
@@ -333,6 +336,7 @@ pub async fn spawn(
             spawn_bootstrap(
                 transport_cmd,
                 mode,
+                fresh_agent,
                 *askpass,
                 *shell_join,
                 *login_shell,
@@ -350,7 +354,17 @@ pub async fn spawn(
             command,
             skip_bootstrap,
             ..
-        } => spawn_custom_shell(command, mode, *skip_bootstrap, agent_resolver, log).await,
+        } => {
+            spawn_custom_shell(
+                command,
+                mode,
+                fresh_agent,
+                *skip_bootstrap,
+                agent_resolver,
+                log,
+            )
+            .await
+        }
     }
 }
 
@@ -361,6 +375,7 @@ pub async fn spawn(
 async fn bootstrap_script_body(
     agent_resolver: &dyn AgentResolver,
     mode: AgentMode,
+    fresh_agent: bool,
 ) -> Result<String, Error> {
     let mut body = BOOTSTRAP_SCRIPT.replace("__NEWT_HASH__", &agent_resolver.agent_hash().await?);
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
@@ -369,6 +384,9 @@ async fn bootstrap_script_body(
     }
     if mode.serve_vfs() {
         body = format!("NEWT_AGENT_MODE='vfs'\n{}", body);
+    }
+    if fresh_agent {
+        body = format!("NEWT_FORCE_UPLOAD=1\n{}", body);
     }
     Ok(body)
 }
@@ -381,6 +399,7 @@ async fn bootstrap_script_body(
 async fn spawn_bootstrap(
     transport_cmd: &[String],
     mode: AgentMode,
+    fresh_agent: bool,
     enable_askpass: bool,
     shell_join: bool,
     login_shell: bool,
@@ -394,7 +413,7 @@ async fn spawn_bootstrap(
         .ok_or_else(|| Error::custom("empty transport command"))?;
     let program = crate::shell::resolve_program(program, extra_path);
 
-    let script_body = bootstrap_script_body(agent_resolver, mode).await?;
+    let script_body = bootstrap_script_body(agent_resolver, mode, fresh_agent).await?;
 
     let askpass_listener = if enable_askpass {
         Some(crate::askpass::AskpassListener::spawn(askpass_provider)?)
@@ -778,11 +797,12 @@ async fn spawn_direct_copy(
 async fn spawn_custom_shell(
     command: &str,
     mode: AgentMode,
+    fresh_agent: bool,
     skip_bootstrap: bool,
     agent_resolver: &dyn AgentResolver,
     log: Arc<dyn ConnectLog>,
 ) -> Result<SpawnedAgent, Error> {
-    let script = bootstrap_script_body(agent_resolver, mode).await?;
+    let script = bootstrap_script_body(agent_resolver, mode, fresh_agent).await?;
 
     log.log(format!(
         "Running custom command (skip_bootstrap={}): sh -c {:?}",

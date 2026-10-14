@@ -1200,7 +1200,7 @@ fn main() {
                 // wedges WebView2's composition into a permanently blank
                 // window (~50% of Explorer launches on slow machines). The
                 // `init` command prewarms once the webview is provably alive.
-                if let Err(e) = tauri::async_runtime::block_on(ctx.connect(agent_resolver)) {
+                if let Err(e) = tauri::async_runtime::block_on(ctx.connect(agent_resolver, false)) {
                     log::error!("local connect failed during setup: {}", e);
                     ctx.set_connection_failed(e.to_string());
                 }

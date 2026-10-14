@@ -1511,7 +1511,13 @@ impl MainWindowContext {
         })
     }
 
-    pub async fn connect(&self, agent_resolver: Arc<dyn AgentResolver>) -> Result<(), Error> {
+    /// Connect the session. `fresh_agent` re-uploads the agent where the
+    /// target caches one (see [`newt_common::connect::spawn`]).
+    pub async fn connect(
+        &self,
+        agent_resolver: Arc<dyn AgentResolver>,
+        fresh_agent: bool,
+    ) -> Result<(), Error> {
         let state = &self.inner.main_window_state;
         let publisher = &self.inner.publisher;
         let session_slot = &self.inner.session;
@@ -1538,8 +1544,18 @@ impl MainWindowContext {
             },
             askpass_provider,
             self.clone(),
+            fresh_agent,
         )
         .await
+    }
+
+    /// Whether the last attempt to connect failed, as opposed to a
+    /// session that ran and was lost.
+    pub fn connection_failed(&self) -> bool {
+        matches!(
+            *self.inner.main_window_state.connection_status.0.read(),
+            ConnectionStatus::Failed { .. }
+        )
     }
 
     pub fn askpass_respond(&self, response: Option<String>) {

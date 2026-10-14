@@ -16,6 +16,10 @@
 #   RPC bytes into stdin until the upload has been fully consumed —
 #   some `head -c` implementations (BSD/macOS) read ahead and would
 #   silently swallow them.
+#
+#   NEWT_FORCE_UPLOAD=1, injected by the host when its previous attempt
+#   failed, asks for the upload even when a cached binary exists,
+#   replacing one that is there but broken.
 
 set -e
 
@@ -51,15 +55,20 @@ if [ -n "${XDG_CACHE_HOME}" ]; then
 elif [ -n "${HOME}" ]; then
     CACHE_DIR="${HOME}/.cache/newt"
 else
-    CACHE_DIR="/tmp/newt-$(id -u)"
+    # No home to cache in: a private directory for this connection alone.
+    # A fixed name in /tmp could be one another user made first, holding
+    # an "agent" of their own.
+    CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/newt.XXXXXX")
 fi
 
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
-AGENT_PATH="${CACHE_DIR}/newt-agent-${NEWT_HASH}"
+# Keyed by platform too: a home shared between machines holds one agent
+# for each.
+AGENT_PATH="${CACHE_DIR}/newt-agent-${NEWT_HASH}-${TRIPLE}"
 
 # --- Check cached binary ---
-if [ -x "$AGENT_PATH" ]; then
+if [ -x "$AGENT_PATH" ] && [ -z "${NEWT_FORCE_UPLOAD}" ]; then
     echo "NEWT:READY"
 else
     # Detect available decompression tools
@@ -82,24 +91,42 @@ else
             ;;
     esac
 
-    # Read exact byte count from stdin, decompress if needed
+    # Read exact byte count from stdin, decompress if needed. A short read
+    # (the connection dropping mid-upload) must not install a truncated
+    # agent: gzip fails on a cut-off stream, and a raw upload is counted.
     TMPFILE="${AGENT_PATH}.tmp.$$"
     case "$ENCODING" in
         gzip)
-            head -c "$SIZE" | gzip -d > "$TMPFILE"
+            if ! head -c "$SIZE" | gzip -d > "$TMPFILE"; then
+                rm -f "$TMPFILE"
+                echo "NEWT:ERROR:agent upload was cut short"
+                exit 1
+            fi
             ;;
         *)
             head -c "$SIZE" > "$TMPFILE"
+            if [ "$(wc -c < "$TMPFILE")" -ne "$SIZE" ]; then
+                rm -f "$TMPFILE"
+                echo "NEWT:ERROR:agent upload was cut short"
+                exit 1
+            fi
             ;;
     esac
 
     chmod +x "$TMPFILE"
     mv "$TMPFILE" "$AGENT_PATH"
 
-    # Clean up old versions
+    # Clean up this platform's other versions, and names without a
+    # platform. Another platform's agents belong to another machine
+    # sharing this home.
     for f in "${CACHE_DIR}"/newt-agent-*; do
-        case "$f" in
-            "${AGENT_PATH}"|"${AGENT_PATH}".*)
+        case "${f##*/}" in
+            "${AGENT_PATH##*/}"|"${AGENT_PATH##*/}".*)
+                ;;
+            newt-agent-*-"${TRIPLE}"|newt-agent-*-"${TRIPLE}".tmp.*)
+                rm -f "$f" 2>/dev/null || true
+                ;;
+            newt-agent-*-*-*)
                 ;;
             *)
                 rm -f "$f" 2>/dev/null || true

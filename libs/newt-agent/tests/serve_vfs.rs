@@ -176,6 +176,7 @@ async fn bootstrap_spawns_serve_vfs_agent() {
     let spawned = newt_common::connect::spawn(
         &spec,
         AgentMode::ServeVfs,
+        false,
         &[],
         &TestResolver,
         Arc::new(NoAskpass),
@@ -194,6 +195,61 @@ async fn bootstrap_spawns_serve_vfs_agent() {
 
     let listing = vfs.list_files(&VfsPathBuf::root(), None).await.unwrap();
     assert!(!listing.files.is_empty());
+}
+
+/// Bootstrap a serve-vfs agent through a cache in `cache`, and list its
+/// root over RPC.
+async fn bootstrap_and_list(
+    cache: &std::path::Path,
+    fresh_agent: bool,
+) -> Result<(), newt_common::Error> {
+    let spec = SpawnSpec::CustomShell {
+        command: format!(
+            "XDG_CACHE_HOME='{}' sh -c \"$NEWT_BOOTSTRAP\"",
+            cache.display()
+        ),
+        label: "test".to_string(),
+        skip_bootstrap: false,
+    };
+    let spawned = newt_common::connect::spawn(
+        &spec,
+        AgentMode::ServeVfs,
+        fresh_agent,
+        &[],
+        &TestResolver,
+        Arc::new(NoAskpass),
+        Arc::new(EprintLog),
+    )
+    .await?;
+    let communicator = Communicator::new(spawned.stream);
+    let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
+    let vfs = RemoteVfs::for_agent(
+        communicator,
+        encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Custom"), Some("bootstrap-test")),
+        guard,
+    );
+    vfs.list_files(&VfsPathBuf::root(), None).await.map(|_| ())
+}
+
+/// A broken agent in the target's cache is used as it is, until a fresh
+/// connection replaces it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fresh_agent_replaces_a_broken_cached_one() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let cache = tempfile::tempdir().unwrap();
+    let cached = cache.path().join("newt").join(format!(
+        "newt-agent-cafebabe00112233-{}",
+        newt_common::agent_resolver::local_agent_triple()
+    ));
+    std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
+    std::fs::write(&cached, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(bootstrap_and_list(cache.path(), false).await.is_err());
+    bootstrap_and_list(cache.path(), true).await.unwrap();
+    assert_ne!(std::fs::read(&cached).unwrap(), b"#!/bin/sh\nexit 1\n");
 }
 
 // ---------------------------------------------------------------------------

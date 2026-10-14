@@ -1135,6 +1135,7 @@ pub(super) async fn connect(
     set_status: impl Fn(&str),
     askpass_provider: Arc<dyn AskpassProvider>,
     main_window_ctx: super::MainWindowContext,
+    fresh_agent: bool,
 ) -> Result<(), Error> {
     let (mut services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
@@ -1185,6 +1186,7 @@ pub(super) async fn connect(
             let conn: ChildConnection = newt_common::connect::spawn(
                 spec,
                 newt_common::connect::AgentMode::Session,
+                fresh_agent,
                 &extra_path,
                 agent_resolver.as_ref(),
                 askpass_provider.clone(),

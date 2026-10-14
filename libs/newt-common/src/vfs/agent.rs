@@ -246,6 +246,7 @@ async fn mount_inner(
     let mut spawned = crate::connect::spawn(
         &spec,
         AgentMode::ServeVfs,
+        false,
         ctx.extra_path,
         resolver.as_ref(),
         askpass_provider,

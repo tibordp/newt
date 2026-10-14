@@ -1483,10 +1483,12 @@ Off for `docker exec`-style transports: those are non-login by design and alread
 **Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
 1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.
 2. The script detects platform and architecture (`uname -s`, `uname -m`).
-3. It checks a cache directory (`~/.cache/newt/`) for a matching `newt-agent` binary (keyed by a blake3 hash of the local agent binary).
+3. It checks a cache directory (`$XDG_CACHE_HOME/newt/`, else `~/.cache/newt/`) for a matching agent, `newt-agent-<hash>-<triple>`: keyed by a blake3 hash of the local agent binary and by the target's platform, so a home shared between machines of different architectures keeps one agent for each. With no home at all, it uses a private directory created for that connection (`mktemp -d`) and caches nothing — a fixed name under `/tmp` could be one another user made first.
 4. If cached: Executes immediately (`NEWT:READY`).
-5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script caches it for future use, cleans up old versions, and confirms with a second `NEWT:READY` — the host holds off RPC traffic until then, because some `head -c` implementations (BSD/macOS) read ahead and would swallow bytes sent while the upload is still being consumed.
+5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script checks the upload arrived whole (a short read is never installed), caches it for future use, cleans up this platform's older versions (another platform's agents belong to another machine sharing the home), and confirms with a second `NEWT:READY` — the host holds off RPC traffic until then, because some `head -c` implementations (BSD/macOS) read ahead and would swallow bytes sent while the upload is still being consumed.
 6. The agent enters RPC mode; all further communication is bincode over stdin/stdout.
+
+**Replacing a broken cached agent**: Reconnecting after a connection that *failed* (rather than one that ran and was lost) uploads the agent afresh even when one is cached (`NEWT_FORCE_UPLOAD=1`), so a cached binary that is there but broken — damaged on disk, or from an interrupted copy — is replaced rather than retried forever.
 
 **Bootstrapless (direct-copy) protocol** (Docker / Podman only):
 1. Newt runs `<engine> inspect --format='{{.Os}}/{{.Architecture}}' <container>` and maps the result to an agent target triple.

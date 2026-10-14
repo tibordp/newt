@@ -338,12 +338,15 @@ pub async fn cmd_new_window(
 #[tauri::command]
 #[specta::specta]
 pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
+    // A session that ran had a working agent; one that never came up may
+    // have a broken one cached on the target, so that one is replaced.
+    let fresh_agent = ctx.connection_failed();
     ctx.disconnect_for_reconnect().await;
 
     let app_handle = ctx.window().app_handle().clone();
     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
     let agent_resolver = global_ctx.agent_resolver();
-    ctx.connect(agent_resolver).await?;
+    ctx.connect(agent_resolver, fresh_agent).await?;
 
     // Prewarmed viewer/editor windows hold only UI state (file_path, mode,
     // etc. — all populated at activation via cmd_view / open_editor_window),

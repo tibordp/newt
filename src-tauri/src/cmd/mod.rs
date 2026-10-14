@@ -93,7 +93,7 @@ pub async fn init(
 
     if !ctx.is_connected() {
         let agent_resolver = global_ctx.agent_resolver();
-        if let Err(e) = ctx.connect(agent_resolver).await {
+        if let Err(e) = ctx.connect(agent_resolver, false).await {
             ctx.set_connection_failed(e.to_string());
             return Err(e);
         }

@@ -183,11 +183,24 @@ impl AgentResolver for CurrentExeAgentResolver {
 // ---------------------------------------------------------------------------
 
 /// Where an agent caches binaries it materializes for copy-based nested
-/// spawns. Mirrors the bootstrap script's cache location.
-fn agent_cache_dir() -> std::path::PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("newt")
+/// spawns. Mirrors the bootstrap script's cache location: with no cache
+/// directory, a private one made for this process, since a fixed name in
+/// the temporary directory could be one another user made first.
+fn agent_cache_dir() -> Result<std::path::PathBuf, Error> {
+    if let Some(dir) = dirs::cache_dir() {
+        return Ok(dir.join("newt"));
+    }
+    static PRIVATE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PRIVATE
+        .get_or_init(|| {
+            tempfile::Builder::new()
+                .prefix("newt-")
+                .tempdir()
+                .ok()
+                .map(tempfile::TempDir::keep)
+        })
+        .clone()
+        .ok_or_else(|| Error::custom("no directory to cache the agent in"))
 }
 
 /// `AgentResolver` that serves its own triple from the running executable
@@ -283,7 +296,10 @@ impl AgentResolver for Remote {
         }
 
         let hash = self.agent_hash().await?;
-        let cache_dir = self.cache_dir.clone().unwrap_or_else(agent_cache_dir);
+        let cache_dir = match self.cache_dir.clone() {
+            Some(dir) => dir,
+            None => agent_cache_dir()?,
+        };
         tokio::fs::create_dir_all(&cache_dir).await?;
         let dest = cache_dir.join(format!("newt-agent-{}-{}", hash, triple));
         if tokio::fs::try_exists(&dest).await.unwrap_or(false) {
