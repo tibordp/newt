@@ -254,7 +254,7 @@ pub(super) async fn copy_single_file(
                     } else {
                         AttributeKind::ObjectMetadata
                     };
-                    if !resolve_preservation(reporter, kind, &entry.dest, e).await? {
+                    if !resolve_preservation(reporter, kind, dst_vfs, &entry.dest, e).await? {
                         if write_options.sparse {
                             write_options.sparse = false;
                         } else if write_options.object_canned_acl.is_some() {
@@ -339,7 +339,7 @@ async fn check_destination(
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Cannot check {}", entry.dest),
+                        &format!("Cannot check {}", shown(dst_vfs, &entry.dest)),
                         None,
                         cancel,
                         true,
@@ -388,11 +388,11 @@ async fn check_destination(
         }
         (CopyEntryKind::Directory, false) => Some(format!(
             "Cannot replace file with directory: {}",
-            entry.dest
+            shown(dst_vfs, &entry.dest)
         )),
         (_, true) => Some(format!(
             "Cannot replace directory with file: {}",
-            entry.dest
+            shown(dst_vfs, &entry.dest)
         )),
         _ => None,
     };
@@ -411,7 +411,7 @@ async fn check_destination(
         };
     }
     if !reporter
-        .replace_existing(&entry.dest, &entry.file, &existing)
+        .replace_existing(dst_vfs, &entry.dest, &entry.file, &existing)
         .await?
     {
         return Ok(Destination::Skip);
@@ -695,7 +695,7 @@ pub(super) async fn execute_copy(
                                     match reporter
                                         .handle_io_error(
                                             e,
-                                            &format!("Cannot replace {dest}"),
+                                            &format!("Cannot replace {}", shown(&*dst_vfs, &dest)),
                                             None,
                                             &cancel,
                                             true,
@@ -799,6 +799,7 @@ pub(super) async fn execute_copy(
                             if !resolve_preservation(
                                 reporter,
                                 AttributeKind::HardLinks,
+                                &*dst_vfs,
                                 &entry.dest,
                                 e,
                             )
@@ -903,7 +904,7 @@ pub(super) async fn execute_copy(
                             }
                             Destination::Absent if refused => crate::Error::custom(format!(
                                 "{} was refused as existing, but is not there",
-                                entry.dest
+                                shown(&*dst_vfs, &entry.dest)
                             )),
                             Destination::Absent
                             | Destination::Merge
@@ -919,8 +920,12 @@ pub(super) async fn execute_copy(
                 match reporter
                     .handle_io_error(
                         error,
-                        &format!("Cannot copy {}", entry.source),
-                        Some(format!("{} -> {}", entry.source, entry.dest)),
+                        &format!("Cannot copy {}", shown(&*src_vfs, &entry.source)),
+                        Some(format!(
+                            "{} -> {}",
+                            shown(&*src_vfs, &entry.source),
+                            shown(&*dst_vfs, &entry.dest)
+                        )),
                         &cancel,
                         true,
                     )
@@ -971,7 +976,10 @@ pub(super) async fn execute_copy(
                         match reporter
                             .handle_io_error(
                                 e,
-                                &format!("Error removing source {}", entry.source),
+                                &format!(
+                                    "Error removing source {}",
+                                    shown(&*src_vfs, &entry.source)
+                                ),
                                 None,
                                 &cancel,
                                 true,
@@ -1024,7 +1032,13 @@ pub(super) async fn execute_copy(
                 }
                 Err(e) => {
                     match reporter
-                        .handle_io_error(e, &format!("Cannot replace {dest}"), None, &cancel, true)
+                        .handle_io_error(
+                            e,
+                            &format!("Cannot replace {}", shown(&*dst_vfs, &dest)),
+                            None,
+                            &cancel,
+                            true,
+                        )
                         .await
                     {
                         Ok(IssueOutcome::Retry) => {}
@@ -1066,7 +1080,10 @@ pub(super) async fn execute_copy(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    &format!("Error removing source directory {}", entry.source),
+                                    &format!(
+                                        "Error removing source directory {}",
+                                        shown(&*src_vfs, &entry.source)
+                                    ),
                                     None,
                                     &cancel,
                                     true,

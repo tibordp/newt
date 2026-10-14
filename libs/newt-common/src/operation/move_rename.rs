@@ -112,9 +112,15 @@ pub(super) async fn execute_move(
                 if dest_dir != source_dir {
                     // Type mismatch (file vs directory) — can only skip
                     let msg = if dest_dir {
-                        format!("Cannot replace directory with file: {}", dest_local)
+                        format!(
+                            "Cannot replace directory with file: {}",
+                            shown(&*src_vfs, &dest_local)
+                        )
                     } else {
-                        format!("Cannot replace file with directory: {}", dest_local)
+                        format!(
+                            "Cannot replace file with directory: {}",
+                            shown(&*src_vfs, &dest_local)
+                        )
                     };
                     match reporter
                         .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
@@ -126,7 +132,7 @@ pub(super) async fn execute_move(
                     }
                 } else if !dest_dir {
                     if !reporter
-                        .replace_existing(&dest_local, &source_file, &dest_file)
+                        .replace_existing(&*src_vfs, &dest_local, &source_file, &dest_file)
                         .await?
                     {
                         continue;
@@ -176,7 +182,10 @@ pub(super) async fn execute_move(
                                 match reporter
                                     .handle_io_error(
                                         e,
-                                        &format!("Error replacing {}", dest_local),
+                                        &format!(
+                                            "Error replacing {}",
+                                            shown(&*src_vfs, &dest_local)
+                                        ),
                                         None,
                                         &cancel,
                                         false,
@@ -193,8 +202,12 @@ pub(super) async fn execute_move(
                         match reporter
                             .handle_io_error(
                                 e,
-                                &format!("Error renaming {}", source_local),
-                                Some(format!("{} -> {}", source_local, dest_local)),
+                                &format!("Error renaming {}", shown(&*src_vfs, &source_local)),
+                                Some(format!(
+                                    "{} -> {}",
+                                    shown(&*src_vfs, &source_local),
+                                    shown(&*src_vfs, &dest_local)
+                                )),
                                 &cancel,
                                 true,
                             )
@@ -260,7 +273,13 @@ pub(super) async fn same_file_or_skip(
             Ok(same) => return Ok(Some(same)),
             Err(e) => {
                 match reporter
-                    .handle_io_error(e, &format!("Cannot check {}", b), None, cancel, true)
+                    .handle_io_error(
+                        e,
+                        &format!("Cannot check {}", shown(vfs, b)),
+                        None,
+                        cancel,
+                        true,
+                    )
                     .await?
                 {
                     IssueOutcome::Skip => return Ok(None),
@@ -292,7 +311,13 @@ async fn find_destination(
             Err(e) if e.kind == crate::ErrorKind::NotFound => return Ok(Found::Nothing),
             Err(e) => {
                 match reporter
-                    .handle_io_error(e, &format!("Cannot check {}", path), None, cancel, true)
+                    .handle_io_error(
+                        e,
+                        &format!("Cannot check {}", shown(vfs, path)),
+                        None,
+                        cancel,
+                        true,
+                    )
                     .await?
                 {
                     IssueOutcome::Skip => return Ok(Found::Skipped),
@@ -434,7 +459,10 @@ pub(super) async fn rename_entry(
                 Occupant::Outside => {}
                 Occupant::Pending => return Ok(Moved::Blocked),
                 Occupant::Settled => {
-                    let msg = format!("Another renamed entry has the name {}", new_path.path);
+                    let msg = format!(
+                        "Another renamed entry has the name {}",
+                        shown(&*vfs, &new_path.path)
+                    );
                     return match reporter
                         .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
                         .await
@@ -449,9 +477,15 @@ pub(super) async fn rename_entry(
             let (source_dir, dest_dir) = directories(&source_file, &dest_file);
             if dest_dir != source_dir {
                 let msg = if dest_dir {
-                    format!("Cannot replace directory with file: {}", new_path.path)
+                    format!(
+                        "Cannot replace directory with file: {}",
+                        shown(&*vfs, &new_path.path)
+                    )
                 } else {
-                    format!("Cannot replace file with directory: {}", new_path.path)
+                    format!(
+                        "Cannot replace file with directory: {}",
+                        shown(&*vfs, &new_path.path)
+                    )
                 };
                 match reporter
                     .raise_issue(IssueKind::AlreadyExists, msg, None, vec![IssueAction::Skip])
@@ -465,7 +499,7 @@ pub(super) async fn rename_entry(
                 match reporter
                     .raise_issue(
                         IssueKind::AlreadyExists,
-                        format!("File already exists: {}", new_path.path),
+                        format!("File already exists: {}", shown(&*vfs, &new_path.path)),
                         None,
                         vec![IssueAction::Skip, IssueAction::Overwrite],
                     )
@@ -518,7 +552,7 @@ pub(super) async fn rename_entry(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    &format!("Error replacing {}", new_path.path),
+                                    &format!("Error replacing {}", shown(&*vfs, &new_path.path)),
                                     None,
                                     cancel,
                                     false,
@@ -535,8 +569,12 @@ pub(super) async fn rename_entry(
                     match reporter
                         .handle_io_error(
                             e,
-                            &format!("Error renaming {}", source),
-                            Some(format!("{} -> {}", source, new_path)),
+                            &format!("Error renaming {}", shown(&*vfs, &source.path)),
+                            Some(format!(
+                                "{} -> {}",
+                                shown(&*vfs, &source.path),
+                                shown(&*vfs, &new_path.path)
+                            )),
                             cancel,
                             true,
                         )

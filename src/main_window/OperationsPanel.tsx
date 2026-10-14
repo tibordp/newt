@@ -453,9 +453,9 @@ export function OperationProgressModal({ op }: { op: OperationState }) {
                         {op.current_item && (
                           <span
                             className={modalStyles.currentItem}
-                            title={op.current_item}
+                            title={visibleName(op.current_item)}
                           >
-                            {op.current_item}
+                            {visibleName(op.current_item)}
                           </span>
                         )}
                       </div>

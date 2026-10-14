@@ -27,6 +27,7 @@ pub(super) async fn collect_delete_entries(
     cancel: &CancellationToken,
 ) -> Result<Vec<DeleteEntry>, crate::Error> {
     let mut collector = DeleteCollector {
+        vfs,
         reporter,
         cancel,
         cross_mount_points,
@@ -51,6 +52,7 @@ pub(super) async fn collect_delete_entries(
 }
 
 struct DeleteCollector<'a> {
+    vfs: &'a dyn Vfs,
     reporter: &'a mut ProgressReporter,
     cancel: &'a CancellationToken,
     cross_mount_points: bool,
@@ -83,7 +85,8 @@ impl Visitor for DeleteCollector<'_> {
             self.kept.extend(self.open.iter().cloned());
             self.kept.insert(key.clone());
             if !self.cross_mount_points && entry.depth > 0 {
-                skip_mount_point(self.reporter, entry.path, DELETE_MOUNT_POINT_HINT).await?;
+                skip_mount_point(self.reporter, self.vfs, entry.path, DELETE_MOUNT_POINT_HINT)
+                    .await?;
                 return Ok(Control::Skip);
             }
         }
@@ -107,7 +110,7 @@ impl Visitor for DeleteCollector<'_> {
         what: Failed<'_>,
         error: crate::Error,
     ) -> Result<Resume, crate::Error> {
-        resume_after(self.reporter, what, error, self.cancel).await
+        resume_after(self.reporter, self.vfs, what, error, self.cancel).await
     }
 }
 
@@ -185,7 +188,7 @@ pub(super) async fn execute_delete(
             return Err(crate::Error::cancelled());
         }
 
-        let display = entry.path.to_string();
+        let display = shown(&*entry.vfs, &entry.path);
         reporter.maybe_send_progress(0, items_done, &display);
 
         let mut retry = true;
@@ -204,7 +207,7 @@ pub(super) async fn execute_delete(
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Error deleting {}", entry.path),
+                        &format!("Error deleting {}", shown(&*entry.vfs, &entry.path)),
                         None,
                         &cancel,
                         true,
@@ -253,7 +256,7 @@ pub(super) async fn execute_trash(
 
         let (vfs, local_path) = context.registry.resolve(vfs_path)?;
 
-        let display = local_path.to_string();
+        let display = shown(&*vfs, &local_path);
         reporter.maybe_send_progress(0, items_done, &display);
 
         let mut retry = true;
@@ -270,7 +273,7 @@ pub(super) async fn execute_trash(
                 match reporter
                     .handle_io_error(
                         e,
-                        &format!("Error moving {} to Trash", local_path),
+                        &format!("Error moving {} to Trash", shown(&*vfs, &local_path)),
                         None,
                         &cancel,
                         true,

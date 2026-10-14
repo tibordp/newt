@@ -12,6 +12,7 @@ pub(super) struct SourceAttributes {
 pub(super) async fn resolve_preservation(
     reporter: &mut ProgressReporter,
     kind: AttributeKind,
+    vfs: &dyn Vfs,
     path: &Path,
     error: crate::Error,
 ) -> Result<bool, crate::Error> {
@@ -21,7 +22,11 @@ pub(super) async fn resolve_preservation(
     match reporter
         .raise_issue(
             IssueKind::PreservationFailed(kind),
-            format!("Cannot preserve {} for {path}: {error}", kind.label()),
+            format!(
+                "Cannot preserve {} for {}: {error}",
+                kind.label(),
+                shown(vfs, path)
+            ),
             None,
             vec![IssueAction::Retry, IssueAction::Skip],
         )
@@ -68,7 +73,8 @@ impl SourceAttributes {
                         break;
                     }
                     Err(e) => {
-                        if !resolve_preservation(reporter, AttributeKind::Metadata, path, e).await?
+                        if !resolve_preservation(reporter, AttributeKind::Metadata, vfs, path, e)
+                            .await?
                         {
                             break;
                         }
@@ -135,7 +141,7 @@ impl SourceAttributes {
                     }
                     Ok(None) => break,
                     Err(e) => {
-                        if !resolve_preservation(reporter, kind, path, e).await? {
+                        if !resolve_preservation(reporter, kind, vfs, path, e).await? {
                             break;
                         }
                     }
@@ -199,7 +205,7 @@ impl SourceAttributes {
                 match outcome {
                     Ok(()) => break,
                     Err(e) => {
-                        if !resolve_preservation(reporter, *kind, path, e).await? {
+                        if !resolve_preservation(reporter, *kind, destination, path, e).await? {
                             break;
                         }
                     }
@@ -233,8 +239,14 @@ impl SourceAttributes {
                 match cancellable(cancel, destination.write_attribute(path, property)).await {
                     Ok(()) => break,
                     Err(e) => {
-                        if !resolve_preservation(reporter, AttributeKind::AccessControl, path, e)
-                            .await?
+                        if !resolve_preservation(
+                            reporter,
+                            AttributeKind::AccessControl,
+                            destination,
+                            path,
+                            e,
+                        )
+                        .await?
                         {
                             break;
                         }
@@ -276,7 +288,7 @@ async fn apply_metadata(
         match cancellable(cancel, vfs.set_metadata(path, metadata)).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                if !resolve_preservation(reporter, kind, path, e).await? {
+                if !resolve_preservation(reporter, kind, vfs, path, e).await? {
                     return Ok(());
                 }
             }

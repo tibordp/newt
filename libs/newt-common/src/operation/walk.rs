@@ -44,13 +44,14 @@ pub(super) struct WalkOptions {
 /// `hint` names the dialog option that would have walked into it.
 pub(super) async fn skip_mount_point(
     reporter: &mut ProgressReporter,
+    vfs: &dyn Vfs,
     path: &Path,
     hint: &str,
 ) -> Result<(), crate::Error> {
     reporter
         .raise_issue(
             IssueKind::Other("MountPoint".into()),
-            format!("Skipped mount point {path}"),
+            format!("Skipped mount point {}", shown(vfs, path)),
             Some(format!(
                 "The directory is the root of another filesystem. {hint}"
             )),
@@ -65,12 +66,13 @@ pub(super) async fn skip_mount_point(
 /// only action.
 async fn skip_special_file(
     reporter: &mut ProgressReporter,
+    vfs: &dyn Vfs,
     path: &Path,
 ) -> Result<(), crate::Error> {
     reporter
         .raise_issue(
             IssueKind::Other("SpecialFile".into()),
-            format!("Skipped {path}: not a regular file"),
+            format!("Skipped {}: not a regular file", shown(vfs, path)),
             Some("FIFOs, sockets and devices have no contents to copy.".into()),
             vec![IssueAction::Skip],
         )
@@ -81,13 +83,14 @@ async fn skip_special_file(
 /// Route a walk failure through the operation's issue prompt.
 pub(super) async fn resume_after(
     reporter: &mut ProgressReporter,
+    vfs: &dyn Vfs,
     what: Failed<'_>,
     error: crate::Error,
     cancel: &CancellationToken,
 ) -> Result<Resume, crate::Error> {
     let context = match what {
-        Failed::Listing(path) => format!("Error scanning directory {path}"),
-        Failed::Following(path) => format!("Cannot follow {path}"),
+        Failed::Listing(path) => format!("Error scanning directory {}", shown(vfs, path)),
+        Failed::Following(path) => format!("Cannot follow {}", shown(vfs, path)),
     };
     Ok(
         match reporter
@@ -158,6 +161,7 @@ impl Visitor for Collector<'_> {
                         if !super::preserve::resolve_preservation(
                             self.reporter,
                             AttributeKind::Metadata,
+                            self.vfs,
                             entry.path,
                             e,
                         )
@@ -170,7 +174,7 @@ impl Visitor for Collector<'_> {
             }
         }
         if !file.is_symlink && !file.is_dir && file.is_special() {
-            skip_special_file(self.reporter, entry.path).await?;
+            skip_special_file(self.reporter, self.vfs, entry.path).await?;
             return Ok(Control::Skip);
         }
         let kind = if file.is_symlink {
@@ -201,14 +205,14 @@ impl Visitor for Collector<'_> {
         what: Failed<'_>,
         error: crate::Error,
     ) -> Result<Resume, crate::Error> {
-        resume_after(self.reporter, what, error, self.cancel).await
+        resume_after(self.reporter, self.vfs, what, error, self.cancel).await
     }
 
     async fn cycle(&mut self, path: &Path) -> Result<(), crate::Error> {
         self.reporter
             .raise_issue(
                 IssueKind::Other("SymlinkCycle".into()),
-                format!("Symbolic link cycle at {path}"),
+                format!("Symbolic link cycle at {}", shown(self.vfs, path)),
                 None,
                 vec![IssueAction::Skip],
             )

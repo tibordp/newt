@@ -73,6 +73,11 @@ struct FolderRun<'a> {
 }
 
 impl<'a> FolderRun<'a> {
+    /// `name` in this folder, as its panes show it.
+    fn shown(&self, name: &str) -> String {
+        shown(&*self.vfs, &self.dir.path.join(name))
+    }
+
     /// Look at the folder as it is now: members that are gone are skipped,
     /// and the listing says who has which name.
     async fn new(
@@ -107,7 +112,13 @@ impl<'a> FolderRun<'a> {
                 Err(e) => {
                     match run
                         .reporter
-                        .handle_io_error(e, &format!("Cannot list {}", run.dir), None, cancel, true)
+                        .handle_io_error(
+                            e,
+                            &format!("Cannot list {}", shown(&*run.vfs, &run.dir.path)),
+                            None,
+                            cancel,
+                            true,
+                        )
                         .await?
                     {
                         IssueOutcome::Skip => break None,
@@ -151,7 +162,7 @@ impl<'a> FolderRun<'a> {
     async fn run(&mut self) -> Result<(), crate::Error> {
         for i in 0..self.members.len() {
             if self.members[i].state == State::Skipped {
-                let msg = format!("{} no longer exists", self.dir.join(&self.members[i].old));
+                let msg = format!("{} no longer exists", self.shown(&self.members[i].old));
                 self.skip_with(i, msg).await?;
             }
         }
@@ -162,7 +173,7 @@ impl<'a> FolderRun<'a> {
             if let Some(problem) = problem.filter(plan::Problem::is_error) {
                 let msg = format!(
                     "Cannot rename {} to {}: {}",
-                    self.dir.join(&self.members[i].old),
+                    self.shown(&self.members[i].old),
                     self.members[i].new,
                     describe(&problem, &entries),
                 );
@@ -248,7 +259,7 @@ impl<'a> FolderRun<'a> {
                 self.unpark_to_old(i).await;
                 let msg = format!(
                     "Cannot rename {} to {}: another entry has the name",
-                    self.dir.join(&self.members[i].old),
+                    self.shown(&self.members[i].old),
                     self.members[i].new
                 );
                 self.skip_with(i, msg).await?;
@@ -343,7 +354,7 @@ impl<'a> FolderRun<'a> {
                     };
                 }
                 Err(e) => {
-                    let msg = format!("Error renaming {}", self.dir.join(&self.members[i].at));
+                    let msg = format!("Error renaming {}", self.shown(&self.members[i].at));
                     match self
                         .reporter
                         .handle_io_error(e, &msg, None, self.cancel, true)
@@ -402,7 +413,11 @@ impl<'a> FolderRun<'a> {
                         .iter()
                         .map(|&i| self.members[i].old.as_str())
                         .collect();
-                    let msg = format!("Error renaming {} in {}", names.join(", "), self.dir);
+                    let msg = format!(
+                        "Error renaming {} in {}",
+                        names.join(", "),
+                        shown(&*self.vfs, &self.dir.path)
+                    );
                     match self
                         .reporter
                         .handle_io_error(e, &msg, None, self.cancel, true)

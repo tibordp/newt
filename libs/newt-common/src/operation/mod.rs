@@ -15,6 +15,12 @@ use crate::vfs::attributes::AttributeKind;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{VFS_READ_CHUNK_SIZE, Vfs, VfsPath, VfsRegistry};
 
+/// `path` as panes on `vfs` show it (`C:\Users\…`, not the wire form), for
+/// messages the user reads.
+pub(super) fn shown(vfs: &dyn Vfs, path: &Path) -> String {
+    vfs.descriptor().format_path(path, &vfs.mount_meta())
+}
+
 mod archive;
 mod batch_rename;
 mod copy;

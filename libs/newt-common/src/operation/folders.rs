@@ -40,7 +40,7 @@ pub(super) async fn folder_conflict(
     };
     if package {
         let action = reporter
-            .ask_replace(format!("Package already exists: {dest}"))
+            .ask_replace(format!("Package already exists: {}", shown(dst_vfs, dest)))
             .await?;
         let replace = match action {
             // A package's size is its contents'.
@@ -70,7 +70,7 @@ pub(super) async fn folder_conflict(
             reporter
                 .raise_issue(
                     IssueKind::FolderExists,
-                    format!("Folder already exists: {dest}"),
+                    format!("Folder already exists: {}", shown(dst_vfs, dest)),
                     None,
                     vec![
                         IssueAction::Merge,
@@ -157,7 +157,13 @@ pub(super) async fn remove_whole(
             Ok(()) => return Ok(()),
             Err(e) => {
                 match reporter
-                    .handle_io_error(e, &format!("Cannot remove {path}"), None, cancel, true)
+                    .handle_io_error(
+                        e,
+                        &format!("Cannot remove {}", shown(vfs, path)),
+                        None,
+                        cancel,
+                        true,
+                    )
                     .await?
                 {
                     IssueOutcome::Skip => return Ok(()),

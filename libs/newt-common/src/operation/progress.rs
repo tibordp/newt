@@ -171,12 +171,13 @@ impl ProgressReporter {
     /// Asks about a file in the way of another; true to replace it.
     pub(super) async fn replace_existing(
         &mut self,
-        dest: &PathBuf,
+        vfs: &dyn Vfs,
+        dest: &Path,
         source: &File,
         existing: &File,
     ) -> Result<bool, crate::Error> {
         let action = self
-            .ask_replace(format!("File already exists: {}", dest))
+            .ask_replace(format!("File already exists: {}", super::shown(vfs, dest)))
             .await?;
         Ok(replaces(action, source, existing))
     }

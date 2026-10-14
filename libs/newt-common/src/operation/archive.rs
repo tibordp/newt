@@ -65,7 +65,7 @@ pub(super) async fn execute_create_archive(
         if existing.is_dir {
             return Err(crate::Error::custom(format!(
                 "destination is a directory: {}",
-                dst_path
+                shown(&*dst_vfs, &dst_path)
             )));
         }
         // The walk leaves the destination out, so a stale archive among the
@@ -83,7 +83,7 @@ pub(super) async fn execute_create_archive(
         match reporter
             .raise_issue(
                 IssueKind::AlreadyExists,
-                format!("File already exists: {}", dst_path),
+                format!("File already exists: {}", shown(&*dst_vfs, &dst_path)),
                 None,
                 vec![IssueAction::Skip, IssueAction::Overwrite],
             )
@@ -218,7 +218,7 @@ async fn pack_entries(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    &format!("Cannot read {}", entry.source),
+                                    &format!("Cannot read {}", shown(src_vfs, &entry.source)),
                                     None,
                                     cancel,
                                     true,

@@ -16,6 +16,7 @@ pub(super) async fn collect_chmod_entries(
     cancel: &CancellationToken,
 ) -> Result<Vec<(PathBuf, bool)>, crate::Error> {
     let mut collector = AttributeCollector {
+        vfs,
         reporter,
         cancel,
         cross_mount_points,
@@ -35,6 +36,7 @@ pub(super) async fn collect_chmod_entries(
 }
 
 struct AttributeCollector<'a> {
+    vfs: &'a dyn Vfs,
     reporter: &'a mut ProgressReporter,
     cancel: &'a CancellationToken,
     cross_mount_points: bool,
@@ -49,7 +51,7 @@ impl Visitor for AttributeCollector<'_> {
         }
         let is_dir = entry.file.is_dir && !entry.file.is_symlink;
         if is_dir && entry.mount_point && !self.cross_mount_points && entry.depth > 0 {
-            skip_mount_point(self.reporter, entry.path, MOUNT_POINT_HINT).await?;
+            skip_mount_point(self.reporter, self.vfs, entry.path, MOUNT_POINT_HINT).await?;
             return Ok(Control::Skip);
         }
         self.entries.push((entry.path.to_owned(), is_dir));
@@ -61,7 +63,7 @@ impl Visitor for AttributeCollector<'_> {
         what: Failed<'_>,
         error: crate::Error,
     ) -> Result<Resume, crate::Error> {
-        resume_after(self.reporter, what, error, self.cancel).await
+        resume_after(self.reporter, self.vfs, what, error, self.cancel).await
     }
 }
 
@@ -108,13 +110,13 @@ pub(super) async fn execute_set_metadata(
                 collect_chmod_entries(&*vfs, &local_path, cross_mount_points, reporter, &cancel)
                     .await?;
             for (entry, _) in entries {
-                let display = format!("{}:{}", vfs_path.vfs_id, entry);
+                let display = shown(&*vfs, &entry);
                 all_entries.push((vfs.clone(), entry, display));
             }
             continue;
         }
 
-        let display = vfs_path.to_string();
+        let display = shown(&*vfs, &local_path);
         all_entries.push((vfs, local_path, display));
     }
 
@@ -253,13 +255,13 @@ pub(super) async fn execute_apply_properties(
                 if entry_is_dir && !include_dirs {
                     continue;
                 }
-                let display = format!("{}:{}", vfs_path.vfs_id, entry);
+                let display = shown(&*vfs, &entry);
                 all_entries.push((vfs.clone(), entry, display));
             }
             continue;
         }
 
-        let display = vfs_path.to_string();
+        let display = shown(&*vfs, &local_path);
         all_entries.push((vfs, local_path, display));
     }
 
