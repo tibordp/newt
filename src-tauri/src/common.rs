@@ -307,45 +307,37 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
         &self.window
     }
 
+    /// Send what changed since the last publish. The snapshot, the diff and
+    /// the emit all happen under `base`: a snapshot taken outside it could
+    /// be older than the base it is diffed against, rolling the frontend
+    /// back, and an emit outside it could overtake its predecessor.
     pub fn publish(&self) -> Result<(), Error> {
+        let mut base = self.base.lock();
         let serialized = serde_json::to_value(&self.state).unwrap();
-
-        let (version, patch) = {
-            let mut base = self.base.lock();
-            let patch = diff(&base.1, &serialized, Some(MAX_PATCH_OPS));
-            if patch.as_ref().is_some_and(|p| p.is_empty()) {
-                // If there are no changes, don't publish anything and don't increment the version
-                return Ok(());
-            }
-
-            let version = base.0;
-            *base = (version + 1, serialized.clone());
-            (version, patch)
+        let patch = diff(&base.1, &serialized, Some(MAX_PATCH_OPS));
+        if patch.as_ref().is_some_and(|p| p.is_empty()) {
+            // If there are no changes, don't publish anything and don't increment the version
+            return Ok(());
+        }
+        let version = base.0;
+        let kind = match patch {
+            Some(patch) => UpdatePayloadKind::Patch(patch),
+            None => UpdatePayloadKind::State(serialized.clone()),
         };
-
+        *base = (version + 1, serialized);
         self.window.emit_to(
             self.window.label(),
             &self.event_name,
-            UpdatePayload {
-                version,
-                kind: patch
-                    .map(UpdatePayloadKind::Patch)
-                    .unwrap_or(UpdatePayloadKind::State(serialized)),
-            },
+            UpdatePayload { version, kind },
         )?;
-
         Ok(())
     }
 
     pub fn publish_full(&self) -> Result<(), Error> {
+        let mut base = self.base.lock();
         let serialized = serde_json::to_value(&self.state).unwrap();
-        let (version, _) = {
-            let mut base = self.base.lock();
-            let version = base.0 + 1;
-
-            std::mem::replace(&mut *base, (version, serialized.clone()))
-        };
-
+        let version = base.0;
+        *base = (version + 1, serialized.clone());
         self.window.emit_to(
             self.window.label(),
             &self.event_name,
@@ -354,7 +346,6 @@ impl<T: serde::Serialize> UpdatePublisher<T> {
                 kind: UpdatePayloadKind::State(serialized),
             },
         )?;
-
         Ok(())
     }
 }
