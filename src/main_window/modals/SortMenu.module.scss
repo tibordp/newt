@@ -1,5 +1,3 @@
-@use "../../styles/forced-colors" as fc;
-
 // Hidden trigger anchor — the dropdown is keyboard-launched (mod+shift+s) so
 // it has no visible click target. Stretched across the pane header area so
 // Radix's `--radix-dropdown-menu-trigger-width` bounds the content width.
@@ -46,12 +44,6 @@
   min-height: 26px;
   box-sizing: border-box;
   padding: 0 var(--space-3);
-}
-
-.itemHighlighted {
-  background: var(--color-accent) !important;
-  color: var(--color-accent-fg) !important;
-  @include fc.selected;
 }
 
 .itemCurrent {

@@ -30,6 +30,32 @@ export function DialogTabs<T extends string>({
       role="tablist"
       aria-label={label}
       className={stretch ? styles.tabBarStretch : styles.tabBar}
+      onKeyDown={(e) => {
+        // Left/Right (wrapping) and Home/End move to a tab and select it,
+        // while a tab has focus.
+        if (
+          disabled ||
+          (e.target as HTMLElement).getAttribute("role") !== "tab"
+        )
+          return;
+        const at = tabs.findIndex((tab) => tab.value === value);
+        const next =
+          e.key === "ArrowRight"
+            ? (at + 1) % tabs.length
+            : e.key === "ArrowLeft"
+              ? (at - 1 + tabs.length) % tabs.length
+              : e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? tabs.length - 1
+                  : null;
+        if (next === null) return;
+        e.preventDefault();
+        onChange(tabs[next].value);
+        e.currentTarget
+          .querySelectorAll<HTMLElement>('[role="tab"]')
+          [next]?.focus();
+      }}
     >
       {tabs.map((tab) => (
         <button

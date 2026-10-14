@@ -204,26 +204,35 @@ export default function SettingsEditor({
               role="tablist"
               aria-orientation="vertical"
               aria-label="Categories"
+              onKeyDown={(e) => {
+                // Up/Down/Home/End move between categories and select
+                // them; Tab reaches only the selected one.
+                const keys = [null, ...categories.map(([key]) => key)];
+                const at = keys.indexOf(activeCategory);
+                const next =
+                  e.key === "ArrowDown"
+                    ? Math.min(at + 1, keys.length - 1)
+                    : e.key === "ArrowUp"
+                      ? Math.max(at - 1, 0)
+                      : e.key === "Home"
+                        ? 0
+                        : e.key === "End"
+                          ? keys.length - 1
+                          : null;
+                if (next === null) return;
+                e.preventDefault();
+                setActiveCategory(keys[next]);
+                document.getElementById(categoryTabId(keys[next]))?.focus();
+              }}
             >
-              <div
-                id={categoryTabId(null)}
-                role="tab"
-                aria-selected={activeCategory === null}
-                className={
-                  activeCategory === null
-                    ? styles.sidebarItemActive
-                    : styles.sidebarItem
-                }
-                onClick={() => setActiveCategory(null)}
-              >
-                All
-              </div>
-              {categories.map(([key, title]) => (
-                <div
-                  key={key}
+              {[[null, "All"] as const, ...categories].map(([key, title]) => (
+                <button
+                  key={key ?? ""}
+                  type="button"
                   id={categoryTabId(key)}
                   role="tab"
                   aria-selected={activeCategory === key}
+                  tabIndex={activeCategory === key ? 0 : -1}
                   className={
                     activeCategory === key
                       ? styles.sidebarItemActive
@@ -232,7 +241,7 @@ export default function SettingsEditor({
                   onClick={() => setActiveCategory(key)}
                 >
                   {title}
-                </div>
+                </button>
               ))}
             </div>
             <div

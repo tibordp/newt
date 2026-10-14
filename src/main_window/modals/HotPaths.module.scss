@@ -126,8 +126,9 @@
     opacity: 0.7;
   }
 
-  &:hover {
-    opacity: 1 !important;
+  // As specific as the row-hover rule above, and later, so it wins.
+  :global([cmdk-item]) > &:hover {
+    opacity: 1;
   }
 }
 

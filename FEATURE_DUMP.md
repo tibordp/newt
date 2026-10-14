@@ -42,7 +42,7 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 
 - **DialogShell / DialogHeader / DialogBody / DialogFooter**: structural skeleton. The body scrolls while the header and footer stay pinned (matters for tall content like Properties and the Connection Log). The footer is a chrome-tinted strip with a hairline top border; it hosts the right-aligned Cancel/primary buttons plus an optional left `start` slot for secondary controls (e.g. Copy's "Pack into archive…", Properties' "Apply recursively").
 - **Field / FieldGroup / CheckboxField / FieldRow**: form layout primitives (stacked label+control with optional hint, tight checkbox clusters, inline label+control rows).
-- **DialogTabs**: shared tab strip (Connect transports, archive formats, Settings sections).
+- **DialogTabs**: shared tab strip (Connect transports, archive formats, Settings sections). With a tab focused, Left/Right move to the previous/next tab and select it (wrapping), Home/End to the first/last.
 - **DialogSubmitButton**: submit with spinner + pending label; `variant="destructive"` renders the red primary used by delete confirmations. **DialogError**: inline error banner. Both pair with `useAsyncAction` for single-flight async submits.
 - No backdrop scrim — dialogs separate from the panes via a deep elevation shadow (`--shadow-dialog`) plus a strong border, keeping open/close instant and the panes fully readable (deliberate: dimming reads web-modal, and macOS/KDE/Win32 dialogs don't dim).
 - Floating containers (centered dialogs, top-anchored palettes, settings editor, progress modal, askpass) share elevation/border/radius via Sass mixins in `src/styles/_dialog-mixins.scss`.
@@ -1086,8 +1086,8 @@ All terminals are always mounted in the DOM but only the active one is visible. 
 ### Terminal Emulation
 
 - **xterm.js**: Full VT100/ANSI terminal emulation with 256-color and truecolor support.
-- **Scrollback**: 1000 lines.
-- **Font**: Menlo, Monaco, Courier New (fallback chain), 12px, 1.2 line height.
+- **Scrollback**: `terminal.scrollback` lines (default 1000).
+- **Font**: `terminal.font_family` (a CSS font-family list, default Menlo, Monaco, Courier New, monospace) at `terminal.font_size` (default 12), 1.2 line height. Changes in Settings apply to open terminals at once.
 - **Cursor**: Blinking bar, 2px wide.
 - **Working directory**: New terminals inherit the current directory of the active pane. On Windows the native path is de-verbatimised for the spawn (`\\?\C:\…` → `C:\…`) so cmd.exe actually cd's there; a genuine network location stays UNC (`\\server\share\…`) so the shell shows its own "UNC not supported" notice rather than us hiding it.
 - **Shell**: Unix — system default shell (passwd database or `$SHELL`). Windows — `%COMSPEC%` (cmd.exe). On macOS the shell is spawned as a **login shell** (`-l`, for `bash`/`zsh`/`fish`/`sh`; shells with no login flag are left alone): launchd gives a GUI process a bare `PATH`, and everything `path_helper` contributes (`/etc/paths.d`, the cryptex dirs, `/Library/Apple/usr/bin`) only arrives via `/etc/profile`, which non-login shells never read. Terminal.app, iTerm2, Ghostty and VS Code all do the same on macOS — and, like VS Code, Newt deliberately does *not* pass `-l` elsewhere: a Linux desktop session gets its environment from PAM/systemd, and an agent gets one from its login-shell bootstrap.
@@ -1143,7 +1143,7 @@ When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus ter
 | Mod+Enter | Open focused file/directory in a new terminal (sets working directory) |
 | Enter (in defunct terminal) | Close the terminal tab |
 
-These shortcuts are handled by the terminal's custom key event handler and bubble through to the main window handler where appropriate.
+A key typed in a terminal goes to the program running there, with two exceptions that go to Newt: the keys of the terminal and focus commands above (toggle panel, new terminal, next/previous terminal, focus panes/terminal, maximize), at whatever they're bound to, and any binding scoped to `when = "terminal_focused"`. Everything else stays the program's even when a Newt command has it — Ctrl+R, Ctrl+N, Ctrl+P or F10 mean something to a shell or a TUI; Mod+C copies the selection (Ctrl+Shift+C off macOS).
 
 ### Shell Integration (`newt` CLI)
 
@@ -1832,6 +1832,11 @@ skip_packages = false       # macOS: find apps and other packages, but don't loo
 [environment]
 extra_path = ["/opt/homebrew/bin", "/usr/local/bin"]  # Searched after PATH for the programs Newt runs itself (ssh, docker, podman, kubectl, git); not added to terminals or user commands. Defaults: this on macOS; ["~/.local/bin", "/snap/bin", "/var/lib/flatpak/exports/bin"] on Linux; [] on Windows
 
+[terminal]
+font_family = 'Menlo, Monaco, "Courier New", monospace'  # CSS font-family list; the first installed font is used
+font_size = 12              # Points (6–72)
+scrollback = 1000           # Lines kept above the screen
+
 [editor]
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
@@ -1870,7 +1875,7 @@ language = "typescript"     # Optional: editor language
 Four tabs:
 
 **Preferences tab**:
-- Sidebar with category filter: All, Appearance, Behavior, Enrichers, Archives, Hot Paths, Go to File, Environment, Editor, Viewer — one per section of `settings.toml`, named by the schema's titles. All lists every setting, with a header at the start of each category.
+- Sidebar with category filter: All, Appearance, Behavior, Enrichers, Archives, Hot Paths, Go to File, Environment, Editor, Viewer — one per section of `settings.toml`, named by the schema's titles. All lists every setting, with a header at the start of each category. From the keyboard, Tab reaches the selected category and Up/Down/Home/End move between them.
 - Search box for full-text search across setting titles and descriptions.
 - Each setting rendered as a row with title, description, and appropriate control:
   - Boolean → checkbox.

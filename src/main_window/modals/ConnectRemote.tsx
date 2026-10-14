@@ -248,8 +248,17 @@ export default function ConnectRemote({
   }
 
   // Re-focus the first input when the user switches transport. Keyboard users
-  // expect the dialog to keep them in the active field, not bouncing to body.
+  // expect the dialog to keep them in the active field, not bouncing to body
+  // — except while they move along the tabs from the keyboard, where focus
+  // stays on the tab.
   useEffect(() => {
+    const active = document.activeElement;
+    if (
+      active?.getAttribute("role") === "tab" &&
+      active.matches(":focus-visible")
+    ) {
+      return;
+    }
     firstInputRef.current?.focus();
   }, [form.transport]);
 

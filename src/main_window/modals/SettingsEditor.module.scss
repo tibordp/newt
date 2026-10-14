@@ -61,7 +61,16 @@
 }
 
 .sidebarItem {
+  display: block;
+  width: 100%;
   padding: var(--space-3) var(--space-6);
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
   cursor: pointer;
   text-transform: capitalize;
   color: var(--color-fg);

@@ -48,6 +48,10 @@ const PTY_READ_BUFFER_SIZE: usize = 1024;
 #[cfg(unix)]
 const PASSWD_BUFFER_SIZE: usize = 1024;
 
+/// A terminal, unique only within its session: each session's terminal
+/// client counts from 0, a remote one in its own agent, so every window's
+/// first terminal is 0. Resolve a handle through its session, never in a
+/// process-wide table.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
 )]

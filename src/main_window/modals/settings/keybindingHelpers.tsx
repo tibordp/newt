@@ -205,6 +205,8 @@ export function KeyCaptureInput({
   }, [autoFocus]);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // Keys on the clear button are the button's.
+    if (e.target !== e.currentTarget) return;
     // Tab and Escape have higher-priority semantics: Escape exits recording,
     // Tab lets the user move on to the action buttons without trapping focus.
     if (e.key === "Escape") {
@@ -265,9 +267,11 @@ export function KeyCaptureInput({
         <button
           type="button"
           className={styles.keyCaptureClear}
-          onMouseDown={(e) => {
-            // mousedown so the parent doesn't lose focus first
-            e.preventDefault();
+          // A press keeps focus in the field; the click, from the mouse
+          // or Enter/Space, clears it.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation();
             onChange("");
             ref.current?.focus();
           }}

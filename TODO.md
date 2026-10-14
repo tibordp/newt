@@ -32,10 +32,6 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts �
 - Per-profile start directory (`start_directory` on spawn-style connection profiles): explicit, so it beats the remembered location, WinSCP-style.
 - Record sessions when the OS ends the process on Windows (`WM_QUERYENDSESSION`/`WM_ENDSESSION` at logoff/shutdown) and Linux (SIGTERM from the session manager). Today only macOS's `applicationShouldTerminate:` path records; elsewhere a logoff loses whatever changed since each window last closed.
 
-## Dialog visual uplift
-
-- `HotPaths.module.scss` deleteBtn hover keeps an `opacity !important`; HistoryNavigator and SortMenu each keep two `!important`s fighting Menu.module's `data-highlighted` styling — all need a structural fix in Menu.module.scss to remove.
-
 ## Per-platform look
 
 - A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
@@ -94,12 +90,10 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 
 - Live announcements: navigation finishing, operations completing or failing, selection counts, "Loading…" states — one polite live region fed from the existing flows, rather than per-component `aria-live`.
 - Screen-reader modes for the terminal (xterm.js `screenReaderMode`) and editor (Monaco `accessibilitySupport`, whose `auto` can't detect a reader inside a webview): detect a running reader natively (`NSWorkspace.isVoiceOverEnabled`, `SPI_GETSCREENREADER`, `org.a11y.Status.ScreenReaderEnabled` on D-Bus), publish it in state, and let a preference override it.
-- Keyboard gaps: Settings' category sidebar is click-only (tabs have roles but no key handling); the key-capture field's clear (×) button acts on mousedown only, and Enter/Space on it is captured as a key.
 - Regression check: the scene harness can assert ARIA snapshots (e.g. the focused file row is the list's active descendant) and run axe-core over every scene.
 
 ## Bug fixes and strengthening
 
-- `TerminalHandle` is minted per session (`Local::new()` per `session.rs`), so every window's first terminal is handle 0. Nothing routes by handle alone today (terminal output travels on each session's own IPC channel), but the next thing that does will cross-talk. Kill the class rather than the instance: either a process-wide counter, or make `TerminalHandle` carry its session. See "Window-targeted events" in CLAUDE.md.
 - Local macOS is the one place the app's own `PATH` is patched by hand (`[environment] extra_path`) rather than inherited: a Finder-launched `.app` has no login shell above it. The visible seam: the terminal gets `-l` and so has the user's full `PATH`, while a Newt-spawned command gets launchd's plus `extra_path`, so a tool can work when typed and fail as a command. The cure is what VS Code does — probe once at startup (`$SHELL -ilc`, marker-delimited JSON on stdout so profile chatter can't corrupt it, bounded by a timeout since a profile can block forever on a prompt) and thread the result as a base env rather than `set_var` (edition 2024, and `shell.rs` deliberately doesn't mutate our own environment). Not worth it until the manual patching actually bites.
 - A pane's `file_window.items` is diffed by array index, so when entries sort in above the window (a streaming search, a refresh) every row reads as changed, the patch overflows `MAX_PATCH_OPS`, and the whole state is re-sent and every row re-rendered — about every 100 ms during a large search. Diff the window by entry key instead (keyed array moves in the patch, or the window sent outside the generic treediff), keeping `deepUpdate`'s reference preservation per row.
 - Scroll anchoring (`PaneViewState::keep_cursor_row`) decides whether the cursor was on screen from the viewport the pane last reported, which it only reports near the window's edges, so near the screen's top and bottom the call can go either way. Exact needs the first visible row on every row scrolled, without recomputing the window each time.
@@ -134,9 +128,7 @@ Correctness and UX:
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.
 - Properties: owner and group take numeric IDs only (no account names); Windows has no attribute editor.
-- Terminal: the keys that escape xterm are hardcoded, so rebinding `focus_panes`/`toggle_terminal_panel` strands focus; Close/Clear/Select All are menu-only; font, size and scrollback aren't settings.
-- Copy/Move can't take a relative destination (`../backup/`) and Create Directory doesn't create `a/b/c`; errors there are native popups over the dialog.
-- Command errors other than a failed navigation (Create Directory, Rename, …) don't name their path. Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.
+- Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.
 - No undo for file operations; no OS notification when a background operation finishes or stops on a prompt.
 
 ## Major new features (groom/write design docs first)
