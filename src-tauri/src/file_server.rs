@@ -22,6 +22,16 @@ struct FileQuery {
     path: String,
 }
 
+/// Whether `origin` is the webview's own: `tauri://localhost` (macOS,
+/// Linux), `http(s)://tauri.localhost` (Windows), or the dev server in a
+/// development build.
+fn is_webview_origin(origin: &str) -> bool {
+    matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) || (cfg!(debug_assertions) && origin.starts_with("http://localhost:"))
+}
+
 fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
     let range = header.strip_prefix("bytes=")?;
     let (start_str, end_str) = range.split_once('-')?;
@@ -131,6 +141,10 @@ async fn serve_file(
     if token != state.token {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let allow_origin = headers
+        .get(header::ORIGIN)
+        .filter(|o| o.to_str().is_ok_and(is_webview_origin))
+        .cloned();
 
     let vfs_id = match vfs_id_str.parse::<u32>() {
         Ok(id) => VfsId(id),
@@ -170,7 +184,7 @@ async fn serve_file(
 
         let body = chunk_stream(state.fs.clone(), vfs_path, range_start, range_end);
 
-        Response::builder()
+        cors(Response::builder(), allow_origin)
             .status(StatusCode::PARTIAL_CONTENT)
             .header(header::CONTENT_TYPE, &mime)
             .header(header::CONTENT_LENGTH, length.to_string())
@@ -179,7 +193,6 @@ async fn serve_file(
                 format!("bytes {}-{}/{}", range_start, range_end, file_size),
             )
             .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(header::CACHE_CONTROL, "no-store")
             .body(body)
             .unwrap()
@@ -193,14 +206,24 @@ async fn serve_file(
             chunk_stream(state.fs.clone(), vfs_path, 0, end)
         };
 
-        Response::builder()
+        cors(Response::builder(), allow_origin)
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, &mime)
             .header(header::CONTENT_LENGTH, file_size.to_string())
             .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(header::CACHE_CONTROL, "no-store")
             .body(body)
             .unwrap()
+    }
+}
+
+fn cors(
+    builder: axum::http::response::Builder,
+    allow_origin: Option<header::HeaderValue>,
+) -> axum::http::response::Builder {
+    let builder = builder.header(header::VARY, "Origin");
+    match allow_origin {
+        Some(origin) => builder.header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+        None => builder,
     }
 }
