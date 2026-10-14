@@ -10,6 +10,7 @@ import {
 import { modeString } from "./utils";
 import { formatBytes } from "../lib/size";
 import { fileIconGlyph } from "../lib/fileIcons";
+import { visibleName } from "../lib/bidi";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
 import type { MetadataTraits } from "../lib/bindings";
 import styles from "./Columns.module.scss";
@@ -117,9 +118,12 @@ function FileName({
         ref={partRef}
         className={focused ? "filename-part focused" : "filename-part"}
       >
-        {displayName}
+        {visibleName(displayName)}
         {info.source_display && (
-          <span className={styles.sourceHint}> ({info.source_display})</span>
+          <span className={styles.sourceHint}>
+            {" "}
+            ({visibleName(info.source_display)})
+          </span>
         )}
       </div>
       {caret && (

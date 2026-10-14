@@ -17,6 +17,7 @@ import {
   DialogFooter,
   IconChevronDown,
 } from "./modals/primitives";
+import { visibleName } from "../lib/bidi";
 
 export type { IssueAction, OperationState };
 
@@ -189,14 +190,18 @@ function IssueResolution({
     >
       <span
         className={classNameOverrides?.issueMessage ?? styles.issueMessage}
-        title={inModal ? undefined : (issue.detail ?? undefined)}
+        title={
+          inModal || issue.detail == null
+            ? undefined
+            : visibleName(issue.detail)
+        }
       >
-        {issue.message}
+        {visibleName(issue.message)}
       </span>
       {inModal && issue.detail != null && (
         <details className={modalStyles.issueDetail}>
           <summary>Details</summary>
-          {issue.detail}
+          {visibleName(issue.detail)}
         </details>
       )}
       <div className={classNameOverrides?.issueActions ?? styles.issueActions}>

@@ -24,6 +24,7 @@ import {
   editableNameEnd,
 } from "./primitives";
 import styles from "./CopyMove.module.scss";
+import { visibleName } from "../../lib/bidi";
 
 type CopyMoveProps = CommonDialogProps & ModalDataOf<"copy_move">;
 
@@ -166,13 +167,13 @@ export default function CopyMove({
           <Field
             label={
               <>
-                {title} <b>{itemSummary}</b> as:
+                {title} <b>{visibleName(itemSummary)}</b> as:
               </>
             }
             htmlFor={nameId}
             hint={
               <>
-                in <b>{display_destination}</b>
+                in <b>{visibleName(display_destination)}</b>
               </>
             }
           >
@@ -190,7 +191,8 @@ export default function CopyMove({
           </Field>
         ) : (
           <p className={styles.prompt}>
-            {title} <b>{itemSummary}</b> into <b>{display_destination}</b>
+            {title} <b>{visibleName(itemSummary)}</b> into{" "}
+            <b>{visibleName(display_destination)}</b>
           </p>
         )}
         <FieldGroup>

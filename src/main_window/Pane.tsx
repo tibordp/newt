@@ -61,6 +61,7 @@ import styles from "./Pane.module.scss";
 import menuStyles from "./Menu.module.scss";
 import columnStyles from "./Columns.module.scss";
 import Spinner from "./Spinner";
+import { visibleName } from "../lib/bidi";
 
 function PathBreadcrumbs(props: {
   breadcrumbs: PaneBreadcrumb[];
@@ -107,7 +108,7 @@ function PathBreadcrumbs(props: {
                     }
                   }}
                 >
-                  {crumb.label}
+                  {visibleName(crumb.label)}
                 </a>
               </ContextMenu.Trigger>
               <LocationContextMenuContent

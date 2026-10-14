@@ -13,6 +13,7 @@ import {
   CheckboxField,
 } from "./primitives";
 import styles from "./ConfirmDelete.module.scss";
+import { visibleName } from "../../lib/bidi";
 
 type ConfirmDeleteProps = CommonDialogProps & ModalDataOf<"confirm_delete">;
 
@@ -33,7 +34,7 @@ export default function ConfirmDelete({
       <DialogHeader title="Delete" />
       <DialogBody className={styles.body}>
         <Dialog.Description asChild>
-          <span>{message}</span>
+          <span>{visibleName(message)}</span>
         </Dialog.Description>
         {mode !== "trash" && (
           <FieldFold summary="More options">

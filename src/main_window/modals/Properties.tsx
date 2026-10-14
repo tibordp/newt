@@ -21,6 +21,7 @@ import {
   DialogFooter,
 } from "./primitives";
 import styles from "./Properties.module.scss";
+import { visibleName } from "../../lib/bidi";
 
 type PropertiesProps = CommonDialogProps & ModalDataOf<"properties">;
 
@@ -398,13 +399,15 @@ export default function Properties({
   return (
     <DialogShell>
       <DialogHeader
-        title={isSingle ? "Properties" : `Properties \u2014 ${name}`}
+        title={
+          isSingle ? "Properties" : `Properties \u2014 ${visibleName(name)}`
+        }
       />
       <DialogBody>
         <div className={canEdit ? styles.columns : undefined}>
           <div className={styles.infoSection}>
             <dl className={styles.infoList}>
-              {isSingle && <InfoRow label="Name" value={name} />}
+              {isSingle && <InfoRow label="Name" value={visibleName(name)} />}
               {isSingle && (
                 <InfoRow
                   label="Type"

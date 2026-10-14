@@ -26,6 +26,8 @@
 
 .filename-part {
   display: inline;
+  // A right-to-left name keeps to itself, never reordering what follows.
+  unicode-bidi: isolate;
 }
 
 .hidden-file {
