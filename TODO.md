@@ -148,7 +148,6 @@ Correctness and UX:
 - The Connect dialog lists no profiles when `connections.toml` doesn't parse, with only a log line; show the parse error there instead.
 - Files materialised from downloads/archives get no Mark-of-the-Web or quarantine; the file server sends `Access-Control-Allow-Origin: *` (it needs the webview's origin, which is `tauri://localhost`, `http://tauri.localhost` on Windows, or the dev server).
 - Windows named pipes (elevation, shell control, askpass) use the default DACL, readable by Everyone; `/tmp` socket names are predictable.
-- Host-side RPC dispatch trusts a compromised remote: clipboard read/write via shell control, askpass prompts with arbitrary text, `API_HOST_FETCH_AGENT` triple path joins, a 4 GiB frame reservation.
 - FEATURE_DUMP drift: Open Config File (says built-in editor), Escape (says clears selection), Rename (says full name), terminal paste, Settings categories, `[environment]`, hidden files, ownership.
 
 ## Major new features (groom/write design docs first)

@@ -361,8 +361,9 @@ pub async fn connect_target(
     pane_handle: PaneHandle,
     kind: crate::connections::ConnectionKind,
     open_in: crate::connections::OpenIn,
+    host_access: bool,
 ) -> Result<(), Error> {
-    crate::connections::connect_kind(&ctx, pane_handle, kind, open_in).await
+    crate::connections::connect_kind(&ctx, pane_handle, kind, open_in, Some(host_access)).await
 }
 
 #[cfg(any(target_os = "linux", windows))]

@@ -41,6 +41,11 @@
   input[type="checkbox"] {
     flex-shrink: 0;
   }
+
+  &:has(input:disabled) {
+    color: var(--color-fg-muted);
+    cursor: default;
+  }
 }
 
 // Collapsed "more options" section of a dialog.

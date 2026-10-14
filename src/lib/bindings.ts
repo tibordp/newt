@@ -786,9 +786,9 @@ async reconnect() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async connectTarget(paneHandle: PaneHandle, kind: ConnectionKind, openIn: OpenIn) : Promise<Result<null, string>> {
+async connectTarget(paneHandle: PaneHandle, kind: ConnectionKind, openIn: OpenIn, hostAccess: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("connect_target", { paneHandle, kind, openIn }) };
+    return { status: "ok", data: await TAURI_INVOKE("connect_target", { paneHandle, kind, openIn, hostAccess }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1381,6 +1381,18 @@ async cmdOpenSettings(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 async cmdChangeAssociation(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_change_association", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Settings, with its search holding `query`: a dialog's link to the
+ * setting behind one of its controls.
+ */
+async openSettingsAt(query: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_settings_at", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2428,11 +2440,14 @@ keep_finished_operations: boolean;
  */
 quick_search: boolean; 
 /**
- * In remote (SSH) sessions, expose the local filesystem to the remote
- * host so it can be browsed alongside remote files. Disable this if the
- * remote host is untrusted.
+ * Allow remote sessions to be given access to this host — its
+ * files (browsable from the session alongside the remote ones), and,
+ * through `newt cmd` in the session's terminals, the clipboard and
+ * Newt's commands. Each connection then chooses with "Allow access to
+ * this host". Grant it only to machines you trust: whoever controls
+ * the remote can use whatever it is given.
  */
-expose_local_fs: boolean; 
+allow_remote_host_access: boolean; 
 /**
  * Default sort order for new panes.
  */
@@ -2569,6 +2584,16 @@ line: number | null;
  * What's wrong there, as a phrase that follows the location.
  */
 message: string }
+/**
+ * Last-used Connect dialog choices, for connections that open without it
+ * too (recents, `--target`).
+ */
+export type ConnectDefaults = { 
+/**
+ * "Allow access to this host". On until unticked: consent is
+ * given once, in Settings (`behavior.allow_remote_host_access`).
+ */
+host_access: boolean }
 export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean; login_shell?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
  * A saved connection profile. Secrets are stored in the system keychain,
@@ -2580,7 +2605,13 @@ export type ConnectionProfile = ({ type: "s3"; region?: string | null; bucket?: 
  * window, or an FS-only agent mount in the active pane. Ignored for
  * VFS kinds (S3/SFTP), which are always pane mounts.
  */
-open_in?: OpenIn }
+open_in?: OpenIn; 
+/**
+ * "Allow access to this host" for a session opened from this
+ * profile; unset, the Connect dialog's last choice. Takes effect only
+ * while `behavior.allow_remote_host_access` allows it.
+ */
+host_access?: boolean | null }
 export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
 export type ContainerEntry = { id: string; name: string; image: string; state: string }
 /**
@@ -2856,7 +2887,11 @@ export type DndFile = { name: string; is_dir: boolean }
  * Marks a connect/mount dialog as editing an existing saved profile. The
  * id stays stable across renames so the profile is updated in place.
  */
-export type EditingProfile = { id: string; name: string }
+export type EditingProfile = { id: string; name: string; 
+/**
+ * See [`ConnectionProfile::host_access`].
+ */
+host_access: boolean | null }
 export type EditorLanguage = { id: string; label: string }
 export type EditorPreferences = { 
 /**
@@ -3405,7 +3440,12 @@ can_reveal: boolean;
 /**
  * Open on the Associations tab, at this pattern's row.
  */
-association: AssociationFocus | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+association: AssociationFocus | null; 
+/**
+ * Open with the settings search holding this, showing the setting
+ * another dialog pointed at.
+ */
+query: string | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.
@@ -3630,7 +3670,12 @@ can_reveal: boolean;
 /**
  * Open on the Associations tab, at this pattern's row.
  */
-association: AssociationFocus | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
+association: AssociationFocus | null; 
+/**
+ * Open with the settings search holding this, showing the setting
+ * another dialog pointed at.
+ */
+query: string | null } } | { type: "confirm_delete"; data: { message: string; paths: VfsPath[]; mode: DeleteConfirmMode } } | { type: "user_command_input"; data: { command_index: number; command_title: string; prompts: UserCommandPrompt[]; confirms: string[] } } | { type: "debug" } | { type: "connection_log" } | { type: "about"; data: { version: string; git_revision: string | null; target_triple: string } } | 
 /**
  * The notices text itself is bundled into the frontend at build time,
  * so the modal carries no payload.
@@ -4032,6 +4077,10 @@ search: SearchDefaults;
  * Sticky last-used Batch Rename toggles.
  */
 batch_rename: BatchRenameDefaults; 
+/**
+ * Sticky last-used Connect dialog choices.
+ */
+connect: ConnectDefaults; 
 /**
  * Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
  * never stored here (they live in connections.toml); the Quick Connect

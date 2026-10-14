@@ -162,3 +162,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+// The checkbox, and while Settings doesn't allow it, a padlock leading
+// there.
+.hostAccessRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lockButton {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  font-family: "nerd-symbols";
+  color: var(--color-fg-muted);
+
+  &:hover {
+    color: var(--color-fg);
+  }
+}

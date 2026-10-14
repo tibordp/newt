@@ -895,7 +895,7 @@ fn create_rpc_services(
     operations: &Operations,
     publisher: &Arc<UpdatePublisher<MainWindowState>>,
     preferences: &crate::preferences::PreferencesHandle,
-    expose_local_fs: bool,
+    host_access: bool,
     askpass_provider: Arc<dyn AskpassProvider>,
     progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink>,
     agent_resolver: Arc<dyn AgentResolver>,
@@ -913,9 +913,10 @@ fn create_rpc_services(
     };
     let shell_control_dispatcher = crate::shell_control::ShellControlDispatcher {
         window: publisher.window().clone(),
+        host_access,
     };
     let communicator = Communicator::with_dispatcher(stream, |outbox| {
-        let host_vfs = expose_local_fs.then(|| {
+        let host_vfs = host_access.then(|| {
             let local = Arc::new(newt_common::vfs::LocalVfs::new());
             newt_common::api::VfsDispatcher::new(local, outbox.clone())
         });
@@ -1136,6 +1137,7 @@ pub(super) async fn connect(
     askpass_provider: Arc<dyn AskpassProvider>,
     main_window_ctx: super::MainWindowContext,
     fresh_agent: bool,
+    host_access: bool,
 ) -> Result<(), Error> {
     let (mut services, stderr_log, child) = match connection_target {
         ConnectionTarget::Local => {
@@ -1195,7 +1197,6 @@ pub(super) async fn connect(
             .await?
             .into();
             conn_log.log("Setting up RPC services...");
-            let expose_local_fs = preferences.load().behavior.expose_local_fs;
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
@@ -1207,7 +1208,7 @@ pub(super) async fn connect(
                 &state.operations,
                 publisher,
                 &preferences,
-                expose_local_fs,
+                host_access,
                 askpass_provider.clone(),
                 progress_sink,
                 agent_resolver.clone(),
@@ -1259,7 +1260,6 @@ pub(super) async fn connect(
             spawn_stderr_reader(spawn.stderr, conn_log.clone());
             conn_log.log("Setting up RPC services...");
             let stream: DynStream = tokio_duplex::Duplex::new(spawn.stdout, spawn.stdin);
-            let expose_local_fs = preferences.load().behavior.expose_local_fs;
             let progress_sink: Arc<dyn newt_common::vfs::VfsProgressSink> =
                 Arc::new(crate::main_window::LocalProgressSink::new(
                     state.vfs_progress.clone(),
@@ -1271,7 +1271,7 @@ pub(super) async fn connect(
                 &state.operations,
                 publisher,
                 &preferences,
-                expose_local_fs,
+                host_access,
                 askpass_provider.clone(),
                 progress_sink,
                 agent_resolver.clone(),
@@ -1360,7 +1360,7 @@ pub(super) async fn connect(
     // the client-local filesystem from within the remote session.
     // Also set up hairpin diversion so list_files/read/write for the remote
     // VFS are handled locally without round-tripping through the agent.
-    if connection_target.is_remote() && preferences.load().behavior.expose_local_fs {
+    if host_access {
         // This VFS surfaces *this host's* local FS into the remote
         // session, and only the host can describe it: host path style,
         // and the host's drives so a Windows client lands on a drive

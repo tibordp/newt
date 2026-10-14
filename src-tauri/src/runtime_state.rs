@@ -34,6 +34,8 @@ pub struct RuntimeState {
     pub search: SearchDefaults,
     /// Sticky last-used Batch Rename toggles.
     pub batch_rename: BatchRenameDefaults,
+    /// Sticky last-used Connect dialog choices.
+    pub connect: ConnectDefaults,
     /// Ad-hoc (unsaved) connections, most-recent first. Saved profiles are
     /// never stored here (they live in connections.toml); the Quick Connect
     /// palette filters any recent that matches a saved profile.
@@ -49,6 +51,7 @@ impl Default for RuntimeState {
             copy_move: CopyMoveDefaults::default(),
             search: SearchDefaults::default(),
             batch_rename: BatchRenameDefaults::default(),
+            connect: ConnectDefaults::default(),
             recent_connections: Vec::new(),
         }
     }
@@ -156,6 +159,22 @@ pub struct SearchDefaults {
     pub gitignore: bool,
     pub one_file_system: bool,
     pub skip_packages: bool,
+}
+
+/// Last-used Connect dialog choices, for connections that open without it
+/// too (recents, `--target`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConnectDefaults {
+    /// "Allow access to this host". On until unticked: consent is
+    /// given once, in Settings (`behavior.allow_remote_host_access`).
+    pub host_access: bool,
+}
+
+impl Default for ConnectDefaults {
+    fn default() -> Self {
+        Self { host_access: true }
+    }
 }
 
 pub struct RuntimeStateManager {

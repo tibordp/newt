@@ -304,11 +304,14 @@ pub struct BehaviorPreferences {
     /// typing opens the regex filter directly.
     #[schemars(title = "Quick Search")]
     pub quick_search: bool,
-    /// In remote (SSH) sessions, expose the local filesystem to the remote
-    /// host so it can be browsed alongside remote files. Disable this if the
-    /// remote host is untrusted.
-    #[schemars(title = "Expose Local Filesystem in Remote Sessions")]
-    pub expose_local_fs: bool,
+    /// Allow remote sessions to be given access to this host — its
+    /// files (browsable from the session alongside the remote ones), and,
+    /// through `newt cmd` in the session's terminals, the clipboard and
+    /// Newt's commands. Each connection then chooses with "Allow access to
+    /// this host". Grant it only to machines you trust: whoever controls
+    /// the remote can use whatever it is given.
+    #[schemars(title = "Allow Remote Sessions Access to This Host")]
+    pub allow_remote_host_access: bool,
     /// Default sort order for new panes.
     #[schemars(title = "Default Sort")]
     pub default_sort: DefaultSort,
@@ -353,7 +356,7 @@ impl Default for BehaviorPreferences {
             keep_terminal_open: true,
             keep_finished_operations: false,
             quick_search: true,
-            expose_local_fs: false,
+            allow_remote_host_access: false,
             default_sort: DefaultSort::default(),
             history_retention: 200,
             shell_integration: true,

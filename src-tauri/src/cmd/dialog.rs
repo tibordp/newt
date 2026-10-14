@@ -727,6 +727,7 @@ pub fn dialog(
                         .vfs_info()
                         .is_ok_and(|info| info.host_local_vfs_id().is_some()),
                     association: None,
+                    query: None,
                 },
                 DialogKind::Debug => {
                     if !cfg!(debug_assertions) {
@@ -1262,10 +1263,32 @@ pub fn cmd_change_association(
                     kind,
                     exists,
                 }),
+                query: None,
             },
             context: ModalContext {
                 pane_handle: Some(pane_handle),
             },
+        });
+        Ok(())
+    })
+}
+
+/// Settings, with its search holding `query`: a dialog's link to the
+/// setting behind one of its controls.
+#[tauri::command]
+#[specta::specta]
+pub fn open_settings_at(ctx: MainWindowContext, query: String) -> Result<(), Error> {
+    let can_reveal = ctx
+        .vfs_info()
+        .is_ok_and(|info| info.host_local_vfs_id().is_some());
+    ctx.with_update(|gs| {
+        *gs.modal.0.write() = Some(ModalData {
+            kind: ModalDataKind::Settings {
+                can_reveal,
+                association: None,
+                query: Some(query),
+            },
+            context: ModalContext { pane_handle: None },
         });
         Ok(())
     })

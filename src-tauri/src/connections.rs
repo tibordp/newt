@@ -15,6 +15,11 @@ pub struct ConnectionProfile {
     /// VFS kinds (S3/SFTP), which are always pane mounts.
     #[serde(default)]
     pub open_in: OpenIn,
+    /// "Allow access to this host" for a session opened from this
+    /// profile; unset, the Connect dialog's last choice. Takes effect only
+    /// while `behavior.allow_remote_host_access` allows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_access: Option<bool>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
 }
@@ -33,6 +38,8 @@ pub enum OpenIn {
 pub struct EditingProfile {
     pub id: String,
     pub name: String,
+    /// See [`ConnectionProfile::host_access`].
+    pub host_access: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -514,14 +521,13 @@ pub async fn connect_profile(
         // Full session: connect directly — the new window has its own
         // connection screen with the live log.
         let app_handle = ctx.window().app_handle().clone();
-        crate::main_window::spawn_main_window(
-            &app_handle,
-            crate::main_window::SessionLaunch::new(
-                target,
-                crate::session_memory::SessionIdentity::of(&profile.kind),
-                format!("Newt [{}]", profile.name),
-            ),
-        )?;
+        let mut launch = crate::main_window::SessionLaunch::new(
+            target,
+            crate::session_memory::SessionIdentity::of(&profile.kind),
+            format!("Newt [{}]", profile.name),
+        );
+        launch.host_access = profile.host_access;
+        crate::main_window::spawn_main_window(&app_handle, launch)?;
         ctx.with_update(|gs| {
             gs.close_modal();
             Ok(())
@@ -535,6 +541,7 @@ pub async fn connect_profile(
         let edit = EditingProfile {
             id: profile.id,
             name: profile.name,
+            host_access: profile.host_access,
         };
         open_connection_editor(
             &ctx,
@@ -566,6 +573,7 @@ pub fn edit_connection(
     let edit = EditingProfile {
         id: profile.id,
         name: profile.name,
+        host_access: profile.host_access,
     };
     open_connection_editor(
         &ctx,
@@ -636,6 +644,7 @@ pub async fn connect_kind(
     pane_handle: crate::main_window::PaneHandle,
     kind: ConnectionKind,
     open_in: OpenIn,
+    host_access: Option<bool>,
 ) -> Result<(), Error> {
     let app_handle = ctx.window().app_handle().clone();
     if open_in == OpenIn::Pane {
@@ -648,14 +657,13 @@ pub async fn connect_kind(
 
     let (target, label) = connection_target_for(&kind)
         .ok_or_else(|| Error::Custom("not a spawn-style connection kind".into()))?;
-    crate::main_window::spawn_main_window(
-        &app_handle,
-        crate::main_window::SessionLaunch::new(
-            target,
-            crate::session_memory::SessionIdentity::of(&kind),
-            format!("Newt [{}]", label),
-        ),
-    )?;
+    let mut launch = crate::main_window::SessionLaunch::new(
+        target,
+        crate::session_memory::SessionIdentity::of(&kind),
+        format!("Newt [{}]", label),
+    );
+    launch.host_access = host_access;
+    crate::main_window::spawn_main_window(&app_handle, launch)?;
     record_recent(&app_handle, kind, open_in);
     ctx.with_update(|gs| {
         gs.close_modal();
@@ -693,7 +701,7 @@ pub async fn connect_recent(
             None,
             connect_on_open,
         ),
-        None => connect_kind(&ctx, pane_handle, recent.kind, recent.open_in).await,
+        None => connect_kind(&ctx, pane_handle, recent.kind, recent.open_in, None).await,
     }
 }
 

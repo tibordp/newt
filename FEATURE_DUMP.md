@@ -1158,7 +1158,7 @@ Every spawned terminal (and every user command, both terminal- and operation-mod
 | `newt view <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). |
 | `newt cp <src>… <dest>` / `newt mv` | Enqueue a copy/move through the operations framework (fire-and-forget; prints the operation id). Multiple sources need an existing dir; single source to a non-existent leaf copies/moves under the new name (a same-directory `mv` is a plain rename). Trailing slash asserts directory-ness; existence checks go through the session VFS. |
 | `newt select [pattern…] [--add\|--remove]` | Set the pane's selection. With patterns: the Select by Pattern dialog's syntax (case-insensitive glob, `/` prefix for regex) against visible entries, matches of several patterns unioned — so a shell-expanded unquoted `*.c` works, each file name being a literal glob. Without: names read from stdin, one per line — a bare name is a pane entry as listed (works on S3/archives; `ls \| newt select`), a name containing a separator resolves against the shell's cwd and only counts if it lands in the pane's directory (so `git ls-files \| newt select` picks the top-level tracked files of the pane's directory and ignores nested ones). Replaces the selection by default; `--add`/`--remove` adjust it instead. Prints "N matched". |
-| `newt cmd [id]` | Tier-1 mechanical dispatch of any command-registry id (same ids as `[[bind]]`/palette): closes any open modal first, exactly like a keybinding. Bare `newt cmd` lists ids + names (including user commands). Excluded: `new_window`, `quit`, `open_elevated`, `connect_wsl` (non-uniform signatures). |
+| `newt cmd [id]` | Tier-1 mechanical dispatch of any command-registry id (same ids as `[[bind]]`/palette): closes any open modal first, exactly like a keybinding. Bare `newt cmd` lists ids + names (including user commands). Excluded: `new_window`, `quit`, `open_elevated`, `connect_wsl` (non-uniform signatures). In a remote session it needs [access to this host](#access-to-this-host), since commands reach the clipboard and local apps; without it, it's refused. |
 
 Path arguments resolve exactly like the Go To dialog (`resolve_display_path`: mounted-VFS URLs, native absolutes, `~` expansion on the session side), so `newt cd "$(newt pwd)"` round-trips on any pane. A URL matching no mounted VFS is an error (no auto-mounting).
 
@@ -1323,7 +1323,7 @@ Mount and browse optical disc images (`.iso`, `.udf`) as virtual read-only files
 
 In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on the remote agent, allowing the user to browse local files alongside remote ones. The root VFS label shows "Remote" in SSH sessions to distinguish it from the client-local VFS which shows "Local".
 
-**Gated by preference**: `behavior.expose_local_fs` (default: false). When disabled, the remote VFS is not available and no local filesystem access is exposed to the remote host.
+**Mounted only for sessions given access to this host** — see [Access to this host](#access-to-this-host). Otherwise the remote VFS isn't available and nothing of the local filesystem is exposed to the remote host.
 
 **Architecture**: The agent mounts a `RemoteVfs` that proxies all Vfs trait calls back to the Tauri host over bidirectional RPC. The host runs a `VfsDispatcher` that dispatches these calls to a real `LocalVfs`. Streaming reads and writes each ride their own flow-controlled RPC byte stream, so a slow disk on either end holds up only that transfer, never the rest of the session. An open error comes back from the open, a mid-stream read error from the next read, and a far-side write error (a full disk) from the next write rather than after the whole file has been sent. Dropping a reader stops the far side reading the file; dropping a writer before `finish` leaves the far-side write uncommitted.
 
@@ -1434,6 +1434,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
 - **SFTP**: Host (`user@hostname`).
 - **SSH**: Host (`user@hostname`) + optional `forward_agent` flag (`-A`) + `login_shell` (defaults true). Connecting opens a new window.
+- Every profile that opens as a session (SSH, Docker, Podman, Kube, Custom) can carry `host_access`, its own choice for [Allow access to this host](#access-to-this-host).
 - **Docker** / **Podman**: Container name + optional user + `bootstrapless` flag (defaults to true: `docker cp` / `podman cp` + direct exec; disable to use the sh-bootstrap path with hash-keyed caching).
 - **Kube**: kubectl context, namespace, pod, container.
 - **Custom**: Caller-supplied shell command run locally via the platform shell (`sh -c` on Unix, `cmd.exe /C` on Windows). The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
@@ -1454,6 +1455,17 @@ Spawn-style profiles additionally carry **`open_in`** (`window` default, or `pan
 - Empty state: "No saved connections. Use the connect or mount dialogs to save one."
 
 ### Remote Sessions
+
+**Connect only to machines you trust.** A remote session runs Newt's agent there as you, and the remote machine can misuse whatever the session gives it.
+
+#### Access to this host
+
+A remote session can be given access to this host, the computer running Newt: its files, mounted in the session as a browsable filesystem beside the remote ones, and — through `newt cmd` in the session's terminals — the clipboard and Newt's commands (opening files in local apps, Reveal in Finder, new windows). It is off unless both of these say otherwise:
+
+- **Consent, once, in Settings**: `behavior.allow_remote_host_access` ("Allow Remote Sessions Access to This Host", default off). Until it's on, no session gets access.
+- **Per connection, in the Connect dialog**: **Allow access to this host**, shown for connections that open as a session. While Settings hasn't allowed it, the checkbox is greyed out, with a link to that setting. Once allowed, it starts as it was last left (on, the first time), and a saved profile remembers its own choice (`host_access` in `connections.toml`). Connections that open without the dialog — a recent connection, `--target` — use the dialog's last choice; a saved profile without a choice of its own does too.
+
+Turning the setting off revokes access for every session connected from then on, whatever their profiles say. Without access, `newt cmd` in a remote terminal is refused, naming the checkbox; the other `newt` verbs work as ever, since they act on the session's own panes. Local and elevated sessions are this host already, and pane mounts of a remote (FS-only agents) never reach it.
 
 Newt opens an agent session over any of these transports. The frontend / IPC layer is identical regardless of transport — only the spawn step differs.
 
@@ -1496,7 +1508,7 @@ Off for `docker exec`-style transports: those are non-login by design and alread
 3. It execs `<engine> exec -i <container> /tmp/newt-agent-<hash>` and uses that pipe as the RPC channel.
 No shell or coreutils in the container required, but every connect re-uploads (no cache).
 
-**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote side. The UI is identical to local mode. If `behavior.expose_local_fs` is enabled, the client-local filesystem is automatically mounted as a Remote VFS (see VFS section).
+**After connection**: All filesystem operations, terminal PTYs, file operations, and VFS mounts execute on the remote side. The UI is identical to local mode. If the session has [access to this host](#access-to-this-host), the client-local filesystem is automatically mounted as a Remote VFS (see VFS section).
 
 **Askpass** is only wired for SSH; daemon-mediated transports (docker / kubectl / podman) skip it since the daemon handles auth out of band.
 
@@ -1520,7 +1532,7 @@ No shell or coreutils in the container required, but every connect re-uploads (n
 
 Distributions are enumerated by reading the `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss` registry key (the source Windows Terminal / VS Code use) — `wslapi.dll` has no list API. The session is launched via `wslapi!WslLaunch`, which is loaded at runtime with `LoadLibraryW` (never linked), so a machine without WSL just fails this one transport instead of failing to start.
 
-No bootstrap or upload: the bundled Linux-musl agent already lives on the Windows filesystem, so it is exec'd directly from its translated `/mnt/<drive>/…` path (DrvFs default-mounts world-exec). The agent architecture is taken from the Windows host arch (correct for WSL2 and x64 WSL1). The `WslLaunch` process is a normal Win32 process handle wrapped in a small adapter (Rust's `Child` can't adopt a pre-existing handle); closing the window terminates it. WSL is a remote-style session — `behavior.expose_local_fs` mounts the client-local filesystem as a Remote VFS, same as SSH. There are no saved WSL connection profiles by design.
+No bootstrap or upload: the bundled Linux-musl agent already lives on the Windows filesystem, so it is exec'd directly from its translated `/mnt/<drive>/…` path (DrvFs default-mounts world-exec). The agent architecture is taken from the Windows host arch (correct for WSL2 and x64 WSL1). The `WslLaunch` process is a normal Win32 process handle wrapped in a small adapter (Rust's `Child` can't adopt a pre-existing handle); closing the window terminates it. WSL is a remote-style session — given [access to this host](#access-to-this-host), it mounts the client-local filesystem as a Remote VFS, same as SSH. There are no saved WSL connection profiles by design.
 
 `WslLaunch`'s relay process attaches to the caller's console, so a windows-subsystem (production) build — which has none — would get a visible console window popped per launch. Before the first launch the process pre-owns a hidden console: `AllocConsoleWithOptions(NO_WINDOW)` where available (Win11 24H2+, resolved dynamically), else `AllocConsole` + hide (one brief flash, first WSL session only). Console-subsystem dev builds and terminal launches already have a console and are untouched.
 
@@ -1776,7 +1788,7 @@ delete_to_trash = true      # Move deletes to the OS trash; Delete Permanently b
 keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
-expose_local_fs = false     # Expose local filesystem to remote host in SSH sessions
+allow_remote_host_access = false  # Allow remote sessions to be given access to this host (per connection)
 default_sort = { key = "name", ascending = true }
 history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
 shell_integration = true    # `newt` CLI in built-in terminals / user commands (local sessions; remote always on)

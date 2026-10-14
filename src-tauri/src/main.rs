@@ -818,13 +818,18 @@ fn print_resolved_config(global_ctx: &GlobalContext) {
 fn resolve_profile(
     config_dir: &std::path::Path,
     name: &str,
-) -> Result<(ConnectionTarget, SessionIdentity, String), Error> {
+) -> Result<(ConnectionTarget, SessionIdentity, String, Option<bool>), Error> {
     let profile = crate::connections::list_connections(config_dir)
         .into_iter()
         .find(|p| p.name == name || p.id == name)
         .ok_or_else(|| Error::Custom(format!("connection profile '{}' not found", name)))?;
     match crate::connections::connection_target_for(&profile.kind) {
-        Some((ct, _label)) => Ok((ct, SessionIdentity::of(&profile.kind), profile.name)),
+        Some((ct, _label)) => Ok((
+            ct,
+            SessionIdentity::of(&profile.kind),
+            profile.name,
+            profile.host_access,
+        )),
         None => Err(Error::Custom(format!(
             "profile '{}' is not a spawn-style profile; open it via Quick Connect inside the app",
             name
@@ -1167,12 +1172,14 @@ fn main() {
             // Resolve `--profile` now that the preferences manager (and thus
             // the config dir) is available; otherwise use the target picked
             // out of `--target` / default-local above.
-            let (ct, identity, default_title) = match (&profile_arg, &non_profile) {
+            let (ct, identity, default_title, host_access) = match (&profile_arg, &non_profile) {
                 (Some(name), _) => {
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
                     resolve_profile(&config_dir, name)?
                 }
-                (None, Some(pair)) => pair.clone(),
+                (None, Some((ct, identity, title))) => {
+                    (ct.clone(), identity.clone(), title.clone(), None)
+                }
                 (None, None) => {
                     unreachable!("non_profile is None only when profile_arg is Some")
                 }
@@ -1184,6 +1191,7 @@ fn main() {
             };
 
             let mut launch = SessionLaunch::new(ct.clone(), identity, wt);
+            launch.host_access = host_access;
             launch.start.explicit = resolve_explicit_paths(&explicit_paths, &ct);
             let (_window, ctx) = spawn_main_window(app.handle(), launch)?;
 

@@ -31,15 +31,18 @@ export default function SettingsEditor({
   preferences,
   canReveal,
   association,
+  query,
   paneHandle,
 }: {
   preferences: PreferencesState | null;
   canReveal: boolean;
   /// Open on the Associations tab, at this row.
   association: AssociationFocus | null;
+  /// Open with the search holding this.
+  query: string | null;
   paneHandle: PaneHandle | null;
 }) {
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(query ?? "");
   const [problemsHidden, setProblemsHidden] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(

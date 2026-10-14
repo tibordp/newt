@@ -805,6 +805,9 @@ pub enum ModalDataKind {
         can_reveal: bool,
         /// Open on the Associations tab, at this pattern's row.
         association: Option<AssociationFocus>,
+        /// Open with the settings search holding this, showing the setting
+        /// another dialog pointed at.
+        query: Option<String>,
     },
     ConfirmDelete {
         message: String,
@@ -1331,6 +1334,8 @@ struct MainWindowContextInner {
     publisher: Arc<UpdatePublisher<MainWindowState>>,
     preferences: crate::preferences::PreferencesHandle,
     connection_target: ConnectionTarget,
+    /// See [`SessionLaunch::host_access`].
+    host_access: Option<bool>,
     identity: SessionIdentity,
     window_title: String,
     /// Where the panes open on the next connect; a reconnect replaces it
@@ -1395,6 +1400,7 @@ impl MainWindowContext {
             identity,
             title: window_title,
             start,
+            host_access,
             ..
         } = launch;
         let mut global_state = MainWindowState::new();
@@ -1414,6 +1420,7 @@ impl MainWindowContext {
                 publisher,
                 preferences,
                 connection_target,
+                host_access,
                 identity,
                 window_title,
                 start: Mutex::new(start),
@@ -1545,8 +1552,32 @@ impl MainWindowContext {
             askpass_provider,
             self.clone(),
             fresh_agent,
+            self.host_access(),
         )
         .await
+    }
+
+    /// Whether this session may reach this host — its files, and the
+    /// clipboard and commands through `newt cmd`: only a remote one, only
+    /// while the preference allows it, and as the session asked (the
+    /// Connect dialog's last choice if it didn't).
+    fn host_access(&self) -> bool {
+        use tauri::Manager;
+        if !self.inner.connection_target.is_remote()
+            || !self
+                .inner
+                .preferences
+                .load()
+                .behavior
+                .allow_remote_host_access
+        {
+            return false;
+        }
+        self.inner.host_access.unwrap_or_else(|| {
+            let app_handle = self.window().app_handle().clone();
+            let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
+            global_ctx.runtime_state().state().connect.host_access
+        })
     }
 
     /// Whether the last attempt to connect failed, as opposed to a
@@ -2218,6 +2249,9 @@ pub struct SessionLaunch {
     /// Geometry to open with instead of the target's remembered one (a New
     /// Window taking its opener's).
     pub geometry: Option<WindowGeometry>,
+    /// "Allow access to this host", as the Connect dialog or a profile
+    /// chose it; `None` takes the dialog's last choice.
+    pub host_access: Option<bool>,
 }
 
 impl SessionLaunch {
@@ -2228,6 +2262,7 @@ impl SessionLaunch {
             title,
             start: SessionStart::remembered(),
             geometry: None,
+            host_access: None,
         }
     }
 }

@@ -367,6 +367,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             dialog::cmd_directory_properties,
             dialog::cmd_open_settings,
             dialog::cmd_change_association,
+            dialog::open_settings_at,
             window::cmd_new_window,
             pane::cmd_toggle_hidden,
             pane::cmd_toggle_maximized,

@@ -7,7 +7,9 @@ import {
   type OpenIn,
   type SshHostEntry,
 } from "../../lib/bindings";
-import { tryRun } from "../../lib/ipc";
+import { safe, tryRun } from "../../lib/ipc";
+import { usePreferences } from "../../lib/preferences";
+import { useRuntimeState } from "../../lib/runtimeState";
 import { CommonDialogProps, ModalDataOf } from "./ModalContent";
 import {
   useAsyncAction,
@@ -64,6 +66,7 @@ type FormState = {
   // Profile name: auto-derived from the target until the user touches it.
   nameEdited: boolean;
   connectionName: string;
+  hostAccess: boolean;
 };
 
 function initialForm(
@@ -92,6 +95,7 @@ function initialForm(
     openIn: defaultOpenIn,
     nameEdited: false,
     connectionName: "",
+    hostAccess: true,
   };
   switch (initial.type) {
     case "ssh":
@@ -202,6 +206,9 @@ function defaultProfileName(form: FormState): string {
   }
 }
 
+const HOST_ACCESS_HINT =
+  "Let this session reach this host: your files, and from its terminals (newt cmd) the clipboard and Newt's commands. Only for machines you trust.";
+
 const OPEN_IN_HINT =
   "Checked: open a full remote session in a new window. Unchecked: mount the target's filesystem in the active pane — the connection is made by the current session, with its ssh/docker/kubectl, credentials, and network.";
 
@@ -214,10 +221,17 @@ export default function ConnectRemote({
   context,
   mountLog,
 }: ConnectRemoteProps) {
+  const preferences = usePreferences();
+  const runtimeState = useRuntimeState();
+  // Consent is given in Settings; until then the checkbox stays off.
+  const hostAccessAllowed =
+    !!preferences?.settings.behavior?.allow_remote_host_access;
   const [form, setForm] = useState<FormState>(() => {
     const f = initialForm(initial, default_open_in);
     f.connectionName = edit?.name ?? defaultProfileName(f);
     f.nameEdited = !!edit;
+    f.hostAccess =
+      edit?.host_access ?? runtimeState?.connect.host_access ?? true;
     return f;
   });
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -257,8 +271,20 @@ export default function ConnectRemote({
   const connecting = useAsyncAction(async () => {
     const kind = buildKind(form);
     if (typeof kind === "string") return kind;
+    if (hostAccessAllowed && form.openIn === "window") {
+      safe(
+        commands.updateRuntimeState("connect", {
+          host_access: form.hostAccess,
+        }),
+      );
+    }
     return tryRun(
-      commands.connectTarget(context?.pane_handle ?? 0, kind, form.openIn),
+      commands.connectTarget(
+        context?.pane_handle ?? 0,
+        kind,
+        form.openIn,
+        hostAccessAllowed && form.hostAccess,
+      ),
     );
   });
 
@@ -270,7 +296,18 @@ export default function ConnectRemote({
     const id = savedId ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const err = await tryRun(
       commands.cmdSaveConnection(
-        { id, name, open_in: form.openIn, ...kind },
+        {
+          id,
+          name,
+          open_in: form.openIn,
+          // Only what the checkbox could show; otherwise the profile keeps
+          // its own.
+          host_access:
+            hostAccessAllowed && form.openIn === "window"
+              ? form.hostAccess
+              : (edit?.host_access ?? null),
+          ...kind,
+        },
         null,
       ),
     );
@@ -382,6 +419,31 @@ export default function ConnectRemote({
                 pending={pending}
                 firstInputRef={firstInputRef}
               />
+            )}
+
+            {form.openIn === "window" && (
+              <div className={styles.hostAccessRow}>
+                <CheckboxField
+                  label="Allow access to this host"
+                  title={HOST_ACCESS_HINT}
+                  checked={hostAccessAllowed && form.hostAccess}
+                  onChange={(v) => update("hostAccess", v)}
+                  disabled={pending || !hostAccessAllowed}
+                />
+                {!hostAccessAllowed && (
+                  <button
+                    type="button"
+                    className={styles.lockButton}
+                    title="Not allowed in Settings. Open the setting"
+                    aria-label="Allow in Settings"
+                    onClick={() =>
+                      safe(commands.openSettingsAt("Access to This Host"))
+                    }
+                  >
+                    {"\u{f033e}"}
+                  </button>
+                )}
+              </div>
             )}
 
             <ProfileNameField

@@ -55,6 +55,10 @@ trait and mount into either side, and file operations are written once against t
 a copy from an archive-on-S3 in a remote session to the local disk is the ordinary code path,
 not a special case.
 
+Connect only to machines you trust: a remote session runs the agent there as you. Access back to
+your own computer — its files, clipboard and commands — is off unless you allow it in Settings
+and then for the connection.
+
 ## Building
 
 Requires Rust and Node.js.

@@ -53,6 +53,10 @@ impl ShellControlHandler for HostShellHandler {
 /// invoked by the agent's control server.
 pub struct ShellControlDispatcher {
     pub window: tauri::WebviewWindow,
+    /// Whether the session may reach this host. `newt cmd` runs any
+    /// command, the clipboard and host apps among them, so it needs this;
+    /// the other verbs act on the session's own panes.
+    pub host_access: bool,
 }
 
 #[async_trait::async_trait]
@@ -62,10 +66,19 @@ impl Dispatcher for ShellControlDispatcher {
             return None;
         }
         let request: ControlRequest = newt_common::api::decode(&req);
-        let result: ControlResult = match context_for(&self.window) {
-            Ok(ctx) => handle_control(&ctx, request).await,
-            Err(e) => Err(e),
-        };
+        let result: ControlResult =
+            if !self.host_access && matches!(request, ControlRequest::Command { .. }) {
+                Err(
+                    "newt cmd needs this session to have been allowed access to the \
+                     host running Newt (\"Allow access to this host\" when connecting)"
+                        .to_string(),
+                )
+            } else {
+                match context_for(&self.window) {
+                    Ok(ctx) => handle_control(&ctx, request).await,
+                    Err(e) => Err(e),
+                }
+            };
         Some(bytes::Bytes::from(newt_common::api::encode(&result)))
     }
 }

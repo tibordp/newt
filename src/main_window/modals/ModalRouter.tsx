@@ -77,6 +77,7 @@ export default function ModalRouter({
             preferences={preferences}
             canReveal={state?.modal?.data?.can_reveal ?? false}
             association={state?.modal?.data?.association ?? null}
+            query={state?.modal?.data?.query ?? null}
             paneHandle={state?.modal?.context?.pane_handle ?? null}
           />
         );
