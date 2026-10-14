@@ -16,13 +16,16 @@ export function refocusOwner(e: Event) {
 // button, or ctrl+click on macOS. The `contextmenu` event it causes
 // consumes it.
 let menuPress = false;
-window.addEventListener(
-  "pointerdown",
-  (e) => {
-    menuPress = e.button === 2 || (e.button === 0 && e.ctrlKey);
-  },
-  true,
-);
+// Unit tests load this module under Node, which has no window.
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "pointerdown",
+    (e) => {
+      menuPress = e.button === 2 || (e.button === 0 && e.ctrlKey);
+    },
+    true,
+  );
+}
 const keyboardMenus = new WeakMap<Event, boolean>();
 const replayed = new WeakSet<Event>();
 

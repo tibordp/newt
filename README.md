@@ -30,7 +30,7 @@ handling. Built with Tauri 2 — Rust backend, React/TypeScript frontend.
   session — an S3 mount inside an SSH session uses the remote host's credentials and network.
 - **Recursive search as a filesystem** — Find in Folder streams matches into a flat pane you can
   operate on directly; open, copy, delete, and drag act on the real underlying files.
-- **Viewer and editor** — F3 views text, hex, structured dissection of over 1500 file formats, 
+- **Viewer and editor** — F3 views text, hex, structured dissection of some 1600 file formats, 
   rendered Markdown, images, audio, video, and PDF, streaming remote files by range instead of 
   downloading them; F4 edits in Monaco with language detection.
 - **User commands** — define your own commands with Jinja-style templates over the selection,
