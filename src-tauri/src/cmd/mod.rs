@@ -289,6 +289,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             crate::editor::set_editor_dirty,
             crate::editor::ping_editor,
             window::reconnect,
+            window::connection_log,
             window::connect_target,
             crate::discovery::discover_ssh_hosts,
             crate::discovery::discover_docker_containers,

@@ -5,6 +5,7 @@ import type { MainWindowState } from "../types";
 import styles from "./ConnectionLogDialog.module.scss";
 import { commands } from "../../lib/bindings";
 import { DialogShell, DialogHeader, DialogFooter } from "./primitives";
+import { useConnectionLog } from "../useConnectionLog";
 
 const preventAutoFocus = (e: Event) => e.preventDefault();
 
@@ -14,7 +15,9 @@ export default function ConnectionLogContent({
   state: MainWindowState | null;
 }) {
   const ref = useRef<HTMLPreElement>(null);
-  const log = state?.connection_status?.log ?? [];
+  const log = useConnectionLog(
+    state?.connection_status.log ?? { generation: 0, end: 0 },
+  );
 
   useEffect(() => {
     if (ref.current) {

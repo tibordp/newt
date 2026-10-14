@@ -61,6 +61,32 @@
   font-weight: bold;
 }
 
+.problem {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(
+    in srgb,
+    var(--color-warning) 10%,
+    var(--color-surface)
+  );
+}
+
+.problemTitle {
+  font-weight: 600;
+}
+
+.problemText {
+  margin-top: var(--space-2);
+  max-height: 7.5em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-muted);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .itemContent {
   display: flex;
   align-items: center;

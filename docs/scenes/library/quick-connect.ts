@@ -47,6 +47,7 @@ const scene: Scene = {
         { type: "docker", container: "postgres-dev", open_in: "pane" },
         { type: "ssh", host: "demo@pi.home.arpa", open_in: "window" },
       ],
+      problem: null,
     },
   }),
 };

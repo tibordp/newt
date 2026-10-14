@@ -249,7 +249,7 @@ export function mainWindow(spec: MainWindowSpec): MainWindowState {
   const operations = spec.operations ?? [];
   const foreground = operations.find((op) => !op.backgrounded && !op.silent);
   return {
-    connection_status: { status: "connected", log: [] },
+    connection_status: { status: "connected", log: { generation: 0, end: 0 } },
     askpass: null,
     panes: spec.panes,
     terminals: Object.fromEntries(

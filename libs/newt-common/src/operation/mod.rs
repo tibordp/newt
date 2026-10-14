@@ -585,7 +585,7 @@ pub async fn execute_operation(
     next_issue_id: Arc<AtomicU64>,
     context: Arc<OperationContext>,
 ) {
-    info!("operation {}: starting [{:?}]", id, request);
+    debug!("operation {}: starting [{:?}]", id, request);
 
     let mut reporter = ProgressReporter::new(
         id,

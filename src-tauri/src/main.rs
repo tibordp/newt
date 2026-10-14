@@ -553,10 +553,11 @@ impl GlobalContext {
             .any(|ctx| ctx.0.is_dirty())
     }
 
-    pub fn any_running_operations(&self) -> bool {
+    /// Whether closing some main window would ask first.
+    pub fn any_close_concerns(&self) -> bool {
         self.main_windows_by_focus()
             .iter()
-            .any(|ctx| !ctx.operations().running().is_empty())
+            .any(|ctx| ctx.close_concerns().is_some())
     }
 
     #[cfg(target_os = "macos")]
@@ -579,10 +580,11 @@ impl GlobalContext {
 /// termination — tracked upstream in
 /// <https://github.com/tauri-apps/tauri/issues/9198>.
 ///
-/// Until that lands, inject the method into the delegate class at runtime: a
-/// dirty editor or a running operation cancels the termination and runs the
-/// graceful quit (editor sweep, close confirmations) instead, while an idle
-/// app lets the termination proceed so it never blocks logout. If a tao upgrade starts implementing the selector itself,
+/// Until that lands, inject the method into the delegate class at runtime:
+/// a dirty editor, or anything a window's close would ask about, cancels the
+/// termination and runs the graceful quit (editor sweep, close
+/// confirmations) instead; otherwise the termination proceeds. If a tao
+/// upgrade starts implementing the selector itself,
 /// `install` panics on `class_addMethod` — delete this module then; the
 /// `ExitRequested { code: None }` arm in the run callback picks up the
 /// mapped event.
@@ -610,7 +612,7 @@ mod terminate_guard {
     ) -> usize {
         let app_handle = APP_HANDLE.get().unwrap();
         let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
-        if global_ctx.any_dirty_editor() || global_ctx.any_running_operations() {
+        if global_ctx.any_dirty_editor() || global_ctx.any_close_concerns() {
             global_ctx.quit(app_handle);
             NS_TERMINATE_CANCEL
         } else {
@@ -674,6 +676,9 @@ pub fn detect_theme() -> Option<tauri::Theme> {
 
     None
 }
+
+/// The smallest any window may be made, in logical pixels.
+pub(crate) const MIN_WINDOW_SIZE: (f64, f64) = (400.0, 300.0);
 
 /// Keep a window on the app. A navigation anywhere else — a link clicked
 /// in a PDF, a script — is cancelled, and a web or mail link opens in the

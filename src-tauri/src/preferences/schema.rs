@@ -289,6 +289,10 @@ pub struct BehaviorPreferences {
     /// Ask for confirmation before deleting files.
     #[schemars(title = "Confirm Delete")]
     pub confirm_delete: bool,
+    /// Ask before closing a window that has terminals open or operations
+    /// running, which the close would end.
+    #[schemars(title = "Confirm Close")]
+    pub confirm_close: bool,
     /// Move deleted files to the system Trash instead of deleting them
     /// permanently. Applies to filesystems that have a trash (local files,
     /// remote hosts, agent mounts); Delete Permanently always bypasses it.
@@ -352,6 +356,7 @@ impl Default for BehaviorPreferences {
     fn default() -> Self {
         Self {
             confirm_delete: true,
+            confirm_close: true,
             delete_to_trash: true,
             keep_terminal_open: true,
             keep_finished_operations: false,
@@ -545,11 +550,11 @@ impl Default for ArchivePreferences {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
 #[serde(default)]
 pub struct EnvironmentPreferences {
-    /// Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
-    /// where GUI apps don't inherit the user's shell `PATH`, so subprocesses
-    /// like `docker` / `kubectl` / `podman` can't be found at their usual
-    /// install locations. Leading `~` expands to the user's home directory.
-    /// Non-existent entries are silently skipped.
+    /// Directories searched after `PATH` for the programs Newt runs itself —
+    /// `ssh`, `docker`, `podman`, `kubectl`, `git` — since an app started
+    /// from the desktop doesn't inherit the shell's `PATH`. Terminals and
+    /// user commands don't use them. A leading `~` is the home directory;
+    /// directories that don't exist are skipped.
     #[schemars(title = "Extra PATH Entries")]
     pub extra_path: Vec<String>,
 }

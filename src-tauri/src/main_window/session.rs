@@ -77,21 +77,64 @@ impl ConnectionTarget {
 #[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ConnectionStatus {
-    Connecting { message: String, log: Vec<String> },
-    Connected { log: Vec<String> },
-    Disconnected { log: Vec<String>, error: String },
-    Failed { log: Vec<String>, error: String },
+    Connecting { message: String },
+    Connected,
+    Disconnected { error: String },
+    Failed { error: String },
 }
 
+/// How far the connection log has grown. The lines themselves stay out of
+/// published state; the frontend fetches them with `connection_log`.
+#[derive(Clone, Copy, Default, serde::Serialize, specta::Type)]
+pub struct LogCursor {
+    /// Changes when a reconnect starts a new log.
+    pub generation: u32,
+    /// Index one past the last line.
+    pub end: u32,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct ConnectionStatusWire {
+    #[serde(flatten)]
+    pub status: ConnectionStatus,
+    pub log: LogCursor,
+}
+
+/// Lines of the connection log from `start` on.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ConnectionLogChunk {
+    pub generation: u32,
+    pub start: u32,
+    pub lines: Vec<String>,
+}
+
+/// The transcript of the session's connection: the transport's and the
+/// agent's stderr, and the steps of connecting.
+#[derive(Default)]
+struct ConnectionLines {
+    generation: u32,
+    /// Index of `lines[0]`: lines dropped off the front past [`LOG_CAP`].
+    first: u32,
+    lines: Vec<String>,
+}
+
+/// Lines the connection log keeps; past it, the older half is dropped.
+const LOG_CAP: usize = 100_000;
+
 #[derive(Clone)]
-pub struct ConnectionState(pub Arc<RwLock<ConnectionStatus>>);
+pub struct ConnectionState(
+    pub Arc<RwLock<ConnectionStatus>>,
+    Arc<RwLock<ConnectionLines>>,
+);
 
 impl Default for ConnectionState {
     fn default() -> Self {
-        Self(Arc::new(RwLock::new(ConnectionStatus::Connecting {
-            message: "Loading...".into(),
-            log: Vec::new(),
-        })))
+        Self(
+            Arc::new(RwLock::new(ConnectionStatus::Connecting {
+                message: "Loading...".into(),
+            })),
+            Default::default(),
+        )
     }
 }
 
@@ -100,7 +143,18 @@ impl serde::Serialize for ConnectionState {
     where
         S: serde::ser::Serializer,
     {
-        self.0.read().serialize(serializer)
+        let log = {
+            let lines = self.1.read();
+            LogCursor {
+                generation: lines.generation,
+                end: lines.first + lines.lines.len() as u32,
+            }
+        };
+        ConnectionStatusWire {
+            status: self.0.read().clone(),
+            log,
+        }
+        .serialize(serializer)
     }
 }
 
@@ -143,54 +197,60 @@ impl TauriAgentResolver {
     }
 }
 
-#[async_trait::async_trait]
-impl AgentResolver for TauriAgentResolver {
-    /// Compute a hash that changes whenever any agent binary changes.
-    async fn agent_hash(&self) -> Result<String, newt_common::Error> {
-        let mut hasher = blake3::Hasher::new();
-        let mut found = false;
+/// Hash of every agent binary under `dirs`.
+fn hash_agents(dirs: &[std::path::PathBuf]) -> Result<String, newt_common::Error> {
+    let mut hasher = blake3::Hasher::new();
+    let mut found = false;
 
-        for dir in &self.dirs {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    // Triple-subdir layout: <dir>/<triple>/newt-agent[.exe]
-                    // (the agent's extension follows the triple's OS, not
-                    // the host's).
-                    if let Some(triple) = p.file_name().and_then(|n| n.to_str()) {
-                        let nested = p.join(agent_file_name(triple));
-                        if nested.is_file() {
-                            hasher.update(&std::fs::read(&nested)?);
-                            found = true;
-                        }
-                    }
-                    // Flat layout: <dir>/newt-agent[.exe]
-                    if p.is_file()
-                        && p.file_name()
-                            .is_some_and(|n| n == "newt-agent" || n == "newt-agent.exe")
-                    {
-                        hasher.update(&std::fs::read(&p)?);
+    for dir in dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                // Triple-subdir layout: <dir>/<triple>/newt-agent[.exe]
+                // (the agent's extension follows the triple's OS, not
+                // the host's).
+                if let Some(triple) = p.file_name().and_then(|n| n.to_str()) {
+                    let nested = p.join(agent_file_name(triple));
+                    if nested.is_file() {
+                        hasher.update(&std::fs::read(&nested)?);
                         found = true;
                     }
                 }
-            }
-            // Flat layout, direct: <dir>/newt-agent[.exe]
-            for name in ["newt-agent", "newt-agent.exe"] {
-                let flat = dir.join(name);
-                if flat.is_file() {
-                    hasher.update(&std::fs::read(&flat)?);
+                // Flat layout: <dir>/newt-agent[.exe]
+                if p.is_file()
+                    && p.file_name()
+                        .is_some_and(|n| n == "newt-agent" || n == "newt-agent.exe")
+                {
+                    hasher.update(&std::fs::read(&p)?);
                     found = true;
                 }
             }
         }
-
-        if !found {
-            return Err(newt_common::Error::custom(
-                "no agent binaries found to compute hash",
-            ));
+        // Flat layout, direct: <dir>/newt-agent[.exe]
+        for name in ["newt-agent", "newt-agent.exe"] {
+            let flat = dir.join(name);
+            if flat.is_file() {
+                hasher.update(&std::fs::read(&flat)?);
+                found = true;
+            }
         }
+    }
 
-        Ok(hasher.finalize().to_hex()[..16].to_string())
+    if !found {
+        return Err(newt_common::Error::custom(
+            "no agent binaries found to compute hash",
+        ));
+    }
+
+    Ok(hasher.finalize().to_hex()[..16].to_string())
+}
+
+#[async_trait::async_trait]
+impl AgentResolver for TauriAgentResolver {
+    /// Compute a hash that changes whenever any agent binary changes.
+    async fn agent_hash(&self) -> Result<String, newt_common::Error> {
+        let dirs = self.dirs.clone();
+        tokio::task::spawn_blocking(move || hash_agents(&dirs)).await?
     }
 
     /// Look up the agent binary for a given target triple.
@@ -616,69 +676,64 @@ impl Filesystem for HairpinFs {
 // Stderr log buffer — shared between the background reader and the context
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Default)]
-pub(super) struct StderrLog(Arc<RwLock<Vec<String>>>);
-
-impl StderrLog {
-    pub fn lines(&self) -> Vec<String> {
-        self.0.read().clone()
-    }
-
-    fn push(&self, line: String) {
-        self.0.write().push(line);
-    }
-}
-
 impl ConnectionState {
     pub fn set_connecting(&self, message: &str) {
-        let mut status = self.0.write();
-        let existing_log = match &*status {
-            ConnectionStatus::Connecting { log, .. } => log.clone(),
-            _ => Vec::new(),
-        };
-        *status = ConnectionStatus::Connecting {
+        *self.0.write() = ConnectionStatus::Connecting {
             message: message.to_string(),
-            log: existing_log,
         };
     }
 
     pub fn set_failed(&self, error: String) {
-        let mut status = self.0.write();
-        let existing_log = match &*status {
-            ConnectionStatus::Connecting { log, .. } => log.clone(),
-            _ => Vec::new(),
-        };
-        *status = ConnectionStatus::Failed {
-            log: existing_log,
-            error,
+        *self.0.write() = ConnectionStatus::Failed { error };
+    }
+
+    /// Start a new, empty log.
+    pub fn restart_log(&self) {
+        let mut log = self.1.write();
+        let generation = log.generation.wrapping_add(1);
+        *log = ConnectionLines {
+            generation,
+            ..Default::default()
         };
     }
 
-    /// Append a line to the connection log.
     fn append_log(&self, line: String) {
-        let mut status = self.0.write();
-        match &mut *status {
-            ConnectionStatus::Connecting { log, .. } | ConnectionStatus::Connected { log } => {
-                log.push(line);
-            }
-            _ => {}
+        let mut log = self.1.write();
+        if log.lines.len() >= LOG_CAP {
+            log.lines.drain(..LOG_CAP / 2);
+            log.first += (LOG_CAP / 2) as u32;
+        }
+        log.lines.push(line);
+    }
+
+    /// The lines from `from` on, or the whole log when `generation` is no
+    /// longer the current one.
+    pub fn log_since(&self, generation: u32, from: u32) -> ConnectionLogChunk {
+        let log = self.1.read();
+        let from = if generation == log.generation {
+            from.max(log.first)
+        } else {
+            log.first
+        };
+        let skip = ((from - log.first) as usize).min(log.lines.len());
+        ConnectionLogChunk {
+            generation: log.generation,
+            start: from,
+            lines: log.lines[skip..].to_vec(),
         }
     }
 }
 
-/// Helper that pushes a line to both the stderr log and the connection status,
-/// then publishes so the frontend sees it immediately.
+/// Appends to the connection log and publishes, so the frontend hears of
+/// the line at once.
 struct ConnectionLog {
-    stderr_log: StderrLog,
     connection_status: ConnectionState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
 }
 
 impl ConnectionLog {
     fn log(&self, line: impl Into<String>) {
-        let line = line.into();
-        self.stderr_log.push(line.clone());
-        self.connection_status.append_log(line);
+        self.connection_status.append_log(line.into());
         let _ = self.publisher.publish();
     }
 }
@@ -1041,7 +1096,6 @@ fn spawn_child_watcher(
     mut child: AgentProcess,
     stderr: Option<DynStderr>,
     askpass_listener: Option<newt_common::askpass::AskpassListener>,
-    stderr_log: StderrLog,
     session_slot: Arc<arc_swap::ArcSwap<Option<Session>>>,
     connection_status: ConnectionState,
     publisher: Arc<UpdatePublisher<MainWindowState>>,
@@ -1051,7 +1105,6 @@ fn spawn_child_watcher(
         spawn_stderr_reader(
             stderr,
             Arc::new(ConnectionLog {
-                stderr_log: stderr_log.clone(),
                 connection_status: connection_status.clone(),
                 publisher: publisher.clone(),
             }),
@@ -1069,14 +1122,13 @@ fn spawn_child_watcher(
         // Drop the session — this aborts the file server, etc.
         session_slot.store(Arc::new(None));
 
-        let log = stderr_log.lines();
         let error = match status {
             Ok(s) if s.success() => "process exited".to_string(),
             Ok(s) => format!("process exited with {}", s),
             Err(e) => format!("failed to wait for process: {}", e),
         };
 
-        *connection_status.0.write() = ConnectionStatus::Disconnected { log, error };
+        *connection_status.0.write() = ConnectionStatus::Disconnected { error };
         let _ = publisher.publish();
     });
 }
@@ -1139,7 +1191,7 @@ pub(super) async fn connect(
     fresh_agent: bool,
     host_access: bool,
 ) -> Result<(), Error> {
-    let (mut services, stderr_log, child) = match connection_target {
+    let (mut services, child) = match connection_target {
         ConnectionTarget::Local => {
             // Build SFTP askpass config from the resolved local agent binary
             // path + the host UI callback. If the agent binary can't be
@@ -1174,13 +1226,11 @@ pub(super) async fn connect(
                 progress_sink,
                 agent_resolver.clone(),
             );
-            (services, StderrLog::default(), None)
+            (services, None)
         }
         ConnectionTarget::Spawn(spec) => {
             set_status(&format!("Connecting via {}...", spec.label()));
-            let stderr_log = StderrLog::default();
             let conn_log = Arc::new(ConnectionLog {
-                stderr_log: stderr_log.clone(),
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             });
@@ -1214,11 +1264,7 @@ pub(super) async fn connect(
                 agent_resolver.clone(),
             );
             conn_log.log("Connected");
-            (
-                services,
-                stderr_log,
-                Some((conn.child, conn.stderr, conn._askpass)),
-            )
+            (services, Some((conn.child, conn.stderr, conn._askpass)))
         }
         ConnectionTarget::Elevated => {
             set_status("Waiting for authorization...");
@@ -1239,19 +1285,12 @@ pub(super) async fn connect(
                 progress_sink,
                 agent_resolver.clone(),
             );
-            let stderr_log = StderrLog::default();
-            (
-                services,
-                stderr_log,
-                Some((conn.child, conn.stderr, conn._askpass)),
-            )
+            (services, Some((conn.child, conn.stderr, conn._askpass)))
         }
         #[cfg(windows)]
         ConnectionTarget::Wsl { distro } => {
             set_status(&format!("Connecting to WSL [{}]...", distro));
-            let stderr_log = StderrLog::default();
             let conn_log = Arc::new(ConnectionLog {
-                stderr_log: stderr_log.clone(),
                 connection_status: state.connection_status.clone(),
                 publisher: publisher.clone(),
             });
@@ -1279,7 +1318,6 @@ pub(super) async fn connect(
             conn_log.log("Connected");
             (
                 services,
-                stderr_log,
                 Some((AgentProcess::Win(spawn.process), None, None)),
             )
         }
@@ -1525,15 +1563,13 @@ pub(super) async fn connect(
             child,
             stderr,
             askpass_listener,
-            stderr_log.clone(),
             Arc::clone(session_slot),
             state.connection_status.clone(),
             publisher.clone(),
         );
     }
 
-    let log = stderr_log.lines();
-    *state.connection_status.0.write() = ConnectionStatus::Connected { log };
+    *state.connection_status.0.write() = ConnectionStatus::Connected;
     publisher.publish()?;
 
     Ok(())

@@ -68,6 +68,7 @@ export default function ModalRouter({
           <QuickConnectContent
             connections={state?.modal?.data?.connections ?? []}
             recentConnections={state?.modal?.data?.recent_connections ?? []}
+            problem={state?.modal?.data?.problem ?? null}
             state={state}
           />
         );

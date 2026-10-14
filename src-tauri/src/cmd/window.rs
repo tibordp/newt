@@ -45,6 +45,7 @@ fn build_child_window(
     )
     .title(title)
     .inner_size(size.0, size.1)
+    .min_inner_size(crate::MIN_WINDOW_SIZE.0, crate::MIN_WINDOW_SIZE.1)
     .theme(theme)
     .center();
 
@@ -335,6 +336,18 @@ pub async fn cmd_new_window(
     Ok(())
 }
 
+/// The connection log from line `from` on; the whole log when
+/// `generation` is out of date.
+#[tauri::command]
+#[specta::specta]
+pub fn connection_log(
+    ctx: MainWindowContext,
+    generation: u32,
+    from: u32,
+) -> crate::main_window::ConnectionLogChunk {
+    ctx.connection_log(generation, from)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn reconnect(ctx: MainWindowContext) -> Result<(), Error> {
@@ -533,9 +546,9 @@ pub fn zoom(webview: tauri::Webview, factor: f64) -> Result<(), Error> {
     Ok(())
 }
 
-/// Close the window although operations are running: cancel them and wait
-/// for them to stop, or (`now`) close at once and leave them to be
-/// cancelled as the session ends.
+/// Close the window past its Close Window prompt: cancel the running
+/// operations and wait for them to stop, or (`now`) close at once and leave
+/// them to be cancelled as the session ends. Terminals end with the session.
 #[tauri::command]
 #[specta::specta]
 pub async fn close_with_running_operations(ctx: MainWindowContext, now: bool) -> Result<(), Error> {

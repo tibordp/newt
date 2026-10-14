@@ -658,7 +658,11 @@ pub fn dialog(
                     let app_handle = ctx.window().app_handle().clone();
                     let global_ctx: tauri::State<crate::GlobalContext> = app_handle.state();
                     let config_dir = global_ctx.preferences().config_dir().to_path_buf();
-                    let connections = crate::connections::list_connections(&config_dir);
+                    let (connections, problem) =
+                        match crate::connections::load_connections(&config_dir) {
+                            Ok(connections) => (connections, None),
+                            Err(problem) => (Vec::new(), Some(problem)),
+                        };
                     // Hide any recent that now matches a saved profile — the
                     // profile is already one keystroke away in this palette.
                     let saved: std::collections::HashSet<String> =
@@ -672,6 +676,7 @@ pub fn dialog(
                     ModalDataKind::QuickConnect {
                         connections,
                         recent_connections,
+                        problem,
                     }
                 }
                 DialogKind::SelectVfs => {

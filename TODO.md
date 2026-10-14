@@ -7,6 +7,7 @@ Design: `design_docs/DESIGN_SHELL_INTEGRATION.md`.
 - `behavior.shell_integration = false` gates local sessions only; agents always create the control server (they can't see host preferences). Propagate the flag at agent spawn (env for bootstrap transports like `NEWT_AGENT_MODE`, an arg for direct spawns) if disabling remotely turns out to matter.
 - `newt cp --wait` (long-poll an operations endpoint for completion, exit code from the operation result).
 - Per-terminal pane affinity (`NEWT_TERMINAL` is already injected), `--json` output, user-command invocation by title.
+- Deeper shell integration: a script injected into bash, zsh, fish and PowerShell that emits prompt markers (OSC 133: prompt, command start, command end) and reports the shell's directory, for a two-way working-directory sync between a terminal and its pane. Busy detection rides on it — the foreground process group (`tcgetpgrp` on the PTY) on Unix, the shell's child processes on Windows, both answered on the agent in a remote session — so the Close Window prompt can name what is running (`vim`, `make`) and leave idle shells alone; today it counts every open terminal.
 
 ## Remote sessions and agent mounts
 
@@ -122,7 +123,7 @@ Release engineering:
 - Linux packages depend on libappindicator, which the binary doesn't link; no CI step test-installs a package.
 - `cargo deny` (licences, advisories; bincode 1.3 is unmaintained), and WiX 6 → 7 wording in `newt.wxs` / `build-msi.ps1`.
 - On Windows, `--help`/`--version` print nothing (GUI subsystem), the MSI doesn't add to PATH and is per-machine only.
-- `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint; `agent_hash` reads ~100 MB of agents with blocking I/O on every connect.
+- `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint.
 - Write supported OS versions and Install/Update/Troubleshooting/Uninstall into FEATURE_DUMP for the manual.
 
 Correctness and UX:
@@ -131,21 +132,16 @@ Correctness and UX:
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
 - Non-UTF-8 file names can't be operated on (lossy wire paths).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
-- The remote connection log (stderr of an agent run at `RUST_LOG=info`, including full operation-request Debug dumps) grows without bound and is re-serialised on every publish.
 - macOS file watching roots an FSEvents stream at `/` per pane per wait.
 - `UpdatePublisher::publish` can emit out of order (the frontend sees a version gap and re-requests full state).
 - Properties: owner/group by name silently does nothing; Windows has no attribute editor.
 - Terminal: the keys that escape xterm are hardcoded, so rebinding `focus_panes`/`toggle_terminal_panel` strands focus; Close/Clear/Select All are menu-only; font, size and scrollback aren't settings.
-- Window close/quit kills busy terminals without asking; `Mod+Q` is Ctrl+Q off macOS.
 - Copy/Move can't take a relative destination (`../backup/`) and Create Directory doesn't create `a/b/c`; errors there are native popups over the dialog.
-- Errors carry no path ("Permission denied (os error 13)"); file names aren't bidi-isolated (RLO spoofing).
-- Light theme `--color-fg-muted` (#929292, 3.1:1 on white) is below WCAG AA; about #6a6a6a would clear 4.5:1 on both the background and the chrome.
-- No undo for file operations; no OS notification when a background operation finishes or stops on a prompt; no minimum window size.
-- Bookmarks have no Settings tab (the dialog-is-the-file rule); Mod+H doesn't persist.
+- Operation issue messages print paths in the wire form (`/?/C:/Users/…` on Windows) rather than as the pane shows them; command errors other than a failed navigation (Create Directory, Rename, …) don't name their path. Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.
+- No undo for file operations; no OS notification when a background operation finishes or stops on a prompt.
+- Mod+H doesn't persist.
 - Alt+F5 is taken by GNOME; F11 is Show Desktop on macOS.
-- The Connect dialog lists no profiles when `connections.toml` doesn't parse, with only a log line; show the parse error there instead.
-- Files materialised from downloads/archives get no Mark-of-the-Web or quarantine; the file server sends `Access-Control-Allow-Origin: *` (it needs the webview's origin, which is `tauri://localhost`, `http://tauri.localhost` on Windows, or the dev server).
-- FEATURE_DUMP drift: Open Config File (says built-in editor), Escape (says clears selection), Rename (says full name), terminal paste, Settings categories, `[environment]`, hidden files, ownership.
+- Files materialised from downloads/archives get no Mark-of-the-Web or quarantine.
 
 ## Major new features (groom/write design docs first)
 

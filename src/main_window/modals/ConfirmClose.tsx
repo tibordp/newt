@@ -13,10 +13,22 @@ type ConfirmCloseProps = CommonDialogProps & ModalDataOf<"confirm_close">;
 
 export default function ConfirmClose({
   running,
+  terminals,
   stopping,
   cancel,
 }: ConfirmCloseProps) {
-  const what = running === 1 ? "An operation is" : `${running} operations are`;
+  const parts = [
+    running > 0 &&
+      (running === 1
+        ? "an operation is running"
+        : `${running} operations are running`),
+    terminals > 0 &&
+      (terminals === 1
+        ? "a terminal is open"
+        : `${terminals} terminals are open`),
+  ].filter(Boolean);
+  const what = parts.join(" and ");
+  const ends = running + terminals === 1 ? "it" : "them";
   return (
     <DialogShell>
       <DialogHeader title="Close Window" />
@@ -25,7 +37,7 @@ export default function ConfirmClose({
           <span>
             {stopping
               ? "Stopping the running operations…"
-              : `${what} still running. Closing the window stops ${running === 1 ? "it" : "them"}.`}
+              : `${what.charAt(0).toUpperCase()}${what.slice(1)}. Closing the window ${running > 0 ? "stops" : "ends"} ${ends}.`}
           </span>
         </Dialog.Description>
       </DialogBody>
@@ -46,7 +58,7 @@ export default function ConfirmClose({
             onClick={() => safe(commands.closeWithRunningOperations(false))}
             autoFocus
           >
-            Stop and Close
+            {running > 0 ? "Stop and Close" : "Close"}
           </button>
         )}
       </DialogFooter>

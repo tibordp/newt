@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { commands, type ConnectionStatus } from "../lib/bindings";
+import { commands, type ConnectionStatusWire } from "../lib/bindings";
 import { safe } from "../lib/ipc";
 import { useAfterGrace } from "../lib/useAfterGrace";
 import styles from "./ConnectionScreen.module.scss";
 import Spinner from "./Spinner";
+import { useConnectionLog } from "./useConnectionLog";
 
 /** What the main window shows while its session isn't connected: the
  * connection's transcript, and a status bar saying where it stands. */
 export default function ConnectionScreen({
   status,
 }: {
-  status: Exclude<ConnectionStatus, { status: "connected" }>;
+  status: Exclude<ConnectionStatusWire, { status: "connected" }>;
 }) {
   const logRef = useRef<HTMLPreElement>(null);
+  const log = useConnectionLog(status.log);
 
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [status.log.length]);
+  }, [log.length]);
 
   const connecting = useAfterGrace(status.status === "connecting");
   const elapsed = useElapsed(status.status === "connecting");
@@ -26,10 +28,10 @@ export default function ConnectionScreen({
   return (
     <div className={styles.screen}>
       <pre className={styles.log} ref={logRef}>
-        {status.log.join("\n")}
+        {log.join("\n")}
         {status.status === "connecting" && (
           <>
-            {status.log.length > 0 && "\n"}
+            {log.length > 0 && "\n"}
             <span className={styles.cursor} aria-hidden />
           </>
         )}

@@ -157,7 +157,7 @@ impl Default for CurrentExeAgentResolver {
 impl AgentResolver for CurrentExeAgentResolver {
     async fn agent_hash(&self) -> Result<String, Error> {
         let path = Self::current_exe()?;
-        let bytes = std::fs::read(&path)?;
+        let bytes = tokio::fs::read(&path).await?;
         let hash = blake3::Hasher::new().update(&bytes).finalize();
         Ok(hash.to_hex()[..16].to_string())
     }

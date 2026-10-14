@@ -198,18 +198,18 @@ fn connections_path(config_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 pub fn list_connections(config_dir: &std::path::Path) -> Vec<ConnectionProfile> {
-    let path = connections_path(config_dir);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    match toml::from_str::<ConnectionsFile>(&content) {
-        Ok(file) => file.connections,
-        Err(e) => {
-            log::warn!("Failed to parse connections.toml: {}", e);
-            Vec::new()
-        }
-    }
+    load_connections(config_dir).unwrap_or_else(|e| {
+        log::warn!("{e}");
+        Vec::new()
+    })
+}
+
+/// The saved connections, or why `connections.toml` can't be read. An
+/// absent file is an empty list.
+pub fn load_connections(config_dir: &std::path::Path) -> Result<Vec<ConnectionProfile>, String> {
+    read_connections_file(&connections_path(config_dir))
+        .map(|file| file.connections)
+        .map_err(|e| e.to_string())
 }
 
 /// An absent file is an empty list; an unparsable one is an error, since

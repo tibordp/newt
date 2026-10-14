@@ -51,9 +51,10 @@ use self::session::Session;
 use self::terminal::Terminal;
 
 pub use self::session::{
-    AgentResolver, ConnectionState, ConnectionStatus, ConnectionTarget, DirectCopyPlan, SpawnSpec,
-    TauriAgentResolver, docker_direct_copy_plan, docker_transport_cmd, kube_transport_cmd,
-    podman_direct_copy_plan, podman_transport_cmd, ssh_transport_cmd,
+    AgentResolver, ConnectionLogChunk, ConnectionState, ConnectionStatus, ConnectionStatusWire,
+    ConnectionTarget, DirectCopyPlan, SpawnSpec, TauriAgentResolver, docker_direct_copy_plan,
+    docker_transport_cmd, kube_transport_cmd, podman_direct_copy_plan, podman_transport_cmd,
+    ssh_transport_cmd,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -728,6 +729,8 @@ pub enum ModalDataKind {
         /// Ad-hoc (unsaved) targets, most-recent first, already filtered to
         /// exclude any that match a saved profile.
         recent_connections: Vec<crate::runtime_state::RecentConnection>,
+        /// Why `connections.toml` couldn't be read, its profiles left out.
+        problem: Option<String>,
     },
     SelectVfs {
         targets: Vec<VfsTarget>,
@@ -735,9 +738,11 @@ pub enum ModalDataKind {
     /// "Disconnect X:?" for the unmap-network-drive command. Constructed
     /// on Windows only; plain data, so no cfg (keeps bindings.ts
     /// host-independent without a gate).
-    /// Closing the window would cut short operations still running.
+    /// Closing the window would end its terminals or cut short
+    /// operations still running.
     ConfirmClose {
         running: u32,
+        terminals: u32,
         /// Stopping them was chosen; waiting for them to wind down.
         stopping: bool,
     },
@@ -1119,7 +1124,7 @@ pub struct MainWindowStateWire<'a> {
     preview: &'a crate::viewer::ViewerState,
 }
 
-specta_as!(ConnectionState => ConnectionStatus);
+specta_as!(ConnectionState => ConnectionStatusWire);
 specta_as!(AskpassState => Option<AskpassPrompt>);
 specta_as!(Panes => Vec<pane::Pane>);
 specta_as!(pane::Pane => pane::PaneViewState);
@@ -1448,14 +1453,26 @@ impl MainWindowContext {
         if self.inner.close_confirmed.swap(false, Ordering::SeqCst) {
             return true;
         }
-        let running = self.operations().running().len();
-        if running == 0 {
+        let Some((running, terminals)) = self.close_concerns() else {
             return true;
-        }
+        };
         let _ = self.with_update(|gs| {
+            // The terminals the close would end are in view behind the
+            // prompt, even ones hidden or maximized away.
+            if terminals > 0 {
+                let mut opts = gs.display_options.0.write();
+                opts.terminal_panel_visible = true;
+                if opts.panes_focused {
+                    opts.maximized = false;
+                }
+                if opts.active_terminal.is_none() {
+                    opts.active_terminal = gs.terminals.first_handle();
+                }
+            }
             *gs.modal.0.write() = Some(ModalData {
                 kind: ModalDataKind::ConfirmClose {
-                    running: running as u32,
+                    running,
+                    terminals,
                     stopping: false,
                 },
                 context: ModalContext { pane_handle: None },
@@ -1464,6 +1481,18 @@ impl MainWindowContext {
         });
         let _ = self.window().set_focus();
         false
+    }
+
+    /// What closing would end that the user is asked about first: the
+    /// running operations and open terminals, or `None` when there are
+    /// neither or Confirm Close is off.
+    pub fn close_concerns(&self) -> Option<(u32, u32)> {
+        if !self.preferences().load().behavior.confirm_close {
+            return None;
+        }
+        let running = self.operations().running().len() as u32;
+        let terminals = self.terminals().len() as u32;
+        (running > 0 || terminals > 0).then_some((running, terminals))
     }
 
     /// Let the next close go ahead whatever is running.
@@ -1587,6 +1616,13 @@ impl MainWindowContext {
             *self.inner.main_window_state.connection_status.0.read(),
             ConnectionStatus::Failed { .. }
         )
+    }
+
+    pub fn connection_log(&self, generation: u32, from: u32) -> ConnectionLogChunk {
+        self.inner
+            .main_window_state
+            .connection_status
+            .log_since(generation, from)
     }
 
     pub fn askpass_respond(&self, response: Option<String>) {
@@ -2231,10 +2267,8 @@ impl MainWindowContext {
             opts.panes_focused = true;
             opts.active_pane = PaneHandle(0);
         }
-        *state.connection_status.0.write() = ConnectionStatus::Connecting {
-            message: "Reconnecting...".into(),
-            log: Vec::new(),
-        };
+        state.connection_status.set_connecting("Reconnecting...");
+        state.connection_status.restart_log();
 
         let _ = self.publish();
     }
@@ -2321,6 +2355,7 @@ pub fn spawn_main_window(
     )
     .title(&launch.title)
     .resizable(true)
+    .min_inner_size(crate::MIN_WINDOW_SIZE.0, crate::MIN_WINDOW_SIZE.1)
     .theme(theme);
     builder = match geometry {
         Some(g) => {

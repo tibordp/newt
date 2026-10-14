@@ -16,6 +16,8 @@ import styles from "./HotPaths.module.scss";
 type QuickConnectProps = {
   connections: ConnectionProfile[];
   recentConnections: RecentConnection[];
+  /** Why `connections.toml` couldn't be read. */
+  problem: string | null;
   state: MainWindowState | null;
 };
 
@@ -84,6 +86,7 @@ function recentSubtitle(rc: RecentConnection): string {
 export default function QuickConnect({
   connections,
   recentConnections,
+  problem,
   state,
 }: QuickConnectProps) {
   const [filter, setFilter] = useState("");
@@ -253,11 +256,21 @@ export default function QuickConnect({
             placeholder="Search connections..."
           />
         </div>
+        {problem !== null && (
+          <div className={styles.problem} role="alert">
+            <div className={styles.problemTitle}>
+              Saved connections can't be shown: connections.toml has a problem
+            </div>
+            <div className={styles.problemText}>{problem}</div>
+          </div>
+        )}
         <Command.List label="Connections">
           <Command.Empty>
-            {connections.length === 0 && recentConnections.length === 0
-              ? "No saved connections. Use the connect or mount dialogs to save one."
-              : "No matching connections."}
+            {problem !== null
+              ? "No connections to show."
+              : connections.length === 0 && recentConnections.length === 0
+                ? "No saved connections. Use the connect or mount dialogs to save one."
+                : "No matching connections."}
           </Command.Empty>
 
           {filteredRecents.length > 0 && (

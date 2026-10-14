@@ -32,6 +32,7 @@ Newt's windows are web content in the platform webview, so screen readers see th
 - **Dialogs** are named by their title and described by their summary or, for confirmations, by what will happen; form fields are labelled, with hints and validation errors attached to their field. Lists that are navigated from a search box (Quick Connect, Hot Paths, the command palette, history, sort menu) announce the highlighted entry.
 - **High contrast** (Windows `forced-colors`): states that are normally drawn with colour alone are redrawn in the theme's own colours — marked files, highlighted menu and palette entries, the active terminal tab, settings category and viewer toggles use the theme's selection colours, the file-list and table cursor is an outline (so it shows on a marked row too), and progress bars keep a visible fill and track.
 - **Tooltips**: every icon-only or abbreviated control carries a native tooltip, and one that runs a command shows its current shortcut (e.g. "Maximize pane (⌘+F11)" on macOS), following any rebinding. Truncated paths and names show in full on hover.
+- **Names can't disguise themselves**: bidirectional formatting characters in a name (right-to-left override, embeddings, isolates, the LRM/RLM/ALM marks) show as `�`, one each, wherever a name is something to decide on — the file list, the path bar, Delete, Copy/Move, Properties and the prompts of running operations — so `photo<RLO>gpj.exe` reads `photo�gpj.exe`, never `photoexe.jpg`. Right-to-left names themselves display normally, and each name in the file list is laid out on its own, never reordering the text beside it.
 
 The terminal and editor rely on xterm.js's and Monaco's own accessibility; neither yet switches to its screen-reader mode automatically.
 
@@ -86,7 +87,7 @@ Zoom is applied via the webview zoom factor and persisted app-wide in the runtim
 ### Window Management
 
 - **New Window** (Mod+N): Opens a fresh Newt window (new session).
-- **Close Window** (Mod+Shift+W): Closes the current window. Shifted (gnome-terminal convention) so a session window can't be closed on a stray Mod+W. Viewer/editor children can't outlive the session they were spawned from, so closing a main window takes them along: a Rust-side `CloseRequested` interceptor (covers the command, the menu item, and the OS close button alike) closes viewer children outright and sweeps editor children — dirty ones prompt, the window close resumes once the last child editor is gone, and refusing a prompt aborts the close. A window with operations still running (copies, moves, deletes, archive work, user commands) asks first: **Stop and Close** cancels them and closes once they've stopped (the dialog reads "Stopping the running operations…" meanwhile, with **Close Now** to stop waiting), Cancel keeps the window. Closing ends the window's session: its terminals are killed, anything still running is cancelled, and a remote or elevated session's agent exits with its connection.
+- **Close Window** (Mod+Shift+W): Closes the current window. Shifted (gnome-terminal convention) so a session window can't be closed on a stray Mod+W. Viewer/editor children can't outlive the session they were spawned from, so closing a main window takes them along: a Rust-side `CloseRequested` interceptor (covers the command, the menu item, and the OS close button alike) closes viewer children outright and sweeps editor children — dirty ones prompt, the window close resumes once the last child editor is gone, and refusing a prompt aborts the close. A window with terminals open or operations still running (copies, moves, deletes, archive work, user commands) asks first, saying how many of each the close would end; a hidden terminal panel is shown (and a maximized pane restored) so the terminals are in view behind the prompt. **Close** — **Stop and Close** when operations are running — goes ahead: running operations are cancelled and the window closes once they've stopped (the dialog reads "Stopping the running operations…" meanwhile, with **Close Now** to stop waiting); Cancel keeps the window. Every open terminal counts, idle at a prompt or not. **Behavior ▸ Confirm Close** (`behavior.confirm_close`, on by default) turns the prompt off. Quitting — the Quit command, the Dock, logging out — asks the same of every window, and an editor with unsaved changes asks too, so with terminals open a logout waits for an answer. Closing ends the window's session: its terminals are killed, anything still running is cancelled, and a remote or elevated session's agent exits with its connection.
 - **Quit Newt** (Mod+Q): Closes all main windows, exiting the app. Open editor windows are swept first so their unsaved-changes prompts fire: the quit waits (event-driven, via the `Destroyed` handler) for the last editor to close before the main windows go, and refusing any editor's prompt aborts the quit (`cancel_quit`), leaving all remaining windows open. Pre-warmed hidden editors are exempt from the sweep. Windows with operations running ask as they would on Close Window; the others close. OS-initiated termination (macOS Dock quit, logout) goes through the same sweep via an `applicationShouldTerminate:` method injected into tao's app delegate at runtime (`terminate_guard` in `main.rs` — tao doesn't implement the selector and `RunEvent::ExitRequested` never fires for OS termination, see tauri#9198): a dirty editor or a running operation cancels the termination and runs the sweep (with its close confirmations), an idle app terminates immediately so it never blocks logout. Editor dirty state is mirrored to Rust for this via `set_editor_dirty`. The `ExitRequested { code: None }` handler remains as a safety net for the all-windows-closed path.
 - **Reload Window**: Available in the Debug dialog (debug builds only).
 - **Window title**: the active pane's folder followed by the session's title — `walker - Newt`, `logs - Newt [build-01]`, `src - Newt [Elevated]` — so windows can be told apart in the window switcher. The folder is the last segment of the path bar (a search pane shows its search label); on Wayland the title doesn't update after the window opens (upstream GTK/Tauri bug).
@@ -267,7 +268,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Num * | Invert Selection — toggles every visible entry; filtered-out selections are left alone |
 | Num + / Num - | Select / Deselect by Pattern (see below) |
 | (unbound) | Select Same Extension (command palette) — adds every visible entry with the focused entry's extension, case-folded; directories count as one extensionless group of their own |
-| Escape | Clear filter text, or clear selection if no filter active |
+| Escape | Clear the quick search or filter, and stop whatever the pane is still loading — a directory listing, git status, Calculate Size. The selection is kept (Mod+D deselects) |
 | Shift+Enter | Follow symlink (navigate to its target) |
 | Shift+\<drive letter\> | Jump to that drive's root. Offered whenever the session has a split-root (Windows drive-lettered) mount — `MainWindowState.mount_summary.has_split_root_vfs`, refreshed on mount/unmount — not gated on the host OS. With no such mount the keystroke types into the quick filter as usual. |
 
@@ -494,7 +495,7 @@ Creates a new file (same dialog as Create File) and immediately opens it in the 
 
 ### Rename (F2)
 
-Modal dialog with the current filename pre-filled and fully selected (so you can type a new name immediately). Operates on the **focused** entry, ignoring the selection — and does nothing at all when that is `..` (see the `..` note under File List). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it (tried as `rename_no_replace` first, as Move does), else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the byte-identical name is a no-op, and renaming to a *different spelling of the same name* — `Foo` → `foo` on a case-insensitive volume, NFC → NFD on HFS+ — is a rename rather than a conflict: the destination stats successfully as the source, so `Vfs::same_file` is consulted before the conflict probe and suppresses it. Renaming one **hard link** onto another takes the same exemption and is then a no-op — POSIX has `rename` succeed without acting when both names are links to one file, so both survive and nothing is reported. That is BSD `mv`'s behaviour (GNU `mv` refuses instead); it's rare, and inaction is the safe end of the trade. Copying one hard link onto another counts as already copied (see Copy's conflict detection), since writing over it would destroy the file. The pane refreshes and re-focuses the new name when the operation completes. A directory renamed onto an existing directory asks Merge / Replace / Skip (Replace swaps it in; a package in the way is asked about as a file) — a rename merging silently would be a surprise.
+Modal dialog with the current filename pre-filled and selected up to its extension, so typing replaces the name and keeps the type (`report.final.pdf` selects `report.final`); a directory's name, or a name with no extension or only a leading dot (`.bashrc`), is selected whole. Operates on the **focused** entry, ignoring the selection — and does nothing at all when that is `..` (see the `..` note under File List). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it (tried as `rename_no_replace` first, as Move does), else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the byte-identical name is a no-op, and renaming to a *different spelling of the same name* — `Foo` → `foo` on a case-insensitive volume, NFC → NFD on HFS+ — is a rename rather than a conflict: the destination stats successfully as the source, so `Vfs::same_file` is consulted before the conflict probe and suppresses it. Renaming one **hard link** onto another takes the same exemption and is then a no-op — POSIX has `rename` succeed without acting when both names are links to one file, so both survive and nothing is reported. That is BSD `mv`'s behaviour (GNU `mv` refuses instead); it's rare, and inaction is the safe end of the trade. Copying one hard link onto another counts as already copied (see Copy's conflict detection), since writing over it would destroy the file. The pane refreshes and re-focuses the new name when the operation completes. A directory renamed onto an existing directory asks Merge / Replace / Skip (Replace swaps it in; a package in the way is asked about as a file) — a rename merging silently would be a surprise.
 
 ### Batch Rename (Shift+F2)
 
@@ -558,7 +559,7 @@ Opens a modal dialog with:
   - **More copy options** ("More move options" for a move; collapsed section, keyboard-reachable like any other control; opens expanded when a remembered toggle inside it differs from its default (extended attributes default on for macOS, streams for macOS and Windows), so a sticky choice is never hidden):
     - **Existing files**: Ask (default), or answer every file conflict up front with any answer the prompt offers (see Issue resolution) — the same as giving it with "apply to all" at the first prompt.
     - **Existing folders**: **Merge** (default) — copy into it, keeping what only the destination has; **Replace** — put the source in its place; **Ask** — Merge / Replace / Skip per folder. Not remembered, like Existing files. A *package* in the way (see below) is not a folder to this setting but a file to Existing files.
-    - **Preserve owner / group**, with **Match accounts by** numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
+    - **Preserve owner** and **Preserve group** (separate toggles), with **Match accounts by** numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
     - **Preserve extended attributes** (user xattrs; ACL and resource-fork xattrs are excluded because they have their own toggles). On by default on macOS, as Finder and `cp` keep them: without them a copy loses Finder tags and colour labels, the quarantine flag (so a copied download would skip Gatekeeper's first-open check), and the signatures of signed scripts — including an app whose executable is a script, which then reports as damaged. Off on Linux, where `cp` keeps them only with `-a` and they are mostly security labels, and on Windows, which has none to read: a Windows file has nothing to carry, while one copied *to* Windows with extended attributes still raises "Cannot preserve".
     - **Preserve access control lists** — Linux POSIX ACLs, macOS extended ACLs, Windows DACLs. Carried opaquely in the source platform's encoding; only a destination of the same platform can apply them.
     - **Preserve alternate streams and resource forks** — macOS `..namedfork/rsrc`, NTFS `:stream:$DATA`; streamed like file contents. On by default on macOS and Windows (as Finder and Explorer keep them — Windows' Mark of the Web is the `Zone.Identifier` stream), off on Linux. Resource forks are legacy (signed apps can't have them); without them custom icons, Mac OS 9-era files and old aliases lose what's in the fork.
@@ -648,7 +649,7 @@ Hardlinks are not detectable through the VFS surface and are archived as indepen
 
 ### Properties (Alt+Enter)
 
-Modal dialog showing file metadata. Supports single files and multi-file selections. The Unix permission/ownership editor is read-only on VFS types that don't support metadata changes (S3, archives); VFSes with extended properties (S3) still get their own editable sheet groups (see below).
+Modal dialog showing file metadata. Supports single files and multi-file selections. The Unix permission/ownership editor appears only where the filesystem can change metadata and the entries have Unix modes — not on S3, in archives, or for local Windows files; VFSes with extended properties (S3) still get their own editable sheet groups (see below).
 
 **Information displayed**:
 - Name
@@ -670,7 +671,7 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 
 **Ownership editor**:
 - Separate checkboxes to enable owner/group editing.
-- Text input accepts numeric ID. Name resolution planned for future.
+- Text input takes a numeric UID / GID; account names aren't resolved.
 
 **Symlinks**: a permissions change never reaches a link's target — a link's own mode is left alone (it is fixed on Linux and unused elsewhere), whether the link was selected or met in a recursive walk; ownership changes apply to the link itself (`lchown`).
 
@@ -1102,7 +1103,7 @@ Terminal colors follow the system/app theme:
 ### Copy/Paste
 
 - **Copy**: Ctrl+Shift+C (or Cmd+C on macOS) copies the terminal selection to the system clipboard.
-- **Paste**: Ctrl+Shift+V on Linux/Windows, Cmd+V on macOS. The terminal reads the clipboard via `navigator.clipboard.readText()` and writes it into the PTY (an explicit handler is needed on macOS because Cmd+V is not delivered to the webview without an Edit menu — see below).
+- **Paste**: Ctrl+Shift+V on Linux/Windows, Cmd+V on macOS (through the Edit menu — see below), or Paste in the terminal's context menu. The text goes to the program as one paste, bracketed where the shell asked for one; there is no confirmation for multi-line text. Ctrl+V reaches the program as ^V, and Mod+V's Paste Path from Clipboard applies only while a pane has focus.
 - **macOS Edit menu**: Main, viewer, and editor windows include a native Edit submenu with Undo / Redo / Cut / Copy / Paste / Select All entries. Without this menu, macOS silently swallows Cmd+V/C/X/A before they reach the webview, so this is required for clipboard shortcuts to work in any text input.
 - **Input assist disabled globally**: `index.html` sets `autocorrect="off" autocapitalize="off" spellcheck="false"` on `<html>`, which inherits to every `<input>` and `<textarea>`. macOS WebKit otherwise applies these by default and silently mangles typed paths, regex patterns, and shell commands; Linux WebKit doesn't, so this normalises behaviour across platforms.
 - **Selection**: Highlight text with the mouse to select. Text is selectable by default.
@@ -1770,7 +1771,7 @@ A remote or elevated session's agent ends itself on a panic, which the window se
 
 ```toml
 [appearance]
-show_hidden = false         # Show files starting with "."
+show_hidden = false         # New windows start with hidden files shown (Mod+H toggles per window)
 folders_first = true        # Directories before files in sort order
 natural_sort = false        # Numbers in names sort by value (IMG_2 before IMG_10)
 show_command_bar = true     # Show F-key bar at bottom of window
@@ -1787,6 +1788,7 @@ time_format = ""            # strftime-style time column format (e.g. "%H:%M"); 
 
 [behavior]
 confirm_delete = true       # Ask for confirmation before deleting
+confirm_close = true        # Ask before closing a window with terminals open or operations running
 delete_to_trash = true      # Move deletes to the OS trash; Delete Permanently bypasses
 keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
@@ -1826,6 +1828,9 @@ exclude = []                # Name globs never shown or descended into, e.g. ["n
 limit = 200000              # Entries looked at before the search stops
 skip_packages = false       # macOS: find apps and other packages, but don't look inside them
 
+[environment]
+extra_path = ["/opt/homebrew/bin", "/usr/local/bin"]  # Searched after PATH for the programs Newt runs itself (ssh, docker, podman, kubectl, git); not added to terminals or user commands. Defaults: this on macOS; ["~/.local/bin", "/snap/bin", "/var/lib/flatpak/exports/bin"] on Linux; [] on Windows
+
 [editor]
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
 
@@ -1863,8 +1868,8 @@ language = "typescript"     # Optional: editor language
 
 Four tabs:
 
-**Settings tab**:
-- Sidebar with category filter (All, Appearance, Behavior, Hot Paths). Category names from schema titles.
+**Preferences tab**:
+- Sidebar with category filter: All, Appearance, Behavior, Enrichers, Archives, Hot Paths, Go to File, Environment, Editor, Viewer — one per section of `settings.toml`, named by the schema's titles. All lists every setting, with a header at the start of each category.
 - Search box for full-text search across setting titles and descriptions.
 - Each setting rendered as a row with title, description, and appropriate control:
   - Boolean → checkbox.
@@ -1947,9 +1952,9 @@ Not to be confused with `applies_to` on `[[command]]` entries, which is a *run f
 - `alt` → "⌥" (macOS) / "Alt" (other)
 - Other keys: Capitalized (e.g., `f5` → "F5")
 
-### Open Config File
+### Open Settings File in Editor
 
-Available from the command palette. Opens `settings.toml` in the built-in editor for direct editing.
+Available from the command palette (File category, unbound). Hands `settings.toml` to the system's default application for it — the same as the Settings dialog's **Open in external editor** — creating it with a commented skeleton first if it doesn't exist yet. To edit it in Newt's own editor, use the dialog's **Show in pane** and press F4.
 
 ---
 
@@ -2139,7 +2144,7 @@ Opens the directory under the cursor in the left or right pane respectively, reg
 
 ### Hidden Files (Mod+H)
 
-Toggle visibility of files starting with `.` (dot files). The `..` parent directory is *always* visible regardless of this setting. The toggle is global (affects both panes).
+Toggles whether hidden entries are shown, in both panes of the window. What counts as hidden is the filesystem's call: a leading `.` on Unix hosts, over SFTP and inside archives and disc images; on a Windows host the Hidden or System attribute instead (a dot file is an ordinary file there); ZIP and 7z entries also by their DOS hidden attribute, disc-image entries by their own hidden flag. S3 objects are never hidden. The `..` parent directory is *always* visible. The toggle lasts as long as the window and isn't saved; `appearance.show_hidden` sets how each new window starts.
 
 ---
 

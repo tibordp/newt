@@ -786,6 +786,13 @@ async reconnect() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The connection log from line `from` on; the whole log when
+ * `generation` is out of date.
+ */
+async connectionLog(generation: number, from: number) : Promise<ConnectionLogChunk> {
+    return await TAURI_INVOKE("connection_log", { generation, from });
+},
 async connectTarget(paneHandle: PaneHandle, kind: ConnectionKind, openIn: OpenIn, hostAccess: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("connect_target", { paneHandle, kind, openIn, hostAccess }) };
@@ -1843,9 +1850,9 @@ async cmdConnectWsl(paneHandle: PaneHandle) : Promise<Result<null, string>> {
 }
 },
 /**
- * Close the window although operations are running: cancel them and wait
- * for them to stop, or (`now`) close at once and leave them to be
- * cancelled as the session ends.
+ * Close the window past its Close Window prompt: cancel the running
+ * operations and wait for them to stop, or (`now`) close at once and leave
+ * them to be cancelled as the session ends. Terminals end with the session.
  */
 async closeWithRunningOperations(now: boolean) : Promise<Result<null, string>> {
     try {
@@ -2421,6 +2428,11 @@ export type BehaviorPreferences = {
  */
 confirm_delete: boolean; 
 /**
+ * Ask before closing a window that has terminals open or operations
+ * running, which the close would end.
+ */
+confirm_close: boolean; 
+/**
  * Move deleted files to the system Trash instead of deleting them
  * permanently. Applies to filesystems that have a trash (local files,
  * remote hosts, agent mounts); Delete Permanently always bypasses it.
@@ -2596,6 +2608,10 @@ export type ConnectDefaults = {
 host_access: boolean }
 export type ConnectionKind = { type: "s3"; region?: string | null; bucket?: string | null; endpoint_url?: string | null; credential_mode?: string; profile?: string | null; role_arn?: string | null; external_id?: string | null } | { type: "sftp"; host: string } | { type: "ssh"; host: string; forward_agent?: boolean; login_shell?: boolean } | { type: "docker"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "podman"; container: string; user?: string | null; bootstrapless?: boolean } | { type: "kube"; context?: string | null; namespace?: string | null; pod: string; container?: string | null } | { type: "custom"; command: string; skip_bootstrap?: boolean }
 /**
+ * Lines of the connection log from `start` on.
+ */
+export type ConnectionLogChunk = { generation: number; start: number; lines: string[] }
+/**
  * A saved connection profile. Secrets are stored in the system keychain,
  * not in this struct or the connections file.
  */
@@ -2612,7 +2628,8 @@ open_in?: OpenIn;
  * while `behavior.allow_remote_host_access` allows it.
  */
 host_access?: boolean | null }
-export type ConnectionStatus = { status: "connecting"; message: string; log: string[] } | { status: "connected"; log: string[] } | { status: "disconnected"; log: string[]; error: string } | { status: "failed"; log: string[]; error: string }
+export type ConnectionStatus = { status: "connecting"; message: string } | { status: "connected" } | { status: "disconnected"; error: string } | { status: "failed"; error: string }
+export type ConnectionStatusWire = ({ status: "connecting"; message: string } | { status: "connected" } | { status: "disconnected"; error: string } | { status: "failed"; error: string }) & { log: LogCursor }
 export type ContainerEntry = { id: string; name: string; image: string; state: string }
 /**
  * Per-location badge (pane header / status bar), replace-by-kind per
@@ -2925,11 +2942,11 @@ export type EntryKind = "any" | "file" | "directory" |
 "symlink"
 export type EnvironmentPreferences = { 
 /**
- * Directories to prepend to `PATH` at startup. Useful on macOS / GNOME
- * where GUI apps don't inherit the user's shell `PATH`, so subprocesses
- * like `docker` / `kubectl` / `podman` can't be found at their usual
- * install locations. Leading `~` expands to the user's home directory.
- * Non-existent entries are silently skipped.
+ * Directories searched after `PATH` for the programs Newt runs itself —
+ * `ssh`, `docker`, `podman`, `kubectl`, `git` — since an app started
+ * from the desktop doesn't inherit the shell's `PATH`. Terminals and
+ * user commands don't use them. A leading `~` is the home directory;
+ * directories that don't exist are skipped.
  */
 extra_path: string[] }
 export type ExifRow = { label: string; value: string }
@@ -3194,11 +3211,24 @@ export type LayoutState = {
  */
 terminal_height: number | null }
 /**
+ * How far the connection log has grown. The lines themselves stay out of
+ * published state; the frontend fetches them with `connection_log`.
+ */
+export type LogCursor = { 
+/**
+ * Changes when a reconnect starts a new log.
+ */
+generation: number; 
+/**
+ * Index one past the last line.
+ */
+end: number }
+/**
  * The `update:main_window` payload, borrowing the live state. Serializing
  * through this derive keeps the wire shape and `MainWindowState` in
  * `bindings.ts` one and the same.
  */
-export type MainWindowState = { connection_status: ConnectionStatus; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary; preview: ViewerState }
+export type MainWindowState = { connection_status: ConnectionStatusWire; askpass: AskpassPrompt | null; panes: PaneViewState[]; terminals: Partial<{ [key in string]: TerminalView }>; modal: ModalData | null; dnd: DndData | null; display_options: DisplayOptionsInner; operations: Partial<{ [key in string]: OperationState }>; window_title: string; foreground_operation_id: number | null; vfs_progress: Partial<{ [key in string]: VfsProgress }>; mount_log: string[]; mount_summary: MountSummary; preview: ViewerState }
 /**
  * A node of a rendered document.
  */
@@ -3376,14 +3406,19 @@ folders_first: boolean } } | { type: "quick_connect"; data: { connections: Conne
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.
  */
-recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
+recent_connections: RecentConnection[]; 
+/**
+ * Why `connections.toml` couldn't be read, its profiles left out.
+ */
+problem: string | null } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
 /**
  * "Disconnect X:?" for the unmap-network-drive command. Constructed
  * on Windows only; plain data, so no cfg (keeps bindings.ts
  * host-independent without a gate).
- * Closing the window would cut short operations still running.
+ * Closing the window would end its terminals or cut short
+ * operations still running.
  */
-{ type: "confirm_close"; data: { running: number; 
+{ type: "confirm_close"; data: { running: number; terminals: number; 
 /**
  * Stopping them was chosen; waiting for them to wind down.
  */
@@ -3606,14 +3641,19 @@ folders_first: boolean } } | { type: "quick_connect"; data: { connections: Conne
  * Ad-hoc (unsaved) targets, most-recent first, already filtered to
  * exclude any that match a saved profile.
  */
-recent_connections: RecentConnection[] } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
+recent_connections: RecentConnection[]; 
+/**
+ * Why `connections.toml` couldn't be read, its profiles left out.
+ */
+problem: string | null } } | { type: "select_vfs"; data: { targets: VfsTarget[] } } | 
 /**
  * "Disconnect X:?" for the unmap-network-drive command. Constructed
  * on Windows only; plain data, so no cfg (keeps bindings.ts
  * host-independent without a gate).
- * Closing the window would cut short operations still running.
+ * Closing the window would end its terminals or cut short
+ * operations still running.
  */
-{ type: "confirm_close"; data: { running: number; 
+{ type: "confirm_close"; data: { running: number; terminals: number; 
 /**
  * Stopping them was chosen; waiting for them to wind down.
  */
