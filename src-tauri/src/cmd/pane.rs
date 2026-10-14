@@ -813,7 +813,8 @@ pub async fn cmd_open_folder(ctx: MainWindowContext, pane_handle: PaneHandle) ->
 
     // Both block on another process: the file manager's D-Bus reply (which
     // can mean starting it), the shell's COM call, or `open` exiting.
-    let native = target.path.to_native();
+    // The shell takes no verbatim (`\\?\`) paths.
+    let native = target.path.launch_cwd();
     tokio::task::spawn_blocking(move || {
         if select {
             opener::reveal(native)
