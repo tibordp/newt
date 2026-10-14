@@ -670,7 +670,13 @@ impl Pane {
                 };
                 return match e {
                     Error::Cancelled => Ok(outcome),
-                    e => Err(e),
+                    e => {
+                        let shown = match self.vfs_info.descriptor(target.vfs_id) {
+                            Some((desc, meta)) => desc.format_path(&target.path, &meta),
+                            None => target.to_string(),
+                        };
+                        Err(Error::Custom(format!("Cannot open {shown}: {e}")))
+                    }
                 };
             }
         };

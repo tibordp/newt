@@ -919,7 +919,7 @@ pub(super) async fn execute_copy(
                 match reporter
                     .handle_io_error(
                         error,
-                        "Error",
+                        &format!("Cannot copy {}", entry.source),
                         Some(format!("{} -> {}", entry.source, entry.dest)),
                         &cancel,
                         true,

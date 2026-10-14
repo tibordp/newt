@@ -218,8 +218,8 @@ async fn pack_entries(
                             match reporter
                                 .handle_io_error(
                                     e,
-                                    "Error",
-                                    Some(entry.source.as_wire_str().to_string()),
+                                    &format!("Cannot read {}", entry.source),
+                                    None,
                                     cancel,
                                     true,
                                 )
