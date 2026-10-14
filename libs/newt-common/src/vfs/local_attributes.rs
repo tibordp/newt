@@ -173,10 +173,11 @@ fn xattrs_read(path: &std::path::Path) -> Result<Option<Attribute>, Error> {
         }
         Ok(Some(Attribute::ExtendedAttributes(attrs)))
     }
+    // Windows has no user extended attributes: nothing to carry.
     #[cfg(not(unix))]
     {
         let _ = path;
-        Err(Error::not_supported())
+        Ok(None)
     }
 }
 
