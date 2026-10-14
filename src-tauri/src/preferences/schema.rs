@@ -31,6 +31,9 @@ pub struct AppPreferences {
     #[schemars(title = "Environment")]
     pub environment: EnvironmentPreferences,
     #[serde(default)]
+    #[schemars(title = "Terminal")]
+    pub terminal: TerminalPreferences,
+    #[serde(default)]
     #[schemars(title = "Editor")]
     pub editor: EditorPreferences,
     #[serde(default)]
@@ -72,6 +75,31 @@ pub enum ImageBackground {
     #[default]
     Checkerboard,
     Light,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
+#[serde(default)]
+pub struct TerminalPreferences {
+    /// Font of the built-in terminals, as a CSS font-family list: the first
+    /// one installed is used.
+    #[schemars(title = "Font")]
+    pub font_family: String,
+    /// Font size of the built-in terminals, in points.
+    #[schemars(title = "Font Size", range(min = 6, max = 72))]
+    pub font_size: u32,
+    /// Lines a terminal keeps above the screen to scroll back to.
+    #[schemars(title = "Scrollback", range(min = 0, max = 1000000))]
+    pub scrollback: u32,
+}
+
+impl Default for TerminalPreferences {
+    fn default() -> Self {
+        Self {
+            font_family: r#"Menlo, Monaco, "Courier New", monospace"#.into(),
+            font_size: 12,
+            scrollback: 1000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, specta::Type)]
@@ -605,6 +633,9 @@ pub struct SettingsFile {
     pub environment: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
+    pub terminal: toml::Value,
+    #[serde(default = "default_toml_table")]
+    #[specta(type = serde_json::Value)]
     pub editor: toml::Value,
     #[serde(default = "default_toml_table")]
     #[specta(type = serde_json::Value)]
@@ -639,6 +670,7 @@ impl SettingsFile {
             "hot_paths" => &mut self.hot_paths,
             "quick_open" => &mut self.quick_open,
             "environment" => &mut self.environment,
+            "terminal" => &mut self.terminal,
             "editor" => &mut self.editor,
             "viewer" => &mut self.viewer,
             other => unreachable!("no settings section `{other}`"),
@@ -650,7 +682,7 @@ impl SettingsFile {
     /// defaults, modified-key detection) — a new `AppPreferences` group
     /// must be added here, in `section_mut` and as a field above, or its
     /// TOML section is reported as not a setting on load.
-    pub fn sections(&self) -> [(&'static str, &toml::Value); 9] {
+    pub fn sections(&self) -> [(&'static str, &toml::Value); 10] {
         [
             ("appearance", &self.appearance),
             ("behavior", &self.behavior),
@@ -659,6 +691,7 @@ impl SettingsFile {
             ("hot_paths", &self.hot_paths),
             ("quick_open", &self.quick_open),
             ("environment", &self.environment),
+            ("terminal", &self.terminal),
             ("editor", &self.editor),
             ("viewer", &self.viewer),
         ]
@@ -675,6 +708,7 @@ impl Default for SettingsFile {
             hot_paths: default_toml_table(),
             quick_open: default_toml_table(),
             environment: default_toml_table(),
+            terminal: default_toml_table(),
             editor: default_toml_table(),
             viewer: default_toml_table(),
             bindings: Vec::new(),

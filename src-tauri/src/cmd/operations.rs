@@ -34,7 +34,15 @@ pub async fn create_directory(
     typed_name(&name)?;
     let dir_path = path.join(&name);
 
-    ctx.fs()?.create_directory(dir_path).await?;
+    ctx.fs()?
+        .create_directory(dir_path.clone())
+        .await
+        .map_err(|e| {
+            Error::Custom(format!(
+                "Cannot create {}: {e}",
+                ctx.format_vfs_path(&dir_path)
+            ))
+        })?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();
@@ -61,7 +69,12 @@ pub async fn touch_file(
     typed_name(&name)?;
     let file_path = path.join(&name);
 
-    ctx.fs()?.touch(file_path.clone()).await?;
+    ctx.fs()?.touch(file_path.clone()).await.map_err(|e| {
+        Error::Custom(format!(
+            "Cannot create {}: {e}",
+            ctx.format_vfs_path(&file_path)
+        ))
+    })?;
 
     ctx.with_update_async(|gs| async move {
         gs.close_modal();

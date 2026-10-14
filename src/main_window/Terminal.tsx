@@ -1,4 +1,4 @@
-import { useEffect, useRef, useContext, useState } from "react";
+import { useEffect, useMemo, useRef, useContext, useState } from "react";
 import { ContextMenu as CM } from "../lib/menus";
 import { Terminal as XTermJSTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -15,6 +15,23 @@ import type { ITheme } from "@xterm/xterm";
 import { commands } from "../lib/bindings";
 import { REFOCUS_EVENT } from "./types";
 import { TerminalMenuContent } from "./TerminalMenus";
+import { normalizeKeyEvent } from "../lib/commands";
+import { usePreferences } from "../lib/preferences";
+
+/// Commands whose keys, typed in a terminal, go to Newt rather than the
+/// program: moving between the terminal and the panes, and between
+/// terminals. Anything else a key is bound to stays the program's — Ctrl+R,
+/// Ctrl+N or F10 mean something to a shell or a TUI — unless its binding
+/// is scoped to `terminal_focused`.
+const TERMINAL_COMMANDS = new Set([
+  "toggle_terminal_panel",
+  "create_terminal",
+  "next_terminal",
+  "prev_terminal",
+  "focus_panes",
+  "focus_terminal",
+  "toggle_maximized",
+]);
 
 const lightTheme: ITheme = {
   background: "#ffffff",
@@ -95,6 +112,23 @@ export default function Terminal({
   defunctRef.current = defunct;
   const ref = useRef<HTMLDivElement>(null);
   const termDataContext = useContext(TerminalData);
+  const preferences = usePreferences();
+  const settings = preferences?.settings.terminal;
+  const escapeKeys = useMemo(
+    () =>
+      new Set(
+        (preferences?.bindings ?? [])
+          .filter((b) =>
+            b.when === null
+              ? TERMINAL_COMMANDS.has(b.command)
+              : b.when === "terminal_focused",
+          )
+          .map((b) => b.key),
+      ),
+    [preferences?.bindings],
+  );
+  const escapeKeysRef = useRef(escapeKeys);
+  escapeKeysRef.current = escapeKeys;
 
   // A hidden panel is collapsed to zero size rather than removed, and fitting
   // it would shrink the PTY to a single row under whatever is running.
@@ -107,9 +141,6 @@ export default function Terminal({
 
   useEffect(() => {
     const term = new XTermJSTerminal({
-      scrollback: 1000,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 12,
       lineHeight: 1.2,
       fontWeight: "normal",
       fontWeightBold: "bold",
@@ -140,23 +171,8 @@ export default function Terminal({
         safeSilent(commands.closeTerminal(handle));
         return false;
       }
-      // Ctrl+` — toggle terminal panel
-      if (e.ctrlKey && e.key === "`") return false;
-      // Ctrl+Shift+` — new terminal (Shift+` produces ~)
-      if (e.ctrlKey && e.shiftKey && e.key === "~") return false;
-      // Ctrl+PageDown / Ctrl+PageUp — cycle tabs
-      if (e.ctrlKey && (e.key === "PageDown" || e.key === "PageUp"))
-        return false;
-      // Alt+Up / Alt+Down — focus panes / terminal
-      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown"))
-        return false;
-      // Mod+F11 — toggle maximized layout
-      if (
-        e.key === "F11" &&
-        (navigator.platform.startsWith("Mac") ? e.metaKey : e.ctrlKey)
-      )
-        return false;
-      return true;
+      // Left to bubble to the window's key dispatcher.
+      return !escapeKeysRef.current.has(normalizeKeyEvent(e));
     });
 
     const unregister = registerTerminalDataHandler(
@@ -214,6 +230,16 @@ export default function Terminal({
       }
     };
   }, []);
+
+  // Font and scrollback follow the [terminal] settings, live.
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term || !settings) return;
+    term.options.fontFamily = settings.font_family;
+    term.options.fontSize = settings.font_size;
+    term.options.scrollback = settings.scrollback;
+    fitIfSized();
+  }, [settings]);
 
   useEffect(() => {
     if (visible) {

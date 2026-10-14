@@ -2196,7 +2196,7 @@ export type Annotation = { git: GitEntryStatus } |
  * is derived via `schemars` so the frontend settings editor can be generated
  * automatically.
  */
-export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; quick_open?: QuickOpenPreferences; environment?: EnvironmentPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
+export type AppPreferences = { appearance?: AppearancePreferences; behavior?: BehaviorPreferences; enrichers?: EnricherPreferences; archives?: ArchivePreferences; hot_paths?: HotPathsPreferences; quick_open?: QuickOpenPreferences; environment?: EnvironmentPreferences; terminal?: TerminalPreferences; editor?: EditorPreferences; viewer?: ViewerPreferences }
 export type AppearancePreferences = { 
 /**
  * Always show folders before files regardless of sort order.
@@ -4285,7 +4285,27 @@ quoted: boolean;
  * Whether the first row is a header.
  */
 header: boolean | null; detected_header: boolean | null }
+/**
+ * A terminal, unique only within its session: each session's terminal
+ * client counts from 0, a remote one in its own agent, so every window's
+ * first terminal is 0. Resolve a handle through its session, never in a
+ * process-wide table.
+ */
 export type TerminalHandle = number
+export type TerminalPreferences = { 
+/**
+ * Font of the built-in terminals, as a CSS font-family list: the first
+ * one installed is used.
+ */
+font_family: string; 
+/**
+ * Font size of the built-in terminals, in points.
+ */
+font_size: number; 
+/**
+ * Lines a terminal keeps above the screen to scroll back to.
+ */
+scrollback: number }
 export type TerminalView = { handle: TerminalHandle; defunct: boolean }
 export type ThemeMode = "system" | "light" | "dark"
 export type TimeBound = 
