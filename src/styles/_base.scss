@@ -35,11 +35,6 @@ input[type="submit"] {
     background: var(--color-control-active-bg);
   }
 
-  &:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: -2px;
-  }
-
   &:disabled {
     opacity: 0.5;
   }
@@ -70,6 +65,12 @@ input[type="submit"] {
     &:active {
       background: var(--color-destructive-active);
     }
+  }
+
+  // A destructive action that isn't the default: a plain face, so the
+  // footer keeps a single filled button.
+  &.destructive-text {
+    color: var(--color-destructive-text);
   }
 }
 

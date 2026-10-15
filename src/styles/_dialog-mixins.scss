@@ -1,3 +1,5 @@
+@use "focus-ring";
+
 // Shared dialog chrome. Mixins rather than cross-file `composes`, which the
 // Vite/Sass module pipeline cannot resolve (see note in CreateArchive.module.scss).
 
@@ -49,6 +51,7 @@
   font-family: inherit;
   font-size: inherit;
   font-weight: 500;
+  @include focus-ring.inset;
 
   &:hover {
     color: var(--color-fg);

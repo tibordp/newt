@@ -1,3 +1,4 @@
+@use "../styles/focus-ring";
 @use "../styles/forced-colors" as fc;
 
 .panel {
@@ -47,6 +48,7 @@
   font: inherit;
   font-size: 0.9em;
   white-space: nowrap;
+  @include focus-ring.inset;
 
   &:hover {
     background: var(--color-cursor-inactive);
@@ -118,6 +120,7 @@
   font-size: 16px;
   padding: 0;
   flex-shrink: 0;
+  @include focus-ring.inset;
 
   &:hover {
     background: var(--color-cursor-inactive);

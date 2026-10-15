@@ -1,4 +1,5 @@
 @use "../styles/forced-colors" as fc;
+@use "../styles/focus-ring";
 
 .operationsPanel {
   display: flex;
@@ -158,6 +159,10 @@
 // Overwrite and the menu of its conditional variants, as one control.
 .splitButton {
   display: inline-flex;
+
+  > button {
+    @include focus-ring.inset;
+  }
 
   > button:first-child {
     border-top-right-radius: 0;

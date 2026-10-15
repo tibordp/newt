@@ -1,5 +1,6 @@
 @use "../../styles/dialog-mixins" as dlg;
 @use "../../styles/forced-colors" as fc;
+@use "../../styles/focus-ring";
 
 .content {
   @include dlg.dialog-surface;
@@ -74,6 +75,7 @@
   cursor: pointer;
   text-transform: capitalize;
   color: var(--color-fg);
+  @include focus-ring.inset;
 
   &:hover {
     background: var(--color-button-bg);
@@ -209,6 +211,7 @@
   color: var(--color-fg-muted);
   border: none;
   border-radius: 0;
+  @include focus-ring.inset;
 
   & + & {
     border-left: 1px solid var(--color-control-border);
@@ -863,6 +866,7 @@
   font: inherit;
   font-size: var(--font-size-sm);
   cursor: default;
+  @include focus-ring.inset;
 
   &:hover,
   &[data-state="open"] {

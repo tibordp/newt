@@ -52,3 +52,11 @@
   align-items: center;
   gap: var(--space-3);
 }
+
+// Footer buttons show their ring on :focus, not just :focus-visible: WebKit
+// hides it on an auto-focused button when the dialog was opened with the
+// mouse, leaving nothing to say what Enter presses.
+.footer button:focus {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}

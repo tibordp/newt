@@ -62,6 +62,8 @@
   --color-destructive-hover: var(--_destructive-600);
   --color-destructive-active: var(--_destructive-700);
   --color-destructive-fg: #ffffff;
+  // Destructive label on a plain face
+  --color-destructive-text: var(--_destructive-text);
 
   // Focus
   --focus-ring: 2px solid var(--_blue-500);

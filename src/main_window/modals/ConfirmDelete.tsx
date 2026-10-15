@@ -54,7 +54,7 @@ export default function ConfirmDelete({
           <>
             <button
               type="button"
-              className="destructive"
+              className="destructive-text"
               onClick={() => onConfirm(false)}
             >
               Delete Permanently

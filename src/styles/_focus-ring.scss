@@ -1,0 +1,9 @@
+// Focus rings sit 1px outside a control's edge (`_reset.scss`). A button
+// that is part of a surface — a tab, a sidebar or table row, a bar cell, a
+// half of a joined group — draws it inside instead, where an outside ring
+// is clipped by the container or paints over its neighbour.
+@mixin inset {
+  &:focus-visible {
+    outline-offset: -2px;
+  }
+}
