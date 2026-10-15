@@ -11,9 +11,12 @@ npm run screenshots -- terminal editor --scheme dark
 
 PNGs land in `docs/screenshots/` (`<scene>.png`, `<scene>-dark.png`; `--out`
 to change) at 2×, in macOS window chrome with its shadow on a transparent
-background. Run it on a Mac: default preferences, and with them the rendered
-shortcuts, are exported from Rust for the host platform. Captures run in parallel,
-half as many at once as the machine has cores; `--jobs N` sets it.
+background. That folder isn't committed. The one shot that is, the README's
+`docs/screenshot.png`, is the light `pack-to-s3`, copied there whenever a run
+into the default folder renders it. Run it on a Mac: default preferences, and
+with them the rendered shortcuts, are exported from Rust for the host platform.
+Captures run in parallel, half as many at once as the machine has cores;
+`--jobs N` sets it.
 
 ## Scenes
 

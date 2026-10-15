@@ -7,7 +7,7 @@
 // Needs Playwright's WebKit once: `npx playwright install webkit`.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,11 +17,16 @@ import { webkit } from "playwright";
 import { createServer } from "vite";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const defaultOut = join(root, "docs", "screenshots");
+// The README's screenshot, committed unlike the rest: the light pack-to-s3
+// shot, copied over whenever a run into the default folder renders it.
+const hero = { name: "pack-to-s3", scheme: "light" };
+const heroPath = join(root, "docs", "screenshot.png");
 
 const { values: opts, positionals: only } = parseArgs({
   allowPositionals: true,
   options: {
-    out: { type: "string", default: join(root, "docs", "screenshots") },
+    out: { type: "string", default: defaultOut },
     scheme: { type: "string" },
     jobs: { type: "string" },
   },
@@ -100,6 +105,14 @@ try {
         try {
           await capture(name, scheme, out);
           console.log(`✓ ${out}`);
+          if (
+            name === hero.name &&
+            scheme === hero.scheme &&
+            resolve(opts.out) === defaultOut
+          ) {
+            copyFileSync(out, heroPath);
+            console.log(`✓ ${heroPath}`);
+          }
         } catch (e) {
           failed = true;
           console.error(`✗ ${name} (${scheme}): ${e.message}`);

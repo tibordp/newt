@@ -1489,32 +1489,32 @@ impl Pane {
     /// The entry keys an action operates on: the selection if there is one,
     /// else the focused entry — and never [`PARENT_KEY`], in either case.
     ///
-    /// In filter mode, only entries visible in the current filtered view are
-    /// included, so hidden selected files don't piggyback on operations.
+    /// In filter mode, only entries visible in the current filtered view
+    /// count as the selection, so hidden selected files don't piggyback on
+    /// operations; a selection the filter hides entirely is no selection, and
+    /// focus takes over — matching the status bar, which counts only visible
+    /// entries.
     ///
-    /// `..` is excluded *here* rather than at each call site. The selection
-    /// mutators already keep it out of `all_selected`, but the fall back to
-    /// `focused` had no such gate, which is how Delete came to prompt for it.
-    /// Every consumer already treats an empty result as "do nothing", so this
-    /// one guarantee is all they need. Actions must ask through this or its
-    /// wrappers below, never `focused` directly.
+    /// `..` is excluded *here* rather than at each call site, since focus can
+    /// rest on it. Every consumer treats an empty result as "do nothing".
+    /// Actions must ask through this or its wrappers below, never `focused`
+    /// directly.
     fn effective_keys(view_state: &PaneViewState) -> Vec<String> {
-        let keys: Vec<&String> = if view_state.all_selected.is_empty() {
-            view_state.actionable_focus().into_iter().collect()
-        } else if view_state.filter_mode == FilterMode::Filter {
-            view_state
-                .all_selected
-                .iter()
-                .filter(|s| view_state.file_lookup.contains_key(s.as_str()))
-                .collect()
-        } else {
-            view_state.all_selected.iter().collect()
-        };
-
-        keys.into_iter()
+        let selected: Vec<&String> = view_state
+            .all_selected
+            .iter()
             .filter(|k| k.as_str() != PARENT_KEY)
-            .cloned()
-            .collect()
+            .filter(|k| {
+                view_state.filter_mode != FilterMode::Filter
+                    || view_state.file_lookup.contains_key(k.as_str())
+            })
+            .collect();
+
+        if selected.is_empty() {
+            view_state.actionable_focus().cloned().into_iter().collect()
+        } else {
+            selected.into_iter().cloned().collect()
+        }
     }
 
     /// Paths of the effective selection. See [`Self::effective_keys`].
@@ -3411,6 +3411,14 @@ mod tests {
     #[test]
     fn filter_mode_drops_entries_outside_the_view() {
         let mut vs = view_state(None, &["visible.txt", "hidden.txt"]);
+        vs.filter_mode = FilterMode::Filter;
+        vs.file_lookup = [("visible.txt".to_string(), 0)].into_iter().collect();
+        assert_eq!(Pane::effective_keys(&vs), vec!["visible.txt".to_string()]);
+    }
+
+    #[test]
+    fn filter_hiding_the_whole_selection_falls_back_to_focus() {
+        let mut vs = view_state(Some("visible.txt"), &["hidden.txt"]);
         vs.filter_mode = FilterMode::Filter;
         vs.file_lookup = [("visible.txt".to_string(), 0)].into_iter().collect();
         assert_eq!(Pane::effective_keys(&vs), vec!["visible.txt".to_string()]);
