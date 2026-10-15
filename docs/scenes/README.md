@@ -24,7 +24,9 @@ state change leaves stale. On top of the state, a scene can carry:
 
 - `files`: fixtures for the paths the window reads, keyed by `VfsPath.path`
   (`import x from "../fixtures/foo.rs?url"`). The viewer's file server is
-  pointed at the fixture, so image, media and PDF modes work too.
+  pointed at the fixture, so image, media and PDF modes work too. A
+  fixture's `size` makes the file that long, its bytes repeating to fill it,
+  so a few hundred lines can stand in for a multi-gigabyte log.
 - `terminals`: raw output per terminal handle, ANSI escapes and all.
 - `preferences` / `runtimeState`: tweaks to the exported defaults.
 - `commands`: extra IPC handlers, for dialogs that fetch their data.

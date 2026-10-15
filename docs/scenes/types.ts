@@ -24,6 +24,9 @@ export type Fixture = {
   /// The mode the viewer detects, where the MIME type alone doesn't tell
   /// (Structure for a binary the dissector recognises).
   viewerMode?: ViewerMode;
+  /// The file's length, if longer than the fixture: its bytes repeat to
+  /// fill it, so a short fixture stands in for a huge file.
+  size?: number;
 };
 
 type SceneCommon = {

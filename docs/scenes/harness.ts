@@ -130,7 +130,7 @@ const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
 };
 
 const detailsOf = async (path: VfsPath): Promise<FileDetails> => ({
-  size: (await bytesOf(path)).length,
+  size: fixture(path).size ?? (await bytesOf(path)).length,
   mime_type: fixture(path).mime,
   is_dir: false,
   is_symlink: false,
@@ -212,7 +212,15 @@ const handlers: Record<string, (args: any) => unknown> = {
     path: VfsPath;
     offset: number;
     length: number;
-  }) => (await bytesOf(path)).slice(offset, offset + length).buffer,
+  }) => {
+    const bytes = await bytesOf(path);
+    const end = Math.min(offset + length, fixture(path).size ?? bytes.length);
+    const out = new Uint8Array(Math.max(0, end - offset));
+    for (let i = 0; i < out.length; i++) {
+      out[i] = bytes[(offset + i) % bytes.length];
+    }
+    return out.buffer;
+  },
   sniff_viewer_encoding: () => {
     const viewer = state as ViewerState;
     viewer.encoding.detected ??= { encoding: "UTF-8", bom_len: 0 };
