@@ -189,10 +189,17 @@ impl Dissection {
     }
 
     /// Run the expansion of `id` until it has what was asked of it, reading
-    /// what it needs, until it waits for a password, or until `stop`.
-    async fn drive(&self, id: NodeId, stop: &CancellationToken) -> Result<(), Error> {
+    /// what it needs, until it waits for a password, or until `stop`. With
+    /// `show`, the children it produces go to the window as they come.
+    async fn drive(&self, id: NodeId, stop: &CancellationToken, show: bool) -> Result<(), Error> {
         let started = Instant::now();
         let mut reported = started;
+        let mut sent = if show {
+            let state = self.state.lock().await;
+            Some(state.session.children(id).map_or(0, |c| c.ids.len()))
+        } else {
+            None
+        };
         loop {
             if stop.is_cancelled() {
                 return Ok(());
@@ -217,12 +224,17 @@ impl Dissection {
                     }
                 }
             }
-            if let Some((done, total)) = progress
-                && started.elapsed() >= PROGRESS_EVERY
-                && reported.elapsed() >= PROGRESS_EVERY
-            {
+            if started.elapsed() >= PROGRESS_EVERY && reported.elapsed() >= PROGRESS_EVERY {
                 reported = Instant::now();
-                self.report(key, done, total);
+                if let Some((done, total)) = progress {
+                    self.report(key, done, total);
+                }
+                if let Some(sent) = &mut sent {
+                    let added = self.state.lock().await.added(id, sent);
+                    if let Some((first, nodes)) = added {
+                        self.show(key, first, nodes);
+                    }
+                }
             }
         }
     }
@@ -236,6 +248,18 @@ impl Dissection {
                 total,
             };
             let _ = window.emit_to(window.label(), "dissect-progress", progress);
+        }
+    }
+
+    fn show(&self, node: u32, first: u32, nodes: Vec<DissectNode>) {
+        if let Some(window) = &self.window {
+            let added = DissectChildrenAdded {
+                id: self.id,
+                node,
+                first,
+                nodes,
+            };
+            let _ = window.emit_to(window.label(), "dissect-children", added);
         }
     }
 
@@ -268,7 +292,20 @@ impl Dissection {
         stop: &CancellationToken,
     ) -> Result<(), Error> {
         self.state.lock().await.session.expand(id, at_least);
-        self.drive(id, stop).await
+        self.drive(id, stop, false).await
+    }
+
+    /// `expand`, for the node the viewer is expanding: its children are
+    /// shown as they're produced. Expansions on the way to another node
+    /// aren't, since the viewer has no state for those nodes to put them in.
+    async fn expand_shown(
+        &self,
+        id: NodeId,
+        at_least: u64,
+        stop: &CancellationToken,
+    ) -> Result<(), Error> {
+        self.state.lock().await.session.expand(id, at_least);
+        self.drive(id, stop, true).await
     }
 
     /// The bytes of `span`, from the file, a decoded stream or the pieces
@@ -458,7 +495,7 @@ impl Dissection {
                 return Ok(best);
             }
             self.state.lock().await.session.expand_more(id, PAGE);
-            self.drive(id, stop).await?;
+            self.drive(id, stop, false).await?;
         }
     }
 
@@ -515,7 +552,7 @@ impl Dissection {
                     break;
                 }
                 self.state.lock().await.session.expand_more(parent, PAGE);
-                self.drive(parent, stop).await?;
+                self.drive(parent, stop, false).await?;
             }
         }
         Ok(None)
@@ -612,6 +649,21 @@ impl DissectionState {
         node
     }
 
+    /// The children of `id` past the first `sent`, with the index of the
+    /// first of them; `sent` then counts them too.
+    fn added(&mut self, id: NodeId, sent: &mut usize) -> Option<(u32, Vec<DissectNode>)> {
+        let ids: Vec<NodeId> = self.session.children(id)?.ids.get(*sent..)?.to_vec();
+        if ids.is_empty() {
+            return None;
+        }
+        let first = u32::try_from(*sent).unwrap_or(u32::MAX);
+        *sent += ids.len();
+        Some((
+            first,
+            ids.into_iter().map(|child| self.node(child)).collect(),
+        ))
+    }
+
     fn page(&mut self, id: NodeId) -> DissectPage {
         let ids: Vec<NodeId> = self
             .session
@@ -655,7 +707,7 @@ impl DissectionState {
 
 // --- Wire types ---
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectNode {
     key: u32,
     name: String,
@@ -672,7 +724,7 @@ pub struct DissectNode {
     children: DissectChildren,
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectInterpretation {
     /// `None` when the content wasn't recognised.
     format: Option<DissectFormatName>,
@@ -680,7 +732,7 @@ pub struct DissectInterpretation {
     forced: bool,
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectFormatName {
     name: &'static str,
     title: &'static str,
@@ -737,7 +789,7 @@ impl From<ChildState> for DissectChildState {
     }
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectChildren {
     state: DissectChildState,
     loaded: u32,
@@ -756,7 +808,7 @@ impl DissectChildren {
     }
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectCount {
     n: u64,
     at_least: bool,
@@ -776,7 +828,7 @@ pub enum DissectValueKind {
     Guid,
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectValue {
     kind: DissectValueKind,
     /// The value as read: a name for an enum, the set flags, the number in
@@ -881,7 +933,7 @@ pub enum DissectDiagnosticKind {
     Note,
 }
 
-#[derive(Serialize, specta::Type)]
+#[derive(Serialize, specta::Type, Clone)]
 pub struct DissectDiagnostic {
     kind: DissectDiagnosticKind,
     message: String,
@@ -941,6 +993,18 @@ pub struct DissectProgress {
     node: u32,
     done: u64,
     total: u64,
+}
+
+/// Children a node's expansion produced since it last sent some, sent to the
+/// window as `dissect-children` while it runs.
+#[derive(Serialize, specta::Type, Clone)]
+pub struct DissectChildrenAdded {
+    /// The dissection.
+    id: u64,
+    node: u32,
+    /// The index of the first among the node's children.
+    first: u32,
+    nodes: Vec<DissectNode>,
 }
 
 /// A format chosen for the file (an empty path) or for a file within it,
@@ -1118,7 +1182,7 @@ pub async fn dissect_children(
     let dissection = global_ctx.dissections.get(id)?;
     let stop = dissection.token(Some(node));
     let node = dissection.state.lock().await.id(node)?;
-    dissection.expand(node, at_least, &stop).await?;
+    dissection.expand_shown(node, at_least, &stop).await?;
     Ok(dissection.state.lock().await.page(node))
 }
 
@@ -1689,6 +1753,32 @@ mod tests {
         save_span(&dissection, whole, path, &go()).await.unwrap();
         assert_eq!(std::fs::read(path).unwrap(), text);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn children_are_sent_once_each_from_where_the_last_send_ended() {
+        let dissection = open(zip("song.gpx", b"hello", false), None).await;
+        let root = dissection.root;
+        let mut state = dissection.state.lock().await;
+        let ids = state.session.children(root).unwrap().ids.to_vec();
+        assert!(ids.len() > 1);
+        let keys = |state: &mut DissectionState, ids: &[NodeId]| -> Vec<u32> {
+            ids.iter().map(|&id| state.key(id)).collect()
+        };
+
+        let mut sent = 1;
+        let (first, nodes) = state.added(root, &mut sent).unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(
+            nodes.iter().map(|n| n.key).collect::<Vec<_>>(),
+            keys(&mut state, &ids[1..])
+        );
+        assert_eq!(sent, ids.len());
+        assert!(state.added(root, &mut sent).is_none());
+
+        // A list that shrank under it (a reinterpretation) sends nothing.
+        let mut past = ids.len() + 1;
+        assert!(state.added(root, &mut past).is_none());
     }
 
     #[tokio::test]

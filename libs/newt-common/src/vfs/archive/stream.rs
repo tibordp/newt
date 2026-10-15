@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use iluvatar::{EngineRequest, StreamIndex, StreamReader};
+use iluvatar::{CompressionFormat, EngineRequest, StreamIndex, StreamReader, ThinningBudget};
 use tokio::io::AsyncRead;
 
 use crate::Error;
@@ -27,6 +27,20 @@ pub(super) const READERS_BUDGET: u64 = 128 << 20;
 
 /// Compressed input is requested in slices of at most this.
 pub(super) const PACKED_SLICE: u64 = 256 << 10;
+
+/// Checkpoint state one stream's index may hold. A checkpoint carries the
+/// decoder's live window (up to 64 MiB for LZMA at ultra settings, more for
+/// a long-window zstd stream), so this decides how many checkpoints a
+/// stream gets, not how fine they are.
+pub(super) const INDEX_BUDGET: u64 = 256 << 20;
+
+/// How a whole compressed stream is checkpointed as it is indexed: evenly
+/// over its length within [`INDEX_BUDGET`], however long it turns out to
+/// unpack to, and never denser than iluvatar's default for the format.
+pub(super) fn index_strategy(format: CompressionFormat) -> ThinningBudget {
+    ThinningBudget::new(INDEX_BUDGET)
+        .with_min_interval(iluvatar::default_interval_for_format(format))
+}
 
 /// Parked readers for one compressed stream.
 pub(super) struct ReaderPool {

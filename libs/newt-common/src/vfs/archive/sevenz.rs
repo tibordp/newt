@@ -41,17 +41,14 @@ use super::super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, RegisteredDescriptor, Vfs, VfsDescriptor,
     VfsPath, VfsRandomReader,
 };
-use super::stream::{PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed};
+use super::stream::{
+    INDEX_BUDGET, PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed,
+};
 use super::tree::{DirectoryTree, normalized_to_string};
 
 /// Symlink targets are read eagerly at index time; anything larger than this
 /// is not a plausible link target.
 const MAX_SYMLINK_TARGET: u64 = 64 * 1024;
-
-/// Checkpoint state a folder's index may hold. An LZMA checkpoint carries
-/// the live dictionary (up to 64 MiB at ultra settings), so this decides
-/// how many checkpoints a big solid folder gets, not how fine they are.
-const INDEX_BUDGET: u64 = 256 << 20;
 
 const MIN_INTERVAL: u64 = 1 << 20;
 

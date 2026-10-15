@@ -2773,6 +2773,19 @@ export type DissectChildState = "leaf" |
 "failed"
 export type DissectChildren = { state: DissectChildState; loaded: number; count: DissectCount | null; error: DissectDiagnostic | null }
 /**
+ * Children a node's expansion produced since it last sent some, sent to the
+ * window as `dissect-children` while it runs.
+ */
+export type DissectChildrenAdded = { 
+/**
+ * The dissection.
+ */
+id: number; node: number; 
+/**
+ * The index of the first among the node's children.
+ */
+first: number; nodes: DissectNode[] }
+/**
  * A format chosen for the file (an empty path) or for a file within it,
  * by the child indices down to it.
  */

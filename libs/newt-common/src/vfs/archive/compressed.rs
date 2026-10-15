@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use iluvatar::{EngineRequest, FixedInterval, StreamIndex, StreamIndexer};
+use iluvatar::{EngineRequest, StreamIndex, StreamIndexer, ThinningBudget};
 use log::info;
 use tokio::io::AsyncRead;
 use tokio::sync::{Notify, mpsc};
@@ -32,7 +32,8 @@ use super::super::{
 };
 use super::detect_compression;
 use super::stream::{
-    GuardedRead, MAX_READERS, PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, read_packed,
+    GuardedRead, MAX_READERS, PACKED_SLICE, ReaderPool, StreamDriver, drive_reader, index_strategy,
+    read_packed,
 };
 use super::tree::DirectoryTree;
 
@@ -162,7 +163,7 @@ struct IndexState {
     /// The indexer between runs. A run holds the lock for its whole life
     /// and drives the indexer in place, so a cancelled run leaves it
     /// exactly where it stopped and the next run continues from there.
-    indexer: tokio::sync::Mutex<Option<StreamIndexer<FixedInterval>>>,
+    indexer: tokio::sync::Mutex<Option<StreamIndexer<ThinningBudget>>>,
     completed: tokio::sync::OnceCell<StreamIndex>,
     error: tokio::sync::OnceCell<String>,
     /// Notified whenever the tree changes or indexing completes or fails.
@@ -269,9 +270,9 @@ impl CompressedFileVfs {
             }
             None => {
                 let format = detect_compression(&upstream, &archive_path).await?;
-                let strategy = FixedInterval::new(iluvatar::default_interval_for_format(format));
-                let mut indexer = StreamIndexer::new(format.into(), strategy, Some(file_size))
-                    .map_err(|e| Error::custom(format!("failed to create indexer: {}", e)))?;
+                let mut indexer =
+                    StreamIndexer::new(format.into(), index_strategy(format), Some(file_size))
+                        .map_err(|e| Error::custom(format!("failed to create indexer: {}", e)))?;
                 indexer.emit_output(false);
                 info!(
                     "archive: indexing compressed file {} (size={}, {:?})",

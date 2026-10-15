@@ -25,7 +25,9 @@ use super::super::{
     VfsPath,
 };
 use super::detect_compression;
-use super::stream::{GuardedRead, MAX_READERS, ReaderPool, StreamDriver, drive_reader};
+use super::stream::{
+    GuardedRead, MAX_READERS, ReaderPool, StreamDriver, drive_reader, index_strategy,
+};
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
     index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
@@ -173,7 +175,7 @@ struct TarIndexingState {
     /// whole life and drives the engine in place, so a cancelled run
     /// leaves it exactly where it stopped and the next run continues
     /// from there.
-    engine: tokio::sync::Mutex<Option<iluvatar::IndexingEngine>>,
+    engine: tokio::sync::Mutex<Option<iluvatar::IndexingEngine<iluvatar::ThinningBudget>>>,
     /// Completed archive index (set once indexing finishes successfully).
     completed_index: tokio::sync::OnceCell<iluvatar::ArchiveIndex>,
     /// Set if indexing failed with an error message.
@@ -293,7 +295,13 @@ impl TarArchiveVfs {
                     archive_path, file_size, compression,
                 );
                 slot.insert(
-                    iluvatar::IndexingEngine::new(compression, None, file_size).map_err(|e| {
+                    iluvatar::IndexingEngine::with_strategy(
+                        compression,
+                        None,
+                        index_strategy(compression),
+                        file_size,
+                    )
+                    .map_err(|e| {
                         Error::custom(format!("failed to create indexing engine: {}", e))
                     })?,
                 )

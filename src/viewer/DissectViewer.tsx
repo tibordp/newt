@@ -13,6 +13,7 @@ import { message, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   commands,
   type CopyFormat,
+  type DissectChildrenAdded,
   type DissectChoice,
   type DissectContent,
   type DissectDiagnostic,
@@ -369,6 +370,39 @@ export function DissectViewer({
       ({ payload }) => {
         if (payload.id !== session) return;
         setProgress((prev) => new Map(prev).set(payload.node, payload));
+      },
+    );
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [session]);
+
+  // Children of a loading node, as its expansion produces them. The page
+  // its request returns supersedes them, so one that arrives once the load
+  // is over is dropped, and the parent itself waits for that page. Nodes
+  // already known are kept: the viewer may have expanded one meanwhile.
+  useEffect(() => {
+    if (session === null) return;
+    const unlisten = getCurrentWebviewWindow().listen<DissectChildrenAdded>(
+      "dissect-children",
+      ({ payload }) => {
+        if (payload.id !== session || !loadCounts.current.has(payload.node))
+          return;
+        setNodes((prev) => {
+          const next = new Map(prev);
+          for (const n of payload.nodes)
+            if (!next.has(n.key)) next.set(n.key, n);
+          return next;
+        });
+        setChildren((prev) => {
+          const keys = [...(prev.get(payload.node) ?? [])];
+          keys.splice(
+            payload.first,
+            payload.nodes.length,
+            ...payload.nodes.map((n) => n.key),
+          );
+          return new Map(prev).set(payload.node, keys);
+        });
       },
     );
     return () => {

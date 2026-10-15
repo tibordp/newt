@@ -3449,9 +3449,9 @@ dependencies = [
 
 [[package]]
 name = "iluvatar"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2694d98ed0d9fdfd3f00b20686fca5a894e0c0e5376ea700e9bc177bf1586bd0"
+checksum = "53d595eef424ffc5206692d8f5eb3e9741ffff0e3e71eedb1b4fc7505bb3f684"
 dependencies = [
  "aes 0.8.4",
  "bincode",
