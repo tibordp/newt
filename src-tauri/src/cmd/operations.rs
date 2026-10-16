@@ -10,7 +10,7 @@ use crate::GlobalContext;
 use crate::common::{Error, RawArgs, RawBytes};
 use crate::main_window::{
     DeleteConfirmMode, MainWindowContext, ModalContext, ModalData, ModalDataKind, OperationState,
-    OperationStatus, PaneHandle,
+    OperationStatus, Outcome, PaneHandle,
 };
 
 /// A name typed into a dialog, refused if joining it would leave the
@@ -315,6 +315,48 @@ pub async fn apply_properties(
     .await
 }
 
+/// The folders whose listings an operation changes.
+fn changed_dirs(request: &OperationRequest) -> Vec<VfsPath> {
+    let parents = |paths: &[VfsPath]| paths.iter().filter_map(VfsPath::parent).collect::<Vec<_>>();
+    let mut dirs = match request {
+        OperationRequest::Copy { destination, .. } => vec![destination.clone()],
+        OperationRequest::Move {
+            sources,
+            destination,
+            ..
+        } => [vec![destination.clone()], parents(sources)].concat(),
+        OperationRequest::Rename { source, .. } => source.parent().into_iter().collect(),
+        OperationRequest::BatchRename { folders } => {
+            folders.iter().map(|folder| folder.dir.clone()).collect()
+        }
+        OperationRequest::Delete { paths, .. } => parents(paths),
+        OperationRequest::CreateArchive { destination, .. } => {
+            destination.parent().into_iter().collect()
+        }
+        // A folder's own listing shows a recursive change.
+        OperationRequest::SetMetadata { paths, .. }
+        | OperationRequest::ApplyProperties { paths, .. } => {
+            [paths.clone(), parents(paths)].concat()
+        }
+        OperationRequest::RunCommand { .. } | OperationRequest::DebugSleep { .. } => Vec::new(),
+    };
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// Refresh the panes showing `dirs` once operation `id` ends. Registered
+/// before the operation starts, which a fast one could otherwise beat.
+pub fn refresh_when_finished(ctx: &MainWindowContext, id: OperationId, dirs: Vec<VfsPath>) {
+    if dirs.is_empty() {
+        return;
+    }
+    let after = ctx.clone();
+    ctx.operations().on_end(id, move |_| {
+        tauri::async_runtime::spawn(async move { after.refresh_panes_at(&dirs).await });
+    });
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn start_operation(
@@ -333,6 +375,8 @@ pub async fn start_operation_with_callback(
     on_completed: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<OperationId, Error> {
     let id = ctx.next_operation_id()?;
+
+    refresh_when_finished(&ctx, id, changed_dirs(&request));
 
     let (kind, description) = match &request {
         OperationRequest::Copy {
@@ -440,7 +484,11 @@ pub async fn start_operation_with_callback(
     ctx.publish()?;
 
     if let Some(cb) = on_completed {
-        ctx.operations().register_completion_callback(id, cb);
+        ctx.operations().on_end(id, move |outcome| {
+            if outcome == Outcome::Completed {
+                cb();
+            }
+        });
     }
 
     // Send to operations client
@@ -798,4 +846,42 @@ pub async fn cmd_debug_run_test_operation(
     duration_seconds: u64,
 ) -> Result<OperationId, Error> {
     start_operation(ctx, OperationRequest::DebugSleep { duration_seconds }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use newt_common::vfs::VfsId;
+
+    fn at(path: &str) -> VfsPath {
+        path.split('/')
+            .filter(|c| !c.is_empty())
+            .fold(VfsPath::root(VfsId::ROOT), |p, c| p.join(c))
+    }
+
+    #[test]
+    fn a_move_changes_its_destination_and_where_each_source_was() {
+        let request = OperationRequest::Move {
+            sources: vec![at("/a/x"), at("/a/y"), at("/b/z")],
+            destination: at("/c"),
+            options: Default::default(),
+            rename_to: None,
+        };
+        assert_eq!(changed_dirs(&request), [at("/a"), at("/b"), at("/c")]);
+    }
+
+    #[test]
+    fn a_delete_or_rename_changes_the_folder_holding_its_paths() {
+        let delete = OperationRequest::Delete {
+            paths: vec![at("/a/x"), at("/a/y")],
+            to_trash: true,
+            cross_mount_points: false,
+        };
+        assert_eq!(changed_dirs(&delete), [at("/a")]);
+        let rename = OperationRequest::Rename {
+            source: at("/b/x"),
+            new_name: "y".into(),
+        };
+        assert_eq!(changed_dirs(&rename), [at("/b")]);
+    }
 }

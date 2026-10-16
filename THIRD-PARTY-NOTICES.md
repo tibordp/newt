@@ -149,7 +149,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-765 crates, the superset across every target platform and feature.
+730 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -179,8 +179,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   anyhow 1.0.104 — MIT OR Apache-2.0
   apple-native-keyring-store 1.0.2 — MIT OR Apache-2.0
       Copyright (c) 2016 keyring Developers
-  arboard 3.6.1 — MIT OR Apache-2.0
-      Copyright (c) 2022 The Arboard contributors
   arc-swap 1.9.2 — MIT OR Apache-2.0
       Copyright (c) 2017 arc-swap developers
   arrayref 0.3.9 — BSD-2-Clause
@@ -289,8 +287,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2019 Daniel "Lokathor" Gee.
   byteorder 1.5.0 — Unlicense OR MIT
       Copyright (c) 2015 Andrew Gallant
-  byteorder-lite 0.1.0 — Unlicense OR MIT
-      Copyright (c) 2015 Andrew Gallant
   bytes 1.12.1 — MIT
       Copyright (c) 2018 Carl Lerche
   bytes-utils 0.1.4 — Apache-2.0/MIT
@@ -331,7 +327,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) Individual contributors
   clap_lex 1.1.1 — MIT OR Apache-2.0
       Copyright (c) Individual contributors
-  clipboard-win 5.4.1 — BSL-1.0
   cmov 0.5.4 — Apache-2.0 OR MIT
       Copyright (c) 2022-2026 The RustCrypto Project Developers
   colorchoice 1.0.5 — MIT OR Apache-2.0
@@ -386,8 +381,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2019 The Crossbeam Project Developers
   crossbeam-utils 0.8.23 — MIT OR Apache-2.0
       Copyright (c) 2019 The Crossbeam Project Developers
-  crunchy 0.2.4 — MIT
-      Copyright 2017-2023 Eira Fransham.
   crypto-bigint 0.5.5 — Apache-2.0 OR MIT
       Copyright (c) 2021 The RustCrypto Project Developers
   crypto-common 0.1.7 — MIT OR Apache-2.0
@@ -441,8 +434,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   dlopen2_derive 0.4.3 — MIT
   dom_query 0.28.0 — MIT
       Copyright (c) 2023 Mykola Humanov
-  downcast-rs 1.2.1 — MIT/Apache-2.0
-      Copyright (c) 2020 Ashish Myles and contributors
   dpi 0.1.2 — Apache-2.0 AND MIT
   drag 2.1.1 — Apache-2.0 OR MIT
       Copyright (c) 2023 - Present CrabNebula Ltd.
@@ -471,13 +462,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   erased-serde 0.4.10 — MIT OR Apache-2.0
   errno 0.3.14 — MIT OR Apache-2.0
       Copyright (c) 2014 Chris Wong
-  error-code 3.4.0 — BSL-1.0
   event-listener 5.4.2 — Apache-2.0 OR MIT
   event-listener-strategy 0.5.4 — Apache-2.0 OR MIT
   expanduser 1.2.2 — CC-PDDC
   fastrand 2.5.0 — Apache-2.0 OR MIT
-  fax 0.2.7 — MIT
-      Copyright © 2021 The pdf-rs contributers.
   fdeflate 0.3.7 — MIT OR Apache-2.0
   ff 0.13.1 — MIT/Apache-2.0
       Copyright (c) 2017 Sean Bowe
@@ -518,14 +506,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   fillyfoal-text 0.1.0 — GPL-3.0-or-later
   finl_unicode 1.5.0 — (MIT OR Apache-2.0) AND Unicode-DFS-2016
       Copyright © 1991-2023 Unicode, Inc.
-  fixedbitset 0.5.7 — MIT OR Apache-2.0
-      Copyright (c) 2015-2017
   flate2 1.1.10 — MIT OR Apache-2.0
       Copyright (c) 2014-2026 Alex Crichton
   fnv 1.0.7 — Apache-2.0 / MIT
       Copyright (c) 2017 Contributors
-  foldhash 0.1.5 — Zlib
-      Copyright (c) 2024 Orson Peters
   foldhash 0.2.0 — Zlib
       Copyright (c) 2024 Orson Peters
   foreign-types 0.5.0 — MIT/Apache-2.0
@@ -577,7 +561,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   gdkx11-sys 0.18.2 — MIT
   generic-array 0.14.7 — MIT
       Copyright (c) 2015 Bartłomiej Kamiński
-  gethostname 1.1.0 — Apache-2.0
   getrandom 0.1.16 — MIT OR Apache-2.0
       Copyright 2018 Developers of the Rand project
       Copyright (c) 2014 The Rust Project Developers
@@ -608,10 +591,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2017 h2 authors
   h2 0.4.19 — MIT
       Copyright (c) 2017 h2 authors
-  half 2.7.1 — MIT OR Apache-2.0
   hashbrown 0.12.3 — MIT OR Apache-2.0
-      Copyright (c) 2016 Amanieu d'Antras
-  hashbrown 0.15.5 — MIT OR Apache-2.0
       Copyright (c) 2016 Amanieu d'Antras
   hashbrown 0.17.1 — MIT OR Apache-2.0
       Copyright (c) 2016 Amanieu d'Antras
@@ -693,7 +673,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2015 Andrew Gallant
   iluvatar 0.6.0 — MIT OR Apache-2.0
       Copyright (c) 2025 iluvatar contributors
-  image 0.25.10 — MIT OR Apache-2.0
   indexmap 1.9.3 — Apache-2.0 OR MIT
       Copyright (c) 2016--2017
   indexmap 2.14.2 — Apache-2.0 OR MIT
@@ -830,8 +809,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2020 Frommi
   mio 1.2.3 — MIT
       Copyright (c) 2014 Carl Lerche and other MIO contributors
-  moxcms 0.8.1 — BSD-3-Clause OR Apache-2.0
-      Copyright (c) Radzivon Bartoshyk. All rights reserved.
   muda 0.20.0 — Apache-2.0 OR MIT
       Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
   multiversion_no_op 1.0.0 — Apache-2.0 OR MIT
@@ -844,8 +821,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2015 Jonathan Reem
   nix 0.31.3 — MIT
       Copyright (c) 2015 Carl Lerche + nix-rust Authors
-  nom 8.0.0 — MIT
-      Copyright (c) 2014-2019 Geoffroy Couprie
   normpath 1.5.2 — MIT OR Apache-2.0
       Copyright (c) 2020 dylni (https://github.com/dylni)
   notify 8.2.0 — CC0-1.0
@@ -935,8 +910,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2021 The RustCrypto Project Developers
   percent-encoding 2.3.2 — MIT OR Apache-2.0
       Copyright (c) 2013-2025 The rust-url developers
-  petgraph 0.8.3 — MIT OR Apache-2.0
-      Copyright (c) 2015
   phf 0.13.1 — MIT
       Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
   phf_generator 0.13.1 — MIT
@@ -981,12 +954,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2019-2020 CreepySkeleton
   proc-macro2 1.0.107 — MIT OR Apache-2.0
   pwd 1.4.0 — CC-PDDC
-  pxfm 0.1.30 — BSD-3-Clause OR Apache-2.0
-      Copyright (c) Radzivon Bartoshyk. All rights reserved.
-  quick-error 2.0.1 — MIT/Apache-2.0
-      Copyright (c) 2015 The quick-error Developers
-  quick-xml 0.41.0 — MIT
-      Copyright (c) 2016 Johann Tuffe
   quick-xml 0.42.0 — MIT
       Copyright (c) 2016 Johann Tuffe
   quote 1.0.47 — MIT OR Apache-2.0
@@ -1209,8 +1176,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   thiserror 2.0.21 — MIT OR Apache-2.0
   thiserror-impl 1.0.69 — MIT OR Apache-2.0
   thiserror-impl 2.0.21 — MIT OR Apache-2.0
-  tiff 0.11.3 — MIT
-      Copyright (c) 2018 PistonDevelopers
   time 0.3.55 — MIT OR Apache-2.0
       Copyright (c) Jacob Pratt et al.
   time-core 0.1.9 — MIT OR Apache-2.0
@@ -1271,8 +1236,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright 2019 Artúr Barnabás Kovács
   tray-icon 0.25.1 — MIT OR Apache-2.0
       Copyright (c) 2022-2022 Tauri Programme within The Commons Conservancy
-  tree_magic_mini 3.2.2 — MIT
-      Copyright (c) 2017 Aaron Hancock
   treediff 5.0.0 — MIT/Apache-2.0
       Copyright (c) 2016 Alex Crichton
   triomphe 0.1.16 — MIT OR Apache-2.0
@@ -1330,18 +1293,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   wasm-bindgen-shared 0.2.129 — MIT OR Apache-2.0
       Copyright (c) 2014 Alex Crichton
   wasm-streams 0.5.0 — MIT OR Apache-2.0
-  wayland-backend 0.3.17 — MIT
-      Copyright (c) 2015 Elinor Berger
-  wayland-client 0.31.15 — MIT
-      Copyright (c) 2015 Elinor Berger
-  wayland-protocols 0.32.13 — MIT
-      Copyright (c) 2015 Elinor Berger
-  wayland-protocols-wlr 0.3.12 — MIT
-      Copyright (c) 2015 Elinor Berger
-  wayland-scanner 0.31.11 — MIT
-      Copyright (c) 2015 Elinor Berger
-  wayland-sys 0.31.11 — MIT
-      Copyright (c) 2015 Elinor Berger
   web-sys 0.3.106 — MIT OR Apache-2.0
       Copyright (c) 2014 Alex Crichton
   web-time 1.1.0 — MIT OR Apache-2.0
@@ -1357,8 +1308,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   webview2-com 0.39.1 — MIT
   webview2-com-macros 0.8.1 — MIT
   webview2-com-sys 0.39.1 — MIT
-  weezl 0.1.12 — MIT OR Apache-2.0
-      Copyright (c) HeroicKatora 2020
   winapi 0.3.9 — MIT/Apache-2.0
       Copyright (c) 2015-2018 The winapi-rs Developers
   winapi-i686-pc-windows-gnu 0.4.0 — MIT/Apache-2.0
@@ -1474,18 +1423,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   winnow 0.5.40 — MIT
   winnow 1.0.4 — MIT
   wit-bindgen 0.57.1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
-  wl-clipboard-rs 0.9.4 — MIT OR Apache-2.0
-      Copyright (c) 2019 Ivan Molodetskikh
   writeable 0.6.4 — Unicode-3.0
       Copyright © 2020-2024 Unicode, Inc.
   wry 0.57.0 — Apache-2.0 OR MIT
       Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
   x11 2.21.0 — MIT
   x11-dl 2.21.0 — MIT
-  x11rb 0.13.2 — MIT OR Apache-2.0
-      Copyright 2019 x11rb Contributers
-  x11rb-protocol 0.13.2 — MIT OR Apache-2.0
-      Copyright 2019 x11rb Contributers
   xattr 1.6.1 — MIT OR Apache-2.0
       Copyright (c) 2015 Steven Allen
   xmlparser 0.13.6 — MIT/Apache-2.0
@@ -1506,12 +1449,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
   zcheapstr 1.1.0 — MIT
       Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
-  zerocopy 0.8.59 — BSD-2-Clause OR Apache-2.0 OR MIT
-      Copyright 2019 The Fuchsia Authors.
-      Copyright 2023 The Fuchsia Authors
-  zerocopy-derive 0.8.59 — BSD-2-Clause OR Apache-2.0 OR MIT
-      Copyright 2019 The Fuchsia Authors.
-      Copyright 2023 The Fuchsia Authors
   zerofrom 0.1.8 — Unicode-3.0
       Copyright © 2020-2024 Unicode, Inc.
   zerofrom-derive 0.1.8 — Unicode-3.0
@@ -1533,10 +1470,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   zstd-sys 2.1.0+zstd.1.5.7 — BSD-3-Clause
       Copyright (c) 2026, Alexandre Bury
       Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
-  zune-core 0.5.3 — MIT OR Apache-2.0 OR Zlib
-      Copyright (c) zune-image developers
-  zune-jpeg 0.5.15 — MIT OR Apache-2.0 OR Zlib
-      Copyright (c) zune-image developers
   zvariant 5.15.0 — MIT
       Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
   zvariant_derive 5.15.0 — MIT

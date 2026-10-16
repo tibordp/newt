@@ -310,7 +310,7 @@ const FileRow = memo(
         aria-setsize={setSize}
         data-name={row.key ?? row.name}
         data-is-dir={row.is_dir ? "true" : undefined}
-        className={`${styles.fileItem} ${isFocused ? styles.focused : isCursor ? styles.cursor : ""} ${isSelected ? styles.selected : ""}`}
+        className={`${styles.fileItem} ${isFocused ? styles.focused : isCursor ? styles.cursor : ""} ${isSelected ? styles.selected : ""} ${row.cut ? styles.cut : ""}`}
         onClick={onClick}
         onMouseDown={onMouseDown}
         onDoubleClick={() => onOpen(row)}
@@ -343,6 +343,7 @@ const FileRow = memo(
     prev.row.mode === next.row.mode &&
     prev.row.is_dir === next.row.is_dir &&
     prev.row.is_symlink === next.row.is_symlink &&
+    prev.row.cut === next.row.cut &&
     annotationsEqual(prev.row.annotations, next.row.annotations) &&
     prev.columns === next.columns &&
     prev.isCursor === next.isCursor &&

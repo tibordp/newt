@@ -1765,9 +1765,39 @@ async cmdCopyToClipboard(paneHandle: PaneHandle) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async cmdCutToClipboard(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_cut_to_clipboard", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The selection's display paths as text, and nothing else.
+ */
+async cmdCopyPath(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_copy_path", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cmdPasteFromClipboard(paneHandle: PaneHandle) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cmd_paste_from_clipboard", { paneHandle }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Paste as a move, whatever was copied (Finder's ⌥⌘V).
+ */
+async cmdMoveFromClipboard(paneHandle: PaneHandle) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cmd_move_from_clipboard", { paneHandle }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3138,7 +3168,11 @@ annotations: Annotation[];
 /**
  * What the row's context menu offers besides what Enter does.
  */
-actions: RowActions }
+actions: RowActions; 
+/**
+ * The session has cut the file to the clipboard.
+ */
+cut: boolean }
 /**
  * A windowed slice of the file list sent to the frontend.
  */

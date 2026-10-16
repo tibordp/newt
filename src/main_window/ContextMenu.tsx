@@ -22,6 +22,8 @@ import {
 } from "./columns";
 import styles from "./Menu.module.scss";
 
+const IS_MAC_HOST = navigator.platform.startsWith("Mac");
+
 export function Shortcut({
   commands,
   id,
@@ -213,10 +215,26 @@ export function FileContextMenuContent({
         </CM.Item>
         <CM.Item
           className={styles.item}
+          disabled={isParentDir}
+          onSelect={() => safe(ipc.cmdCutToClipboard(paneHandle))}
+        >
+          Cut to Clipboard
+          <Shortcut commands={commands} id="cut_to_clipboard" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          disabled={isParentDir}
           onSelect={() => safe(ipc.cmdCopyToClipboard(paneHandle))}
         >
-          Copy Path
+          Copy to Clipboard
           <Shortcut commands={commands} id="copy_to_clipboard" />
+        </CM.Item>
+        <CM.Item
+          className={styles.item}
+          onSelect={() => safe(ipc.cmdCopyPath(paneHandle))}
+        >
+          Copy Path
+          <Shortcut commands={commands} id="copy_path" />
         </CM.Item>
 
         <CM.Separator className={styles.separator} />
@@ -353,6 +371,15 @@ export function PaneContextMenuContent({
           Paste
           <Shortcut commands={commands} id="paste_from_clipboard" />
         </CM.Item>
+        {IS_MAC_HOST && (
+          <CM.Item
+            className={styles.item}
+            onSelect={() => safe(ipc.cmdMoveFromClipboard(paneHandle))}
+          >
+            Move Here
+            <Shortcut commands={commands} id="move_from_clipboard" />
+          </CM.Item>
+        )}
         <CM.Item
           className={styles.item}
           onSelect={() => safe(ipc.cmdRefresh(paneHandle))}

@@ -129,8 +129,8 @@ pub fn attach_terminal_output(
 /// through the webview can prompt for permission.
 #[tauri::command]
 #[specta::specta]
-pub fn read_clipboard_text(ctx: MainWindowContext) -> Result<String, Error> {
-    ctx.with_clipboard(|c| c.get_text())
+pub async fn read_clipboard_text(ctx: MainWindowContext) -> Result<String, Error> {
+    Ok(ctx.clipboard().text().await?.unwrap_or_default())
 }
 
 #[tauri::command]

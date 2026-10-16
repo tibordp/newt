@@ -725,7 +725,7 @@ pub async fn copy_viewer_range(
     };
 
     let text = format_bytes(&buf, format);
-    ctx.with_clipboard(|c| c.set_text(text))?;
+    ctx.clipboard().set_text(text).await?;
     Ok(())
 }
 

@@ -17,6 +17,7 @@
 //! handler with a small middleware that closes the current modal before
 //! any `cmd_*` command runs.
 
+pub mod clipboard;
 pub mod dialog;
 pub mod dnd;
 pub mod operations;
@@ -407,8 +408,11 @@ pub fn create_specta_builder() -> Builder<Wry> {
             dialog::cmd_deselect_by_pattern,
             pane::cmd_compute_size,
             pane::cmd_compute_all_sizes,
-            pane::cmd_copy_to_clipboard,
-            pane::cmd_paste_from_clipboard,
+            clipboard::cmd_copy_to_clipboard,
+            clipboard::cmd_cut_to_clipboard,
+            clipboard::cmd_copy_path,
+            clipboard::cmd_paste_from_clipboard,
+            clipboard::cmd_move_from_clipboard,
             terminal::cmd_send_to_terminal,
             terminal::cmd_toggle_terminal_panel,
             terminal::cmd_focus_panes,
@@ -571,8 +575,11 @@ async fn dispatch_registry_command_inner(
         "copy" => dialog::cmd_copy(ctx, pane)?,
         "move" => dialog::cmd_move(ctx, pane)?,
         "create_archive" => dialog::cmd_create_archive(ctx, pane)?,
-        "copy_to_clipboard" => pane::cmd_copy_to_clipboard(ctx, pane)?,
-        "paste_from_clipboard" => pane::cmd_paste_from_clipboard(ctx, pane).await?,
+        "copy_to_clipboard" => clipboard::cmd_copy_to_clipboard(ctx, pane).await?,
+        "cut_to_clipboard" => clipboard::cmd_cut_to_clipboard(ctx, pane).await?,
+        "copy_path" => clipboard::cmd_copy_path(ctx, pane).await?,
+        "paste_from_clipboard" => clipboard::cmd_paste_from_clipboard(ctx, pane).await?,
+        "move_from_clipboard" => clipboard::cmd_move_from_clipboard(ctx, pane).await?,
         "show_next_operation" => operations::cmd_show_next_operation(ctx, pane)?,
         "toggle_hidden" => pane::cmd_toggle_hidden(ctx, pane)?,
         "toggle_maximized" => pane::cmd_toggle_maximized(ctx, pane)?,
@@ -675,7 +682,10 @@ mod dispatch_tests {
             "move",
             "create_archive",
             "copy_to_clipboard",
+            "cut_to_clipboard",
+            "copy_path",
             "paste_from_clipboard",
+            "move_from_clipboard",
             "show_next_operation",
             "toggle_hidden",
             "toggle_maximized",

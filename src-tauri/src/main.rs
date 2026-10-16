@@ -5,6 +5,7 @@
 extern crate objc; // v0.2.7
 
 pub mod associations;
+pub mod clipboard;
 pub mod cmd;
 pub mod common;
 pub mod config_file;
@@ -179,6 +180,7 @@ pub struct GlobalContext {
     window_menus: Mutex<HashMap<String, tauri::menu::Menu<tauri::Wry>>>,
     /// The Structure viewer's dissections, in every window.
     dissections: viewer::dissect::Dissections,
+    clipboard: OnceLock<clipboard::Clipboard>,
 }
 
 impl Default for GlobalContext {
@@ -191,6 +193,7 @@ impl Default for GlobalContext {
             prewarmed_editors: Mutex::new(HashMap::new()),
             agent_resolver: OnceLock::new(),
             preferences: OnceLock::new(),
+            clipboard: OnceLock::new(),
             runtime_state: OnceLock::new(),
             session_memory: OnceLock::new(),
             pending_quit: AtomicBool::new(false),
@@ -264,6 +267,32 @@ impl GlobalContext {
         self.session_memory
             .get()
             .expect("SessionMemory not initialized")
+    }
+
+    pub fn init_clipboard(&self, app_handle: &tauri::AppHandle) {
+        self.clipboard
+            .set(clipboard::Clipboard::new(app_handle))
+            .ok();
+    }
+
+    pub fn clipboard(&self) -> &clipboard::Clipboard {
+        self.clipboard.get().expect("Clipboard not initialized")
+    }
+
+    /// Drop each session's clipboard record that the clipboard no longer
+    /// holds — only the cut ones with `cut_only`, which are what shows.
+    pub fn revalidate_clipboard_records(&self, cut_only: bool) {
+        let windows: Vec<MainWindowContext> = self.main_windows.lock().values().cloned().collect();
+        for ctx in windows {
+            let due = ctx
+                .clipboard_record()
+                .lock()
+                .as_ref()
+                .is_some_and(|record| record.cut || !cut_only);
+            if due {
+                tauri::async_runtime::spawn(async move { ctx.revalidate_clipboard().await });
+            }
+        }
     }
 
     /// Record a closing session: where its panes are (if restoring covers
@@ -1133,6 +1162,16 @@ fn main() {
     let handler = Box::new(move |i: Invoke<Wry>| -> bool {
         let start = std::time::Instant::now();
         let cmd = i.message.command().to_string();
+        // macOS says nothing when the clipboard changes, but any change
+        // made while Newt is frontmost comes before some interaction with
+        // it (and one made elsewhere, before focusing it): drop cut marks
+        // the clipboard no longer backs.
+        #[cfg(target_os = "macos")]
+        i.message
+            .webview()
+            .app_handle()
+            .state::<GlobalContext>()
+            .revalidate_clipboard_records(true);
 
         let result = handler(i);
         debug!("handler {} took {:?}", cmd, start.elapsed());
@@ -1167,6 +1206,14 @@ fn main() {
             global_ctx.init_preferences(app.handle(), config_dir_arg.clone());
             global_ctx.init_runtime_state(app.handle());
             global_ctx.init_session_memory();
+            global_ctx.init_clipboard(app.handle());
+            {
+                let app = app.handle().clone();
+                global_ctx.clipboard().on_change(move || {
+                    app.state::<GlobalContext>()
+                        .revalidate_clipboard_records(false)
+                });
+            }
 
             if print_config {
                 print_resolved_config(&global_ctx);
@@ -1342,6 +1389,9 @@ fn main() {
                                 let _ = app_handle.remove_menu();
                             }
                         }
+
+                        #[cfg(target_os = "macos")]
+                        global_ctx.revalidate_clipboard_records(true);
 
                         if let Some(ctx) =
                             global_ctx.main_windows.lock().get(window.label()).cloned()

@@ -460,8 +460,8 @@ pub fn default_commands() -> Vec<CommandDef> {
         },
         CommandDef {
             id: "copy_to_clipboard".into(),
-            name: "Copy Path to Clipboard".into(),
-            short_name: Some("CopyPath".into()),
+            name: "Copy to Clipboard".into(),
+            short_name: Some("Copy".into()),
             category: "Edit".into(),
             // Ctrl+Ins is the CUA-era clipboard alias; macOS has no Insert key.
             default_keys: if cfg!(target_os = "macos") {
@@ -474,14 +474,54 @@ pub fn default_commands() -> Vec<CommandDef> {
             scope: CommandScope::Main,
         },
         CommandDef {
+            id: "cut_to_clipboard".into(),
+            name: "Cut to Clipboard".into(),
+            short_name: Some("Cut".into()),
+            category: "Edit".into(),
+            default_keys: vec!["mod+x".into()],
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
             id: "paste_from_clipboard".into(),
-            name: "Paste Path from Clipboard".into(),
-            short_name: Some("PastePath".into()),
+            name: "Paste from Clipboard".into(),
+            short_name: Some("Paste".into()),
             category: "Edit".into(),
             default_keys: if cfg!(target_os = "macos") {
                 vec!["mod+v".into()]
             } else {
                 vec!["mod+v".into(), "shift+insert".into()]
+            },
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
+            id: "move_from_clipboard".into(),
+            name: "Move Here from Clipboard".into(),
+            short_name: Some("Move Here".into()),
+            category: "Edit".into(),
+            // Finder's ⌥⌘V.
+            default_keys: if cfg!(target_os = "macos") {
+                vec!["mod+alt+v".into()]
+            } else {
+                Vec::new()
+            },
+            default_when: Some("pane_focused".into()),
+            needs_pane: true,
+            scope: CommandScope::Main,
+        },
+        CommandDef {
+            id: "copy_path".into(),
+            name: "Copy Path".into(),
+            short_name: Some("CopyPath".into()),
+            category: "Edit".into(),
+            // Finder's "Copy as Pathname"; Explorer's "Copy as path".
+            default_keys: if cfg!(target_os = "macos") {
+                vec!["mod+alt+c".into()]
+            } else {
+                vec!["mod+shift+c".into()]
             },
             default_when: Some("pane_focused".into()),
             needs_pane: true,

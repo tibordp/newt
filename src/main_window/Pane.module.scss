@@ -139,6 +139,11 @@
   opacity: 0.6;
 }
 
+// Cut to the clipboard: the row's contents fade, its highlight doesn't.
+.cut > * {
+  opacity: 0.5;
+}
+
 .fileItem {
   position: relative;
   isolation: isolate;

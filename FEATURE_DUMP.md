@@ -363,7 +363,8 @@ The default browser context menu is suppressed in the main window and in the tex
 | Follow Symlink / Reveal Source | Shift+Enter (symlinks and aliased entries only) |
 | View | F3 |
 | Edit | F4 |
-| Copy Path | Mod+C |
+| Cut to Clipboard / Copy to Clipboard | Mod+X / Mod+C |
+| Copy Path | ⌥⌘C on macOS, Ctrl+Shift+C elsewhere |
 | Copy / Move / Pack to Archive | F5 / F6 / Alt+F5 |
 | Rename | F2 |
 | Delete | F8 |
@@ -382,6 +383,7 @@ The Follow row appears only when it would do something: labelled "Reveal Source"
 | New Directory | F7 |
 | New File | |
 | Paste | Mod+V |
+| Move Here (macOS) | ⌥⌘V |
 | Refresh | (unbound) |
 | Directory Properties | (`directory_properties`, unbound) |
 | Windows Menu | Shift+RClick (Windows host + host-local files only) |
@@ -689,8 +691,16 @@ Today only S3 implements a sheet:
 
 ### Clipboard Operations
 
-- **Copy Path** (Mod+C, also Ctrl+Ins off macOS): Copies the paths of all selected files (or the focused file if none selected) to the system clipboard. On Linux the clipboard is reached through Wayland's data-control protocol where the compositor offers it (wlroots compositors, KDE), and otherwise through X11 — under XWayland on a Wayland desktop. With neither, the clipboard commands report that, and everything else works.
-- **Paste** (Mod+V, also Shift+Ins off macOS): Pastes file paths from the system clipboard into the current pane.
+Copy, cut and paste files through the system clipboard, within Newt and to and from other apps — Finder, Explorer, Nautilus, Nemo, Thunar, Caja, Dolphin, PCManFM-Qt, mail and chat apps.
+
+- **Copy to Clipboard** (Mod+C, also Ctrl+Ins off macOS) and **Cut to Clipboard** (Mod+X) put the selection (or the focused entry) on the clipboard: as files, for other apps, when they're on this computer; as their paths, as text, always — so a text editor or a terminal gets the paths. Cut files show faded in the panes listing them until they're pasted or something else is copied, anywhere.
+- **Paste** (Mod+V, also Shift+Ins off macOS) copies what's on the clipboard into the pane's current folder — never into the folder under the cursor — and moves it after a Cut. It starts at once, like a drop, with the default copy options; clashes ask as in any copy. A cut pastes once: the clipboard is emptied when the move finishes. Pasting a cut into the folder the files are in does nothing but use up the cut (files from elsewhere among them still move); pasting a copy there says a file can't be copied onto itself.
+- **Move Here** (⌥⌘V on macOS, unbound elsewhere) pastes as a move whatever was copied, as in Finder.
+- **Copy Path** (⌥⌘C on macOS, Ctrl+Shift+C elsewhere) puts only the paths on the clipboard, as text, so a chat or mail app pastes the path rather than attaching the files.
+- **Files that aren't on this computer** — on S3 or SFTP, in an archive, on a remote session's host — copy and paste within their window like any others, but reach other apps only as their paths: Finder or Explorer can't paste them.
+- **Between windows**, a copy arrives as it would from Finder: files on this computer paste (in a remote session, only one allowed access to this computer — otherwise Paste says so); other files arrive as their paths, and Paste goes there if this window can (a path on an S3 bucket it has mounted).
+- **macOS has no cut on the clipboard**: a Cut is known only to the window it was made in, where Paste moves. Finder or another window pastes it as a copy (⌥⌘V there moves it).
+- **When the clipboard holds no files**, Paste goes to the path it holds, as typing it into Go to would; with nothing usable on it, Paste does nothing.
 
 ### Operation Progress and Issue Resolution
 
@@ -1178,7 +1188,7 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Read primitives**: three shapes on the `Vfs` trait — sequential streams (`open_read_async`), stateless one-shot ranges (`read_range`), and positioned-read handles (`open_read_at` → `VfsRandomReader::read_at`), held open for a whole read session instead of paying an open per chunk. The split follows chunk count: a caller that will issue a single chunk uses `read_range` (one round trip, nothing to reap); a multi-chunk loop opens a handle. Handle consumers: the archive/disc engine loops, `find_in_file`, `newt cat` streaming, media streaming through the file server (ranges longer than one chunk), and viewer range-copy for selections past one chunk. The F3 viewer's own text/hex chunk reads deliberately stay on `read_range` — the viewer should observe live changes to the file and must not hold the file open (locking it on Windows) just because a viewer window is up. The handle pins the file's identity where the backend can, so a file replaced mid-session fails or keeps serving the original rather than mixing bytes across generations: an open fd on local (pread), an SFTP file handle (protocol-native offset reads, size stat'd once at open), a pinned ETag on S3 (reads after the first carry `If-Match`; a concurrent overwrite fails the read with "object changed while reading"). The same surface is exposed on the shell-facing `Filesystem` trait (`VfsPath`-addressed, hairpin-diverted like `read_range`), which also carries the file-content verbs (`read_range`/`read_file`/`write_file`/`find_in_file`/details/property sheet) — there is no separate reader trait. Over RPC a handle is a server-held session (`OPEN_READ_AT` mints a `StreamId`, `READ_AT` is request/response per chunk, `READ_AT_CLOSE` on proxy drop reaps it) — the same open/read/close triple exists at both the VFS verb level and the Filesystem verb level.
 
-**Auto-refresh**: Panes auto-refresh on window focus for local and remote VFS types. Auto-refresh is disabled for S3, SFTP, and archive VFS types (where listing is expensive). Manual refresh is always available via Mod+R.
+**Auto-refresh**: Panes auto-refresh on window focus for local and remote VFS types, and when one of Newt's own operations finishes (or stops) having changed the folder they show — a copy or move into or out of it, a rename, delete, pack or property change in it; a user command refreshes both panes — rather than waiting on file watching, which can miss changes made in quick succession. Auto-refresh is disabled for S3, SFTP, and archive VFS types (where listing is expensive). Manual refresh is always available via Mod+R.
 
 ### Local Filesystem (always mounted, VFS ID 0)
 
@@ -2216,8 +2226,11 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| Mod+C, Ctrl+Ins (not macOS) | Copy path to clipboard | Pane focused |
+| Mod+C, Ctrl+Ins (not macOS) | Copy to clipboard | Pane focused |
+| Mod+X | Cut to clipboard | Pane focused |
 | Mod+V, Shift+Ins (not macOS) | Paste from clipboard | Pane focused |
+| ⌥⌘V (macOS) | Move here from clipboard | Pane focused |
+| ⌥⌘C (macOS), Ctrl+Shift+C | Copy path | Pane focused |
 
 ### Filter & Search
 

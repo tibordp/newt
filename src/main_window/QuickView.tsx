@@ -401,7 +401,7 @@ function QuickView({ state, panesFocused, activePane }: Props) {
   // The pane's copy shortcut copies what's selected in the preview, if
   // anything is, wherever focus is — the text, hex, image and table
   // viewers select without taking focus. Otherwise it goes on to the list
-  // and copies the path.
+  // and copies the files.
   const preferences = usePreferences();
   const copyKeys = useMemo(
     () =>

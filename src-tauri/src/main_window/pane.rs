@@ -1744,6 +1744,8 @@ pub struct FileView {
     pub annotations: Vec<Annotation>,
     /// What the row's context menu offers besides what Enter does.
     pub actions: crate::associations::RowActions,
+    /// The session has cut the file to the clipboard.
+    pub cut: bool,
 }
 
 /// A windowed slice of the file list sent to the frontend.
@@ -1865,6 +1867,10 @@ pub struct PaneViewState {
     /// For each row's file associations, at window projection.
     #[serde(skip)]
     preferences: Option<crate::preferences::PreferencesHandle>,
+    /// The files the session has cut to the clipboard, by their real
+    /// paths, to mark as cut at window projection.
+    #[serde(skip)]
+    cut: Option<Arc<HashSet<VfsPath>>>,
 }
 
 impl PaneViewState {
@@ -2045,12 +2051,25 @@ impl PaneViewState {
             }
             _ => Default::default(),
         };
+        let cut = f.key() != PARENT_KEY
+            && self.cut.as_ref().is_some_and(|cut| {
+                let path = f.source.clone().unwrap_or_else(|| self.path.join(f.key()));
+                cut.contains(&path)
+            });
         FileView {
             file: f.clone(),
             source_display,
             annotations,
             actions,
+            cut,
         }
+    }
+
+    /// Mark the files in `cut` (real paths) as cut, and nothing else.
+    pub fn set_cut(&mut self, cut: Option<Arc<HashSet<VfsPath>>>) {
+        self.cut = cut;
+        self.file_generation += 1;
+        self.recompute_window();
     }
 
     /// Capture the current overlay for the history entry being left, or
@@ -3066,6 +3085,23 @@ mod tests {
             file_lookup,
             ..Default::default()
         }
+    }
+
+    /// A search result is marked by the file it stands for, not by its
+    /// place in the results.
+    #[test]
+    fn cut_files_are_marked_by_their_real_paths() {
+        let mut vs = listed(&[
+            (PARENT_KEY, true),
+            ("a", false),
+            ("b", false),
+            ("hit", false),
+        ]);
+        let elsewhere = VfsPath::root(VfsId::ROOT).join("elsewhere").join("hit");
+        vs.files[3].source = Some(elsewhere.clone());
+        vs.cut = Some(Arc::new(HashSet::from([vs.path.join("b"), elsewhere])));
+        let marked: Vec<bool> = vs.files.iter().map(|f| vs.project_file(f).cut).collect();
+        assert_eq!(marked, [false, false, true, true]);
     }
 
     #[test]

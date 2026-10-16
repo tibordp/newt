@@ -301,12 +301,21 @@ pub struct OperationState {
     pub scanning_bytes: Option<u64>,
 }
 
-type OperationCallback = Box<dyn FnOnce() + Send>;
+/// How an operation ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+type EndHook = Box<dyn FnOnce(Outcome) + Send>;
 
 #[derive(Clone)]
 pub struct Operations {
     pub state: Arc<RwLock<HashMap<OperationId, OperationState>>>,
-    callbacks: Arc<Mutex<HashMap<OperationId, OperationCallback>>>,
+    /// Run once each when the operation ends, with how it ended.
+    on_end: Arc<Mutex<HashMap<OperationId, Vec<EndHook>>>>,
     /// Ticks on every progress report.
     changed: Arc<tokio::sync::watch::Sender<()>>,
 }
@@ -315,7 +324,7 @@ impl Default for Operations {
     fn default() -> Self {
         Self {
             state: Arc::new(RwLock::new(HashMap::new())),
-            callbacks: Arc::new(Mutex::new(HashMap::new())),
+            on_end: Arc::new(Mutex::new(HashMap::new())),
             changed: Arc::new(tokio::sync::watch::channel(()).0),
         }
     }
@@ -339,13 +348,10 @@ impl Operations {
             .collect()
     }
 
-    /// Mark an operation that couldn't be started as failed.
+    /// Fail an operation that couldn't be started, as a failure the
+    /// client reported would.
     pub fn failed_to_start(&self, id: OperationId, error: String) {
-        if let Some(op) = self.state.write().get_mut(&id) {
-            op.status = OperationStatus::Failed;
-            op.error = Some(error);
-        }
-        self.changed.send_replace(());
+        apply_operation_progress(self, OperationProgress::Failed { id, error }, false);
     }
 
     /// Wait until no operation is running.
@@ -367,18 +373,26 @@ impl Operations {
             .map(|op| op.id)
     }
 
-    pub fn register_completion_callback(&self, id: OperationId, cb: Box<dyn FnOnce() + Send>) {
-        self.callbacks.lock().insert(id, cb);
+    /// Run `hook` when operation `id` ends. Register before starting it:
+    /// a fast operation can end before a later registration.
+    pub fn on_end(&self, id: OperationId, hook: impl FnOnce(Outcome) + Send + 'static) {
+        self.on_end
+            .lock()
+            .entry(id)
+            .or_default()
+            .push(Box::new(hook));
     }
 
-    /// If a completion callback is registered for `id`, remove and return it.
-    fn take_callback(&self, id: OperationId) -> Option<Box<dyn FnOnce() + Send>> {
-        self.callbacks.lock().remove(&id)
+    fn end(&self, id: OperationId, outcome: Outcome) {
+        let hooks = self.on_end.lock().remove(&id).unwrap_or_default();
+        for hook in hooks {
+            hook(outcome);
+        }
     }
 
     pub fn clear(&self) {
         self.state.write().clear();
-        self.callbacks.lock().clear();
+        self.on_end.lock().clear();
     }
 }
 
@@ -1078,6 +1092,19 @@ pub struct MainWindowState {
     /// Last pattern applied from the select-by-pattern dialog, pre-filled
     /// on the next open.
     pub select_pattern: Arc<parking_lot::Mutex<String>>,
+    /// What the session last put on the clipboard, while it's still there.
+    pub clipboard: Arc<parking_lot::Mutex<Option<ClipboardRecord>>>,
+}
+
+/// Files the session copied or cut, in its own terms: pasted within the
+/// session through this rather than the OS clipboard, which holds only
+/// what other apps can use. Good only while the clipboard still has what
+/// the session wrote (`stamp`).
+pub struct ClipboardRecord {
+    /// Dereferenced: search results stand for their real files.
+    pub sources: Vec<VfsPath>,
+    pub cut: bool,
+    pub stamp: crate::clipboard::Stamp,
 }
 
 /// Session-level facts about the mounted VFS set that the frontend needs
@@ -1182,6 +1209,7 @@ impl MainWindowState {
             mount_summary: MountSummaryState::default(),
             preview: Default::default(),
             select_pattern: Default::default(),
+            clipboard: Default::default(),
         }
     }
 
@@ -1282,9 +1310,7 @@ fn apply_progress(operations: &Operations, progress: OperationProgress, keep_fin
             } else {
                 ops.remove(&id);
             }
-            if let Some(cb) = operations.take_callback(id) {
-                cb();
-            }
+            operations.end(id, Outcome::Completed);
         }
         OperationProgress::Failed { id, error } => {
             if let Some(op) = ops.get_mut(&id) {
@@ -1292,7 +1318,7 @@ fn apply_progress(operations: &Operations, progress: OperationProgress, keep_fin
                 op.error = Some(error);
                 op.silent = false;
             }
-            operations.take_callback(id); // discard
+            operations.end(id, Outcome::Failed);
         }
         OperationProgress::Cancelled { id } => {
             if keep_finished {
@@ -1303,7 +1329,7 @@ fn apply_progress(operations: &Operations, progress: OperationProgress, keep_fin
             } else {
                 ops.remove(&id);
             }
-            operations.take_callback(id); // discard
+            operations.end(id, Outcome::Cancelled);
         }
         OperationProgress::Issue { id, issue } => {
             if let Some(op) = ops.get_mut(&id) {
@@ -1349,10 +1375,6 @@ struct MainWindowContextInner {
     focus_seq: std::sync::atomic::AtomicU64,
     session: Arc<arc_swap::ArcSwap<Option<Session>>>,
     askpass_response: Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>>>,
-    /// Made on first use: there may be no clipboard to reach (a Wayland
-    /// compositor without data-control and no XWayland), and that's the
-    /// clipboard commands' error, not the window's.
-    clipboard: Mutex<Option<arboard::Clipboard>>,
     /// `settings.toml` body from just before the last Mod+B, backing the
     /// bookmark bubble's Undo. Kept here rather than in `ModalDataKind` so
     /// the user's settings file doesn't ride along in every state push.
@@ -1434,7 +1456,6 @@ impl MainWindowContext {
                 focus_seq: std::sync::atomic::AtomicU64::new(0),
                 session: Arc::new(arc_swap::ArcSwap::from_pointee(None)),
                 askpass_response: Arc::new(parking_lot::Mutex::new(None)),
-                clipboard: Mutex::new(None),
                 bookmark_undo: Mutex::new(None),
                 terminal_output: Mutex::new(None),
                 close_confirmed: std::sync::atomic::AtomicBool::new(false),
@@ -1793,6 +1814,69 @@ impl MainWindowContext {
 
     pub fn panes(&self) -> &Panes {
         &self.inner.main_window_state.panes
+    }
+
+    pub fn clipboard_record(&self) -> &parking_lot::Mutex<Option<ClipboardRecord>> {
+        &self.inner.main_window_state.clipboard
+    }
+
+    /// Mark what the session's clipboard record has cut in every pane, and
+    /// unmark what it no longer has.
+    pub fn sync_cut_marks(&self) -> Result<(), Error> {
+        let cut = self
+            .clipboard_record()
+            .lock()
+            .as_ref()
+            .filter(|record| record.cut)
+            .map(|record| Arc::new(record.sources.iter().cloned().collect()));
+        for pane in self.panes().all() {
+            pane.view_state_mut().set_cut(cut.clone());
+        }
+        self.publish()
+    }
+
+    /// Refresh the panes showing any of `dirs`, after Newt's own operation
+    /// changed them: their watchers may tell late, or miss files created
+    /// while a watch is re-armed. Only on filesystems that refresh
+    /// automatically anyway; elsewhere listing is too dear.
+    pub async fn refresh_panes_at(&self, dirs: &[VfsPath]) {
+        let Ok(vfs_info) = self.vfs_info() else {
+            return;
+        };
+        let mut refreshed = false;
+        for pane in self.panes().all() {
+            let path = pane.path();
+            let refreshes = vfs_info
+                .descriptor(path.vfs_id)
+                .is_some_and(|(descriptor, _)| descriptor.auto_refresh());
+            if refreshes && dirs.contains(&path) {
+                refreshed |= pane.refresh(None, true).await.is_ok();
+            }
+        }
+        if refreshed {
+            let _ = self.publish();
+        }
+    }
+
+    /// Drop the clipboard record if the clipboard no longer holds what the
+    /// session wrote, unmarking a cut.
+    pub async fn revalidate_clipboard(&self) {
+        let Some(stamp) = self.clipboard_record().lock().as_ref().map(|r| r.stamp) else {
+            return;
+        };
+        if self.clipboard().stamp().await == stamp {
+            return;
+        }
+        let dropped = {
+            let mut record = self.clipboard_record().lock();
+            match record.as_ref() {
+                Some(current) if current.stamp == stamp => record.take(),
+                _ => None,
+            }
+        };
+        if dropped.is_some_and(|record| record.cut) {
+            let _ = self.sync_cut_marks();
+        }
     }
 
     pub fn modal(&self) -> &ModalState {
@@ -2215,18 +2299,12 @@ impl MainWindowContext {
         Ok(())
     }
 
-    /// Use the window's clipboard. It's kept for the window's lifetime
-    /// because on X11 what was copied is only served while it lives.
-    pub fn with_clipboard<T>(
-        &self,
-        f: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
-    ) -> Result<T, Error> {
-        let mut clipboard = self.inner.clipboard.lock();
-        let clipboard = match &mut *clipboard {
-            Some(clipboard) => clipboard,
-            empty => empty.insert(arboard::Clipboard::new()?),
-        };
-        Ok(f(clipboard)?)
+    pub fn clipboard(&self) -> crate::clipboard::Clipboard {
+        self.window()
+            .app_handle()
+            .state::<crate::GlobalContext>()
+            .clipboard()
+            .clone()
     }
 
     /// Tear down the current session and wipe connection-scoped UI state so this
@@ -2251,6 +2329,7 @@ impl MainWindowContext {
         state.panes.clear();
         state.terminals.clear();
         state.operations.clear();
+        *state.clipboard.lock() = None;
         self.inner.session.store(Arc::new(None));
     }
 
@@ -2396,4 +2475,38 @@ pub fn spawn_main_window(
     crate::spawn_theme_sync(&window, prefs_handle.clone());
 
     Ok((window, ctx))
+}
+
+#[cfg(test)]
+mod operation_tests {
+    use super::*;
+
+    fn recording(operations: &Operations, id: OperationId) -> Arc<Mutex<Vec<Outcome>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for _ in 0..2 {
+            let seen = seen.clone();
+            operations.on_end(id, move |outcome| seen.lock().push(outcome));
+        }
+        seen
+    }
+
+    #[test]
+    fn every_hook_runs_once_with_how_the_operation_ended() {
+        let operations = Operations::default();
+        let seen = recording(&operations, 1);
+        apply_operation_progress(&operations, OperationProgress::Cancelled { id: 1 }, false);
+        apply_operation_progress(&operations, OperationProgress::Completed { id: 1 }, false);
+        assert_eq!(*seen.lock(), [Outcome::Cancelled, Outcome::Cancelled]);
+    }
+
+    /// An operation whose start fails never reports progress; its hooks
+    /// run all the same.
+    #[test]
+    fn a_failed_start_ends_the_operation() {
+        let operations = Operations::default();
+        let seen = recording(&operations, 7);
+        operations.failed_to_start(7, "no agent".into());
+        assert_eq!(*seen.lock(), [Outcome::Failed, Outcome::Failed]);
+        assert!(operations.on_end.lock().is_empty());
+    }
 }

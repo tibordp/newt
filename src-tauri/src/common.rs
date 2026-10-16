@@ -13,8 +13,6 @@ pub enum Error {
     #[error("{0}")]
     Open(#[from] opener::OpenError),
     #[error("{0}")]
-    Arboard(#[from] arboard::Error),
-    #[error("{0}")]
     Custom(String),
     #[error("operation cancelled")]
     Cancelled,

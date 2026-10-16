@@ -645,7 +645,7 @@ async fn with_local_copy(
         newt_common::vfs::path::PathBuf::from_native(&temp_dir),
     );
 
-    let op_id = super::operations::start_operation(
+    super::operations::start_operation_with_callback(
         ctx.clone(),
         OperationRequest::Copy {
             rename_to: None,
@@ -653,17 +653,13 @@ async fn with_local_copy(
             destination: dest_vfs_path,
             options: CopyOptions::default(),
         },
-    )
-    .await?;
-
-    ctx.operations().register_completion_callback(
-        op_id,
-        Box::new(move || {
+        Some(Box::new(move || {
             if let Err(e) = then(dest_path) {
                 log::warn!("opening a downloaded file: {e}");
             }
-        }),
-    );
+        })),
+    )
+    .await?;
 
     Ok(())
 }
@@ -950,64 +946,6 @@ pub fn cmd_toggle_maximized(ctx: MainWindowContext, _pane_handle: PaneHandle) ->
         opts.maximized = !opts.maximized;
         Ok(())
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn cmd_copy_to_clipboard(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-    let pane = ctx.panes().require(pane_handle)?;
-
-    #[cfg(windows)]
-    const LINE_ENDING: &str = "\r\n";
-    #[cfg(not(windows))]
-    const LINE_ENDING: &str = "\n";
-
-    let mut text = String::new();
-    for (idx, line) in pane
-        .get_effective_selection_dereferenced()
-        .into_iter()
-        .enumerate()
-    {
-        if idx != 0 {
-            text.push_str(LINE_ENDING);
-        }
-        text.push_str(&ctx.format_vfs_path(&line));
-    }
-
-    ctx.with_clipboard(|c| c.set_text(text))?;
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn cmd_paste_from_clipboard(
-    ctx: MainWindowContext,
-    pane_handle: PaneHandle,
-) -> Result<(), Error> {
-    let text = ctx.with_clipboard(|c| c.get_text())?;
-    let text = text.trim();
-
-    // Same resolution chain as the navigate command with exact: false
-    let resolved = if let Some(vfs_path) = ctx.resolve_display_path(text) {
-        Some(vfs_path)
-    } else {
-        ctx.shell_service()?
-            .shell_expand(text.to_string())
-            .await?
-            .map(|p| VfsPath::new(VfsId::ROOT, p))
-    };
-
-    let text = text.to_string();
-    ctx.with_pane_update_async(pane_handle, |_, pane| async move {
-        if let Some(target) = resolved {
-            pane.navigate_to(target).await?;
-        } else {
-            pane.navigate(&text).await?;
-        }
-        Ok(())
-    })
-    .await
 }
 
 #[tauri::command]

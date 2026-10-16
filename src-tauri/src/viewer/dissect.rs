@@ -1423,7 +1423,7 @@ pub async fn dissect_copy(
         .read(Span::new(source, offset, len), &stop)
         .await?;
     let text = super::format_bytes(&bytes, format);
-    ctx.with_clipboard(|c| c.set_text(text))?;
+    ctx.clipboard().set_text(text).await?;
     Ok(())
 }
 

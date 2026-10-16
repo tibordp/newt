@@ -524,6 +524,9 @@ async fn execute_rendered(
         }
         ctx.publish()?;
 
+        // A command may change anything; what shows is the panes' folders.
+        let shown = ctx.panes().all().iter().map(|pane| pane.path()).collect();
+        crate::cmd::operations::refresh_when_finished(ctx, id, shown);
         let req = StartOperationRequest {
             id,
             request: OperationRequest::RunCommand {
