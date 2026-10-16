@@ -460,6 +460,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
         .typ::<crate::viewer::ViewerStateWire>()
         .typ::<crate::viewer::dissect::DissectProgress>()
         .typ::<crate::viewer::dissect::DissectChildrenAdded>()
+        .typ::<crate::viewer::dissect::DissectTaskProgress>()
         .typ::<crate::editor::EditorStateWire>()
         .typ::<newt_common::vfs::File>()
         .typ::<newt_common::vfs::FileList>()

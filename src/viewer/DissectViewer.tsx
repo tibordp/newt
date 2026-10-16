@@ -23,6 +23,8 @@ import {
   type DissectSecret,
   type DissectSource,
   type DissectSpan,
+  type DissectTask,
+  type DissectTaskProgress,
 } from "../lib/bindings";
 import { safe, safeSilent, unwrap, unwrapBytes } from "../lib/ipc";
 import { ContextMenu as CM, keyboardMenuHandlers } from "../lib/menus";
@@ -149,6 +151,12 @@ export function DissectViewer({
   const [working, setWorking] = useState(0);
   // Byte reads of decoded streams in flight.
   const [reading, setReading] = useState(0);
+  // Saves of a span to a file in flight.
+  const [saving, setSaving] = useState(0);
+  // How far the latest decoding read and save have got.
+  const [tasks, setTasks] = useState<
+    Partial<Record<DissectTask, DissectTaskProgress>>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [zone, setZone] = useState<Zone>("tree");
   const [bytesOpen, setBytesOpen] = useState(true);
@@ -197,6 +205,7 @@ export function DissectViewer({
     loadCounts.current = new Map();
     setLoading(new Map());
     setProgress(new Map());
+    setTasks({});
     let cancelled = false;
     let opened: number | null = null;
     (async () => {
@@ -410,7 +419,38 @@ export function DissectViewer({
     };
   }, [session]);
 
-  const busy = loading.size > 0 || working > 0 || reading > 0;
+  useEffect(() => {
+    if (session === null) return;
+    const unlisten = getCurrentWebviewWindow().listen<DissectTaskProgress>(
+      "dissect-task-progress",
+      ({ payload }) => {
+        if (payload.id !== session) return;
+        setTasks((prev) => ({ ...prev, [payload.task]: payload }));
+      },
+    );
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [session]);
+
+  // A finished task's last report would otherwise greet the next one.
+  const forgetTask = useCallback(
+    (task: DissectTask) =>
+      setTasks((prev) => {
+        const next = { ...prev };
+        delete next[task];
+        return next;
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (reading === 0) forgetTask("decode");
+  }, [reading, forgetTask]);
+  useEffect(() => {
+    if (saving === 0) forgetTask("save");
+  }, [saving, forgetTask]);
+
+  const busy = loading.size > 0 || working > 0 || reading > 0 || saving > 0;
   const showBusy = useAfterGrace(busy);
   // What the status bar says is going on: the field loading (the one
   // furthest along, if several are), else what else is.
@@ -425,10 +465,15 @@ export function DissectViewer({
         : keys[0];
       const name = nodes.get(key)?.name ?? "";
       const done = progress.get(key);
+      const codec = done?.codec ? ` · decoding ${done.codec}` : "";
       const more = keys.length > 1 ? ` and ${keys.length - 1} more` : "";
-      return `Loading “${name}”${done ? ` ${percent(done)}` : "…"}${more}`;
+      return `Loading “${name}”${codec}${measure(done)}${more}`;
     }
-    if (reading > 0) return "Decoding…";
+    if (saving > 0) return `Saving${measure(tasks.save)}`;
+    if (reading > 0) {
+      const codec = tasks.decode?.codec ? ` ${tasks.decode.codec}` : "";
+      return `Decoding${codec}${measure(tasks.decode)}`;
+    }
     if (working > 0) return "Working…";
     return null;
   })();
@@ -908,7 +953,7 @@ export function DissectViewer({
     const path = await saveDialog({ defaultPath: name });
     focusZone(zone);
     if (!path) return;
-    setWorking((n) => n + 1);
+    setSaving((n) => n + 1);
     try {
       await unwrap(
         commands.dissectSave(session, s.source, s.offset, s.len, path),
@@ -918,7 +963,7 @@ export function DissectViewer({
         await message(String(e), { kind: "error", title: "Error" });
       }
     } finally {
-      setWorking((n) => n - 1);
+      setSaving((n) => n - 1);
     }
   };
   /// The hex pane's selection, else the selected field's bytes.
@@ -1935,12 +1980,16 @@ function Spinner() {
   return <span className={styles.spinner} aria-hidden />;
 }
 
-function percentOf({ done, total }: DissectProgress): number {
+type Fraction = { done: number; total: number };
+
+function percentOf({ done, total }: Fraction): number {
   return Math.min(100, Math.floor((done * 100) / Math.max(total, 1)));
 }
 
-function percent(progress: DissectProgress): string {
-  return `${percentOf(progress)}%`;
+/// How far a task in the status bar has got, or an ellipsis when nothing
+/// measures it.
+function measure(progress: Fraction | undefined): string {
+  return progress ? ` ${percentOf(progress)}%` : "…";
 }
 
 /// `children` once whatever mounted it has been going on for a moment,

@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use fillyfoal::{
-    ByteRequest, ChildState, Count, DiagKind, Diagnostic, Limits, NodeId, Progress, ReadProgress,
-    Secret, SecretRequest, Session, SourceId, Span, Value, Wait, formats,
+    Activity, ByteRequest, ChildState, Count, DecodeProgress, DiagKind, Diagnostic, Limits, NodeId,
+    Progress, ReadProgress, Secret, SecretRequest, Session, SourceId, Span, Value, Wait, formats,
 };
 use newt_common::vfs::{VfsPath, VfsRandomReader};
 use parking_lot::Mutex;
@@ -204,11 +204,11 @@ impl Dissection {
             if stop.is_cancelled() {
                 return Ok(());
             }
-            let (step, progress, key) = {
+            let (step, activity, key) = {
                 let mut state = self.state.lock().await;
                 let step = state.session.poll_node(id, BUDGET);
-                let progress = state.session.progress(id);
-                (step, progress, state.key(id))
+                let activity = state.session.activity(id);
+                (step, activity, state.key(id))
             };
             match step {
                 Progress::Idle => return Ok(()),
@@ -226,8 +226,9 @@ impl Dissection {
             }
             if started.elapsed() >= PROGRESS_EVERY && reported.elapsed() >= PROGRESS_EVERY {
                 reported = Instant::now();
-                if let Some((done, total)) = progress {
-                    self.report(key, done, total);
+                if let Some((done, total)) = activity.as_ref().and_then(Activity::estimate) {
+                    let codec = activity.and_then(|a| a.decoding.last().map(|d| d.codec));
+                    self.report(key, done, total, codec);
                 }
                 if let Some(sent) = &mut sent {
                     let added = self.state.lock().await.added(id, sent);
@@ -239,15 +240,29 @@ impl Dissection {
         }
     }
 
-    fn report(&self, node: u32, done: u64, total: u64) {
+    fn report(&self, node: u32, done: u64, total: u64, codec: Option<&'static str>) {
         if let Some(window) = &self.window {
             let progress = DissectProgress {
                 id: self.id,
                 node,
                 done,
                 total,
+                codec,
             };
             let _ = window.emit_to(window.label(), "dissect-progress", progress);
+        }
+    }
+
+    fn report_task(&self, task: DissectTask, done: u64, total: u64, codec: Option<&'static str>) {
+        if let Some(window) = &self.window {
+            let progress = DissectTaskProgress {
+                id: self.id,
+                task,
+                done,
+                total,
+                codec,
+            };
+            let _ = window.emit_to(window.label(), "dissect-task-progress", progress);
         }
     }
 
@@ -325,11 +340,17 @@ impl Dissection {
                 .read_at(span.offset, span.len)
                 .await?);
         }
+        let started = Instant::now();
+        let mut reported = started;
         loop {
             if stop.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            let step = self.state.lock().await.session.read_step(span, BUDGET);
+            let (step, chain) = {
+                let mut state = self.state.lock().await;
+                let step = state.session.read_step(span, BUDGET);
+                (step, state.session.read_activity())
+            };
             match step {
                 ReadProgress::Done(bytes) => return Ok(bytes),
                 ReadProgress::Yielded => tokio::task::yield_now().await,
@@ -338,6 +359,13 @@ impl Dissection {
                         fetched = self.fetch(requests) => fetched?,
                         _ = stop.cancelled() => return Err(Error::Cancelled),
                     }
+                }
+            }
+            if started.elapsed() >= PROGRESS_EVERY && reported.elapsed() >= PROGRESS_EVERY {
+                reported = Instant::now();
+                if let Some((done, total)) = chain.iter().rev().find_map(DecodeProgress::estimate) {
+                    let codec = chain.last().map(|d| d.codec);
+                    self.report_task(DissectTask::Decode, done, total, codec);
                 }
             }
         }
@@ -993,6 +1021,33 @@ pub struct DissectProgress {
     node: u32,
     done: u64,
     total: u64,
+    /// The codec of the innermost stream the expansion waits on decoding,
+    /// when it does ("zstd", "deflate", ...).
+    codec: Option<&'static str>,
+}
+
+/// Work on the dissection's bytes rather than a node's children.
+#[derive(Serialize, specta::Type, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DissectTask {
+    /// Decoding a stream up to a read (the hex pane, a copy): the measure
+    /// is the innermost stream's that has one.
+    Decode,
+    /// Writing a span to a file: bytes written of the span.
+    Save,
+}
+
+/// How far a task has got, sent to the window as `dissect-task-progress`
+/// while it runs.
+#[derive(Serialize, specta::Type, Clone)]
+pub struct DissectTaskProgress {
+    /// The dissection.
+    id: u64,
+    task: DissectTask,
+    done: u64,
+    total: u64,
+    /// As [`DissectProgress::codec`].
+    codec: Option<&'static str>,
 }
 
 /// Children a node's expansion produced since it last sent some, sent to the
@@ -1404,7 +1459,13 @@ async fn save_span(
     use tokio::io::AsyncWriteExt;
     let mut file = tokio::fs::File::create(path).await?;
     let mut at = span.offset;
+    let started = Instant::now();
+    let mut reported = started;
     while at < span.end() {
+        if started.elapsed() >= PROGRESS_EVERY && reported.elapsed() >= PROGRESS_EVERY {
+            reported = Instant::now();
+            dissection.report_task(DissectTask::Save, at - span.offset, span.len, None);
+        }
         let len = (span.end() - at).min(SAVE_CHUNK);
         let bytes = dissection
             .read(Span::new(span.source, at, len), stop)

@@ -2860,7 +2860,12 @@ export type DissectProgress = {
 /**
  * The dissection.
  */
-id: number; node: number; done: number; total: number }
+id: number; node: number; done: number; total: number; 
+/**
+ * The codec of the innermost stream the expansion waits on decoding,
+ * when it does ("zstd", "deflate", ...).
+ */
+codec: string | null }
 /**
  * After a reinterpretation: the way down to the node and its children, and
  * every choice now in effect, for the viewer to keep.
@@ -2895,6 +2900,32 @@ export type DissectSpan = {
  * The byte space: the file, or a stream decoded or reassembled from it.
  */
 source: number; offset: number; len: number }
+/**
+ * Work on the dissection's bytes rather than a node's children.
+ */
+export type DissectTask = 
+/**
+ * Decoding a stream up to a read (the hex pane, a copy): the measure
+ * is the innermost stream's that has one.
+ */
+"decode" | 
+/**
+ * Writing a span to a file: bytes written of the span.
+ */
+"save"
+/**
+ * How far a task has got, sent to the window as `dissect-task-progress`
+ * while it runs.
+ */
+export type DissectTaskProgress = { 
+/**
+ * The dissection.
+ */
+id: number; task: DissectTask; done: number; total: number; 
+/**
+ * As [`DissectProgress::codec`].
+ */
+codec: string | null }
 export type DissectValue = { kind: DissectValueKind; 
 /**
  * The value as read: a name for an enum, the set flags, the number in
