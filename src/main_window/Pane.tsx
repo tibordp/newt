@@ -1653,6 +1653,11 @@ function PaneInner(
       // — stealing focus into the filter input here would strand them.
       inputRef.current?.focus();
       return;
+    } else if (IS_MAC_HOST && e.metaKey) {
+      // AppKit acts on Cmd chords the page leaves alone — ⌘` cycles the
+      // app's windows. The window-level dispatcher still cancels the bound
+      // ones.
+      return;
     }
 
     e.preventDefault();

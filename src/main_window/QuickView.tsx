@@ -28,6 +28,8 @@ import { REFOCUS_EVENT } from "./types";
 
 const MODIFIERS = new Set(["Meta", "Control", "Shift", "Alt", "AltGraph"]);
 
+const IS_MAC_HOST = navigator.platform.startsWith("Mac");
+
 /// Keys belong to the file list even while the preview holds DOM focus (a
 /// click in it to scroll or select): the first key hands focus back to the
 /// list and is replayed there. A replayed event has no default action, so
@@ -40,6 +42,10 @@ function forwardKey(e: React.KeyboardEvent, root: HTMLElement) {
   // A modifier alone does nothing, and moving focus for it would drop the
   // preview's text selection before the chord (the copy shortcut) arrives.
   if (MODIFIERS.has(key.key)) return;
+  // AppKit acts on Cmd chords the page leaves alone (⌘` cycles the app's
+  // windows), which a replayed event never reaches; the bound ones bubble
+  // to the window-level dispatcher as they are.
+  if (IS_MAC_HOST && key.metaKey) return;
   e.preventDefault();
   e.stopPropagation();
 
