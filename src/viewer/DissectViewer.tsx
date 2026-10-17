@@ -44,6 +44,7 @@ import {
   type ViewerMode,
 } from "./helpers";
 import { DissectAs, type DissectAsTarget } from "./DissectAs";
+import { ValueInline, ValueRows, copyableValue } from "./DissectValue";
 import { useEmbeddedCopy, useViewerHost } from "./host";
 import { IconChevronRight } from "./icons";
 import { useAfterGrace } from "../lib/useAfterGrace";
@@ -891,7 +892,9 @@ export function DissectViewer({
   };
   const copyValue = () => {
     if (!node) return false;
-    copyText(node.value?.text ?? node.summary ?? node.name);
+    copyText(
+      node.value ? copyableValue(node.value) : (node.summary ?? node.name),
+    );
   };
 
   /// The selected line and what's shown below it, as the tree shows them:
@@ -1477,11 +1480,7 @@ export function DissectViewer({
         {n.value && (
           <>
             <span className={styles.colon}>:</span>
-            <span className={styles.value} data-kind={n.value.kind}>
-              {n.value.text}
-            </span>
-            {(n.value.kind === "enum" || n.value.kind === "flags") &&
-              n.value.raw && <span className={styles.raw}>{n.value.raw}</span>}
+            <ValueInline value={n.value} />
           </>
         )}
         {n.summary && <span className={styles.summary}>— {n.summary}</span>}
@@ -2025,20 +2024,7 @@ function Details({
     <div className={styles.details} aria-label="Field details">
       <div className={styles.detailsTitle}>{node.name}</div>
       <dl className={styles.detailsList}>
-        {v && (
-          <>
-            <dt>Value</dt>
-            <dd className={styles.value} data-kind={v.kind}>
-              {v.text}
-            </dd>
-          </>
-        )}
-        {v?.raw && (
-          <>
-            <dt>Raw</dt>
-            <dd className={styles.mono}>{v.raw}</dd>
-          </>
-        )}
+        {v && <ValueRows value={v} />}
         {node.summary && (
           <>
             <dt>Summary</dt>

@@ -108,10 +108,10 @@
           "children": {
             "count": {
               "at_least": false,
-              "n": 4
+              "n": 5
             },
             "error": null,
-            "loaded": 4,
+            "loaded": 5,
             "state": "complete"
           },
           "description": null,
@@ -198,7 +198,10 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "text",
+            "data": {
+              "kind": "text",
+              "value": "edge-01/handshake.pcap"
+            },
             "raw": null,
             "text": "edge-01/handshake.pcap"
           }
@@ -226,6 +229,34 @@
         },
         {
           "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 11,
+          "name": "Local file name",
+          "span": {
+            "len": 22,
+            "offset": 130,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "data": {
+              "kind": "text",
+              "value": "edge-01/handshake.pcap"
+            },
+            "raw": null,
+            "text": "edge-01/handshake.pcap"
+          }
+        },
+        {
+          "children": {
             "count": {
               "at_least": false,
               "n": 4
@@ -250,7 +281,7 @@
             "offset": 152,
             "source": 0
           },
-          "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144",
+          "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144; 3 packets, 274 bytes over 41.682 ms; TCP 3",
           "target": null,
           "value": null
         }
@@ -259,10 +290,10 @@
         "children": {
           "count": {
             "at_least": false,
-            "n": 4
+            "n": 5
           },
           "error": null,
-          "loaded": 4,
+          "loaded": 5,
           "state": "complete"
         },
         "description": null,
@@ -293,7 +324,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 11,
+          "key": 12,
           "name": "Global Header",
           "span": {
             "len": 24,
@@ -324,28 +355,7 @@
             "offset": 176,
             "source": 0
           },
-          "summary": "94 bytes, 2026-10-08 14:21:07.418203 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [SYN]",
-          "target": null,
-          "value": null
-        },
-        {
-          "children": {
-            "count": null,
-            "error": null,
-            "loaded": 0,
-            "state": "unloaded"
-          },
-          "description": null,
-          "diagnostics": [],
-          "interpretation": null,
-          "key": 12,
-          "name": "Packet 1",
-          "span": {
-            "len": 110,
-            "offset": 286,
-            "source": 0
-          },
-          "summary": "94 bytes, 2026-10-08 14:21:07.439044 UTC, IPv6 2001:db8:443::1 → 2001:db8:10::2a, TCP 443 (https) → 51820 [SYN, ACK]",
+          "summary": "+0 s, 94 bytes, 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 [SYN] Seq=975150082 Win=64800 Len=0",
           "target": null,
           "value": null
         },
@@ -360,13 +370,34 @@
           "diagnostics": [],
           "interpretation": null,
           "key": 13,
+          "name": "Packet 1",
+          "span": {
+            "len": 110,
+            "offset": 286,
+            "source": 0
+          },
+          "summary": "+20.841 ms, 94 bytes, 2001:db8:443::1 → 2001:db8:10::2a, TCP 443 → 51820 [SYN, ACK] Seq=2387310352 Ack=975150083 Win=64260 Len=0",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 14,
           "name": "Packet 2",
           "span": {
             "len": 102,
             "offset": 396,
             "source": 0
           },
-          "summary": "86 bytes, 2026-10-08 14:21:07.459885 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [ACK]",
+          "summary": "+41.682 ms, 86 bytes, 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 [ACK] Seq=975150083 Ack=2387310353 Win=507 Len=0",
           "target": null,
           "value": null
         }
@@ -397,7 +428,7 @@
           "offset": 152,
           "source": 0
         },
-        "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144",
+        "summary": "pcap 2.4, ETHERNET, little-endian, µs timestamps, snaplen 262144; 3 packets, 274 bytes over 41.682 ms; TCP 3",
         "target": null,
         "value": null
       },
@@ -415,35 +446,14 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 14,
+          "key": 15,
           "name": "Record Header",
           "span": {
             "len": 16,
             "offset": 176,
             "source": 0
           },
-          "summary": null,
-          "target": null,
-          "value": null
-        },
-        {
-          "children": {
-            "count": null,
-            "error": null,
-            "loaded": 0,
-            "state": "unloaded"
-          },
-          "description": null,
-          "diagnostics": [],
-          "interpretation": null,
-          "key": 15,
-          "name": "Ethernet II",
-          "span": {
-            "len": 14,
-            "offset": 192,
-            "source": 0
-          },
-          "summary": null,
+          "summary": "2026-10-08 14:21:07.418203 UTC",
           "target": null,
           "value": null
         },
@@ -458,13 +468,34 @@
           "diagnostics": [],
           "interpretation": null,
           "key": 16,
+          "name": "Ethernet II",
+          "span": {
+            "len": 14,
+            "offset": 192,
+            "source": 0
+          },
+          "summary": "02:00:5e:10:00:2a → 02:00:5e:44:30:01, IPv6",
+          "target": null,
+          "value": null
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "unloaded"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 17,
           "name": "IPv6",
           "span": {
             "len": 40,
             "offset": 206,
             "source": 0
           },
-          "summary": null,
+          "summary": "2001:db8:10::2a → 2001:db8:443::1, TCP, hop limit 64",
           "target": null,
           "value": null
         },
@@ -472,10 +503,10 @@
           "children": {
             "count": {
               "at_least": false,
-              "n": 9
+              "n": 10
             },
             "error": null,
-            "loaded": 9,
+            "loaded": 10,
             "state": "complete"
           },
           "description": null,
@@ -488,7 +519,7 @@
             "offset": 246,
             "source": 0
           },
-          "summary": null,
+          "summary": "51820 (wireguard) → 443 (https) [SYN], seq 975150082, ack 0, window 64800, 0 bytes",
           "target": null,
           "value": null
         }
@@ -513,7 +544,7 @@
           "offset": 176,
           "source": 0
         },
-        "summary": "94 bytes, 2026-10-08 14:21:07.418203 UTC, IPv6 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 (https) [SYN]",
+        "summary": "+0 s, 94 bytes, 2001:db8:10::2a → 2001:db8:443::1, TCP 51820 → 443 [SYN] Seq=975150082 Win=64800 Len=0",
         "target": null,
         "value": null
       },
@@ -531,17 +562,23 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 17,
+          "key": 18,
           "name": "Source port",
           "span": {
             "len": 2,
             "offset": 246,
             "source": 0
           },
-          "summary": null,
+          "summary": "wireguard",
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 16,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "51820"
+            },
             "raw": "0xca6c",
             "text": "51820"
           }
@@ -556,7 +593,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 18,
+          "key": 19,
           "name": "Destination port",
           "span": {
             "len": 2,
@@ -566,7 +603,13 @@
           "summary": "https",
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 16,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "443"
+            },
             "raw": "0x1bb",
             "text": "443"
           }
@@ -581,7 +624,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 19,
+          "key": 20,
           "name": "Sequence number",
           "span": {
             "len": 4,
@@ -591,7 +634,13 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 32,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "975150082"
+            },
             "raw": "0x3a1f9c02",
             "text": "975150082"
           }
@@ -606,7 +655,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 20,
+          "key": 21,
           "name": "Acknowledgment number",
           "span": {
             "len": 4,
@@ -616,7 +665,13 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 32,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "0"
+            },
             "raw": "0x0",
             "text": "0"
           }
@@ -628,22 +683,28 @@
             "loaded": 0,
             "state": "leaf"
           },
-          "description": null,
+          "description": "The header length in 32-bit words (high nibble)",
           "diagnostics": [],
           "interpretation": null,
-          "key": 21,
-          "name": "Data offset / flags",
+          "key": 22,
+          "name": "Data offset",
           "span": {
-            "len": 2,
+            "len": 1,
             "offset": 258,
             "source": 0
           },
           "summary": "header 40 bytes",
           "target": null,
           "value": {
-            "kind": "flags",
-            "raw": "0xa002",
-            "text": "SYN | DOFF=10"
+            "data": {
+              "bits": 4,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "10"
+            },
+            "raw": "0xa",
+            "text": "10"
           }
         },
         {
@@ -656,7 +717,151 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 22,
+          "key": 23,
+          "name": "Flags",
+          "span": {
+            "len": 2,
+            "offset": 258,
+            "source": 0
+          },
+          "summary": null,
+          "target": null,
+          "value": {
+            "data": {
+              "bits": 12,
+              "kind": "flags",
+              "raw": "2",
+              "table": [
+                {
+                  "mask": "1",
+                  "name": "FIN",
+                  "number": false,
+                  "set": false,
+                  "value": "1"
+                },
+                {
+                  "mask": "2",
+                  "name": "SYN",
+                  "number": false,
+                  "set": true,
+                  "value": "2"
+                },
+                {
+                  "mask": "4",
+                  "name": "RST",
+                  "number": false,
+                  "set": false,
+                  "value": "4"
+                },
+                {
+                  "mask": "8",
+                  "name": "PSH",
+                  "number": false,
+                  "set": false,
+                  "value": "8"
+                },
+                {
+                  "mask": "16",
+                  "name": "ACK",
+                  "number": false,
+                  "set": false,
+                  "value": "16"
+                },
+                {
+                  "mask": "32",
+                  "name": "URG",
+                  "number": false,
+                  "set": false,
+                  "value": "32"
+                },
+                {
+                  "mask": "64",
+                  "name": "ECE",
+                  "number": false,
+                  "set": false,
+                  "value": "64"
+                },
+                {
+                  "mask": "128",
+                  "name": "CWR",
+                  "number": false,
+                  "set": false,
+                  "value": "128"
+                },
+                {
+                  "mask": "256",
+                  "name": "AE",
+                  "number": false,
+                  "set": false,
+                  "value": "256"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=1",
+                  "number": false,
+                  "set": false,
+                  "value": "512"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=2",
+                  "number": false,
+                  "set": false,
+                  "value": "1024"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=3",
+                  "number": false,
+                  "set": false,
+                  "value": "1536"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=4",
+                  "number": false,
+                  "set": false,
+                  "value": "2048"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=5",
+                  "number": false,
+                  "set": false,
+                  "value": "2560"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=6",
+                  "number": false,
+                  "set": false,
+                  "value": "3072"
+                },
+                {
+                  "mask": "3584",
+                  "name": "RESERVED=7",
+                  "number": false,
+                  "set": false,
+                  "value": "3584"
+                }
+              ],
+              "unknown": "0"
+            },
+            "raw": "0x2",
+            "text": "SYN"
+          }
+        },
+        {
+          "children": {
+            "count": null,
+            "error": null,
+            "loaded": 0,
+            "state": "leaf"
+          },
+          "description": null,
+          "diagnostics": [],
+          "interpretation": null,
+          "key": 24,
           "name": "Window",
           "span": {
             "len": 2,
@@ -666,7 +871,13 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 16,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "64800"
+            },
             "raw": "0xfd20",
             "text": "64800"
           }
@@ -681,7 +892,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 23,
+          "key": 25,
           "name": "Checksum",
           "span": {
             "len": 2,
@@ -691,9 +902,17 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "number",
-            "raw": "47938",
-            "text": "0xbb42"
+            "data": {
+              "algo": "Internet checksum",
+              "bits": 16,
+              "kind": "checksum",
+              "stored": "0xbb42",
+              "verdict": {
+                "kind": "valid"
+              }
+            },
+            "raw": null,
+            "text": "0xbb42 (Internet checksum, valid)"
           }
         },
         {
@@ -706,7 +925,7 @@
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 24,
+          "key": 26,
           "name": "Urgent pointer",
           "span": {
             "len": 2,
@@ -716,7 +935,13 @@
           "summary": null,
           "target": null,
           "value": {
-            "kind": "number",
+            "data": {
+              "bits": 16,
+              "kind": "number",
+              "radix": "dec",
+              "signed": false,
+              "value": "0"
+            },
             "raw": "0x0",
             "text": "0"
           }
@@ -726,35 +951,31 @@
             "count": null,
             "error": null,
             "loaded": 0,
-            "state": "leaf"
+            "state": "unloaded"
           },
           "description": null,
           "diagnostics": [],
           "interpretation": null,
-          "key": 25,
+          "key": 27,
           "name": "Options",
           "span": {
             "len": 20,
             "offset": 266,
             "source": 0
           },
-          "summary": null,
+          "summary": "MSS=1440, SACK_PERM, TSval=2914836410 TSecr=0, WS=128",
           "target": null,
-          "value": {
-            "kind": "bytes",
-            "raw": "20 bytes",
-            "text": "02 04 05 a0 04 02 08 0a ad bc df ba 00 00 00 00 …  |................|"
-          }
+          "value": null
         }
       ],
       "parent": {
         "children": {
           "count": {
             "at_least": false,
-            "n": 9
+            "n": 10
           },
           "error": null,
-          "loaded": 9,
+          "loaded": 10,
           "state": "complete"
         },
         "description": null,
@@ -767,7 +988,7 @@
           "offset": 246,
           "source": 0
         },
-        "summary": null,
+        "summary": "51820 (wireguard) → 443 (https) [SYN], seq 975150082, ack 0, window 64800, 0 bytes",
         "target": null,
         "value": null
       },

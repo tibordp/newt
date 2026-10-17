@@ -166,7 +166,10 @@
   &[data-kind="number"],
   &[data-kind="float"],
   &[data-kind="bytes"],
-  &[data-kind="guid"] {
+  &[data-kind="guid"],
+  &[data-kind="checksum"],
+  &[data-kind="addr"],
+  &[data-kind="color"] {
     font-family: var(--font-mono);
     font-size: 12px;
   }
@@ -185,12 +188,67 @@
   &[data-kind="flags"] {
     font-weight: 600;
   }
+
+  &[data-unknown] {
+    font-weight: normal;
+    color: var(--color-fg-muted);
+  }
+}
+
+// A colour as a chip, over a checkerboard that shows through its alpha.
+// A dashed edge marks a preview of a colour sRGB can't show exactly.
+.swatch {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-fg) 30%, transparent);
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--swatch), var(--swatch)),
+    repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 6px 6px;
+
+  &[data-approximate] {
+    border-style: dashed;
+  }
+
+  &[data-large] {
+    width: 28px;
+    height: 14px;
+    margin-right: var(--space-3);
+    vertical-align: -2px;
+  }
+}
+
+.verdict {
+  flex-shrink: 0;
+
+  &[data-verdict="valid"] {
+    color: var(--color-success);
+  }
+
+  &[data-verdict="mismatch"] {
+    color: var(--color-error);
+  }
+}
+
+.verdictMark {
+  align-self: center;
+  font-family: "nerd-symbols";
 }
 
 .raw {
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: 11px;
+  color: var(--color-fg-muted);
+}
+
+// Words about a value, such as a checksum's algorithm.
+.note {
+  flex-shrink: 0;
   color: var(--color-fg-muted);
 }
 
@@ -442,6 +500,29 @@
 
 .description {
   white-space: pre-wrap;
+}
+
+// Every entry of a flag table; those that don't match the value muted.
+.flagTable {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  gap: 0 var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: contents;
+    color: var(--color-fg-muted);
+
+    &[data-set] {
+      color: var(--color-fg);
+    }
+  }
+}
+
+.component + .component {
+  margin-left: var(--space-4);
 }
 
 .mono {

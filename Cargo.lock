@@ -2229,7 +2229,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-archive",
  "fillyfoal-av",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-archive"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-text",
@@ -2257,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-av"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-image",
@@ -2267,12 +2267,12 @@ dependencies = [
 [[package]]
 name = "fillyfoal-codec"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 
 [[package]]
 name = "fillyfoal-core"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-codec",
 ]
@@ -2280,7 +2280,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-data"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-text",
@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-docs"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-av",
  "fillyfoal-core",
@@ -2302,7 +2302,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-exec"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-archive",
  "fillyfoal-core",
@@ -2314,7 +2314,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-games"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-system",
@@ -2324,7 +2324,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-image"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-data",
@@ -2334,7 +2334,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-science"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-archive",
  "fillyfoal-core",
@@ -2345,7 +2345,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-security"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
  "fillyfoal-text",
@@ -2354,7 +2354,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-system"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-archive",
  "fillyfoal-core",
@@ -2367,7 +2367,7 @@ dependencies = [
 [[package]]
 name = "fillyfoal-text"
 version = "0.1.0"
-source = "git+https://github.com/tibordp/fillyfoal#3748b1deab24267d42b54f88e43c42657f7680e9"
+source = "git+https://github.com/tibordp/fillyfoal#727d6bb4f67d6a335b58b8d2a81b69fd68f3435d"
 dependencies = [
  "fillyfoal-core",
 ]

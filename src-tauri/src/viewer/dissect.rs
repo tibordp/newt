@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use fillyfoal::{
     Activity, ByteRequest, ChildState, Count, DecodeProgress, DiagKind, Diagnostic, Limits, NodeId,
-    Progress, ReadProgress, Secret, SecretRequest, Session, SourceId, Span, Value, Wait, formats,
+    Progress, ReadProgress, Secret, SecretRequest, Session, SourceId, Span, Wait, formats,
 };
 use newt_common::vfs::{VfsPath, VfsRandomReader};
 use parking_lot::Mutex;
@@ -32,6 +32,10 @@ use crate::common::{Error, RawBytes};
 use crate::main_window::MainWindowContext;
 
 use super::CopyFormat;
+
+mod value;
+
+use value::DissectValue;
 
 /// Work units per step, between which the dissection lets other requests
 /// in and yields its runtime worker.
@@ -840,96 +844,6 @@ impl DissectChildren {
 pub struct DissectCount {
     n: u64,
     at_least: bool,
-}
-
-#[derive(Serialize, specta::Type, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum DissectValueKind {
-    Bool,
-    Number,
-    Enum,
-    Flags,
-    Float,
-    Time,
-    Text,
-    Bytes,
-    Guid,
-}
-
-#[derive(Serialize, specta::Type, Clone)]
-pub struct DissectValue {
-    kind: DissectValueKind,
-    /// The value as read: a name for an enum, the set flags, the number in
-    /// the radix the format gives it.
-    text: String,
-    /// The number underneath, in the other radix (or the raw integer of an
-    /// enum, flags or timestamp).
-    raw: Option<String>,
-}
-
-/// Bits of a signed value as an unsigned number of that width.
-fn twos_complement(value: i64, bits: u8) -> u64 {
-    let mask = if bits >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    };
-    value as u64 & mask
-}
-
-impl From<&Value> for DissectValue {
-    fn from(value: &Value) -> Self {
-        use DissectValueKind as K;
-        let (kind, text, raw) = match value {
-            Value::Bool(b) => (K::Bool, b.to_string(), None),
-            Value::UInt {
-                value,
-                radix: fillyfoal::Radix::Hex,
-                ..
-            } => (K::Number, format!("{value:#x}"), Some(value.to_string())),
-            Value::UInt { value, .. } => {
-                (K::Number, value.to_string(), Some(format!("{value:#x}")))
-            }
-            Value::Int { value, bits } => (
-                K::Number,
-                value.to_string(),
-                Some(format!("{:#x}", twos_complement(*value, *bits))),
-            ),
-            Value::Enum { raw, name, .. } => (
-                K::Enum,
-                name.map_or_else(|| "unknown".to_string(), str::to_string),
-                Some(format!("{raw:#x}")),
-            ),
-            Value::Flags {
-                raw, set, unknown, ..
-            } => {
-                let mut parts: Vec<String> = set.iter().map(|s| s.to_string()).collect();
-                if *unknown != 0 {
-                    parts.push(format!("{unknown:#x}"));
-                }
-                let text = if parts.is_empty() {
-                    "none".to_string()
-                } else {
-                    parts.join(" | ")
-                };
-                (K::Flags, text, Some(format!("{raw:#x}")))
-            }
-            Value::Float(f) => (K::Float, f.to_string(), None),
-            Value::Timestamp { unix_seconds } => (
-                K::Time,
-                fillyfoal::render::value(value),
-                Some(unix_seconds.to_string()),
-            ),
-            Value::Text(s) => (K::Text, s.escape_debug().to_string(), None),
-            Value::Bytes(b) => (
-                K::Bytes,
-                fillyfoal::render::value(value),
-                Some(format!("{} bytes", b.len())),
-            ),
-            Value::Guid(g) => (K::Guid, g.to_string(), None),
-        };
-        DissectValue { kind, text, raw }
-    }
 }
 
 #[derive(Serialize, specta::Type, Clone, Copy)]

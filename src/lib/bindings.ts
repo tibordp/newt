@@ -2779,6 +2779,8 @@ maximized: boolean;
  * Quick View: the right slot previews the active pane's focused file.
  */
 quick_view: boolean }
+export type DissectAddrFamily = "ipv4" | "ipv6" | "mac" | "eui64" | "other"
+export type DissectAlpha = { value: number; premultiplied: boolean }
 export type DissectChildState = "leaf" | 
 /**
  * Not expanded yet.
@@ -2820,6 +2822,38 @@ first: number; nodes: DissectNode[] }
  * by the child indices down to it.
  */
 export type DissectChoice = { path: number[]; format: string }
+export type DissectColor = { model: DissectColorModel; 
+/**
+ * The model's components, normalised to 0..1 (Lab in its own ranges:
+ * L 0..100, a and b about ±128).
+ */
+components: number[]; depth: DissectColorDepth; alpha: DissectAlpha | null; space: DissectColorSpace; 
+/**
+ * A spot colour's or swatch's name.
+ */
+name: string | null; 
+/**
+ * 8-bit sRGB `rrggbbaa`, straight alpha; `None` when a component
+ * isn't a number.
+ */
+swatch: string | null; 
+/**
+ * Whether `swatch` is the colour, not a preview of it (CMYK, Lab,
+ * device values, clipped wide-gamut colours).
+ */
+exact: boolean }
+export type DissectColorDepth = 
+/**
+ * Unsigned integers of this many bits each.
+ */
+{ kind: "bits"; bits: number } | { kind: "float"; bits: number } | 
+/**
+ * Bit fields packed into one number of `bits`, laid out as `layout`
+ * ("RGB565").
+ */
+{ kind: "packed"; raw: string; bits: number; layout: string } | { kind: "other" }
+export type DissectColorModel = "rgb" | "gray" | "cmyk" | "lab" | "hsb" | "other"
+export type DissectColorSpace = "srgb" | "srgb-linear" | "display-p3" | "rec2020" | "device" | "other"
 export type DissectContent = { node: DissectNode; 
 /**
  * The file's name, for suggesting formats by its extension.
@@ -2829,6 +2863,15 @@ export type DissectCount = { n: number; at_least: boolean }
 export type DissectDiagnostic = { kind: DissectDiagnosticKind; message: string; span: DissectSpan | null }
 export type DissectDiagnosticKind = "truncated" | "malformed" | "unsupported" | "limit" | "warning" | "note"
 /**
+ * One entry of a flag table.
+ */
+export type DissectFlag = { mask: string; value: string; name: string; set: boolean; 
+/**
+ * A multi-bit field holding a number (an offset, a count), never set:
+ * its value is `raw & mask`, shifted down.
+ */
+number: boolean }
+/**
  * A format the file can be dissected as, chosen instead of identified.
  */
 export type DissectFormat = { name: string; title: string; extensions: string[]; 
@@ -2837,6 +2880,15 @@ export type DissectFormat = { name: string; title: string; extensions: string[];
  */
 suggested: boolean }
 export type DissectFormatName = { name: string; title: string }
+export type DissectGuidOrder = 
+/**
+ * Microsoft's: the first three fields little-endian.
+ */
+"mixed" | 
+/**
+ * RFC 4122's.
+ */
+"big" | "other"
 export type DissectInterpretation = { 
 /**
  * `None` when the content wasn't recognised.
@@ -2896,11 +2948,17 @@ id: number; node: number; done: number; total: number;
  * when it does ("zstd", "deflate", ...).
  */
 codec: string | null }
+export type DissectRadix = "dec" | "hex" | "oct" | "bin"
 /**
  * After a reinterpretation: the way down to the node and its children, and
  * every choice now in effect, for the viewer to keep.
  */
 export type DissectReinterpreted = { located: DissectLocated; choices: DissectChoice[] }
+export type DissectRes = { kind: "day" } | { kind: "minute" } | { kind: "second" } | 
+/**
+ * Fractions of a second, to this many digits.
+ */
+{ kind: "sub"; digits: number } | { kind: "other" }
 export type DissectSecret = { index: number; 
 /**
  * What it unlocks, e.g. "Password for the encrypted ZIP entries".
@@ -2956,7 +3014,7 @@ id: number; task: DissectTask; done: number; total: number;
  * As [`DissectProgress::codec`].
  */
 codec: string | null }
-export type DissectValue = { kind: DissectValueKind; 
+export type DissectValue = { 
 /**
  * The value as read: a name for an enum, the set flags, the number in
  * the radix the format gives it.
@@ -2966,8 +3024,30 @@ text: string;
  * The number underneath, in the other radix (or the raw integer of an
  * enum, flags or timestamp).
  */
-raw: string | null }
-export type DissectValueKind = "bool" | "number" | "enum" | "flags" | "float" | "time" | "text" | "bytes" | "guid"
+raw: string | null; data: DissectValueData }
+export type DissectValueData = { kind: "bool" } | { kind: "number"; value: string; bits: number; signed: boolean; radix: DissectRadix } | { kind: "enum"; raw: string; bits: number; known: boolean } | { kind: "flags"; raw: string; bits: number; unknown: string; table: DissectFlag[] } | { kind: "float"; bits: number } | { kind: "time"; secs: string; nanos: number; zone: DissectZone; res: DissectRes } | { kind: "text"; value: string } | { kind: "bytes"; len: number } | { kind: "guid"; order: DissectGuidOrder; uuid: string } | { kind: "checksum"; algo: string; stored: string; bits: number | null; verdict: DissectVerdict } | { kind: "size"; n: string; unit: number | null; bytes: string | null; bits: number } | { kind: "duration"; ticks: string; per_sec: string } | { kind: "addr"; family: DissectAddrFamily; hex: string } | ({ kind: "color" } & DissectColor) | 
+/**
+ * A value fillyfoal has and this build doesn't structure: `text` only.
+ */
+{ kind: "other" }
+export type DissectVerdict = { kind: "valid" } | { kind: "mismatch"; computed: string | null } | 
+/**
+ * The dissector doesn't compute this check.
+ */
+{ kind: "not_checked" } | { kind: "skipped"; reason: string } | 
+/**
+ * Verified where the data is decoded; a mismatch is reported there.
+ */
+{ kind: "deferred" } | { kind: "other" }
+export type DissectZone = { kind: "utc" } | 
+/**
+ * The file recorded its wall clock this many minutes east of UTC.
+ */
+{ kind: "offset"; minutes: number } | 
+/**
+ * A wall clock in a zone the file doesn't record: never converted.
+ */
+{ kind: "local" } | { kind: "other" }
 export type DndData = { source_pane: PaneHandle; files: DndFile[] }
 export type DndFile = { name: string; is_dir: boolean }
 /**
