@@ -672,6 +672,10 @@ impl Vfs for SearchVfs {
         self.mount_meta.clone()
     }
 
+    fn unmounted(&self) {
+        self.job.shut_down();
+    }
+
     async fn list_files(
         &self,
         path: &Path,

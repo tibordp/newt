@@ -29,10 +29,10 @@
 //! SearchVfs uses `Sticky`; the tar and compressed-file archive VFSes
 //! use `Resettable`.
 //!
-//! Every transition (acquire, last-guard release, natural completion)
-//! happens under one lock, so a consumer arriving as the last one leaves
-//! either keeps the run alive or starts the next one — never lands on a
-//! run that is being cancelled.
+//! Every transition (acquire, last-guard release, natural completion,
+//! shut-down) happens under one lock, so a consumer arriving as the last
+//! one leaves either keeps the run alive or starts the next one — never
+//! lands on a run that is being cancelled.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -105,6 +105,8 @@ struct Inner {
 
 struct Run {
     consumers: usize,
+    /// Shut down for good: nothing is spawned again.
+    shut_down: bool,
     /// Whether the spawn closure has been invoked for the current run.
     started: bool,
     /// The current run's token. Replaced on a `Resettable` restart; each
@@ -127,6 +129,7 @@ impl BackgroundJob {
                 status: AtomicU8::new(STATUS_RUNNING),
                 run: Mutex::new(Run {
                     consumers: 0,
+                    shut_down: false,
                     started: false,
                     cancel: CancellationToken::new(),
                 }),
@@ -157,6 +160,7 @@ impl BackgroundJob {
             let mut run = self.inner.run.lock();
             run.consumers += 1;
             match (self.status(), self.inner.policy) {
+                _ if run.shut_down => None,
                 (JobStatus::Running, _) if !run.started => {
                     run.started = true;
                     Some(run.cancel.clone())
@@ -181,13 +185,28 @@ impl BackgroundJob {
             inner: self.inner.clone(),
         }
     }
+
+    /// Cancel the running task, if any, and never start another, whatever
+    /// the restart policy: for an owner that is going away while others
+    /// may still hold it.
+    pub fn shut_down(&self) {
+        let mut run = self.inner.run.lock();
+        run.shut_down = true;
+        let _ = self.inner.status.compare_exchange(
+            STATUS_RUNNING,
+            STATUS_CANCELLED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        run.cancel.cancel();
+    }
 }
 
 impl Drop for BackgroundJob {
     fn drop(&mut self) {
-        // When the owning struct goes away (unmount, etc.), make sure
-        // any outstanding task exits promptly. Cancelling an
-        // already-cancelled token is a no-op.
+        // When the owning struct goes away, make sure any outstanding
+        // task exits promptly. Cancelling an already-cancelled token is a
+        // no-op.
         self.inner.run.lock().cancel.cancel();
     }
 }
@@ -264,6 +283,20 @@ mod tests {
 
     fn spawn_counter(job: &BackgroundJob, spawns: &mut Vec<JobHandle>) -> ConsumerGuard {
         job.acquire(|handle| spawns.push(handle))
+    }
+
+    /// Consumers left behind keep neither the run going nor a new one
+    /// from starting.
+    #[test]
+    fn a_shut_down_job_stays_down() {
+        let job = BackgroundJob::new(RestartPolicy::Resettable);
+        let mut spawns = Vec::new();
+        let _held = spawn_counter(&job, &mut spawns);
+        job.shut_down();
+        assert!(spawns[0].is_cancelled());
+        assert_eq!(job.status(), JobStatus::Cancelled);
+        let _late = spawn_counter(&job, &mut spawns);
+        assert_eq!(spawns.len(), 1);
     }
 
     #[test]

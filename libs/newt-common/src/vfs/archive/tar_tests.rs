@@ -538,3 +538,98 @@ async fn the_last_mention_of_a_name_decides_it_and_names_stay_unique() {
     );
     assert_eq!(read_to_vec(&vfs, "/dup.txt").await, b"two\n");
 }
+
+// ---------------------------------------------------------------------------
+// Unmounting
+// ---------------------------------------------------------------------------
+
+/// A call still waiting on the index (a closed viewer's, say) holds the
+/// VFS past its unmount; the unmount stops indexing and fails the call
+/// rather than leaving it to keep indexing going.
+#[tokio::test]
+async fn unmounting_stops_indexing_under_a_waiting_call() {
+    let vfs = mount(SIMPLE_TAR_GZ, "/archive.gz", MockVfsConfig::default());
+    let registry = crate::vfs::VfsRegistry::with_root(vfs.clone());
+    let id = registry.mount(vfs.clone());
+
+    let hello = vp("/hello.txt");
+    let waiting = vfs.file_details(&hello);
+    tokio::pin!(waiting);
+    assert!(futures::poll!(waiting.as_mut()).is_pending());
+
+    registry.unmount(id);
+    let deadline = std::time::Duration::from_secs(5);
+    let err = tokio::time::timeout(deadline, waiting)
+        .await
+        .expect("the waiting call ends")
+        .expect_err("the archive was unmounted");
+    assert!(
+        err.to_string().contains("unmounted"),
+        "unexpected error: {err}"
+    );
+
+    // Nor does a call made afterwards start indexing again.
+    let err = tokio::time::timeout(deadline, vfs.file_details(&hello))
+        .await
+        .expect("the call ends")
+        .expect_err("the archive was unmounted");
+    assert!(
+        err.to_string().contains("unmounted"),
+        "unexpected error: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Reading while indexing
+// ---------------------------------------------------------------------------
+
+/// An uncompressed tar of `members`, in order.
+fn tar_archive(members: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (name, data) in members {
+        let mut header = [0u8; 512];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        header[148..156].fill(b' ');
+        let sum: u32 = header.iter().map(|&b| u32::from(b)).sum();
+        header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        out.extend_from_slice(&header);
+        out.extend_from_slice(data);
+        out.resize(out.len().div_ceil(512) * 512, 0);
+    }
+    out.resize(out.len() + 1024, 0);
+    out
+}
+
+/// A member the index has passed reads before the rest of the archive
+/// is indexed: from the partial index, not the complete one.
+#[tokio::test(start_paused = true)]
+async fn a_member_already_indexed_reads_while_indexing_runs() {
+    let bulk = vec![0u8; 4 << 20];
+    let archive = tar_archive(&[("hello.txt", HELLO), ("bulk.bin", &bulk)]);
+    let config = MockVfsConfig {
+        read_latency: Some(std::time::Duration::from_millis(100)),
+        ..MockVfsConfig::default()
+    };
+    let vfs = mount(&archive, ARCHIVE_PATH, config);
+
+    let details = vfs.file_details(&vp("/hello.txt")).await.unwrap();
+    assert_eq!(details.size, HELLO.len() as u64);
+    assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
+    assert!(
+        vfs.state.completed_index.get().is_none(),
+        "the read waited for the whole archive"
+    );
+
+    // A path nothing has listed yet waits for the complete index.
+    let err = vfs.file_details(&vp("/missing")).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::NotFound);
+    assert!(vfs.state.completed_index.get().is_some());
+}

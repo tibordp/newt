@@ -112,7 +112,11 @@ impl VfsRegistry {
             return None; // refuse to unmount ROOT
         }
         info!("vfs: unmount id={}", id);
-        self.vfs_map.write().remove(&id)
+        let vfs = self.vfs_map.write().remove(&id);
+        if let Some(vfs) = &vfs {
+            vfs.unmounted();
+        }
+        vfs
     }
 }
 

@@ -671,7 +671,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) The rust-url developers
   ignore 0.4.33 — Unlicense OR MIT
       Copyright (c) 2015 Andrew Gallant
-  iluvatar 0.6.0 — MIT OR Apache-2.0
+  iluvatar 0.7.0 — MIT OR Apache-2.0
       Copyright (c) 2025 iluvatar contributors
   indexmap 1.9.3 — Apache-2.0 OR MIT
       Copyright (c) 2016--2017

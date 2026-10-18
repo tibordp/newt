@@ -414,6 +414,12 @@ impl Vfs for CompressedFileVfs {
         self.mount_meta.clone()
     }
 
+    fn unmounted(&self) {
+        let _ = self.state.error.set("the archive was unmounted".into());
+        self.job.shut_down();
+        self.state.updated.notify_waiters();
+    }
+
     async fn list_files(
         &self,
         path: &Path,

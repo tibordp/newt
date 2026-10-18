@@ -112,6 +112,9 @@ pub struct MockVfsConfig {
     /// Time each `list_files` takes, so overlapping listings can be seen
     /// overlapping (`MockVfs::max_concurrent_listings`).
     pub list_latency: Option<std::time::Duration>,
+    /// Time each `read_at` of an `open_read_at` reader takes, so work that
+    /// reads a file a chunk at a time can be caught part-way.
+    pub read_latency: Option<std::time::Duration>,
     /// How `create_new` is honoured by writes and `copy_within`; `None`
     /// answers `NotSupported`.
     pub create_new: Option<MockRefusal>,
@@ -143,6 +146,7 @@ impl Default for MockVfsConfig {
             can_stat_directories: true,
             can_list_recursive: false,
             list_latency: None,
+            read_latency: None,
             create_new: Some(MockRefusal::AtOpen),
             create_new_max_size: None,
             rename_no_replace: true,
@@ -274,6 +278,7 @@ pub struct MockVfs {
     /// Directories `is_package` answers yes for, by wire path.
     packages: Vec<String>,
     list_latency: Option<std::time::Duration>,
+    read_latency: Option<std::time::Duration>,
     listings_in_flight: std::sync::atomic::AtomicUsize,
     max_concurrent_listings: std::sync::atomic::AtomicUsize,
 }
@@ -674,6 +679,7 @@ impl Vfs for MockVfs {
             entries: self.entries.clone(),
             failures: self.failures.clone(),
             strict_range_reads: self.strict_range_reads,
+            latency: self.read_latency,
         }))
     }
 
@@ -1405,6 +1411,7 @@ struct MockRandomReader {
     entries: Arc<Mutex<BTreeMap<String, MockEntry>>>,
     failures: Arc<Mutex<Vec<FailureSpec>>>,
     strict_range_reads: bool,
+    latency: Option<std::time::Duration>,
 }
 
 #[async_trait]
@@ -1412,6 +1419,9 @@ impl crate::vfs::VfsRandomReader for MockRandomReader {
     async fn read_at(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, crate::Error> {
         if let Some(e) = check_failure_in(&self.failures, &self.path, "read_at") {
             return Err(e);
+        }
+        if let Some(latency) = self.latency {
+            tokio::time::sleep(latency).await;
         }
         match self.entries.lock().get(&self.key) {
             Some(MockEntry::File { content, .. }) => {
@@ -1652,6 +1662,7 @@ impl MockVfsBuilder {
         let rename_no_replace = self.config.rename_no_replace;
         let exchange = self.config.exchange;
         let list_latency = self.config.list_latency;
+        let read_latency = self.config.read_latency;
         let descriptor: &'static dyn VfsDescriptor = Box::leak(Box::new(MockVfsDescriptor {
             config: self.config,
         }));
@@ -1674,6 +1685,7 @@ impl MockVfsBuilder {
             mounts: self.mounts,
             packages: self.packages,
             list_latency,
+            read_latency,
             listings_in_flight: std::sync::atomic::AtomicUsize::new(0),
             max_concurrent_listings: std::sync::atomic::AtomicUsize::new(0),
         })

@@ -177,7 +177,11 @@ struct TarIndexingState {
     /// from there.
     engine: tokio::sync::Mutex<Option<iluvatar::IndexingEngine<iluvatar::ThinningBudget>>>,
     /// Completed archive index (set once indexing finishes successfully).
-    completed_index: tokio::sync::OnceCell<iluvatar::ArchiveIndex>,
+    completed_index: tokio::sync::OnceCell<Arc<iluvatar::ArchiveIndex>>,
+    /// The latest partial index while indexing runs, which reads what it
+    /// has indexed. Published after the tree it was built into, so a path
+    /// the tree resolves is in it.
+    snapshot: parking_lot::RwLock<Option<Arc<iluvatar::ArchiveIndex>>>,
     /// Set if indexing failed with an error message.
     error: tokio::sync::OnceCell<String>,
     /// Set when the archive ends inside a header or member. The index
@@ -227,6 +231,7 @@ impl TarArchiveVfs {
                 }),
                 engine: tokio::sync::Mutex::new(None),
                 completed_index: tokio::sync::OnceCell::new(),
+                snapshot: parking_lot::RwLock::new(None),
                 error: tokio::sync::OnceCell::new(),
                 truncated: tokio::sync::OnceCell::new(),
                 updated: Notify::new(),
@@ -379,6 +384,7 @@ impl TarArchiveVfs {
                 let partial_index = engine.snapshot_index();
                 let tree = build_directory_tree_from_iluvatar(partial_index.entries());
                 *state.tree.write() = tree;
+                *state.snapshot.write() = Some(Arc::new(partial_index));
                 state.updated.notify_waiters();
                 emit_indexing_progress(
                     &reporter,
@@ -404,7 +410,8 @@ impl TarArchiveVfs {
         );
         let tree = build_directory_tree_from_iluvatar(index.entries());
         *state.tree.write() = tree;
-        let _ = state.completed_index.set(index);
+        let _ = state.completed_index.set(Arc::new(index));
+        *state.snapshot.write() = None;
         state.updated.notify_waiters();
         info!("archive: indexing complete for {}", archive_path);
         Ok(())
@@ -417,26 +424,44 @@ impl TarArchiveVfs {
             .map(|_| "archive truncated".to_string())
     }
 
-    /// Wait for the completed archive index (needed for file reads).
-    /// The returned `ConsumerGuard` keeps the indexer alive across this
-    /// call; the caller must hold it for the *entire* downstream use
-    /// of the index — typically by binding it to a local and letting
-    /// it drop with the function scope.
-    async fn wait_for_index(
+    /// An index to answer from: the complete one, or while indexing runs
+    /// the latest partial one, once `ready` finds what it needs in it. What
+    /// only the complete index can answer (a path not found so far) waits
+    /// for it. The returned `ConsumerGuard` keeps the indexer alive; the
+    /// caller must hold it for the *entire* downstream use of the index —
+    /// typically by binding it to a local and letting it drop with the
+    /// function scope.
+    async fn index_with(
         &self,
-    ) -> Result<(&iluvatar::ArchiveIndex, super::super::ConsumerGuard), Error> {
+        ready: impl Fn(&iluvatar::ArchiveIndex) -> bool,
+    ) -> Result<(Arc<iluvatar::ArchiveIndex>, super::super::ConsumerGuard), Error> {
         let guard = self.acquire_indexer();
 
         loop {
             let notified = self.state.updated.notified();
             if let Some(index) = self.state.completed_index.get() {
-                return Ok((index, guard));
+                return Ok((index.clone(), guard));
             }
             if let Some(err) = self.state.error.get() {
                 return Err(Error::custom(err.clone()));
             }
+            let snapshot = self.state.snapshot.read().clone();
+            if let Some(index) = snapshot
+                && ready(&index)
+            {
+                return Ok((index, guard));
+            }
             notified.await;
         }
+    }
+
+    /// [`index_with`](Self::index_with) for reading `path`.
+    async fn index_for(
+        &self,
+        path: &Path,
+    ) -> Result<(Arc<iluvatar::ArchiveIndex>, super::super::ConsumerGuard), Error> {
+        self.index_with(|index| self.resolve_for_read(index, path).is_ok())
+            .await
     }
 
     /// Resolve a path for reading: follow symlinks in the directory tree,
@@ -509,6 +534,12 @@ impl Vfs for TarArchiveVfs {
 
     fn mount_meta(&self) -> Vec<u8> {
         self.mount_meta.clone()
+    }
+
+    fn unmounted(&self) {
+        let _ = self.state.error.set("the archive was unmounted".into());
+        self.job.shut_down();
+        self.state.updated.notify_waiters();
     }
 
     async fn list_files(
@@ -627,14 +658,18 @@ impl Vfs for TarArchiveVfs {
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let (index, _guard) = self.wait_for_index().await?;
-
         // Try direct lookup for symlink identity (lstat equivalent).
         // This may return None if the path traverses through a symlink
         // directory (e.g. "/symlink_dir/file.txt" — only the resolved
         // path exists in the index).
         let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
         let path_str = normalized.to_string_lossy();
+        let (index, _guard) = self
+            .index_with(|index| {
+                index_get(index, &path_str).is_some() || self.resolve_for_read(index, path).is_ok()
+            })
+            .await?;
+        let index = &*index;
         let original_entry = index_get(index, &path_str);
 
         let is_symlink =
@@ -673,8 +708,10 @@ impl Vfs for TarArchiveVfs {
     }
 
     async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        // Wait for indexing to complete for accurate file info
-        let (_index, _guard) = self.wait_for_index().await?;
+        let std_path = StdPath::new(path.as_wire_str());
+        let (_index, _guard) = self
+            .index_with(|_| self.state.tree.read().file_info(std_path).is_ok())
+            .await?;
         self.state
             .tree
             .read()
@@ -685,9 +722,9 @@ impl Vfs for TarArchiveVfs {
         &self,
         path: &Path,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>, Error> {
-        let (index, guard) = self.wait_for_index().await?;
-        let (_, entry) = self.resolve_for_read(index, path)?;
-        let reader = self.prepare_reader(index, entry.uncompressed_offset, entry.size)?;
+        let (index, guard) = self.index_for(path).await?;
+        let (_, entry) = self.resolve_for_read(&index, path)?;
+        let reader = self.prepare_reader(&index, entry.uncompressed_offset, entry.size)?;
         let upstream = open_read_at(&self.upstream, &self.archive_path).await?;
         Ok(Box::new(GuardedRead {
             inner: PipelinedReader::new(
@@ -706,7 +743,8 @@ impl Vfs for TarArchiveVfs {
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
-        let (index, _guard) = self.wait_for_index().await?;
+        let (index, _guard) = self.index_for(path).await?;
+        let index = &*index;
         let (_, entry) = self.resolve_for_read(index, path)?;
         let total_size = entry.size;
         let want = length.min(total_size.saturating_sub(offset));
@@ -732,12 +770,18 @@ impl Vfs for TarArchiveVfs {
 
     /// Entries sit back to back in the uncompressed stream.
     async fn read_order(&self, paths: &[PathBuf]) -> Result<Option<Vec<u64>>, Error> {
-        let (index, _guard) = self.wait_for_index().await?;
+        let (index, _guard) = self
+            .index_with(|index| {
+                paths
+                    .iter()
+                    .all(|p| self.resolve_for_read(index, p).is_ok())
+            })
+            .await?;
         Ok(Some(
             paths
                 .iter()
                 .map(|p| {
-                    self.resolve_for_read(index, p)
+                    self.resolve_for_read(&index, p)
                         .map_or(u64::MAX, |(_, e)| e.uncompressed_offset)
                 })
                 .collect(),

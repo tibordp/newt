@@ -610,6 +610,10 @@ pub trait Vfs: Send + Sync {
     fn mount_meta(&self) -> Vec<u8> {
         Vec::new()
     }
+    /// The VFS was unmounted: stop its background work for good. It isn't
+    /// dropped yet if a call in flight still holds it, and that call
+    /// would otherwise keep the work going.
+    fn unmounted(&self) {}
 
     // (helpers defined below for impls to use)
 

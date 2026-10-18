@@ -34,7 +34,7 @@ dirs = "7"
 url = "2"
 openssh-sftp-client = "0.15"
 openssh-sftp-protocol-error = "0.1.1"
-iluvatar = { version = "0.6", features = ["tokio"] }
+iluvatar = { version = "0.7", features = ["tokio"] }
 newt-archive = { path = "../newt-archive" }
 newt-disc = { path = "../newt-disc" }
 blake3 = "1"
@@ -56,6 +56,8 @@ percent-encoding = "2"
 
 [dev-dependencies]
 serde_json = "1"
+# Paused clocks for tests that simulate slow upstreams.
+tokio = { version = "1", features = ["test-util"] }
 # A fake HTTP client standing in for S3 in the S3 writer's tests.
 aws-smithy-runtime-api = { version = "1", features = ["client"] }
 # Verifies archive-pack output (our ZipWriter) in operation tests.
