@@ -76,7 +76,7 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 
 ## Distribution
 
-- Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.
+- Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `org.newt-fm.newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.
 
 ## Bug fixes and strengthening
 
@@ -104,8 +104,7 @@ Release engineering:
 - CI on `macos-latest` and `windows-latest` (clippy + tests); today only Linux builds on push. Pin the toolchain (`rust-toolchain.toml`).
 - macOS: fail the release when signing secrets are missing, verify with `codesign --verify --deep` / `spctl` / `stapler validate`, set `minimumSystemVersion` (the frontend uses `color-mix()`, Safari 16.2, while Vite targets `safari13`). Trash goes through Finder AppleScript (trash-rs `DeleteMethod::Finder`) under the hardened runtime without `NSAppleEventsUsageDescription`; consider `NsFileManager`. Guide users to Full Disk Access on TCC-denied paths.
 - Elevated sessions from the AppImage: root can't exec the agent from the FUSE mount. `NEWT_AGENT_DIR` also leaks into terminal shells.
-- Settle identifiers before 1.0: keychain service `com.newt.credentials` vs `org.newt-fm.newt`, `newt.desktop` vs reverse-DNS.
-- Linux packages depend on libappindicator, which the binary doesn't link; no CI step test-installs a package.
+- No CI step test-installs a Linux package.
 - `cargo deny` (licences, advisories; bincode 1.3 is unmaintained), and WiX 6 → 7 wording in `newt.wxs` / `build-msi.ps1`.
 - `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint.
 - Write supported OS versions and Install/Update/Troubleshooting/Uninstall into FEATURE_DUMP for the manual.

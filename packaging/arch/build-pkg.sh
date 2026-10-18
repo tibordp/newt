@@ -43,7 +43,6 @@ arch = ${ARCH}
 license = GPL-3.0-or-later
 depend = webkit2gtk-4.1
 depend = gtk3
-depend = libappindicator-gtk3
 EOF
 
 # Build the package

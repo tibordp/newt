@@ -530,12 +530,20 @@ pub fn typescript_export_config() -> specta_typescript::Typescript {
 /// Everything from `default_commands()` with the uniform `(ctx, pane)`
 /// signature — the exceptions (`new_window`, `quit`, `open_elevated`,
 /// `connect_wsl`) take window-management arguments and are deliberately
-/// absent.
+/// absent — plus the `user_command_N` ids the command list carries.
 async fn dispatch_registry_command_inner(
     ctx: MainWindowContext,
     id: &str,
     pane: PaneHandle,
 ) -> Result<bool, Error> {
+    if let Some(index) = id
+        .strip_prefix("user_command_")
+        .and_then(|n| n.parse::<usize>().ok())
+    {
+        let app = ctx.window().app_handle().clone();
+        crate::user_commands::run_user_command(ctx, app.state(), pane, index).await?;
+        return Ok(true);
+    }
     match id {
         "as_other_pane" => pane::cmd_as_other_pane(ctx, pane).await?,
         "swap_panes" => pane::cmd_swap_panes(ctx, pane)?,

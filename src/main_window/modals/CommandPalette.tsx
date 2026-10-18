@@ -76,7 +76,7 @@ export default function CommandPalette({
         // When condition filtering for user commands
         matchesAppliesToCondition(command, state),
     );
-    ret.sort((a, b) => a.score - b.score);
+    ret.sort((a, b) => b.score - a.score);
     return ret.map(({ command }) => command);
   }, [filter, paneHandle, allCommands, categoryFilter, state]);
 

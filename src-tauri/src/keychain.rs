@@ -1,6 +1,6 @@
 use crate::common::Error;
 
-const SERVICE_NAME: &str = "com.newt.credentials";
+const SERVICE_NAME: &str = "org.newt-fm.newt";
 
 fn entry(key: &str) -> Result<keyring::Entry, Error> {
     keyring::Entry::new(SERVICE_NAME, key).map_err(|e| Error::Custom(e.to_string()))

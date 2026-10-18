@@ -114,6 +114,13 @@ const PLATFORM_KEEPS_STREAMS: bool = cfg!(any(target_os = "macos", windows));
 const PLATFORM_KEEPS_XATTRS: bool = cfg!(target_os = "macos");
 
 impl CopyMoveDefaults {
+    /// What the Copy dialog shows before anything is remembered: the
+    /// operation's defaults with the platform's own choice of attributes.
+    /// Paste and drops, which have no dialog, copy with these.
+    pub fn stock() -> newt_common::operation::CopyOptions {
+        Self::default().seed()
+    }
+
     /// The remembered toggles laid over the operation's own defaults.
     pub fn seed(&self) -> newt_common::operation::CopyOptions {
         let base = newt_common::operation::CopyOptions::default();

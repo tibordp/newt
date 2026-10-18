@@ -1055,6 +1055,47 @@ fn settings_that_cannot_work_are_reported() {
 }
 
 #[test]
+fn numbers_outside_their_range_keep_their_defaults() {
+    let loaded = loaded(
+        "[terminal]\nfont_size = 200\nscrollback = 5000\n\n\
+         [archives]\nzstd_level = 0\n\n\
+         [quick_open]\nlimit = 0\n",
+    );
+    assert_eq!(loaded.settings.terminal.font_size, 12);
+    assert_eq!(loaded.settings.terminal.scrollback, 5000);
+    assert_eq!(
+        loaded.settings.archives.zstd_level,
+        AppPreferences::default().archives.zstd_level
+    );
+    assert_eq!(
+        locations(&loaded),
+        [
+            ("terminal.font_size", Some(2)),
+            ("archives.zstd_level", Some(6)),
+            ("quick_open.limit", Some(9)),
+        ]
+    );
+    assert_eq!(loaded.problems[0].message, "200 is not between 6 and 72");
+    assert_eq!(loaded.problems[2].message, "0 is less than 1");
+}
+
+#[test]
+fn a_when_the_command_never_dispatches_in_is_reported() {
+    let loaded = loaded(
+        "[[bind]]\nkey = \"f5\"\ncommand = \"copy\"\nwhen = \"pane\"\n\n\
+         [[bind]]\nkey = \"f6\"\ncommand = \"move\"\nwhen = \"viewer\"\n\n\
+         [[bind]]\nkey = \"f7\"\ncommand = \"create_directory\"\nwhen = \"pane_focused\"\n\n\
+         [[bind]]\nkey = \"x\"\ncommand = \"viewer_close\"\nwhen = \"viewer\"\n",
+    );
+    assert_eq!(
+        locations(&loaded),
+        [("[[bind]] #1", Some(1)), ("[[bind]] #2", Some(6))]
+    );
+    assert!(loaded.problems[0].message.contains("none of"));
+    assert!(loaded.problems[1].message.contains("never fires"));
+}
+
+#[test]
 fn a_reload_that_is_not_toml_keeps_what_was_in_force() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");

@@ -9,6 +9,10 @@ export type SettingDef = {
   type: "boolean" | "string" | "number" | "enum" | "list" | "custom";
   enumValues?: string[];
   enumLabels?: Record<string, string>;
+  /// Bounds a number declares with `range(...)`.
+  minimum?: number;
+  maximum?: number;
+  integer?: boolean;
   customWidget?: string;
   value: any;
   modified: boolean;
@@ -127,6 +131,9 @@ export function extractSettings(preferences: PreferencesState): SettingDef[] {
         type,
         enumValues,
         enumLabels,
+        minimum: propSchema.minimum,
+        maximum: propSchema.maximum,
+        integer: propSchema.type === "integer",
         customWidget,
         value,
         modified: preferences.modified_keys.includes(key),

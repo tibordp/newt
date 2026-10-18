@@ -1840,7 +1840,9 @@ function PaneInner(
       setContextMenuOnFile(true);
       setContextMenuIsParentDir(fileName === "..");
 
-      // If right-clicked file is not in the selection, focus it (clearing selection)
+      // A right-click outside the selection focuses the row but keeps the
+      // selection, as a key press would: selection-wide commands still act
+      // on it, single-entry ones on the focused row.
       const inSelection = selectedLookupRef.current.has(fileName);
       if (fileName !== ".." && !inSelection) {
         safeSilent(commands.focus(paneHandle, fileName));

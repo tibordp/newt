@@ -532,7 +532,7 @@ pub fn dialog(
                         display_destination,
                         summary,
                         defaults: rt_state.copy_move.seed(),
-                        stock: crate::runtime_state::CopyMoveDefaults::default().seed(),
+                        stock: crate::runtime_state::CopyMoveDefaults::stock(),
                     }
                 }
                 DialogKind::CreateArchive => {

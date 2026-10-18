@@ -6,7 +6,7 @@ set -euo pipefail
 # Required env:
 #   VERSION   — package version (e.g. 0.1.0)
 #   DEPS      — runtime dependencies for the Depends: field
-#               (e.g. "libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1")
+#               (e.g. "libwebkit2gtk-4.1-0, libgtk-3-0")
 #
 # Optional env:
 #   ARCH      — Debian architecture (default: amd64)

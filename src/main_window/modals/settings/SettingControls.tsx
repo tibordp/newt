@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import styles from "../SettingsEditor.module.scss";
 import {
@@ -18,6 +18,42 @@ type ControlLabelling = {
   labelledBy: string;
   describedBy?: string;
 };
+
+/// A number is saved only once it is one the setting takes: what's typed on
+/// the way to it (an empty field, the `1` of `12` under a minimum of 6)
+/// stays in the field, and leaving the field puts back the saved value.
+function NumberControl({
+  setting,
+  onUpdate,
+  labelledBy,
+  describedBy,
+}: {
+  setting: SettingDef;
+  onUpdate: (key: string, value: any) => void;
+} & ControlLabelling) {
+  const saved = String(setting.value ?? 0);
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+  return (
+    <input
+      type="number"
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      min={setting.minimum}
+      max={setting.maximum}
+      step={setting.integer ? 1 : "any"}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (e.target.value !== "" && e.target.validity.valid) {
+          onUpdate(setting.key, Number(e.target.value));
+        }
+      }}
+      onBlur={() => setDraft(saved)}
+      style={{ width: "80px" }}
+    />
+  );
+}
 
 export function SettingControl({
   setting,
@@ -44,12 +80,11 @@ export function SettingControl({
       );
     case "number":
       return (
-        <input
-          type="number"
-          {...aria}
-          value={setting.value ?? 0}
-          onChange={(e) => onUpdate(setting.key, Number(e.target.value))}
-          style={{ width: "80px" }}
+        <NumberControl
+          setting={setting}
+          onUpdate={onUpdate}
+          labelledBy={labelledBy}
+          describedBy={describedBy}
         />
       );
     case "enum":

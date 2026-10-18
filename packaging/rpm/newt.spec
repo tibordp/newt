@@ -9,7 +9,6 @@ URL:            https://github.com/tibordp/newt
 
 Requires:       webkit2gtk4.1
 Requires:       gtk3
-Requires:       libappindicator-gtk3
 
 %description
 Newt is a keyboard-centric dual-pane file manager built with
@@ -23,7 +22,7 @@ make -C %{_newt_srcdir} install DESTDIR=%{buildroot} PREFIX=/usr BINARY=%{_newt_
 %doc /usr/share/doc/newt/THIRD-PARTY-NOTICES.md
 /usr/bin/newt
 /usr/share/newt/agents/
-/usr/share/applications/newt.desktop
-/usr/share/icons/hicolor/32x32/apps/newt.png
-/usr/share/icons/hicolor/128x128/apps/newt.png
-/usr/share/icons/hicolor/256x256/apps/newt.png
+/usr/share/applications/org.newt-fm.newt.desktop
+/usr/share/icons/hicolor/32x32/apps/org.newt-fm.newt.png
+/usr/share/icons/hicolor/128x128/apps/org.newt-fm.newt.png
+/usr/share/icons/hicolor/256x256/apps/org.newt-fm.newt.png

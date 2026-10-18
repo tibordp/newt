@@ -331,7 +331,7 @@ A file that isn't on this computer (S3, SFTP, an archive, a remote session) is d
 | Mod+Click (Ctrl; ⌘ on macOS) | Toggle selection for that file (keeps other selections) |
 | Shift+Click | Range select from focused file to clicked file |
 | Double-click | Open/enter (same as Enter key) |
-| Right-click | If clicked file is NOT selected: focus it (clears selection), show context menu. If clicked file IS selected: keep selection, show context menu. |
+| Right-click | Shows the context menu. A click outside the selection focuses the clicked row but keeps the selection, as a key press would: selection-wide commands (Copy, Delete, …) still act on the selection, single-entry ones (Rename, Open With, …) on the clicked row. A click inside the selection leaves focus where it was. |
 | Drag outside the Name column | Rectangle (marquee) selection — see below |
 | Drag on file icon/name | Initiate drag-and-drop to other pane — see below |
 | Alt+Wheel (⌥ on macOS) | Move the cursor instead of scrolling, one row per wheel notch however fast the wheel turns (scroll acceleration is ignored). A very fast spin can move a little less than a row per notch: the webview merges some notches into one event |
@@ -408,7 +408,7 @@ All but Copy Path are the pane's ordinary commands, acting on the pane whose bar
 
 - Drag one or more files from one pane to the other by dragging anywhere in the Name column — the icon, the name, or the blank space after it. Dragging in any other column or below the last row draws a selection rectangle instead.
 - **Multi-file drag**: If multiple files are selected, dragging any selected file drags them all. A ghost preview shows "N items" at the cursor.
-- **Drop targets**: Drop on a folder to copy/move into it. Drop on the pane background to copy/move to the pane's current directory.
+- **Drop targets**: Drop on a folder to copy/move into it, or on `..` to copy/move to wherever `..` leads (the folder holding an archive, at its root). Drop on the pane background to copy/move to the pane's current directory. A drop copies with the Copy dialog's stock options — the platform's defaults, not the toggles F5 remembers: on macOS extended attributes (tags, quarantine) and resource forks come along, on Windows alternate streams.
 - **Modifier keys**: Normal drop = copy. Shift+drop = move.
 - **Visual feedback**: Drop target pane/folder highlights on hover.
 - **Same-pane restrictions**: Cannot drop a folder onto itself.
@@ -694,7 +694,7 @@ Today only S3 implements a sheet:
 Copy, cut and paste files through the system clipboard, within Newt and to and from other apps — Finder, Explorer, Nautilus, Nemo, Thunar, Caja, Dolphin, PCManFM-Qt, mail and chat apps.
 
 - **Copy to Clipboard** (Mod+C, also Ctrl+Ins off macOS) and **Cut to Clipboard** (Mod+X) put the selection (or the focused entry) on the clipboard: as files, for other apps, when they're on this computer; as their paths, as text, always — so a text editor or a terminal gets the paths. Cut files show faded in the panes listing them until they're pasted or something else is copied, anywhere.
-- **Paste** (Mod+V, also Shift+Ins off macOS) copies what's on the clipboard into the pane's current folder — never into the folder under the cursor — and moves it after a Cut. It starts at once, like a drop, with the default copy options; clashes ask as in any copy. A cut pastes once: the clipboard is emptied when the move finishes. Pasting a cut into the folder the files are in does nothing but use up the cut (files from elsewhere among them still move); pasting a copy there says a file can't be copied onto itself.
+- **Paste** (Mod+V, also Shift+Ins off macOS) copies what's on the clipboard into the pane's current folder — never into the folder under the cursor — and moves it after a Cut. It starts at once, like a drop, with the Copy dialog's stock options (the platform's defaults, not the toggles F5 remembers); clashes ask as in any copy. A cut pastes once: the clipboard is emptied when the move finishes. Pasting a cut into the folder the files are in does nothing but use up the cut (files from elsewhere among them still move); pasting a copy there says a file can't be copied onto itself.
 - **Move Here** (⌥⌘V on macOS, unbound elsewhere) pastes as a move whatever was copied, as in Finder.
 - **Copy Path** (⌥⌘C on macOS, Ctrl+Shift+C elsewhere) puts only the paths on the clipboard, as text, so a chat or mail app pastes the path rather than attaching the files.
 - **Files that aren't on this computer** — on S3 or SFTP, in an archive, on a remote session's host — copy and paste within their window like any others, but reach other apps only as their paths: Finder or Explorer can't paste them.
@@ -1459,7 +1459,7 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 ### Connection Profiles and Quick Connect
 
-**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service via the `keyring` crate) under the service name `com.newt.credentials`.
+**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service via the `keyring` crate) under the service name `org.newt-fm.newt`.
 
 **Profile types**:
 - **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
@@ -1780,7 +1780,7 @@ Stored as `settings.toml` under Tauri's platform-specific application configurat
 
 The file is hot-reloaded — changes are picked up within 200ms and applied without restart.
 
-**Mistakes don't cost the rest of the file.** Each setting is read on its own: one with the wrong type (`history_retention = "lots"`), an unknown key, or a `[[bind]]`/`[[command]]`/`[[bookmark]]`/`[[association]]` entry that doesn't read is left out, and everything else applies — a left-out setting keeps its default. Settings that read but can't work are flagged too: a binding to a command that doesn't exist, a key whose modifiers aren't in the order `meta`, `ctrl`, `shift`, `alt` (it would never fire), a pattern that isn't a valid glob, an association whose `command` names no user command, an editor language that doesn't exist. Only a file that isn't TOML at all is ignored as a whole; on a reload, the settings in force before stay in force.
+**Mistakes don't cost the rest of the file.** Each setting is read on its own: one with the wrong type (`history_retention = "lots"`), an unknown key, or a `[[bind]]`/`[[command]]`/`[[bookmark]]`/`[[association]]` entry that doesn't read is left out, and everything else applies — a left-out setting keeps its default. Settings that read but can't work are flagged too: a binding to a command that doesn't exist, a key whose modifiers aren't in the order `meta`, `ctrl`, `shift`, `alt` (it would never fire), a `when` the command is never dispatched in (`pane_focused`/`terminal_focused` for main-window commands, `viewer` or `editor` for those windows' own), a pattern that isn't a valid glob, an association whose `command` names no user command, an editor language that doesn't exist. A number outside its setting's range (`terminal.font_size` 6–72, `archives.zstd_level` 1–22, …) is left out like one of the wrong type; the Settings dialog only saves numbers in range. Only a file that isn't TOML at all is ignored as a whole; on a reload, the settings in force before stay in force.
 
 When the file has problems — at startup or after any reload — a toast appears over the main window: the first problem with its line, and how many more there are. It doesn't time out, and offers **Show** (opens Settings) and **Open settings.toml**; once dismissed (×), it stays away until a reload turns up a different set of problems, and goes on its own once the file is fixed. The Settings dialog lists every problem with its line at the top, whether or not the toast was dismissed.
 
@@ -2068,6 +2068,12 @@ for copyright notices, and deduplicates the licence bodies per SPDX id. Asset
 attributions are hand-maintained in `xtask/src/notices_assets.md`. CI runs
 `cargo xtask notices --check`, so the committed file cannot drift from the
 dependency tree.
+
+Linux packages install the desktop entry as `org.newt-fm.newt.desktop`, with
+its icons under the same name: the id Newt's windows report as their Wayland
+app id and X11 class, so the desktop matches them to it (icon, dock grouping).
+`xdg-mime default org.newt-fm.newt.desktop inode/directory` makes Newt the
+default file manager.
 
 Linux packages install `LICENSE` and the notices under
 `/usr/share/doc/newt/`; the `.deb` additionally carries a Debian

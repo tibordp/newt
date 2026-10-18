@@ -2682,11 +2682,12 @@ impl PaneViewState {
         if focused.key() == PARENT_KEY {
             return;
         }
-        let want = (focused.is_dir, extension_of(&focused.name).to_lowercase());
+        let group = |f: &File| (!f.is_dir).then(|| extension_of(&f.name).to_lowercase());
+        let want = group(focused);
         self.drag_base = None;
         self.clear_quick_search();
         for f in &self.files {
-            if f.key() != PARENT_KEY && (f.is_dir, extension_of(&f.name).to_lowercase()) == want {
+            if f.key() != PARENT_KEY && group(f) == want {
                 self.all_selected.insert(f.key().to_string());
             }
         }
@@ -3135,17 +3136,21 @@ mod tests {
             ("..", true),
             ("dir", true),
             ("other", true),
+            ("pkg.d", true),
             ("README", false),
             ("x.txt", false),
+            ("y.d", false),
         ]);
         vs.focused = Some("dir".into());
         vs.select_same_extension();
-        assert_eq!(vs.all_selected.len(), 2);
+        assert_eq!(vs.all_selected.len(), 3);
         assert!(vs.all_selected.contains("other"));
+        assert!(vs.all_selected.contains("pkg.d"));
         assert!(!vs.all_selected.contains("README"));
+        assert!(!vs.all_selected.contains("y.d"));
         vs.focused = Some(PARENT_KEY.into());
         vs.select_same_extension();
-        assert_eq!(vs.all_selected.len(), 2);
+        assert_eq!(vs.all_selected.len(), 3);
     }
 
     #[test]

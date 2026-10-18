@@ -1194,6 +1194,12 @@ fn main() {
         [left, right]
     };
     let global_ctx = GlobalContext::default();
+    let context = tauri::generate_context!();
+    // Without a GTK application id (which would make GTK allow a single
+    // instance), the program name is the Wayland app id and X11 class
+    // the desktop matches windows to `org.newt-fm.newt.desktop` by.
+    #[cfg(target_os = "linux")]
+    gtk::glib::set_prgname(Some(context.config().identifier.as_str()));
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1468,7 +1474,7 @@ fn main() {
             },
         )
         .invoke_handler(handler)
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running tauri application")
         .run(|app_handle, event| match event {
             // The app delegate exists only once the app has launched.

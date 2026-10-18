@@ -36,9 +36,9 @@ make install DESTDIR="$APPDIR" PREFIX=/usr BINARY="$BINARY" AGENT_DIR="$AGENT_DI
 
 # AppDir entry points: AppRun + top-level desktop file and icon
 install -m755 packaging/appimage/AppRun "$APPDIR/AppRun"
-install -m644 packaging/newt.desktop "$APPDIR/newt.desktop"
-install -m644 src-tauri/icons/128x128.png "$APPDIR/newt.png"
-ln -s newt.png "$APPDIR/.DirIcon"
+install -m644 packaging/org.newt-fm.newt.desktop "$APPDIR/org.newt-fm.newt.desktop"
+install -m644 src-tauri/icons/128x128.png "$APPDIR/org.newt-fm.newt.png"
+ln -s org.newt-fm.newt.png "$APPDIR/.DirIcon"
 
 OUT="Newt-${VERSION}-${ARCH}.AppImage"
 "$APPIMAGETOOL" "$APPDIR" "$OUT"

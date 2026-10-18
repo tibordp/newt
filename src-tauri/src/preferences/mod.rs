@@ -917,7 +917,7 @@ impl PreferencesManager {
                 ("QuickOpenPreferences", "skip_packages"),
             ] {
                 if let Some(properties) = schema_json
-                    .pointer_mut(&format!("/definitions/{section}/properties"))
+                    .pointer_mut(&format!("/$defs/{section}/properties"))
                     .and_then(|p| p.as_object_mut())
                 {
                     properties.remove(setting);

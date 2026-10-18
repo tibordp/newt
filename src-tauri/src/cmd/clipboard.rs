@@ -9,6 +9,7 @@ use newt_common::vfs::{VfsId, VfsPath};
 use crate::clipboard::Stamp;
 use crate::common::Error;
 use crate::main_window::{ClipboardRecord, MainWindowContext, PaneHandle};
+use crate::runtime_state::CopyMoveDefaults;
 
 #[tauri::command]
 #[specta::specta]
@@ -183,14 +184,14 @@ async fn paste_files(
             rename_to: None,
             sources,
             destination,
-            options: Default::default(),
+            options: CopyMoveDefaults::stock(),
         }
     } else {
         OperationRequest::Copy {
             rename_to: None,
             sources,
             destination,
-            options: Default::default(),
+            options: CopyMoveDefaults::stock(),
         }
     };
     let after = ctx.clone();

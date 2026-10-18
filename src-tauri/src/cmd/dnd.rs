@@ -2,7 +2,21 @@ use newt_common::operation::{OperationId, OperationRequest};
 use newt_common::vfs::VfsPath;
 
 use crate::common::{Error, RawArgs};
+use crate::main_window::pane::{PARENT_KEY, Pane};
 use crate::main_window::{DndData, DndFile, MainWindowContext, MainWindowState, PaneHandle};
+use crate::runtime_state::CopyMoveDefaults;
+
+/// Where a drop on `pane` lands: its directory, the folder row it hit, or —
+/// for the `..` row — wherever `..` would navigate, out of an archive
+/// included.
+fn drop_destination(pane: &Pane, subdirectory: Option<&str>) -> VfsPath {
+    let dir = pane.path();
+    match subdirectory {
+        None => dir,
+        Some(PARENT_KEY) => pane.resolve_relative(&dir, PARENT_KEY),
+        Some(sub) => dir.join(sub),
+    }
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -69,7 +83,7 @@ pub async fn execute_dnd(
     subdirectory: Option<String>,
     is_move: bool,
 ) -> Result<OperationId, Error> {
-    let (sources, dest_path) = ctx.with_update(|gs| {
+    let (sources, destination) = ctx.with_update(|gs| {
         let dnd_data = gs
             .dnd
             .0
@@ -83,27 +97,25 @@ pub async fn execute_dnd(
             .panes
             .get(destination_pane)
             .ok_or_else(|| Error::Custom("destination pane not found".into()))?;
-        Ok((sources, dest_pane.path()))
+        Ok((
+            sources,
+            drop_destination(&dest_pane, subdirectory.as_deref()),
+        ))
     })?;
-
-    let destination = match subdirectory {
-        Some(sub) => dest_path.join(&sub),
-        None => dest_path,
-    };
 
     let request = if is_move {
         OperationRequest::Move {
             rename_to: None,
             sources,
             destination,
-            options: Default::default(),
+            options: CopyMoveDefaults::stock(),
         }
     } else {
         OperationRequest::Copy {
             rename_to: None,
             sources,
             destination,
-            options: Default::default(),
+            options: CopyMoveDefaults::stock(),
         }
     };
 
@@ -253,20 +265,16 @@ pub async fn external_drop(
     })?;
 
     if let Some((dnd, sources, source_path)) = self_drop {
-        let dest_path = ctx
+        let dest_pane = ctx
             .panes()
             .get(pane_handle)
-            .ok_or_else(|| Error::Custom("pane not found".into()))?
-            .path();
+            .ok_or_else(|| Error::Custom("pane not found".into()))?;
         // Dropping onto a row that is one of the dragged folders degrades to
         // a pane-background drop, mirroring the internal same-pane rule.
         let subdirectory = subdirectory.filter(|s| {
             !(pane_handle == dnd.source_pane && dnd.files.iter().any(|f| &f.name == s))
         });
-        let destination = match subdirectory {
-            Some(sub) => dest_path.join(&sub),
-            None => dest_path,
-        };
+        let destination = drop_destination(&dest_pane, subdirectory.as_deref());
         if destination == source_path {
             return Ok(None);
         }
@@ -274,7 +282,7 @@ pub async fn external_drop(
             rename_to: None,
             sources,
             destination,
-            options: Default::default(),
+            options: CopyMoveDefaults::stock(),
         };
         return super::operations::start_operation(ctx, request)
             .await
@@ -298,21 +306,17 @@ pub async fn external_drop(
         })
         .collect();
 
-    let dest_path = ctx
+    let dest_pane = ctx
         .panes()
         .get(pane_handle)
-        .ok_or_else(|| Error::Custom("pane not found".into()))?
-        .path();
-    let destination = match subdirectory {
-        Some(sub) => dest_path.join(&sub),
-        None => dest_path,
-    };
+        .ok_or_else(|| Error::Custom("pane not found".into()))?;
+    let destination = drop_destination(&dest_pane, subdirectory.as_deref());
 
     let request = OperationRequest::Copy {
         rename_to: None,
         sources,
         destination,
-        options: Default::default(),
+        options: CopyMoveDefaults::stock(),
     };
 
     super::operations::start_operation(ctx, request)
