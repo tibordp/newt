@@ -465,7 +465,6 @@ impl Vfs for CompressedFileVfs {
             } else {
                 index.unpacked_len.unwrap_or(0)
             },
-            mime_type: crate::vfs::file::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir: file.is_dir,
             is_symlink: false,
             symlink_target: None,

@@ -784,19 +784,8 @@ impl Vfs for SftpVfs {
             .permissions()
             .map(|p| Mode(permissions_to_mode(&p)));
 
-        // Extension-based MIME detection only — content sniffing on SFTP would
-        // require an extra open + 8 KB read on every focus change, which is
-        // costly on high-latency links and rarely contributes information that
-        // mime_guess can't already provide from the extension.
-        let mime_type = if is_dir {
-            None
-        } else {
-            crate::vfs::file::guess_mime_type(&sftp_path(path))
-        };
-
         Ok(FileDetails {
             size,
-            mime_type,
             is_dir,
             is_symlink,
             symlink_target,

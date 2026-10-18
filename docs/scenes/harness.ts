@@ -131,7 +131,6 @@ const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
 
 const detailsOf = async (path: VfsPath): Promise<FileDetails> => ({
   size: fixture(path).size ?? (await bytesOf(path)).length,
-  mime_type: fixture(path).mime,
   is_dir: false,
   is_symlink: false,
   symlink_target: null,
@@ -191,11 +190,11 @@ const handlers: Record<string, (args: any) => unknown> = {
   get_runtime_state: () => runtimeState,
   file_details: ({ path }: { path: VfsPath }) => detailsOf(path),
   inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
-    const details = await detailsOf(path);
+    const { mime, viewerMode } = fixture(path);
     return {
-      details,
-      viewer_mode:
-        fixture(path).viewerMode ?? viewerModeOf(details.mime_type ?? ""),
+      details: await detailsOf(path),
+      viewer_mode: viewerMode ?? viewerModeOf(mime ?? ""),
+      mime,
       language: scene.window === "editor" ? scene.state.language : "plaintext",
     };
   },

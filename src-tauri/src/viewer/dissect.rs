@@ -21,6 +21,7 @@ use fillyfoal::{
     Activity, ByteRequest, ChildState, Count, DecodeProgress, DiagKind, Diagnostic, Limits, NodeId,
     Progress, ReadProgress, Secret, SecretRequest, Session, SourceId, Span, Wait, formats,
 };
+use newt_common::filesystem::Filesystem;
 use newt_common::vfs::{VfsPath, VfsRandomReader};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -1040,21 +1041,33 @@ pub struct DissectLocated {
 
 // --- Commands ---
 
-/// Whether the dissector recognises the file whose head and tail these are.
-pub fn recognises(data: &[u8], tail: &[u8], len: u64) -> bool {
-    let head = formats::Head {
-        data,
-        tail,
-        len,
-        len_known: true,
-    };
-    formats::identify(&head).is_some_and(|f| f.name != "text")
+/// What the dissector identifies the file at `path`, `len` bytes named
+/// `name`, as: the same answer its tree's root gets, reading only what
+/// identification asks for.
+pub async fn identify(
+    fs: &dyn Filesystem,
+    path: &VfsPath,
+    len: u64,
+    name: &str,
+) -> Result<formats::Identification, Error> {
+    let mut identify = formats::Identify::new(len, Some(name));
+    loop {
+        match identify.poll() {
+            formats::Identified::NeedBytes(ranges) => {
+                let chunks = futures::future::try_join_all(
+                    ranges
+                        .iter()
+                        .map(|r| fs.read_range(path.clone(), r.offset, r.len)),
+                )
+                .await?;
+                for (range, chunk) in ranges.iter().zip(chunks) {
+                    identify.provide(range.offset, &chunk.data);
+                }
+            }
+            formats::Identified::Done(found) => return Ok(found),
+        }
+    }
 }
-
-/// Bytes the probe of [`recognises`] wants: from the start, and from the
-/// end.
-pub const PROBE_HEAD: u64 = formats::HEAD_LEN;
-pub const PROBE_TAIL: u64 = formats::TAIL_LEN;
 
 /// Every format, those that list the extension of the file `name` first.
 #[tauri::command]

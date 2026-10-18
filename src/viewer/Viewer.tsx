@@ -6,6 +6,8 @@ import styles from "./Viewer.module.scss";
 import { commands, type ViewerState } from "../lib/bindings";
 import { useRemoteState, safe, unwrap, unwrapBytes } from "../lib/ipc";
 import { useScopedBindings } from "../lib/scopedBindings";
+import { useAfterGrace } from "../lib/useAfterGrace";
+import Spinner from "../main_window/Spinner";
 import { useViewerHost } from "./host";
 import type { VfsPath } from "../lib/types";
 import {
@@ -47,6 +49,7 @@ export function ViewerBody({
 }: ViewerBodyProps) {
   const viewerHost = useViewerHost();
   const [info, setInfo] = useState<FileInfo | null>(null);
+  const [mime, setMime] = useState<string | null>(null);
   const fileUrl =
     filePath && info
       ? buildFileUrl(
@@ -54,6 +57,7 @@ export function ViewerBody({
           filePath.vfs_id,
           filePath.path,
           fileVersion(info),
+          mime,
         )
       : "";
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +74,7 @@ export function ViewerBody({
     if (!filePath) return;
     // Reset state for new file
     setInfo(null);
+    setMime(null);
     setError(null);
     setAutoMode(null);
     chunkCache.current.clear();
@@ -80,6 +85,7 @@ export function ViewerBody({
         const inspected = await unwrap(commands.inspectFile(filePath));
         if (cancelled) return;
         setInfo(inspected.details as FileInfo);
+        setMime(inspected.mime);
         setAutoMode(inspected.viewer_mode);
         safe(viewerHost.setMode(inspected.viewer_mode));
       } catch (e: any) {
@@ -108,6 +114,7 @@ export function ViewerBody({
   const currentMode = confirmedFor === fileKey ? stateMode : autoMode;
 
   const ready = !!error || (!!info && !!currentMode);
+  const showLoading = useAfterGrace(!!filePath && !ready);
   useEffect(() => {
     if (ready) onReady?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,7 +191,7 @@ export function ViewerBody({
 
   if (error) {
     content = (
-      <>
+      <div className={styles.viewer}>
         <div className={styles.viewerContent} />
         <div
           className={styles.viewerStatus}
@@ -192,19 +199,26 @@ export function ViewerBody({
         >
           <span className={styles.statusError}>{error}</span>
         </div>
-      </>
+      </div>
     );
   } else if (!filePath || !info || !currentMode) {
     content = (
-      <>
+      <div className={styles.viewer}>
         <div className={styles.viewerContent} />
         <div
           className={styles.viewerStatus}
           onContextMenu={(e) => e.preventDefault()}
         >
-          {filePath ? <span>Loading...</span> : null}
+          {/* A space holds the bar's height until the grace period ends. */}
+          {showLoading ? (
+            <span>
+              <Spinner /> Loading…
+            </span>
+          ) : (
+            "\u00a0"
+          )}
         </div>
-      </>
+      </div>
     );
   } else if (currentMode === "text") {
     content = (
@@ -258,7 +272,7 @@ export function ViewerBody({
         vfsPath={filePath}
         fileUrl={fileUrl}
         fileSize={info.size}
-        mimeType={info.mime_type}
+        mimeType={mime}
         autoMode={autoMode ?? currentMode}
       />
     );

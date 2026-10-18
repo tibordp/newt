@@ -686,7 +686,6 @@ impl Vfs for MockVfs {
                 gid,
             }) => Ok(crate::vfs::FileDetails {
                 size: content.len() as u64,
-                mime_type: None,
                 is_dir: false,
                 is_symlink: false,
                 symlink_target: None,
@@ -699,7 +698,6 @@ impl Vfs for MockVfs {
             }),
             Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::vfs::FileDetails {
                 size: 0,
-                mime_type: None,
                 is_dir: true,
                 is_symlink: false,
                 symlink_target: None,
@@ -712,7 +710,6 @@ impl Vfs for MockVfs {
             }),
             Some(MockEntry::Symlink { target }) => Ok(crate::vfs::FileDetails {
                 size: 0,
-                mime_type: None,
                 is_dir: false,
                 is_symlink: true,
                 symlink_target: Some(target.clone()),

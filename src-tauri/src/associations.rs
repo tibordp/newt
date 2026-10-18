@@ -12,7 +12,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use log::warn;
 
 use crate::preferences::schema::{AssociationEntry, AssociationKind, BrowseFormat, EnterAction};
-use crate::viewer::ViewerMode;
+use crate::viewer::{ViewerMode, webview_formats};
 
 pub struct Associations {
     /// The settings file's entries, then the shipped ones.
@@ -238,19 +238,20 @@ impl Associations {
         }
     }
 
-    /// The viewer mode for a file, falling back to its MIME type.
-    pub fn viewer_mode(&self, name: &str, mime: Option<&str>) -> ViewerMode {
-        self.trace(name, AssociationKind::File, None)
-            .viewer
-            .map_or_else(|| viewer_for_mime(mime), |(v, _)| v)
-    }
-
-    /// Whether an entry, rather than the MIME type, picks the viewer mode
-    /// for a file.
-    pub fn sets_viewer(&self, name: &str) -> bool {
-        self.trace(name, AssociationKind::File, None)
-            .viewer
-            .is_some()
+    /// How the viewer shows a file named `name` of `size` bytes whose
+    /// content is `content`: its mode, and the MIME type it is shown as.
+    /// An entry's viewer comes first, then [`by_content`].
+    pub fn view(
+        &self,
+        name: &str,
+        size: u64,
+        content: Content<'_>,
+    ) -> (ViewerMode, Option<String>) {
+        let (mode, mime) = by_content(name, size, content);
+        match self.trace(name, AssociationKind::File, None).viewer {
+            Some((viewer, _)) => (viewer, mime),
+            None => (mode, mime),
+        }
     }
 
     /// The editor language for a file, falling back to its MIME type.
@@ -326,6 +327,8 @@ pub enum Origin {
     BuiltIn,
     /// The MIME type the name implies.
     FileType,
+    /// What files of the name usually hold (see `usual_viewer`).
+    Content,
     /// Nothing: Enter opens a file in its default application and goes
     /// into a directory, and Browse Into reads the file's first bytes.
     Default,
@@ -396,9 +399,83 @@ fn glob(pattern: &str) -> Option<globset::GlobMatcher> {
         .map(|g| g.compile_matcher())
 }
 
-fn mime_of(name: &str) -> Option<String> {
-    newt_common::vfs::file::guess_mime_type(std::path::Path::new(name))
+/// The MIME type `name`'s extension suggests.
+pub fn mime_of(name: &str) -> Option<String> {
+    mime_guess::from_path(name)
+        .first()
+        .map(|m| m.essence_str().to_string())
 }
+
+/// What a file's content was identified as.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Content<'a> {
+    /// The identified format's MIME type; `None` when nothing matched.
+    pub mime: Option<&'a str>,
+    /// Whether the content is text, whatever else it is.
+    pub text: bool,
+}
+
+/// How the viewer shows a file named `name` of `size` bytes whose content
+/// is `content`, without associations: its mode, and the MIME type it is
+/// shown as. The content decides, except that text with a name naming a
+/// text mode (`.md`, `.csv`, `.txt`) is shown as the name says.
+pub fn by_content(name: &str, size: u64, content: Content<'_>) -> (ViewerMode, Option<String>) {
+    let by_name = mime_of(name);
+    let named_text = matches!(
+        viewer_for_mime(by_name.as_deref()),
+        ViewerMode::Text | ViewerMode::Markdown | ViewerMode::Table
+    );
+    let mime = if size == 0 || (content.text && named_text) {
+        by_name
+    } else {
+        content
+            .mime
+            .map(|m| m.split(';').next().unwrap_or(m).trim().to_string())
+    };
+    let mode = match viewer_for_mime(mime.as_deref()) {
+        ViewerMode::Image if size > IMAGE_MAX_SIZE => ViewerMode::Dissect,
+        ViewerMode::Hex if content.mime.is_some() => ViewerMode::Dissect,
+        mode => mode,
+    };
+    (mode, mime)
+}
+
+/// The mode the viewer usually picks for a file named `name`, for the
+/// associations editor, which has no content to go on: a name naming a text
+/// mode keeps it, as text content does, and one with an editor language
+/// (`.ts`, `Dockerfile`) is text unless its type picks a mode of its own
+/// (`.svg`); otherwise what [`by_content`] makes of the formats claiming its
+/// extension, if they agree. `None` when it depends on the content.
+fn usual_viewer(name: &str, has_language: bool) -> Option<ViewerMode> {
+    let by_name = mime_of(name).map(|m| viewer_for_mime(Some(&m)));
+    if matches!(
+        by_name,
+        Some(ViewerMode::Text | ViewerMode::Markdown | ViewerMode::Table)
+    ) {
+        return by_name;
+    }
+    if has_language && matches!(by_name, None | Some(ViewerMode::Hex)) {
+        return Some(ViewerMode::Text);
+    }
+    let claims = name
+        .rsplit_once('.')
+        .map(|(_, extension)| fillyfoal::formats::by_extension(extension))
+        .unwrap_or_default();
+    let mut modes = claims.iter().map(|format| {
+        let content = Content {
+            mime: Some(format.mime),
+            text: false,
+        };
+        by_content(name, 1, content).0
+    });
+    let first = modes.next()?;
+    modes.all(|mode| mode == first).then_some(first)
+}
+
+/// The largest image Image mode is chosen for: the webview holds all of
+/// an image's bytes in one block while decoding it, so a bigger one takes
+/// the viewer down.
+const IMAGE_MAX_SIZE: u64 = 512 << 20;
 
 impl Associations {
     fn origin(&self, index: usize) -> Origin {
@@ -478,10 +555,10 @@ impl Associations {
                 own_entry.and_then(|e| e.viewer),
                 traced.viewer,
                 |i| self.origin(i),
-                (
-                    mime.as_deref().map(|m| viewer_for_mime(Some(m))),
-                    Origin::FileType,
-                ),
+                match usual_viewer(&sample, traced.language.is_some()) {
+                    Some(viewer) => (Some(viewer), Origin::Content),
+                    None => (None, Origin::Default),
+                },
             ),
             language: cell(
                 own_entry.and_then(|e| e.language.clone()),
@@ -543,7 +620,7 @@ impl Associations {
                 viewer: traced
                     .viewer
                     .map(|(v, _)| v)
-                    .or_else(|| mime.as_deref().map(|m| viewer_for_mime(Some(m)))),
+                    .or_else(|| usual_viewer(query, traced.language.is_some())),
                 language: traced
                     .language
                     .map(|(l, _)| l)
@@ -636,9 +713,9 @@ fn viewer_for_mime(mime: Option<&str>) -> ViewerMode {
         "text/csv" | "text/tab-separated-values" => ViewerMode::Table,
         "text/markdown" | "text/x-markdown" => ViewerMode::Markdown,
         "application/pdf" => ViewerMode::Pdf,
-        _ if mime.starts_with("video/") => ViewerMode::Video,
-        _ if mime.starts_with("audio/") => ViewerMode::Audio,
-        _ if mime.starts_with("image/") => ViewerMode::Image,
+        _ if webview_formats::plays_video(mime) => ViewerMode::Video,
+        _ if webview_formats::plays_audio(mime) => ViewerMode::Audio,
+        _ if webview_formats::shows_image(mime) => ViewerMode::Image,
         _ if mime.starts_with("text/")
             || TEXT_MIME_TYPES.contains(&mime)
             || mime.ends_with("+xml")
@@ -746,13 +823,6 @@ fn defaults() -> Vec<AssociationEntry> {
             BrowseFormat::Zip,
         ),
         browsable(&["*.crate"], BrowseFormat::Tar),
-        // mime_guess knows `.ts` only as an MPEG transport stream; in a
-        // file manager it is far more often TypeScript. `.mts` is AVCHD
-        // video as often as a TypeScript module, so it keeps its MIME type.
-        AssociationEntry {
-            viewer: Some(ViewerMode::Text),
-            ..entry(&["*.ts", "*.tsx", "*.cts"])
-        },
         language(&["*.ts", "*.tsx", "*.mts", "*.cts"], "typescript"),
         language(&["Dockerfile", "*.dockerfile"], "dockerfile"),
         language(&["*.js", "*.mjs", "*.cjs", "*.jsx"], "javascript"),
@@ -887,7 +957,7 @@ mod tests {
             Action::Browse(Some(BrowseFormat::Zip))
         );
         assert_eq!(
-            a.viewer_mode("x.zip", Some("application/zip")),
+            a.view("x.zip", 10, content("application/zip", false)).0,
             ViewerMode::Hex
         );
         // The format still comes from the defaults.
@@ -1017,30 +1087,128 @@ mod tests {
     }
 
     #[test]
-    fn viewer_and_language_fall_back_to_mime() {
+    fn language_falls_back_to_mime() {
         let a = defaults_only();
-        assert_eq!(
-            a.viewer_mode("main.ts", Some("video/vnd.dlna.mpeg-tts")),
-            ViewerMode::Text
-        );
-        assert_eq!(
-            a.viewer_mode("clip.mp4", Some("video/mp4")),
-            ViewerMode::Video
-        );
-        assert_eq!(a.viewer_mode("a.csv", Some("text/csv")), ViewerMode::Table);
-        assert_eq!(
-            a.viewer_mode("logo.svg", Some("image/svg+xml")),
-            ViewerMode::Image
-        );
-        assert_eq!(
-            a.viewer_mode("clip.mts", Some("video/vnd.dlna.mpeg-tts")),
-            ViewerMode::Video
-        );
-        assert_eq!(a.viewer_mode("blob", None), ViewerMode::Hex);
         assert_eq!(a.language("main.ts", None), "typescript");
         assert_eq!(a.language("Dockerfile", None), "dockerfile");
         assert_eq!(a.language("data", Some("application/ld+json")), "json");
         assert_eq!(a.language("README", Some("text/plain")), "plaintext");
+    }
+
+    fn content(mime: &'static str, text: bool) -> Content<'static> {
+        Content {
+            mime: Some(mime),
+            text,
+        }
+    }
+
+    #[test]
+    fn the_editor_predicts_by_content() {
+        let a = defaults_only();
+        let usual = |pattern: &str| {
+            let row = a.row_for(pattern, AssociationKind::File).unwrap();
+            (row.viewer.inherited, row.viewer.origin)
+        };
+        let content = |mode| (Some(mode), Origin::Content);
+        assert_eq!(usual("*.deb"), content(ViewerMode::Dissect));
+        assert_eq!(usual("*.raw"), content(ViewerMode::Dissect));
+        assert_eq!(usual("*.png"), content(ViewerMode::Image));
+        assert_eq!(usual("*.svg"), content(ViewerMode::Image));
+        assert_eq!(usual("*.md"), content(ViewerMode::Markdown));
+        assert_eq!(usual("*.rs"), content(ViewerMode::Text));
+        assert_eq!(usual("*.csv"), content(ViewerMode::Table));
+        // An editor language says text: TypeScript, not a transport stream.
+        assert_eq!(usual("*.ts"), content(ViewerMode::Text));
+        assert_eq!(usual("Dockerfile"), content(ViewerMode::Text));
+        assert_eq!(usual("*.unknown-extension"), (None, Origin::Default));
+    }
+
+    #[test]
+    fn content_picks_the_viewer() {
+        let a = defaults_only();
+        let view = |name, size, c| a.view(name, size, c).0;
+        assert_eq!(
+            view("photo.png", 10, content("image/png", false)),
+            ViewerMode::Image
+        );
+        // A disk image whose name says camera RAW, and nothing identified.
+        assert_eq!(
+            view("data.img.raw", 1 << 40, Content::default()),
+            ViewerMode::Hex
+        );
+        // An image the webview can't decode is dissected.
+        assert_eq!(
+            view("shot.raw", 10, content("image/x-panasonic-rw", false)),
+            ViewerMode::Dissect
+        );
+        assert_eq!(
+            view("huge.png", IMAGE_MAX_SIZE + 1, content("image/png", false)),
+            ViewerMode::Dissect
+        );
+        assert_eq!(
+            view("notes.png", 10, content("text/plain", true)),
+            ViewerMode::Text
+        );
+        assert_eq!(
+            view("README", 10, content("text/markdown", true)),
+            ViewerMode::Markdown
+        );
+        assert_eq!(
+            view("blob", 10, content("application/zip", false)),
+            ViewerMode::Dissect
+        );
+        assert_eq!(
+            view("a.m4a", 10, content("audio/mp4; codecs=mp4a.40.2", false)),
+            ViewerMode::Audio
+        );
+        assert_eq!(
+            view("empty.md", 0, Content::default()),
+            ViewerMode::Markdown
+        );
+        // `.ts` is TypeScript or an MPEG transport stream, which the webview
+        // doesn't play: the content tells.
+        assert_eq!(
+            view("main.ts", 10, content("text/plain", true)),
+            ViewerMode::Text
+        );
+        assert_eq!(
+            view("clip.ts", 10, content("video/mp2t", false)),
+            ViewerMode::Dissect
+        );
+    }
+
+    #[test]
+    fn a_text_name_picks_among_text_modes() {
+        let a = defaults_only();
+        let (mode, mime) = a.view("notes.txt", 10, content("text/markdown", true));
+        assert_eq!(
+            (mode, mime.as_deref()),
+            (ViewerMode::Text, Some("text/plain"))
+        );
+        assert_eq!(
+            a.view("data.csv", 10, content("text/plain", true)).0,
+            ViewerMode::Table
+        );
+        // A name that doesn't name a text mode leaves it to the content.
+        assert_eq!(
+            a.view("logo.svg", 10, content("image/svg+xml", true)).0,
+            ViewerMode::Image
+        );
+    }
+
+    #[test]
+    fn an_association_beats_the_content() {
+        let a = user(
+            r#"
+            [[association]]
+            match = ["*.bin"]
+            viewer = "text"
+            "#,
+        );
+        assert_eq!(
+            a.view("x.bin", 10, content("image/png", false)).0,
+            ViewerMode::Text
+        );
     }
 
     #[test]
@@ -1146,7 +1314,7 @@ mod tests {
         assert_eq!(txt.pattern, "*.txt");
         assert!(!txt.customized);
         assert_eq!(txt.viewer.inherited, Some(ViewerMode::Text));
-        assert_eq!(txt.viewer.origin, Origin::FileType);
+        assert_eq!(txt.viewer.origin, Origin::Content);
         assert!(a.row_for("[", AssociationKind::File).is_none());
     }
 
@@ -1196,6 +1364,9 @@ mod tests {
             viewer = "hex"
             "#,
         );
-        assert_eq!(a.viewer_mode("x.foo", Some("text/plain")), ViewerMode::Hex);
+        assert_eq!(
+            a.view("x.foo", 10, content("text/plain", true)).0,
+            ViewerMode::Hex
+        );
     }
 }

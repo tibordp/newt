@@ -1022,13 +1022,6 @@ impl Vfs for S3Vfs {
             .map_err(sdk_err)?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
-        let mime_type = resp
-            .content_type()
-            .map(|s| s.to_string())
-            .filter(|s| s != "application/octet-stream")
-            .or_else(|| {
-                crate::vfs::file::guess_mime_type(std::path::Path::new(path.as_wire_str()))
-            });
         let is_dir = key.ends_with('/') && size == 0;
 
         let modified = resp.last_modified().and_then(|d| {
@@ -1041,7 +1034,6 @@ impl Vfs for S3Vfs {
 
         Ok(FileDetails {
             size,
-            mime_type,
             is_dir,
             is_symlink: false,
             symlink_target: None,

@@ -30,6 +30,18 @@ describe("buildFileUrl", () => {
       "http://localhost:1234/token/7?path=%2Fcaf%C3%A9%2F%E7%8C%AB.jpg",
     );
   });
+
+  it("carries the type to serve the file as", () => {
+    expect(
+      buildFileUrl(
+        "http://localhost:1234/token",
+        7,
+        "/clip",
+        "1-2",
+        "video/mp4",
+      ),
+    ).toBe("http://localhost:1234/token/7?path=%2Fclip&v=1-2&mime=video%2Fmp4");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -32,12 +32,6 @@ use super::{
     VfsAsyncWriter, VfsDescriptor, VfsMetadata, VfsRandomReader, VfsSpaceInfo,
 };
 
-/// Bytes read from a file head when sniffing for a MIME type without an
-/// extension match. Bigger reads catch more formats but cost more I/O per
-/// directory listing entry; 8 KiB is enough for every magic-number signature
-/// in `mimetype-detector` while staying inside one filesystem block.
-const MIME_SNIFF_BUFFER_SIZE: usize = 8192;
-
 /// Files-per-batch streamed to the host during a directory listing. Smaller
 /// batches reduce first-paint latency on huge directories; larger batches
 /// reduce IPC overhead. 500 lands in the sweet spot for both.
@@ -646,8 +640,6 @@ impl Vfs for LocalVfs {
         let path = path.to_native();
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
-            use std::io::Read;
-
             let symlink_meta = std::fs::symlink_metadata(&path)?;
             let is_symlink = symlink_meta.is_symlink();
             let symlink_target = if is_symlink {
@@ -668,39 +660,8 @@ impl Vfs for LocalVfs {
             let size = meta.len();
             let (mode_field, user_field, group_field) = cache.owner_bits(&meta);
 
-            // Try extension first, then content sniffing — never of a FIFO
-            // or device, whose read can block.
-            let special = mode_field.as_ref().is_some_and(Mode::is_special);
-            let mime_type = if is_dir || special {
-                None
-            } else {
-                let from_extension = crate::vfs::file::guess_mime_type(&path);
-                if from_extension.is_some() {
-                    from_extension
-                } else {
-                    let file = std::fs::File::open(&path)?;
-                    let mut buf = vec![0u8; MIME_SNIFF_BUFFER_SIZE.min(size as usize)];
-                    let mut reader = std::io::BufReader::new(file);
-                    let n = reader.read(&mut buf)?;
-                    let header = &buf[..n];
-
-                    let detected = mimetype_detector::detect(header);
-                    if detected.is("application/octet-stream") {
-                        // No specific match — fall back to null-byte heuristic
-                        if !header.contains(&0) {
-                            Some("text/plain".to_string())
-                        } else {
-                            Some("application/octet-stream".to_string())
-                        }
-                    } else {
-                        Some(detected.mime().to_string())
-                    }
-                }
-            };
-
             Ok(FileDetails {
                 size,
-                mime_type,
                 is_dir,
                 is_symlink,
                 symlink_target,
@@ -2424,7 +2385,7 @@ mod special_file_tests {
     use crate::vfs::local::LocalVfs;
     use crate::vfs::path::PathBuf;
 
-    /// A FIFO nobody writes to: sniffing its contents would block forever.
+    /// A FIFO nobody writes to: reading it would block forever.
     #[tokio::test]
     async fn details_of_a_fifo_do_not_read_it() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2435,11 +2396,10 @@ mod special_file_tests {
         let vfs = LocalVfs::new();
         let path = PathBuf::from_native(&native);
         assert!(vfs.file_info(&path).await.unwrap().is_special());
-        let details = tokio::time::timeout(Duration::from_secs(5), vfs.file_details(&path))
+        tokio::time::timeout(Duration::from_secs(5), vfs.file_details(&path))
             .await
             .expect("file_details blocked on the FIFO")
             .unwrap();
-        assert_eq!(details.mime_type, None);
     }
 }
 

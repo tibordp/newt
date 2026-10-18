@@ -657,7 +657,6 @@ impl Vfs for ZipArchiveVfs {
         let is_dir = entry.kind == zr::EntryKind::Dir;
         Ok(FileDetails {
             size: if is_dir { 0 } else { entry.size },
-            mime_type: crate::vfs::file::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir,
             is_symlink: entry.kind == zr::EntryKind::Symlink,
             symlink_target: None,

@@ -10,7 +10,7 @@ const rtf = (kind: "file" | "directory"): AssociationRow => ({
   shared_with: [],
   enter: { set: null, inherited: null, origin: { source: "default" } },
   format: { set: null, inherited: null, origin: { source: "default" } },
-  viewer: { set: null, inherited: "text", origin: { source: "file_type" } },
+  viewer: { set: null, inherited: "dissect", origin: { source: "content" } },
   language: {
     set: null,
     inherited: "plaintext",

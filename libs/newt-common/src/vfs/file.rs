@@ -261,7 +261,6 @@ impl FileList {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileDetails {
     pub size: u64,
-    pub mime_type: Option<String>,
     pub is_dir: bool,
     pub is_symlink: bool,
     /// Raw link target as reported by the source FS (see `File::symlink_target`).
@@ -284,14 +283,6 @@ pub struct FileChunk {
     pub total_size: u64,
 }
 
-/// Guess MIME type from a file path's extension.
-/// Returns `None` if the extension is not recognized.
-pub fn guess_mime_type(path: &std::path::Path) -> Option<String> {
-    mime_guess::from_path(path)
-        .first()
-        .map(|m| m.essence_str().to_string())
-}
-
 /// `SystemTime` → the millisecond epoch timestamps carried on `File` /
 /// `FileDetails`.
 pub trait ToUnix {
@@ -306,20 +297,5 @@ impl ToUnix for std::time::SystemTime {
             .map(|t| t.as_millis() as i128)
             .unwrap_or_else(|e| -(e.duration().as_millis() as i128));
         ms.clamp(i64::MIN as i128, i64::MAX as i128) as i64
-    }
-}
-
-#[cfg(test)]
-mod mime_tests {
-    use super::guess_mime_type;
-
-    /// The viewer picks its table and markdown modes from these.
-    #[test]
-    fn table_and_markdown_extensions() {
-        let guess = |name: &str| guess_mime_type(std::path::Path::new(name));
-        assert_eq!(guess("a.csv").as_deref(), Some("text/csv"));
-        assert_eq!(guess("a.tsv").as_deref(), Some("text/tab-separated-values"));
-        assert_eq!(guess("README.md").as_deref(), Some("text/markdown"));
-        assert_eq!(guess("notes.markdown").as_deref(), Some("text/markdown"));
     }
 }

@@ -149,7 +149,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-740 crates, the superset across every target platform and feature.
+739 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -794,7 +794,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2014 Sean McArthur
   mime_guess 2.0.5 — MIT
       Copyright (c) 2015 Austin Bonander
-  mimetype-detector 0.3.12 — MIT OR Apache-2.0
   minijinja 2.24.0 — Apache-2.0
   miniz_oxide 0.8.9 — MIT OR Zlib OR Apache-2.0
       Copyright 2013-2014 RAD Game Tools and Valve Software
@@ -1268,7 +1267,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2014 Paho Lurie-Gregg
   uds_windows 1.2.1 — MIT
       Copyright (c) Microsoft Corporation. All rights reserved.
-  unicase 2.9.0 — MIT OR Apache-2.0
+  unicase 2.10.0 — MIT OR Apache-2.0
       Copyright (c) 2014-2026 Sean McArthur
   unicode-ident 1.0.26 — (MIT OR Apache-2.0) AND Unicode-3.0
       Copyright © 1991-2023 Unicode, Inc.

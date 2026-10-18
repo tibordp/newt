@@ -369,8 +369,8 @@ async fileDetails(path: VfsPath) : Promise<Result<FileDetails, string>> {
 }
 },
 /**
- * `file_details`, plus the mode the viewer opens the file in and the
- * language the editor gives it.
+ * `file_details`, plus the mode the viewer opens the file in, the type
+ * it shows it as and the language the editor gives it.
  */
 async inspectFile(path: VfsPath) : Promise<Result<InspectedFile, string>> {
     try {
@@ -3159,7 +3159,7 @@ key: string | null;
  * `Vfs::redirect_target`).
  */
 source: VfsPath | null }
-export type FileDetails = { size: number; mime_type: string | null; is_dir: boolean; is_symlink: boolean; 
+export type FileDetails = { size: number; is_dir: boolean; is_symlink: boolean; 
 /**
  * Raw link target as reported by the source FS (see `File::symlink_target`).
  */
@@ -3341,9 +3341,13 @@ recent_folders: boolean;
 mounts_in_vfs_selector: boolean }
 export type ImageBackground = "dark" | "checkerboard" | "light"
 /**
- * A file's details, with what its associations make of it.
+ * A file's details, with what its content and associations make of it.
  */
-export type InspectedFile = { details: FileDetails; viewer_mode: ViewerMode; language: string }
+export type InspectedFile = { details: FileDetails; viewer_mode: ViewerMode; 
+/**
+ * What the file is shown as: by content, or by name for text.
+ */
+mime: string | null; language: string }
 export type IssueAction = "skip" | "overwrite" | 
 /**
  * Copy into an existing folder, keeping what only it has.
@@ -4012,6 +4016,10 @@ export type Origin =
  * The MIME type the name implies.
  */
 { source: "file_type" } | 
+/**
+ * What files of the name usually hold (see `usual_viewer`).
+ */
+{ source: "content" } | 
 /**
  * Nothing: Enter opens a file in its default application and goes
  * into a directory, and Browse Into reads the file's first bytes.

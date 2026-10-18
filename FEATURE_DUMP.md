@@ -305,8 +305,8 @@ enter = "command"
 command = "Build"               # the title of a [[command]]
 ```
 
-- **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode or language no entry sets comes from the file's MIME type, then Hex mode and plain text.
-- **Built-ins** cover the archive and disc formats below, the editor's language table, `.ts`/`.tsx`/`.cts` as TypeScript text (MIME databases know `.ts` only as an MPEG transport stream; `.mts`, AVCHD video as often as a TypeScript module, keeps its video type), and containers that open in their own application but can be browsed into from the context menu: Office and OpenDocument files, EPUB, Python wheels, NuGet and VS Code packages (`zip`) and Rust crates (`tar`).
+- **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode no entry sets comes from the file's content (see the viewer's [Mode Selection](#mode-selection)), a language from the type the viewer identified, then plain text.
+- **Built-ins** cover the archive and disc formats below, the editor's language table, and containers that open in their own application but can be browsed into from the context menu: Office and OpenDocument files, EPUB, Python wheels, NuGet and VS Code packages (`zip`) and Rust crates (`tar`).
 - **Enter actions**: `open` hands the file to the system's default application, `browse` goes in (into a directory, or into a file as `format`), `view` and `edit` open Newt's viewer and editor, `command` runs a user command as picking it from the palette would. A renamed command takes its associations along. A directory can only be opened on this computer's own filesystem; elsewhere Enter goes in.
 - **Packages** (macOS only): app bundles, frameworks, plugins, Xcode projects, `.rtfd` documents, photo libraries and other directories that Finder shows as files. Which directories are packages is what Launch Services says (`NSURLIsPackageKey`: a type conforming to `com.apple.package`, as declared by the system and installed apps, or the bundle bit set) — never a guess from a name, so a `whatever.app` folder on Linux, in S3 or in an archive is a folder. A package shows a file's icon instead of the folder. Enter goes into them; **Behavior ▸ Open Packages** makes it open them instead. A `[[association]]` with `kind = "directory"` still decides what Enter does for what it matches, and one without `enter` declares what it matches a package (offering Open in Default App). The listing is shown at once and packages are marked as Launch Services answers, an automatic enricher like git status; it runs only where a macOS kernel serves the files (locally on a Mac, or in a remote session to one).
 - **Browse Into** (`browse_into`, unbound; context menu) goes into the focused entry whatever Enter does with it: a directory or package is entered, a file browsed as its association's format — or, when nothing names one, as whatever its first bytes say (ZIP, 7z, tar, cpio and ar headers, gzip/bzip2/xz/zstd streams, ISO 9660 and UDF volumes). A tar or compressed file whose name doesn't say which compression it uses is decompressed by what its first bytes say.
@@ -745,7 +745,7 @@ When an operation encounters a conflict:
 
 ## 5. File Viewer (F3)
 
-Opens in a separate window (1100×800 pixels). Automatically detects the file's MIME type and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
+Opens in a separate window (1100×800 pixels). Identifies the file from its content and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
 
 ### Pre-warmed Windows
 
@@ -755,21 +755,28 @@ Pre-warms are created only from the `init` command — i.e. after the main windo
 
 ### Mode Selection
 
-The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Structure, Table, Markdown, Image, Audio, Video, PDF. The initial mode is chosen automatically:
+The viewer has a **View** menu with radio buttons to manually switch between modes: Text, Hex, Structure, Table, Markdown, Image, Audio, Video, PDF. The initial mode is chosen automatically, from what the file's content is — the identification [Structure mode](#structure-mode) gives its root, from the first 66 KiB and last 1 KiB (the last 128 KiB for the few formats whose signature sits near the end, such as RAID superblocks), with the name settling short Markdown, CSV and TSV that would otherwise read as plain text. Its type picks the mode by the table below, with these exceptions:
+
+- **Text names its own mode**: text whose name names a text mode (`.md`, `.csv`, `.txt`, `.json`, …) opens as the name says — a `README.txt` that looks like Markdown stays Text — while text under another name opens as Text (`notes.png`) or as what the content is (`README` with Markdown in it → Markdown).
+- **The name never picks a binary mode**: content nothing identifies opens as Hex, whatever its extension (a disk image named `.raw`, the camera-RAW extension, is not shown as an image). An empty file goes by its name.
+- **Media the webview can't decode** opens in Structure. Image, Audio and Video modes use the webview's own decoders, which differ by platform (WebKit on macOS, WebKitGTK with GStreamer on Linux, Chromium's WebView2 on Windows):
+  - **Images**: PNG, APNG, JPEG, GIF, WebP, AVIF, BMP, ICO and SVG everywhere; TIFF, HEIC and JPEG XL on macOS. Camera RAW, PSD, TGA and the like are dissected instead, and so is an image over 512 MiB, since the webview holds all of an image's bytes in memory while decoding it.
+  - **Audio**: MP3, AAC/M4A, WAV, FLAC and WebM everywhere; AIFF on macOS and Linux; Ogg on Linux and Windows.
+  - **Video**: MP4 and WebM everywhere; QuickTime (`.mov`, `.m4v`) on macOS; QuickTime, Matroska and Ogg on Linux, where playback also depends on the GStreamer plugins installed. An MPEG transport stream (`.ts`, `.m2ts`) plays nowhere and is dissected.
 
 | Detected Type | Mode |
 |---------------|------|
 | `text/csv`, `text/tab-separated-values` (`.csv`, `.tsv`) | Table |
 | `text/markdown` (`.md`, `.markdown`) | Markdown |
 | `text/*`, `application/json`, `application/xml`, `application/javascript`, `application/typescript`, `application/x-sh`, `application/x-python`, `application/sql`, `application/x-yaml`, `application/toml`, `application/graphql`, `image/svg+xml`, anything ending in `+xml` or `+json` | Text |
-| `image/*` | Image |
-| `audio/*` | Audio |
-| `video/*` | Video |
+| An image the webview decodes (see above) | Image |
+| Audio the webview plays (see above) | Audio |
+| Video the webview plays (see above) | Video |
 | `application/pdf` | PDF |
 | Anything else the [Structure](#structure-mode) dissector recognises | Structure |
 | Everything else | Hex |
 
-A [file association](#file-associations) with a `viewer` mode comes before the table — the built-ins open `.ts` as text, not as an MPEG transport stream video.
+A [file association](#file-associations) with a `viewer` mode comes before all of this. No built-in sets one: the content tells a TypeScript `.ts` (Text) from an MPEG transport stream (Structure), which extension databases can't.
 
 ### Mode Toggle
 
@@ -905,7 +912,7 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
   - **What it applies to**: the file, or a file within it — an archive member's data, decompressed data, an embedded resource: the selected node if it holds one, or its one child that does (an archive member holds its data beside its headers, so selecting the member is enough). Any other node does nothing but say so in the status bar; there is no reaching up to an enclosing file. The context menu works the target out as it opens: the item names it ("Dissect “song.gpx” As…") and is disabled on a node without one. Whether a node holds a file is known once it has been expanded (Mod+D on an unexpanded one finds out). The palette names it ("Dissect “song.gpx” as…"), and its suggestions follow that name's extension.
   - **Where it shows**: once expanded, a node holding a file carries its format's short name as a quiet tag ("png", "zip", "?" when not recognised; the full name on hover), and one dissected as a chosen format carries an accent "as …" tag instead. The field details list its **Format** (identified, chosen, or not recognised). For the file itself the status bar reads e.g. "Structure as Guitar Pro 6 score".
   - **How long it lasts**: every choice, the file's own and those inside it, lasts for the viewer window's file: kept by the position of its node in the tree, and replayed when the file is dissected again, e.g. after switching to another mode and back. Choosing a format for content drops the choices made inside it. Quick View always identifies.
-- **Detection**: a file whose association or MIME type would leave it in Hex mode opens in Structure mode when the dissector recognises it from its first 66 KiB and last 1 KiB. A [file association](#file-associations) can pick it explicitly with `viewer = "dissect"`.
+- **Detection**: a file the dissector identifies that no other mode shows (an archive, an executable, a disk image, an image the webview can't decode) opens in Structure mode; see the viewer's [Mode Selection](#mode-selection). A [file association](#file-associations) can pick it explicitly with `viewer = "dissect"`.
 
 ### Image Mode
 
@@ -975,7 +982,7 @@ The preview is for the mouse; the keyboard stays with the file list. It doesn't 
 The viewer and editor access files through an internal HTTP server on localhost (random port, token-protected). This supports:
 - Range requests (HTTP 206) for chunked loading.
 - 1 MB streaming chunks to avoid buffering entire files.
-- MIME type detection for proper content-type headers.
+- The `Content-Type` the viewer identified the file as (so media and PDFs play from any VFS, extension or not), else the one its name suggests.
 
 ---
 
@@ -1264,8 +1271,6 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 **Symlink handling**: Reads symlink targets for display, stats targets to determine if they're directories.
 
 **Display path**: `sftp://hostname/path/to/file`
-
-**MIME detection**: Reads the first 8 KB of a file via `read_range()` and uses MIME type detection.
 
 **Lifecycle**: SSH process is killed when the SFTP VFS is unmounted.
 
@@ -1939,7 +1944,7 @@ Available in debug builds only. Provides:
 
 **Associations tab**: a table of name patterns — one row per pattern, the user's ("Yours") above the built-ins — with what happens to a match in three columns: **Enter**, **View (F3)** — the mode the viewer opens it in — and **Syntax highlighting (F4)**, the language the editor highlights it as (F4 always opens Newt's editor). Directory rows have only Enter.
 - **Adding**: the first row is an add row — type a pattern into its Name field (`.rtf` is read as `*.rtf`; a glob, or an exact name like `Makefile`), pick Files or Folders, and its cells show at once what that pattern would inherit; setting any of them adds it, and the field empties for the next one. Enter in the field moves to its Enter cell. Typing a pattern that is already listed edits that row.
-- **Every cell shows what applies.** A value the row's own `[[association]]` entry sets is shown plainly with an accent dot; one it inherits is muted, and says on hover where it comes from — built-in, by file type, or another of the user's patterns (`*.gz` showing through on `*.tar.gz`).
+- **Every cell shows what applies.** A value the row's own `[[association]]` entry sets is shown plainly with an accent dot; one it inherits is muted, and says on hover where it comes from — built-in, by file type, by content, or another of the user's patterns (`*.gz` showing through on `*.tar.gz`). The viewer goes by a file's content, which a pattern doesn't have, so View (F3) shows what files of that name usually open as: what the name says for a text mode (`*.md` Markdown, `*.rs` Text), Text for a name the editor has a language for (`*.ts`, `Dockerfile`) unless its type picks a mode of its own (`*.svg`), otherwise the mode of the formats that claim the extension when they agree (`*.deb` and `*.raw` Structure, `*.png` Image), and *by contents* when they don't.
 - **A cell is a menu.** Click it, or focus it and press Enter or Space: the first choice is always *Default — what would apply otherwise*, which takes the row's own setting away; the rest are the values. Enter's menu has Open in default app, Open in viewer, Open in editor, Browse as ZIP / 7-Zip / tar / compressed file / disc image, and each user command; for a file Enter doesn't browse, a Browse Into submenu picks the format Browse Into uses. A choice writes one key of the pattern's entry in `settings.toml`, in place — comments and the order of entries survive — or adds a one-pattern entry for a pattern that had none. **Delete** on a row of the user's removes its entry (or, from an entry shared with other patterns, just that pattern), and the pattern goes back to whatever applied before.
 - **Arrow keys move between cells**, Home and End along a row; Down from the search box goes into the table and Up from its top row back.
 - **The search box** narrows the table to patterns containing the text or matching it as a file name, so typing `release.tar.gz` lists `*.tar.gz` and `*.gz` and sums up what happens to that file above the table. When nothing matches, **Add** puts the text into the add row.

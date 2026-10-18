@@ -8,10 +8,14 @@ export function buildFileUrl(
   vfsId: number,
   path: string,
   version?: string,
+  /// The type to serve it as; the file server guesses from the name
+  /// without one.
+  mime?: string | null,
 ): string {
   const url = new URL(`${fileServerBase}/${vfsId}`);
   url.searchParams.set("path", path);
   if (version) url.searchParams.set("v", version);
+  if (mime) url.searchParams.set("mime", mime);
   return url.toString();
 }
 

@@ -660,7 +660,6 @@ impl Vfs for TarArchiveVfs {
 
         Ok(FileDetails {
             size: resolved_entry.size,
-            mime_type: crate::vfs::file::guess_mime_type(StdPath::new(path.as_wire_str())),
             is_dir: resolved_entry.entry_type.is_directory(),
             is_symlink,
             symlink_target,

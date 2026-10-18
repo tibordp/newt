@@ -661,7 +661,6 @@ impl Vfs for DiscVfs {
             } else {
                 entry.size
             },
-            mime_type: crate::vfs::file::guess_mime_type(std::path::Path::new(path.as_wire_str())),
             is_dir: entry.kind == EntryKind::Dir,
             is_symlink: entry.kind == EntryKind::Symlink,
             symlink_target: entry.link_target.clone(),

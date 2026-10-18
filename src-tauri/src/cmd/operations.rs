@@ -2,11 +2,11 @@ use newt_common::operation::{
     ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
     ResolveIssueRequest, StartOperationRequest,
 };
-use newt_common::vfs::FileDetails;
-use newt_common::vfs::VfsPath;
+use newt_common::vfs::{FileDetails, Mode, VfsPath};
 use tauri::Manager;
 
 use crate::GlobalContext;
+use crate::associations::Content;
 use crate::common::{Error, RawArgs, RawBytes};
 use crate::main_window::{
     DeleteConfirmMode, MainWindowContext, ModalContext, ModalData, ModalDataKind, OperationState,
@@ -746,58 +746,43 @@ pub async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileD
     Ok(info)
 }
 
-/// A file's details, with what its associations make of it.
+/// A file's details, with what its content and associations make of it.
 #[derive(serde::Serialize, specta::Type)]
 pub struct InspectedFile {
     pub details: FileDetails,
     pub viewer_mode: crate::viewer::ViewerMode,
+    /// What the file is shown as: by content, or by name for text.
+    pub mime: Option<String>,
     pub language: String,
 }
 
-/// `file_details`, plus the mode the viewer opens the file in and the
-/// language the editor gives it.
+/// `file_details`, plus the mode the viewer opens the file in, the type
+/// it shows it as and the language the editor gives it.
 #[tauri::command]
 #[specta::specta]
 pub async fn inspect_file(ctx: MainWindowContext, path: VfsPath) -> Result<InspectedFile, Error> {
-    let details = ctx.fs()?.file_details(path.clone()).await?;
+    let fs = ctx.fs()?;
+    let details = fs.file_details(path.clone()).await?;
     let name = path.file_name().unwrap_or_default();
-    let mime = details.mime_type.as_deref();
+    // A FIFO or device could block the read, or never end.
+    let readable = !details.is_dir && !details.mode.as_ref().is_some_and(Mode::is_special);
+    let found = if readable {
+        Some(crate::viewer::dissect::identify(&*fs, &path, details.size, name).await?)
+    } else {
+        None
+    };
+    let content = Content {
+        mime: found.and_then(|f| f.format).map(|f| f.mime),
+        text: found.is_some_and(|f| f.text),
+    };
     let associations = ctx.preferences().associations();
-    let mut viewer_mode = associations.viewer_mode(name, mime);
-    // A binary nothing says how to show is shown as hex, unless the
-    // dissector recognises it.
-    if viewer_mode == crate::viewer::ViewerMode::Hex
-        && !associations.sets_viewer(name)
-        && recognised(&ctx, &path, details.size).await
-    {
-        viewer_mode = crate::viewer::ViewerMode::Dissect;
-    }
+    let (viewer_mode, mime) = associations.view(name, details.size, content);
     Ok(InspectedFile {
         viewer_mode,
-        language: associations.language(name, mime),
+        language: associations.language(name, mime.as_deref()),
+        mime,
         details,
     })
-}
-
-/// Whether the Structure viewer's dissector recognises the file at `path`.
-async fn recognised(ctx: &MainWindowContext, path: &VfsPath, size: u64) -> bool {
-    use crate::viewer::dissect::{PROBE_HEAD, PROBE_TAIL, recognises};
-    let Ok(fs) = ctx.fs() else {
-        return false;
-    };
-    let Ok(head) = fs.read_range(path.clone(), 0, PROBE_HEAD).await else {
-        return false;
-    };
-    let tail = if size > PROBE_HEAD {
-        let start = size.saturating_sub(PROBE_TAIL);
-        match fs.read_range(path.clone(), start, PROBE_TAIL).await {
-            Ok(tail) => tail.data,
-            Err(_) => return false,
-        }
-    } else {
-        head.data.clone()
-    };
-    recognises(&head.data, &tail, size)
 }
 
 #[tauri::command]

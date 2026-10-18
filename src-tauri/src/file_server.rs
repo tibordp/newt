@@ -20,6 +20,8 @@ struct FileServerState {
 #[derive(serde::Deserialize)]
 struct FileQuery {
     path: String,
+    /// The type to serve the file as: what the viewer identified it as.
+    mime: Option<String>,
 }
 
 /// Whether `origin` is the webview's own: `tauri://localhost` (macOS,
@@ -160,9 +162,9 @@ async fn serve_file(
         }
     };
 
-    // The type may come verbatim from a remote object's Content-Type.
-    let mime = details
-        .mime_type
+    let mime = query
+        .mime
+        .or_else(|| crate::associations::mime_of(&query.path))
         .and_then(|m| header::HeaderValue::from_str(&m).ok())
         .unwrap_or(header::HeaderValue::from_static("application/octet-stream"));
     let file_size = details.size;

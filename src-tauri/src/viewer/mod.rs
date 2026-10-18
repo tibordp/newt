@@ -2,6 +2,7 @@ pub mod dissect;
 pub mod encoding;
 mod markdown;
 mod table;
+pub mod webview_formats;
 
 use newt_common::find::{SearchMatch, SearchPattern};
 use newt_common::vfs::{Mode, VfsPath};

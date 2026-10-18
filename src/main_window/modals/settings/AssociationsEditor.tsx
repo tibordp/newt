@@ -80,6 +80,8 @@ function originLabel(origin: Origin): string {
       return "built-in";
     case "file_type":
       return "by file type";
+    case "content":
+      return "by content";
     case "default":
       return "default";
   }

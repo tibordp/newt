@@ -12,6 +12,7 @@ import type { Scene } from "../types";
 
 const builtIn: Origin = { source: "built_in" };
 const fileType: Origin = { source: "file_type" };
+const content: Origin = { source: "content" };
 const none: Origin = { source: "default" };
 
 const cell = <T>(
@@ -38,7 +39,7 @@ const row = (
   shared_with: [],
   enter: cell<EnterChoice>(null),
   format: cell<BrowseFormat>(null),
-  viewer: cell(null, "text", fileType),
+  viewer: cell(null, "text", content),
   language: cell(null, "plaintext", fileType),
   ...fields,
 });
@@ -57,14 +58,14 @@ const table: AssociationTable = {
     row("*.log", {
       customized: true,
       enter: cell({ action: "view" }),
-      viewer: cell("text", "text", fileType),
+      viewer: cell("text", "text", content),
     }),
     row("*.nupkg", {
       customized: true,
       shared_with: ["*.vsix"],
       enter: cell(browse),
       format: cell(null, "zip", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
       language: cell<string>(null, null, fileType),
     }),
     row("*.vsix", {
@@ -72,45 +73,44 @@ const table: AssociationTable = {
       shared_with: ["*.nupkg"],
       enter: cell(browse),
       format: cell(null, "zip", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
       language: cell<string>(null, null, fileType),
     }),
     row("*.zip", {
       customized: true,
       enter: cell(null, browse, builtIn),
       format: cell(null, "zip", builtIn),
-      viewer: cell("hex", null, fileType),
+      viewer: cell<ViewerMode>("hex", "dissect", content),
       language: cell<string>(null, null, fileType),
     }),
     row("*.7z", {
       enter: cell(null, browse, builtIn),
       format: cell(null, "7z", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
     }),
     row("Dockerfile", { language: cell(null, "dockerfile", builtIn) }),
     row("*.docx", {
       format: cell(null, "zip", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
       language: cell<string>(null, null, fileType),
     }),
     row("*.gz", {
       enter: cell(null, browse, builtIn),
       format: cell(null, "compressed", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
     }),
     row("*.iso", {
       enter: cell(null, browse, builtIn),
       format: cell(null, "disc", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
     }),
     row("*.rs", { language: cell(null, "rust", builtIn) }),
     row("*.tar.gz", {
       enter: cell(null, browse, builtIn),
       format: cell(null, "tar", builtIn),
-      viewer: cell<ViewerMode>(null, null, fileType),
+      viewer: cell<ViewerMode>(null, "dissect", content),
     }),
     row("*.ts", {
-      viewer: cell(null, "text", builtIn),
       language: cell(null, "typescript", builtIn),
     }),
   ],
