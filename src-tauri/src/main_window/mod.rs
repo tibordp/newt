@@ -311,6 +311,13 @@ pub enum Outcome {
 
 type EndHook = Box<dyn FnOnce(Outcome) + Send>;
 
+/// An operation stopped to ask the user something.
+#[derive(Clone)]
+pub struct Prompt {
+    pub description: String,
+    pub message: String,
+}
+
 #[derive(Clone)]
 pub struct Operations {
     pub state: Arc<RwLock<HashMap<OperationId, OperationState>>>,
@@ -318,6 +325,7 @@ pub struct Operations {
     on_end: Arc<Mutex<HashMap<OperationId, Vec<EndHook>>>>,
     /// Ticks on every progress report.
     changed: Arc<tokio::sync::watch::Sender<()>>,
+    prompts: tokio::sync::broadcast::Sender<Prompt>,
 }
 
 impl Default for Operations {
@@ -326,6 +334,7 @@ impl Default for Operations {
             state: Arc::new(RwLock::new(HashMap::new())),
             on_end: Arc::new(Mutex::new(HashMap::new())),
             changed: Arc::new(tokio::sync::watch::channel(()).0),
+            prompts: tokio::sync::broadcast::channel(16).0,
         }
     }
 }
@@ -352,6 +361,11 @@ impl Operations {
     /// client reported would.
     pub fn failed_to_start(&self, id: OperationId, error: String) {
         apply_operation_progress(self, OperationProgress::Failed { id, error }, false);
+    }
+
+    /// Each prompt a visible operation raises from now on.
+    pub fn prompts(&self) -> tokio::sync::broadcast::Receiver<Prompt> {
+        self.prompts.subscribe()
     }
 
     /// Wait until no operation is running.
@@ -1333,6 +1347,12 @@ fn apply_progress(operations: &Operations, progress: OperationProgress, keep_fin
         }
         OperationProgress::Issue { id, issue } => {
             if let Some(op) = ops.get_mut(&id) {
+                if !op.silent {
+                    let _ = operations.prompts.send(Prompt {
+                        description: op.description.clone(),
+                        message: issue.message.clone(),
+                    });
+                }
                 op.status = OperationStatus::WaitingForInput;
                 op.issue = Some(OperationIssueInfo {
                     issue_id: issue.issue_id,
@@ -1439,6 +1459,11 @@ impl MainWindowContext {
             window.clone(),
             "main_window",
             global_state.clone(),
+        ));
+        tauri::async_runtime::spawn(crate::notifications::notify_prompts(
+            window.clone(),
+            global_state.operations.prompts(),
+            preferences.clone(),
         ));
 
         Self {
@@ -2508,5 +2533,55 @@ mod operation_tests {
         operations.failed_to_start(7, "no agent".into());
         assert_eq!(*seen.lock(), [Outcome::Failed, Outcome::Failed]);
         assert!(operations.on_end.lock().is_empty());
+    }
+
+    fn insert(operations: &Operations, id: OperationId, silent: bool) {
+        operations.state.write().insert(
+            id,
+            OperationState {
+                id,
+                kind: "copy".into(),
+                description: format!("Copying {id}"),
+                total_bytes: None,
+                total_items: None,
+                bytes_done: 0,
+                items_done: 0,
+                current_item: String::new(),
+                status: OperationStatus::Running,
+                error: None,
+                issue: None,
+                backgrounded: false,
+                silent,
+                scanning_items: None,
+                scanning_bytes: None,
+            },
+        );
+    }
+
+    fn issue(id: OperationId) -> OperationProgress {
+        OperationProgress::Issue {
+            id,
+            issue: newt_common::operation::OperationIssue {
+                issue_id: 1,
+                kind: newt_common::operation::IssueKind::AlreadyExists,
+                message: "File already exists: a".into(),
+                detail: None,
+                actions: vec![newt_common::operation::IssueAction::Skip],
+            },
+        }
+    }
+
+    #[test]
+    fn a_visible_operation_prompting_is_announced() {
+        let operations = Operations::default();
+        let mut prompts = operations.prompts();
+        insert(&operations, 1, true);
+        insert(&operations, 2, false);
+        apply_operation_progress(&operations, issue(1), false);
+        apply_operation_progress(&operations, issue(2), false);
+        let prompt = prompts.try_recv().unwrap();
+        assert_eq!(prompt.description, "Copying 2");
+        assert_eq!(prompt.message, "File already exists: a");
+        assert!(prompts.try_recv().is_err());
     }
 }

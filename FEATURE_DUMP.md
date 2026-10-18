@@ -739,6 +739,7 @@ When an operation encounters a conflict:
 
 - **Conditional overwrites** sit in a menu on the Overwrite button (its chevron half) and are decided per file from the two entries' size and modification time; no content is read. *If newer*: the source's time is later. *If size differs*: for destinations whose times say nothing (S3, copies made without "Preserve timestamps"). *If size or date differs*: rsync's quick check; a file matching on both is skipped. Times compare exactly, to the millisecond, so a copy to a filesystem with coarser times (DOS timestamps in zip and FAT, whole seconds over SFTP) differs from its source. An unknown size or time is never newer and always differs. Without "Preserve timestamps" a copy carries the time it was made, so it is newer than its source.
 - **"Apply to all" checkbox**: When checked, the chosen answer is applied to all subsequent issues of the same type within the same operation that offer it; a conditional answer is still decided per file. An issue that does not offer the sticky answer (a directory in the way after "Overwrite" for all) still prompts, while Skip covers it. The dialog's **Existing files** answer is this same sticky answer, set before the operation starts. "Already exists" I/O errors outside a conflict check are ordinary I/O errors and are not covered. Retry always applies only to the current attempt, regardless of the checkbox; another failure prompts again.
+- **Notification**: an operation that stops on an issue while its session's main window isn't focused (Newt in the background, or another window in front) shows a system notification — the operation's description and the issue — and asks for attention (the Dock icon bounces once on macOS, the taskbar button flashes on Windows, the window is marked urgent on Linux). Clicking the notification brings that window forward, to the prompt. Finishing, failing or being cancelled notifies nothing. `behavior.notify_on_prompt` (default on) turns both off. Notifications go through the platform's notification service, so its own settings (macOS asks the first time, Focus / Do Not Disturb) apply; on Windows they need the installed app, and a click is only seen while the toast is on screen, not from the Action Center.
 
 ---
 
@@ -1811,6 +1812,7 @@ confirm_close = true        # Ask before closing a window with terminals open or
 delete_to_trash = true      # Move deletes to the OS trash; Delete Permanently bypasses
 keep_terminal_open = true   # Keep terminal tab open after shell exits
 keep_finished_operations = false  # Keep completed/cancelled ops in panel
+notify_on_prompt = true     # System notification when an operation stops on a prompt while its window isn't focused
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
 allow_remote_host_access = false  # Allow remote sessions to be given access to this host (per connection)
 default_sort = { key = "name", ascending = true }

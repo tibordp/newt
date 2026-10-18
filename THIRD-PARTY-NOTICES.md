@@ -149,7 +149,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Rust crates
 
-730 crates, the superset across every target platform and feature.
+740 crates, the superset across every target platform and feature.
 
   adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0
       Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -773,6 +773,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2016 Jerome Froelich
   lzma-sys 0.1.20 — MIT/Apache-2.0
       Copyright (c) 2016 Alex Crichton
+  mac-notification-sys 0.6.15 — MIT/Apache-2.0
   malloc_buf 0.0.6 — MIT
   markup5ever 0.39.0 — MIT OR Apache-2.0
       Copyright (c) 2014 The html5ever Project Developers
@@ -824,6 +825,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   normpath 1.5.2 — MIT OR Apache-2.0
       Copyright (c) 2020 dylni (https://github.com/dylni)
   notify 8.2.0 — CC0-1.0
+  notify-rust 4.18.2 — MIT OR Apache-2.0
+      Copyright (c) 2017 Hendrik Sollich
   notify-types 2.1.0 — MIT OR Apache-2.0
       Copyright (c) 2023 Notify Contributors
   nucleo-matcher 0.3.1 — MPL-2.0
@@ -939,6 +942,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright © 2020-2024 Unicode, Inc.
   powerfmt 0.2.0 — MIT OR Apache-2.0
       Copyright (c) 2023 Jacob Pratt et al.
+  ppv-lite86 0.2.21 — MIT OR Apache-2.0
+      Copyright (c) 2019 The CryptoCorrosion Contributors
   precomputed-hash 0.1.1 — MIT
       Copyright (c) 2017 Emilio Cobos Álvarez
   pretty_env_logger 0.5.0 — MIT/Apache-2.0
@@ -959,7 +964,16 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   quote 1.0.47 — MIT OR Apache-2.0
   r-efi 5.3.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later
   r-efi 6.0.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later
+  rand 0.9.5 — MIT OR Apache-2.0
+      Copyright 2018 Developers of the Rand project
+      Copyright (c) 2014 The Rust Project Developers
+  rand_chacha 0.9.0 — MIT OR Apache-2.0
+      Copyright 2018 Developers of the Rand project
+      Copyright (c) 2014 The Rust Project Developers
   rand_core 0.6.4 — MIT OR Apache-2.0
+      Copyright 2018 Developers of the Rand project
+      Copyright (c) 2014 The Rust Project Developers
+  rand_core 0.9.5 — MIT OR Apache-2.0
       Copyright 2018 Developers of the Rand project
       Copyright (c) 2014 The Rust Project Developers
   raw-window-handle 0.6.2 — MIT OR Apache-2.0 OR Zlib
@@ -1133,7 +1147,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   subtle 2.6.1 — BSD-3-Clause
       Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
       Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.
-  swift-rs 1.0.8 — MIT OR Apache-2.0
+  swift-rs 1.0.9 — MIT OR Apache-2.0
       Copyright (c) 2023 The swift-rs Developers
   syn 1.0.109 — MIT OR Apache-2.0
   syn 2.0.119 — MIT OR Apache-2.0
@@ -1154,6 +1168,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2017 - Present Tauri Apps Contributors
   tauri-plugin-fs 2.6.0 — Apache-2.0 OR MIT
       Copyright (c) 2017 - Present Tauri Apps Contributors
+  tauri-plugin-notification 2.7.0 — Apache-2.0 OR MIT
+      Copyright (c) 2017 - Present Tauri Apps Contributors
   tauri-plugin-shell 2.4.0 — Apache-2.0 OR MIT
       Copyright (c) 2017 - Present Tauri Apps Contributors
   tauri-runtime 2.12.0 — Apache-2.0 OR MIT
@@ -1161,7 +1177,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   tauri-runtime-wry 2.12.0 — Apache-2.0 OR MIT
       Copyright (c) 2017 - Present Tauri Apps Contributors
   tauri-specta 2.0.0-rc.21 — MIT
-  tauri-utils 2.10.0 — Apache-2.0 OR MIT
+  tauri-utils 2.10.2 — Apache-2.0 OR MIT
+      Copyright (c) 2017 - Present Tauri Apps Contributors
+  tauri-winrt-notification 0.8.1 — MIT OR Apache-2.0
       Copyright (c) 2017 - Present Tauri Apps Contributors
   tempfile 3.27.0 — MIT OR Apache-2.0
       Copyright (c) 2015 Steven Allen
@@ -1449,6 +1467,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
   zcheapstr 1.1.0 — MIT
       Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
+  zerocopy 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT
+      Copyright 2019 The Fuchsia Authors.
+      Copyright 2023 The Fuchsia Authors
+  zerocopy-derive 0.8.63 — BSD-2-Clause OR Apache-2.0 OR MIT
+      Copyright 2019 The Fuchsia Authors.
+      Copyright 2023 The Fuchsia Authors
   zerofrom 0.1.8 — Unicode-3.0
       Copyright © 2020-2024 Unicode, Inc.
   zerofrom-derive 0.1.8 — Unicode-3.0

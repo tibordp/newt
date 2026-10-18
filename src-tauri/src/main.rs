@@ -16,6 +16,7 @@ pub mod editor;
 pub mod file_server;
 pub mod keychain;
 pub mod main_window;
+pub mod notifications;
 pub mod open_with;
 pub mod preferences;
 pub mod runtime_state;
@@ -1196,6 +1197,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(global_ctx)
         .setup(move |app| {
             if let Ok(dir) = app.path().app_log_dir() {
@@ -1207,6 +1209,7 @@ fn main() {
             global_ctx.init_runtime_state(app.handle());
             global_ctx.init_session_memory();
             global_ctx.init_clipboard(app.handle());
+            notifications::init(app.handle());
             {
                 let app = app.handle().clone();
                 global_ctx.clipboard().on_change(move || {

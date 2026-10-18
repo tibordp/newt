@@ -2473,6 +2473,12 @@ keep_terminal_open: boolean;
  */
 keep_finished_operations: boolean; 
 /**
+ * Show a system notification when an operation stops to ask something
+ * (a file that already exists, an error to retry or skip) while its
+ * window isn't focused.
+ */
+notify_on_prompt: boolean; 
+/**
  * Use incremental quick-search when typing in a file pane. When disabled,
  * typing opens the regex filter directly.
  */
