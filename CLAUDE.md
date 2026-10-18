@@ -87,6 +87,10 @@ Be intentional about where state is kept:
 
 The `cmd_*` middleware automatically closes any open modal before dispatching, so individual commands never need to manage modal lifecycle. The frontend's `Dialog.Root` opens/closes based on `remoteState.modal` — there is no `useState` for open/closed.
 
+### Adding Commands
+
+A main-window command is a `CommandDef` in `preferences/commands.rs` plus a Tauri command named `cmd_<id>` taking just a `PaneHandle` (Tauri injects the rest), registered in `collect_commands!`. The palette, key bindings and `newt cmd` all run it by invoking that name through the app's invoke handler — there is no other dispatch table. After adding one, regenerate the bindings (`cargo xtask gen-bindings`) and run `every_main_command_has_its_cmd_handler`, which checks each main-scope id against them. A platform-gated command keeps a stub on the other platforms, so the bindings stay host-independent.
+
 ### Adding New Session-Wide State
 
 When adding state that affects the session's UI beyond a single component (e.g. a new panel, a toggle, a mode):

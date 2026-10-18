@@ -214,7 +214,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
         }
         ControlRequest::Command { pane, id } => {
             let handle = select_pane(ctx, pane);
-            if crate::cmd::dispatch_registry_command(ctx, &id, handle)
+            if crate::cmd::invoke_palette_command(ctx, &id, handle)
                 .await
                 .map_err(err)?
             {
@@ -232,6 +232,7 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
                 .resolved()
                 .commands
                 .into_iter()
+                .filter(|c| c.scope == crate::preferences::commands::CommandScope::Main)
                 .map(|c| CommandListEntry {
                     id: c.id,
                     name: c.name,

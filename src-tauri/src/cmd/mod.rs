@@ -524,214 +524,90 @@ pub fn typescript_export_config() -> specta_typescript::Typescript {
 }
 
 // ---------------------------------------------------------------------------
-// Shell-integration tier-1 dispatch: run a registry command by id
+// Shell integration: run a palette command by id
 // ---------------------------------------------------------------------------
 
-/// Everything from `default_commands()` with the uniform `(ctx, pane)`
-/// signature — the exceptions (`new_window`, `quit`, `open_elevated`,
-/// `connect_wsl`) take window-management arguments and are deliberately
-/// absent — plus the `user_command_N` ids the command list carries.
-async fn dispatch_registry_command_inner(
-    ctx: MainWindowContext,
-    id: &str,
-    pane: PaneHandle,
-) -> Result<bool, Error> {
-    if let Some(index) = id
-        .strip_prefix("user_command_")
-        .and_then(|n| n.parse::<usize>().ok())
-    {
-        let app = ctx.window().app_handle().clone();
-        crate::user_commands::run_user_command(ctx, app.state(), pane, index).await?;
-        return Ok(true);
-    }
-    match id {
-        "as_other_pane" => pane::cmd_as_other_pane(ctx, pane).await?,
-        "swap_panes" => pane::cmd_swap_panes(ctx, pane)?,
-        "open_in_left_pane" => pane::cmd_open_in_left_pane(ctx, pane).await?,
-        "open_in_right_pane" => pane::cmd_open_in_right_pane(ctx, pane).await?,
-        "select_all" => pane::cmd_select_all(ctx, pane)?,
-        "deselect_all" => pane::cmd_deselect_all(ctx, pane)?,
-        "invert_selection" => pane::cmd_invert_selection(ctx, pane)?,
-        "toggle_selection" => pane::cmd_toggle_selection(ctx, pane)?,
-        "select_same_extension" => pane::cmd_select_same_extension(ctx, pane)?,
-        "select_by_pattern" => dialog::cmd_select_by_pattern(ctx, pane)?,
-        "deselect_by_pattern" => dialog::cmd_deselect_by_pattern(ctx, pane)?,
-        "view" => window::cmd_view(ctx, pane).await?,
-        "edit" => window::cmd_edit(ctx, pane).await?,
-        "rename" => dialog::cmd_rename(ctx, pane)?,
-        "batch_rename" => dialog::cmd_batch_rename(ctx, pane)?,
-        "properties" => dialog::cmd_properties(ctx, pane)?,
-        "directory_properties" => dialog::cmd_directory_properties(ctx, pane)?,
-        "delete_selected" => operations::cmd_delete_selected(ctx, pane).await?,
-        "delete_permanent" => operations::cmd_delete_permanent(ctx, pane).await?,
-        "create_directory" => dialog::cmd_create_directory(ctx, pane)?,
-        "create_file" => dialog::cmd_create_file(ctx, pane)?,
-        "create_and_edit" => dialog::cmd_create_and_edit(ctx, pane)?,
-        "navigate" => dialog::cmd_navigate(ctx, pane)?,
-        "open" => pane::cmd_open(ctx, pane).await?,
-        "browse_into" => pane::cmd_browse_into(ctx, pane).await?,
-        "open_with" => pane::cmd_open_with(ctx, pane).await?,
-        "change_association" => dialog::cmd_change_association(ctx, pane)?,
-        "follow_symlink" => pane::cmd_follow_symlink(ctx, pane).await?,
-        "navigate_back" => pane::cmd_navigate_back(ctx, pane).await?,
-        "navigate_root" => pane::cmd_navigate_root(ctx, pane).await?,
-        "navigate_forward" => pane::cmd_navigate_forward(ctx, pane).await?,
-        "history_back" => dialog::cmd_history_back(ctx, pane)?,
-        "history_forward" => dialog::cmd_history_forward(ctx, pane)?,
-        "history" => dialog::cmd_history(ctx, pane)?,
-        "send_to_terminal" => terminal::cmd_send_to_terminal(ctx, pane).await?,
-        "copy" => dialog::cmd_copy(ctx, pane)?,
-        "move" => dialog::cmd_move(ctx, pane)?,
-        "create_archive" => dialog::cmd_create_archive(ctx, pane)?,
-        "copy_to_clipboard" => clipboard::cmd_copy_to_clipboard(ctx, pane).await?,
-        "cut_to_clipboard" => clipboard::cmd_cut_to_clipboard(ctx, pane).await?,
-        "copy_path" => clipboard::cmd_copy_path(ctx, pane).await?,
-        "paste_from_clipboard" => clipboard::cmd_paste_from_clipboard(ctx, pane).await?,
-        "move_from_clipboard" => clipboard::cmd_move_from_clipboard(ctx, pane).await?,
-        "show_next_operation" => operations::cmd_show_next_operation(ctx, pane)?,
-        "toggle_hidden" => pane::cmd_toggle_hidden(ctx, pane)?,
-        "toggle_maximized" => pane::cmd_toggle_maximized(ctx, pane)?,
-        "toggle_quick_view" => crate::viewer::cmd_toggle_quick_view(ctx, pane)?,
-        "close_window" => window::cmd_close_window(ctx, pane)?,
-        "refresh" => pane::cmd_refresh(ctx, pane).await?,
-        "compute_size" => pane::cmd_compute_size(ctx, pane)?,
-        "compute_all_sizes" => pane::cmd_compute_all_sizes(ctx, pane)?,
-        "quick_connect" => dialog::cmd_quick_connect(ctx, pane)?,
-        "connect_remote" => dialog::cmd_connect_remote(ctx, pane)?,
-        "select_vfs" => dialog::cmd_select_vfs(ctx, pane)?,
-        "mount_s3" => dialog::cmd_mount_s3(ctx, pane)?,
-        "mount_sftp" => dialog::cmd_mount_sftp(ctx, pane)?,
-        "start_filter" => pane::cmd_start_filter(ctx, pane)?,
-        "start_search" => dialog::cmd_start_search(ctx, pane)?,
-        "sort" => dialog::cmd_sort(ctx, pane)?,
-        "unmount_vfs" => vfs::cmd_unmount_vfs(ctx, pane).await?,
-        "open_folder" => pane::cmd_open_folder(ctx, pane).await?,
-        "toggle_terminal_panel" => terminal::cmd_toggle_terminal_panel(ctx, pane).await?,
-        "focus_panes" => terminal::cmd_focus_panes(ctx, pane)?,
-        "focus_terminal" => terminal::cmd_focus_terminal(ctx, pane).await?,
-        "create_terminal" => terminal::cmd_create_terminal(ctx, pane).await?,
-        "next_terminal" => terminal::cmd_next_terminal(ctx, pane)?,
-        "prev_terminal" => terminal::cmd_prev_terminal(ctx, pane)?,
-        "open_settings" => dialog::cmd_open_settings(ctx, pane)?,
-        "open_config_file" => preferences::cmd_open_config_file(ctx, pane)?,
-        "command_palette" => dialog::cmd_command_palette(ctx, pane)?,
-        "hot_paths" => dialog::cmd_hot_paths(ctx, pane)?,
-        "quick_open" => dialog::cmd_quick_open(ctx, pane)?,
-        "user_commands" => dialog::cmd_user_commands(ctx, pane)?,
-        "add_bookmark" => preferences::cmd_add_bookmark(ctx, pane)?,
-        "connection_log" => dialog::cmd_connection_log(ctx, pane)?,
-        "debug" => dialog::cmd_debug(ctx, pane)?,
-        "documentation" => cmd_documentation(ctx, pane)?,
-        "about" => dialog::cmd_about(ctx, pane)?,
-        _ => return Ok(false),
-    }
-    Ok(true)
-}
-
-/// Dispatch a registry command exactly as a keybinding would: close any
-/// open modal first (mirroring `wrap_with_modal_close_middleware`), then
-/// run the `cmd_*` handler against the given pane.
-pub async fn dispatch_registry_command(
+/// Run the main-window command `id` (`user_command_N` included) on `pane`,
+/// as the palette or a key binding would: as an invoke of its `cmd_*` (or
+/// `run_user_command`) through the app's own invoke handler, so it gets the
+/// same arguments, middleware and ACL. `Ok(false)` when there is no such
+/// command.
+pub async fn invoke_palette_command(
     ctx: &MainWindowContext,
     id: &str,
     pane: PaneHandle,
 ) -> Result<bool, Error> {
-    ctx.with_update(|gs| {
-        gs.close_modal();
-        Ok(())
-    })?;
-    dispatch_registry_command_inner(ctx.clone(), id, pane).await
+    use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponse};
+    use tauri::webview::InvokeRequest;
+
+    let app = ctx.window().app_handle().clone();
+    let global: tauri::State<GlobalContext> = app.state();
+    let known = global
+        .preferences()
+        .resolved()
+        .commands
+        .iter()
+        .any(|c| c.id == id && c.scope == crate::preferences::commands::CommandScope::Main);
+    if !known {
+        return Ok(false);
+    }
+    let (cmd, body) = match id.strip_prefix("user_command_") {
+        Some(index) => {
+            let index: usize = index.parse().expect("user command ids are numbered");
+            (
+                "run_user_command".to_string(),
+                serde_json::json!({ "paneHandle": pane, "index": index }),
+            )
+        }
+        None => (
+            format!("cmd_{id}"),
+            serde_json::json!({ "paneHandle": pane }),
+        ),
+    };
+
+    let webview: tauri::Webview = ctx.window().as_ref().clone();
+    let request = InvokeRequest {
+        cmd,
+        callback: CallbackFn(0),
+        error: CallbackFn(1),
+        url: webview.url().map_err(|e| Error::Custom(e.to_string()))?,
+        body: InvokeBody::Json(body),
+        headers: Default::default(),
+        invoke_key: app.invoke_key().to_string(),
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    webview.on_message(
+        request,
+        Box::new(move |_, _, response, _, _| {
+            let _ = tx.send(response);
+        }),
+    );
+    match rx.await.expect("an invoke is always answered") {
+        InvokeResponse::Ok(_) => Ok(true),
+        InvokeResponse::Err(e) => Err(Error::Custom(match e.0 {
+            serde_json::Value::String(message) => message,
+            other => other.to_string(),
+        })),
+    }
 }
 
 #[cfg(test)]
-mod dispatch_tests {
-    /// Every dispatchable id must exist in the command registry — the table
-    /// and `default_commands()` live in different files and this is the
-    /// drift check.
+mod palette_command_tests {
+    /// The palette, key bindings and `newt cmd` all run a main-window
+    /// command by invoking `cmd_<id>` with just a pane handle; the generated
+    /// bindings show whether each one is registered with that shape.
     #[test]
-    fn dispatch_table_ids_are_registry_ids() {
-        let registry: Vec<String> = crate::preferences::commands::default_commands()
-            .into_iter()
-            .map(|d| d.id)
-            .collect();
-        let table = [
-            "as_other_pane",
-            "swap_panes",
-            "open_in_left_pane",
-            "open_in_right_pane",
-            "select_all",
-            "deselect_all",
-            "invert_selection",
-            "toggle_selection",
-            "select_same_extension",
-            "select_by_pattern",
-            "deselect_by_pattern",
-            "view",
-            "edit",
-            "rename",
-            "properties",
-            "directory_properties",
-            "delete_selected",
-            "delete_permanent",
-            "create_directory",
-            "create_file",
-            "create_and_edit",
-            "navigate",
-            "open",
-            "follow_symlink",
-            "navigate_back",
-            "navigate_root",
-            "navigate_forward",
-            "history_back",
-            "history_forward",
-            "history",
-            "send_to_terminal",
-            "copy",
-            "move",
-            "create_archive",
-            "copy_to_clipboard",
-            "cut_to_clipboard",
-            "copy_path",
-            "paste_from_clipboard",
-            "move_from_clipboard",
-            "show_next_operation",
-            "toggle_hidden",
-            "toggle_maximized",
-            "toggle_quick_view",
-            "close_window",
-            "refresh",
-            "compute_size",
-            "compute_all_sizes",
-            "quick_connect",
-            "connect_remote",
-            "select_vfs",
-            "mount_s3",
-            "mount_sftp",
-            "start_filter",
-            "start_search",
-            "unmount_vfs",
-            "open_folder",
-            "toggle_terminal_panel",
-            "focus_panes",
-            "focus_terminal",
-            "create_terminal",
-            "next_terminal",
-            "prev_terminal",
-            "open_settings",
-            "open_config_file",
-            "command_palette",
-            "hot_paths",
-            "user_commands",
-            "add_bookmark",
-            "connection_log",
-            "debug",
-            "documentation",
-            "about",
-        ];
-        for id in table {
+    fn every_main_command_has_its_cmd_handler() {
+        let bindings = include_str!("../../../src/lib/bindings.ts");
+        for def in crate::preferences::commands::default_commands() {
+            if def.scope != crate::preferences::commands::CommandScope::Main {
+                continue;
+            }
+            let invoke = format!("TAURI_INVOKE(\"cmd_{}\", {{ paneHandle }})", def.id);
             assert!(
-                registry.iter().any(|r| r == id),
-                "unknown id in dispatch table: {id}"
+                bindings.contains(&invoke),
+                "no `cmd_{}(pane_handle)` command",
+                def.id
             );
         }
     }
