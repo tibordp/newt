@@ -507,6 +507,15 @@ function VfsSelector({
               prev.kind !== "Connect" &&
               prev.kind !== "Drive" &&
               prev.kind !== "Volume";
+            const disconnectable =
+              (target.kind === "Mounted" || target.kind === "Drive") &&
+              target.type_name !== "local" &&
+              target.vfs_id != null;
+            const disconnect = () => {
+              if (target.vfs_id != null) {
+                safe(commands.unmountVfs(paneHandle, target.vfs_id));
+              }
+            };
             const icon =
               (target.volume && VOLUME_KIND_ICONS[target.volume.kind]) ||
               (target.kind === "Volume"
@@ -526,6 +535,12 @@ function VfsSelector({
                 )}
                 <DropdownMenu.Item
                   className={menuStyles.item}
+                  onKeyDown={(e) => {
+                    if (e.key === "Delete" && disconnectable) {
+                      e.preventDefault();
+                      disconnect();
+                    }
+                  }}
                   onSelect={(e) => {
                     // Prevent Radix from auto-closing the dropdown — the
                     // command handlers replace/close the modal on the Rust
@@ -585,27 +600,22 @@ function VfsSelector({
                   {i === activeIndex && (
                     <span className={menuStyles.itemCheck}>{"✓"}</span>
                   )}
-                  {(target.kind === "Mounted" || target.kind === "Drive") &&
-                    target.type_name !== "local" && (
-                      <button
-                        className={menuStyles.itemDismiss}
-                        title="Disconnect"
-                        // Mouse-only: focus never leaves the menu item, and
-                        // the keyboard route is the unmount_vfs command.
-                        aria-hidden
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (target.vfs_id !== null) {
-                            safe(
-                              commands.unmountVfs(paneHandle, target.vfs_id),
-                            );
-                          }
-                        }}
-                        tabIndex={-1}
-                      >
-                        {"✕"}
-                      </button>
-                    )}
+                  {disconnectable && (
+                    <button
+                      className={menuStyles.itemDismiss}
+                      title="Disconnect"
+                      // Mouse-only: focus never leaves the menu item;
+                      // Delete on the row is the keyboard route.
+                      aria-hidden
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        disconnect();
+                      }}
+                      tabIndex={-1}
+                    >
+                      ×
+                    </button>
+                  )}
                 </DropdownMenu.Item>
                 {groupEnd && (
                   <DropdownMenu.Separator className={menuStyles.separator} />

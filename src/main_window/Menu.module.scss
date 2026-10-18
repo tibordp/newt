@@ -107,18 +107,33 @@
   color: var(--color-accent);
 }
 
+/* Trailing × that removes the row's entry (a history entry, a mount).
+   Mouse-only: the row's own Delete key is the keyboard route. */
 .itemDismiss {
   flex-shrink: 0;
-  margin-left: auto;
-  background: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
   border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--color-fg-muted);
-  cursor: default;
-  padding: 0 var(--space-1);
-  font-size: 0.85em;
-  line-height: 1;
+  cursor: pointer;
+  font-size: 14px;
+  // A `data-disabled` row (a history entry on an unmounted VFS) kills
+  // pointer-events on everything inside; its entry can still be removed.
+  pointer-events: auto;
 
   &:hover {
+    background: var(--color-bg-elevated, rgba(0, 0, 0, 0.1));
     color: var(--color-fg);
+  }
+
+  .item[role="option"][aria-selected="true"] & {
+    color: var(--color-accent-fg);
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
   }
 }

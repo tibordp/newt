@@ -101,35 +101,3 @@
   background: rgba(255, 255, 255, 0.2);
   color: var(--color-accent-fg);
 }
-
-.deleteButton {
-  flex-shrink: 0;
-  margin-left: var(--space-2);
-  width: 18px;
-  height: 18px;
-  line-height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-fg-muted);
-  cursor: pointer;
-  font-size: 14px;
-  // Menu rows whose VFS is unmounted set `data-disabled`, which kills
-  // pointer-events on everything inside via Menu.module.scss. Override so
-  // the user can still prune dead history entries — that's the main reason
-  // this button exists on dead rows in the first place.
-  pointer-events: auto;
-
-  &:hover {
-    background: var(--color-bg-elevated, rgba(0, 0, 0, 0.1));
-    color: var(--color-fg);
-  }
-}
-
-.itemPreviewed .deleteButton {
-  color: var(--color-accent-fg);
-  &:hover {
-    background: rgba(255, 255, 255, 0.2);
-  }
-}

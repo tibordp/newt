@@ -14,48 +14,80 @@ import { useSuppressInitialPointer } from "../../lib/useSuppressInitialPointer";
 import menuStyles from "../Menu.module.scss";
 import styles from "./HistoryNavigator.module.scss";
 
-// Step from `from` by `dir` (+1 or -1) inside `entries`, skipping dead
-// entries. Returns the original `from` if no live entry exists in that
-// direction.
+// The keyboard stops on live entries; with `withDead` (the persistent
+// dialog, where nothing navigates on release) on unmounted ones too, which
+// can't be navigated to but can be removed.
+const stopsAt = (entry: HistoryEntryView, withDead: boolean) =>
+  withDead || entry.is_alive;
+
+// Step from `from` by `dir` (+1 or -1) inside `entries` to the next entry
+// the keyboard stops at. Returns the original `from` if there is none in
+// that direction.
 function stepHistoryIndex(
   entries: HistoryEntryView[],
   from: number,
   dir: -1 | 1,
+  withDead = false,
 ): number {
   let i = from + dir;
   while (i >= 0 && i < entries.length) {
-    if (entries[i].is_alive) return i;
+    if (stopsAt(entries[i], withDead)) return i;
     i += dir;
   }
   return from;
 }
 
-// Step `count` live entries in `dir`. Stops at the last reachable live entry
-// in that direction if `count` exceeds what's available.
+// Step `count` stops in `dir`. Stops at the last reachable one in that
+// direction if `count` exceeds what's available.
 function stepHistoryIndexBy(
   entries: HistoryEntryView[],
   from: number,
   dir: -1 | 1,
   count: number,
+  withDead = false,
 ): number {
   let i = from;
   for (let n = 0; n < count; n++) {
-    const next = stepHistoryIndex(entries, i, dir);
+    const next = stepHistoryIndex(entries, i, dir, withDead);
     if (next === i) break;
     i = next;
   }
   return i;
 }
 
-// First / last live entry in the list. Returns `fallback` if there are none.
-function firstLiveIndex(entries: HistoryEntryView[], fallback: number): number {
-  for (let i = 0; i < entries.length; i++) if (entries[i].is_alive) return i;
+// First / last stop in the list. Returns `fallback` if there are none.
+function firstStopIndex(
+  entries: HistoryEntryView[],
+  fallback: number,
+  withDead = false,
+): number {
+  for (let i = 0; i < entries.length; i++)
+    if (stopsAt(entries[i], withDead)) return i;
   return fallback;
 }
-function lastLiveIndex(entries: HistoryEntryView[], fallback: number): number {
+function lastStopIndex(
+  entries: HistoryEntryView[],
+  fallback: number,
+  withDead = false,
+): number {
   for (let i = entries.length - 1; i >= 0; i--)
-    if (entries[i].is_alive) return i;
+    if (stopsAt(entries[i], withDead)) return i;
   return fallback;
+}
+
+// `i` if it is a live entry, else the nearest live one after it, else
+// before it, else `fallback` — where the preview goes when its entry is
+// removed out from under it.
+function nearestLiveIndex(
+  entries: HistoryEntryView[],
+  i: number,
+  fallback: number,
+): number {
+  if (entries[i]?.is_alive) return i;
+  const after = stepHistoryIndex(entries, i, 1);
+  if (after !== i) return after;
+  const before = stepHistoryIndex(entries, i, -1);
+  return before !== i ? before : fallback;
 }
 
 // Quantize a past timestamp into a coarse bucket label, computed relative to
@@ -120,13 +152,23 @@ export default function HistoryNavigator({
   useEffect(() => {
     if (open) {
       setPreviewIndex(
-        stepHistoryIndex(entries, currentIndex, initialDirection),
+        stepHistoryIndex(entries, currentIndex, initialDirection, persistent),
       );
     }
     // entries identity changes per modal-data update (e.g. after a delete);
     // we intentionally only re-seed when `open` flips true.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // A removal leaves the preview on the entry after the removed one; only
+  // the persistent dialog may rest on dead ones.
+  useEffect(() => {
+    setPreviewIndex((i) =>
+      persistent && i < entries.length
+        ? i
+        : nearestLiveIndex(entries, i, currentIndex),
+    );
+  }, [entries, currentIndex, persistent]);
 
   // Freeze "now" at open time so bucket labels don't tick while the dialog
   // is open.
@@ -210,32 +252,46 @@ export default function HistoryNavigator({
           // Alt+ArrowUp/ArrowDown also feed the preview, in addition to
           // the bare arrow keys Radix already handles via its menu key
           // navigation. We intercept here so we can drive `previewIndex`
-          // ourselves (and skip dead entries).
+          // ourselves (and skip dead entries outside the persistent dialog).
           onKeyDown={(e) => {
+            const withDead = persistent;
             if ((e.key === "ArrowLeft" && e.altKey) || e.key === "ArrowDown") {
               e.preventDefault();
-              setPreviewIndex((i) => stepHistoryIndex(entries, i, 1));
+              setPreviewIndex((i) => stepHistoryIndex(entries, i, 1, withDead));
             } else if (
               (e.key === "ArrowRight" && e.altKey) ||
               e.key === "ArrowUp"
             ) {
               e.preventDefault();
-              setPreviewIndex((i) => stepHistoryIndex(entries, i, -1));
+              setPreviewIndex((i) =>
+                stepHistoryIndex(entries, i, -1, withDead),
+              );
             } else if (e.key === "PageDown") {
               e.preventDefault();
-              setPreviewIndex((i) => stepHistoryIndexBy(entries, i, 1, 10));
+              setPreviewIndex((i) =>
+                stepHistoryIndexBy(entries, i, 1, 10, withDead),
+              );
             } else if (e.key === "PageUp") {
               e.preventDefault();
-              setPreviewIndex((i) => stepHistoryIndexBy(entries, i, -1, 10));
+              setPreviewIndex((i) =>
+                stepHistoryIndexBy(entries, i, -1, 10, withDead),
+              );
             } else if (e.key === "Home") {
               e.preventDefault();
-              setPreviewIndex((i) => firstLiveIndex(entries, i));
+              setPreviewIndex((i) => firstStopIndex(entries, i, withDead));
             } else if (e.key === "End") {
               e.preventDefault();
-              setPreviewIndex((i) => lastLiveIndex(entries, i));
+              setPreviewIndex((i) => lastStopIndex(entries, i, withDead));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              commit(previewIndex);
+              if (entries[previewIndex]?.is_alive) commit(previewIndex);
+            } else if (
+              e.key === "Delete" &&
+              persistent &&
+              previewIndex !== currentIndex
+            ) {
+              e.preventDefault();
+              safe(commands.deleteHistoryEntry(paneHandle, previewIndex));
             }
           }}
         >
@@ -292,7 +348,7 @@ export default function HistoryNavigator({
                     {persistent && !isCurrent && (
                       <button
                         type="button"
-                        className={styles.deleteButton}
+                        className={menuStyles.itemDismiss}
                         aria-label="Remove from history"
                         title="Remove from history"
                         onMouseDown={(e) => {
