@@ -5,9 +5,14 @@ use std::os::unix::prelude::MetadataExt;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use log::{debug, warn};
+use log::debug;
+#[cfg(not(target_os = "macos"))]
+use log::warn;
+#[cfg(not(target_os = "macos"))]
 use notify::event::RemoveKind;
+#[cfg(not(target_os = "macos"))]
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+#[cfg(not(target_os = "macos"))]
 use parking_lot::Mutex;
 #[cfg(unix)]
 use parking_lot::RwLock;
@@ -625,51 +630,16 @@ impl Vfs for LocalVfs {
         let canonical = tokio::fs::canonicalize(&path)
             .await
             .unwrap_or_else(|_| path.clone());
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx = Arc::new(Mutex::new(Some(tx)));
-
-        let mut watcher = {
-            let path = path.clone();
-            let watched = [path.clone(), canonical];
-            RecommendedWatcher::new(
-                move |res: Result<Event, notify::Error>| {
-                    match res {
-                        Ok(event) => {
-                            let should_notify = match event.kind {
-                                EventKind::Remove(RemoveKind::Folder) => {
-                                    event.paths.iter().any(|p| {
-                                        watched.iter().any(|w| w.starts_with(p) || p.starts_with(w))
-                                    })
-                                }
-                                EventKind::Access(_) => false,
-                                _ => event
-                                    .paths
-                                    .iter()
-                                    .any(|p| watched.iter().any(|w| p.starts_with(w))),
-                            };
-
-                            if should_notify && let Some(s) = tx.lock().take() {
-                                debug!("{:?} (while watching {})", event, path.display());
-                                let _ = s.send(());
-                            }
-                        }
-                        Err(e) => warn!("watch error: {:?}", e),
-                    };
-                },
-                Config::default().with_follow_symlinks(false),
-            )?
-        };
-
-        let mut watch_path = path;
-        loop {
-            watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
-            if !watch_path.pop() {
-                break;
-            }
+        #[cfg(target_os = "macos")]
+        {
+            tokio::fs::metadata(&path).await?;
+            super::fsevents::DirWatch::start(&path, canonical)?
+                .changed()
+                .await;
+            Ok(())
         }
-
-        let _ = rx.await;
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        notify_changed(path, canonical).await
     }
 
     async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
@@ -1833,6 +1803,59 @@ fn unix_meta_ids(meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<
 #[cfg(windows)]
 fn unix_meta_ids(_meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>, Option<u32>) {
     (None, None, None)
+}
+
+/// Wait for a change in `path` or for it to go away, watching every
+/// directory above it as well, since a parent moved away raises nothing on
+/// the directory itself.
+#[cfg(not(target_os = "macos"))]
+async fn notify_changed(
+    path: std::path::PathBuf,
+    canonical: std::path::PathBuf,
+) -> Result<(), Error> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    let mut watcher = {
+        let path = path.clone();
+        let watched = [path.clone(), canonical];
+        RecommendedWatcher::new(
+            move |res: Result<Event, notify::Error>| {
+                match res {
+                    Ok(event) => {
+                        let should_notify = match event.kind {
+                            EventKind::Remove(RemoveKind::Folder) => event.paths.iter().any(|p| {
+                                watched.iter().any(|w| w.starts_with(p) || p.starts_with(w))
+                            }),
+                            EventKind::Access(_) => false,
+                            _ => event
+                                .paths
+                                .iter()
+                                .any(|p| watched.iter().any(|w| p.starts_with(w))),
+                        };
+
+                        if should_notify && let Some(s) = tx.lock().take() {
+                            debug!("{:?} (while watching {})", event, path.display());
+                            let _ = s.send(());
+                        }
+                    }
+                    Err(e) => warn!("watch error: {:?}", e),
+                };
+            },
+            Config::default().with_follow_symlinks(false),
+        )?
+    };
+
+    let mut watch_path = path;
+    loop {
+        watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
+        if !watch_path.pop() {
+            break;
+        }
+    }
+
+    let _ = rx.await;
+    Ok(())
 }
 
 #[cfg(unix)]

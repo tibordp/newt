@@ -15,7 +15,6 @@ Design: `design_docs/DESIGN_AGENT_VFS_MOUNTS.md`, `design_docs/DESIGN_ENRICHERS_
 
 - Hairpin `get_property_sheet` — the one path-targeted `Filesystem` verb still not diverted. Gated on `RemoteVfsDescriptor::has_extended_properties()` (false today, and `RemoteVfs` doesn't remote the verb), i.e. it needs the "local property sheets in a remote session" feature, not just a hairpin arm.
 - WSL is the one transport still bootstrapped non-login, so its agent never sources `~/.profile` and starts with a barer `PATH` than a `wsl.exe` shell would. It can't just take `-lc` like SSH: `WslLaunch` execs the agent directly with no handshake, so RPC starts on the first byte of stdout and any profile that prints a banner would corrupt the stream. Give WSL the same `NEWT:` handshake as `SpawnSpec::Bootstrap` (which skips non-`NEWT:` lines precisely to absorb login-shell chatter), then enable `login_shell` for it.
-- Host-key prompts and "are you sure you want to add fingerprint" flows for SSH ride the existing askpass channel; verify the same UX with `StrictHostKeyChecking=accept-new` setups.
 - Agent-VFS pane mounts aren't enriched (enrichment is session-level; the sub-agent's `--serve-vfs` mode has no enricher dispatcher). Needs per-VFS enricher routing, the way `Vfs` verbs remote, if it proves wanted.
 - `Vfs`-level remoting of the property-sheet verbs (`API_VFS_*` constants + `RemoteVfs`/`VfsDispatcher` arms) — deferred until `LocalVfs` grows a sheet (xattrs); nothing crosses that layer today. (Design: `design_docs/DESIGN_VFS_PROPERTY_SHEETS.md`.)
 
@@ -32,18 +31,11 @@ Design: `design_docs/DESIGN_PLATFORM_LOCATIONS.md`. Doctrine (platform mounts �
 - Per-profile start directory (`start_directory` on spawn-style connection profiles): explicit, so it beats the remembered location, WinSCP-style.
 - Record sessions when the OS ends the process on Windows (`WM_QUERYENDSESSION`/`WM_ENDSESSION` at logoff/shutdown) and Linux (SIGTERM from the session manager). Today only macOS's `applicationShouldTerminate:` path records; elsewhere a logoff loses whatever changed since each window last closed.
 
-## Per-platform look
-
-- A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
-
 ## UI reviews
 
+- A platform token layer (`:root[data-platform=…]`) over the shared design, with components never branching on platform: the system UI font and size, the system accent colour (`AccentColor` in WebKit on macOS, `UISettings` on Windows, the appearance portal's `accent-color` on GNOME/KDE), GNOME's flat borderless buttons (`--color-control-*`), per-platform control heights. Window chrome is the one structural difference: a unified title bar on macOS.
 - Review the file-list icons as a whole. Today a name maps through the seti theme's `mapping.json` (`src/lib/fileIcons.ts`), and anything unmapped gets the plain text-lines glyph — executables, installers and app bundles included. Known gaps: `.exe`/`.msi`/`.com`/`.cmd` are unmapped though seti's `windows` glyph (used for `.bat`) fits; the font's `apple` glyph (U+E002) is unused and suits app bundles; a package (`Annotation::Package`) shows its name's file glyph, which reads oddly for `.app`; an extensionless Unix executable has no icon of its own — seti has none, nerd-symbols has `cod-file_binary` / `cod-terminal` but in an outline style next to seti's filled ones; installers and images (`.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`) are unmapped. Decide one consistent source (seti only, or seti plus a matching subset of nerd-symbols), whether the lookup takes the mode (execute bits) and package-ness besides the name, and what a non-`.app` package (`.rtfd`, a photo library) shows. The drag ghost (`getFileIconChar` in `Pane.tsx`) should follow whatever the list does.
 - Rethink how background operations are presented. The panel at the bottom of the main window was the quickest way to get them working, not a considered design: where running, finished and failed operations live, how a prompt waiting on the user gets noticed, and what stays on screen once they're done.
-
-## Drag and drop
-
-- Drag-out for non-host-local sources (S3/SFTP/remote sessions) needs materialization: either download-to-tempdir before the native drag starts (reuse the `download_and_open` pattern), or per-platform file-promise APIs (NSFilePromiseProvider / CFSTR_FILEDESCRIPTOR / XDS) — no cross-platform crate wraps those today.
 
 ## Viewer and editor follow-ups
 
@@ -86,21 +78,22 @@ Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 
 - Gated on versioned releases rather than nightly snapshots: an AppStream metainfo file (`org.newt-fm.newt.metainfo.xml`, installed beside `newt.desktop`), which wants a real `<releases>` history. A security reporting policy belongs to the same milestone.
 
-## Accessibility
-
-- Live announcements: navigation finishing, operations completing or failing, selection counts, "Loading…" states — one polite live region fed from the existing flows, rather than per-component `aria-live`.
-- Screen-reader modes for the terminal (xterm.js `screenReaderMode`) and editor (Monaco `accessibilitySupport`, whose `auto` can't detect a reader inside a webview): detect a running reader natively (`NSWorkspace.isVoiceOverEnabled`, `SPI_GETSCREENREADER`, `org.a11y.Status.ScreenReaderEnabled` on D-Bus), publish it in state, and let a preference override it.
-- Regression check: the scene harness can assert ARIA snapshots (e.g. the focused file row is the list's active descendant) and run axe-core over every scene.
-
 ## Bug fixes and strengthening
 
-- Local macOS is the one place the app's own `PATH` is patched by hand (`[environment] extra_path`) rather than inherited: a Finder-launched `.app` has no login shell above it. The visible seam: the terminal gets `-l` and so has the user's full `PATH`, while a Newt-spawned command gets launchd's plus `extra_path`, so a tool can work when typed and fail as a command. The cure is what VS Code does — probe once at startup (`$SHELL -ilc`, marker-delimited JSON on stdout so profile chatter can't corrupt it, bounded by a timeout since a profile can block forever on a prompt) and thread the result as a base env rather than `set_var` (edition 2024, and `shell.rs` deliberately doesn't mutate our own environment). Not worth it until the manual patching actually bites.
+- `LocalVfs` reads a symlink's target with `read_link(..).ok()` (`local.rs`, in the listing, `file_details` and the single-file stat), so an unreadable target becomes `None`, and copying the link (`operation/walk.rs`, `symlink_target.unwrap_or_default()`) creates one pointing at `""`. Fail the walk instead.
+- Local macOS is the one place the app's own `PATH` is patched by hand (`[environment] extra_path`) rather than inherited: a Finder-launched `.app` has no login shell above it. The visible seam: the terminal gets `-l` and so has the user's full `PATH`, while a Newt-spawned command gets launchd's plus `extra_path`, so a tool can work when typed and fail as a command. The cure is what VS Code does — probe once at startup (`$SHELL -ilc`, marker-delimited JSON on stdout so profile chatter can't corrupt it, bounded by a timeout since a profile can block forever on a prompt) and thread the result as a base env rather than `set_var` (edition 2024, and `shell.rs` deliberately doesn't mutate our own environment). Also, something similar for WSL on Windows, the terminal shell is not a login shell and may be missing PATH entries. Something holistic and robust is in order for PATH handling (see above)
 - A pane's `file_window.items` is diffed by array index, so when entries sort in above the window (a streaming search, a refresh) every row reads as changed, the patch overflows `MAX_PATCH_OPS`, and the whole state is re-sent and every row re-rendered — about every 100 ms during a large search. Diff the window by entry key instead (keyed array moves in the patch, or the window sent outside the generic treediff), keeping `deepUpdate`'s reference preservation per row.
-- Scroll anchoring (`PaneViewState::keep_cursor_row`) decides whether the cursor was on screen from the viewport the pane last reported, which it only reports near the window's edges, so near the screen's top and bottom the call can go either way. Exact needs the first visible row on every row scrolled, without recomputing the window each time.
 - Directory watching drops changes between watches: `poll_changes` is one-shot, so `Pane::watch_changes` drops the watcher on the first event, spawns the refresh and only then arms the next watcher (path canonicalisation, a new watcher, one watch per ancestor). A change after the refresh has listed but before the new watch is up raises nothing, and the pane stays stale until the next change — seen once on Windows as a deleted directory lingering after a multi-item delete (the directory goes last, after its contents). The next watch has to be up before the refresh lists: a long-lived change stream rather than one-shot polls, across the agent boundary too. Belongs with a restructuring of the pane's navigation state machine (`navigate_impl`, `refresh_queue`, the navigation mutex, `nav_changes_rx`), which has grown by accretion.
 - Auto-remount VFSes (including dead agent mounts) when navigating into a dead history entry. Today such entries render correctly (cached display path, "unmounted" badge, skipped during overlay stepping) but jumping to one fails. Needs mount metadata stored on the history entry so the navigation can transparently re-establish the connection.
 
 - Bump `specta` / `specta-typescript` / `tauri-specta` past rc.22 / 0.0.9 / rc.21 once a release includes the fix for [specta-rs/specta#498](https://github.com/specta-rs/specta/issues/498): rc.25 overflows the stack exporting `serde_json::Value`. The port itself is small — `Type::inline`/`reference` become `definition(&mut Types)` (`specta_as!`, `common::Error`, the wire `PathBuf`), `TypeCollection` becomes `Types` in the `FunctionArg` impls, container `#[specta(rename)]` becomes `#[serde(rename)]`, `FileChunk.data` needs `#[specta(type = Vec<u8>)]` beside its `serde_bytes`, and `BigIntExportBehavior::Number` becomes the builder's `dangerously_cast_bigints_to_number()`.
+
+## Non-UTF-8 names
+
+Non-UTF-8 names (and lone surrogates on Windows) are converted lossily, so they can act on the wrong file: a listing's `a\xff` beside a real `a�` both act on `a�`, and copying a symlink whose target isn't UTF-8 (`operation/walk.rs` takes `File::symlink_target`) makes a link to a different path. The lossy sites: `PathBuf::from_native`/`native_segments`, `local.rs` dirent names and symlink-target reads, SFTP names (`openssh-sftp-client` hands over a `std::path::Path`, lossless on a Unix host), tar member names (read-only). Undecided between:
+
+- **Refuse**: make `from_native`/`native_segments` fallible (`to_str()`), and fail the listing and the symlink-target reads instead of `to_string_lossy`, so panes show an error and operation walks hit the Retry/Skip prompt. Small, but one such name makes its whole directory unbrowsable.
+- **Encode losslessly in the `String`** (as WTF-8 / Python's `surrogateescape` do): each byte that isn't valid UTF-8 becomes U+10FF00 + byte (the tail of Supplementary Private Use Area-B), and a literal code point from that range has its own bytes escaped the same way, so the mapping is injective; `to_native` turns them back into bytes (`OsStr::from_bytes`; on Windows a hand-written WTF-8 decode into `OsString::from_wide`, never `from_encoded_bytes_unchecked`, since typed input can hold anything). `Path`, the frontend, bindings, `settings.toml` and the RPC stay as they are; the escapes survive a trip through S3 and back; they are all ≥ 0x80, so `is_valid_name` holds. Display (`format_vfs_path`, the name cell) shows them as `\xNN`, and so should text export (Copy Path, the clipboard's text flavour), or a pasted path misses the file. Raw-byte tests only run on Linux (APFS refuses such names). Switching `Path` to `[u8]` instead is no better: the frontend, TOML and clipboard text would still need this same encoding at every edge.
 
 ## 1.0 readiness (audit, October 2026)
 
@@ -108,27 +101,23 @@ Release engineering:
 
 - One version source (`src-tauri/Cargo.toml`, `package.json` and `tauri.conf.json` each say 0.1.0 independently), a tag-driven release workflow, and a mapping onto deb (`1.0.0~rc.1`), rpm (no `-`) and MSI (numeric only) versions. Same-version snapshots don't upgrade under apt/dnf.
 - Sign Windows builds (MSI, `newt.exe`, and `newt-agent.exe`, which UAC shows as "Unknown publisher" for elevated sessions).
-- An update check against the `downloads/latest.json` CI already publishes.
-- `publish` rewrites `latest.json` from the current run alone, so a lean run drops the Intel Mac, ARM Windows and ARM Linux downloads a full run published. Merge instead.
 - CI on `macos-latest` and `windows-latest` (clippy + tests); today only Linux builds on push. Pin the toolchain (`rust-toolchain.toml`).
 - macOS: fail the release when signing secrets are missing, verify with `codesign --verify --deep` / `spctl` / `stapler validate`, set `minimumSystemVersion` (the frontend uses `color-mix()`, Safari 16.2, while Vite targets `safari13`). Trash goes through Finder AppleScript (trash-rs `DeleteMethod::Finder`) under the hardened runtime without `NSAppleEventsUsageDescription`; consider `NsFileManager`. Guide users to Full Disk Access on TCC-denied paths.
 - Elevated sessions from the AppImage: root can't exec the agent from the FUSE mount. `NEWT_AGENT_DIR` also leaks into terminal shells.
 - Settle identifiers before 1.0: keychain service `com.newt.credentials` vs `org.newt-fm.newt`, `newt.desktop` vs reverse-DNS.
 - Linux packages depend on libappindicator, which the binary doesn't link; no CI step test-installs a package.
 - `cargo deny` (licences, advisories; bincode 1.3 is unmaintained), and WiX 6 → 7 wording in `newt.wxs` / `build-msi.ps1`.
-- On Windows, `--help`/`--version` print nothing (GUI subsystem), the MSI doesn't add to PATH and is per-machine only.
 - `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint.
 - Write supported OS versions and Install/Update/Troubleshooting/Uninstall into FEATURE_DUMP for the manual.
 
 Correctness and UX:
 
 - Linux trash on a root-owned mount falls back to copy-then-delete into `~/.local/share/Trash` with no progress or cancel.
-- Non-UTF-8 file names can't be operated on (lossy wire paths).
 - Huge directories: sync commands do O(n) work on the main thread shared by all windows, and a streaming listing is re-cloned and re-sorted every 100 ms under the view-state lock.
-- macOS file watching roots an FSEvents stream at `/` per pane per wait.
 - Properties: owner and group take numeric IDs only (no account names); Windows has no attribute editor.
 - Bidi formatting characters show as U+FFFD in the file list, the path bar, Delete, Copy/Move, Properties and operation prompts, but not yet in the window title (set from Rust), Rename, Quick View, the viewer and editor, or palettes.
-- No undo for file operations; no OS notification when a background operation finishes or stops on a prompt.
+- no OS notification when a background operation finishes or stops on a prompt.
+
 
 ## Major new features (groom/write design docs first)
 

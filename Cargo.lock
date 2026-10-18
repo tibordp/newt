@@ -4171,6 +4171,7 @@ dependencies = [
  "expanduser",
  "filetime",
  "flate2",
+ "fsevent-sys",
  "futures",
  "globset",
  "http-body-util",

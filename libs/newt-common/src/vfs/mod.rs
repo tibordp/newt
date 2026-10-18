@@ -5,6 +5,8 @@ pub mod background_job;
 pub mod change_notifier;
 pub mod disc;
 pub mod file;
+#[cfg(target_os = "macos")]
+mod fsevents;
 pub mod gitignore;
 pub mod local;
 pub(crate) mod local_attributes;
