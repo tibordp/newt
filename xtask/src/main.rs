@@ -1,10 +1,12 @@
 //! Build tasks: cross-platform agent builds, and the generated files that
-//! must not drift (`src/lib/bindings.ts`, `THIRD-PARTY-NOTICES.md`).
+//! must not drift (`src/lib/bindings.ts`, `THIRD-PARTY-NOTICES.md`, the
+//! file-icon set).
 //!
 //! `cargo xtask agents` builds `newt-agent` per target triple and lays it
 //! out as `agents/<triple>/newt-agent[.exe]` — the tree the host resolver
 //! (`TauriAgentResolver`) loads from the cwd-relative `agents/` dir.
 
+mod file_icons;
 mod notices;
 
 use std::path::{Path, PathBuf};
@@ -181,6 +183,8 @@ fn help() {
     println!("      regenerate src/lib/bindings.ts (host-independent)");
     println!("  cargo xtask notices [--check]");
     println!("      regenerate THIRD-PARTY-NOTICES.md (needs node_modules)");
+    println!("  cargo xtask file-icons");
+    println!("      re-vendor the seti font and file-icon mapping from VS Code (needs network)");
 }
 
 fn run() -> Result<(), String> {
@@ -235,6 +239,7 @@ fn run() -> Result<(), String> {
         }
         "gen-bindings" => gen_bindings(rest.iter().any(|a| a == "--check")),
         "notices" => notices::notices(&workspace_root()?, rest.iter().any(|a| a == "--check")),
+        "file-icons" => file_icons::file_icons(&workspace_root()?),
         "help" | "-h" | "--help" => {
             help();
             Ok(())

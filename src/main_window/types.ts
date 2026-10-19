@@ -76,6 +76,17 @@ export function isPackage(row: FileView): boolean {
   return row.annotations?.some((a) => "package" in a) ?? false;
 }
 
+/// Whether a row is a file with an execute bit. A symlink's own mode says
+/// nothing about its target, so a link never counts.
+export function isExecutable(row: FileView): boolean {
+  return (
+    !row.is_dir &&
+    !row.is_symlink &&
+    row.mode != null &&
+    (row.mode & 0o111) !== 0
+  );
+}
+
 /// The du annotation's payload for a row, if any.
 export function recursiveSize(row: FileView): RecursiveSize | undefined {
   const a = row.annotations?.find((a) => "recursive_size" in a);

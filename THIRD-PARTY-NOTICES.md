@@ -28,15 +28,13 @@ these projects, each under its own licence:
 | Seti-UI (modified) | MIT |
 | Weather Icons | SIL OFL 1.1 |
 
-### Seti UI icon font — `src/assets/seti.woff`
+### Seti icon font and file-type mapping — `src/assets/seti.woff`, `src/assets/file-icons.json`
 
-From [seti-ui](https://github.com/jesseweed/seti-ui) by Jesse Weed, MIT
-licensed.
-
-### File-type icon mapping — `src/assets/mapping.json`
-
-Derived from Visual Studio Code's `theme-seti` icon theme, Copyright (c)
-Microsoft Corporation, MIT licensed, itself generated from seti-ui (above).
+From Visual Studio Code's `theme-seti` icon theme, Copyright (c) Microsoft
+Corporation, MIT licensed, itself generated from
+[seti-ui](https://github.com/jesseweed/seti-ui) by Jesse Weed, MIT licensed.
+The mapping also carries the file associations of VS Code's built-in language
+extensions, under the same licence.
 
 ### Codicons — folder and document icons
 

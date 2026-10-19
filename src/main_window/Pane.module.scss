@@ -301,13 +301,17 @@
 
 .gitBadge {
   display: flex;
-  align-items: center;
+  // The header lines its items up by baseline. The glyph is centred instead
+  // (seti draws glyphs centred in the em box), which leaves the text alone
+  // to give the badge its baseline.
+  align-items: baseline;
   gap: var(--space-1);
   color: var(--color-fg-muted);
   white-space: nowrap;
 }
 
 .gitBadgeIcon {
+  align-self: center;
   font-family: "seti";
   font-size: 130%;
   line-height: 1;

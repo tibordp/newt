@@ -13,8 +13,12 @@ import { DropdownMenu } from "../lib/menus";
 import { ContextMenu, isKeyboardContextMenu, openMenuAt } from "../lib/menus";
 import { ownsEvent } from "../lib/events";
 import { useAfterGrace } from "../lib/useAfterGrace";
-import iconMapping from "../assets/mapping.json";
-import { fileIconGlyph } from "../lib/fileIcons";
+import {
+  type FileIconGlyph,
+  fileIconGlyph,
+  iconColor,
+  setiGlyph,
+} from "../lib/fileIcons";
 import { commands, type Result, type RowActions } from "../lib/bindings";
 import { rawCommands, safe, safeSilent } from "../lib/ipc";
 import { modifiers, normalizeKeyEvent, numpadOperator } from "../lib/commands";
@@ -30,6 +34,8 @@ import {
   PaneState,
   DndFileInfo,
   FileRowContext,
+  isExecutable,
+  isPackage,
   KEYBOARD_MENU_EVENT,
   REFOCUS_EVENT,
 } from "./types";
@@ -154,21 +160,20 @@ type LocalDndState = {
   startX: number;
   startY: number;
   files: DndFileInfo[];
+  /** The glyph of a single dragged file; absent for a folder or several. */
+  icon?: FileIconGlyph;
   /** An escalation to a native OS drag is in flight (or done). */
   escalating?: boolean;
 };
 
-const iconDefs = iconMapping.iconDefinitions as unknown as Record<
-  string,
-  { fontCharacter: string; fontColor: string }
->;
-
-function getFileIconChar(
-  name: string,
-  isDir: boolean,
-): { ch: string; color: string } {
-  if (isDir) return { ch: "\uE5FF", color: "" };
-  return fileIconGlyph(name);
+/// The glyph a lone dragged file shows in the drag ghost, as the list shows
+/// it; none for a folder or several files.
+function dragIcon(files: FileView[]): FileIconGlyph | undefined {
+  if (files.length !== 1) return undefined;
+  const f = files[0];
+  const pkg = isPackage(f);
+  if (f.is_dir && !pkg) return undefined;
+  return fileIconGlyph(f.name, { isPackage: pkg, executable: isExecutable(f) });
 }
 
 /**
@@ -178,13 +183,15 @@ function getFileIconChar(
  * Rendered at 1x: canvas PNGs carry no DPI metadata, so a 2x bitmap would
  * draw double-size; slight blur on retina displays is accepted.
  */
-async function renderDragImage(files: DndFileInfo[]): Promise<Uint8Array> {
+async function renderDragImage(
+  files: DndFileInfo[],
+  icon: FileIconGlyph | undefined,
+): Promise<Uint8Array> {
   try {
     const label = files.length === 1 ? files[0].name : `${files.length} items`;
     const bodyStyle = getComputedStyle(document.body);
     const font = `${bodyStyle.fontSize} ${bodyStyle.fontFamily}`;
-    const single = files.length === 1 && !files[0].is_dir;
-    const iconW = single ? 22 : 0;
+    const iconW = icon ? 22 : 0;
     const padX = 8;
     const h = 24;
 
@@ -204,11 +211,15 @@ async function renderDragImage(files: DndFileInfo[]): Promise<Uint8Array> {
     c.fill();
     c.globalAlpha = 1;
     c.textBaseline = "middle";
-    if (single) {
-      const { ch, color } = getFileIconChar(files[0].name, false);
-      c.font = '16px "seti"';
+    if (icon) {
+      const color =
+        icon.color &&
+        getComputedStyle(document.documentElement).getPropertyValue(
+          `--icon-${icon.color}`,
+        );
+      c.font = icon.md ? '13px "nerd-symbols"' : '16px "seti"';
       c.fillStyle = color || bodyStyle.color;
-      c.fillText(ch, padX, h / 2);
+      c.fillText(icon.ch, padX, h / 2);
     }
     c.font = font;
     c.fillStyle = bodyStyle.color;
@@ -768,7 +779,7 @@ function highlightDropTarget(
 function GitBranchBadge({ badge }: { badge: ContextBadge }) {
   if (!("git_branch" in badge) || !badge.git_branch.name) return null;
   const branch = badge.git_branch;
-  const git = iconDefs["git"];
+  const git = setiGlyph("git");
   const parts = [branch.name + (branch.dirty ? "*" : "")];
   if (branch.ahead > 0) parts.push(`↑${branch.ahead}`);
   if (branch.behind > 0) parts.push(`↓${branch.behind}`);
@@ -785,11 +796,9 @@ function GitBranchBadge({ badge }: { badge: ContextBadge }) {
     .join(" · ");
   return (
     <div className={styles.gitBadge} title={title}>
-      {git && (
-        <span className={styles.gitBadgeIcon} aria-hidden>
-          {String.fromCodePoint(parseInt(git.fontCharacter, 16))}
-        </span>
-      )}
+      <span className={styles.gitBadgeIcon} aria-hidden>
+        {git.ch}
+      </span>
       {parts.join(" ")}
     </div>
   );
@@ -1361,6 +1370,7 @@ function PaneInner(
           name: fileKey(f),
           is_dir: f.is_dir,
         })),
+        icon: dragIcon(filesToDrag),
       };
     },
     [paneHandle],
@@ -1382,7 +1392,7 @@ function PaneInner(
       if (!dnd?.active || dnd.escalating) return;
       dnd.escalating = true;
       try {
-        const image = await renderDragImage(dnd.files);
+        const image = await renderDragImage(dnd.files, dnd.icon);
         const accepted = await rawCommands.dndDragOut(image);
         if (accepted.status === "ok" && accepted.data) {
           cleanupDnd();
@@ -1438,11 +1448,12 @@ function PaneInner(
           if (dnd.files.length === 1) {
             const f = dnd.files[0];
             const icon = document.createElement("div");
-            icon.className = f.is_dir ? "file-icon folder" : "file-icon";
-            if (!f.is_dir) {
-              const { ch, color } = getFileIconChar(f.name, f.is_dir);
-              icon.style.setProperty("--icon-color", color);
-              icon.textContent = ch;
+            if (dnd.icon) {
+              icon.className = dnd.icon.md ? "file-icon md" : "file-icon";
+              icon.style.setProperty("--icon-color", iconColor(dnd.icon) ?? "");
+              icon.textContent = dnd.icon.ch;
+            } else {
+              icon.className = "file-icon folder";
             }
             ghost.replaceChildren(icon, ` ${f.name}`);
           } else {

@@ -14,7 +14,7 @@ import {
   type BatchRenameRow,
   type Rule,
 } from "../../lib/bindings";
-import { fileIconGlyph } from "../../lib/fileIcons";
+import { FileIcon } from "../../lib/fileIcons";
 import { safe, tryRun } from "../../lib/ipc";
 import { usePreferences } from "../../lib/preferences";
 import { rowHeightFor } from "../density";
@@ -411,18 +411,7 @@ function Row({
   onClick: () => void;
 }) {
   const problem = row.problem;
-  const { ch, color } = fileIconGlyph(row.name);
-  const icon = row.is_dir ? (
-    <div className="file-icon folder" aria-hidden />
-  ) : (
-    <div
-      className="file-icon"
-      style={{ "--icon-color": color } as React.CSSProperties}
-      aria-hidden
-    >
-      {ch}
-    </div>
-  );
+  const icon = <FileIcon name={row.name} folder={row.is_dir} />;
   const classes = [
     styles.row,
     cursor ? styles.cursor : "",

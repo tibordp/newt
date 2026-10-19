@@ -28,3 +28,5 @@ target/
 
 # tauri-specta emits its own formatting; prettier would fight the regenerator.
 src/lib/bindings.ts
+# Written by `cargo xtask file-icons`.
+src/assets/file-icons.json

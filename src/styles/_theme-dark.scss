@@ -58,6 +58,19 @@
   --_drag-rect-border: rgba(53, 132, 228, 0.6);
 
   --_icon-folder: url("../assets/folder-open-dark.svg");
+
+  // File icons: seti's palette, VS Code's dark-theme values.
+  --_icon-blue: #519aba;
+  --_icon-red: #cc3e44;
+  --_icon-purple: #a074c4;
+  --_icon-yellow: #cbcb41;
+  --_icon-green: #8dc149;
+  --_icon-grey: #4d5a5e;
+  --_icon-orange: #e37933;
+  --_icon-grey-light: #6d8086;
+  --_icon-white: #d4d7d6;
+  --_icon-pink: #f55385;
+  --_icon-ignore: #41535b;
 }
 
 @media (prefers-color-scheme: dark) {

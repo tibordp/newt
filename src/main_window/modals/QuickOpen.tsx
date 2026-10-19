@@ -7,7 +7,7 @@ import {
   type QuickOpenHit,
   type QuickOpenUpdate,
 } from "../../lib/bindings";
-import { fileIconGlyph } from "../../lib/fileIcons";
+import { FileIcon } from "../../lib/fileIcons";
 import { Palette } from "./Palette";
 import styles from "./QuickOpen.module.scss";
 
@@ -54,20 +54,9 @@ function Hit({ hit }: { hit: QuickOpenHit }) {
   const name = chars.slice(slash + 1);
   const dir = chars.slice(0, Math.max(slash, 0));
   const highlights = new Set(hit.highlights);
-  const { ch, color } = fileIconGlyph(name.join(""));
   return (
     <>
-      {hit.is_dir ? (
-        <div className="file-icon folder" aria-hidden />
-      ) : (
-        <div
-          className="file-icon"
-          style={{ "--icon-color": color } as React.CSSProperties}
-          aria-hidden
-        >
-          {ch}
-        </div>
-      )}
+      <FileIcon name={name.join("")} folder={hit.is_dir} />
       <span className={styles.name}>
         <Highlighted chars={name} offset={slash + 1} highlights={highlights} />
       </span>

@@ -4,12 +4,13 @@ import {
   ColumnDef,
   Sorting,
   gitStatus,
+  isExecutable,
   isPackage,
   recursiveSize,
 } from "./types";
 import { modeString } from "./utils";
 import { formatBytes } from "../lib/size";
-import { fileIconGlyph } from "../lib/fileIcons";
+import { FileIcon } from "../lib/fileIcons";
 import { visibleName } from "../lib/bidi";
 import { formatDate, formatDateTime, formatTime } from "../lib/datetime";
 import type { MetadataTraits } from "../lib/bindings";
@@ -57,8 +58,6 @@ function FileName({
   // A package looks like the file macOS presents it as.
   const folder = is_dir && !isPackage(info);
 
-  const { ch, color } = fileIconGlyph(name);
-
   // Quick search draws a caret after the typed prefix, positioned from
   // the rendered text so the name stays one text node.
   const quickSearch = focused && filter != null && filterMode !== "filter";
@@ -93,18 +92,6 @@ function FileName({
     });
   }, [quickSearch, filter, displayName]);
 
-  const iconElement = folder ? (
-    <div className="file-icon folder" aria-hidden />
-  ) : (
-    <div
-      className="file-icon"
-      style={{ "--icon-color": color } as React.CSSProperties}
-      aria-hidden
-    >
-      {ch}
-    </div>
-  );
-
   // `source_display` (pre-rendered by the host for search results) is shown
   // inline as a "where from" hint so identically-named matches stay distinct.
   return (
@@ -113,7 +100,12 @@ function FileName({
         is_symlink ? "symlink" : ""
       } ${git ? `git-${git}` : ""}`}
     >
-      {iconElement}
+      <FileIcon
+        name={name}
+        folder={folder}
+        isPackage={isPackage(info)}
+        executable={isExecutable(info)}
+      />
       <div
         ref={partRef}
         className={focused ? "filename-part focused" : "filename-part"}

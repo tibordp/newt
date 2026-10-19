@@ -68,4 +68,18 @@
 
   // Folder icon
   --_icon-folder: url("../assets/folder-open-light.svg");
+
+  // File icons: seti's palette, VS Code's light-theme values. White, yellow
+  // and green are darkened to 3:1 against the pane.
+  --_icon-blue: #498ba7;
+  --_icon-red: #b8383d;
+  --_icon-purple: #9068b0;
+  --_icon-yellow: #93932f;
+  --_icon-green: #719b3b;
+  --_icon-grey: #455155;
+  --_icon-orange: #cc6d2e;
+  --_icon-grey-light: #627379;
+  --_icon-white: #8a908e;
+  --_icon-pink: #dd4b78;
+  --_icon-ignore: #3b4b52;
 }

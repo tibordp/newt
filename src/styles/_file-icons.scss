@@ -17,6 +17,12 @@
   vertical-align: top;
   color: var(--icon-color);
 
+  // Glyphs borrowed from Symbols Nerd Font's Material set, at seti's size.
+  &.md {
+    font-family: "nerd-symbols";
+    font-size: 120%;
+  }
+
   &.folder {
     background-image: var(--icon-folder);
     background-position: center;
