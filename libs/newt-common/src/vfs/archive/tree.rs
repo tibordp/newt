@@ -42,17 +42,31 @@ impl DirectoryTree {
         Ok(files)
     }
 
-    pub(super) fn file_info(&self, path: &StdPath) -> Result<File, Error> {
+    /// See `Vfs::file_info`.
+    pub(super) fn file_info(&self, path: &StdPath, follow: bool) -> Result<File, Error> {
         let normalized = normalize_dir_path(path);
-        let resolved = self.resolve_path(&normalized, false)?;
+        let resolved = self.resolve_path(&normalized, follow)?;
         if resolved.as_os_str().is_empty() {
             return Ok(File::bare_dir(""));
         }
         let mut file = self
             .lookup_entry(&resolved)
             .ok_or_else(|| Error::not_found(format!("file not found: {}", path.display())))?;
-        let parent = resolved.parent().unwrap_or(StdPath::new(""));
-        self.fill_symlink_target_metadata(parent, &mut file);
+        if follow {
+            // Resolution stops at a link whose target is unknown.
+            if file.is_symlink() {
+                return Err(Error::not_found(format!(
+                    "link leads nowhere: {}",
+                    path.display()
+                )));
+            }
+            if let Some(name) = normalized.file_name() {
+                file.name = name.to_string_lossy().into_owned();
+            }
+        } else {
+            let parent = resolved.parent().unwrap_or(StdPath::new(""));
+            self.fill_symlink_target_metadata(parent, &mut file);
+        }
         Ok(file)
     }
 
@@ -390,7 +404,7 @@ pub(super) fn build_directory_tree_from_iluvatar(
 #[cfg(test)]
 mod build_tree_tests {
     use super::{DirectoryTree, build_tree};
-    use crate::vfs::{File, Mode};
+    use crate::vfs::{File, Mode, Symlink};
     use std::path::Path as StdPath;
 
     fn file() -> File {
@@ -414,6 +428,53 @@ mod build_tree_tests {
             .collect();
         names.sort();
         names
+    }
+
+    fn link(target: Symlink) -> File {
+        File {
+            symlink: Some(target),
+            ..file()
+        }
+    }
+
+    #[test]
+    fn file_info_follows_a_link_only_when_asked() {
+        let target = File {
+            size: Some(5),
+            mode: Some(Mode(0o640)),
+            ..file()
+        };
+        let tree = build_tree([
+            ("d/data", target),
+            ("to_data", link(Symlink::Target("d/data".into()))),
+            ("to_d", link(Symlink::Target("d".into()))),
+        ]);
+
+        let entry = tree.file_info(StdPath::new("to_data"), false).unwrap();
+        assert_eq!(entry.symlink_target(), Some("d/data"));
+        assert_eq!(entry.mode, None);
+
+        let followed = tree.file_info(StdPath::new("to_data"), true).unwrap();
+        assert!(!followed.is_symlink());
+        assert_eq!(followed.name, "to_data");
+        assert_eq!(followed.size, Some(5));
+        assert_eq!(followed.mode.map(|m| m.0), Some(0o640));
+
+        assert!(tree.file_info(StdPath::new("to_d"), false).unwrap().is_dir);
+        assert!(tree.file_info(StdPath::new("to_d"), true).unwrap().is_dir);
+    }
+
+    #[test]
+    fn following_a_link_that_leads_nowhere_fails() {
+        let tree = build_tree([
+            ("unknown", link(Symlink::Unknown)),
+            ("dangling", link(Symlink::Target("missing".into()))),
+        ]);
+        for name in ["unknown", "dangling"] {
+            assert!(tree.file_info(StdPath::new(name), false).is_ok(), "{name}");
+            let err = tree.file_info(StdPath::new(name), true).unwrap_err();
+            assert_eq!(err.kind, crate::ErrorKind::NotFound, "{name}");
+        }
     }
 
     #[test]

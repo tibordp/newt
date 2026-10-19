@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use super::{
     API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
-    API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
-    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
+    API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA, API_VFS_HARD_LINK,
+    API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE,
     API_VFS_READ_ATTRIBUTE, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
     API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA,
@@ -132,14 +132,9 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.read_at_sessions.read_at(id, offset, len).await;
                 encode(&ret)
             }
-            API_VFS_FILE_DETAILS => {
-                let path: PathBuf = decode(&req[..]);
-                let ret = self.vfs.file_details(&path).await;
-                encode(&ret)
-            }
             API_VFS_FILE_INFO => {
-                let path: PathBuf = decode(&req[..]);
-                let ret = self.vfs.file_info(&path).await;
+                let (path, follow): (PathBuf, bool) = decode(&req[..]);
+                let ret = self.vfs.file_info(&path, follow).await;
                 encode(&ret)
             }
             API_VFS_OVERWRITE_ASYNC_BEGIN => {

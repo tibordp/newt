@@ -1112,7 +1112,7 @@ pub async fn dissect_open(
         .map(|c| Ok((c.path, format_named(&c.format)?)))
         .collect::<Result<Vec<_>, Error>>()?;
     let fs = ctx.fs()?;
-    let len = fs.file_details(path.clone()).await?.size;
+    let len = fs.file_info(path.clone(), true).await?.size.unwrap_or(0);
     let reader = fs.open_read_at(path.clone()).await?;
     let name = path.file_name().unwrap_or_default().to_string();
     let dissections = &global_ctx.dissections;

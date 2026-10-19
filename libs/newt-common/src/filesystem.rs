@@ -9,7 +9,7 @@ use crate::Error;
 use crate::find::{SearchMatch, SearchPattern};
 use crate::rpc::Communicator;
 use crate::vfs::properties::PropertySheet;
-use crate::vfs::{FileChunk, FileDetails, FileList, FsStats, VfsPath, VfsRandomReader};
+use crate::vfs::{File, FileChunk, FileList, FsStats, VfsPath, VfsRandomReader};
 
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
@@ -59,13 +59,14 @@ pub trait Filesystem: Send + Sync {
 
     // --- File content ---
 
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error>;
+    /// See `Vfs::file_info`.
+    async fn file_info(&self, path: VfsPath, follow: bool) -> Result<File, Error>;
 
     /// Where a symlink leads, with every link along the way resolved the
     /// way its filesystem resolves them — where following it lands.
     async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, Error>;
 
-    /// Per-VFS extras beyond `FileDetails` (S3 ACLs, user metadata) for
+    /// Per-VFS extras beyond `File` (S3 ACLs, user metadata) for
     /// the Properties dialog. Tolerated exception to the data-plane
     /// membership test — it lives here because it needs the same
     /// session-side resolution and there is no better surface for a
@@ -85,7 +86,7 @@ pub trait Filesystem: Send + Sync {
     /// The file's whole new contents, swapped in at once where the VFS can
     /// promise that for it (`WriteOptions::replace`), written in place
     /// otherwise. Returns the file as written.
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error>;
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<File, Error>;
     async fn find_in_file(
         &self,
         path: VfsPath,
@@ -179,10 +180,10 @@ impl Filesystem for Remote {
         ret
     }
 
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
-        let ret: Result<FileDetails, Error> = self
+    async fn file_info(&self, path: VfsPath, follow: bool) -> Result<File, Error> {
+        let ret: Result<File, Error> = self
             .communicator
-            .invoke(crate::api::API_FILE_DETAILS, &path)
+            .invoke(crate::api::API_FILE_INFO, &(path, follow))
             .await?;
 
         Ok(ret?)
@@ -239,8 +240,8 @@ impl Filesystem for Remote {
         Ok(ret?.into_vec())
     }
 
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error> {
-        let ret: Result<FileDetails, Error> = self
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<File, Error> {
+        let ret: Result<File, Error> = self
             .communicator
             .invoke(
                 crate::api::API_WRITE_FILE,

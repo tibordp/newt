@@ -7,7 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import { marked } from "marked";
 
 import type {
-  FileDetails,
+  File,
   InspectedFile,
   MainWindowState,
   MarkdownNode,
@@ -18,6 +18,7 @@ import type {
   ViewerMode,
   ViewerState,
 } from "../../src/lib/bindings";
+import { file } from "./builders";
 import { scenes } from "./registry";
 import type { SceneStatus } from "./types";
 
@@ -129,17 +130,10 @@ const renderMarkdown = async (path: VfsPath): Promise<MarkdownNode[]> => {
     .map(toNode);
 };
 
-const detailsOf = async (path: VfsPath): Promise<FileDetails> => ({
-  size: fixture(path).size ?? (await bytesOf(path)).length,
-  is_dir: false,
-  symlink: null,
-  user: { name: "demo" },
-  group: { name: "staff" },
-  mode: 0o100644,
-  modified: null,
-  accessed: null,
-  created: null,
-});
+const infoOf = async (path: VfsPath): Promise<File> =>
+  file(path.path.split("/").pop() ?? "", {
+    size: fixture(path).size ?? (await bytesOf(path)).length,
+  });
 
 /// The viewer mode `inspect_file` resolves for a fixture, by MIME type
 /// alone; scenes don't carry associations.
@@ -187,11 +181,11 @@ const handlers: Record<string, (args: any) => unknown> = {
   },
   get_preferences: () => preferences,
   get_runtime_state: () => runtimeState,
-  file_details: ({ path }: { path: VfsPath }) => detailsOf(path),
+  file_info: ({ path }: { path: VfsPath }) => infoOf(path),
   inspect_file: async ({ path }: { path: VfsPath }): Promise<InspectedFile> => {
     const { mime, viewerMode } = fixture(path);
     return {
-      details: await detailsOf(path),
+      info: await infoOf(path),
       viewer_mode: viewerMode ?? viewerModeOf(mime ?? ""),
       mime,
       language: scene.window === "editor" ? scene.state.language : "plaintext",

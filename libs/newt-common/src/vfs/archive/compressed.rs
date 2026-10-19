@@ -20,7 +20,7 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FileChunk, FileDetails, FsStats};
+use crate::vfs::{File, FileChunk, FsStats};
 
 use super::super::open_read_at;
 use super::super::origin::{
@@ -262,7 +262,11 @@ impl CompressedFileVfs {
         if state.completed.get().is_some() {
             return Ok(());
         }
-        let file_size = upstream.file_details(&archive_path).await?.size;
+        let file_size = upstream
+            .file_info(&archive_path, true)
+            .await?
+            .size
+            .unwrap_or(0);
         let indexer = match &mut *slot {
             Some(indexer) => {
                 info!("archive: resuming indexing of {}", archive_path);
@@ -355,7 +359,7 @@ impl CompressedFileVfs {
         self.state
             .tree
             .read()
-            .file_info(StdPath::new(path.as_wire_str()))
+            .file_info(StdPath::new(path.as_wire_str()), false)
             .map(|_| ())
     }
 
@@ -457,36 +461,12 @@ impl Vfs for CompressedFileVfs {
         Ok(None)
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let (index, _guard) = self.wait_for_index().await?;
-        let file = self
-            .state
-            .tree
-            .read()
-            .file_info(StdPath::new(path.as_wire_str()))?;
-        Ok(FileDetails {
-            size: if file.is_dir {
-                0
-            } else {
-                index.unpacked_len.unwrap_or(0)
-            },
-            is_dir: file.is_dir,
-            symlink: None,
-            user: None,
-            group: None,
-            mode: None,
-            modified: None,
-            accessed: None,
-            created: None,
-        })
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let (_, _guard) = self.wait_for_index().await?;
         self.state
             .tree
             .read()
-            .file_info(StdPath::new(path.as_wire_str()))
+            .file_info(StdPath::new(path.as_wire_str()), follow)
     }
 
     async fn open_read_async(

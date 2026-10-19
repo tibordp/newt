@@ -808,20 +808,26 @@ impl Vfs for SearchVfs {
             .and_then(|f| f.source.clone())
     }
 
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+    /// A hit as listed. Following one that is a link takes its source's
+    /// filesystem, which the registry reaches through `redirect_target`.
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let key = path.strip_prefix(&PathBuf::root()).ok_or_else(|| Error {
             kind: ErrorKind::NotFound,
             message: "not under search root".into(),
         })?;
         let results = self.results.read();
-        results
+        let hit = results
             .iter()
             .find(|f| f.key() == key)
             .cloned()
             .ok_or_else(|| Error {
                 kind: ErrorKind::NotFound,
                 message: format!("no search hit for {}", key),
-            })
+            })?;
+        if follow && hit.is_symlink() {
+            return Err(Error::not_supported());
+        }
+        Ok(hit)
     }
 }
 

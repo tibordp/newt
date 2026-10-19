@@ -19,8 +19,8 @@ use crate::vfs::properties::PropertySheet;
 
 use super::path::{PathBuf, VfsPath};
 use super::{
-    File, FileChunk, FileDetails, FileList, FsStats, RevalidationOutcome, Vfs, VfsDescriptor,
-    VfsId, VfsRandomReader,
+    File, FileChunk, FileList, FsStats, RevalidationOutcome, Vfs, VfsDescriptor, VfsId,
+    VfsRandomReader,
 };
 
 // Auto-registration via inventory
@@ -259,10 +259,10 @@ impl Filesystem for VfsRegistryFs {
         vfs.revalidate().await
     }
 
-    async fn file_details(&self, path: VfsPath) -> Result<FileDetails, Error> {
+    async fn file_info(&self, path: VfsPath, follow: bool) -> Result<File, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        vfs.file_details(&local_path).await
+        vfs.file_info(&local_path, follow).await
     }
 
     async fn resolve_link(&self, path: VfsPath) -> Result<VfsPath, Error> {
@@ -300,21 +300,21 @@ impl Filesystem for VfsRegistryFs {
     async fn read_file(&self, path: VfsPath, max_size: u64) -> Result<Vec<u8>, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
-        let details = vfs.file_details(&local_path).await?;
-        if details.size > max_size {
+        let size = vfs.file_info(&local_path, true).await?.size.unwrap_or(0);
+        if size > max_size {
             return Err(Error::custom(format!(
                 "File is too large to edit ({} bytes, limit is {} bytes)",
-                details.size, max_size
+                size, max_size
             )));
         }
         use tokio::io::AsyncReadExt;
         let mut reader = vfs.open_read_async(&local_path).await?;
-        let mut data = Vec::with_capacity(details.size as usize);
+        let mut data = Vec::with_capacity(size as usize);
         reader.read_to_end(&mut data).await?;
         Ok(data)
     }
 
-    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<FileDetails, Error> {
+    async fn write_file(&self, path: VfsPath, data: Vec<u8>) -> Result<File, Error> {
         let path = self.registry.dereference(&path).await;
         let (vfs, local_path) = self.registry.resolve(&path)?;
         // Whole or not at all where the VFS can promise it for this file;
@@ -332,7 +332,7 @@ impl Filesystem for VfsRegistryFs {
         };
         writer.write(&data).await?;
         writer.finish().await?;
-        vfs.file_details(&local_path).await
+        vfs.file_info(&local_path, true).await
     }
 
     async fn find_in_file(

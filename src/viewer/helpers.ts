@@ -1,5 +1,5 @@
 export type { VfsPath } from "../lib/types";
-export type { ExifRow, FileDetails as FileInfo } from "../lib/bindings";
+export type { ExifRow, File as FileInfo } from "../lib/bindings";
 
 export type { ViewerMode } from "../lib/bindings";
 
@@ -19,8 +19,10 @@ export function buildFileUrl(
   return url.toString();
 }
 
-export const fileVersion = (info: { modified: number | null; size: number }) =>
-  `${info.modified ?? ""}-${info.size}`;
+export const fileVersion = (info: {
+  modified: number | null;
+  size: number | null;
+}) => `${info.modified ?? ""}-${info.size ?? ""}`;
 
 export const CHUNK_SIZE = 128 * 1024;
 export const HEX_BYTES_PER_ROW = 16;

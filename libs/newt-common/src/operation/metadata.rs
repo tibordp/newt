@@ -139,7 +139,7 @@ pub(super) async fn execute_set_metadata(
             retry = false;
 
             let new_permissions = if has_mode_changes {
-                match vfs.file_info(local_path).await {
+                match vfs.file_info(local_path, false).await {
                     // A link's own mode is fixed or meaningless; its
                     // target is changed as itself, if it's selected.
                     Ok(file_info) if file_info.is_symlink() => None,

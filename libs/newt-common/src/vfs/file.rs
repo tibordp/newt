@@ -294,31 +294,6 @@ impl FileList {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct FileDetails {
-    pub size: u64,
-    pub is_dir: bool,
-    /// See `File::symlink`.
-    pub symlink: Option<Symlink>,
-    pub user: Option<UserGroup>,
-    pub group: Option<UserGroup>,
-    pub mode: Option<Mode>,
-    pub modified: Option<i64>,
-    pub accessed: Option<i64>,
-    pub created: Option<i64>,
-}
-
-impl FileDetails {
-    pub fn is_symlink(&self) -> bool {
-        self.symlink.is_some()
-    }
-
-    /// A link's target, when it could be read.
-    pub fn symlink_target(&self) -> Option<&str> {
-        self.symlink.as_ref().and_then(Symlink::target)
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FileChunk {
     // serde_bytes: bincode's serde path walks Vec<u8> per byte; this hits
     // its bytes fast path with an identical wire format.
@@ -328,8 +303,7 @@ pub struct FileChunk {
     pub total_size: u64,
 }
 
-/// `SystemTime` → the millisecond epoch timestamps carried on `File` /
-/// `FileDetails`.
+/// `SystemTime` → the millisecond epoch timestamps carried on `File`.
 pub trait ToUnix {
     fn to_unix(&self) -> i64;
 }

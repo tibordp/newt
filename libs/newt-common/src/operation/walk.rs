@@ -159,7 +159,7 @@ impl Collector<'_> {
                 IssueOutcome::Skip => return Ok(None),
                 IssueOutcome::Retry => {}
             }
-            error = match cancellable(self.cancel, self.vfs.file_info(path)).await {
+            error = match cancellable(self.cancel, self.vfs.file_info(path, false)).await {
                 Ok(file) => match file.symlink {
                     Some(Symlink::Target(target)) => return Ok(Some(target)),
                     _ => crate::Error::custom("the filesystem did not report the link's target"),

@@ -247,7 +247,7 @@ pub fn create_specta_builder() -> Builder<Wry> {
             operations::background_operation,
             operations::foreground_operation,
             // File viewing/opening/editing
-            operations::file_details,
+            operations::file_info,
             operations::inspect_file,
             operations::read_file_range,
             operations::read_file,

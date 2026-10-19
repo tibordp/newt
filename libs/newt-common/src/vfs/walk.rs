@@ -152,7 +152,10 @@ pub fn is_mount_point(parent_device: Option<u64>, file: &File) -> bool {
 pub async fn parent_device(vfs: &dyn Vfs, path: &Path, file: &File) -> Option<u64> {
     file.device_id?;
     let parent = path.parent()?;
-    vfs.file_info(parent).await.ok().and_then(|f| f.device_id)
+    vfs.file_info(parent, false)
+        .await
+        .ok()
+        .and_then(|f| f.device_id)
 }
 
 /// The entry for a root. A stat where the VFS has one; the parent's
@@ -160,7 +163,7 @@ pub async fn parent_device(vfs: &dyn Vfs, path: &Path, file: &File) -> Option<u6
 /// directory by definition.
 pub async fn root_entry(vfs: &dyn Vfs, path: &Path) -> Result<File, Error> {
     if vfs.descriptor().can_stat_directories() {
-        return vfs.file_info(path).await;
+        return vfs.file_info(path, false).await;
     }
     let Some(name) = path.file_name() else {
         return Ok(File::bare_dir(""));
@@ -396,7 +399,7 @@ impl<'a> Walker<'a> {
                 let (target, file) = loop {
                     let resolved = async {
                         let target = self.vfs.resolve_link(&child.path).await?;
-                        let file = self.vfs.file_info(&target).await?;
+                        let file = self.vfs.file_info(&target, false).await?;
                         Ok::<_, Error>((target, file))
                     }
                     .await;

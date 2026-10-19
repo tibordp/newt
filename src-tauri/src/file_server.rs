@@ -154,10 +154,10 @@ async fn serve_file(
     };
     let vfs_path = VfsPath::from_wire_str(vfs_id, &query.path);
 
-    let details = match state.fs.file_details(vfs_path.clone()).await {
+    let details = match state.fs.file_info(vfs_path.clone(), true).await {
         Ok(d) => d,
         Err(e) => {
-            log::error!("file_server: file_details error: {}", e);
+            log::error!("file_server: file_info error: {}", e);
             return StatusCode::NOT_FOUND.into_response();
         }
     };
@@ -167,7 +167,7 @@ async fn serve_file(
         .or_else(|| crate::associations::mime_of(&query.path))
         .and_then(|m| header::HeaderValue::from_str(&m).ok())
         .unwrap_or(header::HeaderValue::from_static("application/octet-stream"));
-    let file_size = details.size;
+    let file_size = details.size.unwrap_or(0);
 
     let range_header = headers
         .get("range")

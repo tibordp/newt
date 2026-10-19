@@ -6,11 +6,11 @@ use parking_lot::Mutex;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
+use crate::vfs::FileChunk;
 use crate::vfs::ToUnix;
 use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats};
-use crate::vfs::{FileChunk, FileDetails};
 use crate::{Error, ErrorKind};
 
 use super::properties::{PropertyPatch, PropertySheet};
@@ -956,54 +956,8 @@ impl Vfs for S3Vfs {
         Ok(())
     }
 
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let (bucket, prefix) = self.parse_path(path);
-        let bucket = bucket.ok_or(Error::not_supported())?;
-        let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
-        let client = self.client_for_bucket(&bucket).await?;
-
-        let resp = client
-            .head_object()
-            .bucket(&bucket)
-            .key(&key)
-            .send()
-            .await
-            .map_err(sdk_err)?;
-
-        let size = resp.content_length().unwrap_or(0) as u64;
-        let modified = resp.last_modified().and_then(|d| {
-            let secs = d.secs();
-            let nanos = d.subsec_nanos();
-            std::time::SystemTime::UNIX_EPOCH
-                .checked_add(std::time::Duration::new(secs as u64, nanos))
-                .map(|t| t.to_unix())
-        });
-
-        let name = path.file_name().map(|n| n.to_string()).unwrap_or_default();
-
-        Ok(File {
-            attributes: None,
-            name,
-            size: Some(size),
-            allocated_size: None,
-            device_id: None,
-            inode: None,
-            hard_links: None,
-            is_dir: false,
-            is_hidden: false,
-            symlink: None,
-            user: None,
-            group: None,
-            mode: None,
-            modified,
-            accessed: None,
-            created: None,
-            key: None,
-            source: None,
-        })
-    }
-
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
+    /// S3 has no links, so `follow` changes nothing.
+    async fn file_info(&self, path: &Path, _follow: bool) -> Result<File, Error> {
         let (bucket, prefix) = self.parse_path(path);
         let bucket = bucket.ok_or(Error::not_supported())?;
         let key = prefix.ok_or_else(|| Error::custom("no object key specified"))?;
@@ -1019,7 +973,6 @@ impl Vfs for S3Vfs {
 
         let size = resp.content_length().unwrap_or(0) as u64;
         let is_dir = key.ends_with('/') && size == 0;
-
         let modified = resp.last_modified().and_then(|d| {
             let secs = d.secs();
             let nanos = d.subsec_nanos();
@@ -1028,9 +981,18 @@ impl Vfs for S3Vfs {
                 .map(|t| t.to_unix())
         });
 
-        Ok(FileDetails {
-            size,
+        let name = path.file_name().map(|n| n.to_string()).unwrap_or_default();
+
+        Ok(File {
+            attributes: None,
+            name,
+            size: (!is_dir).then_some(size),
+            allocated_size: None,
+            device_id: None,
+            inode: None,
+            hard_links: None,
             is_dir,
+            is_hidden: false,
             symlink: None,
             user: None,
             group: None,
@@ -1038,6 +1000,8 @@ impl Vfs for S3Vfs {
             modified,
             accessed: None,
             created: None,
+            key: None,
+            source: None,
         })
     }
 

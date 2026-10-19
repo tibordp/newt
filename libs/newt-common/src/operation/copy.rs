@@ -331,7 +331,7 @@ async fn check_destination(
     cancel: &CancellationToken,
 ) -> Result<Destination, crate::Error> {
     let existing = loop {
-        match cancellable(cancel, dst_vfs.file_info(&entry.dest)).await {
+        match cancellable(cancel, dst_vfs.file_info(&entry.dest, false)).await {
             Ok(file) => break file,
             Err(e) if e.kind == crate::ErrorKind::NotFound => return Ok(Destination::Absent),
             // A failed look leaves the destination unknown, not empty.

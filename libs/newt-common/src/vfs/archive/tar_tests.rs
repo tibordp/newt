@@ -89,7 +89,12 @@ async fn lists_top_level_entries() {
 #[tokio::test]
 async fn root_stats_as_a_directory() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
-    assert!(vfs.file_info(&vp("/")).await.expect("file_info").is_dir);
+    assert!(
+        vfs.file_info(&vp("/"), false)
+            .await
+            .expect("file_info")
+            .is_dir
+    );
 }
 
 #[tokio::test]
@@ -238,14 +243,21 @@ async fn symlink_resolves_to_target_content() {
 }
 
 #[tokio::test]
-async fn file_details_reports_symlink_metadata() {
+async fn file_info_describes_a_link_or_where_it_leads() {
     let vfs = mount(SIMPLE_TAR, ARCHIVE_PATH, MockVfsConfig::default());
-    let details = vfs
-        .file_details(&vp("/links/soft.txt"))
+    let link = vfs
+        .file_info(&vp("/links/soft.txt"), false)
         .await
-        .expect("file_details");
-    assert!(details.is_symlink());
-    assert_eq!(details.symlink_target(), Some("../hello.txt"));
+        .expect("the link");
+    assert_eq!(link.symlink_target(), Some("../hello.txt"));
+
+    let target = vfs
+        .file_info(&vp("/links/soft.txt"), true)
+        .await
+        .expect("where it leads");
+    assert!(!target.is_symlink());
+    assert_eq!(target.name, "soft.txt");
+    assert_eq!(target.size, Some(HELLO.len() as u64));
 }
 
 /// Tar has no `get_metadata` override — the trait default derives it from
@@ -556,7 +568,7 @@ async fn unmounting_stops_indexing_under_a_waiting_call() {
     let id = registry.mount(vfs.clone());
 
     let hello = vp("/hello.txt");
-    let waiting = vfs.file_details(&hello);
+    let waiting = vfs.file_info(&hello, true);
     tokio::pin!(waiting);
     assert!(futures::poll!(waiting.as_mut()).is_pending());
 
@@ -572,7 +584,7 @@ async fn unmounting_stops_indexing_under_a_waiting_call() {
     );
 
     // Nor does a call made afterwards start indexing again.
-    let err = tokio::time::timeout(deadline, vfs.file_details(&hello))
+    let err = tokio::time::timeout(deadline, vfs.file_info(&hello, true))
         .await
         .expect("the call ends")
         .expect_err("the archive was unmounted");
@@ -623,8 +635,8 @@ async fn a_member_already_indexed_reads_while_indexing_runs() {
     };
     let vfs = mount(&archive, ARCHIVE_PATH, config);
 
-    let details = vfs.file_details(&vp("/hello.txt")).await.unwrap();
-    assert_eq!(details.size, HELLO.len() as u64);
+    let details = vfs.file_info(&vp("/hello.txt"), true).await.unwrap();
+    assert_eq!(details.size, Some(HELLO.len() as u64));
     assert_eq!(read_to_vec(&vfs, "/hello.txt").await, HELLO);
     assert!(
         vfs.state.completed_index.get().is_none(),
@@ -632,7 +644,7 @@ async fn a_member_already_indexed_reads_while_indexing_runs() {
     );
 
     // A path nothing has listed yet waits for the complete index.
-    let err = vfs.file_details(&vp("/missing")).await.unwrap_err();
+    let err = vfs.file_info(&vp("/missing"), true).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::NotFound);
     assert!(vfs.state.completed_index.get().is_some());
 }

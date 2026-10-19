@@ -26,7 +26,7 @@ impl GitIgnores {
         let tops = futures::future::join_all(
             ancestors
                 .iter()
-                .map(|dir| async move { vfs.file_info(&dir.join(".git")).await.is_ok() }),
+                .map(|dir| async move { vfs.file_info(&dir.join(".git"), false).await.is_ok() }),
         )
         .await;
         let mut rules = HashMap::new();

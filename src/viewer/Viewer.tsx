@@ -84,7 +84,7 @@ export function ViewerBody({
       try {
         const inspected = await unwrap(commands.inspectFile(filePath));
         if (cancelled) return;
-        setInfo(inspected.details as FileInfo);
+        setInfo(inspected.info);
         setMime(inspected.mime);
         setAutoMode(inspected.viewer_mode);
         safe(viewerHost.setMode(inspected.viewer_mode));
@@ -225,7 +225,7 @@ export function ViewerBody({
       <TextViewer
         filePath={displayPath}
         vfsPath={filePath}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         chunkCache={chunkCache}
         loadChunk={loadChunk}
         autoMode={autoMode ?? currentMode}
@@ -240,7 +240,7 @@ export function ViewerBody({
       <TableViewer
         filePath={displayPath}
         vfsPath={filePath}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         chunkCache={chunkCache}
         loadChunk={loadChunk}
         autoMode={autoMode ?? currentMode}
@@ -257,7 +257,7 @@ export function ViewerBody({
         filePath={displayPath}
         vfsPath={filePath}
         fileServerBase={fileServerBase}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         autoMode={autoMode ?? currentMode}
         encoding={encoding}
         bomLen={bomLen}
@@ -271,7 +271,7 @@ export function ViewerBody({
         filePath={displayPath}
         vfsPath={filePath}
         fileUrl={fileUrl}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         mimeType={mime}
         autoMode={autoMode ?? currentMode}
       />
@@ -282,7 +282,7 @@ export function ViewerBody({
         tag={currentMode}
         filePath={displayPath}
         fileUrl={fileUrl}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         autoMode={autoMode ?? currentMode}
       />
     );
@@ -292,7 +292,7 @@ export function ViewerBody({
         filePath={displayPath}
         vfsPath={filePath}
         choices={viewerState?.dissect_formats ?? []}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         autoMode={autoMode ?? currentMode}
       />
     );
@@ -301,7 +301,7 @@ export function ViewerBody({
       <PdfViewer
         filePath={displayPath}
         fileUrl={fileUrl}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         autoMode={autoMode ?? currentMode}
       />
     );
@@ -310,7 +310,7 @@ export function ViewerBody({
       <HexViewer
         filePath={displayPath}
         vfsPath={filePath}
-        fileSize={info.size}
+        fileSize={info.size ?? 0}
         chunkCache={chunkCache}
         loadChunk={loadChunk}
         autoMode={autoMode ?? currentMode}

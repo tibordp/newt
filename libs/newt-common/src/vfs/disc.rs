@@ -17,9 +17,9 @@ use tokio::sync::{Mutex, OnceCell};
 use newt_disc::{Chunk, DiscError, DiscFs, Entry, EntryData, EntryKind, ExtentKind, ProbeOp, Step};
 
 use crate::Error;
+use crate::vfs::FileChunk;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
-use crate::vfs::{FileChunk, FileDetails};
 
 use super::pipelined_read::{ChunkDriver, DriveStep, PipelinedReader};
 
@@ -390,15 +390,20 @@ impl DiscVfs {
                 }
                 let _clear = ClearOnDrop(&self.reporter);
 
-                let details = self.upstream.file_details(&self.image_path).await?;
+                let size = self
+                    .upstream
+                    .file_info(&self.image_path, true)
+                    .await?
+                    .size
+                    .unwrap_or(0);
                 let cache = BlockCache {
                     upstream: self.upstream.clone(),
                     image_path: self.image_path.clone(),
-                    image_size: details.size,
+                    image_size: size,
                     inner: Mutex::new(CacheInner::default()),
                 };
 
-                let mut op = ProbeOp::new(details.size);
+                let mut op = ProbeOp::new(size);
                 let mut fetched = Vec::new();
                 let fs = loop {
                     match op.step(fetched).map_err(disc_err)? {
@@ -651,32 +656,17 @@ impl Vfs for DiscVfs {
         Ok(PathBuf::from_wire_str(&key))
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let state = self.ensure_state().await?;
-        let (_, entry) = self.resolve(state, path, true).await?;
-        Ok(FileDetails {
-            size: if entry.kind == EntryKind::Dir {
-                0
-            } else {
-                entry.size
-            },
-            is_dir: entry.kind == EntryKind::Dir,
-            symlink: (entry.kind == EntryKind::Symlink)
-                .then(|| Symlink::from_read(entry.link_target.clone())),
-            user: entry.uid.map(UserGroup::Id),
-            group: entry.gid.map(UserGroup::Id),
-            mode: entry.mode.map(Mode),
-            modified: entry.modified,
-            accessed: entry.accessed,
-            created: entry.created,
-        })
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let state = self.ensure_state().await?;
-        let (key, entry) = self.resolve(state, path, false).await?;
+        let (key, entry) = self.resolve(state, path, follow).await?;
         let mut file = entry_to_file(&entry);
-        if file.is_symlink() {
+        if follow {
+            // Resolution stops at a link whose target is unknown.
+            if file.is_symlink() {
+                return Err(Error::not_found(format!("link leads nowhere: {}", path)));
+            }
+            file.name = path.file_name().unwrap_or_default().to_string();
+        } else if file.is_symlink() {
             let parent_key = match key.rfind('/') {
                 Some(pos) => key[..pos].to_string(),
                 None => String::new(),

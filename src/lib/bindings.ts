@@ -360,17 +360,21 @@ async foregroundOperation(operationId: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async fileDetails(path: VfsPath) : Promise<Result<FileDetails, string>> {
+/**
+ * What the path leads to (a followed `file_info`): the file the viewer
+ * and editor read.
+ */
+async fileInfo(path: VfsPath) : Promise<Result<File, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("file_details", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("file_info", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `file_details`, plus the mode the viewer opens the file in, the type
- * it shows it as and the language the editor gives it.
+ * `file_info`, plus the mode the viewer opens the file in, the type it
+ * shows it as and the language the editor gives it.
  */
 async inspectFile(path: VfsPath) : Promise<Result<InspectedFile, string>> {
     try {
@@ -396,7 +400,7 @@ async readFile(path: VfsPath, maxSize: number) : Promise<Result<unknown, string>
     else return { status: "error", error: e  as any };
 }
 },
-async writeFile() : Promise<Result<FileDetails, string>> {
+async writeFile() : Promise<Result<File, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_file") };
 } catch (e) {
@@ -3156,11 +3160,6 @@ key: string | null;
  * `Vfs::redirect_target`).
  */
 source: VfsPath | null }
-export type FileDetails = { size: number; is_dir: boolean; 
-/**
- * See `File::symlink`.
- */
-symlink: Symlink | null; user: UserGroup | null; group: UserGroup | null; mode: Mode | null; modified: number | null; accessed: number | null; created: number | null }
 export type FileList = { path: VfsPath; fs_stats: FsStats | null; files: File[]; 
 /**
  * Why the underlying VFS reports the listing as intrinsically
@@ -3340,9 +3339,9 @@ recent_folders: boolean;
 mounts_in_vfs_selector: boolean }
 export type ImageBackground = "dark" | "checkerboard" | "light"
 /**
- * A file's details, with what its content and associations make of it.
+ * A file, with what its content and associations make of it.
  */
-export type InspectedFile = { details: FileDetails; viewer_mode: ViewerMode; 
+export type InspectedFile = { info: File; viewer_mode: ViewerMode; 
 /**
  * What the file is shown as: by content, or by name for text.
  */

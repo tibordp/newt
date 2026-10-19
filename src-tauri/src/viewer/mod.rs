@@ -963,7 +963,7 @@ pub async fn open_in_viewer(
             "{display_path} is on another volume than this document"
         )));
     }
-    let details = ctx.fs()?.file_details(path.clone()).await?;
+    let details = ctx.fs()?.file_info(path.clone(), true).await?;
     if details.is_dir {
         return Err(Error::Custom(format!("{display_path} is a directory")));
     }
@@ -1150,7 +1150,7 @@ pub fn report_preview_table_detection(
 #[tauri::command]
 #[specta::specta]
 pub async fn open_viewer(ctx: MainWindowContext, path: VfsPath) -> Result<(), Error> {
-    let details = ctx.fs()?.file_details(path.clone()).await?;
+    let details = ctx.fs()?.file_info(path.clone(), true).await?;
     if details.is_dir {
         let display_path = ctx.format_vfs_path(&path);
         return Err(Error::Custom(format!("{display_path} is a directory")));

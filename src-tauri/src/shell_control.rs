@@ -255,7 +255,11 @@ pub async fn handle_control(ctx: &MainWindowContext, req: ControlRequest) -> Con
             let _ = cwd;
             let handle = select_pane(ctx, pane);
             let resolved = resolve_arg(ctx, handle, &path, ArgBase::Pane).await?;
-            let details = ctx.fs().map_err(err)?.file_details(resolved.clone()).await;
+            let details = ctx
+                .fs()
+                .map_err(err)?
+                .file_info(resolved.clone(), true)
+                .await;
             if details.is_ok_and(|d| {
                 d.mode
                     .as_ref()
@@ -344,7 +348,7 @@ async fn build_transfer(
     let dest_path = resolve_arg(ctx, pane, dest, ArgBase::Cwd(cwd)).await?;
 
     let fs = ctx.fs().map_err(err)?;
-    let dest_details = fs.file_details(dest_path.clone()).await.ok();
+    let dest_details = fs.file_info(dest_path.clone(), true).await.ok();
 
     match dest_details {
         Some(details) if details.is_dir => {
@@ -366,7 +370,7 @@ async fn build_transfer(
                 .ok_or_else(|| format!("destination has no file name: {dest}"))?
                 .to_string();
             let parent_details = fs
-                .file_details(parent.clone())
+                .file_info(parent.clone(), true)
                 .await
                 .map_err(|_| format!("destination directory does not exist: {dest}"))?;
             if !parent_details.is_dir {

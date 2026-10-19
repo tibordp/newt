@@ -10,9 +10,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::proc::NoConsoleWindow;
+use crate::vfs::FileChunk;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
-use crate::vfs::{FileChunk, FileDetails};
 use crate::{Error, ErrorKind};
 
 impl From<openssh_sftp_client::Error> for Error {
@@ -754,17 +754,20 @@ impl Vfs for SftpVfs {
         Ok(())
     }
 
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        debug!("sftp: file_info {}", path);
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
+        debug!("sftp: file_info {} (follow: {})", path, follow);
         self.check_alive()?;
-        let mut fs = self.sftp.fs();
+        let link_path = sftp_path(path);
+        let name = path.file_name().unwrap_or_default().to_string();
 
-        let symlink_meta = fs.symlink_metadata(sftp_path(path)).await?;
+        if follow {
+            let meta = self.sftp.fs().metadata(&link_path).await?;
+            return Ok(metadata_to_file(name, &meta, None, None));
+        }
 
+        let symlink_meta = self.sftp.fs().symlink_metadata(&link_path).await?;
         let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
-
         let (follow_meta, symlink) = if is_symlink {
-            let link_path = sftp_path(path);
             let (follow, link) = futures::join!(
                 async { self.sftp.fs().metadata(&link_path).await.ok() },
                 read_symlink(&self.sftp, &link_path),
@@ -774,53 +777,12 @@ impl Vfs for SftpVfs {
             (None, None)
         };
 
-        let name = path.file_name().unwrap_or_default().to_string();
-
         Ok(metadata_to_file(
             name,
             &symlink_meta,
             follow_meta.as_ref(),
             symlink,
         ))
-    }
-
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        debug!("sftp: file_details {}", path);
-        self.check_alive()?;
-        let mut fs = self.sftp.fs();
-
-        let symlink_meta = fs.symlink_metadata(sftp_path(path)).await?;
-        let is_symlink = symlink_meta.file_type().is_some_and(|ft| ft.is_symlink());
-
-        let (effective_meta, symlink) = if is_symlink {
-            let follow = fs.metadata(sftp_path(path)).await.ok();
-            let link = read_symlink(&self.sftp, &sftp_path(path)).await;
-            (follow.unwrap_or(symlink_meta), Some(link))
-        } else {
-            (symlink_meta, None)
-        };
-
-        let is_dir = effective_meta.file_type().is_some_and(|ft| ft.is_dir());
-        let size = effective_meta.len().unwrap_or(0);
-        let mode = effective_meta
-            .permissions()
-            .map(|p| Mode(permissions_to_mode(&p)));
-
-        Ok(FileDetails {
-            size,
-            is_dir,
-            symlink,
-            user: symlink_meta.uid().map(UserGroup::Id),
-            group: symlink_meta.gid().map(UserGroup::Id),
-            mode,
-            modified: symlink_meta
-                .modified()
-                .map(|t| sftp_time_to_system_time(t).to_unix()),
-            accessed: symlink_meta
-                .accessed()
-                .map(|t| sftp_time_to_system_time(t).to_unix()),
-            created: None,
-        })
     }
 
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {

@@ -107,7 +107,7 @@ pub(super) async fn execute_move(
                 }
             };
             if let Some(dest_file) = conflict {
-                let source_file = src_vfs.file_info(&source_local).await?;
+                let source_file = src_vfs.file_info(&source_local, false).await?;
                 let (source_dir, dest_dir) = directories(&source_file, &dest_file);
                 if dest_dir != source_dir {
                     // Type mismatch (file vs directory) — can only skip
@@ -306,7 +306,7 @@ async fn find_destination(
     cancel: &CancellationToken,
 ) -> Result<Found, crate::Error> {
     loop {
-        match cancellable(cancel, vfs.file_info(path)).await {
+        match cancellable(cancel, vfs.file_info(path, false)).await {
             Ok(file) => return Ok(Found::File(Box::new(file))),
             Err(e) if e.kind == crate::ErrorKind::NotFound => return Ok(Found::Nothing),
             Err(e) => {
@@ -473,7 +473,7 @@ pub(super) async fn rename_entry(
                     };
                 }
             }
-            let source_file = vfs.file_info(&source.path).await?;
+            let source_file = vfs.file_info(&source.path, false).await?;
             let (source_dir, dest_dir) = directories(&source_file, &dest_file);
             if dest_dir != source_dir {
                 let msg = if dest_dir {

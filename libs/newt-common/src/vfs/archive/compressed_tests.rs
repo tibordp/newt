@@ -58,11 +58,11 @@ async fn lists_one_entry_named_without_the_suffix() {
     assert_eq!(entry.size, Some(SIMPLE_TAR.len() as u64));
     assert!(entry.mode.is_none() && entry.modified.is_none() && entry.user.is_none());
 
-    let details = vfs.file_details(&vp("/simple.tar")).await.unwrap();
-    assert_eq!(details.size, SIMPLE_TAR.len() as u64);
+    let details = vfs.file_info(&vp("/simple.tar"), true).await.unwrap();
+    assert_eq!(details.size, Some(SIMPLE_TAR.len() as u64));
     assert!(!details.is_dir);
     assert_eq!(
-        vfs.file_details(&vp("/nope")).await.unwrap_err().kind,
+        vfs.file_info(&vp("/nope"), true).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
     assert_eq!(
@@ -77,7 +77,7 @@ async fn lists_one_entry_named_without_the_suffix() {
 #[tokio::test]
 async fn root_stats_as_a_directory() {
     let vfs = mount(SIMPLE_TAR_GZ, "/dir/simple.tar.gz");
-    assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir);
+    assert!(vfs.file_info(&vp("/"), false).await.unwrap().is_dir);
 }
 
 #[tokio::test]

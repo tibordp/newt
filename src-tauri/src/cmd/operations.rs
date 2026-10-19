@@ -2,7 +2,7 @@ use newt_common::operation::{
     ArchiveOptions, CopyOptions, IssueAction, IssueResponse, OperationId, OperationRequest,
     ResolveIssueRequest, StartOperationRequest,
 };
-use newt_common::vfs::{FileDetails, Mode, VfsPath};
+use newt_common::vfs::{File, VfsPath};
 use tauri::Manager;
 
 use crate::GlobalContext;
@@ -739,35 +739,37 @@ pub async fn confirm_delete(
 // File reader: viewer/editor support (read/write file ranges)
 // ---------------------------------------------------------------------------
 
+/// What the path leads to (a followed `file_info`): the file the viewer
+/// and editor read.
 #[tauri::command]
 #[specta::specta]
-pub async fn file_details(ctx: MainWindowContext, path: VfsPath) -> Result<FileDetails, Error> {
-    let info = ctx.fs()?.file_details(path).await?;
-    Ok(info)
+pub async fn file_info(ctx: MainWindowContext, path: VfsPath) -> Result<File, Error> {
+    Ok(ctx.fs()?.file_info(path, true).await?)
 }
 
-/// A file's details, with what its content and associations make of it.
+/// A file, with what its content and associations make of it.
 #[derive(serde::Serialize, specta::Type)]
 pub struct InspectedFile {
-    pub details: FileDetails,
+    pub info: File,
     pub viewer_mode: crate::viewer::ViewerMode,
     /// What the file is shown as: by content, or by name for text.
     pub mime: Option<String>,
     pub language: String,
 }
 
-/// `file_details`, plus the mode the viewer opens the file in, the type
-/// it shows it as and the language the editor gives it.
+/// `file_info`, plus the mode the viewer opens the file in, the type it
+/// shows it as and the language the editor gives it.
 #[tauri::command]
 #[specta::specta]
 pub async fn inspect_file(ctx: MainWindowContext, path: VfsPath) -> Result<InspectedFile, Error> {
     let fs = ctx.fs()?;
-    let details = fs.file_details(path.clone()).await?;
+    let info = fs.file_info(path.clone(), true).await?;
     let name = path.file_name().unwrap_or_default();
+    let size = info.size.unwrap_or(0);
     // A FIFO or device could block the read, or never end.
-    let readable = !details.is_dir && !details.mode.as_ref().is_some_and(Mode::is_special);
+    let readable = !info.is_dir && !info.is_special();
     let found = if readable {
-        Some(crate::viewer::dissect::identify(&*fs, &path, details.size, name).await?)
+        Some(crate::viewer::dissect::identify(&*fs, &path, size, name).await?)
     } else {
         None
     };
@@ -776,12 +778,12 @@ pub async fn inspect_file(ctx: MainWindowContext, path: VfsPath) -> Result<Inspe
         text: found.is_some_and(|f| f.text),
     };
     let associations = ctx.preferences().associations();
-    let (viewer_mode, mime) = associations.view(name, details.size, content);
+    let (viewer_mode, mime) = associations.view(name, size, content);
     Ok(InspectedFile {
         viewer_mode,
         language: associations.language(name, mime.as_deref()),
         mime,
-        details,
+        info,
     })
 }
 
@@ -813,7 +815,7 @@ pub async fn read_file(
 pub async fn write_file(
     ctx: MainWindowContext,
     raw: RawArgs<WriteFileArgs>,
-) -> Result<newt_common::vfs::FileDetails, Error> {
+) -> Result<File, Error> {
     Ok(ctx.fs()?.write_file(raw.args.path, raw.data).await?)
 }
 

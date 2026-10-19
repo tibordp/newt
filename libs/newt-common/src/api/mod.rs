@@ -37,7 +37,7 @@ pub const API_TERMINAL_CREATE: Api = Api(100);
 pub const API_TERMINAL_KILL: Api = Api(101);
 pub const API_TERMINAL_WAIT: Api = Api(105);
 
-pub const API_FILE_DETAILS: Api = Api(300);
+pub const API_FILE_INFO: Api = Api(300);
 pub const API_READ_RANGE: Api = Api(301);
 pub const API_READ_FILE: Api = Api(302);
 pub const API_WRITE_FILE: Api = Api(303);
@@ -82,7 +82,6 @@ pub const API_VFS_POLL_CHANGES: Api = Api(601);
 pub const API_VFS_FS_STATS: Api = Api(602);
 pub const API_VFS_OPEN_READ_ASYNC: Api = Api(603);
 pub const API_VFS_READ_RANGE: Api = Api(604);
-pub const API_VFS_FILE_DETAILS: Api = Api(605);
 pub const API_VFS_FILE_INFO: Api = Api(606);
 pub const API_VFS_OVERWRITE_ASYNC_BEGIN: Api = Api(607);
 pub const API_VFS_CREATE_DIRECTORY: Api = Api(608);
@@ -218,9 +217,9 @@ impl Dispatcher for FilesystemDispatcher {
                 let ret = self.filesystem.fs_stats(path).await;
                 encode(&ret)
             }
-            API_FILE_DETAILS => {
-                let path: VfsPath = decode(&req[..]);
-                let ret = self.filesystem.file_details(path).await;
+            API_FILE_INFO => {
+                let (path, follow): (VfsPath, bool) = decode(&req[..]);
+                let ret = self.filesystem.file_info(path, follow).await;
 
                 encode(&ret)
             }

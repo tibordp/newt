@@ -56,7 +56,7 @@ pub(super) async fn execute_create_archive(
     // Destination conflict before any work. The archive is a single artifact,
     // so declining to overwrite simply cancels the operation. A failed look
     // leaves the destination unknown, not absent.
-    let existing = match cancellable(&cancel, dst_vfs.file_info(&dst_path)).await {
+    let existing = match cancellable(&cancel, dst_vfs.file_info(&dst_path, false)).await {
         Ok(file) => Some(file),
         Err(e) if e.kind == crate::ErrorKind::NotFound => None,
         Err(e) => return Err(e),

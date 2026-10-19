@@ -62,9 +62,10 @@ function Editor() {
   const readOnlyRef = useRef(false);
   // The file as it was when loaded or last saved, to notice a change made
   // to it meanwhile.
-  const onDiskRef = useRef<{ size: number; modified: number | null } | null>(
-    null,
-  );
+  const onDiskRef = useRef<{
+    size: number | null;
+    modified: number | null;
+  } | null>(null);
   const bomRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState(0);
@@ -139,10 +140,10 @@ function Editor() {
     (async () => {
       try {
         const inspected = await unwrap(commands.inspectFile(filePath));
-        setFileSize(inspected.details.size);
+        setFileSize(inspected.info.size ?? 0);
         onDiskRef.current = {
-          size: inspected.details.size,
-          modified: inspected.details.modified,
+          size: inspected.info.size,
+          modified: inspected.info.modified,
         };
         safeSilent(commands.setEditorLanguage(inspected.language));
 
@@ -190,9 +191,7 @@ function Editor() {
 
     setSaving(true);
     try {
-      const now = await unwrap(commands.fileDetails(filePath)).catch(
-        () => null,
-      );
+      const now = await unwrap(commands.fileInfo(filePath)).catch(() => null);
       const was = onDiskRef.current;
       if (
         now &&
@@ -212,7 +211,7 @@ function Editor() {
         : encoded;
       const saved = await unwrap(rawCommands.writeFile(filePath, data));
       setDirty(false);
-      setFileSize(saved.size);
+      setFileSize(saved.size ?? 0);
       onDiskRef.current = { size: saved.size, modified: saved.modified };
     } catch (e: unknown) {
       await message(String(e), { kind: "error", title: "Save Error" });

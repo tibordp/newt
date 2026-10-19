@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Error;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FileChunk, FileDetails, FsStats, Mode, Symlink, ToUnix, UserGroup};
+use crate::vfs::{File, FileChunk, FsStats, Mode, Symlink, ToUnix, UserGroup};
 
 use super::path_style::{
     local_breadcrumbs, local_display_path, metadata_traits_from_meta, navigable_parent,
@@ -631,39 +631,6 @@ impl Vfs for LocalVfs {
         notify_changed(path, canonical).await
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let path = path.to_native();
-        let cache = self.fs_cache.clone();
-        tokio::task::spawn_blocking(move || {
-            let symlink_meta = std::fs::symlink_metadata(&path)?;
-            let is_symlink = symlink_meta.is_symlink();
-            let symlink = is_symlink.then(|| read_symlink(&path));
-
-            let meta = if is_symlink {
-                std::fs::metadata(&path).unwrap_or(symlink_meta)
-            } else {
-                symlink_meta
-            };
-
-            let is_dir = meta.is_dir();
-            let size = meta.len();
-            let (mode_field, user_field, group_field) = cache.owner_bits(&meta);
-
-            Ok(FileDetails {
-                size,
-                is_dir,
-                symlink,
-                user: user_field,
-                group: group_field,
-                mode: mode_field,
-                modified: meta.modified().map(|t| t.to_unix()).ok(),
-                accessed: meta.accessed().map(|t| t.to_unix()).ok(),
-                created: meta.created().map(|t| t.to_unix()).ok(),
-            })
-        })
-        .await?
-    }
-
     async fn read_range(&self, path: &Path, offset: u64, length: u64) -> Result<FileChunk, Error> {
         let path = path.to_native();
         tokio::task::spawn_blocking(move || {
@@ -711,11 +678,15 @@ impl Vfs for LocalVfs {
         }))
     }
 
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let path = path.to_native();
         let cache = self.fs_cache.clone();
         tokio::task::spawn_blocking(move || {
-            let meta = std::fs::symlink_metadata(&path)?;
+            let meta = if follow {
+                std::fs::metadata(&path)?
+            } else {
+                std::fs::symlink_metadata(&path)?
+            };
             let is_symlink = meta.is_symlink();
             let symlink = is_symlink.then(|| read_symlink(&path));
             let mut is_dir = meta.is_dir();
@@ -2379,7 +2350,7 @@ mod special_file_tests {
 
     /// A FIFO nobody writes to: reading it would block forever.
     #[tokio::test]
-    async fn details_of_a_fifo_do_not_read_it() {
+    async fn stat_of_a_fifo_does_not_read_it() {
         let dir = tempfile::tempdir().expect("tempdir");
         let native = dir.path().join("pipe");
         let c_path = std::ffi::CString::new(native.as_os_str().as_encoded_bytes()).unwrap();
@@ -2387,10 +2358,10 @@ mod special_file_tests {
 
         let vfs = LocalVfs::new();
         let path = PathBuf::from_native(&native);
-        assert!(vfs.file_info(&path).await.unwrap().is_special());
-        tokio::time::timeout(Duration::from_secs(5), vfs.file_details(&path))
+        assert!(vfs.file_info(&path, false).await.unwrap().is_special());
+        tokio::time::timeout(Duration::from_secs(5), vfs.file_info(&path, true))
             .await
-            .expect("file_details blocked on the FIFO")
+            .expect("file_info blocked on the FIFO")
             .unwrap();
     }
 }

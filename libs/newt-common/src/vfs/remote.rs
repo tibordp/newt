@@ -3,8 +3,8 @@ use tokio::sync::mpsc;
 use crate::Error;
 use crate::rpc::{Communicator, StreamId, StreamReceiver, StreamSender};
 use crate::vfs::File;
+use crate::vfs::FileChunk;
 use crate::vfs::path::Path;
-use crate::vfs::{FileChunk, FileDetails};
 
 use super::{
     Breadcrumb, DisplayPathMatch, PathStyle, RegisteredDescriptor, Vfs, VfsAsyncWriter,
@@ -204,8 +204,8 @@ impl RemoteVfs {
 
 use crate::api::{
     API_VFS_AVAILABLE_SPACE, API_VFS_COPY_WITHIN, API_VFS_CREATE_DIRECTORY, API_VFS_CREATE_SYMLINK,
-    API_VFS_FILE_DETAILS, API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA,
-    API_VFS_HARD_LINK, API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
+    API_VFS_FILE_INFO, API_VFS_FS_STATS, API_VFS_GET_METADATA, API_VFS_HARD_LINK,
+    API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE,
     API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
     API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
@@ -284,18 +284,10 @@ impl Vfs for RemoteVfs {
         }))
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let ret: Result<FileDetails, Error> = self
-            .communicator
-            .invoke(API_VFS_FILE_DETAILS, &path.to_owned())
-            .await?;
-        ret
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let ret: Result<File, Error> = self
             .communicator
-            .invoke(API_VFS_FILE_INFO, &path.to_owned())
+            .invoke(API_VFS_FILE_INFO, &(path.to_owned(), follow))
             .await?;
         ret
     }

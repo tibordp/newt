@@ -564,16 +564,17 @@ impl Filesystem for HairpinFs {
         }
     }
 
-    async fn file_details(
+    async fn file_info(
         &self,
         path: VfsPath,
-    ) -> Result<newt_common::vfs::FileDetails, newt_common::Error> {
+        follow: bool,
+    ) -> Result<newt_common::vfs::File, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
-                .file_details(VfsPath::new(VfsId::ROOT, path.path))
+                .file_info(VfsPath::new(VfsId::ROOT, path.path), follow)
                 .await
         } else {
-            self.inner.file_details(path).await
+            self.inner.file_info(path, follow).await
         }
     }
 
@@ -638,7 +639,7 @@ impl Filesystem for HairpinFs {
         &self,
         path: VfsPath,
         data: Vec<u8>,
-    ) -> Result<newt_common::vfs::FileDetails, newt_common::Error> {
+    ) -> Result<newt_common::vfs::File, newt_common::Error> {
         if path.vfs_id == self.remote_vfs_id {
             self.local_fs
                 .write_file(VfsPath::new(VfsId::ROOT, path.path), data)

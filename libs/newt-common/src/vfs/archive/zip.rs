@@ -23,9 +23,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
 use crate::Error;
+use crate::vfs::FileChunk;
 use crate::vfs::path::{Path, PathBuf};
 use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
-use crate::vfs::{FileChunk, FileDetails};
 
 use super::super::open_read_at;
 use super::super::origin::{
@@ -241,8 +241,12 @@ impl ZipArchiveVfs {
                 }
                 let _clear = ClearOnDrop(&self.reporter);
 
-                let details = self.upstream.file_details(&self.archive_path).await?;
-                let mut op = zr::ZipProbeOp::new(details.size);
+                let size = self
+                    .upstream
+                    .file_info(&self.archive_path, true)
+                    .await?
+                    .size;
+                let mut op = zr::ZipProbeOp::new(size.unwrap_or(0));
                 let mut fetched = Vec::new();
                 let fs = loop {
                     self.report_indexing(&op.progress());
@@ -651,26 +655,11 @@ impl Vfs for ZipArchiveVfs {
         Ok(PathBuf::from_wire_str(&normalized_to_string(&resolved)))
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let state = self.ensure_state().await?;
-        let entry = self.resolve_entry(state, path, true)?;
-        let is_dir = entry.kind == zr::EntryKind::Dir;
-        Ok(FileDetails {
-            size: if is_dir { 0 } else { entry.size },
-            is_dir,
-            symlink: (entry.kind == zr::EntryKind::Symlink).then_some(Symlink::Unknown),
-            user: entry.uid.map(UserGroup::Id),
-            group: entry.gid.map(UserGroup::Id),
-            mode: entry.mode.map(Mode),
-            modified: entry.modified,
-            accessed: entry.accessed,
-            created: entry.created,
-        })
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let state = self.ensure_state().await?;
-        state.tree.file_info(StdPath::new(path.as_wire_str()))
+        state
+            .tree
+            .file_info(StdPath::new(path.as_wire_str()), follow)
     }
 
     async fn open_read_async(

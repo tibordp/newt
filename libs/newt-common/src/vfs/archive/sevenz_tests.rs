@@ -15,9 +15,9 @@ use crate::ErrorKind;
 use crate::askpass::{AskpassProvider, AskpassRequest, AskpassResponse};
 use crate::test_support::{MockVfs, MockVfsConfig};
 use crate::vfs::File;
+use crate::vfs::FileChunk;
 use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{FileChunk, FileDetails};
 use crate::vfs::{Vfs, VfsDescriptor, VfsFileList, VfsId, VfsPath, VfsRegistry};
 
 fn vp(s: &str) -> PathBuf {
@@ -155,8 +155,8 @@ impl Vfs for CountingVfs {
         self.inner.fs_stats(path).await
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, crate::Error> {
-        self.inner.file_details(path).await
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, crate::Error> {
+        self.inner.file_info(path, follow).await
     }
 
     async fn read_range(
@@ -302,7 +302,7 @@ async fn lists_root_dirs_and_symlink() {
 async fn root_stats_as_a_directory() {
     let h = Harness::new(BASIC);
     let vfs = mount(&h).await;
-    assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir);
+    assert!(vfs.file_info(&vp("/"), false).await.unwrap().is_dir);
 }
 
 #[tokio::test]
@@ -342,8 +342,8 @@ async fn reads_every_entry_streaming_and_by_range() {
         .unwrap();
     assert!(past.data.is_empty());
 
-    let details = vfs.file_details(&vp("/dir/big.bin")).await.unwrap();
-    assert_eq!(details.size, 300_000);
+    let details = vfs.file_info(&vp("/dir/big.bin"), true).await.unwrap();
+    assert_eq!(details.size, Some(300_000));
     assert!(details.mode.is_some());
 }
 
@@ -626,7 +626,7 @@ async fn encrypted_header_dismissed_fails_the_listing() {
     let (root, hello, dir) = (vp("/"), vp("/hello.txt"), vp("/dir"));
     let (a, b, c) = tokio::join!(
         vfs.list_files(&root, None),
-        vfs.file_details(&hello),
+        vfs.file_info(&hello, true),
         vfs.list_files(&dir, None),
     );
     assert_eq!(a.unwrap_err().kind, ErrorKind::Cancelled);

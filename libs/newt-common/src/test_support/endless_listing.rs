@@ -61,7 +61,7 @@ impl Filesystem for EndlessListing {
         Ok(crate::vfs::RevalidationOutcome::Fresh)
     }
 
-    async fn file_details(&self, _path: VfsPath) -> Result<crate::vfs::FileDetails, Error> {
+    async fn file_info(&self, _path: VfsPath, _follow: bool) -> Result<crate::vfs::File, Error> {
         Err(Error::not_supported())
     }
 
@@ -96,11 +96,7 @@ impl Filesystem for EndlessListing {
         Err(Error::not_supported())
     }
 
-    async fn write_file(
-        &self,
-        _path: VfsPath,
-        _data: Vec<u8>,
-    ) -> Result<crate::vfs::FileDetails, Error> {
+    async fn write_file(&self, _path: VfsPath, _data: Vec<u8>) -> Result<crate::vfs::File, Error> {
         Err(Error::not_supported())
     }
 

@@ -32,7 +32,7 @@ pub use archive::{
 pub use background_job::{BackgroundJob, ConsumerGuard, JobHandle, JobStatus, RestartPolicy};
 pub use change_notifier::VfsChangeNotifier;
 pub use disc::DiscVfs;
-pub use file::{File, FileChunk, FileDetails, FileList, FsStats, Mode, Symlink, ToUnix, UserGroup};
+pub use file::{File, FileChunk, FileList, FsStats, Mode, Symlink, ToUnix, UserGroup};
 pub use local::{LOCAL_VFS_DESCRIPTOR, LocalVfs, LocalVfsDescriptor};
 pub use mount::{
     MountContext, MountRequest, MountResponse, MountedVfsInfo, SNIFF_LEN, SftpAskpass, VfsManager,
@@ -683,13 +683,14 @@ pub trait Vfs: Send + Sync {
         Err(Error::not_supported())
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        let _ = path;
-        Err(Error::not_supported())
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
-        let _ = path;
+    /// One entry. Without `follow`, the entry itself (`lstat`), as a
+    /// listing row has it — a link's `is_dir` comes from its target, so a
+    /// link to a directory is enterable. With `follow`, what the path
+    /// leads to (`stat`): a final link is followed, everything describes its
+    /// target, `symlink` is `None`, and a link that leads nowhere is an error.
+    /// Either way `name` is the path's last component.
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
+        let _ = (path, follow);
         Err(Error::not_supported())
     }
 
@@ -765,7 +766,9 @@ pub trait Vfs: Send + Sync {
     /// is cheaper or more precise (local, SFTP), or to answer for the
     /// remote side (`RemoteVfs`).
     async fn get_metadata(&self, path: &Path) -> Result<VfsMetadata, Error> {
-        Ok(VfsMetadata::from_listing(&self.file_info(path).await?))
+        Ok(VfsMetadata::from_listing(
+            &self.file_info(path, false).await?,
+        ))
     }
 
     /// Applies to `path` itself, never to a symlink's target.
@@ -775,7 +778,7 @@ pub trait Vfs: Send + Sync {
     }
 
     async fn resolve_link(&self, path: &Path) -> Result<path::PathBuf, Error> {
-        let file = self.file_info(path).await?;
+        let file = self.file_info(path, false).await?;
         let target = file
             .symlink_target()
             .ok_or_else(|| Error::custom("link target unavailable"))?;
@@ -846,7 +849,7 @@ pub trait Vfs: Send + Sync {
             | AttributeKind::Owner { by_name: false }
             | AttributeKind::Group { by_name: false } => Ok(None),
             AttributeKind::Owner { by_name: true } | AttributeKind::Group { by_name: true } => {
-                let file = self.file_info(path).await?;
+                let file = self.file_info(path, false).await?;
                 let owner = matches!(kind, AttributeKind::Owner { .. });
                 match if owner { file.user } else { file.group } {
                     Some(UserGroup::Name(name)) if owner => Ok(Some(Attribute::OwnerName(name))),

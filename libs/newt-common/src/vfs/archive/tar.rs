@@ -11,9 +11,9 @@ use tokio::io::AsyncRead;
 use tokio::sync::{Notify, mpsc};
 
 use crate::Error;
+use crate::vfs::FileChunk;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{File, FsStats, Mode, Symlink, UserGroup};
-use crate::vfs::{FileChunk, FileDetails};
+use crate::vfs::{File, FsStats};
 
 use super::super::open_read_at;
 use super::super::origin::{
@@ -30,7 +30,7 @@ use super::stream::{
 };
 use super::tree::{
     DirectoryTree, SNAPSHOT_INTERVAL, build_directory_tree_from_iluvatar, index_get,
-    index_path_str, mtime_to_i64, normalize_dir_path, normalized_to_string,
+    index_path_str, normalize_dir_path, normalized_to_string,
 };
 
 // ---------------------------------------------------------------------------
@@ -287,7 +287,11 @@ impl TarArchiveVfs {
         if state.completed_index.get().is_some() {
             return Ok(());
         }
-        let file_size = upstream.file_details(&archive_path).await?.size;
+        let file_size = upstream
+            .file_info(&archive_path, true)
+            .await?
+            .size
+            .unwrap_or(0);
         let engine = match &mut *slot {
             Some(engine) => {
                 info!("archive: resuming indexing of {}", archive_path);
@@ -657,61 +661,12 @@ impl Vfs for TarArchiveVfs {
         Ok(PathBuf::from_wire_str(&normalized_to_string(&resolved)))
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, Error> {
-        // Try direct lookup for symlink identity (lstat equivalent).
-        // This may return None if the path traverses through a symlink
-        // directory (e.g. "/symlink_dir/file.txt" — only the resolved
-        // path exists in the index).
-        let normalized = normalize_dir_path(StdPath::new(path.as_wire_str()));
-        let path_str = normalized.to_string_lossy();
-        let (index, _guard) = self
-            .index_with(|index| {
-                index_get(index, &path_str).is_some() || self.resolve_for_read(index, path).is_ok()
-            })
-            .await?;
-        let index = &*index;
-        let original_entry = index_get(index, &path_str);
-
-        let is_symlink =
-            original_entry.is_some_and(|e| matches!(e.entry_type, iluvatar::EntryType::SymLink));
-        let symlink = is_symlink
-            .then(|| Symlink::from_read(original_entry.and_then(|e| e.link_target.clone())));
-
-        // Resolve symlinks/hardlinks for actual metadata (stat equivalent).
-        // Fall back to the original entry if the target is broken.
-        let (_, resolved_entry) = match self.resolve_for_read(index, path) {
-            Ok(resolved) => resolved,
-            Err(e) => match original_entry {
-                Some(fallback) => {
-                    let ap = index_path_str(index, &path_str).unwrap_or_default();
-                    (ap, fallback)
-                }
-                None => return Err(e),
-            },
-        };
-
-        Ok(FileDetails {
-            size: resolved_entry.size,
-            is_dir: resolved_entry.entry_type.is_directory(),
-            symlink,
-            user: Some(UserGroup::Id(resolved_entry.uid as u32)),
-            group: Some(UserGroup::Id(resolved_entry.gid as u32)),
-            mode: Some(Mode(resolved_entry.mode)),
-            modified: mtime_to_i64(resolved_entry.mtime),
-            accessed: None,
-            created: None,
-        })
-    }
-
-    async fn file_info(&self, path: &Path) -> Result<File, Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, Error> {
         let std_path = StdPath::new(path.as_wire_str());
         let (_index, _guard) = self
-            .index_with(|_| self.state.tree.read().file_info(std_path).is_ok())
+            .index_with(|_| self.state.tree.read().file_info(std_path, follow).is_ok())
             .await?;
-        self.state
-            .tree
-            .read()
-            .file_info(StdPath::new(path.as_wire_str()))
+        self.state.tree.read().file_info(std_path, follow)
     }
 
     async fn open_read_async(

@@ -588,7 +588,7 @@ impl Occupants for Members<'_> {
         // Identity where the listing had it: exact, whatever the fold
         // misses.
         if self.members.iter().all(|m| m.identity.is_some()) {
-            return match vfs.file_info(path).await {
+            return match vfs.file_info(path, false).await {
                 Ok(file) => match file.device_id.zip(file.inode) {
                     Some(id) => self
                         .members

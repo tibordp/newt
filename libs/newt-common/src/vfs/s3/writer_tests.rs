@@ -418,7 +418,7 @@ async fn status_codes_become_error_kinds() {
         (500, ErrorKind::Other),
     ] {
         let fake = Fake::new(move |_| (status, ""));
-        let error = fake.vfs.file_info(&path("key")).await.unwrap_err();
+        let error = fake.vfs.file_info(&path("key"), false).await.unwrap_err();
         assert_eq!(error.kind, kind, "{status}");
     }
 }

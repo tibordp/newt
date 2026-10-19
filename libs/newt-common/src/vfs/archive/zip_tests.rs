@@ -37,9 +37,9 @@ use crate::ErrorKind;
 use crate::askpass::{AskpassProvider, AskpassRequest, AskpassResponse};
 use crate::test_support::{MockVfs, MockVfsConfig};
 use crate::vfs::File;
+use crate::vfs::FileChunk;
 use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{FileChunk, FileDetails};
 use crate::vfs::{Vfs, VfsDescriptor, VfsFileList, VfsId, VfsPath, VfsRegistry};
 
 /// Build a VFS path from a wire string.
@@ -166,8 +166,8 @@ impl Vfs for CountingVfs {
         self.inner.fs_stats(path).await
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, crate::Error> {
-        self.inner.file_details(path).await
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, crate::Error> {
+        self.inner.file_info(path, follow).await
     }
 
     async fn read_range(
@@ -301,7 +301,12 @@ async fn root_stats_as_a_directory() {
     let h = Harness::new(VARIED_ZIP);
     let vfs = mount_with(&h, None).await;
 
-    assert!(vfs.file_info(&vp("/")).await.expect("file_info").is_dir);
+    assert!(
+        vfs.file_info(&vp("/"), false)
+            .await
+            .expect("file_info")
+            .is_dir
+    );
 }
 
 #[tokio::test]
@@ -360,8 +365,8 @@ async fn file_details_and_metadata() {
     let h = Harness::new(VARIED_ZIP);
     let vfs = mount_with(&h, None).await;
 
-    let details = vfs.file_details(&vp("/dir/nested.txt")).await.unwrap();
-    assert_eq!(details.size, 15);
+    let details = vfs.file_info(&vp("/dir/nested.txt"), true).await.unwrap();
+    assert_eq!(details.size, Some(15));
     assert!(!details.is_dir);
     assert_eq!(details.mode.as_ref().map(|m| m.0), Some(0o644));
 
@@ -451,7 +456,7 @@ async fn read_efficiency() {
     // Everything below is served from the parsed index: zero further reads.
     vfs.list_files(&vp("/dir"), None).await.unwrap();
     vfs.list_files(&vp("/implicit"), None).await.unwrap();
-    vfs.file_details(&vp("/dir/big.bin")).await.unwrap();
+    vfs.file_info(&vp("/dir/big.bin"), true).await.unwrap();
     assert_eq!(h.counter.reads(), after_first_list);
 
     // First touch of a stored entry: local header + payload = 2 reads.

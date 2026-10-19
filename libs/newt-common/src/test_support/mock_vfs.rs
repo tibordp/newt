@@ -679,53 +679,6 @@ impl Vfs for MockVfs {
         }))
     }
 
-    async fn file_details(&self, path: &Path) -> Result<crate::vfs::FileDetails, crate::Error> {
-        match self.entries.lock().get(path.as_wire_str()) {
-            Some(MockEntry::File {
-                content,
-                mode,
-                uid,
-                gid,
-            }) => Ok(crate::vfs::FileDetails {
-                size: content.len() as u64,
-                is_dir: false,
-                symlink: None,
-                user: Some(crate::vfs::UserGroup::Id(*uid)),
-                group: Some(crate::vfs::UserGroup::Id(*gid)),
-                mode: Some(Mode(*mode)),
-                modified: None,
-                accessed: None,
-                created: None,
-            }),
-            Some(MockEntry::Directory { mode, uid, gid }) => Ok(crate::vfs::FileDetails {
-                size: 0,
-                is_dir: true,
-                symlink: None,
-                user: Some(crate::vfs::UserGroup::Id(*uid)),
-                group: Some(crate::vfs::UserGroup::Id(*gid)),
-                mode: Some(Mode(*mode)),
-                modified: None,
-                accessed: None,
-                created: None,
-            }),
-            Some(MockEntry::Symlink { target }) => Ok(crate::vfs::FileDetails {
-                size: 0,
-                is_dir: false,
-                symlink: Some(target.clone()),
-                user: None,
-                group: None,
-                mode: None,
-                modified: None,
-                accessed: None,
-                created: None,
-            }),
-            None => Err(crate::Error {
-                kind: crate::ErrorKind::NotFound,
-                message: format!("not found: {}", path),
-            }),
-        }
-    }
-
     /// Two entries per batch. Failure specs: `list_recursive` fires
     /// before anything is sent, `list_recursive_page` before every batch
     /// after the first.
@@ -788,13 +741,23 @@ impl Vfs for MockVfs {
         Ok(())
     }
 
-    async fn file_info(&self, path: &Path) -> Result<File, crate::Error> {
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, crate::Error> {
         self.stats.lock().push(path.as_wire_str().to_string());
         if let Some(e) = self.check_failure(path, "file_info") {
             return Err(e);
         }
         let name = path.file_name().unwrap_or_default().to_string();
         let key = self.lookup_key(path);
+        let is_link = matches!(
+            self.entries.lock().get(&key),
+            Some(MockEntry::Symlink { .. })
+        );
+        if follow && is_link {
+            let target = self.resolve_link(path).await?;
+            let mut file = self.file_info(&target, true).await?;
+            file.name = name;
+            return Ok(file);
+        }
         match self.entries.lock().get(&key) {
             Some(MockEntry::File {
                 content,

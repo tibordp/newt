@@ -14,9 +14,9 @@ use tokio::sync::mpsc;
 use crate::ErrorKind;
 use crate::test_support::{MockVfs, MockVfsConfig};
 use crate::vfs::File;
+use crate::vfs::FileChunk;
 use crate::vfs::mount::MountContext;
 use crate::vfs::path::{Path, PathBuf};
-use crate::vfs::{FileChunk, FileDetails};
 use crate::vfs::{Vfs, VfsDescriptor, VfsFileList, VfsId, VfsPath, VfsRegistry};
 
 const IMAGE_PATH: &str = "/image.iso";
@@ -96,8 +96,8 @@ impl Vfs for CountingVfs {
         self.inner.fs_stats(path).await
     }
 
-    async fn file_details(&self, path: &Path) -> Result<FileDetails, crate::Error> {
-        self.inner.file_details(path).await
+    async fn file_info(&self, path: &Path, follow: bool) -> Result<File, crate::Error> {
+        self.inner.file_info(path, follow).await
     }
 
     async fn read_range(
@@ -222,8 +222,8 @@ async fn joliet_listing_and_reads() {
     assert!(hidden.is_hidden);
 
     // file_details reports size + timestamps.
-    let details = vfs.file_details(&vp("/big.bin")).await.unwrap();
-    assert_eq!(details.size, 65536);
+    let details = vfs.file_info(&vp("/big.bin"), true).await.unwrap();
+    assert_eq!(details.size, Some(65536));
     assert!(details.modified.is_some());
 
     // Missing entries are NotFound.
@@ -236,7 +236,10 @@ async fn root_stats_as_a_directory() {
     for name in ["joliet", "udf250"] {
         let harness = Harness::new(&fixture(name));
         let vfs = harness.mount().await;
-        assert!(vfs.file_info(&vp("/")).await.unwrap().is_dir, "{name}");
+        assert!(
+            vfs.file_info(&vp("/"), false).await.unwrap().is_dir,
+            "{name}"
+        );
     }
 }
 
@@ -286,11 +289,11 @@ async fn udf_metadata_partition_and_symlinks() {
     assert_eq!(chunk.data, HELLO);
 
     // file_details follows the final symlink (viewer semantics).
-    let details = vfs.file_details(&vp("/link_to_hello")).await.unwrap();
-    assert_eq!(details.size, HELLO.len() as u64);
+    let details = vfs.file_info(&vp("/link_to_hello"), true).await.unwrap();
+    assert_eq!(details.size, Some(HELLO.len() as u64));
 
     // file_info does not (listing semantics) but mirrors target dir-ness.
-    let info = vfs.file_info(&vp("/link_to_deeper")).await.unwrap();
+    let info = vfs.file_info(&vp("/link_to_deeper"), false).await.unwrap();
     assert!(info.is_symlink());
     assert!(info.is_dir);
 }
