@@ -1,4 +1,4 @@
-<!-- MSI authoring, built by build-msi.ps1 with WiX 6 — Tauri's bundler is not
+<!-- MSI authoring, built by build-msi.ps1 with WiX 7 — Tauri's bundler is not
      involved on Windows. Preprocessor variables (Version, NewtExe, AgentsDir,
      SrcDir) come from that script.
 

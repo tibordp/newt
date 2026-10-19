@@ -1618,7 +1618,7 @@ Each category can be independently toggled on/off in preferences (Hot Paths sect
 
 **Keyboard navigation**: Arrow keys, Page Up/Down, Home/End, Enter to navigate to the selected path, Escape to close.
 
-Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsPath` — `vfs_id` included, so an entry on a mounted VFS lands on that VFS. Removal is keyed by `bookmark_key`, the verbatim `[[bookmark]]` `path` from settings.toml, which is a display path rather than the wire form.
+Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsPath` — `vfs_id` included, so an entry on a mounted VFS lands on that VFS. A bookmark's `path` is a display path, resolved the way the Navigate dialog resolves typed input: a path a mounted filesystem claims (`s3://bucket/…`, `sftp://host/…`, a path inside an open archive) lands on that filesystem, anything else is a path on the session's own filesystem. A bookmark that names its filesystem by scheme (`s3://`, `sftp://`) when none is mounted to claim it is listed dimmed with an "unmounted" tag and can't be opened — connect first (Quick Connect) — but can still be removed. A bookmark inside an archive that is no longer open is still taken as a path on the session's filesystem, so opening it fails. Removal is keyed by `bookmark_key`, the verbatim `[[bookmark]]` `path` from settings.toml.
 
 ### Go to File (Mod+G)
 

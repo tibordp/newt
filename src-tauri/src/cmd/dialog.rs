@@ -886,7 +886,8 @@ fn spawn_volume_fill(
             .into_iter()
             .filter(|e| e.category == HotPathCategory::Mount)
             .map(|e| {
-                let path = VfsPath::new(vfs_id, e.path.path);
+                let mounted = e.path.as_ref().expect("a system hot path has a path");
+                let path = VfsPath::new(vfs_id, mounted.path.clone());
                 // Where a network volume points says more than where
                 // it's mounted.
                 let detail = e

@@ -155,14 +155,23 @@ pub async fn get_hot_paths(
         HotPathCategory::RecentFolder => hp_settings.recent_folders,
     });
 
-    // Add user-defined bookmarks from preferences (always included)
+    // User bookmarks hold display paths: one a mounted VFS claims (`s3://…`,
+    // a path in an open archive) lands there, as typed into Navigate would.
+    // One that names its filesystem (`scheme://`) with nothing mounted to
+    // claim it has nowhere to go; the rest are native paths of the session
+    // root.
     for bm in &prefs.bookmarks {
-        entries.push(HotPathEntry {
-            path: VfsPath::new(
+        let path = match ctx.resolve_display_path(&bm.path) {
+            Some(path) => Some(path),
+            None if names_a_filesystem(&bm.path) => None,
+            None => Some(VfsPath::new(
                 newt_common::vfs::VfsId::ROOT,
                 newt_common::vfs::path::PathBuf::from_native(std::path::Path::new(&bm.path)),
-            ),
-            display_path: String::new(),
+            )),
+        };
+        entries.push(HotPathEntry {
+            path,
+            display_path: bm.path.clone(),
             name: bm.name.clone(),
             category: HotPathCategory::UserBookmark,
             bookmark_key: Some(bm.path.clone()),
@@ -174,10 +183,24 @@ pub async fn get_hot_paths(
     // (no mounted-VFS context), so the menu would otherwise show raw
     // sentinel paths (`/?/C:/…`) instead of `C:\…`.
     for entry in entries.iter_mut() {
-        entry.display_path = ctx.format_vfs_path(&entry.path);
+        if let Some(path) = &entry.path {
+            entry.display_path = ctx.format_vfs_path(path);
+        }
     }
 
     Ok(entries)
+}
+
+/// Whether a display path starts with a URL-style scheme (`s3://`,
+/// `sftp://…`): two letters at least, so a drive (`C:/`) is not one.
+fn names_a_filesystem(display_path: &str) -> bool {
+    display_path.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.len() > 1
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    })
 }
 
 #[tauri::command]
@@ -347,4 +370,27 @@ pub fn editor_languages() -> Vec<EditorLanguage> {
 #[specta::specta]
 pub fn dismiss_config_problems(global_ctx: tauri::State<'_, GlobalContext>) {
     global_ctx.preferences().dismiss_problems();
+}
+
+#[cfg(test)]
+mod bookmark_tests {
+    use super::names_a_filesystem;
+
+    #[test]
+    fn only_a_scheme_names_a_filesystem() {
+        for path in ["s3://", "s3://bucket/a", "sftp://user@host/home"] {
+            assert!(names_a_filesystem(path), "{path}");
+        }
+        for path in [
+            "/home/x",
+            r"C:\Users\x",
+            "C:/Users/x",
+            "C://x",
+            r"\\server\share",
+            r"\\?\C:\x",
+            "/home/x/odd://name",
+        ] {
+            assert!(!names_a_filesystem(path), "{path}");
+        }
+    }
 }

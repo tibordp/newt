@@ -89,7 +89,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
     const group = grouped.find((g) => g.category === cat);
     if (!group) return;
     const entry = group.items[parseInt(idxStr, 10)];
-    if (!entry) return;
+    if (!entry?.path) return;
 
     safe(commands.navigateToPath(paneHandle || 0, entry.path));
   };
@@ -188,6 +188,7 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                     key={`${category}-${i}`}
                     value={`${category}:${i}`}
                     onSelect={onSelect}
+                    className={entry.path ? undefined : styles.unmounted}
                   >
                     {isConfirming ? (
                       <div className={styles.confirmRow}>
@@ -248,6 +249,14 @@ export default function HotPaths({ state }: { state: MainWindowState | null }) {
                             </span>
                           )}
                         </div>
+                        {!entry.path && (
+                          <span
+                            className={styles.unmountedTag}
+                            title="Its filesystem isn't mounted"
+                          >
+                            unmounted
+                          </span>
+                        )}
                         {entry.category === "UserBookmark" && (
                           <button
                             className={styles.deleteBtn}

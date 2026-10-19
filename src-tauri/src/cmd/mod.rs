@@ -161,11 +161,11 @@ pub fn close_modal(ctx: MainWindowContext) -> Result<(), Error> {
     })
 }
 
-/// Hand a URL to the system's default browser. The webview installs no
-/// new-window handler, so an `<a target="_blank">` goes nowhere on any
-/// platform — every outbound link in the UI comes through here. Only web
-/// and mail URLs: the opener also launches local files and programs, and
-/// the viewer renders links from files it doesn't trust.
+/// Hand a URL to the system's default browser: the UI's own outbound links
+/// call this, and `confine_webview` sends navigations that would leave the
+/// app the same way. Only web and mail URLs: the opener also launches local
+/// files and programs, and the viewer renders links from files it doesn't
+/// trust.
 #[tauri::command]
 #[specta::specta]
 pub fn open_url(url: String) -> Result<(), Error> {

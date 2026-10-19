@@ -13,7 +13,9 @@ pub enum HotPathCategory {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct HotPathEntry {
-    pub path: VfsPath,
+    /// `None` for a bookmark on a filesystem that isn't mounted: it is
+    /// listed, but there's nowhere to go.
+    pub path: Option<VfsPath>,
     pub display_path: String,
     pub name: Option<String>,
     pub category: HotPathCategory,
@@ -60,10 +62,10 @@ fn make_entry(
     category: HotPathCategory,
 ) -> HotPathEntry {
     HotPathEntry {
-        path: VfsPath::new(
+        path: Some(VfsPath::new(
             crate::vfs::VfsId::ROOT,
             crate::vfs::path::PathBuf::from_native(&path),
-        ),
+        )),
         display_path: String::new(),
         name,
         category,
@@ -121,7 +123,7 @@ fn collect_windows_drives(out: &mut Vec<HotPathEntry>) {
         // second component (`C:`), which doubles as the display name.
         let name = root.path.components().nth(1).map(|c| c.to_string());
         out.push(HotPathEntry {
-            path: VfsPath::new(crate::vfs::VfsId::ROOT, root.path),
+            path: Some(VfsPath::new(crate::vfs::VfsId::ROOT, root.path)),
             display_path: String::new(),
             name,
             category: HotPathCategory::Mount,

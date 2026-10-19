@@ -23,9 +23,9 @@ export default function BookmarkAdded({
     <DialogShell>
       <DialogHeader
         title={moved ? "Bookmark Moved to Top" : "Bookmark Added"}
-        summary={name ?? display_path}
+        summary={name ?? undefined}
       />
-      {name && <DialogBody>{display_path}</DialogBody>}
+      <DialogBody>{display_path}</DialogBody>
       <DialogFooter
         start={
           <button

@@ -6,8 +6,8 @@
 //!
 //! Security: the pipe name is an unguessable UUID, the server is created
 //! with `first_pipe_instance(true)` + `max_instances(1)` (no squatting, one
-//! connection ever), and the default named-pipe DACL admits only the
-//! creating user + admins. There is no auth handshake (same model as the
+//! connection ever), and `pipe::create`'s protected DACL admits only
+//! SYSTEM, Administrators and the creating user. There is no auth handshake (same model as the
 //! askpass/conpty named pipes). This protects against *other users*; it
 //! does not (and cannot) defend against a same-user attacker, who could
 //! already tamper with the unelevated Newt process itself.

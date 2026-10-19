@@ -1,4 +1,4 @@
-# Builds the Windows MSI with WiX 6. The wix dotnet tool is pinned in
+# Builds the Windows MSI with WiX 7. The wix dotnet tool is pinned in
 # .config/dotnet-tools.json at the repo root; requires the .NET SDK.
 #
 #   packaging/windows/build-msi.ps1 -Exe target\release\newt.exe `

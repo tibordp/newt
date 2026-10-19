@@ -42,11 +42,11 @@ async closeModal() : Promise<Result<null, string>> {
 }
 },
 /**
- * Hand a URL to the system's default browser. The webview installs no
- * new-window handler, so an `<a target="_blank">` goes nowhere on any
- * platform — every outbound link in the UI comes through here. Only web
- * and mail URLs: the opener also launches local files and programs, and
- * the viewer renders links from files it doesn't trust.
+ * Hand a URL to the system's default browser: the UI's own outbound links
+ * call this, and `confine_webview` sends navigations that would leave the
+ * app the same way. Only web and mail URLs: the opener also launches local
+ * files and programs, and the viewer renders links from files it doesn't
+ * trust.
  */
 async openUrl(url: string) : Promise<Result<null, string>> {
     try {
@@ -3313,7 +3313,12 @@ export type GitEntryStatus = "ignored" | "untracked" | "added" | "renamed" | "mo
  */
 export type HistoryEntryView = { path: VfsPath; vfs_display_name: string; display_path: string; is_alive: boolean; arrived_at: number }
 export type HotPathCategory = "UserBookmark" | "StandardFolder" | "Bookmark" | "Mount" | "RecentFolder"
-export type HotPathEntry = { path: VfsPath; display_path: string; name: string | null; category: HotPathCategory; bookmark_key: string | null; 
+export type HotPathEntry = { 
+/**
+ * `None` for a bookmark on a filesystem that isn't mounted: it is
+ * listed, but there's nowhere to go.
+ */
+path: VfsPath | null; display_path: string; name: string | null; category: HotPathCategory; bookmark_key: string | null; 
 /**
  * What kind of storage a mount is, for its icon.
  */

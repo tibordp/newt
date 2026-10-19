@@ -105,7 +105,7 @@ Release engineering:
 - macOS: fail the release when signing secrets are missing, verify with `codesign --verify --deep` / `spctl` / `stapler validate`, set `minimumSystemVersion` (the frontend uses `color-mix()`, Safari 16.2, while Vite targets `safari13`). Trash goes through Finder AppleScript (trash-rs `DeleteMethod::Finder`) under the hardened runtime without `NSAppleEventsUsageDescription`; consider `NsFileManager`. Guide users to Full Disk Access on TCC-denied paths.
 - Elevated sessions from the AppImage: root can't exec the agent from the FUSE mount. `NEWT_AGENT_DIR` also leaks into terminal shells.
 - No CI step test-installs a Linux package.
-- `cargo deny` (licences, advisories; bincode 1.3 is unmaintained), and WiX 6 → 7 wording in `newt.wxs` / `build-msi.ps1`.
+- `cargo deny` (licences, advisories; bincode 1.3 is unmaintained).
 - `cargo tauri build` from source bundles the 0-byte stub agents from `build.rs` without complaint.
 - Write supported OS versions and Install/Update/Troubleshooting/Uninstall into FEATURE_DUMP for the manual.
 
