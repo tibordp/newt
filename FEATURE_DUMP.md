@@ -2072,7 +2072,7 @@ Optional bottom bar (toggled in preferences: `appearance.show_command_bar`, defa
 
 Shows clickable buttons for frequently used commands, each with its shortcut above its short name (the full name on hover where it's abbreviated):
 
-Remote | CmdPalette | Rename | View | Edit | Copy | Move | MkDir | Delete | User Commands
+Remote | CmdPalette | Rename | View | Edit | Copy | Move | MkDir | Delete | UsrMenu
 
 Clicking a button executes the command; the buttons never take focus. Right-clicking the bar offers Hide Command Bar, which turns the preference off; Settings turns it back on.
 

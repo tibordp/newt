@@ -894,7 +894,7 @@ pub fn default_commands() -> Vec<CommandDef> {
         CommandDef {
             id: "user_commands".into(),
             name: "User Commands...".into(),
-            short_name: None,
+            short_name: Some("UsrMenu".into()),
             category: "View".into(),
             default_keys: vec!["f9".into()],
             default_when: Some("pane_focused".into()),

@@ -1,11 +1,12 @@
+# Formatting and linting touch only staged files (lint-staged, including
+# rustfmt for `.rs`). Clippy and the bindings check build whole crates, so
+# they can't be narrowed to files; they run when the commit stages Rust.
 npx lint-staged
-cargo fmt --all
-git diff --name-only -- '*.rs' | if read -r; then
-  echo "cargo fmt modified files — please review and re-stage:"
-  echo "  $REPLY"
-  while read -r f; do echo "  $f"; done
-  exit 1
+
+if [ -z "$(git diff --cached --name-only -- '*.rs' '*Cargo.toml' Cargo.lock)" ]; then
+  exit 0
 fi
+
 # `pty-process` and `newt-agent` are Unix-only (POSIX PTY primitives, askpass
 # UDS, pkexec, …) and excluded from `default-members` on Windows. Mirror that
 # exclusion here so the hook doesn't try to lint them on a Windows host.

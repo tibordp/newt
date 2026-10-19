@@ -74,6 +74,9 @@
     ],
     "docs/scenes/**/*.css": [
       "prettier --write"
+    ],
+    "*.rs": [
+      "rustfmt --edition 2024"
     ]
   },
   "overrides": {
