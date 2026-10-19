@@ -100,15 +100,7 @@ impl VfsDescriptor for RemoteVfsDescriptor {
         super::path_style::navigable_parent(path, PathStyle::from_mount_meta(mount_meta))
     }
 
-    fn roots(&self, mount_meta: &[u8]) -> Vec<super::RootInfo> {
-        // A Windows client's FS exposed into a remote session is
-        // split-root; `has_unified_root`/`initial_path` then land on its
-        // first drive instead of the unlistable `/`.
-        super::path_style::roots_from_meta(mount_meta)
-    }
     fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
-        // Style-based, not root-count (a single-drive Windows client is
-        // still split-root). See `unified_root_from_meta`.
         super::path_style::unified_root_from_meta(mount_meta)
     }
 
@@ -142,10 +134,9 @@ inventory::submit!(RegisteredDescriptor(&REMOTE_VFS_DESCRIPTOR));
 pub struct RemoteVfs {
     communicator: Communicator,
     descriptor: &'static dyn VfsDescriptor,
-    /// Owner-supplied: the proxied side describes its own filesystem
-    /// (style + roots), so the meta arrives with the mount request and
-    /// can be replaced on remount (drive changes) — see `set_mount_meta`.
-    mount_meta: parking_lot::RwLock<Vec<u8>>,
+    /// Owner-supplied: the proxied side describes its own filesystem, so
+    /// the meta arrives with the mount request.
+    mount_meta: Vec<u8>,
     /// Keeps a spawned sub-agent (process, askpass listener) alive for the
     /// lifetime of the mount. `None` for the host-communicator flavor.
     _connection: Option<super::agent::AgentConnectionGuard>,
@@ -155,9 +146,7 @@ impl RemoteVfs {
     /// Build a `RemoteVfs` from a `MountRequest::Remote`. Pulls the host
     /// communicator (set up at session start by the agent) out of the mount
     /// context; the meta comes with the request — only the host can
-    /// describe its own FS. Returns
-    /// the concrete type so the mounting manager can keep a typed handle
-    /// for later `set_mount_meta` (remount) dispatch.
+    /// describe its own FS.
     pub fn mount(
         ctx: &crate::vfs::mount::MountContext<'_>,
         mount_meta: Vec<u8>,
@@ -170,18 +159,11 @@ impl RemoteVfs {
         Ok(std::sync::Arc::new(Self::new(communicator, mount_meta)))
     }
 
-    /// Replace the owner-supplied `mount_meta` (logical remount: the host
-    /// re-enumerated its drives and pushed the fresh description). Not a
-    /// `Vfs` trait operation — every other VFS derives its own meta.
-    pub fn set_mount_meta(&self, mount_meta: Vec<u8>) {
-        *self.mount_meta.write() = mount_meta;
-    }
-
     pub fn new(communicator: Communicator, mount_meta: Vec<u8>) -> Self {
         Self {
             communicator,
             descriptor: &REMOTE_VFS_DESCRIPTOR,
-            mount_meta: parking_lot::RwLock::new(mount_meta),
+            mount_meta,
             _connection: None,
         }
     }
@@ -196,7 +178,7 @@ impl RemoteVfs {
         Self {
             communicator,
             descriptor: &super::agent::AGENT_VFS_DESCRIPTOR,
-            mount_meta: parking_lot::RwLock::new(mount_meta),
+            mount_meta,
             _connection: Some(connection),
         }
     }
@@ -208,8 +190,8 @@ use crate::api::{
     API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE,
     API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE, API_VFS_REMOVE_TREE,
-    API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH, API_VFS_TRASH_ITEM,
-    API_VFS_TRUNCATE,
+    API_VFS_RENAME, API_VFS_ROOTS, API_VFS_SAME_FILE, API_VFS_SET_METADATA, API_VFS_TOUCH,
+    API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
 };
 
 #[async_trait::async_trait]
@@ -219,7 +201,7 @@ impl Vfs for RemoteVfs {
     }
 
     fn mount_meta(&self) -> Vec<u8> {
-        self.mount_meta.read().clone()
+        self.mount_meta.clone()
     }
 
     async fn list_files(
@@ -239,6 +221,12 @@ impl Vfs for RemoteVfs {
             .communicator
             .invoke(API_VFS_POLL_CHANGES, &path.to_owned())
             .await?;
+        ret
+    }
+
+    async fn roots(&self) -> Result<Vec<super::RootInfo>, Error> {
+        let ret: Result<Vec<super::RootInfo>, Error> =
+            self.communicator.invoke(API_VFS_ROOTS, &()).await?;
         ret
     }
 

@@ -19,7 +19,7 @@ use crate::vfs::properties::PropertySheet;
 
 use super::path::{PathBuf, VfsPath};
 use super::{
-    File, FileChunk, FileList, FsStats, RevalidationOutcome, Vfs, VfsDescriptor, VfsId,
+    File, FileChunk, FileList, FsStats, RevalidationOutcome, RootInfo, Vfs, VfsDescriptor, VfsId,
     VfsRandomReader,
 };
 
@@ -217,6 +217,14 @@ impl Filesystem for VfsRegistryFs {
                 }
             }
         }
+    }
+
+    async fn roots(&self, vfs_id: VfsId) -> Result<Vec<RootInfo>, Error> {
+        self.registry
+            .get(vfs_id)
+            .ok_or_else(|| Error::custom(format!("VFS {} not found", vfs_id)))?
+            .roots()
+            .await
     }
 
     async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error> {

@@ -268,7 +268,7 @@ async fn mount_inner(
 
     // Sub-agents are Unix-shaped today: bootstrap and direct-copy only
     // target linux/darwin triples (`triple_from_os_arch`).
-    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some(kind), Some(label));
+    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, Some(kind), Some(label));
 
     let vfs = Arc::new(RemoteVfs::for_agent(
         communicator.clone(),

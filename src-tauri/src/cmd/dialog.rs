@@ -82,11 +82,18 @@ fn leaf_name_separators(ctx: &MainWindowContext, destination: &VfsPath) -> Strin
 
 #[tauri::command]
 #[specta::specta]
-pub fn dialog(
+pub async fn dialog(
     ctx: MainWindowContext,
     dialog: DialogKind,
     pane_handle: Option<PaneHandle>,
 ) -> Result<(), Error> {
+    // A split-root filesystem's drives are its entries in the selector:
+    // asked for before it opens, so none arrive under a moving cursor.
+    let split_roots = if dialog == DialogKind::SelectVfs {
+        ctx.split_roots().await
+    } else {
+        Default::default()
+    };
     let default_open_in = if ctx.connection_target().is_remote() {
         crate::connections::OpenIn::Pane
     } else {
@@ -676,7 +683,7 @@ pub fn dialog(
                     }
                 }
                 DialogKind::SelectVfs => {
-                    let targets = ctx.compute_vfs_targets()?;
+                    let targets = ctx.compute_vfs_targets(&split_roots)?;
                     free_space_fetch = Some(free_space_queries(&ctx, &targets));
                     volume_fetch = ctx.preferences().load().hot_paths.mounts_in_vfs_selector;
                     ModalDataKind::SelectVfs { targets }
@@ -1029,8 +1036,8 @@ macro_rules! cmd_dialog {
     ($name:ident, $dialog:expr) => {
         #[tauri::command]
         #[specta::specta]
-        pub fn $name(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
-            dialog(ctx, $dialog, Some(pane_handle))
+        pub async fn $name(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+            dialog(ctx, $dialog, Some(pane_handle)).await
         }
     };
 }
@@ -1065,7 +1072,10 @@ cmd_dialog!(cmd_sort, DialogKind::Sort);
 /// same effect as pressing `/`.
 #[tauri::command]
 #[specta::specta]
-pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Result<(), Error> {
+pub async fn cmd_start_search(
+    ctx: MainWindowContext,
+    pane_handle: PaneHandle,
+) -> Result<(), Error> {
     let supports_search = ctx.with_pane_update(pane_handle, |_, pane| {
         Ok(ctx
             .vfs_info()
@@ -1075,7 +1085,7 @@ pub fn cmd_start_search(ctx: MainWindowContext, pane_handle: PaneHandle) -> Resu
     })?;
 
     if supports_search {
-        dialog(ctx, DialogKind::Search, Some(pane_handle))
+        dialog(ctx, DialogKind::Search, Some(pane_handle)).await
     } else {
         ctx.with_pane_update(pane_handle, |_, pane| {
             pane.view_state_mut()

@@ -25,7 +25,7 @@ use crate::vfs::{File, FileChunk, FsStats, Mode, Symlink, ToUnix, UserGroup};
 
 use super::path_style::{
     local_breadcrumbs, local_display_path, metadata_traits_from_meta, navigable_parent,
-    roots_from_meta, unified_root_from_meta,
+    unified_root_from_meta,
 };
 use super::{
     Breadcrumb, DisplayPathMatch, MetadataTraits, PathStyle, RegisteredDescriptor, RootInfo, Vfs,
@@ -125,13 +125,7 @@ impl VfsDescriptor for LocalVfsDescriptor {
         None
     }
 
-    fn roots(&self, mount_meta: &[u8]) -> Vec<RootInfo> {
-        roots_from_meta(mount_meta)
-    }
     fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
-        // Style-based, not root-count: a single-drive Windows host is
-        // still split-root. `initial_path` (trait default) then lands on
-        // the first drive instead of the unlistable `/`.
         unified_root_from_meta(mount_meta)
     }
     fn metadata_traits(&self, mount_meta: &[u8]) -> MetadataTraits {
@@ -143,10 +137,8 @@ impl VfsDescriptor for LocalVfsDescriptor {
 /// it (the host for a local session, the agent for a remote one; also
 /// the host for its FS exposed into a remote session). Unix has the
 /// single `/`; Windows has one per logical drive (`\\?\C:`, …), each
-/// classified via [`volume::probe_native`]. Baked into `mount_meta` at
-/// mount time so root lookups stay descriptor-only (no per-call RPC);
-/// drive changes re-enumerate via `VfsManager::remount`, driven by the
-/// host's device-change/focus triggers.
+/// classified via [`volume::probe_native`]. Enumerated afresh on every
+/// call (`Vfs::roots`): drives come and go.
 #[cfg(unix)]
 pub fn local_roots() -> Vec<RootInfo> {
     vec![RootInfo::root()]
@@ -432,7 +424,11 @@ impl Vfs for LocalVfs {
     /// agent for a remote session. So it stamps this binary's host style
     /// and the roots enumerated here, carried to whichever side renders.
     fn mount_meta(&self) -> Vec<u8> {
-        super::encode_mount_meta(PathStyle::host(), &local_roots())
+        super::encode_mount_meta(PathStyle::host())
+    }
+
+    async fn roots(&self) -> Result<Vec<RootInfo>, Error> {
+        Ok(tokio::task::spawn_blocking(local_roots).await?)
     }
 
     async fn list_files(

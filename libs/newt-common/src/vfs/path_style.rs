@@ -18,7 +18,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::path::{Path, PathBuf};
-use super::volume::{RootInfo, VolumeInfo};
 use super::{Breadcrumb, MetadataTraits};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,17 +30,12 @@ pub enum PathStyle {
 /// host and bootstrapped per session by content hash, and `mount_meta`
 /// is runtime-only (never persisted), so there is no version drift to
 /// guard against — only platform-shape differences, which is exactly
-/// what `style`/`roots` carry.
-///
-/// `roots` are the filesystem's root paths (VFS wire strings), captured
-/// at mount/launch time on the side that owns the FS — a single `["/"]`
-/// for Unix, one per drive/share on Windows. Kept a descriptor-only
-/// lookup (no per-call RPC); drive changes refresh the whole meta via
-/// `VfsManager::remount`.
+/// what it carries. It holds what is fixed for the mount's lifetime;
+/// anything that changes under it (a Windows filesystem's drives) is
+/// asked of the filesystem when needed (`Vfs::roots`).
 #[derive(Serialize, Deserialize)]
 struct MountMeta {
     style: PathStyle,
-    roots: Vec<RootMeta>,
     /// Human-readable mount target (agent mounts: the container name,
     /// host, or pod). `None` for style-only metas.
     label: Option<String>,
@@ -50,36 +44,20 @@ struct MountMeta {
     kind: Option<String>,
 }
 
-/// Wire form of one FS root: the path (VFS wire string) plus its volume
-/// classification, probed on the owning side at mount time.
-#[derive(Serialize, Deserialize)]
-struct RootMeta {
-    path: String,
-    volume: Option<VolumeInfo>,
-}
-
-/// Encode `mount_meta` carrying both the path style and the FS roots.
-pub fn encode_mount_meta(style: PathStyle, roots: &[RootInfo]) -> Vec<u8> {
-    encode_mount_meta_labeled(style, roots, None, None)
+/// Encode `mount_meta` carrying the path style.
+pub fn encode_mount_meta(style: PathStyle) -> Vec<u8> {
+    encode_mount_meta_labeled(style, None, None)
 }
 
 /// `encode_mount_meta`, plus display strings (see `MountMeta::kind` /
 /// `MountMeta::label`).
 pub fn encode_mount_meta_labeled(
     style: PathStyle,
-    roots: &[RootInfo],
     kind: Option<&str>,
     label: Option<&str>,
 ) -> Vec<u8> {
     bincode::serialize(&MountMeta {
         style,
-        roots: roots
-            .iter()
-            .map(|r| RootMeta {
-                path: r.path.as_wire_str().to_string(),
-                volume: r.volume.clone(),
-            })
-            .collect(),
         label: label.map(|l| l.to_string()),
         kind: kind.map(|k| k.to_string()),
     })
@@ -98,31 +76,6 @@ pub fn mount_meta_kind(meta: &[u8]) -> Option<String> {
     bincode::deserialize::<MountMeta>(meta)
         .ok()
         .and_then(|m| m.kind)
-}
-
-/// The FS roots from `mount_meta`. Empty when none were recorded
-/// (legacy / style-only mount) — callers fall back to a single `/`.
-pub fn mount_roots(meta: &[u8]) -> Vec<PathBuf> {
-    mount_root_infos(meta).into_iter().map(|r| r.path).collect()
-}
-
-/// The FS roots with their volume classification. Empty when none were
-/// recorded (style-only mount) — callers fall back to a single `/`.
-pub fn mount_root_infos(meta: &[u8]) -> Vec<RootInfo> {
-    if meta.is_empty() {
-        return Vec::new();
-    }
-    bincode::deserialize::<MountMeta>(meta)
-        .map(|m| {
-            m.roots
-                .into_iter()
-                .map(|r| RootInfo {
-                    path: PathBuf::from_wire_str(&r.path),
-                    volume: r.volume,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 impl PathStyle {
@@ -153,10 +106,9 @@ impl PathStyle {
         }
     }
 
-    /// Encode for `mount_meta` with no recorded roots (style-only — e.g.
-    /// a remote Unix root, where the single `/` is implied).
+    /// Encode for `mount_meta`, style only.
     pub fn encode(self) -> Vec<u8> {
-        encode_mount_meta(self, &[])
+        encode_mount_meta(self)
     }
 
     /// Decode from `mount_meta`. Empty / legacy / unparseable ⇒ `Unix`:
@@ -378,26 +330,12 @@ pub fn metadata_traits_from_meta(mount_meta: &[u8]) -> MetadataTraits {
     }
 }
 
-/// FS roots from `mount_meta`, defaulting to a single `/` when none were
-/// recorded (a style-only mount, e.g. a remote Unix root). Shared by
-/// `LocalVfsDescriptor` and `RemoteVfsDescriptor`.
-pub fn roots_from_meta(mount_meta: &[u8]) -> Vec<RootInfo> {
-    let roots = mount_root_infos(mount_meta);
-    if roots.is_empty() {
-        vec![RootInfo::root()]
-    } else {
-        roots
-    }
-}
-
 /// Whether a `Local`/`Remote` mount presents one unified `/` root.
 ///
 /// This is a property of the *path style*, **not** the number of roots: a
 /// Windows filesystem with only a `C:` drive is still split-root — its
-/// root is `C:\`, never `/`. Keying off `roots().len() == 1` (the trait
-/// default) silently misclassifies a single-drive Windows box as unified,
-/// so the VFS selector offers one "Local" entry pointing at the
-/// unlistable `\\?\` sentinel instead of the drive. Decide by style.
+/// root is `C:\`, never `/` — so counting roots would offer a single-drive
+/// box as one "Local" entry at the unlistable `\\?\` sentinel.
 pub fn unified_root_from_meta(mount_meta: &[u8]) -> bool {
     PathStyle::from_mount_meta(mount_meta) == PathStyle::Unix
 }
@@ -439,36 +377,6 @@ mod tests {
             PathStyle::from_mount_meta(&[0xff, 0x00, 0x42]),
             PathStyle::Unix
         );
-    }
-
-    #[test]
-    fn roots_round_trip() {
-        use super::super::volume::{VolumeInfo, VolumeKind};
-
-        let roots = [
-            RootInfo {
-                path: PathBuf::from_wire_str("/?/C:"),
-                volume: Some(VolumeInfo {
-                    kind: VolumeKind::Fixed,
-                    fs_type: Some("NTFS".into()),
-                    label: Some("Data".into()),
-                    target: None,
-                    mount_point: Some("/?/C:".into()),
-                }),
-            },
-            RootInfo::bare(PathBuf::from_wire_str("/?/D:")),
-        ];
-        let meta = encode_mount_meta(PathStyle::Windows, &roots);
-        assert_eq!(PathStyle::from_mount_meta(&meta), PathStyle::Windows);
-        assert_eq!(
-            mount_roots(&meta),
-            roots.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
-        );
-        assert_eq!(mount_root_infos(&meta), roots);
-        // Style-only / empty / garbage → no roots recorded.
-        assert!(mount_roots(&PathStyle::Unix.encode()).is_empty());
-        assert!(mount_roots(&[]).is_empty());
-        assert!(mount_roots(&[0xff, 0x00]).is_empty());
     }
 }
 

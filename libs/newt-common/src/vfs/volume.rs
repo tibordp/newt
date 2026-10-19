@@ -49,10 +49,10 @@ pub struct VolumeInfo {
     pub mount_point: Option<String>,
 }
 
-/// A filesystem root paired with its volume classification. `roots()` /
-/// `mount_meta` currency; the classification is `None` where probing
+/// A filesystem root paired with its volume classification, as
+/// `Vfs::roots` answers; the classification is `None` where probing
 /// failed or doesn't apply (unified Unix root, non-local VFSes).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RootInfo {
     pub path: PathBuf,
     pub volume: Option<VolumeInfo>,

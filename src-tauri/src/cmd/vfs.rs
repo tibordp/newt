@@ -37,7 +37,7 @@ async fn mount_and_navigate(
         kind,
         response.vfs_id
     );
-    let vfs_path = ctx.vfs_initial_path(response.vfs_id);
+    let vfs_path = ctx.vfs_initial_path(response.vfs_id).await;
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
         gs.close_modal();
@@ -171,7 +171,7 @@ pub async fn switch_vfs(
         // otherwise use the VFS's default landing path.
         match path {
             Some(path) => VfsPath::new(id, path),
-            None => ctx.vfs_initial_path(id),
+            None => ctx.vfs_initial_path(id).await,
         }
     } else {
         let descriptor = lookup_descriptor(&type_name)
@@ -183,7 +183,7 @@ pub async fn switch_vfs(
             ))
         })?;
         let response = ctx.mount_vfs(request).await?;
-        ctx.vfs_initial_path(response.vfs_id)
+        ctx.vfs_initial_path(response.vfs_id).await
     };
 
     ctx.with_pane_update_async(pane_handle, |gs, pane| async move {
@@ -198,7 +198,8 @@ pub async fn switch_vfs(
 async fn redirect_and_unmount(ctx: &MainWindowContext, vfs_id: VfsId) -> Result<(), Error> {
     for pane in ctx.panes().all() {
         if pane.path().vfs_id == vfs_id {
-            pane.navigate_to(ctx.vfs_initial_path(VfsId::ROOT)).await?;
+            pane.navigate_to(ctx.vfs_initial_path(VfsId::ROOT).await)
+                .await?;
         }
     }
     ctx.unmount_vfs(vfs_id).await
@@ -264,7 +265,7 @@ pub async fn cmd_unmap_network_drive(
     ctx: MainWindowContext,
     pane_handle: PaneHandle,
 ) -> Result<(), Error> {
-    crate::main_window::drives::open_unmap_confirmation(&ctx, pane_handle)
+    crate::main_window::drives::open_unmap_confirmation(&ctx, pane_handle).await
 }
 
 /// The unmap confirmation dialog's "Disconnect" button.

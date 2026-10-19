@@ -57,6 +57,10 @@ impl Filesystem for EndlessListing {
         Ok(None)
     }
 
+    async fn roots(&self, _vfs_id: crate::vfs::VfsId) -> Result<Vec<crate::vfs::RootInfo>, Error> {
+        Err(Error::not_supported())
+    }
+
     async fn revalidate(&self, _vfs_id: VfsId) -> Result<crate::vfs::RevalidationOutcome, Error> {
         Ok(crate::vfs::RevalidationOutcome::Fresh)
     }

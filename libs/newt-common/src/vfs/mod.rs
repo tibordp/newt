@@ -40,7 +40,7 @@ pub use mount::{
 };
 pub use path_style::{
     PathStyle, encode_mount_meta, encode_mount_meta_labeled, mount_meta_kind, mount_meta_label,
-    mount_root_infos, mount_roots, unix_breadcrumbs, unix_display_path,
+    unix_breadcrumbs, unix_display_path,
 };
 pub use progress::{
     NoopProgressSink, ProgressReporter, RemoteProgressSink, ScopedReporter, VfsProgress,
@@ -388,36 +388,12 @@ pub trait VfsDescriptor: Send + Sync + std::fmt::Debug {
         current
     }
 
-    /// The filesystem's root paths, each with its volume classification
-    /// where known. One `/` for a unified-root FS (every network/archive
-    /// VFS, and Unix local); one per drive/share for a split-root FS
-    /// (Windows local, incl. a Windows client's FS exposed into a remote
-    /// session). Recorded in `mount_meta` at mount time.
-    fn roots(&self, _mount_meta: &[u8]) -> Vec<volume::RootInfo> {
-        vec![volume::RootInfo::root()]
-    }
-
-    /// Whether the FS has a single `/` root. When false the VFS selector
-    /// surfaces each [`roots`](Self::roots) entry as its own drive.
-    fn has_unified_root(&self, mount_meta: &[u8]) -> bool {
-        self.roots(mount_meta).len() == 1
-    }
-
-    /// VFS-internal path to land on when this VFS is freshly selected or
-    /// mounted (VFS selector, post-mount, unmount redirect). The abstract
-    /// root `/` is correct for a unified-root FS but is the unlistable
-    /// `\\?\` position on Windows — so a split-root FS lands on its first
-    /// drive instead.
-    fn initial_path(&self, mount_meta: &[u8]) -> PathBuf {
-        if self.has_unified_root(mount_meta) {
-            PathBuf::root()
-        } else {
-            self.roots(mount_meta)
-                .into_iter()
-                .next()
-                .map(|r| r.path)
-                .unwrap_or_else(PathBuf::root)
-        }
+    /// Whether the FS has a single `/` root. When false — a Windows
+    /// filesystem, split into drives and shares — the VFS selector lists
+    /// each of its [`Vfs::roots`] as a drive, and the FS is entered on one
+    /// of them rather than at the unlistable `\\?\` position.
+    fn has_unified_root(&self, _mount_meta: &[u8]) -> bool {
+        true
     }
 
     /// Try to parse a user-entered display path. Returns the VFS-internal path
@@ -618,6 +594,13 @@ pub trait Vfs: Send + Sync {
     // (helpers defined below for impls to use)
 
     // --- Browse ---
+    /// The filesystem's roots as they are now, each with its volume
+    /// classification where known: one `/` for a unified-root FS, one per
+    /// drive and share for a Windows one, which come and go.
+    async fn roots(&self) -> Result<Vec<volume::RootInfo>, Error> {
+        Ok(vec![volume::RootInfo::root()])
+    }
+
     async fn list_files(
         &self,
         path: &Path,

@@ -517,6 +517,17 @@ impl Filesystem for HairpinFs {
         }
     }
 
+    async fn roots(
+        &self,
+        vfs_id: VfsId,
+    ) -> Result<Vec<newt_common::vfs::RootInfo>, newt_common::Error> {
+        if vfs_id == self.remote_vfs_id {
+            self.local_fs.roots(VfsId::ROOT).await
+        } else {
+            self.inner.roots(vfs_id).await
+        }
+    }
+
     async fn fs_stats(
         &self,
         path: VfsPath,
@@ -1373,16 +1384,11 @@ pub(super) async fn connect(
 
     // The root `LocalVfs` isn't mounted via the registry, so `mount_meta()`
     // isn't consulted — stamp the path style here. Remote root = the agent's
-    // Unix FS (style-only, single `/`). Local root = this host's FS, with
-    // drives enumerated so a Windows host lands on a drive instead of the
-    // unlistable `/`.
+    // Unix FS. Local root = this host's FS.
     let root_meta = if connection_target.is_remote() {
         PathStyle::Unix.encode()
     } else {
-        newt_common::vfs::encode_mount_meta(
-            PathStyle::host(),
-            &newt_common::vfs::local::local_roots(),
-        )
+        PathStyle::host().encode()
     };
     let mut initial_mounted = HashMap::new();
     initial_mounted.insert(
@@ -1401,15 +1407,11 @@ pub(super) async fn connect(
     // VFS are handled locally without round-tripping through the agent.
     if host_access {
         // This VFS surfaces *this host's* local FS into the remote
-        // session, and only the host can describe it: host path style,
-        // and the host's drives so a Windows client lands on a drive
-        // instead of the unlistable `/`. The meta rides in the request so
-        // the agent's `RemoteVfs` answers descriptor queries correctly,
-        // and round-trips back in the response for our own bookkeeping.
-        let client_local_meta = newt_common::vfs::encode_mount_meta(
-            PathStyle::host(),
-            &newt_common::vfs::local::local_roots(),
-        );
+        // session, and only the host can describe it. The meta rides in
+        // the request so the agent's `RemoteVfs` answers descriptor queries
+        // correctly, and round-trips back in the response for our own
+        // bookkeeping.
+        let client_local_meta = PathStyle::host().encode();
         match services
             .vfs_manager
             .mount(newt_common::vfs::MountRequest::Remote {

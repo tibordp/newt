@@ -27,6 +27,7 @@ pub const API_SHELL_EXPAND: Api = Api(6);
 pub const API_LIST_FILES_STREAMING: Api = Api(7);
 pub const API_REVALIDATE: Api = Api(9);
 pub const API_FS_STATS: Api = Api(10);
+pub const API_ROOTS: Api = Api(11);
 
 pub const API_START_OPERATION: Api = Api(200);
 pub const API_CANCEL_OPERATION: Api = Api(201);
@@ -53,7 +54,6 @@ pub const API_RESOLVE_LINK: Api = Api(309);
 pub const API_MOUNT_VFS: Api = Api(400);
 pub const API_UNMOUNT_VFS: Api = Api(401);
 pub const API_VFS_PROGRESS: Api = Api(402);
-pub const API_REMOUNT_VFS: Api = Api(403);
 
 pub const API_SYSTEM_HOT_PATHS: Api = Api(500);
 
@@ -114,6 +114,7 @@ pub const API_VFS_WRITE_RANGE: Api = Api(641);
 pub const API_VFS_LIST_RECURSIVE: Api = Api(642);
 pub const API_VFS_EXCHANGE: Api = Api(644);
 pub const API_VFS_IS_PACKAGE: Api = Api(645);
+pub const API_VFS_ROOTS: Api = Api(646);
 
 // Host UI APIs — invoked by the agent, handled by the Tauri host.
 pub const API_HOST_ASKPASS: Api = Api(624);
@@ -215,6 +216,10 @@ impl Dispatcher for FilesystemDispatcher {
                 let path: VfsPath = decode(&req[..]);
                 let ret = self.filesystem.fs_stats(path).await;
                 encode(&ret)
+            }
+            API_ROOTS => {
+                let vfs_id: VfsId = decode(&req[..]);
+                encode(&self.filesystem.roots(vfs_id).await)
             }
             API_FILE_INFO => {
                 let (path, follow): (VfsPath, bool) = decode(&req[..]);
@@ -597,11 +602,6 @@ impl Dispatcher for VfsMountDispatcher {
             API_UNMOUNT_VFS => {
                 let vfs_id: VfsId = decode(&req[..]);
                 let ret = self.vfs_manager.unmount(vfs_id).await;
-                encode(&ret)
-            }
-            API_REMOUNT_VFS => {
-                let (vfs_id, mount_meta): (VfsId, Option<Vec<u8>>) = decode(&req[..]);
-                let ret = self.vfs_manager.remount(vfs_id, mount_meta).await;
                 encode(&ret)
             }
             _ => return None,

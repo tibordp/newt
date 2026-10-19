@@ -1987,7 +1987,11 @@ impl MainWindowContext {
         self.inner.publisher.publish()
     }
 
-    pub fn compute_vfs_targets(&self) -> Result<Vec<VfsTarget>, Error> {
+    /// `split_roots`: what [`split_roots`](Self::split_roots) answered.
+    pub fn compute_vfs_targets(
+        &self,
+        split_roots: &HashMap<VfsId, Vec<newt_common::vfs::RootInfo>>,
+    ) -> Result<Vec<VfsTarget>, Error> {
         /// Maps VFS type_name → dialog name for types that need user input to mount.
         fn mount_dialog_for(type_name: &str) -> Option<&'static str> {
             match type_name {
@@ -2028,7 +2032,7 @@ impl MainWindowContext {
                 } else {
                     // Split-root FS (Windows drives): one entry per root,
                     // labelled with the drive (`C:\`).
-                    for root in info.descriptor.roots(&info.mount_meta) {
+                    for root in split_roots.get(vfs_id).cloned().unwrap_or_default() {
                         targets.push(VfsTarget {
                             kind: VfsTargetKind::Drive,
                             vfs_id: Some(*vfs_id),
@@ -2166,34 +2170,6 @@ impl MainWindowContext {
         Ok(())
     }
 
-    /// Logical remount of `vfs_id` (see `VfsManager::remount`): refresh
-    /// its `mount_meta` and, if it changed, update our cached copy and
-    /// the pushed mount summary. Returns whether anything changed —
-    /// callers decide what downstream state (an open VFS selector) to
-    /// rebuild.
-    pub async fn remount_vfs(
-        &self,
-        vfs_id: VfsId,
-        mount_meta: Option<Vec<u8>>,
-    ) -> Result<bool, Error> {
-        let vfs_manager = self.with_session(|s| s.vfs_manager.clone())?;
-        let new_meta = vfs_manager.remount(vfs_id, mount_meta).await?;
-        let changed = self.with_session(|s| {
-            let mut mounted = s.mounted_vfs.write();
-            match mounted.get_mut(&vfs_id) {
-                Some(info) if info.mount_meta != new_meta => {
-                    info.mount_meta = new_meta;
-                    true
-                }
-                _ => false,
-            }
-        })?;
-        if changed {
-            self.refresh_mount_summary();
-        }
-        Ok(changed)
-    }
-
     /// Recompute the pushed [`MountSummary`] from the session's mounted
     /// set. The value rides out with the next state publish (every mount/
     /// unmount is followed by one — a navigation or a modal update).
@@ -2214,19 +2190,69 @@ impl MainWindowContext {
             .has_split_root_vfs = has_split_root_vfs;
     }
 
-    /// Fully-qualified path to land on when selecting/mounting `vfs_id`
-    /// (asks the descriptor — see `VfsDescriptor::initial_path`). Falls
-    /// back to the VFS root if the VFS isn't mounted.
-    pub fn vfs_initial_path(&self, vfs_id: VfsId) -> VfsPath {
+    /// Whether `vfs_id` is split into drives and shares (a Windows
+    /// filesystem) rather than under one `/`.
+    fn is_split_root(&self, vfs_id: VfsId) -> bool {
         self.with_session(|s| {
             s.mounted_vfs
                 .read()
                 .get(&vfs_id)
-                .map(|info| VfsPath::new(vfs_id, info.descriptor.initial_path(&info.mount_meta)))
+                .is_some_and(|info| !info.descriptor.has_unified_root(&info.mount_meta))
         })
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| VfsPath::root(vfs_id))
+        .unwrap_or(false)
+    }
+
+    /// Fully-qualified path to land on when selecting or mounting
+    /// `vfs_id`: its root, or for a split-root filesystem its first drive,
+    /// since `/` is the unlistable `\\?\` position there.
+    pub async fn vfs_initial_path(&self, vfs_id: VfsId) -> VfsPath {
+        if !self.is_split_root(vfs_id) {
+            return VfsPath::root(vfs_id);
+        }
+        let first = match self.fs() {
+            Ok(fs) => fs
+                .roots(vfs_id)
+                .await
+                .ok()
+                .and_then(|r| r.into_iter().next()),
+            Err(_) => None,
+        };
+        first.map_or_else(|| VfsPath::root(vfs_id), |r| VfsPath::new(vfs_id, r.path))
+    }
+
+    /// The drives and shares of every split-root filesystem the selector
+    /// lists, asked of each as they are now. One that can't answer lists
+    /// none.
+    pub async fn split_roots(&self) -> HashMap<VfsId, Vec<newt_common::vfs::RootInfo>> {
+        let ids: Vec<VfsId> = self
+            .with_session(|s| {
+                s.mounted_vfs
+                    .read()
+                    .values()
+                    .filter(|i| !i.descriptor.is_ephemeral())
+                    .filter(|i| !i.descriptor.has_unified_root(&i.mount_meta))
+                    .map(|i| i.vfs_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Ok(fs) = self.fs() else {
+            return HashMap::new();
+        };
+        let queries = ids.into_iter().map(|id| {
+            let fs = fs.clone();
+            async move { (id, fs.roots(id).await) }
+        });
+        futures::future::join_all(queries)
+            .await
+            .into_iter()
+            .filter_map(|(id, roots)| match roots {
+                Ok(roots) => Some((id, roots)),
+                Err(e) => {
+                    log::warn!("listing the roots of VFS {id} failed: {e}");
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn resolve_display_path(&self, input: &str) -> Option<VfsPath> {

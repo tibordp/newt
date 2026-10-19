@@ -20,7 +20,7 @@ use super::{
     API_VFS_LIST_FILES, API_VFS_OPEN_READ_ASYNC, API_VFS_OPEN_READ_AT,
     API_VFS_OVERWRITE_ASYNC_BEGIN, API_VFS_POLL_CHANGES, API_VFS_READ_AT, API_VFS_READ_AT_CLOSE,
     API_VFS_READ_ATTRIBUTE, API_VFS_READ_RANGE, API_VFS_REMOVE_DIR, API_VFS_REMOVE_FILE,
-    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_SAME_FILE, API_VFS_SET_METADATA,
+    API_VFS_REMOVE_TREE, API_VFS_RENAME, API_VFS_ROOTS, API_VFS_SAME_FILE, API_VFS_SET_METADATA,
     API_VFS_STREAM_PATH, API_VFS_TOUCH, API_VFS_TRASH_ITEM, API_VFS_TRUNCATE,
     API_VFS_WRITE_ATTRIBUTE, decode, encode,
 };
@@ -132,6 +132,7 @@ impl Dispatcher for VfsDispatcher {
                 let ret = self.read_at_sessions.read_at(id, offset, len).await;
                 encode(&ret)
             }
+            API_VFS_ROOTS => encode(&self.vfs.roots().await),
             API_VFS_FILE_INFO => {
                 let (path, follow): (PathBuf, bool) = decode(&req[..]);
                 let ret = self.vfs.file_info(&path, follow).await;

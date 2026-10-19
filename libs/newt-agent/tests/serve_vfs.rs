@@ -31,7 +31,7 @@ fn proxy_for(mut child: tokio::process::Child) -> (Arc<RemoteVfs>, Communicator)
     let communicator = Communicator::new(stream);
 
     let guard = AgentConnectionGuard::new(child, None);
-    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Docker"), Some("test"));
+    let mount_meta = encode_mount_meta_labeled(PathStyle::Unix, Some("Docker"), Some("test"));
     let vfs = Arc::new(RemoteVfs::for_agent(
         communicator.clone(),
         mount_meta,
@@ -66,6 +66,11 @@ async fn serve_vfs_lists_and_reads_files() {
     assert_eq!(
         newt_common::vfs::mount_meta_kind(&vfs.mount_meta()),
         Some("Docker".to_string())
+    );
+    // The roots are asked of the agent, as they are now.
+    assert_eq!(
+        vfs.roots().await.unwrap(),
+        [newt_common::vfs::RootInfo::root()]
     );
 
     // list_files through the proxy hits the sub-agent's LocalVfs.
@@ -189,7 +194,7 @@ async fn bootstrap_spawns_serve_vfs_agent() {
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
     let vfs = RemoteVfs::for_agent(
         communicator,
-        encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Custom"), Some("bootstrap-test")),
+        encode_mount_meta_labeled(PathStyle::Unix, Some("Custom"), Some("bootstrap-test")),
         guard,
     );
 
@@ -225,7 +230,7 @@ async fn bootstrap_and_list(
     let guard = AgentConnectionGuard::new(spawned.child, spawned.askpass);
     let vfs = RemoteVfs::for_agent(
         communicator,
-        encode_mount_meta_labeled(PathStyle::Unix, &[], Some("Custom"), Some("bootstrap-test")),
+        encode_mount_meta_labeled(PathStyle::Unix, Some("Custom"), Some("bootstrap-test")),
         guard,
     );
     vfs.list_files(&VfsPathBuf::root(), None).await.map(|_| ())

@@ -9,7 +9,7 @@ use crate::Error;
 use crate::find::{SearchMatch, SearchPattern};
 use crate::rpc::Communicator;
 use crate::vfs::properties::PropertySheet;
-use crate::vfs::{File, FileChunk, FileList, FsStats, VfsPath, VfsRandomReader};
+use crate::vfs::{File, FileChunk, FileList, FsStats, RootInfo, VfsId, VfsPath, VfsRandomReader};
 
 /// Channel capacity for streaming file-list batches back to the UI.
 pub const LIST_BATCH_CHANNEL_CAPACITY: usize = 16;
@@ -42,6 +42,9 @@ pub trait Filesystem: Send + Sync {
     /// Volume stats (free/total bytes + classification) for the volume
     /// containing `path`. `Ok(None)` where the VFS has no volume notion.
     async fn fs_stats(&self, path: VfsPath) -> Result<Option<FsStats>, Error>;
+
+    /// The roots of `vfs_id` as they are now (see `Vfs::roots`).
+    async fn roots(&self, vfs_id: VfsId) -> Result<Vec<RootInfo>, Error>;
 
     /// Revalidate the VFS identified by `vfs_id`. The navigation layer
     /// calls this when a pane is about to land on a path inside `vfs_id`
@@ -166,6 +169,14 @@ impl Filesystem for Remote {
             .invoke(crate::api::API_FS_STATS, &path)
             .await?;
 
+        Ok(ret?)
+    }
+
+    async fn roots(&self, vfs_id: VfsId) -> Result<Vec<RootInfo>, Error> {
+        let ret: Result<Vec<RootInfo>, Error> = self
+            .communicator
+            .invoke(crate::api::API_ROOTS, &vfs_id)
+            .await?;
         Ok(ret?)
     }
 
