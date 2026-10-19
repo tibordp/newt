@@ -474,20 +474,17 @@ impl Vfs for RemoteVfs {
         ret
     }
 
-    async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let ret: Result<(), Error> = self
-            .communicator
-            .invoke(API_VFS_RENAME, &(from.to_owned(), to.to_owned()))
-            .await?;
-        ret
-    }
-
-    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::RenameOptions,
+    ) -> Result<(), Error> {
         let ret: Result<(), Error> = self
             .communicator
             .invoke(
-                crate::api::API_VFS_RENAME_NO_REPLACE,
-                &(from.to_owned(), to.to_owned()),
+                API_VFS_RENAME,
+                &(from.to_owned(), to.to_owned(), options.clone()),
             )
             .await?;
         ret

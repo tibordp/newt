@@ -962,7 +962,17 @@ impl Vfs for SftpVfs {
         Ok(a == b)
     }
 
-    async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    /// Whether a server refuses an existing destination depends on the
+    /// server, so `no_replace` is not offered.
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::RenameOptions,
+    ) -> Result<(), Error> {
+        if options.no_replace {
+            return Err(Error::not_supported());
+        }
         debug!("sftp: rename {} -> {}", from, to);
         self.check_alive()?;
         let mut fs = self.sftp.fs();

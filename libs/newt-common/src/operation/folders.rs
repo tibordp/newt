@@ -2,6 +2,7 @@
 //! skipped — unless the existing folder is a package to its filesystem,
 //! which makes it a file's conflict.
 
+use crate::vfs::attributes::RenameOptions;
 use std::hash::{BuildHasher, Hasher};
 
 use super::*;
@@ -135,9 +136,9 @@ pub(super) async fn swap_in(
     // No exchange: the old one steps aside, the new one takes its name, and
     // the old one comes back if it can't.
     let aside = sibling(old, "aside");
-    vfs.rename(old, &aside).await?;
-    if let Err(e) = vfs.rename(new, old).await {
-        if let Err(back) = vfs.rename(&aside, old).await {
+    vfs.rename(old, &aside, &RenameOptions::default()).await?;
+    if let Err(e) = vfs.rename(new, old, &RenameOptions::default()).await {
+        if let Err(back) = vfs.rename(&aside, old, &RenameOptions::default()).await {
             warn!("swap_in: cannot move {aside} back to {old}: {back}");
         }
         return Err(e);

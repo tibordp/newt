@@ -1,4 +1,5 @@
 use super::*;
+use crate::vfs::attributes::RenameOptions;
 
 // --- Execute Move (async, uses Vfs) ---
 
@@ -63,7 +64,14 @@ pub(super) async fn execute_move(
 
             // A backend that refuses atomically moves the source or says
             // something is in the way; any failure goes on to look.
-            match src_vfs.rename_no_replace(&source_local, &dest_local).await {
+            match src_vfs
+                .rename(
+                    &source_local,
+                    &dest_local,
+                    &RenameOptions { no_replace: true },
+                )
+                .await
+            {
                 Ok(()) => {
                     debug!("execute_move: renamed {} -> {}", source_local, dest_local);
                     renamed_count += 1;
@@ -153,7 +161,10 @@ pub(super) async fn execute_move(
             let mut retry = true;
             while retry {
                 retry = false;
-                match src_vfs.rename(&source_local, &dest_local).await {
+                match src_vfs
+                    .rename(&source_local, &dest_local, &RenameOptions::default())
+                    .await
+                {
                     Ok(()) => {
                         debug!("execute_move: renamed {} -> {}", source_local, dest_local);
                         renamed_count += 1;
@@ -427,7 +438,14 @@ pub(super) async fn rename_entry(
         // Rare, and doing nothing is the safe end of the trade.
         let mut attempt_rename = true;
         let mut overwrite_approved = false;
-        match vfs.rename_no_replace(&source.path, &new_path.path).await {
+        match vfs
+            .rename(
+                &source.path,
+                &new_path.path,
+                &RenameOptions { no_replace: true },
+            )
+            .await
+        {
             Ok(()) => {
                 debug!("rename_entry: renamed {} -> {}", source, new_path);
                 return Ok(Moved::Renamed);
@@ -526,7 +544,10 @@ pub(super) async fn rename_entry(
         let mut retry = attempt_rename;
         while retry {
             retry = false;
-            match vfs.rename(&source.path, &new_path.path).await {
+            match vfs
+                .rename(&source.path, &new_path.path, &RenameOptions::default())
+                .await
+            {
                 Ok(()) => {
                     debug!("rename_entry: renamed {} -> {}", source, new_path);
                     return Ok(Moved::Renamed);

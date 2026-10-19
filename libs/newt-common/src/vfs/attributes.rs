@@ -127,6 +127,15 @@ pub struct WriteOptions {
     pub size_hint: Option<u64>,
 }
 
+/// How a rename may treat what is at its destination. Non-default options
+/// the VFS cannot honour are a `NotSupported` error, as with `WriteOptions`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RenameOptions {
+    /// Fail with `AlreadyExists` when anything is at the destination,
+    /// decided atomically by the backend.
+    pub no_replace: bool,
+}
+
 impl WriteOptions {
     /// Asks nothing the VFS must honour; `size_hint` is advisory.
     pub fn is_default(&self) -> bool {

@@ -112,7 +112,6 @@ pub const API_VFS_RESOLVE_LINK: Api = Api(639);
 pub const API_VFS_READ_ORDER: Api = Api(640);
 pub const API_VFS_WRITE_RANGE: Api = Api(641);
 pub const API_VFS_LIST_RECURSIVE: Api = Api(642);
-pub const API_VFS_RENAME_NO_REPLACE: Api = Api(643);
 pub const API_VFS_EXCHANGE: Api = Api(644);
 pub const API_VFS_IS_PACKAGE: Api = Api(645);
 

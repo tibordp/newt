@@ -984,17 +984,23 @@ impl Vfs for LocalVfs {
         .await?
     }
 
-    async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &super::attributes::RenameOptions,
+    ) -> Result<(), Error> {
         let from = from.to_native();
         let to = creation_path(to, false)?;
-        tokio::task::spawn_blocking(move || std::fs::rename(&from, &to).map_err(Error::from))
-            .await?
-    }
-
-    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let from = from.to_native();
-        let to = creation_path(to, false)?;
-        tokio::task::spawn_blocking(move || rename_no_replace(&from, &to)).await?
+        let no_replace = options.no_replace;
+        tokio::task::spawn_blocking(move || {
+            if no_replace {
+                rename_no_replace(&from, &to)
+            } else {
+                std::fs::rename(&from, &to).map_err(Error::from)
+            }
+        })
+        .await?
     }
 
     async fn exchange(&self, a: &Path, b: &Path) -> Result<(), Error> {
@@ -2003,7 +2009,10 @@ mod same_file_tests {
         let upper = fx.write("Foo.txt");
         let lower = fx.path("foo.txt");
 
-        fx.vfs.rename(&upper, &lower).await.expect("rename");
+        fx.vfs
+            .rename(&upper, &lower, &Default::default())
+            .await
+            .expect("rename");
 
         let names: Vec<String> = std::fs::read_dir(fx._dir.path())
             .expect("read_dir")
@@ -2311,14 +2320,15 @@ mod exclusive_write_tests {
     }
 
     #[tokio::test]
-    async fn rename_no_replace_refuses_whatever_is_there() {
+    async fn rename_without_replacing_refuses_whatever_is_there() {
+        let no_replace = crate::vfs::attributes::RenameOptions { no_replace: true };
         let dir = tempfile::tempdir().unwrap();
         let vfs = LocalVfs::new();
         std::fs::write(dir.path().join("src"), b"new").unwrap();
         let src = PathBuf::from_native(&dir.path().join("src"));
         for name in obstacles(dir.path()) {
             let path = PathBuf::from_native(&dir.path().join(name));
-            match vfs.rename_no_replace(&src, &path).await {
+            match vfs.rename(&src, &path, &no_replace).await {
                 // A filesystem without RENAME_NOREPLACE: nothing to test here.
                 Err(e) if e.kind == ErrorKind::NotSupported => return,
                 result => assert_eq!(
@@ -2332,7 +2342,7 @@ mod exclusive_write_tests {
         assert_eq!(std::fs::read(dir.path().join("file")).unwrap(), b"old");
 
         let fresh = dir.path().join("fresh");
-        vfs.rename_no_replace(&src, &PathBuf::from_native(&fresh))
+        vfs.rename(&src, &PathBuf::from_native(&fresh), &no_replace)
             .await
             .unwrap();
         assert_eq!(std::fs::read(&fresh).unwrap(), b"new");

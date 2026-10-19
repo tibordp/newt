@@ -915,16 +915,16 @@ pub trait Vfs: Send + Sync {
     }
 
     // --- Same-VFS fast paths ---
-    async fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let _ = (from, to);
-        Err(Error::not_supported())
-    }
-
-    /// `rename` that fails with `AlreadyExists` when anything is at `to`,
-    /// decided atomically by the backend. `NotSupported` where it cannot
-    /// refuse, which includes every case plain `rename` does not support.
-    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), Error> {
-        let _ = (from, to);
+    /// Move `from` to `to` within this VFS. `options` the backend cannot
+    /// honour are `NotSupported`, which for `no_replace` includes every case
+    /// a plain rename isn't supported.
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &attributes::RenameOptions,
+    ) -> Result<(), Error> {
+        let _ = (from, to, options);
         Err(Error::not_supported())
     }
 

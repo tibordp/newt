@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use super::*;
 use crate::batch_rename::{fold, plan};
 use crate::vfs::PathStyle;
+use crate::vfs::attributes::RenameOptions;
 
 /// One folder of a batch rename.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -333,7 +334,11 @@ impl<'a> FolderRun<'a> {
             let from = self.dir.path.join(&self.members[i].at);
             match self
                 .vfs
-                .rename_no_replace(&from, &self.dir.path.join(&temp))
+                .rename(
+                    &from,
+                    &self.dir.path.join(&temp),
+                    &RenameOptions { no_replace: true },
+                )
                 .await
             {
                 Ok(()) => {
@@ -375,14 +380,18 @@ impl<'a> FolderRun<'a> {
         let from = self.dir.path.join(&self.members[i].at);
         match self
             .vfs
-            .rename_no_replace(&from, &self.dir.path.join(&old))
+            .rename(
+                &from,
+                &self.dir.path.join(&old),
+                &RenameOptions { no_replace: true },
+            )
             .await
         {
             Ok(()) => self.members[i].at = old,
             Err(e) if e.kind == crate::ErrorKind::NotSupported => {
                 if self
                     .vfs
-                    .rename(&from, &self.dir.path.join(&old))
+                    .rename(&from, &self.dir.path.join(&old), &RenameOptions::default())
                     .await
                     .is_ok()
                 {

@@ -70,7 +70,7 @@ Design: `design_docs/DESIGN_7Z_VFS.md` (newt) and
 
 Design: `design_docs/DESIGN_EXCLUSIVE_WRITES.md`.
 
-- SFTP answers `NotSupported` to `create_new` and `rename_no_replace`, so copies and moves to SFTP still stat every destination. `create_new` is `SSH_FXF_EXCL` (the refusal is a bare `SSH_FX_FAILURE`, classified by an lstat, as `rename` already does). The no-replace rename needs the plain v3 `SSH_FXP_RENAME`, which `openssh-sftp-client`'s `Fs::rename` never sends to a server offering `posix-rename`; its low-level write end is private, so this wants an upstream change.
+- SFTP answers `NotSupported` to `create_new` and a `no_replace` rename, so copies and moves to SFTP still stat every destination. `create_new` is `SSH_FXF_EXCL` (the refusal is a bare `SSH_FX_FAILURE`, classified by an lstat, as `rename` already does). The no-replace rename needs the plain v3 `SSH_FXP_RENAME`, which `openssh-sftp-client`'s `Fs::rename` never sends to a server offering `posix-rename`; its low-level write end is private, so this wants an upstream change.
 - Custom S3 endpoints never offer `create_new`. Verify which stores honour `If-None-Match` on PutObject, CompleteMultipartUpload and CopyObject (MinIO, R2, Ceph RGW, …) and allow them.
 
 ## Distribution

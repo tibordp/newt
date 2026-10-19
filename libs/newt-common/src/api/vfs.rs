@@ -254,13 +254,9 @@ impl Dispatcher for VfsDispatcher {
                 encode(&ret)
             }
             API_VFS_RENAME => {
-                let (from, to): (PathBuf, PathBuf) = decode(&req[..]);
-                let ret = self.vfs.rename(&from, &to).await;
-                encode(&ret)
-            }
-            super::API_VFS_RENAME_NO_REPLACE => {
-                let (from, to): (PathBuf, PathBuf) = decode(&req[..]);
-                let ret = self.vfs.rename_no_replace(&from, &to).await;
+                let (from, to, options): (PathBuf, PathBuf, crate::vfs::attributes::RenameOptions) =
+                    decode(&req[..]);
+                let ret = self.vfs.rename(&from, &to, &options).await;
                 encode(&ret)
             }
             super::API_VFS_IS_PACKAGE => {

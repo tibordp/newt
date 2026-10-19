@@ -120,7 +120,7 @@ pub struct MockVfsConfig {
     /// `create_new` answers `NotSupported` for a size hint past this, or
     /// none, as S3 does for anything larger than one request.
     pub create_new_max_size: Option<u64>,
-    /// Offer `rename_no_replace`; off, it answers `NotSupported`.
+    /// Offer `RenameOptions::no_replace`; off, it answers `NotSupported`.
     pub rename_no_replace: bool,
     /// Offer `exchange`; off, it answers `NotSupported`.
     pub exchange: bool,
@@ -1116,19 +1116,6 @@ impl Vfs for MockVfs {
         Ok(a == b && entries.contains_key(&a))
     }
 
-    async fn rename_no_replace(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
-        if !self.rename_no_replace {
-            return Err(crate::Error::not_supported());
-        }
-        if let Some(e) = self.check_failure(from, "rename_no_replace") {
-            return Err(e);
-        }
-        if self.occupied(to) {
-            return Err(already_exists(to));
-        }
-        self.rename(from, to).await
-    }
-
     async fn is_package(&self, path: &Path) -> Result<bool, crate::Error> {
         let key = self.lookup_key(path);
         Ok(self.packages.contains(&key))
@@ -1189,7 +1176,23 @@ impl Vfs for MockVfs {
         Ok(())
     }
 
-    async fn rename(&self, from: &Path, to: &Path) -> Result<(), crate::Error> {
+    async fn rename(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: &crate::vfs::attributes::RenameOptions,
+    ) -> Result<(), crate::Error> {
+        if options.no_replace {
+            if !self.rename_no_replace {
+                return Err(crate::Error::not_supported());
+            }
+            if let Some(e) = self.check_failure(from, "rename_no_replace") {
+                return Err(e);
+            }
+            if self.occupied(to) {
+                return Err(already_exists(to));
+            }
+        }
         if let Some(e) = self.check_failure(from, "rename") {
             return Err(e);
         }
