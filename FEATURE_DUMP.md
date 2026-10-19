@@ -10,6 +10,9 @@ The main window is divided into two zones by a resizable vertical splitter:
 
 - **Top zone**: Two file panes side by side (horizontal splitter), each showing a directory listing.
 - **Bottom zone**: Terminal panel (collapsible) with a tab bar for multiple terminals.
+- **Command bar** (`appearance.show_command_bar`, on by default): a strip of F-key buttons along the bottom edge — see §14.
+
+Quick View (Mod+Shift+F3) takes the place of the inactive pane — see §5.
 
 Both splitters are user-resizable by dragging the divider. Clicking splitter dividers does not steal focus from the file list or terminal.
 
@@ -29,7 +32,7 @@ Newt's windows are web content in the platform webview, so screen readers see th
 
 - **File lists** are listboxes named by the pane's path. As the cursor moves, the focused row is announced (by its visible columns — name, size, dates, …; file-type glyphs are silent), with marked files reported as selected and the row's position in the whole listing, even though only a window of rows is rendered. Quick search and the filter box drive the list the same way, so typing announces the row it lands on.
 - **Viewer table mode** is a grid: the cursor cell is announced with its row and column, selected cells are reported as selected, and the header row and row numbers act as headers.
-- **Dialogs** are named by their title and described by their summary or, for confirmations, by what will happen; form fields are labelled, with hints and validation errors attached to their field. Lists that are navigated from a search box (Quick Connect, Hot Paths, the command palette, history, sort menu) announce the highlighted entry.
+- **Dialogs** are named by their title and described by their summary or, for confirmations, by what will happen; form fields are labelled, with hints and validation errors attached to their field. Lists navigated from a search box (Quick Connect, Hot Paths, the command palette) and the history and sort menus announce the highlighted entry.
 - **High contrast** (Windows `forced-colors`): states that are normally drawn with colour alone are redrawn in the theme's own colours — marked files, highlighted menu and palette entries, the active terminal tab, settings category and viewer toggles use the theme's selection colours, the file-list and table cursor is an outline (so it shows on a marked row too), and progress bars keep a visible fill and track.
 - **Tooltips**: every icon-only or abbreviated control carries a native tooltip, and one that runs a command shows its current shortcut (e.g. "Maximize pane (⌘+F11)" on macOS), following any rebinding. Truncated paths and names show in full on hover.
 - **Names can't disguise themselves**: bidirectional formatting characters in a name (right-to-left override, embeddings, isolates, the LRM/RLM/ALM marks) show as `�`, one each, wherever a name is something to decide on — the file list, the path bar, Delete, Copy/Move, Properties and the prompts of running operations — so `photo<RLO>gpj.exe` reads `photo�gpj.exe`, never `photoexe.jpg`. Right-to-left names themselves display normally, and each name in the file list is laid out on its own, never reordering the text beside it.
@@ -41,9 +44,10 @@ The terminal and editor rely on xterm.js's and Monaco's own accessibility; neith
 All dialogs share a common visual language and a set of frontend primitives (`src/main_window/modals/primitives/`):
 
 - **DialogShell / DialogHeader / DialogBody / DialogFooter**: structural skeleton. The body scrolls while the header and footer stay pinned (matters for tall content like Properties and the Connection Log). The footer is a chrome-tinted strip with a hairline top border; it hosts the right-aligned Cancel/primary buttons plus an optional left `start` slot for secondary controls (e.g. Copy's "Pack into archive…", Properties' "Apply recursively").
-- **Field / FieldGroup / CheckboxField / FieldRow**: form layout primitives (stacked label+control with optional hint, tight checkbox clusters, inline label+control rows).
+- **Field / FieldGroup / CheckboxField / FieldRow**: form layout primitives (stacked label+control with optional hint, tight checkbox clusters, inline label+control rows). **FieldFold** is a collapsible section for options most runs leave alone (Copy's "More options").
 - **DialogTabs**: shared tab strip (Connect transports, archive formats, Settings sections). With a tab focused, Left/Right move to the previous/next tab and select it (wrapping), Home/End to the first/last.
-- **DialogSubmitButton**: submit with spinner + pending label; `variant="destructive"` renders the red primary used by delete confirmations. **DialogError**: inline error banner. Both pair with `useAsyncAction` for single-flight async submits.
+- **DialogSubmitButton**: submit with spinner + pending label; `variant="destructive"` renders the red primary used by delete confirmations, `variant="normal"` a plain button. **DialogError**: inline error banner. Both pair with `useAsyncAction` for single-flight async submits.
+- **DialogSaveButton**: the secondary "Save as connection profile" button of the connect and mount dialogs, flashing "Saved" for a moment once it has; `DialogShell`'s `onSave` binds it to Mod+S anywhere in the dialog.
 - No backdrop scrim — dialogs separate from the panes via a deep elevation shadow (`--shadow-dialog`) plus a strong border, keeping open/close instant and the panes fully readable (deliberate: dimming reads web-modal, and macOS/KDE/Win32 dialogs don't dim).
 - Floating containers (centered dialogs, top-anchored palettes, settings editor, progress modal, askpass) share elevation/border/radius via Sass mixins in `src/styles/_dialog-mixins.scss`.
 - Type sizes come from `--font-size-xs/sm/md/lg` tokens; a `--font-mono` token covers log/transcript surfaces.
@@ -54,15 +58,15 @@ All dialogs share a common visual language and a set of frontend primitives (`sr
 
 - **Page colors** come from CSS reacting to `prefers-color-scheme`. Nothing sets `data-theme` today — the attribute is an escape hatch the cascade honours if something ever does. The media query reflects the *app* theme rather than the OS because the native theme is pushed into the webview (below).
 - **Title bar / window decorations** follow `WebviewWindow::set_theme`, kept live by `spawn_theme_sync` subscribing to preference changes.
-- **UA-rendered chrome — scrollbars, native form controls** — comes from the CSS `color-scheme` property, declared on `:root` in `_reset.scss`. Chromium takes these from the *used* color scheme, which defaults to light no matter what `prefers-color-scheme` says, so WebView2 rendered light scrollbars against a dark page until the property was declared. WebKit (macOS, webkitgtk) infers them from the system appearance, so this only ever showed on Windows.
+- **UA-rendered chrome — scrollbars, native form controls** — comes from the CSS `color-scheme` property, declared on `:root` in `_reset.scss`. Chromium takes these from the *used* color scheme, which defaults to light whatever `prefers-color-scheme` says, so WebView2 needs the property to draw dark scrollbars on a dark page; WebKit (macOS, webkitgtk) infers them from the system appearance.
 
 Platform mechanics behind route 1: on macOS the window's `NSAppearance` propagates to the `WKWebView`; on Linux the GTK theme variant does the same for webkitgtk. On **Windows** the webview color scheme is `ICoreWebView2Profile::SetPreferredColorScheme` — **process-wide**, and set only at webview *creation* (`WebviewWindowBuilder::theme`), since `set_theme` after the fact reaches only the tao window. Two consequences: every window must be built with the resolved app theme or it stamps the shared profile back (see `build_child_window` — a prewarmed F3/F4 window otherwise reset every window's webview), and `detect_theme()` is Linux-only, so `theme = "system"` on Windows passes `None` and leaves the profile on `AUTO`, which follows the OS by itself.
 
 ### Locale
 
-Numbers, dates and times are formatted with an explicitly resolved locale rather than whatever the webview would pick: `appearance.locale` when set, else the system's **regional format** — `GetUserDefaultLocaleName` on Windows, `CFLocaleCopyCurrent` on macOS, `LC_ALL`/`LC_NUMERIC`/`LANG` on Linux, normalised to a BCP-47 tag (`de_DE.UTF-8@euro` → `de-DE`). `C`/`POSIX` resolve to nothing, leaving the runtime default. It arrives as `ResolvedPreferences.locale` and is passed to every `Intl`/`toLocale*` call.
+Numbers, dates and times are formatted with an explicitly resolved locale rather than whatever the webview would pick: `appearance.locale` when set, else the system's **regional format** — `GetUserDefaultLocaleName` on Windows, `CFLocaleCopyCurrent` on macOS, `LC_ALL`/`LC_NUMERIC`/`LANG` on Linux and other Unix systems, normalised to a BCP-47 tag (`de_DE.UTF-8@euro` → `de-DE`). `C`/`POSIX` resolve to nothing, leaving the runtime default. It arrives as `ResolvedPreferences.locale` and is passed to the formatting of the file list, sizes, dates and times, Properties and the viewer and editor status bars. A few counts and values still use the runtime default — Go to File's and Batch Rename's counts, Structure mode's values — and the pane status bar's file and directory counts aren't localised at all.
 
-The explicitness is load-bearing on Windows, which separates the *display language* from the *regional format*: wry initialises WebView2 from `GetUserDefaultUILanguage` (the display language), so a bare `toLocaleString()` formats US-style for anyone running an English UI in a non-US region. macOS and Linux don't split the two, which is why it only ever showed there.
+The explicitness is load-bearing on Windows, which separates the *display language* from the *regional format*: wry initialises WebView2 from `GetUserDefaultUILanguage` (the display language), so a bare `toLocaleString()` formats US-style for anyone running an English UI in a non-US region. macOS and Linux don't split the two.
 
 `date_format` / `time_format` pick the date *layout*; the locale still supplies month and weekday names, so `%B` is `Januar` under `de-DE`.
 
@@ -82,13 +86,16 @@ It applies wherever a size appears: the Size column (when `si_size_prefixes` is 
 - **Mod+-**: Zoom out.
 - **Mod+0**: Reset zoom to default.
 
+Each step multiplies or divides the zoom by 1.1. These keys are fixed: they aren't commands, so they can't be rebound and don't appear in the palette.
+
 Zoom is applied via the webview zoom factor and persisted app-wide in the runtime-state file (`state.json`, `zoom` key): it survives reloads, new windows (including viewers/editors) start at it, and changing it in one window follows through to all others via the runtime-state broadcast.
 
 ### Window Management
 
 - **New Window** (Mod+N): Opens a fresh Newt window (new session).
+- **New windows** open at 1100×800 unless a remembered size applies (see Reopening Where You Left Off); no window can be made smaller than 400×300.
 - **Close Window** (Mod+Shift+W): Closes the current window. Shifted (gnome-terminal convention) so a session window can't be closed on a stray Mod+W. Viewer/editor children can't outlive the session they were spawned from, so closing a main window takes them along: a Rust-side `CloseRequested` interceptor (covers the command, the menu item, and the OS close button alike) closes viewer children outright and sweeps editor children — dirty ones prompt, the window close resumes once the last child editor is gone, and refusing a prompt aborts the close. A window with terminals open or operations still running (copies, moves, deletes, archive work, user commands) asks first, saying how many of each the close would end; a hidden terminal panel is shown (and a maximized pane restored) so the terminals are in view behind the prompt. **Close** — **Stop and Close** when operations are running — goes ahead: running operations are cancelled and the window closes once they've stopped (the dialog reads "Stopping the running operations…" meanwhile, with **Close Now** to stop waiting); Cancel keeps the window. Every open terminal counts, idle at a prompt or not. **Behavior ▸ Confirm Close** (`behavior.confirm_close`, on by default) turns the prompt off. Quitting — the Quit command, the Dock, logging out — asks the same of every window, and an editor with unsaved changes asks too, so with terminals open a logout waits for an answer. Closing ends the window's session: its terminals are killed, anything still running is cancelled, and a remote or elevated session's agent exits with its connection.
-- **Quit Newt** (Mod+Q): Closes all main windows, exiting the app. Open editor windows are swept first so their unsaved-changes prompts fire: the quit waits (event-driven, via the `Destroyed` handler) for the last editor to close before the main windows go, and refusing any editor's prompt aborts the quit (`cancel_quit`), leaving all remaining windows open. Pre-warmed hidden editors are exempt from the sweep. Windows with operations running ask as they would on Close Window; the others close. OS-initiated termination (macOS Dock quit, logout) goes through the same sweep via an `applicationShouldTerminate:` method injected into tao's app delegate at runtime (`terminate_guard` in `main.rs` — tao doesn't implement the selector and `RunEvent::ExitRequested` never fires for OS termination, see tauri#9198): a dirty editor or a running operation cancels the termination and runs the sweep (with its close confirmations), an idle app terminates immediately so it never blocks logout. Editor dirty state is mirrored to Rust for this via `set_editor_dirty`. The `ExitRequested { code: None }` handler remains as a safety net for the all-windows-closed path.
+- **Quit Newt** (Mod+Q): Closes all main windows, exiting the app. Open editor windows are swept first so their unsaved-changes prompts fire: the quit waits (event-driven, via the `Destroyed` handler) for the last editor to close before the main windows go, and refusing any editor's prompt aborts the quit (`cancel_quit`), leaving all remaining windows open. Pre-warmed hidden editors are exempt from the sweep. Windows with terminals open or operations running ask as they would on Close Window; the others close. OS-initiated termination (macOS Dock quit, logout) goes through the same sweep via an `applicationShouldTerminate:` method injected into tao's app delegate at runtime (`terminate_guard` in `main.rs` — tao doesn't implement the selector and `RunEvent::ExitRequested` never fires for OS termination, see tauri#9198): a dirty editor, an open terminal or a running operation cancels the termination and runs the sweep (with its close confirmations), an idle app terminates immediately so it never blocks logout. Editor dirty state is mirrored to Rust for this via `set_editor_dirty`. The `ExitRequested { code: None }` handler remains as a safety net for the all-windows-closed path.
 - **Reload Window**: Available in the Debug dialog (debug builds only).
 - **Window title**: the active pane's folder followed by the session's title — `walker - Newt`, `logs - Newt [build-01]`, `src - Newt [Elevated]` — so windows can be told apart in the window switcher. The folder is the last segment of the path bar (a search pane shows its search label); on Wayland the title doesn't update after the window opens (upstream GTK/Tauri bug).
 - **Refresh File List** (unbound by default — `mod+r` would be Quick Connect's Ctrl+R on Windows/Linux; palette, pane context menu): Force-refreshes the active pane's directory listing.
@@ -117,11 +124,13 @@ Main windows carry a minimal native menu on macOS (Windows/Linux main windows ha
 
 - **App menu**: About Newt, Settings… (Mod+,), Quit Newt (Mod+Q). Deliberately no Hide/Hide Others — their fixed Cmd+H would shadow Toggle Hidden Files.
 - **File**: New Window, Connect to Remote Host…, Close Window.
-- **Edit**: predefined Cut/Copy/Paste/Select All (required so macOS routes Cmd+C/V/X/A to the webview — previously the sole content of the main-window menu).
+- **Edit**: predefined Cut/Copy/Paste/Select All (required so macOS routes Cmd+C/V/X/A to the webview).
 - **Window**: predefined Minimize, Zoom.
 - **Help**: Newt Documentation (`documentation`).
 
-Viewer and editor windows prepend an app submenu with Quit Newt (Cmd+Q) on macOS, so quit works whichever window is focused.
+A menu item can only show a shortcut on a letter, a digit, `,` or F1–F24; a command bound to anything else (an arrow, Enter, punctuation) shows none in the menu, though the key still works.
+
+Viewer and editor windows prepend an app submenu with Quit Newt (Cmd+Q) on macOS, so quit works whichever window is focused; its Cmd+Q is fixed and doesn't follow a rebinding of Quit.
 
 ---
 
@@ -132,14 +141,14 @@ Each pane is an independent file browser with its own path, selection, filter, s
 ### Pane Header
 
 - **Focus dot**: A small accent dot at the start of the header of the pane that has focus. The other pane keeps the space empty, so both paths start at the same offset.
-- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing all mounted VFSes and available mount options. Mounted VFSes sort first and show an unmount (×) button — or press Delete on the highlighted one; below a separator, unmounted types (S3, SFTP, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
-- **Breadcrumb path**: Current directory path displayed as clickable breadcrumb segments. Clicking any segment navigates to that directory. Clicking the *last* segment opens the Navigate (Go To) dialog instead of navigating. Breadcrumb format varies by VFS type:
+- **VFS selector dropdown**: Shows the current filesystem type (Local, S3, SFTP, Archive name). Click to open a dropdown listing the mounted VFSes — not the transient ones (archives, disc images, search results) — and the mount options; its tooltip names the shortcut (Mod+Shift+L). Mounted VFSes sort first, each with its free space and a ✓ on the current one, and those other than Local show an unmount (×) button — or press Delete on the highlighted one. A filesystem with several roots lists them grouped under its name (Windows drives), as are the volumes mounted in it (see VFS Selector Dialog). Below a separator, the types that can be connected (S3, SFTP, Remote) appear as ellipsis entries ("S3…") that open the respective mount dialog; S3… and SFTP… are left out once a filesystem of that type is mounted. "Remote…" opens the full Connect dialog with "Open as a new session" defaulted off (pane mount) regardless of session mode.
+- **Breadcrumb path**: Current directory path displayed as clickable breadcrumb segments. Clicking any segment navigates to that directory. Clicking the *last* segment opens the Navigate (Go To) dialog instead of navigating; its tooltip says so, with the shortcut. Breadcrumb format varies by VFS type:
   - Local: `/home/user/documents`
   - S3: `s3://bucket/prefix/key`
   - SFTP: `sftp://hostname/path`
   - Archives: origin path + inner path, e.g., `/home/user/file.tar.gz/dir/subdir`
-- **Git branch badge**: When the pane's directory is inside a git repository, a quiet muted-text badge appears between the breadcrumbs and the free-space indicator: seti git glyph + branch name (short commit id when detached), a `*` suffix when the repo has uncommitted changes, and `↑N`/`↓M` ahead/behind counts when an upstream exists. Produced by the git enricher (see "Enrichers" below).
-- **Free space indicator**: Shows available disk space (e.g., "123.4 GB free") when the filesystem reports stats. Link-styled; clicking opens the volume-root Properties dialog (`root_properties`), whose Volume section carries the full detail (volume classification — local disk / removable / optical / network / RAM disk / subst — filesystem name, label, target, capacity/used/free). The dialog targets the volume the stats actually describe (`VolumeInfo.mount_point` — on Unix the containing mount point, e.g. `/proc`, not `/`; on Windows the drive/share root). Volume info is probed on the FS-owning side per listing (`VolumeInfo` on `FsStats`): Win32 volume APIs on Windows, `/proc/self/mountinfo` + `/dev/disk/by-label` on Linux, `statfs` on macOS. Only visible for VFS types that support `fs_stats` (local filesystem). Directory Properties invoked *at* a volume root shows the same Volume section.
+- **Git branch badge**: When the pane's directory is inside a git repository, a quiet muted-text badge appears between the breadcrumbs and the free-space indicator: seti git glyph + branch name (short commit id when detached), a `*` suffix when the repo has uncommitted changes, and `↑N`/`↓M` ahead/behind counts when an upstream exists. Its tooltip spells this out ("Branch main · uncommitted changes · 2 commits ahead", "Detached HEAD at …"). Produced by the git enricher (see "Enrichers" below).
+- **Free space indicator**: Shows available disk space (e.g., "123.4 GB free") when the filesystem reports stats. Link-styled; clicking opens the volume-root Properties dialog (`root_properties`), whose Volume section carries the full detail (volume classification — local disk / removable / optical / network / RAM disk / subst — filesystem name, label, target, capacity/used/free). The dialog targets the volume the stats actually describe (`VolumeInfo.mount_point` — on Unix the containing mount point, e.g. `/proc`, not `/`; on Windows the drive/share root). Volume info is probed on the FS-owning side per listing (`VolumeInfo` on `FsStats`): Win32 volume APIs on Windows, `/proc/self/mountinfo` + `/dev/disk/by-label` on Linux, `statfs` on macOS. Only visible for VFS types that support `fs_stats`: the session's own filesystem, the client-local filesystem in remote sessions, and agent mounts — not S3, SFTP, archives or search results. Directory Properties invoked *at* a volume root shows the same Volume section.
 
 - **Maximize button**: A small icon button at the right end of the header, after the free-space indicator. Maximizes this pane (making it the active one) or, when maximized, restores the split layout — see "Maximized Layout". Clicking it leaves keyboard focus in the file list.
 
@@ -147,11 +156,11 @@ The whole header can be hidden via the `appearance.show_pane_header` preference 
 
 ### Pane Status Bar
 
-Bottom strip on each pane showing loading state, the current file's full display path, file/directory counts, total size of selection or directory, and a "(partial)" marker when the listing is windowed. Toggled by the `appearance.show_pane_status` preference (default: on).
+Bottom strip on each pane showing loading state, file/directory counts, the total size of the selection, filter and "(partial)" markers, a running enricher's activity, and the progress of background work on the pane's filesystem (an archive being indexed, a search walking: stage · processed/total · path). Toggled by the `appearance.show_pane_status` preference (default: on). The table under File List shows what it says when.
 
 ### File List
 
-Server-side windowed list with a fixed row height. Rust sends only a ~150-item window around the current viewport; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files. The mouse wheel and trackpad scroll from script and stop at the edge of the rows Rust has sent, going on as the window slides, so a fast flick never shows blank rows, and the list stops when the wheel does; dragging the scrollbar can still outrun the window. When the listing changes in place — a search streaming in results, a refresh, a re-sort — a cursor that is on screen keeps its screen row while entries sort in around it, and a view scrolled away from the cursor stays where it is rather than jumping back to it.
+Server-side windowed list with a fixed row height. Rust sends only a window of rows around the current viewport — the visible rows plus two pages above and below; the frontend renders all window items directly with simple spacer divs. Enables smooth performance with directories of 100k+ files. The mouse wheel and trackpad scroll from script and stop at the edge of the rows Rust has sent, going on as the window slides, so a fast flick never shows blank rows, and the list stops when the wheel does; dragging the scrollbar can still outrun the window. When the listing changes in place — a search streaming in results, a refresh, a re-sort — a cursor that is on screen keeps its screen row while entries sort in around it, and a view scrolled away from the cursor stays where it is rather than jumping back to it.
 
 Each pane keeps its cursor on screen: a solid accent bar in the pane that has focus, and neutral grey in the other one — and in both while the terminal has focus — so the cursor a Tab or a click on the other pane would land on is always visible. Marked files get a light accent tint, joined into one block across a run of them, with the name in the accent colour. While the window itself is in the background (another app, another Newt window, or a native dialog has the keyboard), the focus marks all turn grey — the cursor like the other pane's, the header's focus dot, and the active terminal tab's line — and come back when the window does.
 
@@ -161,25 +170,27 @@ Row height comes from the `appearance.density` preference: `compact` (20px), `co
 
 | Column | Width | Alignment | Content |
 |--------|-------|-----------|---------|
-| Name | 250px | Left | File type icon (color-coded, VSCode icon set) + filename |
-| Size | 100px | Right | Locale-formatted byte count — or SI-prefixed ("1.5 GB") when `appearance.si_size_prefixes` is on (default off) — "—" for directories without a computed size, "???" if unknown |
+| Name | 250px | Left | File type icon (color-coded, VSCode icon set) + filename. The header has two sort targets, **Name** and **Ext**, so a pane sorts by extension without an Extension column |
+| Size | 100px | Right | Locale-formatted byte count — or prefixed ("1.5 GB", in `appearance.size_units`) when `appearance.si_size_prefixes` is on (default off) — "—" for directories without a computed size, "???" if unknown |
 | Modified Date | 80px | Right | Date of last modification |
 | Modified Time | 80px | Right | Time of last modification |
 | User | 70px | Left | Owner name (or numeric UID if name unavailable) |
 | Group | 70px | Left | Group name (or numeric GID) |
 | Mode | 70px | Left | Unix permissions string, e.g., `drwxr-xr-x` |
+| Attr | 60px | Right | Windows `FILE_ATTRIBUTE_*` letters: `R`eadonly `H`idden `S`ystem `A`rchive + `L` (reparse point) `C`ompressed `E`ncrypted; sortable by raw bits |
+
+User, Group and Mode show on Unix-shaped filesystems and Attr on Windows-shaped ones (see VFS-aware columns below), so a pane shows one set or the other out of the same default list.
 
 **Additional columns** (available via settings, not shown by default):
 
-| Column | Content |
-|--------|---------|
-| Extension | File extension only |
-| Modified / Accessed / Created | Compound date + time in one column (145px) |
-| Accessed/Created Date and Time | Access / creation timestamp, date-only or split |
-| Attr | Windows `FILE_ATTRIBUTE_*` letters: `R`eadonly `H`idden `S`ystem `A`rchive + `L` (reparse point) `C`ompressed `E`ncrypted; sortable by raw bits |
-| Link Target | Symlink target path |
+| Column | Width | Content |
+|--------|-------|---------|
+| Extension | 60px | File extension only |
+| Modified / Accessed / Created | 145px | Compound date + time in one column |
+| Accessed/Created Date and Time | 80px each | Access / creation timestamp, date-only or split (headers "Acc. Time", "Cr. Time") |
+| Link Target | 150px | Symlink target path; not sortable |
 
-**VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar and zip archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3 and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
+**VFS-aware columns**: the `appearance.columns` preference defines one global superset + order, but each pane filters it by the metadata its VFS actually populates (`VfsDescriptor::metadata_traits`, surfaced per pane as `PaneViewState::metadata_traits`): User/Group/Mode render only on `unix_owner` VFSes (Unix-shaped local/remote/agent mounts, SFTP, tar, zip and 7z archives, disc images), Attr only on `windows_attributes` ones (Windows-shaped local/remote mounts — incl. the client-local mount in remote sessions; the raw attribute bits ride `File::attributes` across RPC). S3 and search results show neither. The header context menu hides inapplicable choices for that pane; the settings widget still edits the full global list; header drag-reorder weaves the reordered visible keys back through the config so hidden-on-this-pane columns keep their global positions.
 
 Compound-column swaps: when the Extension column is visible, the Name column automatically shows just the file stem (name without extension). The timestamp columns follow the same pattern — a compound column (`modified` etc.) shows date + time in one cell and swaps down to date-only when the paired Time column is also in the list. Each timestamp thus has four presentations: compound date & time, date only (`modified_date`), separate date and time columns (`modified_date` + `modified_time`, or equivalently `modified` + `modified_time` via the swap — the default for Modified), and hidden.
 
@@ -193,16 +204,16 @@ Timestamp columns honor the `appearance.date_format` / `appearance.time_format` 
 
 Column widths are resizable by dragging the grip between column headers (minimum 10px during the drag). Widths persist per pane and per column key in the runtime-state file (`state.json`, see Configuration) — not in `settings.toml` — and are restored on window reload / new windows; a zero-movement click on the grip writes nothing. Double-clicking a grip auto-sizes its column Excel-style: the width fits the widest currently rendered cell (the list is virtualized, so this is the visible window plus overscan, not the whole directory) with the header's own labels as a floor, clamped to ≥30px, then persists. Holding **Shift** applies either gesture to both panes: a Shift-drag resizes the column in the other pane along with it (pressing or releasing Shift mid-drag switches live; the other pane keeps its width unless Shift is still held when the mouse is released), and a Shift-double-click fits the column to the wider of the two panes' contents. A pane that doesn't show the column (its filesystem lacks that metadata) contributes nothing to the fit but still takes the width for when it does. Widths are applied via per-pane CSS custom properties; runtime-state updates broadcast app-wide, so the same pane slot in other windows follows (last write wins).
 
-Click a column header to sort ascending by that key; click the same header again to toggle descending. A triangle indicator (▲/▼) shows the active sort column and direction.
+Click a column header to sort ascending by that key; click the same header again to toggle descending. A chevron in the header shows the active sort column and direction; each header's tooltip reads "Sort by …".
 
-**Sort menu (keyboard, Mod+Shift+S)**: opens a compact menu anchored under the pane header listing every sort key, the current one marked with its ▲/▼. Each row has an underlined accelerator letter (and 1–9 by position); pressing it sorts by that key and closes the menu — a poor-man's chord, so `Mod+Shift+S` then `m` sorts by Modified. Pressing the same key again reverses direction (same toggle as a header click), so `Mod+Shift+S m m` flips to descending. **Holding Shift arms reverse**: `Shift+<key>` sorts by that key *descending* outright (`Mod+Shift+S`, then Shift+M → Modified descending), and while Shift is held the Reverse row lights up (with a `Shift` hint badge) to show it's in effect. Arrow keys + Enter also work; the highlight seeds on the current key so a bare Enter reverses it. `R` reverses without changing the key; `F` toggles "Folders first" (mutating the `appearance.folders_first` preference, like column reordering mutates prefs). Esc dismisses; focus returns to the pane. The menu is per-pane and keyboard-launched only (no click target). The command (`sort`) is rebindable and appears once in the command palette.
+**Sort menu (keyboard, Mod+Shift+S)**: opens a compact menu anchored under the pane header listing the sort keys (all but Attributes, which only its column header sorts by), the current one marked with its ▲/▼. Each row has an underlined accelerator letter (and 1–9 by position); pressing it sorts by that key and closes the menu — a poor-man's chord, so `Mod+Shift+S` then `m` sorts by Modified. Pressing the same key again reverses direction (same toggle as a header click), so `Mod+Shift+S m m` flips to descending. **Holding Shift arms reverse**: `Shift+<key>` sorts by that key *descending* outright (`Mod+Shift+S`, then Shift+M → Modified descending), and while Shift is held the Reverse row lights up (with a `Shift` hint badge) to show it's in effect. Arrow keys, Home/End + Enter also work, as does clicking a row; the highlight seeds on the current key so a bare Enter reverses it. `R` reverses without changing the key; `F` toggles "Folders first" (mutating the `appearance.folders_first` preference, like column reordering mutates prefs). Esc dismisses; focus returns to the pane. The menu is per-pane and keyboard-launched only (no click target). The command (`sort`) is rebindable and appears once in the command palette.
 
-**Available sort keys**: Name, Extension, Size, User, Group, Mode, Modified, Accessed, Created.
+**Available sort keys**: Name, Extension, Size, User, Group, Mode, Attributes, Modified, Accessed, Created.
 
 **Sort behavior**:
 - The `..` parent directory entry *always* sorts first, regardless of sort key or direction.
 - When "Folders first" is enabled (preference), directories sort before files (but after `..`).
-- Extension sort treats directories as having no extension.
+- Extension sort compares two directories as equal (so they fall back to name order); a directory against a file uses the directory name's own extension.
 - Name and extension sorting is **case-insensitive** (Unicode `to_lowercase`), with a stable byte-order tiebreaker for entries differing only by case.
 - **Natural sort** (`appearance.natural_sort`, off by default): Name sorting compares runs of digits by their value, so `IMG_2` comes before `IMG_10` and `v1.9` before `v1.10`, as Finder and Explorer order them. Off, names sort character by character, as `ls` does (`IMG_10` before `IMG_2`). Names that differ only in leading zeros or case keep the character order between them.
 
@@ -211,6 +222,7 @@ Click a column header to sort ascending by that key; click the same header again
 - Focused (cursor) file: different highlight from selection.
 - Hidden files: dimmed styling. Hidden-ness is platform-native — the leading-`.` convention on Unix, the filesystem `HIDDEN`/`SYSTEM` attributes on Windows.
 - Symlinks: special styling (CSS class).
+- File type icons are matched on the name's suffixes, longest first, so `abc.12.34.png` gets the PNG icon and `test.ts` or `css.map` beat plain `.ts` and `.map`. Extensions match case-insensitively (`.JPG`); whole names like `Makefile` must match exactly. A drag preview uses the same icon.
 - Git status: filename color per working-tree status (VSCode-style palette, theme-aware) — modified/deleted-under = amber, untracked/added/renamed = green, conflicted = red, ignored = dimmed muted. Directories carry rollups of everything beneath them. See "Enrichers" below.
 - `..` parent directory: always shown at the top, even when hidden files are hidden or a filter is active. Cannot be selected, and is never an operation target: it is a navigation affordance only. It can still be *focused*, so Delete / Copy / Move / Pack / Properties with `..` under the cursor and nothing selected do nothing at all — no confirmation, no dialog. Two accessors enforce this, and actions must read their targets through one of them: `Pane::effective_keys` (selection, else focus) for the bulk operations, and `PaneViewState::actionable_focus` for the ones that deliberately ignore the selection and act on the cursor (Rename). Navigation is the deliberate exception — Enter and open-in-other-pane read `focused` / `get_focused_*` and see `..`, which is the entire point of it. View/Edit no-op on `..` already, via their `is_focused_dir` guard.
 
@@ -218,8 +230,9 @@ Click a column header to sort ascending by that key; click the same header again
 
 | State | Display |
 |-------|---------|
-| Loading (first 200ms) | (nothing — grace period to avoid flicker) |
-| Loading (after 200ms) | spinner, "Loading... (X items so far)" |
+| Waiting for the first rows (first 200ms) | the previous directory's counts — grace period to avoid flicker |
+| Waiting for the first rows (after 200ms) | spinner, "Loading file list..." |
+| Rows streaming in | "Loading... (X items so far)" at once; the spinner after 200ms |
 | Loaded, no selection | "X files, Y directories", plus ", N hidden" when hidden files exist but Show Hidden is off |
 | Loaded, with selection | "X files, Y directories selected, Z bytes total" — Z includes computed recursive sizes of selected directories, so ⌘A after Calculate All Sizes totals the whole directory |
 | Filter active | "(showing X of Y)" appended |
@@ -238,15 +251,17 @@ Large directories are loaded incrementally via streaming:
 
 Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHERS_AND_RESOURCES.md`). An enricher computes extra per-entry information (`Annotation`s keyed by entry key) and per-location `ContextBadge`s, streamed into a pane-side overlay that is merged into rows at window projection time. The pane layer is fully generic — annotations are opaque to it (`FileView.annotations`); only the frontend interprets the kinds it knows how to render, and the preference↔enricher-id gating lives with the toggles in the preferences schema (`EnricherPreferences::disabled_enrichers`).
 
-**Lifecycle — anchored to the history cursor**: automatic enrichers (git) start when a navigation lands and restart on every refresh (recompute-per-refresh replaces cache invalidation); annotations survive refreshes (re-keying onto surviving rows) but are cleared by any navigation. History navigation (Alt+arrows, history-dialog jumps) restores them stale-while-revalidate: each history entry captures the overlay as it stood when that view was left, the restore happens at landing before the automatic rerun is signalled, so git supersedes its part deterministically while computed du sizes simply reappear as they were (returning to a past view is an explicit acceptance of that view's snapshot). Fresh navigation to the same path does not resurrect anything; snapshot lifetime rides history retention. An automatic rerun supersedes the previous generation wholesale (first batch carries a `reset` flag), so entries that stopped matching (e.g. a committed file) don't linger. Manual enrichers (du) run on their own lane: triggered by keybinds, never restarted by refreshes, and their runs *accumulate* within a visit (sizing one directory doesn't clear a previously sized sibling). Esc on a loaded pane and navigating away both cancel the runs in flight reliably; already-applied annotations stay.
+**Lifecycle — anchored to the history cursor**: automatic enrichers (git, package) start when a navigation lands and restart on every refresh (recompute-per-refresh replaces cache invalidation); annotations survive refreshes (re-keying onto surviving rows) but are cleared by any navigation. History navigation (Alt+arrows, history-dialog jumps) restores them stale-while-revalidate: each history entry captures the overlay as it stood when that view was left, the restore happens at landing before the automatic rerun is signalled, so git supersedes its part deterministically while computed du sizes simply reappear as they were (returning to a past view is an explicit acceptance of that view's snapshot). Fresh navigation to the same path does not resurrect anything; snapshot lifetime rides history retention. An automatic rerun supersedes the previous generation wholesale (first batch carries a `reset` flag), so entries that stopped matching (e.g. a committed file) don't linger. Manual enrichers (du) run on their own lane: triggered by keybinds, never restarted by refreshes, and their runs *accumulate* within a visit (sizing one directory doesn't clear a previously sized sibling). Esc on a loaded pane and navigating away both cancel the runs in flight reliably; already-applied annotations stay.
 
 **In-flight visibility**: while an enricher runs, the pane status bar shows its activity label ("git status… (Esc cancels)"), with a 200ms appearance delay so fast runs don't flash it.
 
 **Architecture**: symmetric across the host↔agent boundary on the operations template — an `Enrichers` registry (`newt_common::enrich`) lives next to the `VfsRegistry` (host-side in local sessions, agent-side in remote ones), fronted by an `EnricherClient` with Local/Remote impls. Static, inventory-collected `EnricherDescriptor`s (the `VfsDescriptor` analogue: id, activity label, automatic, `applies_to_vfs`) are linked by both sides, so the host selects which enrichers to run for a pane (descriptor gate against the pane's VFS × preference gate) and the request names them explicitly — an empty selection sends no request at all, so S3/search/archive/agent-mount panes cost nothing. Data-dependent applicability (is this a repo?) lives inside the enricher; a run that finds nothing still sends an empty reset batch, clearing stale annotations. The remote path streams events down an RPC stream; cancellation is by dropping the request future (transport-level `InvokeCancel` aborts the agent-side run). Producer-side batching at 100ms.
 
-**Du enricher (recursive directory sizes)**: manual-only, two commands — **Calculate Size** (Mod+Shift+Enter; sizes the selected/focused directories) and **Calculate All Sizes** (Shift+Alt+Enter; sizes every entry). There is deliberately no directory-total badge — selection totals include computed sizes, so ⌘A reads the directory total off the existing status line. Walks via the `Vfs` trait on the side that owns the filesystem, so it works on any VFS (S3, archives, SFTP, remote sessions) and never crosses registry mount boundaries; up to 16 entry walks run concurrently, each a serial DFS. Running totals stream into the size column ncdu-style (in-progress values dimmed with a trailing `+`, flipping to plain when a subtree completes); Esc freezes whatever was computed as marked partials. Computed sizes participate in sort-by-size (a live walk re-sorts in place while the order is active). Directory symlinks are not followed, `/proc` is excluded, unreadable subtrees are skipped (all via the shared walker, see File Operations) — and leave the finished total a **lower bound**, rendered with the trailing `+` at full weight and the count of unreadable directories on hover; an entry whose own listing fails stays unannotated. Sizing matches `du`: allocated bytes (`File.allocated_size`, `st_blocks`-based) when the filesystem reports them — sparse files (VM disk images, Docker.raw) count what they occupy, not their apparent size — with apparent-size fallback on VFSes without block metadata (S3/SFTP/archives, where the two coincide). Hardlinked files are counted once per sized entry (`(device_id, inode)` dedup gated on `hard_links > 1`), and the walk never crosses filesystem boundaries (`du -x` semantics; a mountpoint entry reports the mounted filesystem's device, so sizing the mountpoint itself works and stops at further nested mounts). All four fields are unix-only `File` metadata (`None` on Windows and non-local VFSes).
+**Du enricher (recursive directory sizes)**: manual-only, two commands — **Calculate Size** (Mod+Shift+Enter; sizes the selected/focused directories) and **Calculate All Sizes** (Shift+Alt+Enter; sizes every directory — files keep their own size). There is deliberately no directory-total badge — selection totals include computed sizes, so ⌘A reads the directory total off the existing status line. Walks via the `Vfs` trait on the side that owns the filesystem, so it works on any VFS (S3, archives, SFTP, remote sessions) and never crosses registry mount boundaries; up to 16 entry walks run concurrently, each a serial DFS. Running totals stream into the size column ncdu-style (in-progress values dimmed with a trailing `+`, flipping to plain when a subtree completes); Esc freezes whatever was computed as marked partials. Computed sizes participate in sort-by-size (a live walk re-sorts in place while the order is active). Directory symlinks are not followed, `/proc` is excluded, unreadable subtrees are skipped (all via the shared walker, see File Operations) — and leave the finished total a **lower bound**, rendered with the trailing `+` at full weight and the count of unreadable directories on hover; an entry whose own listing fails stays unannotated. Sizing matches `du`: allocated bytes (`File.allocated_size`, `st_blocks`-based) when the filesystem reports them — sparse files (VM disk images, Docker.raw) count what they occupy, not their apparent size — with apparent-size fallback on VFSes without block metadata (S3/SFTP/archives, where the two coincide). Hardlinked files are counted once per sized entry (`(device_id, inode)` dedup gated on `hard_links > 1`), and the walk never crosses filesystem boundaries (`du -x` semantics; a mountpoint entry reports the mounted filesystem's device, so sizing the mountpoint itself works and stops at further nested mounts). All four fields are unix-only `File` metadata (`None` on Windows and non-local VFSes).
 
-**Git enricher**: shells out to the `git` binary where the files live — the remote host's git in remote sessions; no gitoxide/libgit2 dependency. A cheap `.git` walk-up (directory or file, covering worktrees) guards the spawn, so non-repo directories never pay for a git process (their run just emits the empty reset batch). One `git --no-optional-locks status --porcelain=v2 -z --branch --ignored=matching` run at the repo root yields branch/ahead-behind/dirty for the badge and repo-wide per-file statuses for row coloring, with directory rollups (precedence: conflicted > modified > renamed > added > untracked; ignored never rolls up). `--no-optional-locks` keeps status from writing `.git/index` and re-triggering the pane watcher. The status taxonomy is deliberately coarse: copied (`C`) renders as renamed, submodule status changes as modified, and deleted-only directories roll up as Modified. Toggled by `enrichers.git_status` (default on); toggling takes effect immediately (preference changes re-run automatic enrichers).
+**Git enricher**: shells out to the `git` binary where the files live — the remote host's git in remote sessions; no gitoxide/libgit2 dependency. A cheap `.git` walk-up (directory or file, covering worktrees) guards the spawn, so non-repo directories never pay for a git process (their run just emits the empty reset batch). One `git -C <root> --no-optional-locks status --porcelain=v2 -z --branch --untracked-files=normal --ignored=matching` run at the repo root yields branch/ahead-behind/dirty for the badge and repo-wide per-file statuses for row coloring, with directory rollups (precedence: conflicted > modified > renamed > added > untracked; ignored never rolls up). `--no-optional-locks` keeps status from writing `.git/index` and re-triggering the pane watcher. The status taxonomy is deliberately coarse: copied (`C`) renders as renamed, submodule status changes as modified, and deleted-only directories roll up as Modified. Toggled by `enrichers.git_status` (default on); toggling takes effect immediately (preference changes re-run automatic enrichers). Runs on the `local` filesystem type only — the session's own filesystem, whatever host it is on — so not on the client-local filesystem of a remote session or on agent mounts, even when they hold a repository.
+
+**Package enricher**: automatic, macOS only, on the `local` filesystem type; labelled "Finding packages". It marks the directories Launch Services treats as packages (`.app` bundles and the like), which File Associations uses to open them as files (see Packages).
 
 ### Keyboard Navigation
 
@@ -259,8 +274,8 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | Home | Jump to first item |
 | End | Jump to last item |
 | Shift+Home / Shift+End | Jump to first/last item, selecting the whole range |
-| Enter | Open file or enter directory (see "Enter behavior" below) |
-| Backspace | Navigate to parent directory (`..`) |
+| Enter | Open file or enter directory (see "Enter behavior" below) — the focused entry, never the selection |
+| Backspace | Navigate to parent directory (`..`); while a quick search or filter is active it edits the typed text instead |
 | Tab | Switch active pane |
 | Insert | Toggle selection on current file and advance focus to next (the rebindable `toggle_selection` command; macOS reports a PC keyboard's Insert as Help, which matches it too. Apple keyboards have no Insert: rebind it, or select with Shift+arrows or Mod+Click) |
 | Mod+A | Select all files (except `..`) |
@@ -270,6 +285,7 @@ Background annotation of directory listings (design: `design_docs/DESIGN_ENRICHE
 | (unbound) | Select Same Extension (command palette) — adds every visible entry with the focused entry's extension, case-folded; directories count as one extensionless group of their own |
 | Escape | Clear the quick search or filter, and stop whatever the pane is still loading — a directory listing, git status, Calculate Size. The selection is kept (Mod+D deselects) |
 | Shift+Enter | Follow symlink (navigate to its target) |
+| Delete / Ctrl+Insert / Shift+Insert / Mod+Backspace | Delete, and (off macOS) clipboard copy / paste and Go to Root — see the reference in §17 |
 | Shift+\<drive letter\> | Jump to that drive's root. Offered whenever the session has a split-root (Windows drive-lettered) mount — `MainWindowState.mount_summary.has_split_root_vfs`, refreshed on mount/unmount — not gated on the host OS. With no such mount the keystroke types into the quick filter as usual. |
 
 **Select by Pattern** (Num + / Num -, "Select by Pattern..." / "Deselect by Pattern..." in the palette): one dialog, opened in add or remove mode by the entry point, with the mode switchable inside it. The pattern is a case-insensitive glob (`*.rs`, `IMG_*.{jpg,png}`; `*` spans the whole name, there are no separators to stop at); a leading `/` makes it a case-insensitive regex (`/^foo.*\.c$`). It matches display names of *visible* entries only (an active visual filter narrows it, as with Mod+A), never `..`, and only ever adds or removes the matches — the rest of the selection stays. A live "N entries match" count updates as you type (`count_pattern_matches`, an ephemeral query rather than pushed state); an uncompilable pattern disables Submit. The last applied pattern is remembered per session and pre-filled (selected) on the next open.
@@ -307,9 +323,9 @@ command = "Build"               # the title of a [[command]]
 
 - **The most specific pattern wins**: of the entries whose patterns match a name, the one whose pattern has the most literal characters goes first — `*.tar.gz` before `*.gz`, `Dockerfile` before `*` — and at equal specificity the user's before the built-ins; order in the file only breaks remaining ties. **Each property then resolves on its own**, from the first of those entries that sets it: an entry setting only `viewer` leaves what Enter does to the next one. The command an `enter = "command"` runs comes from the entry that chose it. A viewer mode no entry sets comes from the file's content (see the viewer's [Mode Selection](#mode-selection)), a language from the type the viewer identified, then plain text.
 - **Built-ins** cover the archive and disc formats below, the editor's language table, and containers that open in their own application but can be browsed into from the context menu: Office and OpenDocument files, EPUB, Python wheels, NuGet and VS Code packages (`zip`) and Rust crates (`tar`).
-- **Enter actions**: `open` hands the file to the system's default application, `browse` goes in (into a directory, or into a file as `format`), `view` and `edit` open Newt's viewer and editor, `command` runs a user command as picking it from the palette would. A renamed command takes its associations along. A directory can only be opened on this computer's own filesystem; elsewhere Enter goes in.
-- **Packages** (macOS only): app bundles, frameworks, plugins, Xcode projects, `.rtfd` documents, photo libraries and other directories that Finder shows as files. Which directories are packages is what Launch Services says (`NSURLIsPackageKey`: a type conforming to `com.apple.package`, as declared by the system and installed apps, or the bundle bit set) — never a guess from a name, so a `whatever.app` folder on Linux, in S3 or in an archive is a folder. A package shows a file's icon instead of the folder. Enter goes into them; **Behavior ▸ Open Packages** makes it open them instead. A `[[association]]` with `kind = "directory"` still decides what Enter does for what it matches, and one without `enter` declares what it matches a package (offering Open in Default App). The listing is shown at once and packages are marked as Launch Services answers, an automatic enricher like git status; it runs only where a macOS kernel serves the files (locally on a Mac, or in a remote session to one).
-- **Browse Into** (`browse_into`, unbound; context menu) goes into the focused entry whatever Enter does with it: a directory or package is entered, a file browsed as its association's format — or, when nothing names one, as whatever its first bytes say (ZIP, 7z, tar, cpio and ar headers, gzip/bzip2/xz/zstd streams, ISO 9660 and UDF volumes). A tar or compressed file whose name doesn't say which compression it uses is decompressed by what its first bytes say.
+- **Enter actions**: `open` hands the file to the system's default application, `browse` goes in (into a directory, or into a file as `format`), `view` and `edit` open Newt's viewer and editor, `command` runs a user command as picking it from the palette would. A renamed command takes its associations along. For a directory only `open` and `command` apply — `browse`, `view` and `edit` go in — and it can only be opened on this computer's own filesystem; elsewhere Enter goes in.
+- **Packages** (macOS only): app bundles, frameworks, plugins, Xcode projects, `.rtfd` documents, photo libraries and other directories that Finder shows as files. Which directories are packages is what Launch Services says (`NSURLIsPackageKey`: a type conforming to `com.apple.package`, as declared by the system and installed apps, or the bundle bit set) — never a guess from a name, so a `whatever.app` folder on Linux, in S3 or in an archive is a folder. A package shows a file's icon instead of the folder. Enter goes into them; **Behavior ▸ Open Packages** makes it open them instead. A `[[association]]` with `kind = "directory"` still decides what Enter does for what it matches, and one without `enter` adds Open in Default App to the context menu of what it matches; it doesn't make it a package — no file icon, and Open Packages doesn't apply to it. The listing is shown at once and packages are marked as Launch Services answers, an automatic enricher like git status; it runs only where a macOS kernel serves the files (locally on a Mac, or in a remote session to one).
+- **Browse Into** (`browse_into`, unbound; context menu) goes into the focused entry whatever Enter does with it: a directory or package is entered, a file browsed as its association's format — or, when nothing names one, as whatever its first bytes say. The context menu offers it on a file only when an association names a format, so a renamed ZIP with no association is browsed with the command (ZIP, 7z, tar, cpio and ar headers, gzip/bzip2/xz/zstd streams, ISO 9660 and UDF volumes). A tar or compressed file whose name doesn't say which compression it uses is decompressed by what its first bytes say.
 - **Open in Default App** (`open`, unbound; context menu) always hands the entry to the system's default application, downloading it first when it isn't on this computer.
 - **A downloaded file is a copy.** Opening a file that isn't on this computer (S3, SFTP, an archive, a remote session) — by Enter, Open in Default App or Open With — copies it into a new directory under the system's temporary directory and opens the copy. Changes saved in the application stay in that copy and are never written back to where the file came from; to change the file itself, edit it in Newt's editor (F4), which saves to its own location, or copy the edited copy back. Newt doesn't delete these copies (the system's temporary-directory cleanup does, eventually), and if the application can't be started once the copy is made, that is only logged.
 
@@ -319,7 +335,9 @@ The file context menu's **Open With ▸** lists the applications the system offe
 
 - **Windows**: the shell's "How do you want to open this file?" dialog (`SHOpenWithDialog`), with "Always use this app"; the file opens in what is chosen.
 - **Linux**: the desktop portal's app chooser (`org.freedesktop.portal.OpenURI.OpenFile` with `ask`) — GNOME's and KDE's own — which opens the file in what is chosen. Without `xdg-desktop-portal` running, Open With… reports that no chooser is available.
-- **macOS**, where only Finder has a chooser: the same one Finder's "Open With ▸ Other…" shows — an open panel on Applications, as a sheet on the window, with *Enable: Recommended Applications / All Applications* (only the applications recommended for the file can be chosen until "All" is picked) and *Always Open With*, which makes the choice the default for files of its type.
+- **macOS**, where only Finder has a chooser: the same one Finder's "Open With ▸ Other…" shows — an open panel on Applications, as a sheet on the window, with *Enable: Recommended Applications / All Applications* (only the applications recommended for the file can be chosen until "All" is picked; with none recommended it starts on "All") and *Always Open With*, which makes the choice the default for files of its type.
+
+On Windows and Linux, an application picked from the submenu that has since gone away is reported ("… is no longer installed", "… is no longer offered for …") rather than silently doing nothing.
 
 A file that isn't on this computer (S3, SFTP, an archive, a remote session) is downloaded to a temporary directory first, as Open in Default App does, and opens once the copy finishes. Directories and packages aren't offered: Open With is for files.
 
@@ -327,13 +345,14 @@ A file that isn't on this computer (S3, SFTP, an archive, a remote session) is d
 
 | Action | Behavior |
 |--------|----------|
-| Left click | Focus the clicked file |
+| Left click | Focus the clicked file (ending a quick search) |
 | Mod+Click (Ctrl; ⌘ on macOS) | Toggle selection for that file (keeps other selections) |
-| Shift+Click | Range select from focused file to clicked file |
+| Shift+Click | Add the range from the focused file to the clicked file to the selection |
 | Double-click | Open/enter (same as Enter key) |
+| Mouse back / forward buttons | Go Back / Go Forward, one step (`navigate_back` / `navigate_forward`) |
 | Right-click | Shows the context menu. A click outside the selection focuses the clicked row but keeps the selection, as a key press would: selection-wide commands (Copy, Delete, …) still act on the selection, single-entry ones (Rename, Open With, …) on the clicked row. A click inside the selection leaves focus where it was. |
 | Drag outside the Name column | Rectangle (marquee) selection — see below |
-| Drag on file icon/name | Initiate drag-and-drop to other pane — see below |
+| Drag in the Name column (not on `..`) | Initiate drag-and-drop to other pane — see below |
 | Alt+Wheel (⌥ on macOS) | Move the cursor instead of scrolling, one row per wheel notch however fast the wheel turns (scroll acceleration is ignored). A very fast spin can move a little less than a row per notch: the webview merges some notches into one event |
 | Shift+Alt+Wheel | Move the cursor and select from the row it started on, over the selection as it was: wheeling back unselects, as a marquee does. Lasts until Shift or Alt is released |
 
@@ -342,14 +361,13 @@ A file that isn't on this computer (S3, SFTP, an archive, a remote session) is d
 - A blue selection rectangle is drawn; files overlapping the rectangle are selected.
 - Auto-scrolls when dragging near the top or bottom edges of the pane (44px zone). Speed increases closer to the edge.
 - **Mod+Drag** (Ctrl; ⌘ on macOS): Adds rectangle selection to existing selection.
-- **Shift+Drag**: Selects range from focused file to drag endpoint.
 - **Normal drag**: Replaces entire selection with rectangle contents.
 
 **Pane activation**: Clicking anywhere in a pane makes it the active pane for keyboard commands.
 
 ### Context Menu
 
-The default browser context menu is suppressed in the main window and in the text, hex and structure viewers (not the editor). Text inputs retain their native context menus. The keyboard's menu key (Shift+F10 too, where the webview sends it) opens a view's menu at its cursor — the focused row in a pane, the selected node in the structure tree, the cursor byte or selection in hex and text views — wherever the mouse pointer happens to be; macOS WebKit aims the key's request at the pointer, so Newt tells it from a right-click by the press that precedes a click and a key has none.
+The default browser context menu is suppressed in the main window and in the viewer (every mode, and its status bar), not in the editor. Text inputs retain their native context menus. The keyboard's menu key (Shift+F10 too, where the webview sends it) opens a view's menu at its cursor — the focused row in a pane, the selected node in the structure tree, the cursor byte or selection in hex and text views — wherever the mouse pointer happens to be; macOS WebKit aims the key's request at the pointer, so Newt tells it from a right-click by the press that precedes a click and a key has none.
 
 **Right-click a file** or press Shift+F10 / Menu key:
 
@@ -357,8 +375,8 @@ The default browser context menu is suppressed in the main window and in the tex
 |------|----------|
 | Open | Enter |
 | Open in Default App | (`open`, unbound; when Enter does something else, or on a macOS package) |
-| Browse Into | (`browse_into`, unbound; when Enter doesn't go in but could — a package set to open, a document that is a ZIP inside) |
 | Open With ▸ | Files only: the applications the system offers for the file, the default marked, then **Other…** (`open_with`, unbound) |
+| Browse Into | (`browse_into`, unbound; when Enter doesn't go in but could — a package set to open, a document that is a ZIP inside) |
 | Change Association… | (`change_association`, unbound) — the Settings dialog's Associations tab, at the entry's row |
 | Follow Symlink / Reveal Source | Shift+Enter (symlinks and aliased entries only) |
 | View | F3 |
@@ -367,7 +385,7 @@ The default browser context menu is suppressed in the main window and in the tex
 | Copy Path | ⌥⌘C on macOS, Ctrl+Shift+C elsewhere |
 | Copy / Move / Pack to Archive | F5 / F6 / Alt+F5 |
 | Rename | F2 |
-| Delete | F8 |
+| Delete | F8 (also Delete; ⌘⌫ on macOS) |
 | Delete Permanently | Shift+Delete |
 | Open in Terminal | Mod+Enter |
 | Properties | Alt+Enter |
@@ -390,7 +408,7 @@ The Follow row appears only when it would do something: labelled "Reveal Source"
 
 **Windows shell context menu** (Windows host, host-local files): the trailing "Windows Menu" item — or Shift+right-click to skip our menu entirely — pops the classic `IContextMenu` shell menu (not the Windows 11 abbreviated one) for the effective selection; on empty space (or the `..` row) it targets the current directory itself. Implementation (`main_window/shell_menu.rs`, `shell_context_menu` command): runs synchronously on the main thread (`TrackPopupMenuEx` pumps its own modal loop), `SHParseDisplayName` on de-verbatimed paths (`launch_cwd`) → parent `IShellFolder::GetUIObjectOf` → `QueryContextMenu` → `TrackPopupMenuEx(TPM_RETURNCMD)` → `InvokeCommand`, with the Tauri window temporarily subclassed to forward `WM_INITMENUPOPUP`/`WM_DRAWITEM`/`WM_MEASUREITEM`/`WM_MENUCHAR` to `IContextMenu2/3` so dynamic submenus ("Open with", "Send to") populate. User-cancelled verbs (`ERROR_CANCELLED`) are not errors; shell-side mutations (delete, rename, …) reach the pane through the directory watcher. In **elevated sessions** the menu is still built and invoked by the non-elevated UI process — items the desktop user can't read (e.g. `C:\Windows\System32\config\*`) fail at `SHParseDisplayName` with an error, and any verb that did run would run non-elevated. Deliberate: an agent-side menu (feasible for the UAC transport, which shares the interactive desktop) would invoke *every* verb elevated — "Open"/"Open with" silently spawning admin-token processes — which is why Explorer refuses to run elevated too. Power users who need shell verbs on admin-only files can just run `newt.exe` itself elevated.
 
-**Right-click the path bar** — a breadcrumb, or anywhere else in the bar:
+**Right-click the path bar** — a breadcrumb, or anywhere else in the pane header (VFS selector, free space and branch badge included):
 
 | Item | Shortcut |
 |------|----------|
@@ -408,10 +426,11 @@ All but Copy Path are the pane's ordinary commands, acting on the pane whose bar
 
 - Drag one or more files from one pane to the other by dragging anywhere in the Name column — the icon, the name, or the blank space after it. Dragging in any other column or below the last row draws a selection rectangle instead.
 - **Multi-file drag**: If multiple files are selected, dragging any selected file drags them all. A ghost preview shows "N items" at the cursor.
+- A drop starts the copy or move at once — no Copy/Move dialog. Navigating the pane cancels a drag (or a marquee) in progress.
 - **Drop targets**: Drop on a folder to copy/move into it, or on `..` to copy/move to wherever `..` leads (the folder holding an archive, at its root). Drop on the pane background to copy/move to the pane's current directory. A drop copies with the Copy dialog's stock options — the platform's defaults, not the toggles F5 remembers: on macOS extended attributes (tags, quarantine) and resource forks come along, on Windows alternate streams.
 - **Modifier keys**: Normal drop = copy. Shift+drop = move.
 - **Visual feedback**: Drop target pane/folder highlights on hover.
-- **Same-pane restrictions**: Cannot drop a folder onto itself.
+- **Within one pane**: only a drop onto a folder row that isn't being dragged does something (copies or moves into it); a drop on the background or on one of the dragged folders does nothing.
 
 **External drag-and-drop IN** (from the OS file manager):
 - Drag one or more files from the OS file manager (Nautilus, Dolphin, Finder, etc.) and drop onto any pane.
@@ -423,18 +442,19 @@ All but Copy Path are the pane's ordinary commands, acting on the pane whose bar
 
 **External drag-and-drop OUT** (to other applications):
 - Dragging past the window edge hands the internal drag off to a native OS drag session (`drag` crate; copy-only). Drop into Finder/Explorer/Nautilus, other apps, or **another Newt window** (arrives there via the normal external-drop path).
-- **Host-local files only**: every dragged file must resolve to a host-local path. Search panes escalate when the underlying files are local (per-file check after source deref). S3/SFTP/remote-session drags stay internal — leaving the window behaves as before (release outside cancels, re-entering resumes the ghost).
+- **Host-local files only**: every dragged file must resolve to a host-local path. Search panes escalate when the underlying files are local (per-file check after source deref). S3/SFTP/remote-session drags stay internal: releasing outside the window cancels, re-entering resumes the ghost.
 - **Preview**: the drag carries a rendered pill matching the internal ghost (file icon + name, or "N items"); falls back to the app icon.
 - **Drop back into the same window**: routed through internal DnD semantics — copy, dropping into the source directory is a no-op, dropping onto a dragged folder degrades to the pane background.
 - Known platform gaps: Windows paths >260 chars crash upstream (drag-rs #76); Linux X11 can silently fail on some GTK3 setups (#84); Wayland behavior varies by compositor.
 
 ### Focus Preservation
 
-- When navigating to a new directory, the first file is focused by default.
-- When navigating **back** (Alt+Left, mouse back button), the previously focused file is restored from the popped history entry.
+- When navigating to a new directory, the first row is focused — normally `..`.
+- Going up (`..`, Backspace, a breadcrumb) focuses the folder you came out of; a walk up from a directory that can't be listed focuses the nearest part of the path it was aiming for.
+- When navigating through history (the mouse back/forward buttons, a History jump, Alt+Left/Right), the previously focused file is restored from the history entry.
 - When exiting an archive VFS via `..`, the archive file itself is focused in the parent directory.
 - On refresh (e.g., after file system changes), existing selection and focus are preserved if the files still exist.
-- Selection state survives filter changes in Filter mode (but not in Quick Search mode).
+- Changing the filter text, in either mode, leaves the selection alone; a selection command (Insert, Mod+A, …) ends a quick search.
 
 ---
 
@@ -444,13 +464,15 @@ Two filter modes for narrowing the visible file list within a pane. The default 
 
 ### Quick Search Mode
 
-- **Activation**: Start typing any printable character while the pane is focused — Shift included (capitals, digits on AZERTY), unless that Shift chord is bound to a command; not with Ctrl, Alt/Option or Cmd. Characters typed with AltGr or Option don't start it, since those modifiers are also how chords are typed; Filter mode (`/`) takes any character. On a pane listing Windows drives, Shift+letter goes to that drive instead. Requires `quick_search = true` (default).
+- **Activation**: Start typing any printable character while the pane is focused — Shift included (capitals, digits on AZERTY), unless that Shift chord is bound to a command; not with Ctrl, Alt/Option or Cmd. Characters typed with AltGr or Option don't start it, since those modifiers are also how chords are typed; Filter mode (`/`) takes any character. Whenever the session has a filesystem with drive letters (Windows), Shift+letter jumps to that drive instead, in every pane — so capitals never start a quick search there. Requires `quick_search = true` (default).
 - **Input methods**: keys an IME is composing with stay with the IME, so Enter committing a candidate doesn't open the focused file.
-- **Matching**: Case-insensitive **prefix** matching on filenames. Wraps around the file list (searches downward from cursor, then wraps to top).
-- **Live updates**: Results update as you type. The cursor moves to the first match.
+- **Matching**: Case-insensitive **prefix** matching on filenames. Searches downward from the cursor, then upward from it, so it lands on the nearest match above when there is none below.
+- **Live updates**: Results update as you type. A keystroke that would match nothing is dropped, so the text stays at its last matching value.
+- **Moving between matches**: while it's active, Up/Down, Page Up/Down and Home/End (and their Shift forms) move only between matching rows.
+- **Visual indicator**: a caret after the typed prefix in the focused row.
 - **Arrow Left/Right**: Adjusts the search string based on the focused file's name. Right extends the search to include more of the focused filename; Left trims it.
 - **Press the filter key** (`/` by default): Switches to full Filter mode, keeping the current search text.
-- **Cleared by**: Escape, any selection action, navigating to a different directory, or the entry it landed on disappearing (deleted, renamed, moved away). The cursor then goes to the nearest remaining entry, which needn't match the prefix. A Filter-mode filter is kept, being a view rather than a jump.
+- **Cleared by**: Escape, any selection action, clicking a row, navigating to a different directory, or the entry it landed on disappearing (deleted, renamed, moved away). The cursor then goes to the nearest remaining entry, which needn't match the prefix. A Filter-mode filter is kept, being a view rather than a jump.
 
 ### Filter Mode (Visual Regex)
 
@@ -460,7 +482,8 @@ While rows are hidden, the file list carries a faint accent tint (`--color-bg-fi
 
   Both routes run the one `start_filter` command — "switch this pane to filter mode, keeping whatever is typed" — so it is rebindable in the Keybindings tab and runnable from the command palette like anything else. That matters for non-US layouts: `/` is Shift+7 on QWERTZ, and the binding is matched as an exact normalized string, so those layouts capture `shift+/` instead. Unlike other commands it is matched inside the pane rather than dispatched from the window-level handler — the pane's own keydown runs first and routes every unmodified printable character into quick-search, so a key left to the dispatcher would be swallowed before reaching it.
 - **UI**: A filter input bar appears at the bottom of the pane.
-- **Matching**: Full **regex** pattern matching (case-insensitive). Files that don't match are hidden entirely.
+- **Matching**: Full **regex** pattern matching (case-insensitive, unanchored — it matches anywhere in the name). Files that don't match are hidden entirely. A pattern that doesn't compile hides nothing. Text carried over from Quick Search with `/` becomes such a regex, matching anywhere rather than as a prefix.
+- **Editing keys**: Backspace and Delete edit the filter text (Delete doesn't delete files while the filter has focus).
 - **`..` always visible**: The parent directory entry is never hidden by a filter.
 - **Focus follows the matches**: a non-empty pattern moves the cursor to the first match whenever it would otherwise sit on `..` or nowhere — including when the entry it was on stops matching. A cursor already on a surviving entry stays put, so refining a pattern never yanks it away, and an empty pattern hides nothing and moves nothing.
 - **Status bar**: Shows "(showing X of Y)" when filtering.
@@ -471,10 +494,10 @@ While rows are hidden, the file list carries a faint accent tint (`--color-bg-fi
 
 | Behavior | Quick Search | Filter Mode |
 |----------|-------------|-------------|
-| Matching | Prefix, case-insensitive | Regex, case-insensitive |
+| Matching | Prefix, case-insensitive | Regex anywhere in the name, case-insensitive |
 | Non-matching files | Still visible | Hidden |
 | Selection clears filter | Yes | No |
-| Visual indicator | No bar | Filter bar at pane bottom |
+| Visual indicator | Caret after the prefix in the focused row | Filter bar at pane bottom |
 | Navigation clears | Yes | Yes |
 
 ---
@@ -485,19 +508,19 @@ While rows are hidden, the file list carries a faint accent tint (`--color-bg-fi
 
 ### Create Directory (F7)
 
-Modal dialog with a single name input field (auto-focused). Creates a new directory in the active pane's current path. A name typed here — or into Create File, Rename, or Copy/Move's new name — that climbs out of the directory (`..`, `../x`) is refused.
+Modal dialog with a single name input field (auto-focused). Creates a new directory in the active pane's current path; a relative path (`a/b/c`) creates the folders it names, missing ones included. A name typed here — or into Create File, Rename, or Copy/Move's new name — that climbs out of the directory (`..`, `../x`) is refused.
 
 ### Create File (from command palette)
 
-Modal dialog with a name input. Creates an empty file in the current directory.
+Modal dialog ("Create New File (Touch)") with a name input. Creates an empty file in the current directory. A name that already exists is left as it is — contents and modification time untouched — with no error.
 
 ### Create and Edit (Shift+F4)
 
-Creates a new file (same dialog as Create File) and immediately opens it in the built-in editor.
+Creates a new file (same dialog as Create File) and immediately opens it in the built-in editor; on an existing name it just opens that file.
 
 ### Rename (F2)
 
-Modal dialog with the current filename pre-filled and selected up to its extension, so typing replaces the name and keeps the type (`report.final.pdf` selects `report.final`); a directory's name, or a name with no extension or only a leading dot (`.bashrc`), is selected whole. Operates on the **focused** entry, ignoring the selection — and does nothing at all when that is `..` (see the `..` note under File List). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it (tried as `rename_no_replace` first, as Move does), else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). Conflicts raise the standard Skip / Overwrite prompt; the fallback shows real progress and is cancellable. Renaming to the byte-identical name is a no-op, and renaming to a *different spelling of the same name* — `Foo` → `foo` on a case-insensitive volume, NFC → NFD on HFS+ — is a rename rather than a conflict: the destination stats successfully as the source, so `Vfs::same_file` is consulted before the conflict probe and suppresses it. Renaming one **hard link** onto another takes the same exemption and is then a no-op — POSIX has `rename` succeed without acting when both names are links to one file, so both survive and nothing is reported. That is BSD `mv`'s behaviour (GNU `mv` refuses instead); it's rare, and inaction is the safe end of the trade. Copying one hard link onto another counts as already copied (see Copy's conflict detection), since writing over it would destroy the file. The pane refreshes and re-focuses the new name when the operation completes. A directory renamed onto an existing directory asks Merge / Replace / Skip (Replace swaps it in; a package in the way is asked about as a file) — a rename merging silently would be a surprise.
+Modal dialog with the current filename pre-filled and selected up to its extension, so typing replaces the name and keeps the type (`report.final.pdf` selects `report.final`); a directory's name, or a name with no extension or only a leading dot (`.bashrc`), is selected whole. Operates on the **focused** entry, ignoring the selection — and does nothing at all when that is `..` (see the `..` note under File List). Runs as an operation (`OperationRequest::Rename`) with the same two-step execution as Move: native `Vfs::rename` when the VFS supports it (tried as `rename_no_replace` first, as Move does), else copy+delete — so S3 objects and prefixes can be renamed (server-side CopyObject, no data through the app). A conflict with another entry asks Skip / Overwrite (no conditional overwrite, unlike Copy and Move); the fallback shows real progress and is cancellable. Renaming to the byte-identical name is a no-op, and renaming to a *different spelling of the same name* — `Foo` → `foo` on a case-insensitive volume, NFC → NFD on HFS+ — is a rename rather than a conflict: the destination stats successfully as the source, so `Vfs::same_file` is consulted before the conflict probe and suppresses it. Renaming one **hard link** onto another takes the same exemption and is then a no-op — POSIX has `rename` succeed without acting when both names are links to one file, so both survive and nothing is reported. That is BSD `mv`'s behaviour (GNU `mv` refuses instead); it's rare, and inaction is the safe end of the trade. Copying one hard link onto another counts as already copied (see Copy's conflict detection), since writing over it would destroy the file. The pane refreshes and re-focuses the new name when the operation completes. A directory renamed onto an existing directory asks Merge / Replace / Skip (Replace swaps it in; a package in the way is asked about as a file) — a rename merging silently would be a surprise.
 
 ### Batch Rename (Shift+F2)
 
@@ -505,16 +528,16 @@ Renames every entry of the effective selection (the selection, else the focused 
 
 **The rule**:
 - **Find** is a regular expression (Rust `regex` syntax: no lookaround or backreferences), matched anywhere in the whole name, extension included; **every** match is replaced, and a name with no match stays as it is. `^` with a replacement adds a prefix. An empty Find renames nothing. An invalid pattern shows its error in place of the counts.
-- **Replace** follows Monaco's (VS Code's) syntax rather than Rust's: `$1`…`$99` a group, `$<name>` a named group, `$&` or `$0` the whole match, `$$` a dollar; `\u` `\l` before a group upper/lowercase its first character, `\U` `\L` all of it. A reference past the pattern's groups is literal text, as in Monaco (`$12` with one group is group 1 then `2`).
+- **Replace** follows Monaco's (VS Code's) syntax rather than Rust's: `$1`…`$99` a group, `$<name>` a named group, `$&` or `$0` the whole match, `$$` a dollar; `\u` `\l` before a group upper/lowercase its first character, `\U` `\L` all of it. A reference past the pattern's groups is literal text, as in Monaco (`$12` with one group is group 1 then `2`). `\\` is a backslash, `\n` and `\t` a newline and a tab; any other backslash is kept with the character after it.
 - **Case-sensitive** (`Aa`, Alt+C / ⌥⌘C) — off by default.
 - **Keep case** (`AB`, Alt+P / ⌥⌘P) — VS Code's Preserve Case: each replacement takes the case shape of the text it replaces (all upper, all lower, capitalized, or part by part across `-` and `_`).
 - The two toggles are remembered in `state.json` (`batch_rename.*`); Find and Replace start empty every time.
 
 **Preview**: a list styled like a pane — file icons, Name and New Name columns, the matched text and its replacement in bold, unchanged names greyed. Above it, `13 renamed · 1 unchanged · 2 errors · 1 warning` and a filter (All / Renamed / Problems). Arrow keys, Page Up/Down and Home/End move a cursor in the list; **F8 / Shift+F8** jump to the next / previous row with a problem. The problem is written beside the new name and is the row's tooltip.
-- **Errors** (Rename stays disabled): an empty name, `.` or `..`, a separator or NUL, a name Windows refuses on a Windows-style filesystem (`<>:"|?*`, control characters, a trailing dot or space, reserved names like `CON` or `nul.txt`), or two entries of the selection ending up with byte-identical names in one folder (including onto a selected entry the rule leaves alone).
+- **Errors** (Rename stays disabled — as it does while nothing would be renamed): an empty name, `.` or `..`, a separator or NUL, a name Windows refuses on a Windows-style filesystem (`<>:"|?*`, control characters, a trailing dot or space, reserved names like `CON` or `nul.txt`), or two entries of the selection ending up with byte-identical names in one folder (including onto a selected entry the rule leaves alone).
 - **Warnings** (shown, not blocking): the new name replaces an entry outside the selection; or — where the filesystem might ignore case — it matches another new name or an existing entry give or take case or Unicode normalization ("may replace", "where case is ignored"). Names on S3 and in archives are compared byte for byte, so these never appear there. On a filesystem with no rename of its own (S3) the status line says renames there copy and delete.
 - Name length is not checked: the limit is the filesystem's, and a name it refuses fails that entry during the rename.
-- Hidden entries the pane isn't showing aren't known to the preview; the rename itself still finds them.
+- Hidden entries the pane isn't showing aren't known to the preview; the rename itself still finds them. Likewise, in a search pane only the hits in the pane's own folder are checked against the names around them; the rename itself checks every folder.
 
 The preview is computed in the Rust host, not in the webview: the selection is snapshotted when the dialog opens, every new name is recomputed (off the async runtime, ~100 ms for 100,000 names) a moment after typing pauses, and the dialog is sent the counts and the rows in view only, so selections in the hundreds of thousands stay responsive.
 
@@ -522,12 +545,12 @@ The preview is computed in the Rust host, not in the webview: the selection is s
 - **Order.** Each entry's new name is vacated before it's taken: a chain (`1→2`, `2→3`) runs from its end, and a cycle (`a↔b`, `x→y→z→x`) is performed as one unit. Dependencies are judged conservatively — by Unicode case folding and normalization wherever names might fold — so a swap like `a→B`, `b→A` on a case-insensitive volume is recognized; on a case-sensitive one such a phantom cycle costs one unnecessary swap.
 - **Cycles** use an atomic exchange where the filesystem has one (Linux `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`): a cycle of *k* entries is *k*−1 exchanges, and no file is ever under a temporary name. Elsewhere (Windows, SFTP, S3) the first entry steps aside to a hidden `.newt-rename-…` name in the same folder, the rest follow, and it takes its new name last. A cycle is never interrupted by Cancel, and one that can't complete is undone — every entry back under its old name.
 - **The filesystem decides.** Every rename is a no-replace rename first, as single Rename does; a re-spelling of the entry itself (`readme` → `README` where case is ignored) goes through. When something else has the name, it's either an entry of the batch that hasn't moved yet — the rename waits for it, and entries still waiting after a full round step aside to a temporary name to break the cycle the names didn't show — or one that has its name for good, which is **never overwritten** (the prompt offers Skip only), or an entry outside the batch, which gets the normal Skip / Overwrite prompt with apply-to-all. Telling a batch entry from an outsider is exact where the listing has file identities (local filesystems: device and inode) and on byte-compared names (S3, archives); over SFTP it asks the server about entries whose names fold together.
-- Before starting, each folder is listed again: an entry that has disappeared is reported and skipped, and the checks run again on what is there now.
+- Each folder is listed again when its turn comes (deepest first): an entry that has disappeared is reported and skipped, and the checks run again on what is there now. A folder that can't be listed asks Retry / Skip, and Skip leaves that folder's entries alone.
 - In a search pane each hit is renamed in its own folder, and a folder's selected contents are renamed before the folder itself.
 - On S3 each rename is a server-side copy and delete, as single Rename; a folder copies everything under its prefix.
 - When it completes, the pane refreshes and selects the renamed entries under their new names (ready for another pass), with the cursor following the focused entry to its new name.
 
-### Delete (F8 / Del / Cmd+Backspace) and Delete Permanently (Shift+Delete / Opt+Cmd+Backspace)
+### Delete (F8 / Del; ⌘⌫ on macOS) and Delete Permanently (Shift+Delete; ⌥⌘⌫ on macOS)
 
 Deletes all selected files and directories (recursive for directories).
 
@@ -535,33 +558,30 @@ Deletes all selected files and directories (recursive for directories).
 
 - If `behavior.delete_to_trash` is enabled (default: yes), plain Delete moves items to the OS trash instead of deleting them. Only real local filesystems have a trash: the local FS, the remote host's FS in SSH/elevated sessions (freedesktop `~/.local/share/Trash` on the remote machine), and agent mounts — always the trash of the machine that owns the files. S3/SFTP/archive/search VFSes have no trash.
 - **Delete Permanently** (`delete_permanent`, Shift+Delete, ⌥⌘⌫ on macOS, also in the context menu) always bypasses the trash.
-- If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first. For a trash delete it offers three choices: **Move to Trash** (default, focused), **Delete Permanently**, and Cancel.
+- If `behavior.confirm_delete` is enabled (default: yes), a confirmation dialog appears first. For a trash delete it offers three choices: **Move to Trash** (default, focused), **Delete Permanently**, and Cancel. For a permanent delete (Shift+Delete, or with the trash preference off) it reads "Permanently delete X?" / "Permanently delete N selected files?" with **Delete** and Cancel.
 - If the trash preference is on but the selection isn't trashable (e.g. on S3), a dialog explains the items will be deleted permanently and offers **Delete Permanently** / Cancel — this dialog is shown even when `confirm_delete` is off, since the recoverability expectation would otherwise be silently violated.
 - If nothing is selected, the focused file is the target (unless it's `..`).
 
 **Trash execution**: each top-level item is trashed wholesale (`Vfs::trash_item`) and counts as one progress item — no scan walk. Failures raise the standard Skip/Retry prompt. The operations panel shows the kind as `trash` ("Moving N item(s) to Trash").
 
-**Permanent delete strategies** (tried in order):
-1. **Fast tree removal**: If the VFS supports atomic `remove_tree()`, deletes the entire tree in one call.
-2. **Manual tree walk**: Depth-first traversal — deletes files first, then directories bottom-up.
+**Permanent delete**: a depth-first walk deletes files first, then directories bottom-up. (`Vfs::remove_tree`, deleting a whole tree in one call, would be used where a VFS offers it; none does today.)
 
-**Mount points stay** (`rm --one-file-system`): the walk compares each directory's `device_id` with its parent's, so a filesystem mounted under the selection is recognized as such — bind mounts share their source's device and are not, btrfs subvolumes have their own and are. By default the walk stays out: the mount point's contents are left alone and a Skip-only `MountPoint` issue says so, its Details naming the option below (apply-to-all silences the rest). **Descend into mount points**, in the confirmation dialog's "More options" fold, walks in and deletes the contents. Either way the mount point directory itself is never removed (it cannot be while mounted) and neither is the chain of directories above it, so the operation ends clean rather than in a cascade of "busy" and "not empty" issues; a selected directory that is itself a mount point is emptied and left standing. The tickbox is not remembered between dialogs, and it is unreachable with confirmations off, so an unconfirmed delete always stays put. Only the local filesystem reports devices (in a remote session, the agent's), so nothing is ever a mount point on SFTP, S3 or inside archives; on Windows junctions and volume mount points are reparse points, which the walk never follows.
+**Mount points stay** (`rm --one-file-system`): the walk compares each directory's `device_id` with its parent's, so a filesystem mounted under the selection is recognized as such — bind mounts share their source's device and are not, btrfs subvolumes have their own and are. By default the walk stays out: the mount point's contents are left alone and a Skip-only `MountPoint` issue says so, its Details naming the option below (apply-to-all silences the rest). **Descend into mount points**, in the "More options" fold of the permanent-delete confirmation (and of the trash-unavailable one), walks in and deletes the contents. The Move to Trash confirmation has no fold, so choosing Delete Permanently there never descends. Either way the mount point directory itself is never removed (it cannot be while mounted) and neither is the chain of directories above it, so the operation ends clean rather than in a cascade of "busy" and "not empty" issues; a selected directory that is itself a mount point is emptied and left standing. The tickbox is not remembered between dialogs, and it is unreachable with confirmations off, so an unconfirmed delete always stays put. Only the local filesystem reports devices (in a remote session, the agent's), so nothing is ever a mount point on SFTP, S3 or inside archives; on Windows junctions and volume mount points are reparse points, which the walk never follows.
 
 ### Copy (F5)
 
 Opens a modal dialog with:
 
-- **Destination path**: static label showing the other pane's directory (not an input — the destination is always the other pane).
-- **Summary**: Shows the filename (single file) or "N items" (multiple selection).
-- **New name** field (single item only, copy and move): pre-filled with the source's leaf name; edit it to land under a different name in the destination (`rename_to` on the operation — same-VFS moves rename directly to the new name, and the copy fallback plans the tree under it). Left unchanged it sends nothing. Also names the symlink when "Create symbolic link" is checked. Empty or separator-containing input greys out the primary button, since the value becomes a single leaf under the destination. *Which* characters separate comes from the destination's `PathStyle` (`name_separators` on the modal payload), not from the frontend: `\` is rejected on a Windows-styled destination and accepted on a Unix one, where it is an ordinary filename character.
+- **The prompt** names what goes where — the destination is always the other pane's directory. For several items it reads "Copy **N items** into **<destination>**"; for one it labels the New name field, "Copy **<name>** as:", with "in **<destination>**" beneath it.
+- **New name** field (single item only, copy and move): pre-filled with the source's leaf name and selected up to its extension, as in Rename (a directory's name whole); edit it to land under a different name in the destination (`rename_to` on the operation — same-VFS moves rename directly to the new name, and the copy fallback plans the tree under it). Left unchanged it sends nothing. Also names the symlink when "Create symbolic link" is checked. Empty or separator-containing input greys out the primary button, since the value becomes a single leaf under the destination. *Which* characters separate comes from the destination's `PathStyle` (`name_separators` on the modal payload), not from the frontend: `\` is rejected on a Windows-styled destination and accepted on a Unix one, where it is an ordinary filename character.
 - **Options** (checkboxes):
-  - **Create symbolic link** — only available for single-file copies. Creates a symlink at the destination pointing to the source. Disables the other options when checked.
+  - **Create symbolic link** — offered when copying a single item, file or folder. Creates a symlink at the destination pointing to the source's absolute path on its filesystem. Disables the other options when checked. There is no conflict prompt: if the name is taken, the operation fails.
   - **Preserve timestamps** — modification and access times.
   - **Preserve permissions** (default on) — Unix mode bits.
   - **More copy options** ("More move options" for a move; collapsed section, keyboard-reachable like any other control; opens expanded when a remembered toggle inside it differs from its default (extended attributes default on for macOS, streams for macOS and Windows), so a sticky choice is never hidden):
     - **Existing files**: Ask (default), or answer every file conflict up front with any answer the prompt offers (see Issue resolution) — the same as giving it with "apply to all" at the first prompt.
     - **Existing folders**: **Merge** (default) — copy into it, keeping what only the destination has; **Replace** — put the source in its place; **Ask** — Merge / Replace / Skip per folder. Not remembered, like Existing files. A *package* in the way (see below) is not a folder to this setting but a file to Existing files.
-    - **Preserve owner** and **Preserve group** (separate toggles), with **Match accounts by** numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
+    - **Preserve owner** and **Preserve group** (separate toggles), with **Match accounts by** (shown once either is ticked) numeric ID (native identity on Windows: the security-descriptor owner) or account name resolved on the destination.
     - **Preserve extended attributes** (user xattrs; ACL and resource-fork xattrs are excluded because they have their own toggles). On by default on macOS, as Finder and `cp` keep them: without them a copy loses Finder tags and colour labels, the quarantine flag (so a copied download would skip Gatekeeper's first-open check), and the signatures of signed scripts — including an app whose executable is a script, which then reports as damaged. Off on Linux, where `cp` keeps them only with `-a` and they are mostly security labels, and on Windows, which has none to read: a Windows file has nothing to carry, while one copied *to* Windows with extended attributes still raises "Cannot preserve".
     - **Preserve access control lists** — Linux POSIX ACLs, macOS extended ACLs, Windows DACLs. Carried opaquely in the source platform's encoding; only a destination of the same platform can apply them.
     - **Preserve alternate streams and resource forks** — macOS `..namedfork/rsrc`, NTFS `:stream:$DATA`; streamed like file contents. On by default on macOS and Windows (as Finder and Explorer keep them — Windows' Mark of the Web is the `Zone.Identifier` stream), off on Linux. Resource forks are legacy (signed apps can't have them); without them custom icons, Mac OS 9-era files and old aliases lose what's in the fork.
@@ -570,7 +590,7 @@ Opens a modal dialog with:
     - **Apply source attributes to existing directories** — merged directories otherwise keep their own mode/times/owner.
     - **Stay on one filesystem** — rsync's `-x`: a mount point under the selection is copied as an empty directory. Off by default, since a backup of a tree with a volume mounted under it usually wants the volume too. A move's copy half follows the same rule, and its clean-up pass never removes a mount point or the directories above it (see Delete).
     - **Symbolic links**: copy the links (default) or copy their targets (copy only; the walker resolves links on the FS-owning side and skips cycles with an issue).
-    - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3), and for an S3 destination a **Storage class** and **Object access** canned ACL.
+    - **Object store group** (shown when either side is S3): **Preserve object metadata and content headers**, **Preserve object tags**, **Preserve object access grants** (opt-in — grants are not carried by default, even S3→S3; hidden while a canned ACL is chosen, which replaces them), and for an S3 destination a **Storage class** and **Object access** canned ACL.
   - **Sticky toggles** (`state.json` `copy_move.*`, the `CopyMoveDefaults` struct): only the "preserve the source's X" toggles and the match-accounts-by switch are remembered, and only where they differ from their default — one left at its default is stored as unset, so it follows the default if that changes (extended attributes and streams default by platform). Link modes, storage class, canned ACL, "apply source attributes to existing directories", "stay on one filesystem" and the existing-files and existing-folders answers reset every time — each changes what gets written beyond a faithful copy or who can read it.
 - **Pack into archive…** button (copy only): swaps the dialog for Pack to Archive over the same selection.
 
@@ -601,7 +621,7 @@ Opens a modal dialog with:
 
 **No download marks**: a file Newt brings onto this computer — copied from S3, SFTP or a remote session, extracted from an archive or disc image, or downloaded to open in an application — gets no macOS quarantine flag (`com.apple.quarantine`) and no Windows Mark of the Web (the `Zone.Identifier` stream), so Gatekeeper and SmartScreen don't treat it as downloaded. That is deliberate: Newt is a file manager moving files the user chose, like `cp`, `scp` or `tar`, not a browser. A copy between local folders keeps whatever marks the source has, through **Preserve extended attributes** (macOS) and **Preserve alternate streams** (Windows).
 
-**Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for single files.
+**Symlink handling**: With "Create symbolic link" checked, creates a symlink directly (no file content copied). Only available for a single item.
 
 **Positioned reads everywhere**: `vfs::open_read_at` hands out a backend's own positioned-read handle, or one over `read_range` for a VFS without them (archive and disc mounts, whose entries never change under a reader). Everything that reads through handles — the viewer's file server, so media plays from inside archives; nested mounts, so a tar inside a zip indexes; the agent-side `OPEN_READ_AT` dispatch — goes through it.
 
@@ -626,8 +646,8 @@ Packs the active pane's selection into a new archive in the other pane's directo
 
 Opens a modal dialog with:
 
-- **Format tab bar**: `zip`, `7z`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`. Switching formats swaps the extension on the name field.
-- **Archive name** (auto-focused, stem pre-selected): defaults to the single selection's stem, or the containing directory's name for multi-selections. Empty or separator-containing input greys out the primary button — the archive is a single leaf in the destination, so to write it into a subdirectory you navigate the other pane there. Which characters separate comes from the destination's `PathStyle` (`name_separators`, shared with the Copy/Move dialog), so `\` blocks on a Windows-styled destination and is a legal name character on a Unix one.
+- **Format tab bar**: `zip`, `7z`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`, opening on `archives.default_format` (`zip` on Windows, `tar.zst` elsewhere). Switching formats swaps the extension on the name field.
+- **Archive name** (auto-focused, stem pre-selected): defaults to the single selection's name minus its last extension (`foo.tar.gz` gives `foo.tar`, a folder `my.dir` gives `my`), or the containing directory's name for multi-selections (`archive` at the root of a filesystem). Empty or separator-containing input greys out the primary button — the archive is a single leaf in the destination, so to write it into a subdirectory you navigate the other pane there. Which characters separate comes from the destination's `PathStyle` (`name_separators`, shared with the Copy/Move dialog), so `\` blocks on a Windows-styled destination and is a legal name character on a Unix one.
 - **Destination** display (read-only, the other pane's directory).
 - **Compression level** (per-format, seeded from the `[archives]` preferences): gzip/xz/deflate/LZMA2 0–9, zstd 1–22; zip and 7z level 0 store entries uncompressed. Hidden for plain tar. Each format remembers its own level while the dialog is open.
 - **Preserve symlinks** (default on, seeded from preferences): stores symlinks as symlink entries. When off, symlinks are followed — symlinked files are stored as regular files, symlinked directories are descended into (with cycle detection; a cycle raises a skip prompt).
@@ -641,30 +661,31 @@ Opens a modal dialog with:
 
 **Execution**:
 
-1. **Planning phase**: same recursive scan as Copy (live "Scanning…" counts, skip/retry on unreadable subdirectories). The destination archive itself is excluded from the walk (overwriting an archive that sits inside the selection doesn't pack its stale self). Duplicate top-level names across sources fail up front rather than silently colliding inside the archive.
-2. **Conflict detection**: if the destination file exists, offers Skip (cancels the operation — single artifact) / Overwrite. An old archive among the sources is replaced, not packed into the new one; packing a file into itself alone (`foo.zip` as `foo.zip`, or `FOO.zip` on a case-insensitive volume) fails instead, since Overwrite would only empty it. A destination that is a symlink is replaced by the archive, not written through to its target. A destination that can't be looked at (permission denied, a dropped connection) fails the operation rather than being taken as absent.
+1. **Planning phase**: same recursive scan as Copy (live "Scanning…" counts, skip/retry on unreadable subdirectories), except that it doesn't stop at mount points. All sources must be on one filesystem ("all sources must be on the same VFS" — this matters for search results spanning mounts). The destination archive itself is excluded from the walk (overwriting an archive that sits inside the selection doesn't pack its stale self). Duplicate top-level names across sources fail up front rather than silently colliding inside the archive.
+2. **Conflict detection**: if the destination file exists, offers Skip (cancels the operation — single artifact) / Overwrite. An old archive among the sources is replaced, not packed into the new one; packing a file into itself alone (`foo.zip` as `foo.zip`, or `FOO.zip` on a case-insensitive volume) fails instead, since Overwrite would only empty it. A destination that is a symlink is replaced by the archive, not written through to its target; one that is a directory fails the operation ("destination is a directory"). A destination that can't be looked at (permission denied, a dropped connection) fails the operation rather than being taken as absent.
 3. **Per-entry streaming**: sources are opened *before* their header is committed, so open failures offer Skip/Retry cleanly. A read error mid-entry finalizes the entry as truncated (tar zero-pads to the declared size) and offers Skip only — the stream can't rewind. Files that grow or shrink between scan and pack are truncated/padded with a logged warning, matching GNU tar's "file changed as we read it" spirit.
 4. **Failure/cancel cleanup**: the partial archive is removed best-effort; an S3 multipart upload is aborted (also on drop — writers discarded mid-stream no longer leak uploads).
 5. **Progress**: bytes count source bytes read, so the bar tracks the scanned totals regardless of compression ratio.
 
 The Copy (F5) dialog has a **"Pack into archive…"** button that swaps it for this dialog over the same selection.
 
-Hardlinks are not detectable through the VFS surface and are archived as independent file copies.
+Hard links are archived as independent file copies.
 
 ### Properties (Alt+Enter)
 
 Modal dialog showing file metadata. Supports single files and multi-file selections. The Unix permission/ownership editor appears only where the filesystem can change metadata and the entries have Unix modes — not on S3, in archives, or for local Windows files; VFSes with extended properties (S3) still get their own editable sheet groups (see below).
 
-**Information displayed**:
+**Information displayed** (Name, Type, the link target and the timestamps for a single entry only):
 - Name
 - Size (human-readable + exact byte count)
 - Size on disk (allocated bytes, `st_blocks`-based) — shown when the VFS reports it (local Unix files); diverges from Size for sparse files. Multi-select sums it the same way as Size.
 - Type (file / directory / symlink)
 - Symlink target path (if applicable)
-- Owner (name and numeric ID when available, e.g., "root (0)")
-- Group (name and numeric ID)
-- Mode (Unix permissions)
-- Modified, Accessed, Created timestamps (locale-formatted)
+- Owner (name and numeric ID when available, e.g., "root (0)"; "(mixed)" across a selection that differs)
+- Group (name and numeric ID; likewise)
+- Modified, Accessed, Created timestamps (in `appearance.date_format` / `time_format`, else the locale's)
+
+The mode shows only in the permission editor, so where metadata can't be changed (archives, S3) it isn't shown.
 - Hard links, Inode, Device (single selection, Unix filesystems only — rows hidden when the VFS doesn't report them)
 
 **Permission editor** (when VFS supports metadata changes):
@@ -679,35 +700,36 @@ Modal dialog showing file metadata. Supports single files and multi-file selecti
 
 **Symlinks**: a permissions change never reaches a link's target — a link's own mode is left alone (it is fixed on Linux and unused elsewhere), whether the link was selected or met in a recursive walk; ownership changes apply to the link itself (`lchown`).
 
-**Recursive** checkbox (for directories): Applies permissions and ownership changes to all contents. The walk stays out of filesystems mounted under the selection (a `chmod -R` that runs onto a mounted volume rewrites the whole volume's permissions), raising the same Skip-only `MountPoint` issue as Delete; **Descend into mount points**, shown beside it once Recursive is ticked and forgotten when the dialog closes, walks in. Applies to sheet edits too.
+**Apply recursively** checkbox (for a directory or any multi-selection): Applies permissions and ownership changes to all contents. Ticked with nothing edited, Apply still applies the mode bits the dialog shows (the determinate ones) to the whole tree. The walk stays out of filesystems mounted under the selection (a `chmod -R` that runs onto a mounted volume rewrites the whole volume's permissions), raising the same Skip-only `MountPoint` issue as Delete; **Descend into mount points**, shown beside it once Apply recursively is ticked and forgotten when the dialog closes, walks in. Applies to sheet edits too. Where nothing can be edited, the dialog's only button is Close.
 
-**Extended properties (property sheets)**: VFSes that advertise `has_extended_properties` contribute extra editable groups below the generic metadata. The sheet is schema-driven — the backend describes fields (text, choice, key-value map, grant list) and one generic renderer edits them all; no per-VFS frontend code. Sheets load after the dialog opens (loading placeholder → filled in place), so Alt+Enter never stalls on network calls. Multi-select folds per-field: equal values show, differing ones show as mixed/indeterminate and are left untouched unless edited; grant lists fold whole (differing lists offer an explicit "replace on all"). Applying goes through the operations engine (progress, per-item retry/skip, cancel) as an `ApplyProperties` operation; the **Recursive** checkbox extends to sheet edits (per-prefix apply on S3, skipping synthetic directory entries).
+**Extended properties (property sheets)**: VFSes that advertise `has_extended_properties` contribute extra editable groups below the generic metadata. The sheet is schema-driven — the backend describes fields (text, choice, key-value map, grant list) and one generic renderer edits them all; no per-VFS frontend code. Sheets load after the dialog opens (loading placeholder → filled in place), so Alt+Enter never stalls on network calls. Multi-select folds per-field: equal values show, differing ones show as mixed/indeterminate and are left untouched unless edited; grant lists fold whole (differing lists offer an explicit "replace on all"). Applying goes through the operations engine (progress, per-item retry/skip, cancel) as an `ApplyProperties` operation; the **Apply recursively** checkbox extends to sheet edits (per-prefix apply on S3, skipping synthetic directory entries).
 
 Today only S3 implements a sheet:
 - **S3 metadata** group: user metadata (`x-amz-meta-*`) as an editable key-value map (add/remove/edit keys), storage class, Content-Type, Cache-Control. Edits rewrite the object in place (CopyObject with metadata replacement) — untouched system headers and any non-default ACL are preserved across the rewrite; the dialog shows a hint that this can be slow for large objects. The rewrite fails on objects over 5 GiB (CopyObject cap — would need multipart copy) and on unrestored Glacier-class objects; both surface as per-item operation issues.
 - **S3 access control** group: the grant list (grantee user ID / group URI / email × permission) and a write-only canned ACL selector (S3 reads back grants, not the canned value). Omitted gracefully when `s3:GetObjectAcl` is denied — the metadata group still loads.
 
-**Directory Properties**: Available from the pane context menu (right-click empty space). Shows metadata for the current directory itself.
+**Directory Properties** (`directory_properties`, unbound; palette, and the context menu on empty space and the path bar): Shows metadata for the current directory itself.
 
 ### Clipboard Operations
 
 Copy, cut and paste files through the system clipboard, within Newt and to and from other apps — Finder, Explorer, Nautilus, Nemo, Thunar, Caja, Dolphin, PCManFM-Qt, mail and chat apps.
 
 - **Copy to Clipboard** (Mod+C, also Ctrl+Ins off macOS) and **Cut to Clipboard** (Mod+X) put the selection (or the focused entry) on the clipboard: as files, for other apps, when they're on this computer; as their paths, as text, always — so a text editor or a terminal gets the paths. Cut files show faded in the panes listing them until they're pasted or something else is copied, anywhere.
-- **Paste** (Mod+V, also Shift+Ins off macOS) copies what's on the clipboard into the pane's current folder — never into the folder under the cursor — and moves it after a Cut. It starts at once, like a drop, with the Copy dialog's stock options (the platform's defaults, not the toggles F5 remembers); clashes ask as in any copy. A cut pastes once: the clipboard is emptied when the move finishes. Pasting a cut into the folder the files are in does nothing but use up the cut (files from elsewhere among them still move); pasting a copy there says a file can't be copied onto itself.
+- **Paste** (Mod+V, also Shift+Ins off macOS) copies what's on the clipboard into the pane's current folder — never into the folder under the cursor — and moves it after a Cut. It starts at once, like a drop, with the Copy dialog's stock options (the platform's defaults, not the toggles F5 remembers); clashes ask as in any copy. A cut pastes once: the clipboard is emptied when the move finishes — except on Linux after a cut made in another application, since Newt can only take off what it put there itself. Pasting a cut into the folder the files are in does nothing but use up the cut (files from elsewhere among them still move); pasting a copy there says a file can't be copied onto itself.
 - **Move Here** (⌥⌘V on macOS, unbound elsewhere) pastes as a move whatever was copied, as in Finder.
 - **Copy Path** (⌥⌘C on macOS, Ctrl+Shift+C elsewhere) puts only the paths on the clipboard, as text, so a chat or mail app pastes the path rather than attaching the files.
 - **Files that aren't on this computer** — on S3 or SFTP, in an archive, on a remote session's host — copy and paste within their window like any others, but reach other apps only as their paths: Finder or Explorer can't paste them.
 - **Between windows**, a copy arrives as it would from Finder: files on this computer paste (in a remote session, only one allowed access to this computer — otherwise Paste says so); other files arrive as their paths, and Paste goes there if this window can (a path on an S3 bucket it has mounted).
 - **macOS has no cut on the clipboard**: a Cut is known only to the window it was made in, where Paste moves. Finder or another window pastes it as a copy (⌥⌘V there moves it).
 - **When the clipboard holds no files**, Paste goes to the path it holds, as typing it into Go to would; with nothing usable on it, Paste does nothing.
+- **Formats**: on macOS one pasteboard item per file (`public.file-url`, the text on the first), with Finder's file-reference URLs resolved; on Windows `CF_HDROP` plus `Preferred DropEffect`, so an Explorer Cut pasted into Newt moves; on Linux (X11 and Wayland) `x-special/gnome-copied-files` (Nautilus, Nemo, Thunar), `x-special/mate-copied-files` (Caja), `text/uri-list` with `application/x-kde-cutselection` for a cut (Dolphin), and plain text. Only `file://` URIs are taken as files, so files copied from an `sftp://` location in a Linux file manager paste as their text.
 
 ### Operation Progress and Issue Resolution
 
-When a copy, move, rename, delete, or trash operation runs, it's tracked in the **Operations Panel**:
+Every operation — copy, move, rename and batch rename, delete and trash, pack, permission and property changes, user commands — is tracked in the **Operations Panel**:
 
 **Foreground modal** (default for new operations):
-- Large overlay showing operation kind, description, progress bar, percentage, the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
+- Large overlay showing operation kind, description, progress bar, a percentage for operations that move bytes (items done of the total for deletes, renames and permission changes), the current file being processed (relative path, not full destination path), live transfer speed, and estimated time remaining (ETA).
 - **Cancel** button (rightmost): Stops the operation. Partially copied files are left as-is.
 - **Background** button: Minimizes the operation to the compact panel, freeing the UI for other work.
 - **Esc** maps to Cancel, **click-outside** maps to Background. This is a deliberate asymmetry from the rest of the app where Esc and click-out are symmetric: the progress modal isn't a form being canceled — it's destructive work in flight, and Esc is the panic-cancel reflex (an accidental click-out cancelling a long copy is annoying-but-redoable; an accidental Esc backgrounding a runaway delete is silent destruction).
@@ -715,14 +737,15 @@ When a copy, move, rename, delete, or trash operation runs, it's tracked in the 
 
 **Background panel** (compact list):
 - Shows all backgrounded operations as a compact list.
-- Each operation shows: kind, description, progress bar, percentage.
+- Each operation shows: kind, description, progress bar, percentage (or items done), and once it ends Completed / Failed: … / Cancelled.
 - Cancel and Dismiss buttons per operation.
+- An operation waiting on an issue shows the issue's buttons and an **All** (apply to all) checkbox in its row, so it can be answered without bringing it forward; they aren't Tab stops, so focus stays in the pane.
 - **Click a backgrounded operation** to foreground it again (re-opens the modal).
 
-**Operation states**: Scanning → Running → Completed / Failed / Cancelled.
+**Operation states**: Scanning → Running (⇄ Waiting for input, while an issue is open) → Completed / Failed / Cancelled.
 - By default, Completed and Cancelled operations are automatically removed from the panel. Set the `behavior.keep_finished_operations` preference to keep them visible until dismissed.
 - Failed operations persist with an error message until dismissed.
-- The Close button in the foreground modal is available for all finished states (completed, cancelled, failed).
+- A finished operation in the foreground modal offers Close. With the default settings that is a failed one; a completed or cancelled one shows it only when kept (and brought back to the foreground).
 
 **Issue resolution** (file conflicts):
 When an operation encounters a conflict:
@@ -734,8 +757,14 @@ When an operation encounters a conflict:
 | File already exists | Skip, Overwrite; copy and move add Overwrite if newer / if size differs / if size or date differs |
 | Folder already exists | Merge, Replace, Skip |
 | Package already exists | as File already exists |
-| Permission denied | Skip, Retry |
-| Other I/O error | Skip, Retry |
+| Cannot preserve \<attribute\> | Retry, Skip |
+| Cannot replace directory with file (or the reverse) | Skip |
+| Skipped …: not a regular file | Skip |
+| Mount point left alone (Delete, recursive Properties) | Skip |
+| Symbolic link cycle | Skip |
+| Another renamed entry has the name (Batch Rename) | Skip |
+| Permission denied | Skip, Retry (where a retry can help) |
+| Other I/O error | Skip, Retry (where a retry can help) |
 
 - **Conditional overwrites** sit in a menu on the Overwrite button (its chevron half) and are decided per file from the two entries' size and modification time; no content is read. *If newer*: the source's time is later. *If size differs*: for destinations whose times say nothing (S3, copies made without "Preserve timestamps"). *If size or date differs*: rsync's quick check; a file matching on both is skipped. Times compare exactly, to the millisecond, so a copy to a filesystem with coarser times (DOS timestamps in zip and FAT, whole seconds over SFTP) differs from its source. An unknown size or time is never newer and always differs. Without "Preserve timestamps" a copy carries the time it was made, so it is newer than its source.
 - **"Apply to all" checkbox**: When checked, the chosen answer is applied to all subsequent issues of the same type within the same operation that offer it; a conditional answer is still decided per file. An issue that does not offer the sticky answer (a directory in the way after "Overwrite" for all) still prompts, while Skip covers it. The dialog's **Existing files** answer is this same sticky answer, set before the operation starts. "Already exists" I/O errors outside a conflict check are ordinary I/O errors and are not covered. Retry always applies only to the current attempt, regardless of the checkbox; another failure prompts again.
@@ -745,13 +774,13 @@ When an operation encounters a conflict:
 
 ## 5. File Viewer (F3)
 
-Opens in a separate window (1100×800 pixels). Identifies the file from its content and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
+Opens in a separate window (1100×800 by default; with `behavior.restore_window_geometry` the size last used, centred). Identifies the file from its content and selects the appropriate viewing mode. A FIFO, socket or device isn't opened — F3, F4, a link followed from a document and `newt view`/`newt edit` say it isn't a regular file, and Quick View shows nothing for one, as for a folder.
 
 ### Pre-warmed Windows
 
 Viewer windows are **pre-warmed** for instant opening. A hidden window is created in the background with all web content and static UI already loaded. When F3 is pressed, the pre-warmed window receives the file path via the existing `UpdatePublisher` state mechanism, attaches its menu bar, and is made visible — avoiding the WebKit startup and JavaScript initialization latency. A replacement pre-warmed window is spawned immediately in the background. Falls back to direct window creation if no pre-warmed window is available.
 
-Pre-warms are created only from the `init` command — i.e. after the main window's frontend has demonstrably booted — never during setup. Creating additional WebView2 windows while the main webview is still in its early composition phase intermittently wedged it into a permanently blank (white) window on Windows, at up to ~50% of Explorer launches on slow machines. Do not move prewarm creation back into the startup path.
+Pre-warms are created only from the `init` command — i.e. after the main window's frontend has demonstrably booted — never during setup. Creating additional WebView2 windows while the main webview is still in its early composition phase intermittently wedged it into a permanently blank (white) window on Windows, at up to ~50% of Explorer launches on slow machines.
 
 ### Mode Selection
 
@@ -767,8 +796,8 @@ The viewer has a **View** menu with radio buttons to manually switch between mod
 | Detected Type | Mode |
 |---------------|------|
 | `text/csv`, `text/tab-separated-values` (`.csv`, `.tsv`) | Table |
-| `text/markdown` (`.md`, `.markdown`) | Markdown |
-| `text/*`, `application/json`, `application/xml`, `application/javascript`, `application/typescript`, `application/x-sh`, `application/x-python`, `application/sql`, `application/x-yaml`, `application/toml`, `application/graphql`, `image/svg+xml`, anything ending in `+xml` or `+json` | Text |
+| `text/markdown`, `text/x-markdown` (`.md`, `.markdown`) | Markdown |
+| `text/*`, `application/json`, `application/xml`, `application/javascript`, `application/typescript`, `application/x-sh`, `application/x-python`, `application/sql`, `application/x-yaml`, `application/toml`, `application/graphql`, `application/xhtml+xml`, `application/ld+json`, the `x-` script types (Ruby, Perl, Lua, csh, PHP), anything ending in `+xml` or `+json` | Text |
 | An image the webview decodes (see above) | Image |
 | Audio the webview plays (see above) | Audio |
 | Video the webview plays (see above) | Video |
@@ -797,23 +826,23 @@ The status bar includes mode toggle buttons on the right side: the auto-detected
 - **Mouse drag**: Click and drag to select character ranges. Selection is character-granular (uses `caretRangeFromPoint`).
 - **Double-click**: Selects the word under the cursor.
 - **Shift+Click**: Extend selection from anchor to clicked position.
-- **Ctrl+A**: Select entire file.
+- **Mod+A**: Select entire file.
 - **Auto-scroll**: Dragging near top/bottom edges (20px margin) auto-scrolls.
 - **Escape**: Clears the selection. If there is no selection, closes the viewer.
 
-**Copy** (Ctrl+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`, decoded in the effective encoding). 10 MB copy size limit: a larger selection fails with an error rather than copying part of it.
+**Copy** (Mod+C): Copies selected text to clipboard via the Rust backend (`copy_viewer_range`, decoded in the effective encoding). 10 MB copy size limit: a larger selection fails with an error rather than copying part of it.
 
-**Select All** (Ctrl+A) selects to the end of the file, including the part not yet scanned for lines; nothing is read until it is copied. The status bar shows the selection's end as "end". For a file whose size isn't known up front (a `/proc` file, a pipe), it ends where the scan has reached.
+**Select All** (Mod+A) selects to the end of the file, including the part not yet scanned for lines; nothing is read until it is copied. The status bar shows the selection's end as "end". For a file whose size isn't known up front (a `/proc` file, a pipe), it ends where the scan has reached.
 
-**Search** (Ctrl+F): Opens a search bar at the bottom of the viewer.
+**Search** (Mod+F): Opens a search bar at the bottom of the viewer.
 - **Literal text search** (default) or **regex** (toggle with `.*` button).
 - **Enter**: Find next match from current position. Wraps around to start if at end of file.
 - **Shift+Enter**: Find from start of file.
 - Match is selected and scrolled into view (including horizontal scroll if needed).
-- Status indicator shows "Not found", "Wrapped", or error messages.
+- Status indicator shows "Not found", "Wrapped", "Invalid hex" (hex search) or error messages.
 - Search executes on the backend via `find_in_file` on the `Filesystem` trait — works for remote files too.
 
-**Go to Line** (Ctrl+G): Opens a bar with a line number input (1-based). Enter to jump, Escape to cancel.
+**Go to Line** (Mod+G): Opens a bar with a line number input (1-based). Enter to jump, Escape to cancel.
 
 **Context menu** (right-click): Copy, Select All, Go to Line...
 
@@ -824,14 +853,14 @@ The status bar includes mode toggle buttons on the right side: the auto-detected
 | Page Up/Down | Scroll one page |
 | Home | Jump to start of file |
 | End | Jump to end of file |
-| Ctrl+A | Select all |
-| Ctrl+C | Copy selection |
-| Ctrl+F | Open search |
-| Ctrl+G | Go to line |
+| Mod+A | Select all |
+| Mod+C | Copy selection |
+| Mod+F | Open search |
+| Mod+G | Go to line |
 | Escape | Clear selection / close search / close viewer |
 | F3 | Toggle mode |
 
-**Status bar**: `path/to/file.txt | Text | Line 42 / 1250+ | Sel: L10 C5–C20 (0x00A5–0x00B4, 15) | 125.4 KB`
+**Status bar**: `path/to/file.txt | Text | UTF-8 | Line 42 / 1250+ | Sel: L10 C5–C20 (000000A5–000000B4, 15 B) | 125.4 KB` — the encoding appears once it's been detected.
 
 The `+` after the line count indicates the file is still loading. Selection info shows line/column range with byte offsets and size.
 
@@ -842,7 +871,7 @@ A spreadsheet-style grid over delimited text. It streams like Text mode — the 
 - **Parsing**: RFC 4180, leniently: a `"` at the start of a field opens a quoted field that may hold delimiters and line breaks, with `""` for a quote; a stray quote mid-field is data, and text after a closing quote is kept (like Python's `csv`). `\r\n` and `\n` both end rows. Rows are found by a streaming scan of the raw chunks that carries quote state across chunk boundaries, extended as the view approaches the scanned end — so row counts show a `+` until the scan reaches the end of the file, and the scrollbar is estimated from the average row size meanwhile.
 - **Table menu** (per viewer window): **Delimiter** — *Auto-detect (…)*, Comma, Semicolon, Tab, Pipe; **First Row Is Header** — *Auto-detect (Yes/No)*, Yes, No; **Quoted Fields** (on by default; off splits on the delimiter and line breaks only, keeping quotes as data). Auto-detection reads the first chunk: the delimiter is the one that splits its rows most consistently into more than one field (the extension breaks ties — `.tsv`/`.tab` → Tab, otherwise Comma); a header is recognized the way Python's `csv.Sniffer.has_header` does, by columns of numbers or fixed-width values under a label that isn't one.
 - **Layout**: a header row (the first row's values, or spreadsheet letters A, B, … AA when there is no header) stays on top and a row-number gutter on the left while the grid scrolls both ways; only the visible rows and columns are rendered. Numeric cells are right-aligned, and a line break inside a cell shows as `↵`. Column widths start fitted to the first chunk's values (capped at 300 px); drag a header's right edge to resize, double-click it to fit the column to the visible rows (up to 480 px).
-- **Selection**: a cell cursor with a rectangular range. The cursor starts on A1 (once the first data row is in; a table with no data rows — an empty file, a header on its own — has no cursor and its status shows `0 rows × N cols`). Click a cell, drag or Shift+click to extend; click a column header to select the column (drag or Shift+click for several), a row number for the row, the corner for everything. Keys: arrows move (Shift extends), Tab and Shift+Tab move right and left, Mod+arrows jump to the edge (Mod+Down scans to the end), Page Up/Down move a page, Home/End go to the first/last column, Mod+Home/End to the first/last cell; Escape shrinks the selection to the cursor, then closes the viewer.
+- **Selection**: a cell cursor with a rectangular range. The cursor starts on A1 (once the first data row is in; a table with no data rows — an empty file, a header on its own — has no cursor and its status shows `0 rows × N cols`). Click a cell, drag or Shift+click to extend; click a column header to select the column (drag or Shift+click for several), a row number for the row, the corner for everything. Keys: arrows move (Shift extends), Tab and Shift+Tab move right and left, Mod+arrows jump to the edge (Mod+Down, like Mod+End, scans to the end), Page Up/Down move a page, Home/End go to the first/last column, Mod+Home/End to the first/last cell; Escape shrinks the selection to the cursor, then closes the viewer.
 - **Select mode**, for copying part of a cell: double-click a cell, or press **Enter** or **F2** (Google Sheets' and Excel's keys for entering a cell), and it becomes a read-only text box showing the full value with its real line breaks. The box grows over its neighbours to fit the value: wider up to 640 px, then taller as long lines wrap (visually only — a copy keeps the text as it is), up to 12 lines, then it scrolls. The value starts out selected; the caret keys move and extend the selection as in any text field, Home and End going to the start and end of the value (typing, pasting and deleting do nothing), Mod+A selects the cell's text again, and Mod+C (or Edit ▸ Copy, or the context menu) copies the selected text — the whole value when nothing is selected. Escape or Enter returns to the cell cursor, Tab and Shift+Tab to the next and previous cell; clicking elsewhere in the grid leaves it too, and so does scrolling the cell out of view. The status bar names the cell while select mode is on.
 - **Copy** (Mod+C, Edit ▸ Copy): the selected cells as TSV, which pastes into Excel, Numbers and Google Sheets as cells — a field holding a tab, quote or line break is quoted. The context menu adds **Copy as CSV**. Copying whole columns includes their header. Up to 10 MB of the file per copy, like Text mode.
 - **Search** (Mod+F) is the text viewer's search bar, run over the raw file on the backend (remote files included); a hit selects the cell it falls in (a hit in the header selects its column). **Go to Row** (Mod+G, Edit ▸ Go to Row) jumps to a data row.
@@ -852,7 +881,7 @@ A spreadsheet-style grid over delimited text. It streams like Text mode — the 
 
 Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, footnotes) with `comrak`, styled after GitHub's and following the app's light/dark theme. Parsing runs off the UI thread, and a long document fills in from the top a few blocks per frame, so the window — and the file list beside Quick View — stays responsive while it does. Files over 4 MB open in Text mode instead.
 
-- **Safety**: the rendered HTML, raw HTML in the document included, is parsed in Rust and kept only as far as an allowlist goes: ordinary text, list, table and heading elements, `<details>`, footnote sections and read-only task-list checkboxes, each with a few attributes (links, image sources and sizes, table spans and alignment, `id`, `title`). An element that isn't listed gives way to its text; scripts, styles, frames, embedded objects, form controls, SVG and MathML are dropped with their content, and no `style`, `class` or event-handler attribute survives. Links keep only `http(s):`, `mailto:` and relative targets, and images only `data:image/` and relative ones — nothing remote. The page receives the result as a tree of elements and text that it builds with the DOM API — never as markup to parse — inside a shadow root, which keeps the document's styles and ids from touching the viewer's own; the viewer's CSP forbids inline scripts and inline event handlers besides. The CSP also keeps remote content out: images load only from the file itself (relative paths, served through the viewer's file server — so they work in remote sessions and archives too) or `data:` URIs, so README badges and tracking pixels don't load. A relative image is resolved (in Rust, against the document's folder) and kept only while it stays on the document's own volume; so is a relative link followed into the viewer. On Windows a path off the volume — root-relative like `/server/share/x.png`, or climbing past the drive with `..` — would name a network share, and merely loading it would hand the user's Windows credentials to that server. On macOS, Linux and every network filesystem there is one root, so nothing changes there.
+- **Safety**: the rendered HTML, raw HTML in the document included, is parsed in Rust and kept only as far as an allowlist goes: ordinary text, list, table and heading elements, `<details>`, footnote sections and read-only task-list checkboxes, each with a few attributes (links, image sources, sizes and alt text, table spans and alignment, a list's start, an open `<details>`, `id`, `title`). An element that isn't listed gives way to its text; scripts, styles, frames, embedded objects, `select`/`option`/`textarea`, inputs other than task checkboxes, SVG and MathML are dropped with their content (a `button`, `form` or `label` gives way to its text), and no `style`, `class` or event-handler attribute survives. Links keep only `http(s):`, `mailto:` and relative targets, and images only `data:image/` and relative ones — nothing remote. The page receives the result as a tree of elements and text that it builds with the DOM API — never as markup to parse — inside a shadow root, which keeps the document's styles and ids from touching the viewer's own; the viewer's CSP forbids inline scripts and inline event handlers besides. The CSP also keeps remote content out: images load only from the file itself (relative paths, served through the viewer's file server — so they work in remote sessions and archives too) or `data:` URIs, so README badges and tracking pixels don't load. A relative image is resolved (in Rust, against the document's folder) and kept only while it stays on the document's own volume; so is a relative link followed into the viewer. On Windows a path off the volume — root-relative like `/server/share/x.png`, or climbing past the drive with `..` — would name a network share, and merely loading it would hand the user's Windows credentials to that server. On macOS, Linux and every network filesystem there is one root, so nothing changes there.
 - **Links**: `http(s):` and `mailto:` links open in the system browser; a relative link opens that file in the same viewer window (in whatever mode suits it); `#anchor` links scroll to the heading with GitHub's anchor for it, to a footnote, or to an element the document's raw HTML gives an `id` (prefixed `user-content-`, as on GitHub). Links with any other scheme do nothing — the app's URL opener refuses anything but web and mail links, since it would otherwise launch local files and programs.
 - The document scrolls with the arrow and page keys, and the viewer's keys (Escape, F3, …) work as in any mode; text selection and Mod+C work as in a web page. Right-clicking the document offers Copy (with a selection) and Select All, in the viewer window and in Quick View alike. It follows theme changes live.
 
@@ -868,24 +897,24 @@ Renders GitHub-flavored Markdown (tables, task lists, strikethrough, autolinks, 
 - **Byte-granular**: Click in the hex or ASCII column to select a byte. The clicked column becomes the "active" column (blue highlight); the other column shows the same selection in grey.
 - **Mouse drag**: Drag across bytes to select a range.
 - **Shift+Click**: Extend selection to the clicked byte.
-- **Ctrl+A**: Select all bytes.
+- **Mod+A**: Select all bytes.
 - **Auto-scroll**: Dragging near edges auto-scrolls.
-- **Escape**: Clears selection.
+- **Escape**: Clears selection; with none, closes the viewer.
 
-**Copy** (Ctrl+C): Copies selection using the active column's format.
+**Copy** (Mod+C): Copies selection using the active column's format.
 
-**Context menu** (right-click): Copy as Hex (space-separated uppercase, e.g., `4D 5A 90 00`), Copy as Text (UTF-8), Select All, Go to Offset...
+**Context menu** (right-click): Copy as Hex (space-separated uppercase, e.g., `4D 5A 90 00`), Copy as Text (printable ASCII, other bytes as `.`, like the ASCII column), Select All, Go to Offset...
 
-**Search** (Ctrl+F): Same search bar as Text mode, plus a **Hex toggle** button.
+**Search** (Mod+F): Same search bar as Text mode, plus a **Hex toggle** button, already on when the bar opens in Hex mode. Regex isn't available while it is on, and switching it resets regex.
 - **Hex mode**: Input parsed as hex bytes (e.g., `4D 5A` or `4d5a`).
 - **Literal text** and **regex** modes also available.
 - Matches are selected as byte ranges in the hex view.
 
-**Go to Offset** (Ctrl+G): Opens a bar with label "Go to offset (hex)". Input is parsed as hexadecimal (e.g., `1A0` jumps to byte 416).
+**Go to Offset** (Mod+G): Opens a bar with label "Go to offset (hex)". Input is parsed as hexadecimal (e.g., `1A0` jumps to byte 416).
 
-**Keyboard**: Same as Text mode (Ctrl+A, Ctrl+C, Ctrl+F, Ctrl+G, arrows, Page Up/Down, Home, End, Escape, F3).
+**Keyboard**: Same as Text mode (Mod+A, Mod+C, Mod+F, Mod+G, arrows, Page Up/Down, Home, End, Escape, F3).
 
-**Status bar**: `path/to/file.bin | Hex | Offset 00000A20 / 000FFFFF | Sel: 00000A20–00000A2F (16) | 1.0 MB`
+**Status bar**: `path/to/file.bin | Hex | Offset 00000A20 / 00100000 | Sel: 00000A20–00000A2F (16 B) | 1.0 MB` — the second offset is the file's size, with a `+` while its end hasn't been found.
 
 ### Structure Mode
 
@@ -904,8 +933,8 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
   - **Timestamps** are shown as the file records them, never converted; the details add the local time for one whose instant is known, the zone (UTC, the offset the file recorded, or a local wall clock in a zone the file doesn't name), the resolution (a day down to 100 ns for FILETIME) and the Unix time.
   - **Sizes** show the exact count and its approximation (`8 × 512 bytes (4 KiB)`), **durations** exact time (`1.48 s (133200/90000 s)`), with the bytes, blocks and ticks in the details.
   - **GUIDs** show the byte order they're stored in (Microsoft's or RFC 4122), the UUID version, and when a time-based one (v1, v6, v7) was made. **Addresses** (IPv4, IPv6, MAC, EUI-64) show their family and scope (private, link-local, multicast…; for MACs, unicast or multicast and globally unique or locally administered). Strings show their length in characters, byte strings in bytes.
-- **Keyboard**: in the tree, Up/Down, PgUp/PgDn and Home/End move the selection; Right expands a field, or moves into it when expanded; Left collapses it, or moves to its parent; Enter or Space toggles it, or loads more on a **Show more** line. **Tab** moves between the tree and the bytes (when shown). In the bytes, the arrow keys, PgUp/PgDn and Home/End (Mod+Home/End: the start/end of the stream) move a byte cursor, Shift extends a selection, and **Enter** selects the innermost field holding the byte under the cursor — expanding the tree down to it. Clicking a byte does the same. The way down follows decoded streams (a byte of a decompressed member is found through the node holding the compressed data) and parts listed away from their bytes (a ZIP member's data, under the Central Directory), searching a few thousand nodes at most where no child holds the byte; it shows "Working…" and stops on Escape like any load. A byte no field of its stream holds leaves the selection, and the stream shown, where they are.
-- **Copying and saving**: **Mod+C** copies the selected field as `Name: value — summary` (or, in the bytes, the selected bytes as hex); **Mod+Shift+C** just its value (a string unescaped, a checksum's stored value alone). The context menu (also from the keyboard's menu key) adds **Copy Tree**, the tree from the selected field down as shown (`▾`/`▸` for expanded and collapsed fields, two spaces a level, each line's bytes after it as `[0xoffset+0xlength]`, problems below it as `! …`, and `… (n shown of m)` where a list continues — a filtered tree copies filtered), and **Copy Bytes ›** as hex, text (printable ASCII) or Base64 (Copy Tree and Copy Bytes as Hex can be bound in the Keybindings tab). **Save Bytes As…** (**Mod+S**) writes the field's bytes — or, in the bytes pane, the selected bytes — to a file chosen in the system save dialog, suggesting the name of the file the field holds (a member's or a decompressed stream's) or the field's own; it reads a step at a time, so a large decompressed member saves without loading at once, shows how far it has got ("Saving 42%") and stops on Escape, leaving no partial file. In a remote session the file lands on this machine. The menu then offers **Go to Target** (Mod+Enter) for a field that points somewhere and **Go to Offset** (Mod+G), which takes a hex offset and selects the field there. Mod+A selects the selected field's bytes. The bytes pane has its own context menu: **Copy as Hex**, **Copy as Text** (the selected bytes, else the selected field's) and **Go to Offset**.
+- **Keyboard**: in the tree, Up/Down, PgUp/PgDn and Home/End move the selection; Right expands a field, or moves into it when expanded; Left collapses it, or moves to its parent; Enter or Space toggles it, or loads more on a **Show more** line. **Tab** moves between the tree and the bytes (when shown). In the bytes, the arrow keys, PgUp/PgDn and Home/End (Mod+Home/End: the start/end of the stream) move a byte cursor, Shift extends a selection (Escape clears it first), and **Enter** selects the innermost field holding the byte under the cursor — expanding the tree down to it. Clicking a byte does the same. The way down follows decoded streams (a byte of a decompressed member is found through the node holding the compressed data) and parts listed away from their bytes (a ZIP member's data, under the Central Directory), searching a few thousand nodes at most where no child holds the byte; it shows "Working…" and stops on Escape like any load. A byte no field of its stream holds leaves the selection, and the stream shown, where they are.
+- **Copying and saving**: **Mod+C** copies the selected field as `Name: value — summary` (or, in the bytes, the selected bytes as hex); **Mod+Shift+C** just its value (a string unescaped, a checksum's stored value alone). The context menu (also from the keyboard's menu key) has **Copy** and **Copy Value**, then **Copy Tree**, the tree from the selected field down as shown (`▾`/`▸` for expanded and collapsed fields, two spaces a level, each line's bytes after it as `[0xoffset+0xlength]`, problems below it as `! …`, and `… (n shown of m)` where a list continues — a filtered tree copies filtered), and **Copy Bytes ›** as hex, text (printable ASCII) or Base64 (Copy Tree and Copy Bytes as Hex can be bound in the Keybindings tab). **Save Bytes As…** (**Mod+S**) writes the field's bytes — or, in the bytes pane, the selected bytes — to a file chosen in the system save dialog, suggesting the name of the file the field holds (a member's or a decompressed stream's) or the field's own; it reads a step at a time, so a large decompressed member saves without loading at once, shows how far it has got ("Saving 42%") and stops on Escape, leaving no partial file. In a remote session the file lands on this machine. The menu then offers **Go to Target** (Mod+Enter) for a field that points somewhere, **Go to Offset** (Mod+G), which takes a hex offset and selects the field there, and the **Bytes Panel** toggle. Quick View leaves out Save Bytes As… and Dissect As. Mod+A selects the selected field's bytes. The bytes pane has its own context menu: **Copy as Hex**, **Copy as Text** (the selected bytes, else the selected field's) and **Go to Offset**.
 - **Encrypted content** (an encrypted archive's entries, a password-protected document or key file): a bar at the bottom asks for the password, naming what it unlocks. **Enter** unlocks (an empty password counts, since some formats default to one), **Escape** skips, leaving the encrypted content as an unsupported field. A wrong password asks again, up to three times. A field waiting for one carries a lock; Enter on it asks again. One answer serves everything it unlocks, e.g. every entry of an archive. Answers last only as long as the dissection and are never stored. Quick View doesn't ask: a locked field stays locked until the file is opened in the viewer window.
 - **Filter** (**/**, numpad **/** too): a box floats in the tree's corner, as in a pane, and narrows the tree to the lines matching a case-insensitive regex (an invalid one hides nothing) — name, value and summary alike — together with the way down to each; non-matching lines are hidden, not flattened away. Only what's expanded is searched: a collapsed node is matched by its own line, never opened to look inside, and a **Show more** line stays under a shown parent since what it hasn't loaded wasn't searched. While lines are hidden the tree carries the filtered tint (`--color-bg-filtered`) and the status bar counts the matches. A selection the pattern no longer matches moves to the first match. Up/Down and PgUp/PgDn in the box move the selection; Enter or Tab hands the keys to the tree with the filter kept (**/** returns to the box); Escape, in the box or the tree, clears it. Locating a field (clicking a byte, Enter in the bytes, Go to Offset or Target) clears it too, since the field found may be hidden.
 - **Dissect As** (**Mod+D**, or the tree's context menu): a palette of every format, those that list the file's extension first, filtered by title, name or extension as you type. The chosen format replaces identification, for content the dissector doesn't recognise or recognises as the wrong thing (a Guitar Pro `.gpx` is not a GPS track); on data that doesn't match it, the tree shows what could be parsed and where it stopped. **Identify automatically** goes back.
@@ -919,17 +948,17 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
 - Displays the image centered, initially fit to the window (aspect ratio preserved). Zoom percentages are HiDPI-aware: 100% means one image pixel per physical display pixel (`devicePixelRatio` is tracked live, so moving the window between monitors keeps the indicator and limits correct). Nearest-neighbor (`image-rendering: pixelated`) kicks in only above 100%; at or below, the image is smoothly resampled.
 - **Toolbar**: zoom out / zoom-percent preset dropdown (Fit, 25–800%) / zoom in, Fit, 1:1, rotate CCW/CW, flip H/V (toggle state shown), background cycle, info panel toggle. Tooltips carry the keyboard shortcuts.
 - **Zoom**: Mouse wheel (×1.11 per tick) and macOS trackpad pinch zoom centered on the cursor; `+`/`-` (×1.25 per press) zoom centered on the window. Min zoom = fit-to-window (or 100% if image is smaller). Max zoom = 50×. `0` resets to fit, `1` goes to actual size (100%), double-click toggles fit ↔ 100% around the clicked point.
-- **Selection**: Plain left-drag draws a marching-ants selection rectangle, snapped to integer image pixels (in display orientation — rotation/flips are baked into what's selected). Mod+C copies the selection to the clipboard as PNG (no selection: copies the whole image, transforms applied); Mod+A selects all, Escape or a plain click clears (Escape only closes the viewer once there's no selection). Rotating or flipping clears the selection. Copying renders through an offscreen canvas (`crossOrigin=anonymous`; the file server serves `Access-Control-Allow-Origin: *`) and writes via `navigator.clipboard` — the `ClipboardItem` is constructed synchronously inside the gesture, as WebKit requires.
+- **Selection**: Plain left-drag draws a marching-ants selection rectangle, snapped to integer image pixels (in display orientation — rotation/flips are baked into what's selected). Mod+C copies the selection to the clipboard as PNG (no selection: copies the whole image, transforms applied); Mod+A selects all, Escape or a plain click clears (Escape only closes the viewer once there's no selection). Rotating or flipping clears the selection. Copying renders through an offscreen canvas (`crossOrigin=anonymous`; the file server answers the viewer's own origin with a matching `Access-Control-Allow-Origin`, and no other) and writes via `navigator.clipboard` — the `ClipboardItem` is constructed synchronously inside the gesture, as WebKit requires.
 - **Pan**: Middle-click drag or Shift/Alt+left drag, or arrow keys. Pan is clamped to keep the image visible (no empty edges). Cursor is crosshair (selection is the default drag), grabbing while panning.
 - **Rotate/flip** (view-only, never touches the file): `r` rotates 90° clockwise, `Shift+R` counter-clockwise, `h`/`v` flip horizontally/vertically. Rotating while fitted re-fits to the new orientation; the status bar shows the active rotation/flips.
-- **Background**: `b` cycles the backdrop — transparency checkerboard (default, theme-aware via the `--color-checker-*` tokens), dark gray, light gray. Persisted as the `viewer.image_background` preference (app-wide, like all preferences).
-- **Info panel**: `i` (or toolbar/context menu) toggles a right-side panel with dimensions, megapixels, MIME type, file size, and a curated EXIF summary (camera make/model merged, exposure-time · aperture · ISO on one row, focal length with 35mm equivalent, flash fired-state only, zero exposure bias omitted, GPS as decimal coordinates). EXIF is parsed backend-side (`kamadak-exif`) from a bounded 4 MiB prefix read over the VFS read path, so it works on S3/archives/remote without downloading the file; files with no (or late-offset) EXIF show "No EXIF metadata". Values (not labels) are selectable for copy-out; a Mod+C with an active text selection copies the text, not the image. On macOS, non-text/hex viewer modes carry the predefined Edit menu items so clipboard keys route into the webview at all (same trap as `main_window::menu`).
+- **Background**: `b` cycles the backdrop — dark gray, transparency checkerboard (default, theme-aware via the `--color-checker-*` tokens), light gray, in that order, so from the default it goes to light. Persisted as the `viewer.image_background` preference (app-wide, like all preferences).
+- **Info panel**: `i` (or toolbar/context menu) toggles a right-side panel with dimensions, megapixels, MIME type, file size, and a curated EXIF summary (camera make/model merged, exposure-time · aperture · ISO on one row, focal length with 35mm equivalent, flash fired-state only, zero exposure bias omitted, GPS as decimal coordinates). EXIF is parsed backend-side (`kamadak-exif`) from a bounded 4 MiB prefix read over the VFS read path, so it works on S3/archives/remote without downloading the file; files with no (or late-offset) EXIF show "No EXIF metadata". Values (not labels) are selectable for copy-out; a Mod+C with an active text selection copies the text, not the image. On macOS, the Markdown, Image, Audio, Video and PDF modes carry the predefined Edit menu items so clipboard keys route into the webview at all (same trap as `main_window::menu`); Text, Hex, Table and Structure have Newt's own Edit menu.
 - **Context menu**: Copy Selection/Copy Image, Fit/Actual Size, rotate/flip, background radio submenu, info panel toggle — same Radix menu styling as the main window, with shortcut hints.
 - **Live Text**: the `<img>` carries `pointer-events: none` so macOS WebKit's VisionKit overlay (Live Text OCR / "Look Up" data detectors) never activates; all interaction is handled by the container.
 - **Escape**: Close viewer (when no selection is active).
 - **Cached image handling**: Correctly detects already-cached images (`img.complete`) to avoid missed load events.
 
-**Status bar**: `path/to/image.png | Image | 1920×1080 | 150% | 90° flip H | Sel: 640 × 480 | 2.4 MB`
+**Status bar**: `path/to/image.png | Image | 1920 x 1080 | 150% | 90° flip H | Sel: 640 × 480 | 2.4 MB`
 
 **Error handling**: Shows "Unable to display image preview" if the image fails to load.
 
@@ -951,13 +980,15 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
 
 **Status bar**: `path/to/video.mp4 | Video | 150.5 MB`
 
+**Error handling**: Shows "Unable to play video preview" with error details.
+
 ### PDF Mode
 
 - Rendered via PDF.js with a custom toolbar (not a browser iframe).
 - Links in a document open in the default browser or mail client. No Newt window ever navigates away from Newt itself: a navigation to anywhere else (a link, a script) is cancelled, web and mail links are handed to the system, and requests for new windows are refused.
 - **Toolbar**: Previous/Next page buttons, page display ("1 / 42"), zoom in/out/fit buttons, zoom percentage.
-- **Keyboard**: `=` zoom in, `-` zoom out, `0` reset to fit (the shared, rebindable `viewer_zoom_*` commands — Mod+= and friends stay webview zoom).
-- **Escape**: Close viewer (via window-level menu accelerator).
+- **Keyboard**: `=` (also `+`, Shift+=) zoom in, `-` zoom out, `0` back to PDF.js's automatic fit (the shared, rebindable `viewer_zoom_*` commands — Mod+= and friends stay webview zoom).
+- **Escape**: Close viewer.
 
 **Status bar**: `path/to/document.pdf | PDF | 2.3 MB`
 
@@ -967,19 +998,20 @@ The file dissected into a tree of its fields, Wireshark-style: an executable's h
 
 The preview has a bar of its own, matching the pane's location bar: the file's name, then the viewer window's menus as dropdowns — the mode (auto-detected per file), the encoding for text, table and Markdown, and the table options (delimiter, header row, quoted fields) in table mode. A choice made there lasts until the cursor moves on. At the right end, an open button shows the file in the full viewer window (as F3; Quick View stays on) and a close button turns Quick View off.
 
-The preview is for the mouse; the keyboard stays with the file list. It doesn't search or take keyboard commands — F3 opens the full viewer window for that. Clicking into it (to scroll, or to select text) is fine: the list keeps its cursor, and the first key pressed goes to the list as if it had been pressed there, typing into quick search included. The copy shortcut (Copy Path to Clipboard, Mod+C by default) copies what's selected in the preview — text, a hex range, an image region, table cells — wherever keyboard focus is; with nothing selected there it copies the path as usual. A caret, a single hex byte or the table's cursor cell alone doesn't count as a selection. Relative links in previewed Markdown open the target in a viewer window. Maximize shows the active pane alone; F5/F6 still target the other pane, hidden while Quick View is on. The state is per window and not persisted.
+The preview is for the mouse; the keyboard stays with the file list. It doesn't search or take keyboard commands — F3 opens the full viewer window for that. Clicking into it (to scroll, or to select text) is fine: the list keeps its cursor, and the first key pressed goes to the list as if it had been pressed there, typing into quick search included. The copy shortcut (Copy to Clipboard, Mod+C by default) copies what's selected in the preview — text, a hex range, an image region, table cells — wherever keyboard focus is; with nothing selected there it copies the pane's selection as usual. The preview has no mode toggle in its status bar; its bar's mode menu does that. A caret, a single hex byte or the table's cursor cell alone doesn't count as a selection. Relative links in previewed Markdown open the target in a viewer window. Maximize shows the active pane alone; F5/F6 still target the other pane, hidden while Quick View is on. The state is per window and not persisted.
 
 ### Viewer Menu Bar
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
 - **File**: Close (Escape, or Mod+W — the rebindable `viewer_close` command)
-- **Edit** (Text, Hex, Table and Structure modes): Copy, Select All, separator, Go to Line / Go to Offset
-- **View**: Text / Hex / Image / Audio / Video / PDF (radio buttons — one always checked)
-- **Encoding** (Text mode only): Auto-detect (detected name), separator, then the encoding catalogue as per-script submenus (radio buttons, same one-checked convention as View).
+- **Edit** (Text, Hex, Table and Structure modes): Copy, Select All, separator, Go to Line/Offset (Go to Row in Table mode)
+- **View**: Text / Hex / Structure / Table / Markdown / Image / Audio / Video / PDF (radio buttons — one always checked)
+- **Table** (Table mode): Delimiter, First Row Is Header, Quoted Fields — see Table Mode
+- **Encoding** (Text, Table and Markdown modes): Auto-detect (detected name), separator, then the encoding catalogue as per-script submenus (radio buttons, same one-checked convention as View).
 
 ### File Serving
 
-The viewer and editor access files through an internal HTTP server on localhost (random port, token-protected). This supports:
+The Image, Audio, Video and PDF modes, and the images of a Markdown document, load through an internal HTTP server on localhost (random port, token-protected); the other modes and the editor read and write over IPC. The server supports:
 - Range requests (HTTP 206) for chunked loading.
 - 1 MB streaming chunks to avoid buffering entire files.
 - The `Content-Type` the viewer identified the file as (so media and PDFs play from any VFS, extension or not), else the one its name suggests.
@@ -988,7 +1020,7 @@ The viewer and editor access files through an internal HTTP server on localhost 
 
 ## 6. File Editor (F4)
 
-Opens in a separate window (900×700 pixels) using Monaco Editor (the editor core from VS Code).
+Opens in a separate window (900×700 by default, or the size last used) using Monaco Editor (the editor core from VS Code).
 
 ### Pre-warmed Windows
 
@@ -1038,7 +1070,7 @@ The language comes from [file associations](#file-associations); the built-in on
 
 **By filename** (case-insensitive): `Dockerfile` → Dockerfile.
 
-**By MIME type** (fallback): `application/json` → JSON, `application/xml` → XML, `text/x-python` → Python, etc.
+**By MIME type** (fallback), the type the file was identified as from its content (or its name, for text): `application/json` and `+json` types → JSON, `application/xml` and `+xml` → XML, `application/javascript` → JavaScript, `application/typescript` → TypeScript, `text/x-python` → Python, `text/x-shellscript` → Shell, etc.
 
 **Fallback**: Plain text.
 
@@ -1047,12 +1079,12 @@ The language comes from [file associations](#file-associations); the built-in on
 - **Syntax highlighting** for all detected languages.
 - **Word wrap**: Toggle via View menu. Setting persists in Rust state.
 - **Line numbers**: Always visible.
-- **Find and replace**: Ctrl+F (find), Ctrl+H (replace).
-- **Undo/redo**: Ctrl+Z / Ctrl+Y.
+- **Find and replace**: Monaco's own keys — Ctrl+F / Ctrl+H, on macOS Cmd+F / Cmd+Option+F. These aren't Newt commands and can't be rebound.
+- **Undo/redo**: Ctrl+Z / Ctrl+Y (Cmd+Z / Cmd+Shift+Z on macOS), likewise Monaco's.
 - **Font**: 13px, 18px line height.
 - **Minimap**: Disabled.
 - **Render whitespace**: Only in selection.
-- **Theme**: Follows system dark mode preference. Updates dynamically if the OS theme changes.
+- **Theme**: Follows the app theme (`appearance.theme` — the OS's when that is `system`), live.
 - **File size limit**: 5 MB (enforced on load). Larger files show an error and the window closes.
 - **Encoding**: UTF-8, with a byte-order mark kept if the file has one. A file that isn't valid UTF-8 opens read-only ("Read-only: not UTF-8" in the status bar), since saving it would replace every byte that didn't decode.
 
@@ -1069,7 +1101,7 @@ The language comes from [file associations](#file-associations); the built-in on
 
 ### Dirty State and Closing
 
-- **Dirty indicator**: Window title shows `* filename - Editor` when unsaved.
+- **Dirty indicator**: Window title shows `* <path> - Editor` when unsaved.
 - **Escape**: Closes the editor window (confirmation first if unsaved changes) — but only when Monaco doesn't consume it: dismissing intellisense/find/palette widgets or canceling a selection spends the Escape, and only an unclaimed press closes. Save dispatches through the rebindable `editor_save` command; the resolved key also rides Monaco's Save action (re-registered on rebind — `addAction` commands are editor-scoped, so global keybinding rules can't target them) so the key works natively in-editor and Monaco's palette shows the real shortcut.
 - **Close with unsaved changes**: A warning confirmation dialog appears: "You have unsaved changes. Close without saving?" User must confirm to discard changes.
 - **Close without unsaved changes**: Window closes immediately.
@@ -1077,9 +1109,10 @@ The language comes from [file associations](#file-associations); the built-in on
 ### Editor Menu Bar
 
 - **App menu** (macOS only): Quit Newt (Cmd+Q).
-- **File**: Save, Close (Mod+W). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
+- **File**: Save, Close (Cmd/Ctrl+W, fixed — not a rebindable command). On macOS the Save accelerator mirrors the resolved `editor_save` binding and menus rebuild on preference changes (the menu bar claims the key ahead of the webview, so a stale accelerator would shadow a rebind); other platforms register no Save accelerator — the webview handles the key.
 - **View**: Word Wrap (checkbox toggle). Each newly opened file starts from the `editor.word_wrap` preference (default off); toggling wrap on an open file overrides it for that file only.
-- **Language**: Radio buttons for all supported languages (Plain Text, C, C++, C#, CSS, Dockerfile, Go, HTML, INI/TOML, Java, JavaScript, JSON, Kotlin, Lua, Markdown, Perl, PHP, Python, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
+- **Edit** (macOS only): Cut, Copy, Paste, Select All.
+- **Language**: Radio buttons for all supported languages (Plain Text, Batch, C, C++, C#, CSS, Dockerfile, Go, GraphQL, HCL, HTML, INI / TOML, Java, JavaScript, JSON, Kotlin, Less, Lua, Markdown, Objective-C, Perl, PHP, PowerShell, Python, R, Ruby, Rust, SCSS, Shell, SQL, Swift, TypeScript, XML, YAML)
 
 ### Status Bar
 
@@ -1089,6 +1122,7 @@ The language comes from [file associations](#file-associations); the built-in on
 - Language ID.
 - Cursor position (line and column, 1-based).
 - File size (human-readable).
+- "Read-only: not UTF-8" for a file that didn't decode, with a tooltip saying why.
 - "Saving..." briefly during save.
 
 ---
@@ -1103,7 +1137,7 @@ The language comes from [file associations](#file-associations); the built-in on
 - **"×" button** on each tab: Closes that terminal.
 - **Tab click**: Activates that terminal (switches visible terminal).
 - **Maximize button** (right end of the tab bar): Focuses the terminal and maximizes the panel, or restores the split layout when it is maximized — see "Maximized Layout".
-- **Context menus**: every terminal menu ends with New Terminal, Maximize Terminal (Restore Split Layout when maximized) and Hide Terminal Panel. Right-clicking a tab adds Close Terminal and Close Other Terminals for that tab; right-clicking inside a terminal adds Copy (with a selection), Paste, Select All, Clear (the scrollback, keeping the prompt) and Close Terminal. Paste reads the clipboard through the host, so the webview never asks for clipboard permission, and goes in as a bracketed paste where the shell asked for one. While the program in the terminal is reporting the mouse (tmux, vim with `mouse=a`, htop), a right-click goes to the program instead; Shift+right-click opens the menu regardless, as Shift+drag selects text regardless. Right-clicking the empty part of the tab bar offers just the panel items.
+- **Context menus**: every terminal menu ends with New Terminal, Maximize Terminal (Restore Split Layout when maximized) and Hide Terminal Panel. Right-clicking a tab adds Close Terminal and Close Other Terminals for that tab; right-clicking inside a terminal adds Copy (disabled without a selection), Paste, Select All, Clear (the scrollback, keeping the prompt) and Close Terminal. Paste reads the clipboard through the host, so the webview never asks for clipboard permission, and goes in as a bracketed paste where the shell asked for one. While the program in the terminal is reporting the mouse (tmux, vim with `mouse=a`, htop), a right-click goes to the program instead; Shift+right-click opens the menu regardless, as Shift+drag selects text regardless. Right-clicking the empty part of the tab bar offers just the panel items.
 
 A hidden panel — toggled off, or behind a maximized pane — leaves the shell's window size as it was, so full-screen programs aren't squeezed to a single row while out of view.
 
@@ -1125,14 +1159,14 @@ All terminals are always mounted in the DOM but only the active one is visible. 
 
 Terminal colors follow the system/app theme:
 - Separate light and dark color palettes (VSCode-inspired).
-- Theme updates reactively when the OS color scheme changes.
-- Checks `document.documentElement.dataset.theme` first (explicit app override), then falls back to `prefers-color-scheme` media query.
+- Theme updates reactively when the color scheme changes (`prefers-color-scheme`, which follows `appearance.theme` — see Theming in §1).
+- Reads `document.documentElement.dataset.theme` first, then `prefers-color-scheme`; only a change of the latter is watched, so a `data-theme` override would apply to terminals opened after it.
 
 ### Copy/Paste
 
-- **Copy**: Ctrl+Shift+C (or Cmd+C on macOS) copies the terminal selection to the system clipboard.
-- **Paste**: Ctrl+Shift+V on Linux/Windows, Cmd+V on macOS (through the Edit menu — see below), or Paste in the terminal's context menu. The text goes to the program as one paste, bracketed where the shell asked for one; there is no confirmation for multi-line text. Ctrl+V reaches the program as ^V, and Mod+V's Paste Path from Clipboard applies only while a pane has focus.
-- **macOS Edit menu**: Main, viewer, and editor windows include a native Edit submenu with Undo / Redo / Cut / Copy / Paste / Select All entries. Without this menu, macOS silently swallows Cmd+V/C/X/A before they reach the webview, so this is required for clipboard shortcuts to work in any text input.
+- **Copy**: Ctrl+Shift+C or Cmd+C (either, on every platform) copies the terminal selection to the system clipboard.
+- **Paste**: Ctrl+Shift+V on Linux/Windows (the webview's own paste, which the terminal takes), Cmd+V on macOS (through the Edit menu — see below), or Paste in the terminal's context menu. The text goes to the program as one paste, bracketed where the shell asked for one; there is no confirmation for multi-line text. Ctrl+V reaches the program as ^V, and Mod+V's Paste from Clipboard applies only while a pane has focus.
+- **macOS Edit menu**: Main, viewer, and editor windows include a native Edit submenu with Cut / Copy / Paste / Select All entries. Without this menu, macOS silently swallows Cmd+V/C/X/A before they reach the webview, so this is required for clipboard shortcuts to work in any text input.
 - **Input assist disabled globally**: `index.html` sets `autocorrect="off" autocapitalize="off" spellcheck="false"` on `<html>`, which inherits to every `<input>` and `<textarea>`. macOS WebKit otherwise applies these by default and silently mangles typed paths, regex patterns, and shell commands; Linux WebKit doesn't, so this normalises behaviour across platforms.
 - **Selection**: Highlight text with the mouse to select. Text is selectable by default.
 
@@ -1140,7 +1174,7 @@ Terminal colors follow the system/app theme:
 
 - **Running**: Full interactivity. Input goes to the shell, output is displayed.
 - **Defunct/Exited**: When the shell process exits:
-  - If `behavior.keep_terminal_open` is **true** (default): The tab stays open, showing a dimmed message: `[Process exited with code X. Press Enter to close.]` (or signal name if killed). User presses Enter to close the tab.
+  - If `behavior.keep_terminal_open` is **true** (default): The tab stays open, showing a dimmed message: `[Process exited with code X. Press Enter to close.]` (`[Process killed by signal N. …]` if killed). User presses Enter to close the tab.
   - If `behavior.keep_terminal_open` is **false**: The tab is automatically removed. If it was the active terminal, the next terminal becomes active. If no terminals remain, the terminal panel hides.
 
 ### Terminal in Remote/Elevated Mode
@@ -1149,7 +1183,7 @@ Terminals in remote sessions run on the remote host. The PTY is allocated by the
 
 ### Working Directory Resolution
 
-When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus terminal, send-to-terminal), its initial cwd is resolved from the active pane's path:
+When a new terminal is created (Ctrl+Shift+~, panel toggle, focus terminal, or Open in Terminal with none open), its initial cwd is resolved from the active pane's path:
 
 - **Path on the terminal's filesystem** (the local FS in local mode, the agent's FS in remote/elevated mode): used as cwd directly.
 - **Archive VFS**: walks to the enclosing directory of the archive's origin file (e.g., browsing `/home/user/foo.tar.gz/inner` opens the terminal in `/home/user`). Nested archives walk the chain back to a host path.
@@ -1165,8 +1199,8 @@ When a new terminal is created (Mod+Enter, Ctrl+Shift+~, panel toggle, focus ter
 | Ctrl+PageUp | Previous terminal tab |
 | Alt+Up | Switch focus from terminal to file panes |
 | Alt+Down | Switch focus from file panes to terminal |
-| Mod+F11 | Toggle maximized layout (terminal alone ↔ split) |
-| Mod+Enter | Open focused file/directory in a new terminal (sets working directory) |
+| Mod+F11 | Toggle maximized layout — whatever has focus, the terminal or a pane, alone ↔ split |
+| Mod+Enter | Open in Terminal: type the shell-quoted names of the selection (else the focused entry) into the active terminal, each followed by a space — opening a terminal at the pane's directory if there is none |
 | Enter (in defunct terminal) | Close the terminal tab |
 
 A key typed in a terminal goes to the program running there, with two exceptions that go to Newt: the keys of the terminal and focus commands above (toggle panel, new terminal, next/previous terminal, focus panes/terminal, maximize), at whatever they're bound to, and any binding scoped to `when = "terminal_focused"`. Everything else stays the program's even when a Newt command has it — Ctrl+R, Ctrl+N, Ctrl+P or F10 mean something to a shell or a TUI; Mod+C copies the selection (Ctrl+Shift+C off macOS).
@@ -1175,21 +1209,21 @@ A key typed in a terminal goes to the program running there, with two exceptions
 
 Every spawned terminal (and every user command, both terminal- and operation-mode) gets a `newt` CLI that remote-controls the owning session (design: `design_docs/DESIGN_SHELL_INTEGRATION.md`). Gated by `behavior.shell_integration` (default on; currently gates local sessions — remote agents always provide it).
 
-**Plumbing**: the PTY-owning side (host in local sessions, agent in remote/elevated) creates one fresh 0700 temp dir per session holding the control endpoint and the shim, and injects `NEWT_SHELL_SOCK` (socket path / pipe name), `NEWT_TERMINAL` (handle), and a PATH prepend of that dir into every spawned child. Unix: a Unix-domain socket plus a `newt` symlink to the agent binary; Windows: a named pipe (`\\.\pipe\newt-shell-…`) and a generated `newt.cmd` (which sets `NEWT_CLI=1`, since a .cmd shim can't control argv[0]). The agent path written into that shim has its `\\?\` verbatim prefix undone, because cmd.exe's parser rejects verbatim paths: Tauri canonicalises its own exe to resolve symlinks and `fs::canonicalize` on Windows always returns the `\\?\` form, so the agent located relative to the resource dir inherits it. Verbatim UNC is unwrapped to a real share (`\\?\UNC\server\share` → `\\server\share`) rather than trimmed, which would leave a relative path. Every other consumer of that path is a Win32 API and takes the verbatim form happily — only the shell needs this, as `wsl_launch::to_wsl_path` already found. The agent binary enters CLI mode only when invoked *as* `newt` (argv[0] / `NEWT_CLI`) with the env var set — `newt-agent` invoked by its own name always behaves as the agent. The main `newt` executable answers the same modality when `NEWT_SHELL_SOCK` is set and argv[1] is a known verb, so an already-on-PATH `newt` works on Linux without the shim.
+**Plumbing**: the PTY-owning side (host in local sessions, agent in remote/elevated) creates one fresh 0700 temp dir per session holding the control endpoint and the shim, and injects `NEWT_SHELL_SOCK` (socket path / pipe name), `NEWT_TERMINAL` (handle), and a PATH prepend of that dir into every spawned child. Unix: a Unix-domain socket plus a `newt` symlink to the agent binary; Windows: a named pipe (`\\.\pipe\newt-shell-…`) and a generated `newt.cmd` (which sets `NEWT_CLI=1`, since a .cmd shim can't control argv[0]). The agent path written into that shim has its `\\?\` verbatim prefix undone, because cmd.exe's parser rejects verbatim paths: Tauri canonicalises its own exe to resolve symlinks and `fs::canonicalize` on Windows always returns the `\\?\` form, so the agent located relative to the resource dir inherits it. Verbatim UNC is unwrapped to a real share (`\\?\UNC\server\share` → `\\server\share`) rather than trimmed, which would leave a relative path. Every other consumer of that path is a Win32 API and takes the verbatim form happily — only the shell needs this, as `wsl_launch::to_wsl_path` already found. The agent binary enters CLI mode only when invoked *as* `newt` (argv[0] / `NEWT_CLI`) with the env var set — `newt-agent` invoked by its own name always behaves as the agent. The main `newt` executable answers the same modality when `NEWT_SHELL_SOCK` is set and argv[1] is a known verb, so an already-on-PATH `newt` works on Linux without the shim; `help`, `--help` and `-h` count as verbs there, so inside a Newt terminal they print the CLI's help, not the app's.
 
 **Protocol**: HTTP/1.1 over the socket/pipe (hyper connection-level; no axum in the shared code), deliberately version-tolerant (unknown route → 404, never a panic) because shells outlive app upgrades. On Unix, `curl --unix-socket "$NEWT_SHELL_SOCK" http://newt/v1/panes/active/cwd` works. In remote sessions the agent forwards control-plane verbs to the host over `API_HOST_SHELL_CONTROL`; `cat` bytes stream from the agent-side VfsRegistry without a host round-trip.
 
-**Verbs** (`--pane active|other|left|right`, a clap global flag, default active; exit codes 0 ok / 1 usage or request error / 2 no session). The CLI is a clap derive `Parser` in `shell_control/cli.rs`: `newt --help` carries the path-resolution rules, exit codes and examples, every verb has a long `--help` and a short `-h`, and the main executable's CLI-mode guard derives its verb list from the clap command so the two can't drift.
+**Verbs** (`--pane active|other|left|right`, a clap global flag, default active; exit codes 0 ok / 1 usage or request error / 2 no session, or the connection to it failing). The CLI is a clap derive `Parser` in `shell_control/cli.rs`: `newt --help` carries the path-resolution rules, exit codes and examples, every verb has a long `--help` and a short `-h`, and the main executable's CLI-mode guard derives its verb list from the clap command so the two can't drift.
 
 | Verb | Behavior |
 |------|----------|
 | `newt pwd` | Print the pane's directory (display path — native on the root VFS, `s3://…` etc. otherwise). |
 | `newt cd [path]` | Navigate the pane (non-strict: a leaf path lands on the parent with the entry focused). Bare `newt cd` syncs the pane to the shell's cwd. Relative paths resolve against the shell's cwd. |
 | `newt focus <path>` | Alias for the leaf-focus form of `cd`. |
-| `newt cat <path>` | Stream a file to stdout through the session VFS. Relative paths resolve against the *pane* — works inside archives/S3 mounts. |
-| `newt view <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). |
+| `newt cat <path>` | Stream a file to stdout through the session VFS. Relative paths resolve against the *pane* — works inside archives/S3 mounts. Reads to the file's actual end, so a `/proc` file that reports 0 bytes prints its content. |
+| `newt view <path>` / `newt edit <path>` | Open the built-in viewer / editor (pane-relative resolution like `cat`). A FIFO, socket or device is refused. |
 | `newt cp <src>… <dest>` / `newt mv` | Enqueue a copy/move through the operations framework (fire-and-forget; prints the operation id). Multiple sources need an existing dir; single source to a non-existent leaf copies/moves under the new name (a same-directory `mv` is a plain rename). Trailing slash asserts directory-ness; existence checks go through the session VFS. |
-| `newt select [pattern…] [--add\|--remove]` | Set the pane's selection. With patterns: the Select by Pattern dialog's syntax (case-insensitive glob, `/` prefix for regex) against visible entries, matches of several patterns unioned — so a shell-expanded unquoted `*.c` works, each file name being a literal glob. Without: names read from stdin, one per line — a bare name is a pane entry as listed (works on S3/archives; `ls \| newt select`), a name containing a separator resolves against the shell's cwd and only counts if it lands in the pane's directory (so `git ls-files \| newt select` picks the top-level tracked files of the pane's directory and ignores nested ones). Replaces the selection by default; `--add`/`--remove` adjust it instead. Prints "N matched". |
+| `newt select [pattern…] [--add\|--remove]` | Set the pane's selection. With patterns: the Select by Pattern dialog's syntax (case-insensitive glob, `/` prefix for regex) against visible entries, matches of several patterns unioned — so a shell-expanded unquoted `*.c` works, each file name being a literal glob. Without: names read from stdin, one per line — a bare name is a pane entry as listed (works on S3/archives; `ls \| newt select`), a name containing a separator resolves against the shell's cwd and only counts if it lands in the pane's directory (so `git ls-files \| newt select` picks the top-level tracked files of the pane's directory and ignores nested ones). Replaces the selection by default; `--add`/`--remove` adjust it instead. Prints "N matched". With no pattern and a terminal for stdin it's an error rather than a wait. |
 | `newt cmd [id]` | Runs any command the palette offers, by its id (the ids `[[bind]]` uses; `user_command_N` for user commands), exactly as the palette would — closing any open dialog first, window commands such as `new_window` and `quit` included. A command that fails prints its error and exits 1. Bare `newt cmd` lists the ids and names. In a remote session it needs [access to this host](#access-to-this-host), since commands reach the clipboard and local apps; without it, it's refused. |
 
 Path arguments resolve exactly like the Go To dialog (`resolve_display_path`: mounted-VFS URLs, native absolutes, `~` expansion on the session side), so `newt cd "$(newt pwd)"` round-trips on any pane. A URL matching no mounted VFS is an error (no auto-mounting).
@@ -1204,12 +1238,12 @@ All filesystem access goes through trait abstractions. Multiple VFS types can be
 
 **Read primitives**: three shapes on the `Vfs` trait — sequential streams (`open_read_async`), stateless one-shot ranges (`read_range`), and positioned-read handles (`open_read_at` → `VfsRandomReader::read_at`), held open for a whole read session instead of paying an open per chunk. The split follows chunk count: a caller that will issue a single chunk uses `read_range` (one round trip, nothing to reap); a multi-chunk loop opens a handle. Handle consumers: the archive/disc engine loops, `find_in_file`, `newt cat` streaming, media streaming through the file server (ranges longer than one chunk), and viewer range-copy for selections past one chunk. The F3 viewer's own text/hex chunk reads deliberately stay on `read_range` — the viewer should observe live changes to the file and must not hold the file open (locking it on Windows) just because a viewer window is up. The handle pins the file's identity where the backend can, so a file replaced mid-session fails or keeps serving the original rather than mixing bytes across generations: an open fd on local (pread), an SFTP file handle (protocol-native offset reads, size stat'd once at open), a pinned ETag on S3 (reads after the first carry `If-Match`; a concurrent overwrite fails the read with "object changed while reading"). The same surface is exposed on the shell-facing `Filesystem` trait (`VfsPath`-addressed, hairpin-diverted like `read_range`), which also carries the file-content verbs (`read_range`/`read_file`/`write_file`/`find_in_file`/details/property sheet) — there is no separate reader trait. Over RPC a handle is a server-held session (`OPEN_READ_AT` mints a `StreamId`, `READ_AT` is request/response per chunk, `READ_AT_CLOSE` on proxy drop reaps it) — the same open/read/close triple exists at both the VFS verb level and the Filesystem verb level.
 
-**Auto-refresh**: Panes auto-refresh on window focus for local and remote VFS types, and when one of Newt's own operations finishes (or stops) having changed the folder they show — a copy or move into or out of it, a rename, delete, pack or property change in it; a user command refreshes both panes — rather than waiting on file watching, which can miss changes made in quick succession. Auto-refresh is disabled for S3, SFTP, and archive VFS types (where listing is expensive). Manual refresh is always available via Mod+R.
+**Auto-refresh**: Panes auto-refresh on window focus for local and remote VFS types, and when one of Newt's own operations finishes (or stops) having changed the folder they show — a copy or move into or out of it, a rename, delete, pack or property change in it; a user command refreshes both panes — rather than waiting on file watching, which can miss changes made in quick succession. Auto-refresh is disabled for S3, SFTP, archives, disc images, bare compressed files and search results (where listing is expensive, or nothing changes). Manual refresh is always available through Refresh File List (unbound by default; palette and context menus).
 
 ### Local Filesystem (always mounted, VFS ID 0)
 
 - Full read/write support.
-- File watching: Panes automatically refresh when the underlying directory changes on disk.
+- File watching: Panes automatically refresh when the underlying directory changes on disk. On macOS a pane also follows its folder, or a folder above it, being moved (to the Trash, say), deleted or unmounted, landing on the nearest folder that still exists.
 - All operations supported: rename, hard link, symlink creation, metadata (permissions, timestamps, owner, group), filesystem stats.
 
 ### S3 (Amazon S3 / S3-Compatible)
@@ -1233,17 +1267,19 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 - Bucket contents are listed using `ListObjectsV2` with delimiter, simulating a directory structure via common prefixes.
 - "Directories" in S3 are virtual (based on `/` separators in object keys). Created directories are 0-byte objects with trailing `/`.
 
-**Operations supported**: Read, write, create directory, delete, copy within the same S3 bucket, touch, rename (via the operation's copy+delete fallback — server-side CopyObject per object, works on prefixes too), extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog). Server-side copies (copy/move/rename within S3) carry over user metadata and system headers (CopyObject default), and explicitly re-apply the source's storage class and any non-default ACL — a failed ACL restore is logged and the copy still succeeds, since the streaming fallback couldn't restore it either.
+**Operations supported**: Read, write, create directory, delete, server-side copy within the mount (across its buckets too), touch, rename (via the operation's copy+delete fallback — server-side CopyObject per object, works on prefixes too), extended properties (user metadata, storage class, Content-Type/Cache-Control, ACL grants + canned ACL — see Properties dialog). Server-side copies (copy/move/rename within S3) carry over user metadata and system headers whatever the toggles say (CopyObject's default), and re-apply the source's storage class; access grants are not carried, so an object with a non-default ACL comes out of a rename with the bucket's default ACL, unless a canned ACL is chosen in the Copy dialog. Objects over 5 GiB, past CopyObject's limit, are copied by streaming instead.
 
 **Operations NOT supported**: Hard link, symlink, Unix permissions, filesystem stats, trash (plain Delete prompts for permanent deletion).
 
-**Uploads**: an object up to 10 MB is one PutObject. A larger one becomes a multipart upload, created only when its first part fills, so small objects never pay for one. Part size comes from the writer's `size_hint` so the object fits S3's 10,000 parts (50 TB objects take 5 GiB parts); without a hint, or past it, parts double every 1,000 (about 10 TB). A part past 32 MiB spills to a temp file and uploads from it, which also lets the SDK re-read it to retry. A writer dropped mid-upload aborts the multipart upload.
+**Uploads**: an object up to 10 MiB is one PutObject. A larger one becomes a multipart upload, created only when its first part fills, so small objects never pay for one. Part size comes from the writer's `size_hint` so the object fits S3's 10,000 parts (50 TB objects take 5 GiB parts); without a hint, or past it, parts double every 1,000 (about 10 TB). A part past 32 MiB spills to a temp file and uploads from it, which also lets the SDK re-read it to retry. A writer dropped mid-upload aborts the multipart upload.
 
 **Conditional writes**: `create_new` puts `If-None-Match: *` on whichever request completes the object (PutObject, CompleteMultipartUpload, CopyObject). S3 evaluates it when the write completes, after the body is sent, so a write offers `create_new` only when its size hint fits one PutObject; larger or unhinted writes answer `NotSupported` and the copy looks first. A refusal is 412, or 409 `ConditionalRequestConflict` when a concurrent delete won; both map to `AlreadyExists`. The condition needs only `s3:PutObject`, but the look before a write that can't refuse is a HeadObject, which needs `s3:GetObject`: credentials that can list and put but not get (a write-only backup role) copy objects up to 10 MB on AWS, while larger ones, and any on a custom endpoint, fail the look with 403 and can only be skipped. Directory buckets (`--x-s3`) take it on PutObject and CompleteMultipartUpload, not CopyObject. A mount whose endpoint isn't AWS (from the mount's Endpoint URL, `AWS_ENDPOINT_URL[_S3]` or the profile, resolved as the SDK does) never offers `create_new`, since a store that ignores the header overwrites silently; there `touch` checks with HeadObject before its conditional put, rather than truncating an existing object.
 
 **Errors**: SDK failures take their kind from the HTTP status: 404 is `NotFound` (a listing of a deleted bucket falls back to its parent), 403 `PermissionDenied`, 412 and a conditional 409 `AlreadyExists`.
 
-**Copy attributes**: a same-bucket copy keeps the source's storage class unless the dialog picks one. User metadata, content headers, tags and access grants carry over only with the matching "Preserve object …" toggle; the canned-ACL selector, when set, replaces grants outright.
+**Copy attributes**: a same-bucket copy keeps the source's storage class unless the dialog picks one. On a streamed copy, user metadata, content headers, tags and access grants carry over only with the matching "Preserve object …" toggle (a server-side copy always carries metadata and headers, as above); the canned-ACL selector, when set, replaces grants outright.
+
+**Refresh**: an S3 pane refreshes after Newt's own changes to what it shows; changes made by anyone else appear on a manual refresh.
 
 **Display path**: `s3://bucket/prefix/key`
 
@@ -1255,7 +1291,7 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 
 **Mounting**: Via dialog (Mod+Shift+L → SFTP, or "Mount SFTP" in command palette) with `user@hostname` input plus a profile-name row revealed on save-intent (auto-named from the host; used by the **Save** footer action — see Connection Profiles). While the mount is in flight the dialog streams the mount log; a failed mount leaves it open for a retry.
 
-**Connection**: Spawns an SSH process (`ssh <host> -s sftp`) with stdin/stdout piped. SFTP handshake happens over the SSH connection. 30-second timeout on connection. In remote sessions the `ssh` is spawned by the agent on the remote host, so the SFTP connection originates from there.
+**Connection**: Spawns an SSH process (`ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -s -- <host> sftp`) with stdin/stdout piped, so a dead link is noticed within about 90 seconds. SFTP handshake happens over the SSH connection. 30-second timeout on connection. In remote sessions the `ssh` is spawned by the agent on the remote host, so the SFTP connection originates from there.
 
 **Authentication**: Relies on the SSH client's configuration:
 - Public key (SSH agent, key files).
@@ -1264,13 +1300,13 @@ While the mount is in flight the dialog streams the mount log (VFS progress stag
 - SSH config file (`~/.ssh/config`) is respected.
 - Host key verification prompts appear as in-app dialogs.
 
-**Operations supported**: Read, write, rename, create directory, delete, symlink creation, hard link, metadata (permissions, timestamps, owner, group), file watching.
+**Operations supported**: Read, write, rename, create directory, delete, symlink creation, hard link, metadata (permissions, timestamps, owner, group). A pane refreshes after Newt's own changes; changes made on the server by anything else appear on a manual refresh.
 
 **Operations NOT supported**: Copy within SFTP (cross-file copy goes through the host), filesystem stats, trash (plain Delete prompts for permanent deletion), `create_new` writes and no-replace renames (copy and move look before writing). v3 has no "file exists" status, so a rename refused by a server without `posix-rename` is classified by a stat of the target and reports `AlreadyExists`, which lets an approved overwrite clear the target and retry.
 
 **Symlink handling**: Reads symlink targets for display, stats targets to determine if they're directories.
 
-**Display path**: `sftp://hostname/path/to/file`
+**Display path**: `sftp://hostname/path/to/file` (`sftp://user@hostname/…` when mounted with a user)
 
 **Lifecycle**: SSH process is killed when the SFTP VFS is unmounted.
 
@@ -1296,7 +1332,9 @@ Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" tr
 | 7z | `.7z` |
 | Bare compressed file | `.gz`, `.bz2`, `.xz`, `.zst`, `.zstd` (not on a tar or cpio name) |
 
-**Auto-detection**: Pressing Enter on a file with a recognized archive extension mounts it automatically and navigates into the archive root (instead of opening the file). The extensions above are built-in [file associations](#file-associations); an association can browse other names as any of these formats, or open an archive in its application instead, and Browse Into mounts any file by what its first bytes say.
+Tar archives are read in the ustar, old GNU, PAX and V7 forms (old-style GNU sparse members are refused); cpio in the newc (with or without CRC) and odc forms, not the old binary one; ar with both GNU/SysV and BSD long names.
+
+**Auto-detection**: Pressing Enter on a file with a recognized archive extension mounts it automatically and navigates into the archive root (instead of opening the file). The extensions above are built-in [file associations](#file-associations); an association can browse other names as any of these formats, or open an archive in its application instead, and Browse Into mounts any file by what its first bytes say. A tar is recognised from its first bytes only by the ustar magic, so an old V7 tar needs its extension or an association.
 
 **TAR indexing** (streaming/incremental):
 - Index is built by scanning the archive stream. Files appear incrementally in the UI as indexing progresses — you can browse partial results while the rest of the archive is still being indexed.
@@ -1304,7 +1342,7 @@ Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" tr
 - A member reads (F3, Quick View, Properties, copying a file out) as soon as indexing has passed it, without waiting for the rest of the archive: a file near the start of a large `.tar.gz` on S3 opens in seconds. A path indexing hasn't reached yet waits for it, and only a complete index answers that a path doesn't exist. A folder the archive doesn't list as a member of its own, only implies by its contents, still waits for the complete index for its Properties.
 - Indexing runs while something is using the archive — a pane listing inside it, or a read in flight — and pauses when nothing is. Navigating out of the archive stops it; entering it again, or reading from it, continues from exactly where it stopped, with nothing redone. Moving between folders inside the archive keeps it going. A paused archive keeps its decoder state (for zstd and xz, typically the compression window — a few MB) until it's unmounted. Unmounting it — Newt does once no pane's location or history is inside it — stops indexing for good, even under a call still waiting on the index (a viewer closed while it loaded); such a call fails. The same goes for a bare compressed file, and a search stops its walk.
 - Members sharing a path (two `foo.o` in a static library, a tar appended to with `tar -r`) list as one entry: the last one, which is also what reads return. While indexing runs, the last one so far: a read then can return a member a later one replaces.
-- An archive cut off inside a header or a member still mounts, compressed or not — a partially downloaded `.tar.gz` included: everything before the cut lists and reads, the listing carries the partial badge ("archive truncated"), and the member the cut lands in is listed but fails its read. A compressed stream that is corrupt rather than cut short still fails to mount with the decompressor's error. Only the first gzip member, bzip2 stream or xz stream of a concatenated file is read.
+- An archive cut off inside a header or a member still mounts, compressed or not — a partially downloaded `.tar.gz` included: everything before the cut lists and reads, the listing carries the partial badge ("archive truncated"), and the member the cut lands in is listed but fails its read. A compressed stream that is corrupt rather than cut short still fails to mount with the decompressor's error. Only the first gzip member, bzip2 stream or xz stream of a concatenated file is read; concatenated zstd frames are read in full.
 
 **Bare compressed files** (`whatever.gz`): mount as a one-entry filesystem whose entry is the archive's name without its suffix (`notes.txt.gz` → `notes.txt`), with no mode, owner or timestamps — the containers carry nothing worth showing. Nothing but a full pass tells the unpacked length, so the stream is indexed in the background at first use like a tar: the listing lands at once without a size and refreshes with it when indexing completes (indexing pauses like a tar's when nothing is using the file, and continues where it stopped on the next listing or read), and reads wait for the complete index. Reads then go through the same reader pool and stream driver as tar and 7z. The checkpoints that make reads random-access (as in a compressed tar) share a 256 MiB budget spread evenly over the whole stream, however far it turns out to unpack (when they outgrow it, every other one is dropped), so a multi-terabyte disk image indexes in bounded memory; the price is that a read into such a stream decodes forward from its nearest checkpoint, which may lie a few gigabytes back.
 
@@ -1334,7 +1372,7 @@ Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" tr
 
 **Nested archives**: Archives can contain other archives. Opening an inner archive creates a new VFS mount with the outer archive as its origin. The cleanup system prevents unmounting a parent archive while a child archive is still open.
 
-**Stale mount cleanup**: Archive mounts are *ephemeral* — automatically removed when no pane's current path or back/forward history references them (or any origin-derived children — nested archives, searches over them — transitively). The same cleanup machinery handles other ephemeral VFS types (currently SearchVfs) via a shared `is_ephemeral()` descriptor flag.
+**Stale mount cleanup**: Archive mounts are *ephemeral* — automatically removed when no pane's current path or back/forward history references them (or any origin-derived children — nested archives, searches over them — transitively). The same cleanup machinery handles the other ephemeral VFS types (disc images, bare compressed files, search results) via a shared `is_ephemeral()` descriptor flag.
 
 **Symlink and hard link resolution**: Symlinks (TAR/CPIO/ZIP/7z) and hard links (TAR/CPIO) inside the archive are resolved internally. Directory listings show the *target's* size and `is_dir` for symlinks, and reading or viewing a file through a symlink or hard link transparently fetches the target's contents. ZIP and 7z symlink targets are entry content, so they are read eagerly (tiny) at index time.
 
@@ -1344,21 +1382,21 @@ Members whose path climbs out of the archive (`../../.bashrc`, the "zip slip" tr
 
 Mount and browse optical disc images (`.iso`, `.udf`) as virtual read-only filesystems, exactly like archives: Enter on a disc image mounts it and navigates into its root; `..` at the root exits back to the image file. Same ephemeral-mount lifecycle, origin-styled breadcrumbs, and read-only capability surface as archive mounts.
 
-**Formats**: ISO 9660 with Joliet and Rock Ridge extensions (Rock Ridge preferred over Joliet when both exist — real POSIX names, permissions, uid/gid, timestamps, symlinks), and UDF 1.02–2.60 including the Metadata Partition used by Blu-ray-era images (Type-1 and metadata partition maps; logical sector sizes 512–4096, so both optical `.iso` dumps and hard-disk-profile UDF images work). Hybrid/bridge images carrying both filesystems use the UDF view (the authoritative one, and the only correct one for >4 GB files). Multi-extent ISO files (the >4 GB mechanism), inline UDF data, sparse UDF extents, and UDF/Rock Ridge symlinks (resolved internally like archive symlinks) are all supported.
+**Formats**: ISO 9660 with Joliet and Rock Ridge extensions (Rock Ridge preferred over Joliet when both exist — real POSIX names, permissions, uid/gid, timestamps, symlinks), and UDF 1.02–2.60 including the Metadata Partition used by Blu-ray-era images (Type-1 and metadata partition maps; logical sector sizes 512–4096, so both optical `.iso` dumps and hard-disk-profile UDF images work). Hybrid/bridge images carrying both filesystems use the UDF view (the authoritative one, and the only correct one for >4 GB files). Multi-extent ISO files (the >4 GB mechanism), inline UDF data, sparse UDF extents, and UDF/Rock Ridge symlinks (resolved internally like archive symlinks) are all supported. Entries the image marks hidden (ISO's existence flag, UDF's hidden characteristic) show as hidden files, and ISO associated-file records (Mac resource forks) are left out of listings.
 
 **Fully range-read native — no downloading, no indexing pass**: unlike archives, disc-image file data is stored as raw contiguous extents, so every read inside the image translates directly into a range read on the image file. Combined with S3's HTTP-Range reads, a Blu-ray-sized ISO on S3 can be browsed and its files viewed/copied out without the image ever being downloaded. Directory metadata is parsed *lazily per-directory* (no upfront tree walk; entering a 100 GB image costs a handful of small reads) through a 16 MiB block cache that coalesces the structure walk into few upstream GETs; listings are cached permanently since the image is immutable. The in-tree sans-IO `newt-disc` parser crate hands the VFS layer byte ranges to fetch, which are issued concurrently per round — high-latency backends pay round-trips, not per-structure reads.
 
-**Limitations**: Read-only. VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW media), El Torito boot image exposure, zisofs compression, interleaved ISO files, and multi-session images are not supported (clean errors where detectable). Raw-sector formats (`.bin`/`.cue`, `.nrg`) are out of scope.
+**Limitations**: Read-only. VAT/virtual and sparable partition maps (packet-written CD-RW/DVD±RW media), UDF metadata files whose extents continue in allocation extent descriptors, El Torito boot image exposure, zisofs compression, interleaved ISO files, and multi-session images are not supported (clean errors where detectable). Raw-sector formats (`.bin`/`.cue`, `.nrg`) are out of scope.
 
 ### Remote VFS (client-local filesystem in SSH sessions)
 
-In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on the remote agent, allowing the user to browse local files alongside remote ones. The root VFS label shows "Remote" in SSH sessions to distinguish it from the client-local VFS which shows "Local".
+In remote sessions (SSH, containers, Kubernetes, custom, WSL), the client-local filesystem can be mounted as a VFS on the remote agent, allowing the user to browse local files alongside remote ones. The root VFS label shows "Remote" in SSH sessions to distinguish it from the client-local VFS which shows "Local".
 
 **Mounted only for sessions given access to this host** — see [Access to this host](#access-to-this-host). Otherwise the remote VFS isn't available and nothing of the local filesystem is exposed to the remote host.
 
 **Architecture**: The agent mounts a `RemoteVfs` that proxies all Vfs trait calls back to the Tauri host over bidirectional RPC. The host runs a `VfsDispatcher` that dispatches these calls to a real `LocalVfs`. Streaming reads and writes each ride their own flow-controlled RPC byte stream, so a slow disk on either end holds up only that transfer, never the rest of the session. An open error comes back from the open, a mid-stream read error from the next read, and a far-side write error (a full disk) from the next write rather than after the whole file has been sent. Dropping a reader stops the far side reading the file; dropping a writer before `finish` leaves the far-side write uncommitted.
 
-**Hairpin diversion**: For performance, the most latency-sensitive methods (`list_files`, `poll_changes`, `read_range`, `read_file`, `write_file`) are diverted at the Tauri backend — they execute against the local filesystem directly without round-tripping through the remote agent. This is transparent: the wrapper rewrites VFS IDs so callers see consistent paths.
+**Hairpin diversion**: For performance, the latency-sensitive methods — listing, change polling, reads and writes, file details, stats, link resolution, in-file search, Go to File — are diverted at the Tauri backend — they execute against the local filesystem directly without round-tripping through the remote agent. This is transparent: the wrapper rewrites VFS IDs so callers see consistent paths.
 
 **Operations supported**: Full read/write, browsing, file watching — same as local filesystem.
 
@@ -1366,15 +1404,17 @@ In remote (SSH) sessions, the client-local filesystem can be mounted as a VFS on
 
 ### Agent Mounts (remote connection in a pane)
 
-Any spawn-style connection (SSH, Docker, Podman, Kubernetes-exec, Custom) can be mounted as a VFS in a pane instead of remoting a whole session — pick **Open in: Active pane** in the Connect dialog, or save a profile with `open_in = "pane"`.
+Any spawn-style connection (SSH, Docker, Podman, Kubernetes-exec, Custom) can be mounted as a VFS in a pane instead of remoting a whole session — untick **Open as a new session** in the Connect dialog, or save a profile with `open_in = "pane"`.
 
 **Architecture**: The spawner launches the agent with `--serve-vfs`: an FS-only mode that serves just the VFS API over the target's local filesystem (plus askpass forwarding) — no terminals, operations, or nested mounts exist on that connection, structurally. The proxy side is the same `Vfs`-over-RPC implementation as the client-local Remote VFS, under a distinct `agent` descriptor. The VFS selector shows the transport kind plus target — e.g. "Docker (web-1)", "SSH (user@host)" — not a bare "Remote".
 
 **Where the connection originates follows the session**, like every mount: in a local session the host spawns the sub-agent; in a remote session the *agent* does — so a Docker profile mounted from an SSH session execs `docker` on the SSH host, against its daemon and network.
 
-**Agent binary provisioning**: The spawner uploads its own executable when the target's triple matches (the common case). Foreign triples are streamed on demand from the host's bundled agents over RPC (pre-gzipped, spliced straight into the bootstrap upload), or downloaded into `~/.cache/newt/` for `docker cp`-style transports. Cache keys use the host's agent hash throughout.
+**Agent binary provisioning**: The spawner uploads its own executable when the target's triple matches (the common case). Foreign triples are streamed on demand from the host's bundled agents over RPC (pre-gzipped, spliced straight into the bootstrap upload), or downloaded into the user cache directory (`~/.cache/newt/` on Linux, `~/Library/Caches/newt/` on macOS) for `docker cp`-style transports. Cache keys use the host's agent hash throughout.
 
-**Lifecycle**: The sub-agent process is owned by the mount — unmounting (× in the VFS selector) or closing the last referencing history entry kills it; a sub-agent that dies on its own is reaped immediately and subsequent operations surface connection errors. Not ephemeral: agent mounts appear in the VFS selector like S3/SFTP.
+**Lifecycle**: The sub-agent process is owned by the mount — unmounting it (× or Delete in the VFS selector, or Disconnect VFS) kills it; a sub-agent that dies on its own is reaped immediately and subsequent operations surface connection errors. Not ephemeral: agent mounts appear in the VFS selector like S3/SFTP.
+
+**Operations supported**: everything the local filesystem has — trash, free space, server-side copy, hard links, symlinks, metadata, file watching — on the target's own filesystem.
 
 **Startup probe**: after connecting, the mount verifies the agent actually responds (raced against connection close) before registering the VFS — an agent that dies on exec (wrong arch, missing binary) fails the mount with a diagnostic instead of producing a VFS that fails every operation.
 
@@ -1393,18 +1433,18 @@ A search becomes a mounted VFS — results show up as a flat directory the user 
 - **Case-sensitive**: applies to name and exclude patterns and to content search.
 - **Follow symlinks**: off by default (avoids double-counting). This governs links *inside* the searched folder; the folder itself is always searched, including when the pane reached it through a link (results stay keyed under the path the pane shows). On, the shared walker resolves each link and skips cycles, so a link back up the tree cannot loop the search; hits found through a link carry the link's name and the traversed key, with the target as their source.
 - **Skip hidden entries**: hidden files and folders are neither results nor searched into.
-- **Skip what .gitignore ignores**: the rules of `.gitignore` files — those above the searched folder up to the top of its repository, then each folder's own as the search reaches it — and `.git/info/exclude`, the same reading Quick Open does. `.git` itself is skipped too.
+- **Skip what .gitignore ignores**: the rules of `.gitignore` files — those above the searched folder up to the top of its repository, then each folder's own as the search reaches it — and `.git/info/exclude` (a nested repository's too), the same reading Quick Open does; an ignore file over 1 MiB isn't read. `.git` itself is skipped too, and `/proc` is never walked.
 - **Content** (a collapsed section of its own — searching by name is the common case): a substring, or a regex with **Regular expression** set. Files larger than 10 MiB are skipped from content matching but still surface on name match. Directories are skipped when a content filter is set (they have no bytes to scan), and so are FIFOs, sockets and devices, which would never stop giving bytes. **Whole words** requires the match to start and end at word boundaries; **Files not containing it** turns the search around, so the results are the files the content is *not* in (`grep -L`).
 
 **More search options** (a collapsed section):
 
 - **Type**: files and folders, files, folders, or symbolic links. A link is only seen as one while links aren't followed; followed, it counts as what it points to.
 - **Size**: at least / at most, inclusive — `10 MB`, `1.5G`, `512 KiB`, or plain bytes; decimal prefixes unless an `i` makes them binary. Folders never match a search with a size bound.
-- **Modified / Accessed / Created**: *newer than* and *older than*, each either a span counted back from when the search starts (`7d`, `2w`, `3h`, `90min`, `6mo`, `1y`; a bare `m` is refused as ambiguous) or a date (`2026-01-31`, the start of that day in the user's time zone, wherever the search runs). Created is the birth time, which not every filesystem records.
+- **Modified / Accessed / Created**: *newer than* and *older than*, each either a span counted back from when the search starts (`7d`, `2w`, `3h`, `90min`, `6mo`, `1y`, or spelled out — `2 weeks`, `hours`, `sec`; a bare `m` is refused as ambiguous) or a date (`2026-01-31`, the start of that day in the user's time zone, wherever the search runs). Created is the birth time, which not every filesystem records.
 - **Owner**: user and group, by name or numeric id.
 - **Permissions**: any, three presets — executable by anyone (any of `111`), setuid or setgid (any of `6000`), writable by everyone (all of `002`) — or `find -perm`'s three comparisons against octal bits typed in: exactly, all of, any of. Only the permission bits are compared, not the file type.
 - **Attributes** (in place of Owner and Permissions where the searched folder has Windows attributes): read-only, hidden, system, archive; a result must have every attribute ticked.
-- **Limits**: how many levels deep to search (1 is the folder's own entries), and a number of results to stop at — a stopped search's listing is marked partial with "stopped at N results".
+- **Limits**: how many levels deep to search (1 is the folder's own entries), and a number of results to stop at (both at least 1) — a stopped search's listing is marked partial with "stopped at N results".
 - **Stay on one filesystem**: mount points below the searched folder are not entered (`find -xdev`).
 - **Skip package contents** (macOS): apps and other packages can be results but aren't searched inside, as Spotlight does; off by default, so a search goes everywhere Enter does. Remembered with the other toggles.
 
@@ -1431,23 +1471,23 @@ Submitting mounts a `SearchVfs` and navigates the active pane to its root. The w
 - **Operations are transparent.** Open, view, edit, rename, delete, copy/move, drag-out — every action targets the underlying real file. The display still shows the basename + source-path hint, but the bytes the operation touches are the source file's bytes. The viewer and editor windows, and Quick View, open the source file itself, so their titles and status bars show its real path and relative Markdown links resolve beside it.
 - **Walker boundaries.** Walks within a single VFS; mounted child VFSes (archives, etc.) are *not* descended into. OS-level mounts (bind mounts, autofs, network shares) look like ordinary directories and are traversed.
 - **Lifecycle.** SearchVfs is *ephemeral* (see below) — it auto-unmounts as soon as it's no longer reachable from any pane's current path or back/forward history, and it does not show up in the VFS selector dropdown. Its origin link also keeps the source mount (e.g. an archive the search ran over) alive while the search is reachable.
-- **Deferred for v1**: tree-view toggle, native search inside archives / S3 / SFTP.
 
 ### VFS Selector Dialog (Mod+Shift+L)
 
-- Lists all currently **mounted** VFS instances (with VFS ID, type, and mount label).
+- Lists all currently **mounted** VFS instances (by name, with a mount label where it has one).
 - Lists **available** VFS types to mount, as a trailing "connect" section (separator + ellipsis-suffixed entries):
-  - S3: Mounts immediately on selection (uses ambient credentials).
+  - S3: Opens the Mount S3 dialog.
   - SFTP: Opens hostname input dialog.
+  - S3… and SFTP… are left out once a filesystem of that type is mounted; another one comes from the palette or Quick Connect.
   - Remote: Opens the Connect dialog (`DialogKind::MountRemote`) with "Open as a new session" defaulted off, i.e. pre-scoped to a pane mount whatever the session mode. Always offered, even inside a remote session.
 - **Volumes** (`hot_paths.mounts_in_vfs_selector`, default on): the mounted volumes Hot Paths lists (see Hot Paths below) appear in a section for the filesystem they're mounted in, the way a split-root filesystem's drives do: a header with the filesystem's name, its root (`/`), then each volume with an icon for its kind (disk, USB drive, disc, disk image, network share, phone or camera), where it's mounted — or, for a network share, where it points (`//user@server/share`, with any password left out) — and its free space. Selecting one navigates the pane there; it's an ordinary path, nothing is mounted or unmounted. They're listed for each filesystem that is a machine's own: the session's root, and in a remote session also this computer's filesystem when it's mounted there, so each machine's volumes sit under its own entry. The list is queried each time the dropdown opens and fills in after it has opened, so a stalled network mount can't hold it up. Volumes the selector already lists as drives (all of them, on Windows) aren't repeated. The ✓ marks the most specific entry holding the pane's path: a volume rather than the filesystem it's mounted in.
-- **Unmount button** (×) on mounted VFSes (except Local); Delete on a highlighted mount does the same.
-- Mount labels: S3 shows nothing extra, SFTP shows hostname, Archives show the source file path.
+- **Unmount button** (×) on mounted VFSes (except Local); Delete on a highlighted mount does the same, and **Disconnect VFS** (`unmount_vfs`, unbound; palette) unmounts the pane's current filesystem.
+- Mount labels: an S3 mount scoped to a bucket shows the bucket, SFTP shows hostname.
 - **Drive classification** (split-root FSes, i.e. Windows drives): each per-drive entry carries a `VolumeInfo` probed at mount time on the FS-owning side (so a remote Windows host's drives classify too) — a kind-specific icon (fixed / removable / optical / network / RAM disk / subst), the volume label after the drive letter, and a dimmed target for drives that point elsewhere (`\\server\share` for mapped network drives, the aliased directory for subst). Recorded in `mount_meta` alongside the roots.
 - **Live drive refresh** (Windows hosts): drive-letter changes (USB plug/eject, `net use`, `subst`) refresh the roots + classification of every mount describing this machine's drives via a logical remount (`VfsManager::remount` — revalidate + fresh `mount_meta` for ROOT in local/elevated sessions; owner-supplied meta pushed into the agent-side `RemoteVfs` for the client-local mount in remote/WSL sessions, which also carries the meta in the initial `MountRequest::Remote`). Triggers: a hidden `WM_DEVICECHANGE` listener window (volume arrival/removal broadcasts, burst-coalesced across all session windows) plus a window-focus-regain sweep as the catch-all for changes that don't broadcast (`subst`). No-op signals are free (old/new meta byte-compare); an open VFS selector is rebuilt in place. A pane sitting on a removed drive degrades through the normal NotFound handling on its next listing.
-- **Map / Unmap network drive** (Windows only, `@cfg(windows)` — absent from the palette elsewhere): `map_network_drive` (F11) opens the system Map Network Drive wizard (`WNetConnectionDialog1W`, owned by the session window, run on the main thread) and, on success, navigates the invoking pane to the freshly mapped drive (`dwDevNum` → drive letter; deviceless connections stay put). `unmap_network_drive` (Alt+F11, pane-scoped) checks that the pane's current drive is a mapped network drive per the mount's recorded `VolumeInfo` (errors otherwise), confirms via a `ConfirmUnmapDrive` modal showing the drive and its `\\server\share` target, then disconnects with `WNetCancelConnection2W` *without* force (open handles surface as an error rather than yanking the drive). After either operation the drive roots refresh immediately (on top of the WM_DEVICECHANGE watcher), and panes parked on a disconnected drive are relocated to the mount's initial path.
+- **Map / Unmap network drive** (Windows only, `@cfg(windows)` — absent from the palette elsewhere): `map_network_drive` (F11) opens the system Map Network Drive wizard (`WNetConnectionDialog1W`, owned by the session window, run on the main thread) and, on success, navigates the invoking pane to the freshly mapped drive (`dwDevNum` → drive letter; deviceless connections stay put). `unmap_network_drive` (Alt+F11, pane-scoped) checks that the pane's current drive is a mapped network drive per the mount's recorded `VolumeInfo` (errors otherwise), confirms via a `ConfirmUnmapDrive` modal showing the drive and its `\\server\share` target, then moves any pane on that drive to another drive's root (the mount's initial path when there is none) and disconnects with `WNetCancelConnection2W` *without* force and with `CONNECT_UPDATE_PROFILE`, so the mapping doesn't come back at the next sign-in. Open handles surface as an error rather than yanking the drive ("Cannot disconnect X: files on it are still open (viewers, editors, terminals?)"). After either operation the drive roots refresh immediately (on top of the WM_DEVICECHANGE watcher).
 - **Free space per target**: the dropdown opens instantly with free bytes blank, then a background fetch fills in "N GB free" (right-aligned, muted) per mounted target as results land — one entry per drive on split-root FSes, the single root on unified-root mounts whose VFS supports `fs_stats` (via the session `Filesystem::fs_stats` / `API_FS_STATS`, so it works identically in remote sessions). A dead network drive delays only its own entry, never the dropdown.
-- **Ephemeral VFSes** (archives, search results) are hidden from the dropdown: they're reachable via navigation history, auto-unmount when no pane references them, and listing them as switch targets would just be noise.
+- **Ephemeral VFSes** (archives, disc images, bare compressed files, search results) are hidden from the dropdown: they're reachable via navigation history, auto-unmount when no pane references them, and listing them as switch targets would just be noise.
 
 ---
 
@@ -1459,16 +1499,16 @@ All operations run directly in the Tauri process. No agent subprocess, no serial
 
 ### Connection Profiles and Quick Connect
 
-**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service via the `keyring` crate) under the service name `org.newt-fm.newt`.
+**Connection profiles** are saved connection configurations stored in `connections.toml` under Tauri's platform-specific application configuration directory for `org.newt-fm.newt`: `~/Library/Application Support/org.newt-fm.newt/` on macOS, `$XDG_CONFIG_HOME/org.newt-fm.newt/` (falling back to `~/.config/org.newt-fm.newt/`) on Linux, and `%APPDATA%\org.newt-fm.newt\` on Windows. Secrets (e.g., AWS access keys) are stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service via the `keyring` crate) under the service name `org.newt-fm.newt`, one entry per profile (account `connection:<profile id>`). Only IAM-user S3 key pairs are stored there, and only when keys are given; switching a profile to another credential mode leaves its old entry until the profile is deleted.
 
 **Profile types**:
-- **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role), and associated secrets.
+- **S3**: Region, bucket, endpoint URL, credential mode (default/profile/IAM user/assume role) with its AWS profile name, role ARN and external ID, and associated secrets.
 - **SFTP**: Host (`user@hostname`).
 - **SSH**: Host (`user@hostname`) + optional `forward_agent` flag (`-A`) + `login_shell` (defaults true). Connecting opens a new window.
 - Every profile that opens as a session (SSH, Docker, Podman, Kube, Custom) can carry `host_access`, its own choice for [Allow access to this host](#access-to-this-host).
 - **Docker** / **Podman**: Container name + optional user + `bootstrapless` flag (defaults to true: `docker cp` / `podman cp` + direct exec; disable to use the sh-bootstrap path with hash-keyed caching).
 - **Kube**: kubectl context, namespace, pod, container.
-- **Custom**: Caller-supplied shell command run locally via the platform shell (`sh -c` on Unix, `cmd.exe /C` on Windows). The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
+- **Custom**: Caller-supplied shell command run locally via the platform shell (`sh -c` on Unix, `%COMSPEC% /V:OFF /C` on Windows). With **Skip bootstrap** (`skip_bootstrap`, "assume command already runs the agent") the command's stdin/stdout are the RPC channel straight away, for a command that starts the agent itself. The bootstrap script is exposed as `$NEWT_BOOTSTRAP` for the user to interpolate (so anything from `ssh foo@bar "$NEWT_BOOTSTRAP"` to `bash -c "$NEWT_BOOTSTRAP"` to elaborate nsenter / firejail recipes works).
 
 Spawn-style profiles additionally carry **`open_in`** (`window` default, or `pane`): whether activating the profile opens a full session window or mounts the target as an agent VFS in the active pane.
 
@@ -1476,14 +1516,14 @@ Spawn-style profiles additionally carry **`open_in`** (`window` default, or `pan
 
 **Quick Connect** (Ctrl+R): A fuzzy-searchable palette listing recent ad-hoc connections and all saved connection profiles.
 
-- **Search**: Searches across name, ID, bucket, host, region, and endpoint URL.
-- **Each entry shows**: Connection name, type badge, and relevant details (bucket, host, region, etc.).
+- **Search**: Saved profiles match on name, ID and their details (bucket, region and endpoint; host; container and user; Kubernetes context, namespace, pod and container; the custom command). Recents match on their label and type.
+- **Each entry shows**: Connection name, with a subtitle of its type and details ("SSH — host"; "pane mount" for a pane-scoped spawn profile).
 - **Recent section**: Ad-hoc connections — ones connected without saving a profile — are remembered in a bounded MRU (`recent_connections` in `state.json`, most-recent first, capped at 12) and shown in a separate "Recent" section above the saved profiles. Only the secret-free target is stored (SSH auth, S3 keys, etc. never land in `state.json`); all kinds are recorded, S3 as its secret-free config (region/bucket/endpoint/credential mode — IAM-user keys are used for the mount and dropped). A recent that now matches a saved profile is filtered out — the profile already covers it. **Delete** (or the ×) forgets a recent.
 - **Enter**: Activates the selected connection (recent or saved). Spawn targets with `open_in: window` open a new session window directly — it has its own connection screen. Everything VFS-bound (S3, SFTP, pane-scoped agent mounts; pane-scoped spawn profiles are marked "pane mount") activates *through* its dialog: the matching Connect / Mount SFTP / Mount S3 dialog opens prefilled and submits itself, doubling as the connection-progress surface — the mount/bootstrap log streams while connecting, and on failure the dialog stays open with everything editable for a retry. The one case that doesn't auto-submit is an IAM-user S3 *recent*: its keys were never persisted, so the dialog waits for re-entry (a saved IAM-user profile fetches its keys from the keychain and auto-connects; if the keychain entry is gone it too stays open).
-- **Delete**: Removes the selected saved profile (also its keychain secrets) or forgets the selected recent — with inline Yes/No confirmation.
+- **Delete**: Removes the selected saved profile (also its keychain secrets) or forgets the selected recent — with inline Yes/No confirmation (Enter or Y confirms, N or Escape cancels, other keys are ignored).
 - **F4** (or the ✎ pencil): Opens the selected entry in the matching dialog (Connect, Mount SFTP, or Mount S3) prefilled with its fields, without auto-connecting. For a saved profile the title carries the profile name, Save updates in place (stable id across renames; keychain secrets included — an IAM-user S3 profile prefills its key pair from the keychain), and Connect is a one-off with the current form values that leaves the profile untouched — which also serves as the per-activation `open_in` override (flip "Open as a new session", Connect, don't Save). For a recent, Save *promotes it to a saved profile* (after which the identity filter hides the recent), and Connect is plain edit-before-connect.
 - **Escape**: Closes the palette.
-- Empty state: "No saved connections. Use the connect or mount dialogs to save one."
+- Empty state: "No saved connections. Use the connect or mount dialogs to save one." When `connections.toml` can't be read, an alert says "Saved connections can't be shown: connections.toml has a problem", with the parse error.
 
 ### Remote Sessions
 
@@ -1502,7 +1542,7 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 
 | Transport | CLI | Notes |
 |---|---|---|
-| Local | (default) | No subprocess; services run in-process. |
+| Local | (default), `--target=local` | No subprocess; services run in-process. |
 | SSH | `--target=ssh:user@host` | Uses `~/.ssh/config`, askpass for passwords / host keys. Login-shell bootstrap (see below). |
 | SSH (agent forwarding) | `--target=ssh-agent:user@host` | Adds `-A`. Lets the remote agent's SSH/SFTP invocations reuse host keys. |
 | pkexec | `--target=pkexec` | Linux only. Elevated agent via Polkit. |
@@ -1513,20 +1553,37 @@ Newt opens an agent session over any of these transports. The frontend / IPC lay
 | Podman (bootstrap) | `--target=podman-bootstrap:[user@]<container>` | Same shape as docker-bootstrap. |
 | Kubernetes | `--target=kube:[context/][namespace/]pod[:container]` | `kubectl exec -i`. Bootstrap-only (kubectl cp itself needs tar). |
 | Custom | `--target='custom:<shell command>'` | Runs locally via the platform shell (`sh -c` / `cmd.exe /C`); bootstrap exposed as `$NEWT_BOOTSTRAP` for the user to splice in (e.g. `ssh host "$NEWT_BOOTSTRAP"`, `bash -c "$NEWT_BOOTSTRAP"`). |
+| Custom (no bootstrap) | `--target='custom-raw:<shell command>'` | The command's stdio is the RPC channel from the start — for a command that runs the agent itself. The CLI form of a Custom profile's Skip bootstrap. |
 | WSL | `--wsl` / `--wsl <NAME>` | Windows only. Bare `--wsl` uses the default distro. No bootstrap (the bundled musl agent is exec'd directly via its `/mnt/<drive>/…` path). Not a `--target` scheme and has no saved profiles. |
 
-The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. For Docker/Podman/Kube the dialog populates a combo-box with live targets (`docker ps`, `podman ps`, `kubectl get pods`), and for SSH it parses `~/.ssh/config` for host aliases. Discovery is per-dialog ephemeral state — no persistent caching.
+An unknown scheme, a missing or empty spec, or a malformed Kubernetes spec is refused with a message naming the valid forms. **Other launch flags**:
 
-**Open as a new session** (checkbox in the Connect dialog's button row): checked opens a full remote session in a new window; unchecked mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The default follows the session: checked in local sessions, unchecked in remote ones — connecting from inside a remote session usually means peeking into one of *its* containers. The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. A pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network. Discovery follows the same side (a remote session lists the remote's targets), and exited/dead containers are filtered out — they can't be exec'd into.
+- `--profile <NAME>` opens a saved profile, matched by name or id; it opens a window whatever the profile's `open_in`. S3 and SFTP profiles are refused ("open it via Quick Connect inside the app"). It can't be combined with `--target`.
+- `--title <TEXT>` sets the window title's suffix, `Newt [TEXT]`.
+- `--config-dir <PATH>` uses another configuration directory: settings, connections, state and session memory all move with it (see Settings File).
+- `--print-config` prints the version, configuration directory, agent inventory and webview runtime, and exits.
+- `-v` / `-vv` log at debug / trace level, `-q` only errors; `RUST_LOG`, when set, wins.
+- `--version` prints the version, git revision and target triple.
+- `--elevated` and `--wsl` can't be combined with `--target`, `--profile` or each other, nor positional paths with `--cwd-left` / `--cwd-right`. `--wsl <NAME>` with a name that isn't installed exits, listing the installed distributions.
 
-**Login-shell bootstrap** (SSH, on by default; per-profile `login_shell`): the agent is started under `exec "$SHELL" -lc '<script>'` so it inherits the target's real login environment — the same one a bare `ssh host` would have given you, since sshd only execs a login shell when handed *no* command. `$SHELL` rather than `sh` so a bash user gets `~/.bash_profile`. This is ambient rather than resolved: everything downstream of the agent — terminals, `sh -c` commands, git, discovery — inherits it, so no `PATH` probing or manual patching is needed on the remote side. It is safe because the handshake already skips any non-`NEWT:` line, tolerating profiles that print banners, and because `-lc` takes the script from argv and leaves stdin free for RPC.
+The Connect dialog (Mod+Shift+R) exposes the same set as a transport-picker form. Beside the form, a discovery list fills it in when an entry is clicked:
+
+- **SSH**: the hosts in `~/.ssh/config` — each alias of a `Host` line as its own entry, `user@alias` when it sets a `User`, its `HostName` dimmed beside it. Wildcard and negated patterns are skipped, and `Include` isn't followed.
+- **Docker / Podman**: the containers (`<engine> ps -a`), running ones first, then by name; exited and dead ones are left out. Picking one fills in its name (its id if unnamed).
+- **Kubernetes**: the contexts (`kubectl config get-contexts`), as chips when there are several, and the pods of the typed context and namespace (every namespace when it's blank) as `namespace/pod` with their containers; picking one fills in namespace, pod and — when there's only one — the container. The list follows as context and namespace are edited.
+
+Each discovery command has 3 seconds, and the CLIs are found through `environment.extra_path`; a failing one shows its error dimmed in place of the list. Discovery is per-dialog ephemeral state — no persistent caching.
+
+**Open as a new session** (checkbox in the Connect dialog's button row): checked opens a full remote session in a new window; unchecked mounts the target's filesystem as an agent VFS in the current pane instead (see "Agent Mounts" in the VFS section). The default follows the session: checked in local sessions, unchecked in remote ones — connecting from inside a remote session usually means peeking into one of *its* containers. The choice is saved on connection profiles (`open_in`, default `window`) and honored by Quick Connect. A pane mount is established by the *session's* agent — the target is reached with the remote host's ssh/docker/kubectl, credentials, and network. Discovery follows the same side (a remote session lists the remote's targets). The Connect dialog opened from the VFS selector (Remote…) always starts unchecked.
+
+**Login-shell bootstrap** (SSH, on by default; per-profile `login_shell`): the agent is started under `exec "${SHELL:-/bin/sh}" -lc '<script>'` so it inherits the target's real login environment — the same one a bare `ssh host` would have given you, since sshd only execs a login shell when handed *no* command. `$SHELL` rather than `sh` so a bash user gets `~/.bash_profile`. This is ambient rather than resolved: everything downstream of the agent — terminals, `sh -c` commands, git, discovery — inherits it, so no `PATH` probing or manual patching is needed on the remote side. It is safe because the handshake already skips any non-`NEWT:` line, tolerating profiles that print banners, and because `-lc` takes the script from argv and leaves stdin free for RPC.
 
 Off for `docker exec`-style transports: those are non-login by design and already carry the image's `ENV`, so a login shell would only add risk on images with a minimal `sh` and no `/etc/profile`. WSL is also non-login for now — it execs the agent directly with no handshake, so profile chatter would land in the RPC stream (see TODO.md).
 
 **Bootstrap protocol** (SSH / Docker / Podman / Kube / Custom):
-1. Newt spawns the transport process and sends a bootstrap shell script (`scripts/bootstrap.sh`) to it on stdin.
+1. Newt spawns the transport process with a bootstrap shell script (`scripts/bootstrap.sh`) as its command — `-lc '<script>'` over SSH, `sh -c <script>` for the others; stdin carries only the upload and then RPC.
 2. The script detects platform and architecture (`uname -s`, `uname -m`).
-3. It checks a cache directory (`$XDG_CACHE_HOME/newt/`, else `~/.cache/newt/`) for a matching agent, `newt-agent-<hash>-<triple>`: keyed by a blake3 hash of the local agent binary and by the target's platform, so a home shared between machines of different architectures keeps one agent for each. With no home at all, it uses a private directory created for that connection (`mktemp -d`) and caches nothing — a fixed name under `/tmp` could be one another user made first.
+3. It checks a cache directory (`$XDG_CACHE_HOME/newt/`, else `~/.cache/newt/`) for a matching agent, `newt-agent-<hash>-<triple>`: keyed by a blake3 hash over all of Newt's bundled agent binaries (16 hex digits) and by the target's platform, so a home shared between machines of different architectures keeps one agent for each. With no home at all, it uses a private directory created for that connection (`mktemp -d`) and caches nothing — a fixed name under `/tmp` could be one another user made first.
 4. If cached: Executes immediately (`NEWT:READY`).
 5. If missing: Requests upload (`NEWT:NEED:triple:caps`). Newt gzip-compresses the agent binary if the remote supports it and uploads it. The script checks the upload arrived whole (a short read is never installed), caches it for future use, cleans up this platform's older versions (another platform's agents belong to another machine sharing the home), and confirms with a second `NEWT:READY` — the host holds off RPC traffic until then, because some `head -c` implementations (BSD/macOS) read ahead and would swallow bytes sent while the upload is still being consumed.
 6. The agent enters RPC mode; all further communication is bincode over stdin/stdout.
@@ -1534,7 +1591,7 @@ Off for `docker exec`-style transports: those are non-login by design and alread
 **Replacing a broken cached agent**: Reconnecting after a connection that *failed* (rather than one that ran and was lost) uploads the agent afresh even when one is cached (`NEWT_FORCE_UPLOAD=1`), so a cached binary that is there but broken — damaged on disk, or from an interrupted copy — is replaced rather than retried forever.
 
 **Bootstrapless (direct-copy) protocol** (Docker / Podman only):
-1. Newt runs `<engine> inspect --format='{{.Os}}/{{.Architecture}}' <container>` and maps the result to an agent target triple.
+1. Newt looks up the container's image (`<engine> inspect --format={{.Image}} <container>`) and its platform (`<engine> image inspect --format={{.Os}}/{{.Architecture}} <image>`), and maps the result to an agent target triple.
 2. It runs `<engine> cp <local-agent> <container>:/tmp/newt-agent-<hash>`.
 3. It execs `<engine> exec -i <container> /tmp/newt-agent-<hash>` and uses that pipe as the RPC channel.
 No shell or coreutils in the container required, but every connect re-uploads (no cache).
@@ -1545,17 +1602,17 @@ No shell or coreutils in the container required, but every connect re-uploads (n
 
 **Connection logging**: Every step (transport launch, bootstrap progress, agent startup) is logged. The Connection Log dialog shows it in real-time. Transport stderr is captured in a background task and appended.
 
-**Process safety** (Linux): Spawned transports run with `PR_SET_PDEATHSIG=SIGTERM`, so if the Tauri process crashes the agent is killed too. Prevents zombies on the remote host.
+**Process safety**: Spawned transports (`ssh`, `docker`, `pkexec`, …) are killed when their session ends; on Linux they also run with `PR_SET_PDEATHSIG=SIGTERM`, so a crash of the Newt process takes them down too. The remote agent then exits because its connection closed. SSH transports always add `-o ServerAliveInterval=30 -o ServerAliveCountMax=3`, and put `--` before the host.
 
 ### Elevated Mode (Linux pkexec / Windows UAC)
 
-**Connecting**: Via command palette ("Open Elevated"), `--elevated`, or `--target=elevated`. Available on Linux and Windows (macOS has no equivalent with usable IPC). Same session UX as any remote: connection overlay, reconnect (re-prompts), child watcher.
+**Connecting**: Via command palette ("Open Elevated", which opens a new window), `--elevated`, or `--target=elevated`. Available on Linux and Windows (macOS has no equivalent with usable IPC). Same session UX as any remote: connection overlay, reconnect (re-prompts), child watcher.
 
 **Linux**: spawns `pkexec <agent-binary-path>`; the Polkit dialog prompts for the password; RPC runs over the agent's stdin/stdout. The agent runs as root.
 
-**Windows**: `ShellExecuteEx "runas"` launches the native `newt-agent.exe` elevated (UAC consent prompt). Because `runas` cannot redirect stdio, RPC instead runs over a **named pipe**: the host creates a single-instance server at an unguessable `\\.\pipe\newt-elevated-<uuid>` and passes `--pipe <name>` to the agent, which connects back. The host GUI stays **unelevated** (only the agent is elevated) — drag-and-drop / clipboard from normal apps keep working. Declining UAC surfaces a friendly "Elevation request was declined" in the connection overlay. Agent stderr/logs are unavailable in this mode (`runas` carries no console/stdio).
+**Windows**: `ShellExecuteEx "runas"` launches the native `newt-agent.exe` elevated (UAC consent prompt). Because `runas` cannot redirect stdio, RPC instead runs over a **named pipe**: the host creates a single-instance server at an unguessable `\\.\pipe\newt-elevated-<uuid>` and passes `--pipe <name>` to the agent, which connects back. The host GUI stays **unelevated** (only the agent is elevated) — drag-and-drop / clipboard from normal apps keep working. While the prompt is up the status reads "Waiting for authorization..."; the host waits 30 seconds for the elevated agent to connect. Declining UAC surfaces a friendly "Elevation request was declined" in the connection overlay. Agent stderr/logs are unavailable in this mode (`runas` carries no console/stdio).
 
-*Security model*: the boundary protected is **other users / lower trust** — the unguessable UUID name, `first_pipe_instance` + `max_instances(1)` (no squatting / single connection), and the default named-pipe DACL (creating user + admins) gate access. No auth handshake, deliberately consistent with the existing askpass/conpty named pipes. It does not (and cannot) defend against a same-user attacker, who can already tamper with the unelevated Newt process itself — identical to the Linux pkexec situation.
+*Security model*: the boundary protected is **other users / lower trust** — the unguessable UUID name, `first_pipe_instance` + `max_instances(1)` (no squatting / single connection), and a protected DACL admitting only SYSTEM, Administrators and the creating user gate access. No auth handshake, deliberately consistent with the existing askpass/conpty named pipes. It does not (and cannot) defend against a same-user attacker, who can already tamper with the unelevated Newt process itself — identical to the Linux pkexec situation.
 
 ### WSL Sessions (Windows only)
 
@@ -1570,7 +1627,7 @@ No bootstrap or upload: the bundled Linux-musl agent already lives on the Window
 ### Connection Status
 
 Until the session is connected, the main window shows the connection's transcript — the spawn command, ssh's own output, the agent upload — styled like the terminal panel and selectable for copying, above a status bar like a pane's:
-- **Connecting**: a block cursor blinks after the last line of the transcript, as in a terminal waiting for output, and the status bar shows a spinner, what is happening ("Connecting via SSH (user@host)…") and how long it has taken so far — the status bar once that has passed 200 ms, so a quick connection doesn't flash it.
+- **Connecting**: a block cursor blinks after the last line of the transcript, as in a terminal waiting for output, and the status bar shows a spinner, what is happening ("Connecting via user@host..." — the target's label: `docker:<container>`, `kube:<namespace>/<pod>`, a custom command's first word; "Waiting for authorization..." for an elevated session, "Connecting to WSL [<distro>]...", "Reconnecting...") and how long it has taken so far — the status bar once that has passed 200 ms, so a quick connection doesn't flash it.
 - **Connected**: the panes take the window's place.
 - **Disconnected / Failed**: the status bar shows the error in red with a **Reconnect** button, which takes the focus, so Enter reconnects.
 
@@ -1579,17 +1636,17 @@ Until the session is connected, the main window shows the connection's transcrip
 When SSH needs interactive input (password, passphrase, host key verification), Newt handles it entirely within the app:
 
 1. SSH invokes the askpass helper (the `newt-agent` binary in askpass mode, set via `SSH_ASKPASS` environment variable).
-2. The helper connects to a Unix domain socket whose path is passed in via `NEWT_ASKPASS_SOCK`. The socket is owned by whichever process spawned `ssh` (the host for the main remote-session transport, the agent for SFTP mounts in a remote session).
+2. The helper connects to a Unix domain socket (a `\\.\pipe\newt-askpass-<uuid>` named pipe on Windows) whose path is passed in via `NEWT_ASKPASS_SOCK`; `SSH_ASKPASS_REQUIRE=force` makes ssh use it even with a terminal. The socket is owned by whichever process spawned `ssh` (the host for the main remote-session transport, the agent for SFTP mounts in a remote session).
 3. The askpass listener forwards the request to an `AskpassProvider`. The host's provider drives the UI directly; the agent's provider proxies the request back to the host over the `API_HOST_ASKPASS` reverse RPC, so the dialog always appears in the host window regardless of where the `ssh` process actually runs.
 4. The dialog shows:
-   - **Title**: "Host Key Verification" (for host key prompts containing "yes/no"), "Authentication" (for passwords), or "SSH" (for other prompts).
+   - **Title**: "Host Key Verification" (for host key prompts, recognised by `(yes/no/[fingerprint])`), "Authentication" (for passwords), or "SSH" (for other prompts).
    - **Input field**: Password field (masked) for secrets, text field for confirmations.
-   - For host key confirmation: submitting empty input defaults to "yes".
+   - For host key confirmation: the buttons are Yes / No, and submitting empty input means "yes"; cancelling answers "no". Other prompts have OK / Cancel.
 5. The user's response is sent back through the socket to SSH, and authentication continues.
 
 ### Reconnect
 
-After disconnection, a "Reconnect" button appears in the status bar (focused, so Enter works too). It reconnects in-place on the same window using the same transport parameters (SSH host, elevated mode, etc.): the old session is torn down (agent subprocess terminated, PTYs killed), panes / terminals / operations are cleared, and a fresh session is established.
+After disconnection, a "Reconnect" button appears in the status bar (focused, so Enter works too). It reconnects in-place on the same window using the same transport parameters (SSH host, elevated mode, etc.): the panes' locations are recorded, the old session is torn down (agent subprocess terminated, PTYs killed, terminals and operations cleared), and a fresh session is established with the panes back where they were, the left one active and the terminal panel hidden.
 
 ---
 
@@ -1605,14 +1662,13 @@ A fuzzy-searchable palette for quick navigation to common locations.
 
 | Category | Source |
 |----------|--------|
-| User Bookmarks | User-added bookmarks from `settings.toml` `[[bookmark]]` entries |
+| Bookmarks | User-added bookmarks from `settings.toml` `[[bookmark]]` entries |
 | Standard Folders | Home, Desktop, Downloads, Documents, Pictures, Music, Videos |
-| System Bookmarks | GTK bookmarks (`~/.config/gtk-3.0/bookmarks`) on Linux |
-| Mounted Volumes | Linux: network mounts (cifs, nfs, sshfs, rclone, kio-fuse, …) wherever they're mounted, other mounts under `/media/`, `/run/media/` and `/mnt/`, and the locations GNOME has mounted (Nautilus' Other Locations, a phone over MTP) through the gvfs FUSE bridge at `/run/user/$UID/gvfs`, labelled like "media on nas". macOS: what's mounted under `/Volumes`, from the kernel's mount table, so the boot volume's link there isn't listed. Windows: logical drives (`C:`, `D:`, …). Mounts are never stat'ed while listing, so a stalled network share can't hold up the dialog. Each is classified (disk, removable drive, disc, disk image, network share, device; on macOS through DiskArbitration) |
-| Mounted VFS | Currently mounted S3, SFTP, and archive filesystems |
-| Recent Folders | `recently-used.xbel` on Linux (top 20 by modification time); Finder GoToFieldHistory on macOS |
+| System Bookmarks | GTK bookmarks (`~/.config/gtk-3.0/bookmarks`, else the legacy `~/.gtk-bookmarks`) on Linux |
+| Volumes | Linux: network mounts (cifs, nfs, sshfs, rclone, kio-fuse, …) wherever they're mounted, other mounts under `/media/`, `/run/media/` and `/mnt/`, and the locations GNOME has mounted (Nautilus' Other Locations, a phone over MTP) through the gvfs FUSE bridge at `/run/user/$UID/gvfs`, labelled like "media on nas". macOS: what's mounted under `/Volumes`, from the kernel's mount table, so the boot volume's link there isn't listed. Windows: logical drives (`C:`, `D:`, …). Mounts are never stat'ed while listing, so a stalled network share can't hold up the dialog. Each is classified (disk, removable drive, disc, disk image, network share, device; on macOS through DiskArbitration) |
+| Recent Folders | The folders of recently used files, from `recently-used.xbel` on Linux (top 20 by modification time); Finder GoToFieldHistory on macOS. Standard folders are left out |
 
-Each category can be independently toggled on/off in preferences (Hot Paths section).
+Every category but Bookmarks can be toggled on/off in preferences (Hot Paths section). In a remote session the standard folders, volumes and recent folders are the remote host's.
 
 **Each entry displays**: Name (if bookmarked or named) + path. Matching characters in the fuzzy search are highlighted.
 
@@ -1625,14 +1681,14 @@ Selecting an entry navigates via `navigate_to_path`, which takes the whole `VfsP
 A palette that finds files and folders anywhere under the active pane's directory by name, as you type — the file manager's take on VS Code's Ctrl+P. Enter focuses the chosen entry in the pane it was opened from: the pane goes to the entry's folder and puts the cursor on it, a folder as much as a file. Opening it from there is the pane's own Enter, so Mod+G, a few characters, Enter, Enter opens a file through its association.
 
 - **Live**: the directory is walked when the palette opens, nearest entries first (breadth-first: everything in a folder before anything in its subfolders), and results appear and re-rank while the walk goes on. A status line under the input counts the entries seen ("Searching… 12,345 items"), says when the walk stopped at the limit, and how many folders couldn't be read. Nothing is cached: each opening walks afresh, and closing the palette stops the walk.
-- **Matching** is VS Code's: an entry matches when the query's characters appear in its path in order, ignoring case — `fobr` finds `foo_bar.txt`. Spaces split the query into pieces that all have to match (`pane tsx`). There is no other query syntax.
+- **Matching** works like VS Code's (it is `nucleo`, the fzf-style matcher Helix uses): an entry matches when the query's characters appear in its path in order, ignoring case and accents (`e` finds `é`) — `fobr` finds `foo_bar.txt`. Spaces split the query into pieces that all have to match (`pane tsx`). There is no other query syntax.
 - **Ranking**: a match within the name ranks above one that needs the folders too, so `pane` puts `Pane.tsx` before `pane_helpers/x.ts`, while `mw/pane` still reaches `main_window/Pane.tsx`. Among matches of the same kind, runs of consecutive characters and characters at word starts (after `/`, `_`, `-`, `.`, a case change) score higher; ties go to the shallower entry, then the shorter path. With an empty query the list is simply the nearest entries. The top 100 are shown, with the matched characters in bold.
-- **What's left out**: hidden entries, unless the pane is showing hidden files; `.git` always; names matching `quick_open.exclude`; and, with `quick_open.gitignore` (on by default), whatever `.gitignore` files ignore — those in the folders walked, those in the folders above up to the repository's top, and the repository's `.git/info/exclude`. The user's global git excludes file is not consulted, and no `git` is run: the rules are read and applied as the walk goes, on any filesystem. Symlinked folders are entered only with `quick_open.follow_symlinks`; with `quick_open.skip_packages` (macOS, off by default) apps and other packages are results but aren't walked into; the walk stays on one filesystem and stops after `quick_open.limit` entries (200,000).
+- **What's left out**: hidden entries, unless the pane is showing hidden files; `.git` always; names matching `quick_open.exclude`; and, with `quick_open.gitignore` (on by default), whatever `.gitignore` files ignore — those in the folders walked, those in the folders above up to the repository's top, and the repository's `.git/info/exclude`. An ignore file over 1 MiB isn't read, and the user's global git excludes file is not consulted; no `git` is run: the rules are read and applied as the walk goes, on any filesystem. Symlinked folders are entered only with `quick_open.follow_symlinks`; with `quick_open.skip_packages` (macOS, off by default) apps and other packages are results but aren't walked into; the walk stays on one filesystem, never enters `/proc`, and stops after `quick_open.limit` entries (200,000). An exclude pattern that isn't a valid glob is ignored.
 - **Where it runs**: next to the files — in a remote session on the remote host, so only the top results cross the connection, whatever the size of the tree; this machine's own files, browsed from a remote session, are walked here. It works on any filesystem a pane can show: local, SFTP, S3, archives, disc images.
 
 ### Bookmark Operations
 
-- **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory. Optional custom name (defaults to the directory name). Stored as `[[bookmark]]` in `settings.toml`. The new entry goes to the *top* of the list, and bookmarking an already-bookmarked path moves it there instead of adding a second copy (any duplicates a hand-edited file already had are collapsed at the same time).
+- **Add Bookmark** (Mod+B): Bookmarks the active pane's current directory, named after it — another name can be given in `settings.toml` (`name`). Stored as `[[bookmark]]` in `settings.toml`, its `path` the directory's display path. The new entry goes to the *top* of the list, and bookmarking an already-bookmarked path moves it there instead of adding a second copy (any duplicates a hand-edited file already had are collapsed at the same time).
 - **Bookmark bubble**: Mod+B pops a small acknowledgement dialog ("Bookmark Added" / "Bookmark Moved to Top", with the name and path) anchored top-right, where a browser's bookmark popover lives — it's the one modal that isn't centred. It is *not* a confirmation — the bookmark is already written, so Escape, click-away and **Done** all keep it. **Undo** restores the whole `[[bookmark]]` array as it was, so undoing a move-to-top puts the entry back at its old position with its old name rather than deleting it. The undo snapshot lives in session state, not in the pushed modal payload (no reason to ship the user's settings file to the frontend), and it only rewrites `[[bookmark]]`, so unrelated settings changes made while the bubble is open survive.
 - **Remove Bookmark**: Press Delete on a user bookmark in the Hot Paths dialog. Shows an inline confirmation (Yes/No) — during confirmation, all other keys are swallowed except Enter/Y (confirm), N (cancel), and Escape (cancel). Removes every entry for that path.
 
@@ -1650,8 +1706,8 @@ Fuzzy-searchable list of all available commands.
     - `"file"`: Only if focused item is a regular file.
     - `"directory"`: Only if focused item is a directory.
     - `"selection"`: Only if files are selected, or a non-`..` file is focused.
-  - Self-referencing commands (`command_palette`, `hot_paths`, `user_commands`) are excluded.
-- **Display**: Each entry shows the command name (with search matches highlighted), category badge (e.g., "User" for user commands), and keyboard shortcut (rendered with platform-specific symbols: ⌘ on macOS, Ctrl elsewhere).
+  - Self-referencing commands (`command_palette`, `hot_paths`, `user_commands`) are excluded, and so are the viewer's and editor's commands, which act in those windows.
+- **Display**: Each entry shows the command name (with search matches highlighted), a "User" badge on user commands (not in the F9 palette, which lists only those), and its keyboard shortcut — on macOS with ⌘ and ⌥ as symbols and Ctrl and Shift spelled out; elsewhere Ctrl, Shift and Alt, with the Windows/Super key as Super.
 - **Keyboard**: Arrow keys, Page Up/Down, Home/End to navigate. Enter to execute. Escape to close. Wraps around (loop).
 
 ### User Commands Palette (F9)
@@ -1674,8 +1730,10 @@ key = "alt+z"             # Optional keyboard shortcut
 terminal = true           # true = run in terminal tab, false = run as background operation
 keep_terminal_open = true # Terminal commands: hold the tab open past exit
 silent = true             # Non-terminal commands: no progress window
-applies_to = "selection"  # Optional run filter: "file", "directory", "selection" (omit = any)
+applies_to = "selection"  # Optional palette filter: "file", "directory", "selection" (omit = any)
 ```
+
+`terminal` defaults to false. `key` binds in the pane context (`pane_focused`) and wins over a `[[bind]]` of the same key there. `applies_to` only decides when the palettes offer the command; its own shortcut runs it whatever is selected. An `applies_to` other than the three values is reported as a settings problem.
 
 ### Template Engine (Minijinja / Jinja2)
 
@@ -1700,20 +1758,22 @@ Everything a template interpolates is quoted for the shell the command runs in, 
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `file` | Object | Currently focused file |
+| `file` | Object | The first entry of `files` — the first selected file in listing order, or the focused one when nothing is selected (undefined on `..`) |
 | `file.name` | String | Filename with extension |
 | `file.path` | String | Full absolute path, as Copy Path gives it (`C:\Users\…` on Windows) |
-| `file.source` | String | Underlying real path for virtual entries (e.g. search hits), likewise; undefined for ordinary files |
+| `file.source` | String | Underlying real path for virtual entries (e.g. search hits), likewise; none for ordinary files |
 | `file.stem` | String | Filename without extension |
 | `file.ext` | String | Extension (without dot) |
 | `file.is_dir` | Bool | Is it a directory? |
-| `file.size` | Number | Size in bytes (may be undefined) |
-| `file.modified` | Number | Unix timestamp in seconds (may be undefined) |
+| `file.size` | Number | Size in bytes (none when unknown) |
+| `file.modified` | Number | Unix timestamp in seconds (none when unknown) |
 | `files` | Array | Selected files, or `[file]` if nothing selected |
 | `dir` | String | Active pane's current directory (absolute path, as Copy Path gives it) |
 | `other_dir` | String | Other pane's current directory |
-| `hostname` | String | Machine hostname |
-| `env.NAME` | String | Environment variable (e.g., `env.HOME`, `env.PATH`) |
+| `hostname` | String | The hostname of the machine running Newt — in a remote session too, where the command itself runs remotely |
+| `env.NAME` | String | An environment variable of the Newt process (e.g., `env.HOME`, `env.PATH`) — likewise this machine's, not the remote's |
+
+"None" values are defined (`is defined` is true) but test as `none`.
 
 ### Custom Filters
 
@@ -1728,6 +1788,8 @@ Everything a template interpolates is quoted for the shell the command runs in, 
 | `regex_replace(pattern, replacement)` | Regex substitution | `{{ file.name \| regex_replace("\.bak$", "") }}` |
 | `join_path` | Join path segments | `{{ [dir, "subdir"] \| join_path }}` |
 
+The path filters follow the rules of the machine running Newt, so on a Windows machine `join_path` joins with `\` even in a session to a Unix host.
+
 All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`, `lower`, `selectattr`, etc.); see Quoting for `join`.
 
 ### Custom Functions
@@ -1735,7 +1797,7 @@ All standard Jinja2 built-in filters are also available (`map`, `join`, `upper`,
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `prompt(label, default="")` | `(string, string?) → string` | Shows a text input dialog. Returns user input or default. |
-| `confirm(message)` | `(string) → bool` | Shows a yes/no dialog. Returns true if confirmed. Aborting cancels the whole command. |
+| `confirm(message)` | `(string) → bool` | Asks for confirmation before the command runs; declining cancels the whole command, so by the time the command is rendered to run it returns true. |
 
 ### Execution Modes
 
@@ -1759,7 +1821,7 @@ The two flags are mode-specific: the Commands tab shows "Keep terminal open" or 
 
 When a template uses `prompt()` or `confirm()`, a modal dialog appears before execution:
 - Shows the command title.
-- Lists all `confirm()` messages as checkboxes.
+- Lists all `confirm()` messages as checkboxes, ticked to begin with.
 - Lists all `prompt()` inputs as text fields (with labels and defaults).
 - **Special case**: A single `confirm()` with no `prompt()` calls renders as a simple Yes/No dialog.
 - Cancel aborts the command. Run executes with collected inputs.
@@ -1778,21 +1840,23 @@ Stored as `settings.toml` under Tauri's platform-specific application configurat
 | Linux | `$XDG_CONFIG_HOME/org.newt-fm.newt/`, falling back to `~/.config/org.newt-fm.newt/` |
 | Windows | `%APPDATA%\org.newt-fm.newt\` |
 
+`--config-dir <PATH>` replaces the whole directory, so `settings.toml`, `connections.toml`, `state.json` and `sessions.json` all move with it. `settings.toml` and `connections.toml` are written atomically (a temporary file renamed over them); a symlinked file is written through to its target, which keeps its permissions. A `settings.toml` that exists but can't be read (not UTF-8, no permission) is never rewritten: a Settings change or Mod+B fails with the error instead.
+
 The file is hot-reloaded — changes are picked up within 200ms and applied without restart.
 
-**Mistakes don't cost the rest of the file.** Each setting is read on its own: one with the wrong type (`history_retention = "lots"`), an unknown key, or a `[[bind]]`/`[[command]]`/`[[bookmark]]`/`[[association]]` entry that doesn't read is left out, and everything else applies — a left-out setting keeps its default. Settings that read but can't work are flagged too: a binding to a command that doesn't exist, a key whose modifiers aren't in the order `meta`, `ctrl`, `shift`, `alt` (it would never fire), a `when` the command is never dispatched in (`pane_focused`/`terminal_focused` for main-window commands, `viewer` or `editor` for those windows' own), a pattern that isn't a valid glob, an association whose `command` names no user command, an editor language that doesn't exist. A number outside its setting's range (`terminal.font_size` 6–72, `archives.zstd_level` 1–22, …) is left out like one of the wrong type; the Settings dialog only saves numbers in range. Only a file that isn't TOML at all is ignored as a whole; on a reload, the settings in force before stay in force.
+**Mistakes don't cost the rest of the file.** Each setting is read on its own: one with the wrong type (`history_retention = "lots"`), an unknown key, or a `[[bind]]`/`[[command]]`/`[[bookmark]]`/`[[association]]` entry that doesn't read is left out, and everything else applies — a left-out setting keeps its default. Also reported: a section that isn't a table, an `[[x]]` that isn't a list of tables, and a leftover `profile` key ("settings profiles are no longer supported"). Settings that read but can't work are flagged too: a binding to a command that doesn't exist, a key that is only modifiers or names something that isn't one, a key whose modifiers aren't in the order `meta`, `ctrl`, `shift`, `alt` (it would never fire), an `applies_to` that is none of `file`, `directory`, `selection`, a `when` the command is never dispatched in (`pane_focused`/`terminal_focused` for main-window commands, `viewer` or `editor` for those windows' own), a pattern that isn't a valid glob, an association whose `command` names no user command, an editor language that doesn't exist. A number outside its setting's range (`terminal.font_size` 6–72, `archives.zstd_level` 1–22, …) is left out like one of the wrong type; the Settings dialog only saves numbers in range. Only a file that isn't TOML at all — or that can't be read — is ignored as a whole; on a reload, the settings in force before stay in force.
 
 When the file has problems — at startup or after any reload — a toast appears over the main window: the first problem with its line, and how many more there are. It doesn't time out, and offers **Show** (opens Settings) and **Open settings.toml**; once dismissed (×), it stays away until a reload turns up a different set of problems, and goes on its own once the file is fixed. The Settings dialog lists every problem with its line at the top, whether or not the toast was dismissed.
 
 ### Panic Reports
 
-A panic — a bug that stops a piece of Newt dead — is written to `panic-<start time>-<pid>.txt` in the platform's log directory for `org.newt-fm.newt` (`~/Library/Logs/org.newt-fm.newt/` on macOS, `$XDG_DATA_HOME/org.newt-fm.newt/logs/` (falling back to `~/.local/share/org.newt-fm.newt/logs/`) on Linux, `%LOCALAPPDATA%\org.newt-fm.newt\logs\` on Windows): the version and revision, the thread, the message with its source location, and a backtrace. One file per run, capped at 1 MB; the ten newest runs' files are kept. One process hosts every window, so a panic inside a command handler ends all of them, while one in a background task ends only that task — either is reported.
+A panic — a bug that stops a piece of Newt dead — is written to `panic-<start time>-<pid>.txt` in the platform's log directory for `org.newt-fm.newt` (`~/Library/Logs/org.newt-fm.newt/` on macOS, `$XDG_DATA_HOME/org.newt-fm.newt/logs/` (falling back to `~/.local/share/org.newt-fm.newt/logs/`) on Linux, `%LOCALAPPDATA%\org.newt-fm.newt\logs\` on Windows): the version and revision, the OS, the thread, the message with its source location, and a backtrace; the start time in the name is in Unix seconds. One file per run, capped at 1 MB; at startup all but the ten newest earlier reports are removed, so with this run's there can be eleven. One process hosts every window, so a panic inside a command handler ends all of them, while one in a background task ends only that task — either is reported.
 
 A remote or elevated session's agent ends itself on a panic, which the window sees as its connection closing (the agent's report is in the connection log). A connection whose handler on either side panics is closed rather than left looking alive with nothing answering: calls in flight fail instead of waiting forever.
 
 ### Runtime State File
 
-`state.json` in the same platform-specific application configuration directory — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt/missing → defaults), written on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Per-target pane locations and window geometry live in `sessions.json` instead (see Reopening Where You Left Off). No file watcher — external edits apply on next launch.
+`state.json` in the same platform-specific application configuration directory — machine-written, ephemeral-ish UI state, kept out of `settings.toml` (which stays purely user-authored). Plain JSON managed by `RuntimeStateManager` (`src-tauri/src/runtime_state.rs`): loaded once at startup (corrupt, missing, or holding a field it doesn't know → all defaults), written whole on each discrete change, and broadcast app-wide via the `update:runtime-state` event (consumed by the `useRuntimeState` hook). Updated by dotted-key commands (`update_runtime_state`), validated against the typed `RuntimeState` struct (unknown keys rejected). Holds per-pane column widths (`column_widths.<pane>.<column>`), the app-wide webview zoom factor (`zoom`), the terminal panel height (`layout.terminal_height`; the file-pane split deliberately stays 50/50), sticky last-used dialog toggles (`copy_move.*`, `search.*`, `batch_rename.*`), the Connect dialog's last Allow access to this host choice (`connect.host_access`, default true), whether hidden files are shown (`show_hidden`), and the recent ad-hoc connections MRU (`recent_connections`, see Quick Connect). Per-target pane locations and window geometry live in `sessions.json` instead (see Reopening Where You Left Off). No file watcher: an external edit applies on next launch, unless a change made in the app first rewrites the file over it.
 
 ### Full Settings Structure
 
@@ -1805,7 +1869,7 @@ show_pane_header = true     # Show breadcrumb / VFS selector / free-space header
 show_pane_status = true     # Show file count / selection size status bar per pane
 density = "comfortable"     # File list row spacing: "compact" (20px), "comfortable" (22px) or "spacious" (24px)
 theme = "system"            # "system", "light", or "dark"
-columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode"]
+columns = ["name", "size", "modified_date", "modified_time", "user", "group", "mode", "attributes"]  # Any of name, size, extension, modified[_date|_time], accessed[_date|_time], created[_date|_time], user, group, mode, attributes, symlink_target; each pane shows those its filesystem has
 si_size_prefixes = false    # Size column shows "1.5 GB" instead of exact byte counts
 size_units = "decimal"      # "decimal" (kB/MB/GB, 1000) or "binary" (KiB/MiB/GiB, 1024)
 locale = ""                 # BCP-47 tag for numbers/dates (e.g. "de-DE"); "" = system regional format
@@ -1821,7 +1885,7 @@ keep_finished_operations = false  # Keep completed/cancelled ops in panel
 notify_on_prompt = true     # System notification when an operation stops on a prompt while its window isn't focused
 quick_search = true         # Use prefix quick-search; when false, typing opens regex filter
 allow_remote_host_access = false  # Allow remote sessions to be given access to this host (per connection)
-default_sort = { key = "name", ascending = true }
+default_sort = { key = "name", ascending = true }  # key: name, extension, size, modified, accessed, created
 history_retention = 200     # Max entries kept per pane in nav history (0 = unlimited)
 shell_integration = true    # `newt` CLI in built-in terminals / user commands (local sessions; remote always on)
 restore_locations = "all"   # Reopen panes where the target's last session left them: "all", "local" (local/elevated/WSL), "none"
@@ -1833,7 +1897,7 @@ open_packages = false       # macOS: Enter opens app bundles and other packages 
 git_status = true           # Git enricher: per-row status colors + branch badge
 
 [archives]
-default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "seven_z", "tar", "tar_gz", "tar_xz", "tar_zst"
+default_format = "tar_zst"  # Format preselected in Pack to Archive: "zip", "seven_z", "tar", "tar_gz", "tar_xz", "tar_zst"; default "zip" on Windows
 preserve_symlinks = true    # Store symlinks as symlinks (false: follow them)
 zip_level = 6               # Deflate level for zip (0-9, 0 = store)
 sevenz_level = 6            # LZMA2 level for 7z (0-9, 0 = store)
@@ -1851,17 +1915,17 @@ mounts_in_vfs_selector = true  # Also list mounted volumes in the VFS selector
 [quick_open]                # Go to File (Mod+G)
 gitignore = true            # Leave out what .gitignore files and .git/info/exclude ignore
 follow_symlinks = false     # Enter folders reached through symlinks
-exclude = []                # Name globs never shown or descended into, e.g. ["node_modules", "*.pyc"]
+exclude = []                # Name globs never shown or descended into, e.g. ["node_modules", "*.pyc"]; .git always is
 limit = 200000              # Entries looked at before the search stops
 skip_packages = false       # macOS: find apps and other packages, but don't look inside them
 
 [environment]
-extra_path = ["/opt/homebrew/bin", "/usr/local/bin"]  # Searched after PATH for the programs Newt runs itself (ssh, docker, podman, kubectl, git); not added to terminals or user commands. Defaults: this on macOS; ["~/.local/bin", "/snap/bin", "/var/lib/flatpak/exports/bin"] on Linux; [] on Windows
+extra_path = ["/opt/homebrew/bin", "/usr/local/bin"]  # Searched after PATH for the programs Newt runs itself (ssh, docker, podman, kubectl, git); not added to terminals or user commands. A leading ~ is expanded; missing directories are skipped. Defaults: this on macOS; ["~/.local/bin", "/snap/bin", "/var/lib/flatpak/exports/bin"] on Linux; [] on Windows
 
 [terminal]
 font_family = 'Menlo, Monaco, "Courier New", monospace'  # CSS font-family list; the first installed font is used
 font_size = 12              # Points (6–72)
-scrollback = 1000           # Lines kept above the screen
+scrollback = 1000           # Lines kept above the screen (0–1,000,000)
 
 [editor]
 word_wrap = false           # Default word wrap in the text editor (per-file toggle still overrides)
@@ -1884,15 +1948,17 @@ title = "My Command"
 run = "echo {{ file.name }}"
 key = "alt+z"               # Optional
 terminal = true             # Optional, default false
-applies_to = "file"         # Optional
+keep_terminal_open = false  # Optional: terminal commands hold their tab open past exit
+silent = false              # Optional: operation commands show no progress window
+applies_to = "file"         # Optional: "file", "directory" or "selection" (palette filter)
 
 [[association]]             # See File Associations; first match first, property by property
-match = ["*.nupkg", "*.vsix"]
+match = ["*.nupkg", "*.vsix"]  # One pattern, or a list
 enter = "browse"            # Optional: "open", "browse", "view", "edit", "command"
 format = "zip"              # Optional: "zip", "7z", "tar", "compressed", "disc"
-kind = "file"               # Optional: "file" or "directory"
+kind = "file"               # Optional: "file" (default) or "directory"
 command = "My Command"      # With enter = "command": a [[command]] title
-viewer = "text"             # Optional: viewer mode
+viewer = "text"             # Optional: text, hex, dissect, table, markdown, image, audio, video, pdf
 language = "typescript"     # Optional: editor language
 ```
 
@@ -1901,65 +1967,69 @@ language = "typescript"     # Optional: editor language
 Four tabs:
 
 **Preferences tab**:
-- Sidebar with category filter: All, Appearance, Behavior, Enrichers, Archives, Hot Paths, Go to File, Environment, Editor, Viewer — one per section of `settings.toml`, named by the schema's titles. All lists every setting, with a header at the start of each category. From the keyboard, Tab reaches the selected category and Up/Down/Home/End move between them.
-- Search box for full-text search across setting titles and descriptions.
+- Sidebar with category filter: All, Appearance, Behavior, Enrichers, Archives, Hot Paths, Go to File, Environment, Terminal, Editor, Viewer — one per section of `settings.toml`, named by the schema's titles. All lists every setting, with a header at the start of each category. From the keyboard, Tab reaches the selected category and Up/Down/Home/End move between them.
+- Search box for full-text search across setting titles, descriptions and keys (`behavior.history_retention`). The one box serves every tab: it filters the Keybindings and Associations tabs too.
+- When the file has problems, a banner at the top lists them, with its own **Open settings.toml** button and a × that dismisses them (the toast too).
 - Each setting rendered as a row with title, description, and appropriate control:
   - Boolean → checkbox.
   - Enum → dropdown.
-  - Number → number input.
+  - Number → number input, bounded by the setting's range; a value out of range (or a half-typed one) isn't saved, and leaving the field puts back the saved value.
   - String → text input.
   - List of strings → a text input per item with a × to remove it, and a dashed row at the end that adds what's typed into it (Enter or leaving the row); an item emptied out is removed.
   - Custom widgets for complex preferences (rendered below the description):
-    - **Columns**: Visible/Hidden panels side by side — visible rows carry a drag handle (mouse drag to reorder, arrow keys when focused); checkboxes toggle simple columns; timestamps get a presentation dropdown (Date & time / Date only / Separate columns).
+    - **Columns**: Visible/Hidden panels side by side — visible rows carry a drag handle (mouse drag to reorder, arrow keys when focused); checkboxes toggle simple columns (Name is marked required); a visible timestamp gets a presentation dropdown (Date & time / Date only / Separate columns).
     - **Default Sort**: Dropdown for sort key + ascending checkbox.
 - **Reset button**: Appears next to settings that have been explicitly set in `settings.toml`. Clicking removes the key from the file, reverting to the cascade default.
 - Changes are saved immediately to `settings.toml` and proactively reloaded (not relying solely on file watcher).
 
-### Debug Dialog
-
-Available in debug builds only. Provides:
-- **Toggle DevTools**: Opens/closes the WebKitGTK inspector.
-- **Reload Window**: Reloads the frontend UI.
-- **Crash (throw error)**: Tests the ErrorBoundary by throwing a React error.
-
 **Keybindings tab**:
 - Table listing every command (built-in + user) with its current shortcuts and dispatch context. The "When" column shows the command's intrinsic dispatch context (e.g. "Pane focused"), independent of whether a key is currently bound.
-- **Multiple bindings per command** are first-class: a command can carry any number of keys (e.g. Delete Selected defaults to F8 + Del, and ⌘⌫ on macOS; Command Palette to Mod+Shift+P + F1; viewer zoom-in to = with +/Shift+= synonyms). The first key is the primary — the one menus, tooltips and the command bar display. Extra keys are ordinary `[[bind]]` entries; removing one default from the set writes a single `command = "-"` disable entry for that key.
-- Search/filter by command name, ID, shortcut, or context.
+- **Multiple bindings per command** are first-class: a command can carry any number of keys (e.g. Delete Selected defaults to F8 + Del, and ⌘⌫ on macOS; Command Palette to F1 + Mod+Shift+P; viewer zoom-in to = with +/Shift+= synonyms). The first key is the primary — the one menus, tooltips and the command bar display. Extra keys are ordinary `[[bind]]` entries; removing one default from the set writes a single `command = "-"` disable entry for that key.
+- Search/filter by command name, ID, shortcut, or context — the shortcut as stored (`meta+p`, not ⌘P) and the context's id (`pane_focused`).
 - Shortcuts rendered with platform-specific symbols (⌘ on macOS, Ctrl elsewhere).
-- **Inline editor**: Click Edit (or double-click a row) to swap the shortcut cell into one key-capture input per binding, with per-row remove and "+ Add key" (user commands are limited to one key — theirs lives on the `[[command]]` entry). Press a combination to record; Escape cancels recording; the × clears a row.
+- Outside edit mode, a ⚠ beside a binding says it overlaps another command's ("Also used by …"), and a command whose keys differ from its defaults shows Reset.
+- **Inline editor**: Click Edit (or double-click a row) to swap the shortcut cell into one key-capture input per binding, with per-row remove and "+ Add key" (user commands are limited to one key — theirs lives on the `[[command]]` entry). Press a combination to record; Escape cancels recording, and Tab moves on rather than being recorded, so neither can be bound here. Each field's own × clears it; the row's × (with two keys or more) removes that binding.
 - **Live conflict detection** as you record:
   - **Hard conflict** (same key + same dispatch context for another command) blocks Save and shows an "Already used by …" banner with an Override button. Override only *acknowledges* the conflict — it doesn't save until you press Save.
-  - **Soft warning** when the same key is used in a different/overlapping context.
+  - **Soft warning** when the same key is bound globally on one side and in a context on the other. The same key in two different contexts (`pane_focused` and `terminal_focused`) is no conflict.
   - **Validation** rejects modifier-only combos.
 - **Action buttons** (in edit mode): Save (primary), Cancel, Reset (always shown when the command has defaults — disabled when already at the default set, otherwise restores the compiled-in default keys).
 - **Reset is bidirectional**: if a different command currently squats on the row's default key+context — including a user command holding it via `[[command]].key` — Reset evicts the squatter so the default reasserts. The squatter's other fields (title/run/applies_to) are preserved.
 - **Modified indicator**: a small accent dot next to commands whose resolved binding differs from the compiled-in default.
 
 **Commands tab**:
-- List of user-defined commands. Each row shows the title and shortcut in a header line (shortcut right-aligned, matching the Keybindings tab), the run script in a monospace `<pre>` block (text-selectable, with `max-height` and internal scroll for long scripts), and small uppercase tags below for `applies to …` and `terminal`.
+- List of user-defined commands. Each row shows the title and shortcut in a header line (shortcut right-aligned, matching the Keybindings tab), the run script in a monospace `<pre>` block (text-selectable, with `max-height` and internal scroll for long scripts), and small uppercase tags below for `applies to …`, `terminal`, `keeps open` and `silent`.
 - Edit button per row. Delete is reachable inside the edit form (one extra click of friction protects against misclicks).
-- **Edit mode**: the row is replaced by a form (title, run textarea, Key — same KeyCaptureInput as the Keybindings tab in `regular` size, Applies to — Any focused item / Files only / Directories only / Selection, Run in terminal). Conflict detection runs against all bindings (built-in + user). Action bar: Delete on the far left, Cancel + Save on the far right (Save is the rightmost primary action).
+- **Edit mode**: the row is replaced by a form (title, run textarea, Key — same KeyCaptureInput as the Keybindings tab in `regular` size, Applies to — Any focused item / Files only / Directories only / Selection, Run in terminal, then Keep terminal open or Run silently depending on it). Conflict detection runs against all bindings (built-in + user). Action bar: Delete on the far left, Cancel + Save on the far right (Save is the rightmost primary action).
 - **Add Command** button stays visible while editing an existing command.
 - Expandable template reference panel showing variables, filters, and functions, with example commands rendered as the same kind of `<pre>` blocks used in row view.
 
 **Associations tab**: a table of name patterns — one row per pattern, the user's ("Yours") above the built-ins — with what happens to a match in three columns: **Enter**, **View (F3)** — the mode the viewer opens it in — and **Syntax highlighting (F4)**, the language the editor highlights it as (F4 always opens Newt's editor). Directory rows have only Enter.
 - **Adding**: the first row is an add row — type a pattern into its Name field (`.rtf` is read as `*.rtf`; a glob, or an exact name like `Makefile`), pick Files or Folders, and its cells show at once what that pattern would inherit; setting any of them adds it, and the field empties for the next one. Enter in the field moves to its Enter cell. Typing a pattern that is already listed edits that row.
 - **Every cell shows what applies.** A value the row's own `[[association]]` entry sets is shown plainly with an accent dot; one it inherits is muted, and says on hover where it comes from — built-in, by file type, by content, or another of the user's patterns (`*.gz` showing through on `*.tar.gz`). The viewer goes by a file's content, which a pattern doesn't have, so View (F3) shows what files of that name usually open as: what the name says for a text mode (`*.md` Markdown, `*.rs` Text), Text for a name the editor has a language for (`*.ts`, `Dockerfile`) unless its type picks a mode of its own (`*.svg`), otherwise the mode of the formats that claim the extension when they agree (`*.deb` and `*.raw` Structure, `*.png` Image), and *by contents* when they don't.
-- **A cell is a menu.** Click it, or focus it and press Enter or Space: the first choice is always *Default — what would apply otherwise*, which takes the row's own setting away; the rest are the values. Enter's menu has Open in default app, Open in viewer, Open in editor, Browse as ZIP / 7-Zip / tar / compressed file / disc image, and each user command; for a file Enter doesn't browse, a Browse Into submenu picks the format Browse Into uses. A choice writes one key of the pattern's entry in `settings.toml`, in place — comments and the order of entries survive — or adds a one-pattern entry for a pattern that had none. **Delete** on a row of the user's removes its entry (or, from an entry shared with other patterns, just that pattern), and the pattern goes back to whatever applied before.
+- **A cell is a menu.** Click it, or focus it and press Enter or Space: the first choice is always *Default — what would apply otherwise*, which takes the row's own setting away; the rest are the values. Enter's menu has Open in default app, Open in viewer, Open in editor, Browse as ZIP / 7-Zip / tar / compressed file / disc image, and each user command (for a directory row: Go in, Open in default app, and the user commands); for a file Enter doesn't browse, a Browse Into submenu picks the format Browse Into uses. A choice writes one key of the pattern's entry in `settings.toml`, in place — comments and the order of entries survive — or adds a one-pattern entry for a pattern that had none. **Delete** on a row of the user's removes its entry (or, from an entry shared with other patterns, just that pattern), and the pattern goes back to whatever applied before.
 - **Arrow keys move between cells**, Home and End along a row; Down from the search box goes into the table and Up from its top row back.
 - **The search box** narrows the table to patterns containing the text or matching it as a file name, so typing `release.tar.gz` lists `*.tar.gz` and `*.gz` and sums up what happens to that file above the table. When nothing matches, **Add** puts the text into the add row.
 - **Change Association…** (`change_association`, unbound; file context menu, palette) opens this tab at the row that decides the focused entry — the most specific pattern matching it — or, when none does, with the add row holding its extension (`*.rtf`) or, for a name without one, the name itself.
 
-**Footer**: a "Settings file" label beside a segmented pair of icon buttons — **Show in pane** navigates the pane the dialog was opened from to `settings.toml` and focuses it (closing the dialog), **Open in external editor** hands the file to the system handler. Both create the file with a commented skeleton if it doesn't exist yet. Show in pane needs the host machine's filesystem mounted in the session (`VfsInfo::host_local_vfs_id` — always true locally, true in a remote session while the client-local mount is present) and is hidden otherwise, leaving external open as the only route.
+**Footer**: a "Settings file" label beside a segmented pair of icon buttons — **Show in pane** ("Reveal in pane" on hover) navigates the pane the dialog was opened from to `settings.toml` and focuses it (closing the dialog), **Open in external editor** hands the file to the system handler (its tooltip shows the `open_config_file` shortcut when one is bound). Both create the file with a commented skeleton if it doesn't exist yet. Show in pane needs the host machine's filesystem mounted in the session (`VfsInfo::host_local_vfs_id` — always true locally, true in a remote session while the client-local mount is present) and is hidden otherwise, leaving external open as the only route.
+
+### Debug Dialog
+
+Available in debug builds only, from the palette or F12 (`debug`, View category). Provides:
+- **Toggle DevTools**: Opens/closes the webview's developer tools (the WebKitGTK inspector on Linux).
+- **Reload Window**: Reloads the frontend UI.
+- **Crash (throw error)**: Tests the ErrorBoundary by throwing a React error.
+- **Run test operation (1m)**: Starts a dummy operation that runs for a minute, and closes the dialog — for trying the operations panel.
 
 ### Keybinding System
 
 Bindings are resolved in cascade order (later overrides earlier):
 1. **Default bindings**: Built into the application (see shortcut reference table).
 2. **User overrides**: `[[bind]]` entries in `settings.toml`.
+3. **User command keys**: a `[[command]]`'s `key`, always in the pane context (`pane_focused`), so it wins over a `[[bind]]` of the same key there.
 
-**Key format**: Lowercase, `+`-separated. Examples: `mod+shift+p`, `f5`, `alt+enter`, `ctrl+shift+~`.
+**Key format**: Lowercase, `+`-separated, modifiers in the order `meta`, `ctrl`, `shift`, `alt`. Examples: `mod+shift+p`, `f5`, `alt+enter`, `ctrl+shift+~`. Named keys: `up`, `down`, `left`, `right`, `space`, `escape`, `enter`, `backspace`, `tab`, `delete`, `insert`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f24`; the numpad operators have their own names (`numpad_add`, `numpad_subtract`, `numpad_multiply`, `numpad_divide`, shown as "Num +" etc.), so they bind apart from the main-row keys. An Alt combination is matched by the key's position, so Option+Z on macOS is `alt+z` whatever character it types; a PC keyboard's Insert arrives on macOS as Help and reads as `insert`.
 
 **`mod+` prefix**: Expands to `ctrl+` on Linux/Windows, `meta+` (Cmd) on macOS.
 
@@ -1971,9 +2041,12 @@ command = "-"  # Disables the default F8 = delete binding
 ```
 
 **`when` conditions** on `[[bind]]` entries gate the *dispatch context* — which input focus state allows the binding to fire:
-- (omitted) → Global; the binding fires regardless of focus.
+- (omitted) → Global; the binding fires wherever focus is in the main window. A terminal with focus keeps every key for the shell, though, except those bound to the terminal commands (toggle panel, new / next / previous terminal, focus panes / terminal, maximize) or bound `terminal_focused`.
 - `"pane_focused"` → Only when a file pane has focus.
 - `"terminal_focused"` → Only when the terminal has focus.
+- `"viewer"` / `"editor"` → In viewer / editor windows; the scope their own commands have.
+
+A binding for a context wins over a global one on the same key. While a dialog or a password prompt is open, the main window's bindings don't fire at all.
 
 Not to be confused with `applies_to` on `[[command]]` entries, which is a *run filter* gating whether a user command appears in the palette / can be invoked at all (`"file"`, `"directory"`, `"selection"`, or omitted = any). The two concepts share neither schema location nor accepted values.
 
@@ -1982,6 +2055,7 @@ Not to be confused with `applies_to` on `[[command]]` entries, which is a *run f
 - `meta` → "⌘" (macOS) / "Super" (other)
 - `shift` → "Shift"
 - `alt` → "⌥" (macOS) / "Alt" (other)
+- Numpad operators → "Num +", "Num -", "Num *", "Num /"
 - Other keys: Capitalized (e.g., `f5` → "F5")
 
 ### Open Settings File in Editor
@@ -1994,11 +2068,11 @@ Available from the command palette (File category, unbound). Hands `settings.tom
 
 Optional bottom bar (toggled in preferences: `appearance.show_command_bar`, default: on).
 
-Shows clickable buttons for frequently used commands, each displaying the command name and its keyboard shortcut:
+Shows clickable buttons for frequently used commands, each with its shortcut above its short name (the full name on hover where it's abbreviated):
 
-Command Palette | Rename | View | Edit | Copy | Move | Create Directory | Delete | User Commands
+Remote | CmdPalette | Rename | View | Edit | Copy | Move | MkDir | Delete | User Commands
 
-Clicking a button executes the command. Right-clicking the bar offers Hide Command Bar, which turns the preference off; Settings turns it back on.
+Clicking a button executes the command; the buttons never take focus. Right-clicking the bar offers Hide Command Bar, which turns the preference off; Settings turns it back on.
 
 ---
 
@@ -2009,14 +2083,14 @@ Focus is a first-class concern — broken focus means reaching for the mouse, wh
 ### Focus Tracking
 
 - **Active pane**: Tracked in Rust state (`display_options.active_pane` — 0 or 1). Tab switches between panes. Clicking a pane activates it.
-- **Panes vs. terminal**: `display_options.panes_focused` (boolean) tracks whether panes or the terminal have input focus. Alt+Up/Down toggles.
+- **Panes vs. terminal**: `display_options.panes_focused` (boolean) tracks whether panes or the terminal have input focus. Alt+Up focuses the panes, Alt+Down the terminal; Ctrl+\` toggles the terminal panel.
 - **Active terminal**: `display_options.active_terminal` tracks which terminal tab is active.
 
 ### Modal Focus
 
 - **On open**: Auto-focuses the most relevant control — the text input in input dialogs, the confirm button in confirmation dialogs. Uses `autoFocus` or ref-based `.focus()`.
-- **On close**: Focus *always* returns to the previously active pane or terminal. Implemented via `onCloseAutoFocus` on Radix Dialog, which calls `refocusActivePane` (increments `focusGeneration` → Pane re-runs its focus effect).
-- **Tab key**: Disabled inside modals (focus is managed by the app, not browser tab order).
+- **On close**: Focus *always* returns to the previously active pane or terminal. Dialogs stop Radix from restoring focus to a stale element (`onCloseAutoFocus` prevented), and the pane and terminal take focus back themselves once the modal state clears. Context menus restore it the same way when they close.
+- **Tab key**: Moves between a dialog's controls, kept inside the dialog.
 - **Command middleware**: All `cmd_*` commands automatically close any open modal before dispatching, preventing stale modal state.
 
 ### Viewer Windows
@@ -2025,8 +2099,8 @@ Focus stays on the viewer's content, so its keys keep working: Tab and Shift+Tab
 
 ### Focus Theft Prevention
 
-- Clicking splitter dividers, pane headers, column headers, or other non-interactive chrome does not steal focus from the file list or terminal.
-- Most interactive elements use `tabindex=-1` (focus managed by app, not browser).
+- Clicking splitter dividers, pane headers, column headers, or other non-interactive chrome does not steal focus from the file list or terminal: a mousedown anywhere in the window but on a list, a text field, a button or a terminal keeps focus where it is. Chrome buttons (the command bar, pane header buttons) aren't Tab stops; a dialog's controls are.
+- **Recovery**: focus that lands on nothing (outside any dialog) is handed back to the active pane or terminal, and a click in the active pane takes focus back to it.
 
 ---
 
@@ -2034,23 +2108,24 @@ Focus stays on the viewer's content, so its keys keep working: Tab and Shift+Tab
 
 ### Outbound Links
 
-Every link that leaves the app goes through the `open_url` command, which hands the URL to `opener` on the host side. An `<a target="_blank">` is not an option: the webview has no new-window handler installed, so a blank-target link is silently swallowed on every platform. Links are therefore `<button>`s styled as links.
+The UI's own links (About, the settings banner, …) are `<button>`s styled as links that call the `open_url` command, which hands the URL to `opener` on the host side. A link in rendered content (a PDF, a Markdown document) never takes the window away from Newt: a navigation off the app, or a request for a new window, is cancelled and a web or mail link handed to the system instead. Only `http`, `https` and `mailto` links are opened at all — the opener would otherwise launch local files and programs.
 
-`documentation` ("Documentation...", Help category, no default keybinding) opens `newt-fm.org/docs/` from the command palette.
+`documentation` ("Documentation...", Help category, no default keybinding) opens `newt-fm.org/docs/` from the command palette, or Help ▸ Newt Documentation on macOS.
 
 ### About Dialog
 
-Available from the command palette. Shows:
+Available from the command palette (and first in the app menu on macOS). Shows:
 
 - **App icon** (96×96), title ("Newt"), tagline ("A keyboard-centric dual-pane file manager").
-- **Version**: e.g., `v0.1.0 (a1b2c3d+)` — short git hash with `+` suffix if built from a dirty working tree.
-- **Build date** and **target triple** (e.g., `x86_64-unknown-linux-gnu`).
+- **Version**: e.g., `v0.1.0 (a1b2c3d+)` — short git hash with `+` suffix if built with uncommitted changes to tracked files.
+- **Target triple** (e.g., `x86_64-unknown-linux-gnu`).
 - **Links**: Website (newt-fm.org), Documentation (newt-fm.org/docs/), GitHub — each hands the URL to the system browser via `open_url`.
 - **License**: GNU General Public License v3.0 or later.
 - **Third-Party Notices…**: opens the notices dialog (below).
-- **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation). The icon rotates slightly on activation.
+- **Easter egg**: Click the icon 3 times to display a random newt fact (12 facts in rotation); every further click picks another. The icon rotates slightly on activation.
+- **Close** is focused when the dialog opens.
 
-Build metadata (git revision, date, target) is captured at compile time via `build.rs` and gracefully falls back when git is unavailable.
+Build metadata (git revision, target) is captured at compile time via `build.rs` and gracefully falls back when git is unavailable; `newt --version` prints the same.
 
 ### Third-Party Notices Dialog
 
@@ -2063,8 +2138,11 @@ The notices are `?raw`-imported into the frontend bundle at build time, so the
 text ships inside the app shell and needs no filesystem access at runtime.
 `cargo xtask notices` regenerates the file: it walks the *normal* dependency
 edges out of `newt` and `newt-agent` (dev- and build-only crates are not
-distributed, so they are left out), reads each dependency's own licence files
-for copyright notices, and deduplicates the licence bodies per SPDX id. Asset
+distributed, so they are left out) and the npm packages of the production
+frontend (`package-lock.json`, in a section of their own), reads each
+dependency's own licence files for copyright notices — and its `THIRD-PARTY*`
+files, for works it incorporates — and deduplicates the licence bodies per
+SPDX id. Asset
 attributions are hand-maintained in `xtask/src/notices_assets.md`. CI runs
 `cargo xtask notices --check`, so the committed file cannot drift from the
 dependency tree.
@@ -2077,12 +2155,13 @@ default file manager.
 
 Linux packages install `LICENSE` and the notices under
 `/usr/share/doc/newt/`; the `.deb` additionally carries a Debian
-machine-readable `copyright` file, and the Arch package mirrors both into
+machine-readable `copyright` file and a copy of the notices under
+`/usr/share/doc/newt-fm/` (Debian wants them under the package's name), and the Arch package mirrors both into
 `/usr/share/licenses/newt-fm/`.
 
 ### Windows Installer
 
-Windows ships a single MSI, authored from scratch in `packaging/windows/`
+Windows ships one MSI per architecture (x64, and arm64 for full releases), authored from scratch in `packaging/windows/`
 and built with WiX (dotnet tool, pinned in `.config/dotnet-tools.json`) by
 `packaging/windows/build-msi.ps1` — Tauri's bundler is not involved, same as
 on Linux. The app binary itself is a plain `cargo build --release -p newt
@@ -2093,12 +2172,16 @@ project).
 
 The **UpgradeCode is pinned** in `newt.wxs` to the value tauri-bundler
 derived for previously shipped MSIs (`uuid5(DNS, "Newt.exe.app.x64")`) —
-changing it orphans existing installs.
+changing it orphans existing installs. Both architectures share it, and installing over a newer version is refused ("A newer version of Newt is already installed.").
 
 Installer UI (custom WixUI set in `ui.wxs`): Welcome → License →
 per-user/per-machine scope → install dir + "Create a desktop shortcut"
 checkbox (unchecked by default) → confirm; the exit page offers "Launch
-Newt". Rerunning the installer gives the stock Change/Repair/Remove
+Newt", ticked. A per-user install goes to `%LOCALAPPDATA%\Programs\Newt`,
+a per-machine one to `Program Files\Newt`, and a previous install's
+location is found again; the agents go in `agents\` under it. A Start
+Menu shortcut is always installed; it and the desktop shortcut carry the
+AppUserModelID `org.newt-fm.newt`. Rerunning the installer gives the stock Change/Repair/Remove
 maintenance flow, where Change opens the feature tree — that is how an
 existing install adds or drops the desktop shortcut later. The desktop
 shortcut is a Level-2 feature: silent installs opt in with
@@ -2108,7 +2191,8 @@ wrote the same `Desktop Shortcut` value, so their users keep the shortcut
 they already have).
 
 WebView2 is detect-only: a launch condition blocks the install with a
-pointer to the runtime download if it is missing; nothing is downloaded by
+pointer to the runtime download if neither a per-machine nor a per-user
+runtime is installed; nothing is downloaded by
 the installer. One dual-scope caveat: a per-user install cannot see or
 upgrade an existing per-machine install (MSI context isolation), so
 switching scope leaves the other copy behind.
@@ -2121,7 +2205,7 @@ hatch.
 
 ### Copy Pane (Mod+.)
 
-Sets the other pane's directory to match the active pane's current path. Useful for quickly aligning both panes to the same location before a copy/move.
+"As Other Pane": takes the active pane to the other pane's directory. Useful for quickly aligning both panes to the same location before a copy/move.
 
 ### Swap Panes (Mod+U)
 
@@ -2131,11 +2215,11 @@ Scroll offset is the one thing that stays put — it lives in the DOM, not in pa
 
 ### Follow Symlink (Shift+Enter)
 
-When a symlink is focused, navigates to where it leads, with the target focused in its directory. The link is resolved by the filesystem it lives on, the way that filesystem resolves links — `realpath` on the local and remote filesystems and over SFTP, the archive's or disc image's own tree inside one — so relative targets climbing out with `..`, chains of links, and links under a linked directory all land where the OS would. The pane lands on the resolved (physical) path, not a path through the link. A link that leads nowhere reports the error.
+"Follow Symlink / Reveal Source". When a symlink is focused, navigates to where it leads, with the target focused in its directory; on a search result (or another entry standing for a file elsewhere) it goes to that file where it actually lives. The link is resolved by the filesystem it lives on, the way that filesystem resolves links — `realpath` on the local and remote filesystems and over SFTP, the archive's or disc image's own tree inside one — so relative targets climbing out with `..`, chains of links, and links under a linked directory all land where the OS would. The pane lands on the resolved (physical) path, not a path through the link. A link that leads nowhere reports the error.
 
 ### Reveal in File Manager (Shift+F3)
 
-Shows the focused entry in the system's file manager, selected in its folder: `SHOpenFolderAndSelectItems` on Windows (Explorer's `/select`), Finder's reveal (`open -R`) on macOS, and on Linux `org.freedesktop.FileManager1.ShowItems` over D-Bus — which Nautilus, Dolphin, Nemo and most others implement — falling back to the desktop portal's Open Directory where no file manager provides it. In a search-results pane it reveals the matched file where it actually lives. On `..` (or in an empty folder) it opens the pane's directory instead. Host-local filesystems only.
+Shows the focused entry in the system's file manager, selected in its folder: `SHOpenFolderAndSelectItems` on Windows (Explorer's `/select`), Finder's reveal (`open -R`) on macOS, and on Linux `org.freedesktop.FileManager1.ShowItems` over D-Bus — which Nautilus, Dolphin, Nemo and most others implement — falling back to the desktop portal's Open Directory where no file manager provides it, and then to opening the containing folder without a selection (under WSL, Explorer). In a search-results pane it reveals the matched file where it actually lives. On `..` (or in an empty folder) it opens the pane's directory instead. Host-local filesystems only; elsewhere it does nothing.
 
 ### Navigate Dialog (Mod+L)
 
@@ -2150,7 +2234,7 @@ Text input for jumping directly to any path. Pre-filled with the current path (a
 
 Path resolution priority: First checks if any mounted VFS claims the path (e.g., `s3://` prefix), then falls back to shell expansion for local paths.
 
-In a remote session with the client-local Windows FS exposed, that mount claims distinctively Windows-shaped absolute input (`C:\…`, bare `X:`, `\\server\share`, verbatim `\\?\` forms) via `RemoteVfsDescriptor::try_parse_display_path` (gated on the mount's `PathStyle`, parsed by `local_path_from_typed_display`) — so typed Windows paths and Shift+\<drive letter\> land on the client-local mount instead of dying against the agent's Unix shell. Drive-relative (`C:foo`) and `..`-carrying inputs are deliberately not claimed. Unix-style absolutes keep resolving through agent-side shell expansion (so `$VAR` expansion works there; `%WINDIR%` in remote sessions does not — accepted tradeoff). Without a Windows-styled mount, Windows-shaped exact input is a harmless near-no-op: the host-native ROOT decode in `cmd::pane::navigate` only applies when the session root's `PathStyle` matches the host's (local and elevated sessions), so a stray `C:\` can't decode against a Unix agent's `/`.
+In a remote session with the client-local Windows FS exposed, that mount claims distinctively Windows-shaped absolute input (`C:\…`, bare `X:`, `\\server\share`, verbatim `\\?\` forms) via `RemoteVfsDescriptor::try_parse_display_path` (gated on the mount's `PathStyle`, parsed by `PathBuf::from_typed_display`) — so typed Windows paths and Shift+\<drive letter\> land on the client-local mount instead of dying against the agent's Unix shell. Drive-relative (`C:foo`) and `..`-carrying inputs are deliberately not claimed. Unix-style absolutes keep resolving through agent-side shell expansion (so `$VAR` expansion works there; `%WINDIR%` in remote sessions does not — accepted tradeoff). Without a Windows-styled mount, Windows-shaped exact input is a harmless near-no-op: the host-native ROOT decode in `cmd::pane::navigate` only applies when the session root's `PathStyle` matches the host's (local and elevated sessions), so a stray `C:\` can't decode against a Unix agent's `/`.
 
 ### Navigation History
 
@@ -2165,20 +2249,21 @@ Each pane maintains its own navigation history. Each entry stores the path, the 
 A single dialog showing the pane's full back/forward timeline. Forward (redo) entries appear above the current entry, back (undo) entries below; closest entries are nearest current in the list.
 
 - **Alt+Left / Alt+Right** open the dialog alt-tab style: pre-stepped one entry in the requested direction, with **Alt-up committing** the previewed entry. Tap-and-release is therefore equivalent to single-step back/forward; hold-and-step lets the user scan further before releasing.
-- **Mod+Y** opens the same dialog persistent: Alt-up does nothing, the dialog stays until dismissed (Esc / outside-click). Each non-current entry has an inline "×" button, and Delete does the same for the highlighted one: it removes that entry from the pane's history (the list updates in place and the highlight moves to the next live entry — the user can keep deleting). Unlike the Alt+Left/Right overlay, it stops on entries on unmounted VFSes too, so Delete can remove them (Enter does nothing on one). Useful for grooming a long history or evicting an entry that's anchoring an archive mount the user wants to drop.
+- **Mod+Y** opens the same dialog persistent: Alt-up does nothing, the dialog stays until dismissed (Esc / outside-click). Each non-current entry has an inline "×" button, and Delete does the same for the highlighted one: it removes that entry from the pane's history (the list updates in place and the highlight moves to the next entry — the user can keep deleting). Unlike the Alt+Left/Right overlay, it stops on entries on unmounted VFSes too, so Delete can remove them (Enter does nothing on one). Useful for grooming a long history or evicting an entry that's anchoring an archive mount the user wants to drop.
 - **In both modes**: Alt+Left/Right or ArrowDown/Up moves the preview — in the Alt overlay skipping unreachable entries (e.g. unmounted VFS mounts). Mouse hover updates the preview. **Enter** or mouse click commits.
 - The current entry is shown in bold with a "current" badge. Unmounted-VFS entries are dimmed with an "unmounted" tag and cannot be navigated to, but remain visible for context.
-- Entries are grouped by time bucket (just now / 5m / 15m / 30m / 1h / 2h / 6h / earlier today / yesterday / weekday / last week / N weeks / older) with quiet section dividers between buckets. Buckets are computed at dialog open and don't tick while it's open.
+- In the dialog, Page Up/Down step ten entries and Home/End go to the first/last.
+- Entries are grouped by time bucket (just now / a minute ago / 5m / 15m / 30m / 1h / 2h / 6h / earlier today / yesterday / weekday / last week / N weeks / last month / older) with quiet section dividers between buckets. Buckets are computed at dialog open and don't tick while it's open.
 
 **Retention**: Each pane's history is bounded by the `behavior.history_retention` preference (default 200, set to 0 for unlimited). When the cap is reached, the oldest entries roll out as new ones are pushed.
 
-**Archive mount lifetime**: Archive VFS mounts are kept alive as long as either pane can navigate to a path inside them via back/forward history (not just when the current path is inside the mount). Stepping out of an archive no longer eagerly unmounts it, so back-navigation re-enters it cleanly. Mounts only become unreachable — and are then auto-unmounted — when every history entry referencing them has rolled out, been manually deleted, or had its forward branch truncated by a divergent navigation.
+**Archive mount lifetime**: Archive VFS mounts are kept alive as long as either pane can navigate to a path inside them via back/forward history (not just when the current path is inside the mount). Stepping out of an archive doesn't unmount it, so back-navigation re-enters it cleanly. Mounts only become unreachable — and are then auto-unmounted — when every history entry referencing them has rolled out, been manually deleted, or had its forward branch truncated by a divergent navigation.
 
 **Robustness**: History stack mutation happens at the moment the displayed path actually changes (the first batch arrives during streaming, or the final swap if no streaming), not at the start of navigation. A back-press to an unreachable target — unmounted VFS, deleted directory, permission revoked — that errors before any batch lands leaves the history stack untouched, so the user can simply press Back again. Stacks are also restored if a multi-step history jump fails to land.
 
 ### Open in Left/Right Pane (Mod+Left / Mod+Right)
 
-Opens the directory under the cursor in the left or right pane respectively, regardless of which pane is currently active. Useful for quickly setting up both panes for a copy/move operation.
+Opens the directory under the cursor in the *other* pane — the left or right one respectively; from that pane itself the command does nothing. On `..` it opens the parent; on a browsable file (an archive) it mounts it and opens its root there. Useful for quickly setting up both panes for a copy/move operation.
 
 ### Hidden Files (Mod+H)
 
@@ -2215,22 +2300,26 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| Enter | Open / enter directory | Pane focused |
-| Backspace | Parent directory | Pane focused |
+| Enter | Open / enter directory (fixed) | Pane focused |
+| Backspace | Parent directory (fixed) | Pane focused |
 | Ctrl+Backspace | Filesystem root — the current drive or share root where there are several (Windows). Unbound on macOS, where ⌘⌫ is Move to Trash; bind `navigate_root` from the Keybindings tab | Pane focused |
-| Tab | Switch panes | Pane focused |
+| Tab | Switch panes (fixed) | Pane focused |
 | Shift+Enter | Follow symlink | Pane focused |
 | Mod+L | Navigate (Go To...) | Pane focused |
 | Alt+Left | History overlay (back direction) — tap for single back step, hold + step + release to commit | Pane focused |
 | Alt+Right | History overlay (forward direction) — tap for single forward step, hold + step + release to commit | Pane focused |
 | Mod+Left | Open in left pane | Pane focused |
 | Mod+Right | Open in right pane | Pane focused |
-| Mod+. | Copy pane path to other pane | Pane focused |
+| Mod+. | As other pane — the active pane goes to the other pane's directory | Pane focused |
 | Mod+U | Swap panes (whole pane state, history included) | Pane focused |
 | Mod+P | Hot paths | Any |
 | Mod+G | Go to file | Any |
 | Mod+B | Add bookmark | Pane focused |
 | Mod+Shift+L | Select VFS | Pane focused |
+| Mod+Y | History dialog (persistent) | Pane focused |
+| Mod+Shift+S | Sort menu | Pane focused |
+| Shift+\<drive letter\> | Jump to that drive's root (with a drive-lettered filesystem mounted; fixed) | Pane focused |
+| Arrows, Page Up/Down, Home/End (with Shift: extend the selection) | Move the cursor (fixed) | Pane focused |
 
 ### Selection
 
@@ -2258,9 +2347,9 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 
 | Shortcut | Action | Context |
 |----------|--------|---------|
-| / | Enter filter mode (`start_filter`, rebindable) | Pane focused |
-| (any printable char) | Start quick search | Pane focused |
-| Escape | Cancel / clear filter | Pane focused |
+| /, Num / | Enter filter mode (`start_filter`, rebindable) | Pane focused |
+| (any printable char) | Start quick search; then Left/Right shrink or extend it (fixed) | Pane focused |
+| Escape | Cancel / clear filter (fixed) | Pane focused |
 | Mod+F | Find in Folder (recursive search) | Pane focused |
 
 ### Terminal
@@ -2273,7 +2362,9 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 | Ctrl+PageUp | Previous terminal | Any |
 | Alt+Up | Focus file panes | Any |
 | Alt+Down | Focus terminal | Any |
-| Mod+Enter | Open in terminal | Pane focused |
+| Mod+Enter | Open in terminal (types the selected names into it) | Pane focused |
+| Ctrl+Shift+C / Cmd+C | Copy the terminal selection (fixed) | Terminal focused |
+| Enter | Close a terminal whose shell has exited (fixed) | Terminal focused |
 
 ### View & Settings
 
@@ -2281,10 +2372,15 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 |----------|--------|---------|
 | Mod+H | Toggle hidden files | Any |
 | Mod+, | Settings | Any |
-| Mod+Shift+P (or F1) | Command palette | Any |
+| F1 (or Mod+Shift+P) | Command palette | Any |
 | F9 | User commands palette | Pane focused |
 | F10 | Show Next Operation (cycle foreground op) | Any |
-| Shift+F10 / Menu | Context menu | Pane focused |
+| Shift+F10 / Menu | Context menu (fixed) | Pane focused |
+| Mod+F11 | Toggle maximized layout | Any |
+| Mod+Shift+F3 | Toggle Quick View | Any |
+| F11 (Windows) | Map network drive | Any |
+| Alt+F11 (Windows) | Unmap network drive | Pane focused |
+| F12 (debug builds) | Debug dialog | Any |
 
 ### Window
 
@@ -2294,12 +2390,16 @@ Toggles whether hidden entries are shown, in every pane of every window at once.
 | Mod+Shift+W | Close window | Any |
 | Mod+Q | Quit (close all windows) | Any |
 | Mod+Shift+R | Connect remote | Any |
-| Ctrl+R | Quick Connect | Pane focused |
-| Mod+= (or Mod++) | Zoom in | Any |
-| Mod+- | Zoom out | Any |
-| Mod+0 | Reset zoom | Any |
+| Ctrl+R | Quick Connect | Any |
+| Mod+= (or Mod++) | Zoom in (fixed; every window) | Any |
+| Mod+- | Zoom out (fixed; every window) | Any |
+| Mod+0 | Reset zoom (fixed; every window) | Any |
 
-Note: Refresh (Mod+R) is unbound by default to avoid conflict with Quick Connect (Ctrl+R). Rebind via settings if needed.
+Note: Refresh is unbound by default — Mod+R would be Quick Connect's Ctrl+R on Linux and Windows. Rebind via settings if needed.
+
+"Any" means anywhere in the main window, with one exception: while a terminal has focus it keeps keys for the shell, except those of the terminal commands above and bindings made for the terminal (see Keybinding System). On Linux and Windows that sends Ctrl+H, Ctrl+P, Ctrl+R and the like to the shell.
+
+Commands with no default key, reachable from the palette or by binding one: Create File, Directory Properties, Open in Default App, Open With…, Change Association…, Browse Into, Go Back, Go Forward, Refresh File List, Select Same Extension, Open Elevated (Linux, Windows), Connect to WSL Distribution (Windows), Mount S3, Mount SFTP, Disconnect VFS, Open Settings File in Editor, Connection Log, Documentation, About Newt.
 
 ### Viewer and Editor Commands
 
@@ -2308,7 +2408,8 @@ Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding
 | Command | Default | Modes |
 |---------|---------|-------|
 | `viewer_toggle_hex` | F3 | All |
-| `viewer_copy` | Mod+C | Text, Hex, Structure, Image |
+| `viewer_close` | Mod+W (Escape too, fixed) | All |
+| `viewer_copy` | Mod+C | Text, Hex, Table, Structure, Image |
 | `viewer_copy_value` | Mod+Shift+C | Structure |
 | `viewer_copy_bytes` | (unbound) | Structure |
 | `viewer_copy_tree` | (unbound) | Structure |
@@ -2317,11 +2418,11 @@ Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding
 | `viewer_toggle_bytes` | Mod+B | Structure |
 | `viewer_dissect_as` | Mod+D | Structure |
 | `viewer_filter` | / (also numpad /) | Structure |
-| `viewer_select_all` | Mod+A | Text, Hex, Structure, Image |
-| `viewer_find` | Mod+F | Text, Hex |
-| `viewer_goto` | Mod+G | Text, Hex, Structure |
+| `viewer_select_all` | Mod+A | Text, Hex, Table, Structure, Image |
+| `viewer_find` | Mod+F | Text, Hex, Table |
+| `viewer_goto` | Mod+G | Text, Hex, Table, Structure |
 | `viewer_zoom_in` | = (also + / Shift+=) | Image, PDF |
-| `viewer_zoom_out` | - (also Shift+-) | Image, PDF |
+| `viewer_zoom_out` | - (also `shift+_`) | Image, PDF |
 | `viewer_zoom_fit` | 0 | Image, PDF |
 | `viewer_zoom_actual` | 1 | Image |
 | `viewer_rotate_cw` / `viewer_rotate_ccw` | r / Shift+R | Image |
@@ -2330,4 +2431,6 @@ Viewer (F3) and editor (F4) window shortcuts live in the same central keybinding
 | `viewer_toggle_info` | i | Image |
 | `editor_save` | Mod+S | Editor |
 
-All keybindings are fully customizable via the Settings dialog or `settings.toml`. `Mod` = Ctrl on Linux/Windows, Cmd on macOS.
+The editor's Escape (close, asking first when there are unsaved changes) and Monaco's own editing keys are fixed.
+
+Every binding above not marked fixed can be changed in the Settings dialog or `settings.toml`; the fixed ones are handled directly by the panes, the terminal and the windows. `Mod` = Ctrl on Linux/Windows, Cmd on macOS.
